@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Minimal plugin built as a wasm32-wasip2 component; the SDK template from milestone 2."
+description = "A small example plugin: a page with stats, a table, a card and tabs, built on tether-plugin-sdk."
 
 # CI builds and lints every crate tagged like this for its target.
 [package.metadata.tether]
@@ -24,4 +24,4 @@ print_stderr = "deny"
 dbg_macro = "deny"
 
 [dependencies]
-wit-bindgen.workspace = true
+tether-plugin-sdk.workspace = true

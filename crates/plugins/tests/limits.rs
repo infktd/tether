@@ -3,10 +3,12 @@
 //! A misbehaving guest can't hurt the host: runaway loops, memory bombs
 //! and panics each end the one call, cleanly, and other calls carry on.
 
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+mod common;
+
+use common::build_guest;
 use tether_plugins::{CallError, PluginLimits, Runtime, Sandbox};
 use wasmtime::component::{Component, Linker};
 
@@ -19,35 +21,6 @@ wasmtime::component::bindgen!({
 fn guest() -> &'static [u8] {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
     BYTES.get_or_init(|| build_guest("tether-plugins-test-guest"))
-}
-
-/// Builds a test guest for wasm32-wasip2 into its own target directory (so
-/// it doesn't wait on the lock of the build running us).
-fn build_guest(package: &str) -> Vec<u8> {
-    {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let target = root.join("target/test-guests");
-        let output = std::process::Command::new(env!("CARGO"))
-            .current_dir(&root)
-            .args([
-                "build",
-                "-p",
-                package,
-                "--target",
-                "wasm32-wasip2",
-                "--release",
-            ])
-            .env("CARGO_TARGET_DIR", &target)
-            .output()
-            .expect("running cargo");
-        assert!(
-            output.status.success(),
-            "building the test guest failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let file = format!("wasm32-wasip2/release/{}.wasm", package.replace('-', "_"));
-        std::fs::read(target.join(file)).expect("reading the test guest")
-    }
 }
 
 struct Host {

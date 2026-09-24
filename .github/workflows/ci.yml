@@ -111,6 +111,8 @@ jobs:
             | tr '\n' ' ')
           echo "Found: ${crates:-none}"
           echo "list=$crates" >> "$GITHUB_OUTPUT"
+      - name: Lint the plugin SDK for its real target
+        run: cargo clippy -p tether-plugin-sdk --target wasm32-wasip2 -- -D warnings
       - name: Build, lint and check component format
         run: |
           for crate in ${{ steps.crates.outputs.list }}; do

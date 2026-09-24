@@ -1,0 +1,133 @@
+// The Tether plugin host API, version 1.
+//
+// A plugin's `plugin.toml` says `host_api = "1"`: it is built against
+// `tether:plugin@1.x`. Unstable until milestone 3 ends, then frozen: after
+// that, the types and functions here never change within 1.x. New things
+// (page elements included) arrive as new types, functions, interfaces or
+// exports, so a plugin built against an earlier 1.x keeps loading. Wasmtime
+// matches imports by semver, but checks records, variants and enums
+// structurally: adding a case or a field to an existing one would break
+// every installed plugin, so that is never done within 1.x.
+package tether:plugin@1.0.0;
+
+/// Structured logs into the plugin's log in the admin panel.
+interface log {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    write: func(level: level, message: string);
+}
+
+/// Pages described as data. The host validates them and renders them with
+/// its own templates and design tokens; plugins never send HTML, CSS or
+/// JavaScript.
+interface page {
+    /// How strongly a badge is coloured.
+    enum tone {
+        neutral,
+        success,
+        warning,
+        danger,
+        /// The screen's one highlight: use sparingly.
+        accent,
+    }
+
+    record badge {
+        label: string,
+        tone: tone,
+    }
+
+    /// A link to another page of the same plugin.
+    record link {
+        label: string,
+        /// Relative to the plugin's pages, e.g. `moons/40161234`.
+        path: string,
+    }
+
+    /// A value, typed so the host formats it the same way everywhere.
+    variant value {
+        text(string),
+        /// A count or an ID: monospaced, right-aligned.
+        number(s64),
+        /// ISK, abbreviated in tables (`1.24b`).
+        isk(f64),
+        /// An instant in EVE time (UTC), RFC 3339.
+        time(string),
+        badge(badge),
+        link(link),
+    }
+
+    record stat {
+        label: string,
+        value: value,
+        caption: option<string>,
+    }
+
+    record column {
+        label: string,
+        /// Right-aligned: for numbers, ISK and times.
+        numeric: bool,
+    }
+
+    record table {
+        title: option<string>,
+        columns: list<column>,
+        rows: list<list<value>>,
+        /// Shown when there are no rows.
+        empty: option<string>,
+    }
+
+    record card {
+        title: string,
+        description: option<string>,
+        /// Label and value pairs.
+        fields: list<tuple<string, value>>,
+    }
+
+    variant section {
+        stats(list<stat>),
+        table(table),
+        card(card),
+        /// A paragraph of plain text.
+        text(string),
+    }
+
+    record tab {
+        label: string,
+        sections: list<section>,
+    }
+
+    record page {
+        title: string,
+        description: option<string>,
+        sections: list<section>,
+        /// Shown below the sections, one visible at a time.
+        tabs: list<tab>,
+    }
+
+    /// Which of the plugin's pages is wanted.
+    record request {
+        /// Relative to the plugin's pages; empty for its main page.
+        path: string,
+        query: list<tuple<string, string>>,
+    }
+
+    variant page-error {
+        not-found,
+        forbidden,
+        /// Something went wrong; the text is for admins.
+        failed(string),
+    }
+}
+
+world plugin {
+    import log;
+    use page.{page, request, page-error};
+
+    /// Renders one of the plugin's pages.
+    export render: func(request: request) -> result<page, page-error>;
+}

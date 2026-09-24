@@ -5,6 +5,7 @@ members = [
     "crates/plugins/test-guest",
     "crates/plugins/test-guest-net",
     "crates/plugins/test-guest-hoard",
+    "crates/plugins/test-guest-pages",
     "examples/hello-plugin",
 ]
 
@@ -24,6 +25,7 @@ tether-cli = { path = "crates/cli" }
 tether-discord = { path = "crates/discord" }
 tether-net = { path = "crates/net" }
 tether-plugins = { path = "crates/plugins" }
+tether-plugin-sdk = { path = "crates/plugin-sdk" }
 
 anyhow = "1"
 askama = "0.16"

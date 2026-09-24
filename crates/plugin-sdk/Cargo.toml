@@ -1,0 +1,19 @@
+[package]
+name = "tether-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Build Tether plugins: the host API bindings, page builders and logging."
+
+# Workspace lints minus `unsafe_code = "forbid"`: wit-bindgen's generated
+# ABI glue needs `unsafe`. Plugins run sandboxed by Wasmtime regardless.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+[dependencies]
+wit-bindgen.workspace = true

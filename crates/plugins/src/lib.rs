@@ -31,6 +31,9 @@
 //! What a plugin can call beyond that is decided by the linker the host
 //! API (the WIT world) builds on top of [`Runtime::linker`].
 
+pub mod host;
+pub mod page;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -51,6 +54,9 @@ pub const CALLS_PER_PLUGIN: usize = 2;
 const MAX_HOST_RESOURCES: usize = 1_000;
 /// Random bytes per request (wasmtime-wasi's default is 64 MiB).
 const MAX_RANDOM_BYTES: u64 = 64 * 1024;
+/// Data copied from a plugin into the host per call (its page, its log
+/// lines): Wasmtime's own default is 128 MiB. Past it, the call traps.
+pub const MAX_HOSTCALL_BYTES: usize = 16 * 1024 * 1024;
 /// Longest trap message kept.
 const MAX_TRAP_TEXT: usize = 2 * 1024;
 
@@ -326,6 +332,7 @@ impl Runtime {
         };
         let mut store = Store::new(&self.engine, sandbox);
         store.limiter(|sandbox| &mut sandbox.limiter);
+        store.set_hostcall_fuel(MAX_HOSTCALL_BYTES);
         // Yield to the async runtime on every tick; interrupt once the
         // CPU budget is spent.
         let mut ticks_left = (limits.cpu.as_millis() / TICK.as_millis()).max(1) as u64;
