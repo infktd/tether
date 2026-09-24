@@ -2,8 +2,8 @@
 //!
 //! Schedules live in `core.schedules`; code declares them at startup with
 //! [`ensure`]. A [`Scheduler`] task enqueues a job whenever one is due.
-//! Fixed intervals for now; plugin manifests bring cron expressions in
-//! milestone 2 and can reuse the same table.
+//! Schedules run at fixed intervals; plugin manifests declare theirs the
+//! same way (`every = "30m"`) and reuse the same table.
 
 use std::time::Duration;
 

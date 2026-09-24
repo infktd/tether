@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_keys (plugin_id, public_key, pinned_by)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (plugin_id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3d7ed3a5c96474866fdccea8266ea746a3bd218c7af5ebc638a83b98b177129"
+}

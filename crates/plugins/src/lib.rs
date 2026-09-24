@@ -32,7 +32,11 @@
 //! API (the WIT world) builds on top of [`Runtime::linker`].
 
 pub mod host;
+pub mod manifest;
+pub mod package;
 pub mod page;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

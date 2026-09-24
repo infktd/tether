@@ -59,6 +59,78 @@ No other tooling is needed: `wasm32-wasip2` produces a component directly. Forge
 
 `examples/hello-plugin` in the repository is a complete example with every kind of section.
 
+## plugin.toml
+
+Every package carries a `plugin.toml`. Unknown fields are refused, so a typo fails loudly instead of silently dropping a capability.
+
+```toml
+[plugin]
+id = "nmu.mining-ledger"   # 3-50 lowercase letters, digits and single . - _, starting with a letter
+name = "Mining ledger"     # up to 60 characters
+version = "0.3.1"          # MAJOR.MINOR.PATCH, no leading zeros
+host_api = "1"
+description = "Moon mining for the corp"                  # optional, up to 300 characters
+repository = "https://github.com/example/mining-ledger"   # optional
+
+[publisher]
+key = "RWQ..."             # the second line of your minisign .pub file
+
+[capabilities]             # all optional; ask only for what you use
+storage = true
+discord = ["send_message"]
+http = ["janice.e-351.com"]         # exact HTTPS hostnames, at most 10
+
+[capabilities.esi]
+user = ["esi-wallet.read_character_wallet.v1"]              # each user consents on their profile
+data_source = ["esi-industry.read_corporation_mining.v1"]  # characters an admin designates
+
+[[capabilities.schedules]]
+name = "sync_mining"
+every = "30m"              # 5m to 7d: m, h or d
+
+[capabilities.secrets.janice_api_key]   # at most 10
+host = "janice.e-351.com"  # one of `http`
+header = "X-ApiKey"        # the header it's sent in
+# prefix = "Bearer "       # optional, put before the value
+
+[permissions]              # granted like core ones, as plugin.<id>.<name>
+view = "View the mining ledger"
+manage = "Manage the mining ledger"
+```
+
+The admin sees every capability before approving an install. Secrets are values like API keys that the admin enters. Each goes to one declared host in one header (not `Cookie`, `Host` or headers that frame the request); the host adds it to your requests there, and your plugin never sees it. Names and descriptions can't contain control characters or invisible formatting (bidi overrides, zero-width characters).
+
+## Packaging and signing
+
+A package is a `.zip` with exactly these entries (anything else, symlinks, encryption, repeated names or an archive comment gets it refused):
+
+| Entry | Limit |
+| --- | --- |
+| `plugin.toml` | 64 KiB |
+| `plugin.wasm` | 32 MiB |
+| `migrations/0001_<name>.sql`, `0002_...`, with no gaps; `<name>` is lowercase letters, digits and `_` | 100 files, 256 KiB each |
+| `ui/<name>.png`, `.jpg`, `.jpeg`, `.webp` or `.gif` (really that type; no SVG) | 32 files, 1 MiB each |
+| `rotation.txt` and `rotation.txt.minisig`, only when changing keys | 4 KiB each |
+
+The whole package is at most 40 MiB. Compress with deflate or store uncompressed.
+
+Sign the finished zip with [minisign](https://jedisct1.github.io/minisign/) and ship the signature next to it:
+
+```bash
+minisign -G -p tether.pub -s tether.key     # once; put the .pub's key line in plugin.toml
+zip -X -r my-plugin.zip plugin.toml plugin.wasm migrations ui
+minisign -S -s tether.key -m my-plugin.zip  # writes my-plugin.zip.minisig
+```
+
+The first install pins your key for your plugin id. Every later version must be signed with the same key. To move to a new key, put the new key in `plugin.toml`, sign the package with the new key, and include a statement signed with the old key:
+
+```bash
+printf 'tether-key-rotation v1\nplugin: %s\nold: %s\nnew: %s\n' nmu.mining-ledger "$OLD_KEY" "$NEW_KEY" > rotation.txt
+minisign -S -s old.key -m rotation.txt      # writes rotation.txt.minisig
+```
+
+Keep the rotation files in later packages or drop them; either works once installs have moved to the new key. If you lose your key, admins have to re-pin it by hand, so keep a backup.
+
 ## Pages
 
 `render` gets a `Request` (the path below the plugin's pages, and the query string) and returns a `Page` or a `PageError`.

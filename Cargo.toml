@@ -93,6 +93,17 @@ wasmtime = { version = "49", default-features = false, features = [
 ] }
 wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
 wit-bindgen = "0.62"
+# Plugin packages (tether-plugins): zip reading with deflate only (no
+# bzip2, zstd, lzma or AES: packages are signed, not encrypted), plugin.toml
+# parsing without the serializer, and minisign verification (no deps).
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+minisign-verify = "0.2"
+# Only for tether-plugins' `testing` feature (tests): signing packages the
+# way minisign does (BLAKE2b-prehashed Ed25519). ed25519-dalek is already in
+# the build through jsonwebtoken.
+blake2 = "0.11"
+ed25519-dalek = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

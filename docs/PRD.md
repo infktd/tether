@@ -205,11 +205,11 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 
 **Milestone 2 tasks, in order**
 
-Decisions from the milestone 2 kickoff are folded into the tasks below. New crates: `zip` (packages), `toml` (manifests), `minisign-verify` (signatures); `chacha20poly1305`'s `stream` feature for encrypted snapshots.
+Decisions from the milestone 2 kickoff are folded into the tasks below. New crates: `zip` (packages), `toml` (manifests), `minisign-verify` (signatures); `chacha20poly1305`'s `stream` feature for encrypted snapshots. For tests only (`tether-plugins`' `testing` feature): `blake2`, and `ed25519-dalek` (already in the build), to sign packages the way minisign does.
 
 - [x] Plugin runtime core (`tether-plugins`): Wasmtime trimmed to the features used, an instance per call, epoch interruption, a memory cap and a call deadline per plugin; tests that an infinite loop, a memory bomb or a trap can't hurt the host or other plugins
 - [x] Host API v1 as WIT (`tether:plugin@1`; `host_api = "1"` is the WIT major version), the guest SDK crate with an `AGENTS.md`, a real example plugin; CI builds and lints guests for `wasm32-wasip2`
-- [ ] Packages: `plugin.toml` parsing and validation (plugin ids limited to the characters link paths allow); safe .zip reading (size caps, no path escapes); minisign signatures with the publisher key pinned on first install; key rotation, where the old key signs a statement endorsing the new one; an admin can re-pin a plugin's key after a confirmation step; both audited
+- [x] Packages: `plugin.toml` parsing and validation (plugin ids limited to the characters link paths allow); safe .zip reading (size caps, no path escapes); minisign signatures with the publisher key pinned on first install; key rotation, where the old key signs a statement endorsing the new one; an admin can re-pin a plugin's key after a confirmation step; both audited
 - [ ] Plugin lifecycle: install from an uploaded .zip, verify, capability approval screen, migrate, activate with no restart; enable, disable, uninstall; all audited
 - [ ] Plugin storage (N9): a schema and a login role per plugin (generated credentials, stored encrypted) that can only touch that schema: `search_path` locked to it, no privileges on core, other plugins' schemas or `public`, no CREATEROLE, CREATEDB or BYPASSRLS; CONNECTION LIMIT, `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout` on the role; a small pool per plugin in the host; parameterised SQL through the host API with caps on rows and bytes returned; plugin migrations; tests proving a plugin role can't read core tables or another plugin's schema
 - [ ] Plugin jobs, declared schedules and logs (shown in the admin panel), on the core job queue

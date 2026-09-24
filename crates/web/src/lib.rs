@@ -20,6 +20,7 @@ pub mod maintenance;
 pub mod openapi;
 pub mod pages;
 pub mod pings;
+pub mod plugins;
 mod ratelimit;
 pub mod setup;
 mod state;

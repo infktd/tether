@@ -91,7 +91,9 @@ pub fn printable(text: &str, max: usize) -> String {
         .collect()
 }
 
-fn is_format(c: char) -> bool {
+/// Invisible formatting characters: bidi overrides and isolates,
+/// zero-width characters and the like.
+pub(crate) fn is_format(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'
@@ -102,6 +104,25 @@ fn is_format(c: char) -> bool {
             | '\u{2060}'..='\u{2064}'
             | '\u{2066}'..='\u{2069}'
             | '\u{FEFF}'
+            // Blank-looking fillers, line and paragraph separators,
+            // deprecated format controls, interlinear annotations, tag
+            // characters (invisible ASCII look-alikes) and other format
+            // controls in the higher planes.
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{3164}'
+            | '\u{FFA0}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{206A}'..='\u{206F}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
     )
 }
 
@@ -225,5 +246,29 @@ impl Host {
         })?;
         page::check(&page)?;
         Ok(Rendered { page, logs })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invisible_characters_are_replaced() {
+        for c in [
+            '\u{202E}',
+            '\u{200B}',
+            '\u{2066}',
+            '\u{FEFF}',
+            '\u{3164}',
+            '\u{206F}',
+            '\u{FFF9}',
+            '\u{E0041}',
+            '\u{1D173}',
+            '\u{2028}',
+        ] {
+            assert_eq!(printable(&format!("a{c}b"), 10), "a b", "{:?}", c);
+        }
+        assert_eq!(printable("o7 Ünïcode fine", 100), "o7 Ünïcode fine");
     }
 }

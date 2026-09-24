@@ -38,28 +38,49 @@ Plugins are WebAssembly components installed at runtime from a GitHub repo URL o
 
 - `plugin.toml`: identity, version, host API version, declared capabilities and permissions
 - `plugin.wasm`: the component, built against the host's WIT interfaces
-- `migrations/`: numbered SQL files for the plugin's own schema
-- `ui/`: optional static assets (images) referenced by the plugin's page descriptions
-- a detached signature over the package
+- `migrations/`: SQL files for the plugin's own schema, `0001_<name>.sql` onward with no gaps
+- `ui/`: optional images (PNG, JPEG, WebP, GIF) referenced by the plugin's page descriptions
+- `rotation.txt` and `rotation.txt.minisig`: only when the publisher changed keys (below)
+- a detached minisign signature over the whole .zip, next to it (`<package>.zip.minisig`)
+
+Everything else in a package is refused, as are symlinks, encrypted entries, repeated names and archive comments.
 
 ```toml
 [plugin]
-id = "nmu.mining-ledger"
+id = "nmu.mining-ledger"          # up to 50 lowercase letters, digits, single . - _
+name = "Mining ledger"
 version = "0.3.1"
 host_api = "1"
 repository = "https://github.com/example/mining-ledger"
 
+[publisher]
+key = "RWQ..."                    # minisign public key, pinned on first install
+
 [capabilities]
-esi_scopes = ["esi-industry.read_corporation_mining.v1"]
 storage = true
 discord = ["send_message"]
-schedules = ["*/30 * * * *"]
 http = ["janice.e-351.com"]
+
+[capabilities.secrets.janice_api_key]   # entered by the admin; the host sends it
+host = "janice.e-351.com"                # to this declared host only,
+header = "X-ApiKey"                      # in this header
+
+[capabilities.esi]
+user = []                          # scopes each user consents to
+data_source = ["esi-industry.read_corporation_mining.v1"]  # characters an admin designates
+
+[[capabilities.schedules]]
+name = "sync_mining"
+every = "30m"                      # fixed intervals, 5m to 7d
 
 [permissions]
 view = "View mining ledger"
 manage = "Manage mining ledger"
 ```
+
+Unknown fields are refused, so a typo can't hide a capability.
+
+**Publisher keys:** the key in the first installed package is pinned for that plugin id and kept even after uninstall. A package signed by another key is refused unless it carries `rotation.txt`, the exact statement `tether-key-rotation v1`, `plugin: <id>`, `old: <pinned key>`, `new: <new key>` (one per line), signed by the pinned key. A publisher who lost their key can't rotate; an admin can re-pin the plugin's key after typing its id to confirm. Pinning, rotating and re-pinning are audited.
 
 **Install flow:** admin pastes a repo URL (host fetches the latest release) or uploads a .zip → verifies the signature and pins the publisher key on first install → shows declared capabilities → admin approves → host applies migrations → component loads. Later updates must be signed by the pinned key or they are rejected.
 

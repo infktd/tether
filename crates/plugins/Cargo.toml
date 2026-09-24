@@ -9,12 +9,25 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+blake2 = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
 chrono.workspace = true
+minisign-verify.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tracing.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+zip.workspace = true
+
+[features]
+# Package builders and a minisign signer for tests (here and in other
+# crates' tests). Signing only; verification is the same with or without.
+testing = ["dep:blake2", "dep:ed25519-dalek"]
 
 [dev-dependencies]
+# This crate's own tests use the `testing` helpers.
+tether-plugins = { path = ".", features = ["testing"] }
 tokio.workspace = true

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.plugin_keys\n        SET public_key = $3, pinned_by = $4, pinned_at = now()\n        WHERE plugin_id = $1 AND public_key = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e17eaf38b0f2dd8b6d7a886d2bca8c1477d7dce0c9873d69d1a6546f21ae6a22"
+}
