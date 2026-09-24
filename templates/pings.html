@@ -1,0 +1,73 @@
+{% extends "layout.html" %}
+{% block title %}Fleet pings{% endblock %}
+{% block breadcrumb %}Fleet&nbsp;/&nbsp;<span class="text-foreground">Pings</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Fleet pings</h1>
+    <p class="text-muted-foreground mt-1">Post to a Discord channel and ping who you choose. Mentions typed into the message don't ping anyone.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if channels.is_empty() %}
+  <section class="card">
+    <header><h2>No ping channels yet</h2></header>
+    <section><p class="text-sm text-muted-foreground">An admin chooses which Discord channels pings go to, on the Discord admin page.</p></section>
+  </section>
+  {% else %}
+  <form class="card" method="post" action="/pings" hx-confirm="Send this ping now?">
+    <header><h2>New ping</h2></header>
+    <section class="flex flex-col gap-4 max-w-2xl">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="grid gap-2">
+          <label class="label" for="channel_id">Channel</label>
+          <select class="select input" id="channel_id" name="channel_id">
+            {% for c in channels %}<option value="{{ c.channel_id }}"{% if form.channel_id == c.channel_id.to_string() %} selected{% endif %}>#{{ c.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="target">Ping</label>
+          <select class="select input" id="target" name="target">
+            {% for t in targets %}<option value="{{ t.value }}"{% if form.target == t.value %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="message">Message</label>
+        <textarea class="textarea" id="message" name="message" rows="5" maxlength="{{ max_message }}" required placeholder="Form up in Jita for a roam, doctrine Caracals, undock in 15.">{{ form.message }}</textarea>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Send ping</button></footer>
+  </form>
+  {% endif %}
+
+  <section class="card data-card">
+    <header><h2>Recent pings</h2></header>
+    {% if recent.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">None yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">When (EVE)</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Message</th><th scope="col">Status</th></tr></thead>
+      <tbody>
+        {% for p in recent %}
+        <tr>
+          <td class="num">{{ p.when }}</td>
+          <td>{{ p.sender }}</td>
+          <td>#{{ p.channel }}<div class="text-xs text-muted-foreground">{{ p.target }}</div></td>
+          <td class="w-full whitespace-normal">
+            <div class="line-clamp-2 break-words">{{ p.message }}</div>
+            {% if p.status == "failed" %}{% if let Some(e) = p.error %}<div class="text-xs text-destructive mt-1">{{ e }}</div>{% endif %}{% endif %}
+          </td>
+          <td>
+            {% if p.status == "sent" %}<span class="badge" data-variant="secondary">Sent</span>
+            {% else if p.status == "failed" %}<span class="badge" data-variant="destructive">Failed</span>
+            {% else %}<span class="badge" data-variant="outline">Retrying</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

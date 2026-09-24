@@ -189,21 +189,21 @@ pub async fn grant(
     let mut tx = state.db.begin().await?;
     // Anyone who logs in with EVE is Guest, and anyone signed in can join an
     // Open group: admin rights there would be admin rights for strangers.
-    let admin_permission = permission.starts_with("admin.");
+    let sensitive = tether_core::permissions::is_sensitive(permission);
     match grantee {
-        Grantee::Tier(Tier::Guest) if admin_permission => {
-            return Err(AppError::bad_request(
-                "Admin permissions can't go to Guest: anyone who logs in with EVE is Guest.",
-            ));
+        Grantee::Tier(Tier::Guest) if sensitive => {
+            return Err(AppError::bad_request(format!(
+                "{permission} can't go to Guest: anyone who logs in with EVE is Guest."
+            )));
         }
         Grantee::Group(group) => {
             let group = groups::get(&mut *tx, group)
                 .await?
                 .ok_or_else(|| AppError::not_found("No such group."))?;
-            if admin_permission && group.join_policy == JoinPolicy::Open {
-                return Err(AppError::bad_request(
-                    "Admin permissions can't go to an Open group: anyone can join it.",
-                ));
+            if sensitive && group.join_policy == JoinPolicy::Open {
+                return Err(AppError::bad_request(format!(
+                    "{permission} can't go to an Open group: anyone can join it."
+                )));
             }
         }
         Grantee::Tier(_) => {}

@@ -141,6 +141,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     )?);
     let mut registry = tether_jobs::Registry::new();
     tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
+    tether_web::pings::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
     tether_web::discord_sync::register_jobs(
         &mut registry,
         tether_web::discord_sync::SyncContext {

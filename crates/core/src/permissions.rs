@@ -6,6 +6,7 @@ pub const ADMIN_PERMISSIONS: &str = "admin.permissions";
 pub const ADMIN_TIERS: &str = "admin.tiers";
 pub const ADMIN_AUDIT: &str = "admin.audit";
 pub const ADMIN_DISCORD: &str = "admin.discord";
+pub const FLEET_PING: &str = "fleet.ping";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
@@ -26,10 +27,20 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         ADMIN_DISCORD,
         "Set up the Discord bot and choose which roles tiers and groups get",
     ),
+    (
+        FLEET_PING,
+        "Send fleet pings to Discord, including @everyone",
+    ),
 ];
 
 pub fn is_known(permission: &str) -> bool {
     CORE_PERMISSIONS.iter().any(|(name, _)| *name == permission)
+}
+
+/// Permissions that must never reach people anyone can become (Guest, or
+/// an Open group): admin powers, and pinging the whole server.
+pub fn is_sensitive(permission: &str) -> bool {
+    permission.starts_with("admin.") || permission == FLEET_PING
 }
 
 /// How accounts get into a group.

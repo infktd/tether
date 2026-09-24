@@ -18,6 +18,14 @@
           {% call icons::icon("user") %}{% endcall %} Profile
         </a>
       </div>
+      {% if shell.nav.pings %}
+      <div class="flex flex-col gap-1">
+        <div class="nav-heading">Fleet</div>
+        <a href="/pings" class="nav-item"{% if shell.active == "pings" %} aria-current="page"{% endif %}>
+          {% call icons::icon("megaphone") %}{% endcall %} Pings
+        </a>
+      </div>
+      {% endif %}
       {% if shell.nav.any() %}
       <div class="flex flex-col gap-1">
         <div class="nav-heading">Admin</div>

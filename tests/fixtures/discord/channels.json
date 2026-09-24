@@ -1,0 +1,6 @@
+[
+  {"id":"600000000000000003","type":4,"guild_id":"222222222222222222","name":"Fleet","position":0,"permission_overwrites":[],"nsfw":false,"parent_id":null,"flags":0},
+  {"id":"600000000000000001","type":0,"guild_id":"222222222222222222","name":"fleet-pings","position":2,"permission_overwrites":[],"nsfw":false,"parent_id":"600000000000000003","topic":null,"last_message_id":null,"rate_limit_per_user":0,"flags":0},
+  {"id":"600000000000000002","type":5,"guild_id":"222222222222222222","name":"announcements","position":1,"permission_overwrites":[],"nsfw":false,"parent_id":null,"topic":null,"last_message_id":null,"flags":0},
+  {"id":"600000000000000004","type":2,"guild_id":"222222222222222222","name":"Comms","position":3,"permission_overwrites":[],"nsfw":false,"parent_id":null,"bitrate":64000,"user_limit":0,"rtc_region":null,"flags":0}
+]

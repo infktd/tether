@@ -19,6 +19,7 @@ mod error;
 pub mod maintenance;
 pub mod openapi;
 pub mod pages;
+pub mod pings;
 mod ratelimit;
 pub mod setup;
 mod state;
@@ -106,6 +107,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/admin/discord/mappings/{id}/remove",
             post(pages::discord::remove_mapping),
+        )
+        .route("/admin/discord/channels", post(pages::discord::add_channel))
+        .route(
+            "/admin/discord/channels/{id}/remove",
+            post(pages::discord::remove_channel),
+        )
+        .route(
+            "/pings",
+            get(pages::pings::pings_page).post(pages::pings::send),
         )
         .route("/profile/discord/link", post(pages::discord::link))
         .route("/profile/discord/unlink", post(pages::discord::unlink))

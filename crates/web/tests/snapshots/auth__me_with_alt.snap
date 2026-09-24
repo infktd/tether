@@ -27,7 +27,8 @@ expression: "me(&h, &after_alt).await"
     "admin.discord",
     "admin.groups",
     "admin.permissions",
-    "admin.tiers"
+    "admin.tiers",
+    "fleet.ping"
   ],
   "tier": "guest"
 }

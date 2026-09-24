@@ -5,6 +5,7 @@ pub mod admin;
 pub mod assets;
 pub mod discord;
 pub mod headers;
+pub mod pings;
 pub mod setup;
 
 use askama::Template;
@@ -145,6 +146,8 @@ pub struct AdminNav {
     pub tiers: bool,
     pub discord: bool,
     pub setup: bool,
+    /// Not an admin page: fleet pings, for FCs.
+    pub pings: bool,
 }
 
 impl AdminNav {
@@ -239,6 +242,7 @@ pub(crate) async fn load(
         permissions: perms.contains(tether_core::permissions::ADMIN_PERMISSIONS),
         tiers: perms.contains(tether_core::permissions::ADMIN_TIERS),
         discord: perms.contains(tether_core::permissions::ADMIN_DISCORD),
+        pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };
     let characters = account

@@ -1299,3 +1299,458 @@ async fn a_sync_whose_removed_role_is_refused_retries(db: PgPool) {
         "{err:?}"
     );
 }
+
+// ---- fleet pings ------------------------------------------------------------
+
+const PING_CHANNEL: &str = "600000000000000001";
+
+/// Discord set up, a ping channel chosen, and the Member role mapped.
+async fn pings_ready(h: &Harness) -> (String, String) {
+    let (owner, pilot) = set_up(h).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/channels")))
+        .respond_with(ok("channels"))
+        .mount(&h.discord_server)
+        .await;
+    let added = send(
+        &h.app,
+        form(
+            "/admin/discord/channels",
+            &format!("channel_id={PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(added.location(), "/admin/discord", "{}", added.body);
+    map(h, &owner, MEMBER_ROLE, "tier:member").await;
+    (owner, pilot)
+}
+
+async fn ping(h: &Harness, token: &str, target: &str, message: &str) -> Res {
+    let body = format!(
+        "channel_id={PING_CHANNEL}&target={}&message={}",
+        target.replace(':', "%3A"),
+        message.replace(' ', "+")
+    );
+    send(&h.app, form("/pings", &body, token)).await
+}
+
+fn message_posted(id: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200)
+        .set_body_json(serde_json::json!({ "id": id, "channel_id": PING_CHANNEL }))
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn fleet_pings_need_the_permission(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    assert_eq!(send(&h.app, get("/pings", &[])).await.location(), "/login");
+    assert_eq!(
+        page(&h, "/pings", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        ping(&h, &pilot, "none", "hi").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        !page(&h, "/profile", &pilot)
+            .await
+            .body
+            .contains(r#"href="/pings""#)
+    );
+
+    let res = page(&h, "/pings", &owner).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.body.contains("No ping channels yet"));
+    assert!(res.body.contains(r#"href="/pings""#), "nav link");
+
+    // Anyone can be Guest or join an Open group: pinging stays off-limits.
+    let refused = send(
+        &h.app,
+        form(
+            "/admin/permissions/grant",
+            "permission=fleet.ping&grantee=tier:guest",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused.body.contains("fleet.ping can&#39;t go to Guest"),
+        "{}",
+        refused.body
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn admins_choose_the_ping_channels(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    let admin = page(&h, "/admin/discord", &owner).await;
+    assert!(admin.body.contains("#fleet-pings"));
+    // Offered: the other text channel, not voice channels or categories.
+    assert!(
+        admin
+            .body
+            .contains(r#"<option value="600000000000000002">#announcements</option>"#)
+    );
+    assert!(!admin.body.contains("Comms"));
+
+    let again = send(
+        &h.app,
+        form(
+            "/admin/discord/channels",
+            &format!("channel_id={PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+    let voice = send(
+        &h.app,
+        form(
+            "/admin/discord/channels",
+            "channel_id=600000000000000004",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(voice.status, StatusCode::NOT_FOUND);
+
+    let removed = send(
+        &h.app,
+        form(
+            &format!("/admin/discord/channels/{PING_CHANNEL}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(removed.location(), "/admin/discord");
+    assert!(
+        page(&h, "/pings", &owner)
+            .await
+            .body
+            .contains("No ping channels yet")
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_ping_posts_to_the_channel_and_pings_only_its_target(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    let targets = page(&h, "/pings", &owner).await.body;
+    assert!(
+        targets.contains(&format!(
+            r#"<option value="role:{MEMBER_ROLE}">@Member</option>"#
+        )),
+        "{targets}"
+    );
+
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "content": format!("<@&{MEMBER_ROLE}>\nForm up @\u{200B}everyone\n— Chribba"),
+            "allowed_mentions": { "parse": [], "roles": [MEMBER_ROLE] },
+            "enforce_nonce": true,
+        })))
+        .respond_with(message_posted("900000000000000001"))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let res = ping(
+        &h,
+        &owner,
+        &format!("role:{MEMBER_ROLE}"),
+        "Form up @everyone",
+    )
+    .await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
+    // A random nonce, the same one any retry would send.
+    let sent = &h.discord_server.received_requests().await.unwrap();
+    let body: serde_json::Value = sent
+        .iter()
+        .find(|r| r.url.path().ends_with("/messages"))
+        .unwrap()
+        .body_json()
+        .unwrap();
+    let nonce: String = sqlx::query_scalar("SELECT nonce FROM core.fleet_pings")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(body["nonce"], nonce.as_str());
+    assert!(nonce.starts_with("tp-") && nonce.len() <= 25, "{nonce}");
+
+    let listed = page(&h, "/pings", &owner).await.body;
+    assert!(listed.contains("Sent"), "{listed}");
+    assert!(
+        listed.contains("#fleet-pings<div class=\"text-xs text-muted-foreground\">@Member</div>"),
+        "{listed}"
+    );
+    let audit: serde_json::Value =
+        sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'ping.send'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(audit["target"], format!("role:{MEMBER_ROLE}"));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn pings_are_checked_and_rate_limited(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000001"))
+        .mount(&h.discord_server)
+        .await;
+
+    assert_eq!(
+        ping(&h, &owner, "none", "").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        ping(&h, &owner, "role:123", "hi").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    let long = "x".repeat(1501);
+    assert_eq!(
+        ping(&h, &owner, "none", &long).await.status,
+        StatusCode::BAD_REQUEST
+    );
+    let other_channel = send(
+        &h.app,
+        form(
+            "/pings",
+            "channel_id=600000000000000002&target=none&message=hi",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(other_channel.status, StatusCode::BAD_REQUEST);
+
+    for _ in 0..5 {
+        assert_eq!(
+            ping(&h, &owner, "here", "go").await.status,
+            StatusCode::SEE_OTHER
+        );
+    }
+    let limited = ping(&h, &owner, "here", "go").await;
+    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+    // What they typed survives the refusal.
+    assert!(limited.body.contains(">go</textarea>"), "{}", limited.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_ping_waits_out_a_discord_outage_but_not_forever(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&h.discord_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000002"))
+        .mount(&h.discord_server)
+        .await;
+
+    assert_eq!(
+        ping(&h, &owner, "none", "late").await.status,
+        StatusCode::SEE_OTHER
+    );
+    assert!(page(&h, "/pings", &owner).await.body.contains("Retrying"));
+    let jobs = jobs_of_kind(&h.db, "discord.ping").await;
+    assert_eq!(jobs, [serde_json::json!({ "ping_id": 1 })]);
+    tether_web::pings::deliver(&h.db, &h.key, &h.discord, 1)
+        .await
+        .unwrap();
+    assert!(page(&h, "/pings", &owner).await.body.contains("Sent"));
+    // Delivered once: a second run does nothing.
+    tether_web::pings::deliver(&h.db, &h.key, &h.discord, 1)
+        .await
+        .unwrap();
+
+    // A ping still stuck after 15 minutes is dropped, not sent late.
+    assert_eq!(
+        ping(&h, &owner, "none", "stale").await.status,
+        StatusCode::SEE_OTHER
+    );
+    sqlx::query("UPDATE core.fleet_pings SET sent_at = NULL, created_at = now() - interval '20 minutes' WHERE id = 2")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let err = tether_web::pings::deliver(&h.db, &h.key, &h.discord, 2)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, tether_jobs::JobError::Permanent(_)),
+        "{err:?}"
+    );
+    assert!(
+        page(&h, "/pings", &owner)
+            .await
+            .body
+            .contains("unavailable for too long")
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_ping_the_bot_may_not_post_says_why(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+            ),
+        )
+        .mount(&h.discord_server)
+        .await;
+    assert_eq!(
+        ping(&h, &owner, "everyone", "hi").await.status,
+        StatusCode::SEE_OTHER
+    );
+    let listed = page(&h, "/pings", &owner).await.body;
+    assert!(listed.contains("Failed"));
+    assert!(
+        listed.contains("give it View Channel and Send Messages"),
+        "{listed}"
+    );
+    // The queued retry finds it closed and does nothing.
+    tether_web::pings::deliver(&h.db, &h.key, &h.discord, 1)
+        .await
+        .unwrap();
+    let posts = h
+        .discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/messages"))
+        .count();
+    assert_eq!(posts, 1);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_here_ping_cannot_smuggle_in_everyone(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "content": "@here\nUndock now, not you @\u{200B}everyone or @\u{200B}here\n— Chribba",
+            "allowed_mentions": { "parse": ["everyone"] },
+        })))
+        .respond_with(message_posted("900000000000000003"))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let res = ping(&h, &owner, "here", "Undock now, not you @everyone or @here").await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn parallel_sends_cannot_beat_the_rate_limit(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000001"))
+        .mount(&h.discord_server)
+        .await;
+    let mut sends = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let (app, owner) = (h.app.clone(), owner.clone());
+        sends.spawn(async move {
+            send(
+                &app,
+                form(
+                    "/pings",
+                    &format!("channel_id={PING_CHANNEL}&target=here&message=go"),
+                    &owner,
+                ),
+            )
+            .await
+            .status
+        });
+    }
+    let mut statuses = Vec::new();
+    while let Some(status) = sends.join_next().await {
+        statuses.push(status.unwrap());
+    }
+    let sent = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::SEE_OTHER)
+        .count();
+    let limited = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((sent, limited), (5, 3), "{statuses:?}");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM core.fleet_pings")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 5);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_queued_ping_to_a_removed_channel_is_not_sent(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&h.discord_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000004"))
+        .expect(0)
+        .mount(&h.discord_server)
+        .await;
+    ping(&h, &owner, "none", "wrong channel").await;
+    send(
+        &h.app,
+        form(
+            &format!("/admin/discord/channels/{PING_CHANNEL}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    let err = tether_web::pings::deliver(&h.db, &h.key, &h.discord, 1)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, tether_jobs::JobError::Permanent(m) if m.contains("no longer a ping channel")),
+        "{err:?}"
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_ping_nothing_will_send_shows_as_failed(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&h.discord_server)
+        .await;
+    ping(&h, &owner, "none", "lost").await;
+    assert!(page(&h, "/pings", &owner).await.body.contains("Retrying"));
+    // Its retries ran out before the cutoff closed it.
+    sqlx::query("UPDATE core.fleet_pings SET created_at = now() - interval '20 minutes'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let listed = page(&h, "/pings", &owner).await.body;
+    assert!(listed.contains("Failed"), "{listed}");
+    assert!(listed.contains("unavailable for too long"));
+}

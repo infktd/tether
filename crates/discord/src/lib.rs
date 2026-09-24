@@ -242,6 +242,43 @@ pub struct GuildRole {
     pub assignable: bool,
 }
 
+/// A channel messages can be posted to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextChannel {
+    pub id: u64,
+    pub name: String,
+}
+
+/// Who a message pings. Nothing else in it can ping anyone: mentions typed
+/// into the text are ignored by Discord (`allowed_mentions`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mention {
+    None,
+    Here,
+    Everyone,
+    Role(u64),
+}
+
+impl Mention {
+    /// The text that makes Discord ping, placed at the start of a message.
+    pub fn prefix(self) -> String {
+        match self {
+            Self::None => String::new(),
+            Self::Here => "@here".to_owned(),
+            Self::Everyone => "@everyone".to_owned(),
+            Self::Role(id) => format!("<@&{id}>"),
+        }
+    }
+
+    fn allowed(self) -> serde_json::Value {
+        match self {
+            Self::None => serde_json::json!({ "parse": [] }),
+            Self::Here | Self::Everyone => serde_json::json!({ "parse": ["everyone"] }),
+            Self::Role(id) => serde_json::json!({ "parse": [], "roles": [id.to_string()] }),
+        }
+    }
+}
+
 /// A member of the server, as far as syncing cares.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
@@ -541,6 +578,72 @@ impl Discord {
         let (guild_id, user) = (id(config.guild_id, "server id")?, id(user_id, "user id")?);
         bot.update_guild_member(guild_id, user).nick(nick).await?;
         Ok(())
+    }
+
+    /// The server's text and announcement channels, in their order.
+    pub async fn text_channels(
+        &self,
+        config: &DiscordConfig,
+    ) -> Result<Vec<TextChannel>, DiscordError> {
+        use twilight_model::channel::ChannelType;
+        let bot = self.bot(config);
+        let guild_id = id(config.guild_id, "server id")?;
+        let mut channels = bot
+            .guild_channels(guild_id)
+            .await?
+            .models()
+            .await
+            .map_err(protocol)?;
+        channels.retain(|c| {
+            matches!(
+                c.kind,
+                ChannelType::GuildText | ChannelType::GuildAnnouncement
+            )
+        });
+        channels.sort_by_key(|c| (c.position.unwrap_or(0), c.id.get()));
+        Ok(channels
+            .into_iter()
+            .map(|c| TextChannel {
+                id: c.id.get(),
+                name: c.name.unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Posts `content` to a channel, pinging only `mention`. `nonce` (up to
+    /// 25 characters) makes Discord drop a repeat of the same message, so a
+    /// retry after a lost response doesn't post twice. Returns the message
+    /// id.
+    pub async fn send_message(
+        &self,
+        config: &DiscordConfig,
+        channel_id: u64,
+        content: &str,
+        mention: Mention,
+        nonce: &str,
+    ) -> Result<u64, DiscordError> {
+        #[derive(Deserialize)]
+        struct Created {
+            id: String,
+        }
+        let bot = self.bot(config);
+        let channel = id(channel_id, "channel id")?;
+        // twilight has no enforce_nonce, so the body is written here.
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "content": content,
+            "allowed_mentions": mention.allowed(),
+            "nonce": nonce,
+            "enforce_nonce": true,
+        }))
+        .map_err(|err| DiscordError::Protocol(err.to_string()))?;
+        let response = bot.create_message(channel).payload_json(&payload).await?;
+        let body = response.bytes().await.map_err(protocol)?;
+        let created: Created = serde_json::from_slice(&body)
+            .map_err(|_| DiscordError::Protocol("unreadable message response".to_owned()))?;
+        created
+            .id
+            .parse()
+            .map_err(|_| DiscordError::Protocol("bad message id".to_owned()))
     }
 
     /// Adds the member to the server with `roles`; if they are already in

@@ -436,3 +436,56 @@ async fn check_cached_asks_discord_once() {
     other.bot_token = Secret::new("other-token".to_owned());
     assert!(discord.check_cached(&other, ttl).await.is_err());
 }
+
+#[tokio::test]
+async fn text_channels_lists_text_and_announcement_channels_in_order() {
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/channels")))
+        .respond_with(ok("channels"))
+        .mount(&server)
+        .await;
+    let channels = discord.text_channels(&config()).await.unwrap();
+    let names: Vec<&str> = channels.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["announcements", "fleet-pings"]);
+}
+
+#[tokio::test]
+async fn messages_ping_only_the_chosen_target_and_carry_a_nonce() {
+    use tether_discord::Mention;
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v10/channels/600000000000000001/messages"))
+        .and(has_content_type_json())
+        .and(body_json(serde_json::json!({
+            "content": "<@&500000000000000003> Form up @everyone",
+            "allowed_mentions": { "parse": [], "roles": ["500000000000000003"] },
+            "nonce": "tether-ping-7",
+            "enforce_nonce": true,
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "900000000000000001", "channel_id": "600000000000000001"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mention = Mention::Role(MEMBER_ROLE);
+    let content = format!("{} Form up @everyone", mention.prefix());
+    let id = discord
+        .send_message(
+            &config(),
+            600_000_000_000_000_001,
+            &content,
+            mention,
+            "tether-ping-7",
+        )
+        .await
+        .unwrap();
+    assert_eq!(id, 900_000_000_000_000_001);
+    assert_eq!(Mention::Here.prefix(), "@here");
+    assert_eq!(Mention::None.prefix(), "");
+}
+
+fn has_content_type_json() -> wiremock::matchers::HeaderExactMatcher {
+    header("content-type", "application/json")
+}

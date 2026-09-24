@@ -57,6 +57,8 @@ struct DiscordPage {
     status_error: Option<String>,
     mappings: Vec<MappingRow>,
     roles: Vec<RoleOption>,
+    ping_channels: Vec<tether_db::pings::PingChannel>,
+    other_channels: Vec<tether_discord::TextChannel>,
     groups: Vec<GroupOption>,
     error: Option<String>,
 }
@@ -135,6 +137,17 @@ async fn page(
         guild_name: c.guild_name,
         missing_permissions: c.missing_permissions,
     });
+    let (ping_channels, other_channels) = if status.is_some() {
+        crate::pings::channel_options(state).await?
+    } else {
+        match discord::config(state).await {
+            Ok(config) => (
+                crate::pings::channels_for(state, &config).await?,
+                Vec::new(),
+            ),
+            Err(_) => (Vec::new(), Vec::new()),
+        }
+    };
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let page = DiscordPage {
         shell,
@@ -149,6 +162,8 @@ async fn page(
         status_error,
         mappings,
         roles,
+        ping_channels,
+        other_channels,
         groups: all_groups
             .iter()
             .map(|g| GroupOption {
@@ -241,6 +256,37 @@ pub async fn add_mapping(
         Err(err) => Err(err),
     };
     match result {
+        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Err(err) => page(&state, shell, None, Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChannelForm {
+    channel_id: String,
+}
+
+/// `POST /admin/discord/channels`
+pub async fn add_channel(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<ChannelForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
+    match crate::pings::add_channel(&state, session.account, &form.channel_id).await {
+        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Err(err) => page(&state, shell, None, Some(err)).await,
+    }
+}
+
+/// `POST /admin/discord/channels/{id}/remove`
+pub async fn remove_channel(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
+    match crate::pings::remove_channel(&state, session.account, id).await {
         Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }

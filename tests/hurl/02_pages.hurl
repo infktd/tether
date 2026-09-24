@@ -204,3 +204,33 @@ HTTP 400
 [Asserts]
 header "Content-Type" contains "text/html"
 body contains "expired or was already used"
+
+# Fleet pings need a session (and fleet.ping).
+GET {{base}}/pings
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/pings
+Origin: {{base}}
+[Form]
+channel_id: 1
+target: everyone
+message: Form up
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/discord/channels
+Origin: {{base}}
+[Form]
+channel_id: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/discord/channels/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"

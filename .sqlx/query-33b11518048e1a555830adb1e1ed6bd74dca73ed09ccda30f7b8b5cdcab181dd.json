@@ -1,0 +1,180 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, sender_name, channel_id, channel_name, target, role_id, role_name,\n               message, nonce, created_at, sent_at, failed_at, error,\n               created_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.fleet_pings WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "sender_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "sender_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "channel_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "channel_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "target",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "target"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "role_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "role_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "role_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "role_name"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "nonce",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "sent_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "failed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "failed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.fleet_pings",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "stale!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "33b11518048e1a555830adb1e1ed6bd74dca73ed09ccda30f7b8b5cdcab181dd"
+}
