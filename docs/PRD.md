@@ -66,7 +66,7 @@ Every requirement below is in v1; the phase column sets build order.
 | F5 | Groups: open, request-to-join, admin-assigned | 0 |
 | F6 | Permissions assigned to tiers and groups only; every change audit-logged | 0 |
 | F7 | Admin CLI: users, tiers, jobs, trigger sync, `doctor` | 0 |
-| F8 | First-run web wizard: ESI app credentials, alliance selection, callback URL check | 0 |
+| F8 | First-run web wizard: ESI app credentials, alliance selection, callback URL check. The first step requires the setup token from `.env` (also printed to the logs at startup as a fallback); once an owner exists the wizard is disabled permanently and the token is ignored | 0 |
 | F9 | Encrypted token vault with automatic refresh and revocation handling | 1 |
 | F10 | ESI scheduler honoring cache expiry, ETags, error and rate limits, with a shared cache | 1 |
 | F11 | Affiliation sync re-evaluates every account's tier on a schedule | 1 |
@@ -88,11 +88,11 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 
 | ID | Area | Requirement |
 | --- | --- | --- |
-| N1 | Install | Three containers: host, Postgres, Caddy. `.env` holds only the domain and a generated database password |
+| N1 | Install | Three containers: host, Postgres, Caddy. `.env` holds only the domain, a generated database password and a generated setup token |
 | N2 | Install | Core migrations run automatically on startup; no manual migrate, collect or create-user steps |
 | N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure |
 | N4 | Platforms | Images for amd64 and arm64 |
-| N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord and GitHub (plugin installs and update checks). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off |
+| N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord and GitHub (plugin installs and update checks). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
 | N7 | Security | Refresh tokens and secrets encrypted at rest; backups encrypted |
 | N8 | Security | Plugins never receive tokens; the host checks admin approval and user consent on every ESI call |
@@ -197,6 +197,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] License: AGPL or MIT/Apache, before the first public repo
 - [ ] Discord library: serenity or twilight, before milestone 1
 - [ ] Plugin database access: raw SQL in their own schema, or a narrower query API, after the spike
+- [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
 - [ ] Which three AA plugins to port first, confirmed with NMU leadership, before milestone 3
 - [ ] Licenses of those AA plugins, checked before porting any code

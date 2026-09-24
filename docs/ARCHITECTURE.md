@@ -181,7 +181,8 @@ volumes:
   pgdata:
 ```
 
-- `.env` holds only the domain and a generated database password. Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
+- `.env` holds only the domain, a generated database password and a generated setup token. Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
+- The wizard's first step requires the setup token, which is also printed to the logs at startup as a fallback. Once an owner exists the wizard is disabled permanently and the token is ignored.
 - `doctor` checks DNS, external reachability of 80 and 443, TLS, database, ESI credentials and callback match, and the Discord token, printing a fix for each failure.
 - Upgrades: change the image tag and restart. Migrations run after an automatic snapshot; rollback is the previous tag plus that snapshot.
 - Admin routes can be bound to a private interface such as Tailscale.
