@@ -37,8 +37,11 @@ enum Command {
 async fn main() -> anyhow::Result<ExitCode> {
     tracing_subscriber::fmt()
         .with_env_filter(
+            // Postgres notices are off: plugins run their own SQL, and a
+            // `RAISE WARNING` would otherwise put their text, raw and of
+            // any size, into the logs.
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,sqlx::postgres::notice=warn".into()),
+                .unwrap_or_else(|_| "info,sqlx::postgres::notice=off".into()),
         )
         // No color codes in `docker compose logs` or other non-terminals.
         .with_ansi(std::io::stdout().is_terminal())
