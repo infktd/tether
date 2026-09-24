@@ -28,6 +28,13 @@ A fresh `docker compose up` must produce a working instance with **zero shell co
 - After each milestone, stop and summarize what was built, what was deferred, and anything surprising. Wait for approval before starting the next milestone.
 - When unsure about a product decision, ask. When unsure about an implementation detail, pick the simplest option and note it in the commit message.
 
+## Subagents
+
+Project subagents live in `.claude/agents/`. Use them to keep the main context clean.
+
+- **explorer** (read-only): use it for dependency research: how eve-esi-client, its generated ESI client, wasmtime, sqlx and other crates work, with exact paths and signatures. Don't read large crate sources or generated code in the main context.
+- **security-reviewer** (read-only): run it on every task that touches auth, sessions, tokens, secrets, plugins or outbound network calls, before committing. Write the task's diff to a file (`git diff > <scratch>/task.diff`, plus `git diff --cached` and new files if needed) and pass the path with a one-line description of the task. Fix every finding, or justify it explicitly in the commit message.
+
 ## Ask before
 
 - Adding any new dependency crate or npm package. Say what it is for and why an existing one won't do.
