@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.accounts SET main_character_id = $2\n        WHERE id = $1\n          AND EXISTS (SELECT 1 FROM core.characters WHERE id = $2 AND account_id = $1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dade7b9138449843ee74456065bf769952f4b40b8a3a317416f4bad9adb4021f"
+}

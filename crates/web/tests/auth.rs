@@ -225,8 +225,9 @@ async fn full_login_creates_a_session(db: PgPool) {
     let me = send(&h.app, get("/api/me", &[(SESSION, &token)])).await;
     assert_eq!(me.status, StatusCode::OK);
     let me: serde_json::Value = serde_json::from_str(&me.body).unwrap();
-    assert_eq!(me["character_id"], 90000001);
-    assert_eq!(me["character_name"], "Jita Trader");
+    assert_eq!(me["main"]["id"], 90000001);
+    assert_eq!(me["main"]["name"], "Jita Trader");
+    assert_eq!(me["is_owner"], true);
 
     // Only a hash of the token is stored.
     let stored: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM core.sessions")
@@ -327,21 +328,33 @@ async fn open_redirect_return_to_falls_back_to_root(db: PgPool) {
 }
 
 async fn log_in(h: &Harness, existing_session: Option<&str>) -> String {
+    log_in_as(h, "90000001:Pilot", existing_session).await
+}
+
+/// Logs in with `character` ("<id>:<name>"), optionally while signed in.
+async fn log_in_as(h: &Harness, character: &str, existing_session: Option<&str>) -> String {
+    let res = callback_as(h, character, existing_session).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    res.cookie_value(SESSION)
+}
+
+async fn callback_as(h: &Harness, character: &str, existing_session: Option<&str>) -> Res {
     let (state, browser) = start_login(h, "/").await;
     let mut cookies = vec![(LOGIN, browser.as_str())];
     if let Some(s) = existing_session {
         cookies.push((SESSION, s));
     }
-    let res = send(
+    send(
         &h.app,
         get(
-            &format!("/auth/callback?code=ok:90000001:Pilot&state={state}"),
+            &format!(
+                "/auth/callback?code=ok:{}&state={state}",
+                character.replace(' ', "%20")
+            ),
             &cookies,
         ),
     )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER);
-    res.cookie_value(SESSION)
+    .await
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -434,4 +447,71 @@ async fn me_requires_a_live_session(db: PgPool) {
             .status,
         StatusCode::UNAUTHORIZED
     );
+}
+
+async fn me(h: &Harness, token: &str) -> serde_json::Value {
+    let res = send(&h.app, get("/api/me", &[(SESSION, token)])).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    serde_json::from_str(&res.body).unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn logging_in_with_another_character_while_signed_in_adds_an_alt(db: PgPool) {
+    let h = harness(db, true).await;
+    let main = log_in_as(&h, "90000001:Main Pilot", None).await;
+    let after_alt = log_in_as(&h, "90000002:Alt Pilot", Some(&main)).await;
+
+    insta::assert_json_snapshot!("me_with_alt", me(&h, &after_alt).await);
+
+    // Logging in later with just the alt reaches the same account.
+    let via_alt = log_in_as(&h, "90000002:Alt Pilot", None).await;
+    assert_eq!(me(&h, &via_alt).await["main"]["id"], 90000001);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn character_linked_elsewhere_is_refused_and_session_kept(db: PgPool) {
+    let h = harness(db, true).await;
+    log_in_as(&h, "90000001:Someone Else", None).await;
+    let mine = log_in_as(&h, "90000002:Mine", None).await;
+
+    let res = callback_as(&h, "90000001:Someone Else", Some(&mine)).await;
+
+    assert_eq!(res.status, StatusCode::CONFLICT);
+    assert!(res.set_cookie(SESSION).is_none());
+    let me = me(&h, &mine).await;
+    assert_eq!(me["characters"].as_array().unwrap().len(), 1);
+    assert_eq!(me["is_owner"], false);
+}
+
+fn post_json(uri: &str, token: &str, body: &str) -> Request<Body> {
+    Request::post(uri)
+        .header(header::COOKIE, format!("{SESSION}={token}"))
+        .header(header::ORIGIN, SITE)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn main_can_be_switched_to_an_own_character(db: PgPool) {
+    let h = harness(db, true).await;
+    let token = log_in_as(&h, "90000001:Main", None).await;
+    let token = log_in_as(&h, "90000002:Alt", Some(&token)).await;
+    log_in_as(&h, "90000003:Stranger", None).await;
+
+    let res = send(
+        &h.app,
+        post_json("/api/me/main", &token, r#"{"character_id":90000002}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert_eq!(me(&h, &token).await["main"]["id"], 90000002);
+
+    let res = send(
+        &h.app,
+        post_json("/api/me/main", &token, r#"{"character_id":90000003}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_eq!(me(&h, &token).await["main"]["id"], 90000002);
 }

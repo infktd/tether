@@ -21,6 +21,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
         .route("/api/me", get(api::me))
+        .route("/api/me/main", post(api::set_main))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf::verify_origin,

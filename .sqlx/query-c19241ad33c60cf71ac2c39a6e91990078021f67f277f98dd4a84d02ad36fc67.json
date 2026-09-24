@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.characters (id, account_id, name, last_login_at)\n        VALUES ($1, $2, $3, now())\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c19241ad33c60cf71ac2c39a6e91990078021f67f277f98dd4a84d02ad36fc67"
+}

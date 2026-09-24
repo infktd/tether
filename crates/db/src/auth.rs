@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use tether_core::Secret;
 
 use crate::PgPool;
+use crate::accounts::AccountId;
 
 pub struct NewLoginAttempt<'a> {
     pub state: &'a str,
@@ -71,16 +72,14 @@ pub async fn take_login_attempt(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRecord {
-    pub character_id: i64,
-    pub character_name: String,
+    pub account: AccountId,
     pub expires_at: DateTime<Utc>,
 }
 
 pub async fn create_session(
     pool: &PgPool,
     token_hash: &[u8],
-    character_id: i64,
-    character_name: &str,
+    account: AccountId,
     ttl: Duration,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!("DELETE FROM core.sessions WHERE expires_at < now()")
@@ -88,12 +87,11 @@ pub async fn create_session(
         .await?;
     sqlx::query!(
         r#"
-        INSERT INTO core.sessions (token_hash, character_id, character_name, expires_at)
-        VALUES ($1, $2, $3, now() + make_interval(secs => $4))
+        INSERT INTO core.sessions (token_hash, account_id, expires_at)
+        VALUES ($1, $2, now() + make_interval(secs => $3))
         "#,
         token_hash,
-        character_id,
-        character_name,
+        account.0,
         ttl.as_secs_f64(),
     )
     .execute(pool)
@@ -111,7 +109,7 @@ pub async fn find_session(
 ) -> Result<Option<SessionRecord>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT character_id, character_name, expires_at,
+        SELECT account_id, expires_at,
                last_seen_at < now() - make_interval(secs => $2) AS "stale!"
         FROM core.sessions
         WHERE token_hash = $1 AND expires_at > now()
@@ -140,8 +138,7 @@ pub async fn find_session(
         .await?;
     }
     Ok(Some(SessionRecord {
-        character_id: row.character_id,
-        character_name: row.character_name,
+        account: AccountId(row.account_id),
         expires_at,
     }))
 }

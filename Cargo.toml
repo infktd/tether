@@ -38,6 +38,7 @@ getrandom = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
+insta = { version = "1", features = ["json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 

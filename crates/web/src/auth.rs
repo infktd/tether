@@ -10,6 +10,7 @@ use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use serde::Deserialize;
 use tether_core::{Secret, hash_token, new_token};
+use tether_db::accounts::{self, AccountId};
 use tether_db::{auth as db, settings};
 use tether_esi::sso::SsoConfig;
 
@@ -111,25 +112,40 @@ pub async fn callback(
             )
         })?;
 
+    // Signed in already? Then this login adds an alt to that account.
+    let current = match jar.get(SESSION_COOKIE) {
+        Some(cookie) => find_session(&state, cookie.value())
+            .await?
+            .map(|s| s.account),
+        None => None,
+    };
+    let outcome = accounts::sign_in(
+        &state.db,
+        identity.character_id,
+        &identity.character_name,
+        current,
+    )
+    .await?;
+    tracing::info!(
+        character_id = identity.character_id,
+        character = identity.character_name,
+        outcome = ?outcome,
+        "SSO login"
+    );
+    let Some(account) = outcome.account() else {
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "That character is already linked to another account.",
+        ));
+    };
+
     // Rotate: drop any session this browser already had, then issue a new
     // token.
     if let Some(old) = jar.get(SESSION_COOKIE) {
         db::delete_session(&state.db, &hash_token(old.value())).await?;
     }
     let token = new_token().map_err(AppError::internal)?;
-    db::create_session(
-        &state.db,
-        &hash_token(token.expose()),
-        identity.character_id,
-        &identity.character_name,
-        SESSION_TTL,
-    )
-    .await?;
-    tracing::info!(
-        character_id = identity.character_id,
-        character = identity.character_name,
-        "logged in"
-    );
+    db::create_session(&state.db, &hash_token(token.expose()), account, SESSION_TTL).await?;
 
     let jar = jar.add(cookie(SESSION_COOKIE, &token, SESSION_TTL)?);
     Ok((jar, Redirect::to(&attempt.return_to)).into_response())
@@ -144,11 +160,10 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Res
     Ok((jar, Redirect::to("/")).into_response())
 }
 
-/// The logged-in character. Rejects with 401 when there is no live session.
+/// The signed-in account. Rejects with 401 when there is no live session.
 #[derive(Debug, Clone)]
 pub struct CurrentSession {
-    pub character_id: i64,
-    pub character_name: String,
+    pub account: AccountId,
 }
 
 impl FromRequestParts<AppState> for CurrentSession {
@@ -157,19 +172,26 @@ impl FromRequestParts<AppState> for CurrentSession {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
         let jar = CookieJar::from_headers(&parts.headers);
         let token = jar.get(SESSION_COOKIE).ok_or_else(AppError::unauthorized)?;
-        let record = db::find_session(
-            &state.db,
-            &hash_token(token.value()),
-            SESSION_TTL,
-            SESSION_TOUCH_EVERY,
-        )
-        .await?
-        .ok_or_else(AppError::unauthorized)?;
+        let record = find_session(state, token.value())
+            .await?
+            .ok_or_else(AppError::unauthorized)?;
         Ok(Self {
-            character_id: record.character_id,
-            character_name: record.character_name,
+            account: record.account,
         })
     }
+}
+
+async fn find_session(
+    state: &AppState,
+    token: &str,
+) -> Result<Option<db::SessionRecord>, AppError> {
+    Ok(db::find_session(
+        &state.db,
+        &hash_token(token),
+        SESSION_TTL,
+        SESSION_TOUCH_EVERY,
+    )
+    .await?)
 }
 
 async fn sso_config(state: &AppState) -> Result<SsoConfig, AppError> {

@@ -180,7 +180,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Config from env, Postgres pool, migrations run automatically at startup
 - [x] Minimal job queue with retries and a dead-letter state
 - [x] EVE SSO login and callback with Postgres-backed sessions
-- [ ] Accounts, characters, alt linking, main switching, owner bootstrap on first login
+- [x] Accounts, characters, alt linking, main switching, owner bootstrap on first login
 - [ ] Tier evaluation from the main's corp and alliance at login
 - [ ] Groups, permissions and audit log
 - [ ] First-run wizard API: ESI credentials, alliance selection, callback check

@@ -1,32 +1,21 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT character_id, character_name, expires_at,\n               last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions\n        WHERE token_hash = $1 AND expires_at > now()\n        ",
+  "query": "\n        SELECT account_id, expires_at,\n               last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions\n        WHERE token_hash = $1 AND expires_at > now()\n        ",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "character_id",
+        "name": "account_id",
         "type_info": "Int8",
         "origin": {
           "Table": {
             "table": "core.sessions",
-            "name": "character_id"
+            "name": "account_id"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "character_name",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "core.sessions",
-            "name": "character_name"
-          }
-        }
-      },
-      {
-        "ordinal": 2,
         "name": "expires_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -37,7 +26,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "stale!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -52,9 +41,8 @@
     "nullable": [
       false,
       false,
-      false,
       null
     ]
   },
-  "hash": "677e673bff33dbb3648c92b39c67400b14f206d98934a7a348da74611586b276"
+  "hash": "dd3f0cee190a8d825bced459239c79f622ed9d1fd01cccf207c502d78e0a4630"
 }

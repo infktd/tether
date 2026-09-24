@@ -1,5 +1,6 @@
 //! Postgres pool, migrations and repositories.
 
+pub mod accounts;
 pub mod auth;
 pub mod settings;
 

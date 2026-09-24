@@ -1,0 +1,24 @@
+---
+source: crates/web/tests/auth.rs
+expression: "me(&h, &after_alt).await"
+---
+{
+  "account_id": 1,
+  "characters": [
+    {
+      "id": 90000001,
+      "is_main": true,
+      "name": "Main Pilot"
+    },
+    {
+      "id": 90000002,
+      "is_main": false,
+      "name": "Alt Pilot"
+    }
+  ],
+  "is_owner": true,
+  "main": {
+    "id": 90000001,
+    "name": "Main Pilot"
+  }
+}
