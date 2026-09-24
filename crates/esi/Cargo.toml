@@ -10,6 +10,9 @@ workspace = true
 
 [dependencies]
 eve-esi-client.workspace = true
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tether-db.workspace = true
@@ -18,3 +21,8 @@ tracing.workspace = true
 tether-core.workspace = true
 thiserror.workspace = true
 oauth2.workspace = true
+
+[dev-dependencies]
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
+tokio.workspace = true
+wiremock.workspace = true

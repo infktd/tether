@@ -49,10 +49,25 @@ async fn cli(db: &PgPool, esi: &Esi, command: Command) -> anyhow::Result<String>
 }
 
 async fn account(db: &PgPool, id: i64, name: &str, owner: bool) -> AccountId {
-    accounts::sign_in(db, id, name, None, owner)
+    sign_in(db, id, name, None, owner).await
+}
+
+async fn sign_in(
+    db: &PgPool,
+    id: i64,
+    name: &str,
+    current: Option<AccountId>,
+    owner: bool,
+) -> AccountId {
+    let login = accounts::Login {
+        character_id: id,
+        character_name: name,
+        owner_hash: "h",
+    };
+    accounts::sign_in(db, login, current, owner)
         .await
         .unwrap()
-        .0
+        .outcome
         .account()
         .unwrap()
 }
@@ -68,9 +83,7 @@ async fn audit_actors(db: &PgPool) -> Vec<(String, Option<String>)> {
 async fn users_lists_and_shows_accounts(db: PgPool) {
     let (_esi_server, esi) = mock_esi().await;
     let owner = account(&db, 196379789, "Chribba", true).await;
-    accounts::sign_in(&db, 443630591, "The Mittani", Some(owner), false)
-        .await
-        .unwrap();
+    sign_in(&db, 443630591, "The Mittani", Some(owner), false).await;
     account(&db, 1887431749, "gigX", false).await;
 
     let list = cli(&db, &esi, Command::Users { command: None })

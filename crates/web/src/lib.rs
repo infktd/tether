@@ -161,7 +161,10 @@ mod tests {
 
     fn state(db: PgPool) -> AppState {
         let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
-            std::sync::Arc::new(tether_esi::sso::EveSso);
+            std::sync::Arc::new(tether_esi::sso::EveSso::new(
+                tether_esi::jwt::JwtVerifier::new("tether tests", "http://127.0.0.1:9/jwks")
+                    .unwrap(),
+            ));
         let key =
             tether_core::crypto::EncryptionKey::from_hex(&tether_core::Secret::new("0".repeat(64)))
                 .unwrap();

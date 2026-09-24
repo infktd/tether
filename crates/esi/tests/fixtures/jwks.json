@@ -1,0 +1,22 @@
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "alg": "RS256",
+      "kid": "JWT-Signature-Key",
+      "use": "sig",
+      "n": "vn7YXFFCcvIsHKbUAKNSXQjMYM567ilmCPSsKGIcAAK_R9bwRV8-Gb4YWwVq_pxXAyFn9He2fbZ4tfCwVse0GJZTXXMQR5ZAcXtiIt_oDVIK0rsggFWNMB3E0YnE7vsf1ZB03T_mzWP_nDLYcIw5RRJ-VXrDvV3W9EoaRJoNwv0QmznApAMqs3Q7UKxQmr0WL6Ud211M3g9TqAD3C9SyAaOC1js2IbsmNbU4y8MAP4MNW_s5U4YUEHgixMzNsWo18eoudHFK3ceLlrHP49gOxJGOsE_pd9_oRizt__S-coG_Vs5qrDPXfGKphzGX0GLkYvH8QlKIUhfYaWrwefGd2Q",
+      "e": "AQAB"
+    },
+    {
+      "kty": "EC",
+      "alg": "ES256",
+      "kid": "8878a23f-b40b-4cda-8e1e-2a1c7d2b0e3e",
+      "use": "sig",
+      "crv": "P-256",
+      "x": "qj96CgRqkxSIEIlkaydpg8baP8unAhxMlQYV1xyMxCU",
+      "y": "daTOyK_ocj4cx6OrfUNGYFuILfSkL7XZzugTauHaM4k"
+    }
+  ],
+  "SkipUnresolvedJsonWebKeys": true
+}

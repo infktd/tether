@@ -41,6 +41,9 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
 insta = { version = "1", features = ["json"] }
+# Verifying CCP's SSO tokens. rust_crypto keeps the path open to dropping
+# aws-lc-sys (see the eve-esi-client follow-up); PEM only in tests.
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 wiremock = "0.6"
 tracing = "0.1"
 utoipa = { version = "6", features = ["chrono", "axum_extras"] }

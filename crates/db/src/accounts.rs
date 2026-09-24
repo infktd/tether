@@ -32,49 +32,95 @@ impl SignIn {
     }
 }
 
-/// Handles a successful SSO login by `character_id`, optionally while
-/// already signed in to `current`.
+/// A verified SSO login.
+#[derive(Debug, Clone, Copy)]
+pub struct Login<'a> {
+    pub character_id: i64,
+    pub character_name: &'a str,
+    /// CCP's owner hash from the verified token.
+    pub owner_hash: &'a str,
+}
+
+/// A character that changed EVE account since it was linked, and was
+/// taken away from the Tether account that had it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transfer {
+    pub from: AccountId,
+    /// It was that account's only character, so the account is gone.
+    pub account_deleted: bool,
+    /// ...and that account was the owner: setup reopens for the holder of
+    /// the setup token.
+    pub owner_lost: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInResult {
+    pub outcome: SignIn,
+    pub became_owner: bool,
+    pub transfer: Option<Transfer>,
+}
+
+/// Handles a verified SSO login, optionally while already signed in to
+/// `current`.
 ///
 /// With `claim_owner` (the browser holds a valid first-run setup session),
-/// the resulting account becomes the owner if there is none yet. Returns
-/// whether it did alongside the outcome.
+/// the resulting account becomes the owner if there is none yet.
 ///
-/// TODO(milestone 1): detect character transfers (sold or moved to another
-/// EVE account) via the SSO `owner` hash and unlink instead of refusing.
+/// If CCP's owner hash differs from the one recorded, the character was
+/// sold or moved to another EVE account: it's unlinked from its old
+/// account first, then treated as a new character.
 pub async fn sign_in(
     pool: &PgPool,
-    character_id: i64,
-    character_name: &str,
+    login: Login<'_>,
     current: Option<AccountId>,
     claim_owner: bool,
-) -> Result<(SignIn, bool), sqlx::Error> {
+) -> Result<SignInResult, sqlx::Error> {
+    let Login {
+        character_id,
+        character_name,
+        owner_hash,
+    } = login;
     let mut tx = pool.begin().await?;
     sqlx::query!("SELECT pg_advisory_xact_lock($1)", SIGN_IN_LOCK)
         .execute(&mut *tx)
         .await?;
 
-    let existing = sqlx::query_scalar!(
-        "SELECT account_id FROM core.characters WHERE id = $1",
+    let row = sqlx::query!(
+        "SELECT account_id, owner_hash FROM core.characters WHERE id = $1",
         character_id
     )
     .fetch_optional(&mut *tx)
-    .await?
-    .map(AccountId);
+    .await?;
+    let mut transfer = None;
+    let existing = match row {
+        Some(r) if r.owner_hash.as_deref().is_some_and(|h| h != owner_hash) => {
+            transfer = Some(detach(&mut tx, character_id, AccountId(r.account_id)).await?);
+            None
+        }
+        Some(r) => Some(AccountId(r.account_id)),
+        None => None,
+    };
+    // A transfer can delete the account this browser was signed in to.
+    let current = match (current, &transfer) {
+        (Some(c), Some(t)) if t.account_deleted && t.from == c => None,
+        _ => current,
+    };
 
     let outcome = match (existing, current) {
         (Some(owner), Some(current)) if owner != current => SignIn::LinkedElsewhere,
         (Some(account), _) => {
             sqlx::query!(
-                "UPDATE core.characters SET name = $2, last_login_at = now() WHERE id = $1",
+                "UPDATE core.characters SET name = $2, owner_hash = $3, last_login_at = now() WHERE id = $1",
                 character_id,
                 character_name,
+                owner_hash,
             )
             .execute(&mut *tx)
             .await?;
             SignIn::Existing(account)
         }
         (None, Some(account)) => {
-            insert_character(&mut tx, account, character_id, character_name).await?;
+            insert_character(&mut tx, account, login).await?;
             SignIn::AddedAlt(account)
         }
         (None, None) => {
@@ -85,7 +131,7 @@ pub async fn sign_in(
             .fetch_one(&mut *tx)
             .await?;
             let account = AccountId(id);
-            insert_character(&mut tx, account, character_id, character_name).await?;
+            insert_character(&mut tx, account, login).await?;
             SignIn::Created(account)
         }
     };
@@ -105,7 +151,67 @@ pub async fn sign_in(
         _ => false,
     };
     tx.commit().await?;
-    Ok((outcome, became_owner))
+    Ok(SignInResult {
+        outcome,
+        became_owner,
+        transfer,
+    })
+}
+
+/// Unlinks a transferred character from `account`: a new main is chosen if
+/// it was the main, and the account is deleted if it has nothing left.
+async fn detach(
+    tx: &mut sqlx::PgTransaction<'_>,
+    character_id: i64,
+    account: AccountId,
+) -> Result<Transfer, sqlx::Error> {
+    let acct = sqlx::query!(
+        "SELECT main_character_id, is_owner FROM core.accounts WHERE id = $1",
+        account.0
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    let successor = sqlx::query_scalar!(
+        r#"
+        SELECT id FROM core.characters
+        WHERE account_id = $1 AND id <> $2
+        ORDER BY added_at, id
+        LIMIT 1
+        "#,
+        account.0,
+        character_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(successor) = successor else {
+        // Its only character: the account (and its sessions, tokens and
+        // memberships) goes.
+        sqlx::query!("DELETE FROM core.accounts WHERE id = $1", account.0)
+            .execute(&mut **tx)
+            .await?;
+        return Ok(Transfer {
+            from: account,
+            account_deleted: true,
+            owner_lost: acct.is_owner,
+        });
+    };
+    if acct.main_character_id == character_id {
+        sqlx::query!(
+            "UPDATE core.accounts SET main_character_id = $2 WHERE id = $1",
+            account.0,
+            successor,
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
+    sqlx::query!("DELETE FROM core.characters WHERE id = $1", character_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(Transfer {
+        from: account,
+        account_deleted: false,
+        owner_lost: false,
+    })
 }
 
 pub async fn owner_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
@@ -127,17 +233,17 @@ pub async fn all_ids(pool: &PgPool) -> Result<Vec<AccountId>, sqlx::Error> {
 async fn insert_character(
     tx: &mut sqlx::PgTransaction<'_>,
     account: AccountId,
-    character_id: i64,
-    character_name: &str,
+    login: Login<'_>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
-        INSERT INTO core.characters (id, account_id, name, last_login_at)
-        VALUES ($1, $2, $3, now())
+        INSERT INTO core.characters (id, account_id, name, owner_hash, last_login_at)
+        VALUES ($1, $2, $3, $4, now())
         "#,
-        character_id,
+        login.character_id,
         account.0,
-        character_name,
+        login.character_name,
+        login.owner_hash,
     )
     .execute(&mut **tx)
     .await?;
@@ -283,8 +389,23 @@ pub async fn find(pool: &PgPool, query: &str) -> Result<Option<AccountId>, sqlx:
 mod tests {
     use super::*;
 
+    fn who(id: i64, name: &str) -> Login<'_> {
+        Login {
+            character_id: id,
+            character_name: name,
+            owner_hash: "owner-a",
+        }
+    }
+
     async fn login(pool: &PgPool, id: i64, name: &str, current: Option<AccountId>) -> SignIn {
-        sign_in(pool, id, name, current, false).await.unwrap().0
+        sign_in(pool, who(id, name), current, false)
+            .await
+            .unwrap()
+            .outcome
+    }
+
+    async fn claim(pool: &PgPool, id: i64, name: &str) -> SignInResult {
+        sign_in(pool, who(id, name), None, true).await.unwrap()
     }
 
     async fn account(pool: &PgPool, id: i64, name: &str) -> AccountId {
@@ -297,9 +418,12 @@ mod tests {
         let early = account(&pool, 1, "Early Bird").await;
         assert!(!owner_exists(&pool).await.unwrap());
 
-        let (admin, claimed) = sign_in(&pool, 2, "Admin", None, true).await.unwrap();
-        assert!(claimed);
-        let admin = get(&pool, admin.account().unwrap()).await.unwrap().unwrap();
+        let admin = claim(&pool, 2, "Admin").await;
+        assert!(admin.became_owner);
+        let admin = get(&pool, admin.outcome.account().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
         assert!(admin.is_owner);
         assert_eq!(
             admin.main,
@@ -310,17 +434,16 @@ mod tests {
         );
 
         // A second claim can't take ownership.
-        let (_, again) = sign_in(&pool, 1, "Early Bird", None, true).await.unwrap();
-        assert!(!again);
+        assert!(!claim(&pool, 1, "Early Bird").await.became_owner);
         assert!(!get(&pool, early).await.unwrap().unwrap().is_owner);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn an_existing_account_can_claim_ownership(pool: PgPool) {
         let existing = account(&pool, 1, "Admin").await;
-        let (outcome, claimed) = sign_in(&pool, 1, "Admin", None, true).await.unwrap();
-        assert_eq!(outcome, SignIn::Existing(existing));
-        assert!(claimed);
+        let result = claim(&pool, 1, "Admin").await;
+        assert_eq!(result.outcome, SignIn::Existing(existing));
+        assert!(result.became_owner);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -382,10 +505,98 @@ mod tests {
         let mut logins = tokio::task::JoinSet::new();
         for id in 1..=10 {
             let pool = pool.clone();
-            logins.spawn(async move { sign_in(&pool, id, "Pilot", None, true).await.unwrap() });
+            logins.spawn(async move { claim(&pool, id, "Pilot").await });
         }
         let outcomes = logins.join_all().await;
 
-        assert_eq!(outcomes.iter().filter(|(_, claimed)| *claimed).count(), 1);
+        assert_eq!(outcomes.iter().filter(|r| r.became_owner).count(), 1);
+    }
+
+    async fn transferred(pool: &PgPool, id: i64, current: Option<AccountId>) -> SignInResult {
+        let login = Login {
+            character_id: id,
+            character_name: "Sold",
+            owner_hash: "owner-b",
+        };
+        sign_in(pool, login, current, false).await.unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn a_transferred_alt_moves_to_its_new_owner(pool: PgPool) {
+        let seller = account(&pool, 1, "Seller").await;
+        login(&pool, 2, "Sold", Some(seller)).await;
+        let buyer = account(&pool, 3, "Buyer").await;
+
+        let result = transferred(&pool, 2, Some(buyer)).await;
+
+        assert_eq!(result.outcome, SignIn::AddedAlt(buyer));
+        assert_eq!(
+            result.transfer,
+            Some(Transfer {
+                from: seller,
+                account_deleted: false,
+                owner_lost: false
+            })
+        );
+        assert_eq!(
+            get(&pool, seller).await.unwrap().unwrap().characters.len(),
+            1
+        );
+        assert_eq!(
+            get(&pool, buyer).await.unwrap().unwrap().characters.len(),
+            2
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn a_transferred_main_hands_main_to_the_next_character(pool: PgPool) {
+        let seller = account(&pool, 1, "Seller Main").await;
+        login(&pool, 2, "Seller Alt", Some(seller)).await;
+
+        let result = transferred(&pool, 1, None).await;
+
+        assert!(matches!(result.outcome, SignIn::Created(_)));
+        let seller = get(&pool, seller).await.unwrap().unwrap();
+        assert_eq!(seller.main.id, 2);
+        assert_eq!(seller.characters.len(), 1);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn a_transferred_only_character_deletes_the_account_even_the_owners(pool: PgPool) {
+        let owner = claim(&pool, 1, "Owner").await.outcome.account().unwrap();
+
+        // The buyer logs in with the owner's old character.
+        let result = transferred(&pool, 1, None).await;
+
+        assert_eq!(
+            result.transfer,
+            Some(Transfer {
+                from: owner,
+                account_deleted: true,
+                owner_lost: true
+            })
+        );
+        assert!(get(&pool, owner).await.unwrap().is_none());
+        let buyer = get(&pool, result.outcome.account().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!buyer.is_owner, "the buyer must not inherit ownership");
+        assert!(!owner_exists(&pool).await.unwrap());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn same_owner_hash_or_first_sighting_is_not_a_transfer(pool: PgPool) {
+        let a = account(&pool, 1, "Pilot").await;
+        assert_eq!(login(&pool, 1, "Pilot", None).await, SignIn::Existing(a));
+        // Characters from before owner hashes were recorded adopt the first
+        // hash they're seen with.
+        sqlx::query!("UPDATE core.characters SET owner_hash = NULL WHERE id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = transferred(&pool, 1, None).await;
+        assert_eq!(result.outcome, SignIn::Existing(a));
+        assert!(result.transfer.is_none());
     }
 }

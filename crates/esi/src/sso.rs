@@ -34,10 +34,15 @@ pub struct SsoTokens {
     pub expires_at: Option<SystemTime>,
 }
 
+/// A login, from a verified access token.
 #[derive(Debug, Clone)]
 pub struct SsoIdentity {
     pub character_id: i64,
     pub character_name: String,
+    /// CCP's owner hash: changes when the character changes EVE account.
+    pub owner_hash: String,
+    /// What the character granted.
+    pub scopes: Vec<String>,
     pub tokens: SsoTokens,
 }
 
@@ -92,11 +97,18 @@ fn tokens_from(set: eve_esi_client::auth::TokenSet) -> SsoTokens {
     }
 }
 
-/// The real EVE SSO, via eve-esi-client.
-#[derive(Debug, Default)]
-pub struct EveSso;
+/// The real EVE SSO, via eve-esi-client, with tokens verified against
+/// CCP's JWKS.
+#[derive(Debug)]
+pub struct EveSso {
+    verifier: crate::jwt::JwtVerifier,
+}
 
 impl EveSso {
+    pub fn new(verifier: crate::jwt::JwtVerifier) -> Self {
+        Self { verifier }
+    }
+
     fn client(config: &SsoConfig) -> Result<SsoClient, SsoError> {
         SsoClient::new(config.client_id.clone(), &config.redirect_uri)
             .map_err(|err| SsoError::Config(err.to_string()))
@@ -125,18 +137,16 @@ impl Sso for EveSso {
                 .exchange(code, verifier)
                 .await
                 .map_err(|err| SsoError::Exchange(err.to_string()))?;
-            // TODO(milestone 1): verify the access token's signature against
-            // CCP's JWKS and check iss, aud and exp. Milestone 0 reads the
-            // claims unverified, which is acceptable only because the token
-            // came straight from CCP's token endpoint over TLS.
-            let character_id = tokens
-                .character_id()
-                .and_then(|id| i64::try_from(id).ok())
-                .ok_or(SsoError::NoCharacter)?;
-            let character_name = tokens.character_name().ok_or(SsoError::NoCharacter)?;
+            let verified = self
+                .verifier
+                .verify(&tokens.access_token, &config.client_id)
+                .await
+                .map_err(|err| SsoError::Exchange(format!("token failed verification: {err}")))?;
             Ok(SsoIdentity {
-                character_id,
-                character_name,
+                character_id: verified.character_id,
+                character_name: verified.character_name,
+                owner_hash: verified.owner_hash,
+                scopes: verified.scopes,
                 tokens: tokens_from(tokens),
             })
         })

@@ -145,14 +145,21 @@ pub async fn callback(
     };
     // The browser that entered the setup token claims ownership (F3).
     let claim_owner = setup::has_setup_session(&state, &jar).await?;
-    let (outcome, became_owner) = accounts::sign_in(
+    let result = accounts::sign_in(
         &state.db,
-        identity.character_id,
-        &identity.character_name,
+        accounts::Login {
+            character_id: identity.character_id,
+            character_name: &identity.character_name,
+            owner_hash: &identity.owner_hash,
+        },
         current,
         claim_owner,
     )
     .await?;
+    let (outcome, became_owner) = (result.outcome, result.became_owner);
+    if let Some(transfer) = &result.transfer {
+        record_transfer(&state, identity.character_id, transfer).await?;
+    }
     tracing::info!(
         character_id = identity.character_id,
         character = identity.character_name,
@@ -166,11 +173,9 @@ pub async fn callback(
         ));
     };
 
-    // Scopes: what we asked for (none yet). Task 2 of milestone 1 switches
-    // this to the verified `scp` claim.
     if let Err(err) = state
         .vault
-        .store(identity.character_id, &identity.tokens, &[])
+        .store(identity.character_id, &identity.tokens, &identity.scopes)
         .await
     {
         return Err(AppError::internal(err));
@@ -269,6 +274,44 @@ impl CurrentSession {
             Err(AppError::forbidden())
         }
     }
+}
+
+/// Audits a character that changed EVE account and re-evaluates the tier of
+/// the account that lost it.
+async fn record_transfer(
+    state: &AppState,
+    character_id: i64,
+    transfer: &accounts::Transfer,
+) -> Result<(), AppError> {
+    audit::record(
+        &state.db,
+        Actor::System,
+        "character.transferred",
+        Some(&format!("character:{character_id}")),
+        serde_json::json!({
+            "from_account": transfer.from.0,
+            "account_deleted": transfer.account_deleted,
+            "owner_lost": transfer.owner_lost,
+        }),
+    )
+    .await?;
+    if transfer.owner_lost {
+        tracing::warn!(
+            character_id,
+            "the owner's only character moved to another EVE account; the owner account is gone \
+             and first-run setup is open again to whoever holds SETUP_TOKEN"
+        );
+    } else {
+        tracing::info!(
+            character_id,
+            from = transfer.from.0,
+            "character transferred to another EVE account"
+        );
+    }
+    if !transfer.account_deleted {
+        tiers::evaluate_account(&state.db, transfer.from).await?;
+    }
+    Ok(())
 }
 
 async fn find_session(

@@ -154,8 +154,12 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     }
 
     let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
+    let verifier = tether_esi::jwt::JwtVerifier::new(
+        &user_agent(&config.public_url()),
+        tether_esi::jwt::CCP_JWKS_URL,
+    )?;
     let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
-        std::sync::Arc::new(tether_esi::sso::EveSso);
+        std::sync::Arc::new(tether_esi::sso::EveSso::new(verifier));
     let site = tether_web::Site::new(config.public_url());
     let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
         db.clone(),

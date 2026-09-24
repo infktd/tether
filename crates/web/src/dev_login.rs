@@ -70,14 +70,18 @@ pub async fn login(
         .iter()
         .find(|f| f.name == name)
         .ok_or_else(|| AppError::not_found("No such fixture; see /dev/login."))?;
-    let (outcome, _) = accounts::sign_in(
+    let outcome = accounts::sign_in(
         &state.db,
-        fixture.character_id,
-        fixture.character_name,
+        accounts::Login {
+            character_id: fixture.character_id,
+            character_name: fixture.character_name,
+            owner_hash: "dev-fixture",
+        },
         None,
         fixture.name == "owner",
     )
-    .await?;
+    .await?
+    .outcome;
     let account = outcome
         .account()
         .ok_or_else(|| AppError::internal("fixture character linked to another account"))?;

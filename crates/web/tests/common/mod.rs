@@ -36,6 +36,11 @@ pub struct FakeSso {
     pub refresh_outcome: Mutex<RefreshOutcome>,
     pub refresh_calls: AtomicUsize,
     pub refresh_tokens_seen: Mutex<Vec<String>>,
+    /// Owner hash per character id; default `owner-<id>`. Change one to
+    /// simulate the character moving to another EVE account.
+    pub owner_hashes: Mutex<HashMap<i64, String>>,
+    /// Scopes every login grants.
+    pub granted_scopes: Mutex<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +62,8 @@ impl Default for FakeSso {
             refresh_outcome: Mutex::new(RefreshOutcome::Rotate),
             refresh_calls: AtomicUsize::new(0),
             refresh_tokens_seen: Mutex::default(),
+            owner_hashes: Mutex::default(),
+            granted_scopes: Mutex::default(),
         }
     }
 }
@@ -105,6 +112,14 @@ impl Sso for FakeSso {
                 (Some("ok"), Some(id), Some(name)) => Ok(SsoIdentity {
                     character_id: id.parse().unwrap(),
                     character_name: name.to_owned(),
+                    owner_hash: self
+                        .owner_hashes
+                        .lock()
+                        .unwrap()
+                        .get(&id.parse::<i64>().unwrap())
+                        .cloned()
+                        .unwrap_or_else(|| format!("owner-{id}")),
+                    scopes: self.granted_scopes.lock().unwrap().clone(),
                     tokens: self.tokens(
                         format!("access-{id}-login"),
                         Some(format!("refresh-{id}-1")),

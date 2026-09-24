@@ -119,10 +119,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn actor_name_is_the_mains_name(pool: PgPool) {
-        let account = crate::accounts::sign_in(&pool, 7, "Admin Pilot", None, false)
+        let login = crate::accounts::Login {
+            character_id: 7,
+            character_name: "Admin Pilot",
+            owner_hash: "h",
+        };
+        let account = crate::accounts::sign_in(&pool, login, None, false)
             .await
             .unwrap()
-            .0
+            .outcome
             .account()
             .unwrap();
         record(&pool, Actor::Account(account), "x", None, json!({}))

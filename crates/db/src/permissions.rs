@@ -137,10 +137,15 @@ mod tests {
 
     /// Character 1 claims ownership; others are ordinary accounts.
     async fn account(pool: &PgPool, id: i64) -> AccountId {
-        accounts::sign_in(pool, id, "Pilot", None, id == 1)
+        let login = accounts::Login {
+            character_id: id,
+            character_name: "Pilot",
+            owner_hash: "h",
+        };
+        accounts::sign_in(pool, login, None, id == 1)
             .await
             .unwrap()
-            .0
+            .outcome
             .account()
             .unwrap()
     }
