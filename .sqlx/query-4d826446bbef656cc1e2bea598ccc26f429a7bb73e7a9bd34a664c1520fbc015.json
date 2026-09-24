@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n            SELECT 1 FROM core.setup_sessions WHERE token_hash = $1 AND expires_at > now()\n        ) AS \"valid!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "valid!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4d826446bbef656cc1e2bea598ccc26f429a7bb73e7a9bd34a664c1520fbc015"
+}

@@ -3,4 +3,4 @@
 mod client;
 pub mod sso;
 
-pub use client::{CharacterAffiliation, Esi, EsiError};
+pub use client::{CharacterAffiliation, Entity, Esi, EsiError, NamedEntity, ResolvedNames};

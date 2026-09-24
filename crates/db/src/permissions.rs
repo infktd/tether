@@ -135,10 +135,12 @@ mod tests {
     use crate::{accounts, groups, tiers};
     use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, JoinPolicy};
 
+    /// Character 1 claims ownership; others are ordinary accounts.
     async fn account(pool: &PgPool, id: i64) -> AccountId {
-        accounts::sign_in(pool, id, "Pilot", None)
+        accounts::sign_in(pool, id, "Pilot", None, id == 1)
             .await
             .unwrap()
+            .0
             .account()
             .unwrap()
     }

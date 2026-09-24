@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
+use tether_core::Secret;
 use tether_db::PgPool;
 use tether_esi::Esi;
+
+use crate::ratelimit::RateLimiter;
 use tether_esi::sso::Sso;
 
 #[derive(Clone)]
@@ -10,6 +13,23 @@ pub struct AppState {
     pub esi: Esi,
     pub sso: Arc<dyn Sso>,
     pub site: Arc<Site>,
+    /// Required by the first-run wizard until an owner exists.
+    pub setup_token: Arc<Secret<String>>,
+    pub limits: Arc<Limits>,
+}
+
+/// Rate limits for endpoints worth guessing at.
+#[derive(Debug)]
+pub struct Limits {
+    pub setup_unlock: RateLimiter,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            setup_unlock: RateLimiter::new(5, std::time::Duration::from_secs(60)),
+        }
+    }
 }
 
 /// Where this instance is reachable from browsers.

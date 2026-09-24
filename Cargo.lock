@@ -2727,6 +2727,7 @@ dependencies = [
  "axum-extra",
  "chrono",
  "insta",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",

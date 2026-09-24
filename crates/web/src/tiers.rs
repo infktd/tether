@@ -12,6 +12,9 @@ use tether_jobs::{JobError, NewJob, Registry};
 
 /// Job kind: refresh one account's affiliations and tier.
 pub const REFRESH_ACCOUNT_JOB: &str = "tiers.refresh_account";
+/// Job kind: re-evaluate every account from stored affiliations, e.g. after
+/// the tier rules change.
+pub const EVALUATE_ALL_JOB: &str = "tiers.evaluate_all";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct RefreshAccount {
@@ -86,7 +89,35 @@ pub async fn enqueue_refresh(db: &PgPool, account: AccountId) -> Result<(), sqlx
     Ok(())
 }
 
+pub async fn enqueue_evaluate_all<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<(), sqlx::Error> {
+    tether_jobs::enqueue(
+        executor,
+        NewJob::new(EVALUATE_ALL_JOB, serde_json::json!({})),
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn evaluate_all(db: &PgPool) -> Result<usize, sqlx::Error> {
+    let accounts = tether_db::accounts::all_ids(db).await?;
+    for account in &accounts {
+        evaluate_account(db, *account).await?;
+    }
+    Ok(accounts.len())
+}
+
 pub fn register_jobs(registry: &mut Registry, db: PgPool, esi: Esi) {
+    let evaluate_db = db.clone();
+    registry.register(EVALUATE_ALL_JOB, move |_job| {
+        let db = evaluate_db.clone();
+        async move {
+            let count = evaluate_all(&db).await.map_err(JobError::retry)?;
+            tracing::info!(accounts = count, "re-evaluated all tiers");
+            Ok(())
+        }
+    });
     registry.register(REFRESH_ACCOUNT_JOB, move |job| {
         let (db, esi) = (db.clone(), esi.clone());
         async move {

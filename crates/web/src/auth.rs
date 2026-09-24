@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use axum::extract::{FromRequestParts, Query, State};
+use axum::extract::{FromRequestParts, OptionalFromRequestParts, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -15,7 +15,8 @@ use tether_db::{auth as db, settings};
 use tether_esi::sso::SsoConfig;
 
 use crate::error::AppError;
-use crate::{AppState, tiers};
+use crate::{AppState, setup, tiers};
+use tether_db::audit::{self, Actor};
 
 /// `__Host-` cookies must be Secure, Path=/ and have no Domain, so they
 /// can't be set or shadowed by other subdomains.
@@ -119,11 +120,14 @@ pub async fn callback(
             .map(|s| s.account),
         None => None,
     };
-    let outcome = accounts::sign_in(
+    // The browser that entered the setup token claims ownership (F3).
+    let claim_owner = setup::has_setup_session(&state, &jar).await?;
+    let (outcome, became_owner) = accounts::sign_in(
         &state.db,
         identity.character_id,
         &identity.character_name,
         current,
+        claim_owner,
     )
     .await?;
     tracing::info!(
@@ -138,6 +142,23 @@ pub async fn callback(
             "That character is already linked to another account.",
         ));
     };
+
+    let mut jar = jar;
+    if became_owner {
+        let mut tx = state.db.begin().await?;
+        tether_db::setup::end_sessions(&mut *tx).await?;
+        audit::record(
+            &mut *tx,
+            Actor::Account(account),
+            "setup.owner",
+            Some(&format!("account:{}", account.0)),
+            serde_json::json!({ "character_id": identity.character_id }),
+        )
+        .await?;
+        tx.commit().await?;
+        tracing::info!(account = account.0, "owner claimed; setup token disabled");
+        jar = jar.remove(removal(setup::SETUP_COOKIE));
+    }
 
     // Tier from the main's current affiliation. An ESI outage must not
     // block login: keep the stored tier and retry in the background.
@@ -188,6 +209,22 @@ impl FromRequestParts<AppState> for CurrentSession {
     }
 }
 
+/// `Option<CurrentSession>`: `None` when not signed in, instead of a 401.
+impl OptionalFromRequestParts<AppState> for CurrentSession {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Option<Self>, AppError> {
+        match <Self as FromRequestParts<AppState>>::from_request_parts(parts, state).await {
+            Ok(session) => Ok(Some(session)),
+            Err(err) if err.status() == StatusCode::UNAUTHORIZED => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+}
+
 impl CurrentSession {
     /// Fails with 403 unless the account holds `permission`.
     pub async fn require(&self, state: &AppState, permission: &str) -> Result<(), AppError> {
@@ -232,7 +269,11 @@ async fn sso_config(state: &AppState) -> Result<SsoConfig, AppError> {
 /// Parsed from a header string because `Cookie::max_age` takes a
 /// `time::Duration`, which axum-extra doesn't re-export. Values are hex
 /// tokens, so nothing needs escaping.
-fn cookie(name: &str, value: &Secret<String>, ttl: Duration) -> Result<Cookie<'static>, AppError> {
+pub(crate) fn cookie(
+    name: &str,
+    value: &Secret<String>,
+    ttl: Duration,
+) -> Result<Cookie<'static>, AppError> {
     Cookie::parse(format!(
         "{name}={}; Max-Age={}; Path=/; Secure; HttpOnly; SameSite=Lax",
         value.expose(),
@@ -243,7 +284,7 @@ fn cookie(name: &str, value: &Secret<String>, ttl: Duration) -> Result<Cookie<'s
 
 /// Removal cookies need the same attributes, or browsers ignore them for
 /// `__Host-` names.
-fn removal(name: &'static str) -> Cookie<'static> {
+pub(crate) fn removal(name: &'static str) -> Cookie<'static> {
     Cookie::build(name)
         .http_only(true)
         .secure(true)

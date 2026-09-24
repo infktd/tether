@@ -4,6 +4,8 @@ mod api;
 pub mod auth;
 mod csrf;
 mod error;
+mod ratelimit;
+pub mod setup;
 mod state;
 pub mod tiers;
 
@@ -12,7 +14,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Router, middleware};
 
-pub use state::{AppState, Site};
+pub use state::{AppState, Limits, Site};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -55,6 +57,20 @@ pub fn router(state: AppState) -> Router {
             delete(api::admin::revoke),
         )
         .route("/api/admin/audit", get(api::admin::audit_log))
+        .route(
+            "/api/admin/tiers",
+            get(api::admin::list_tier_rules).post(api::admin::set_tier_rule),
+        )
+        .route(
+            "/api/admin/tiers/{entity_id}",
+            delete(api::admin::remove_tier_rule),
+        )
+        .route("/api/admin/tiers/resolve", post(api::admin::resolve_names))
+        .route("/api/setup", get(setup::status))
+        .route("/api/setup/unlock", post(setup::unlock))
+        .route("/api/setup/sso", post(setup::set_sso))
+        .route("/api/setup/probe", get(setup::probe))
+        .route("/api/setup/callback-check", post(setup::callback_check))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf::verify_origin,
@@ -105,6 +121,8 @@ mod tests {
             esi: tether_esi::Esi::new("tether tests", Some("http://127.0.0.1:9")).unwrap(),
             sso: std::sync::Arc::new(tether_esi::sso::EveSso),
             site: std::sync::Arc::new(Site::new("https://tether.test")),
+            setup_token: std::sync::Arc::new(tether_core::Secret::new("t".repeat(32))),
+            limits: std::sync::Arc::default(),
         }
     }
 

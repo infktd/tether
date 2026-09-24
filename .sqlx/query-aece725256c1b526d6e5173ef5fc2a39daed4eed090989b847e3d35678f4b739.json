@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.setup_sessions",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "aece725256c1b526d6e5173ef5fc2a39daed4eed090989b847e3d35678f4b739"
+}

@@ -8,13 +8,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tether_core::permissions::{
-    ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, CORE_PERMISSIONS, JoinPolicy, is_known,
+    ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, CORE_PERMISSIONS, JoinPolicy,
+    is_known,
 };
 use tether_core::tiers::Tier;
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
+use tether_db::tiers as tier_db;
 
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -421,4 +423,170 @@ pub async fn audit_log(
             })
             .collect(),
     ))
+}
+
+// ---- tier rules ------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct TierRuleOut {
+    pub entity_id: i64,
+    pub kind: &'static str,
+    pub tier: &'static str,
+    pub name: String,
+}
+
+/// `GET /api/admin/tiers`
+pub async fn list_tier_rules(
+    State(state): State<AppState>,
+    session: CurrentSession,
+) -> Result<Json<Vec<TierRuleOut>>, AppError> {
+    session.require(&state, ADMIN_TIERS).await?;
+    let rules = tier_db::list_rules(&state.db).await?;
+    Ok(Json(
+        rules
+            .into_iter()
+            .map(|r| TierRuleOut {
+                entity_id: r.entity_id,
+                kind: r.kind.as_str(),
+                tier: r.tier.as_str(),
+                name: r.name,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TierRuleIn {
+    pub entity_id: i64,
+    pub tier: String,
+}
+
+/// `POST /api/admin/tiers`: make an alliance or corporation Member or
+/// Allied. Its name and kind come from ESI, not the client.
+pub async fn set_tier_rule(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Json(body): Json<TierRuleIn>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_TIERS).await?;
+    let tier = match Tier::parse(&body.tier) {
+        Some(tier @ (Tier::Member | Tier::Allied)) => tier,
+        _ => return Err(AppError::bad_request("tier must be member or allied.")),
+    };
+    let entity = state
+        .esi
+        .names(&[body.entity_id])
+        .await
+        .map_err(esi_unavailable)?
+        .into_iter()
+        .find(|e| e.id == body.entity_id)
+        .ok_or_else(|| AppError::not_found("ESI doesn't know that id."))?;
+    let kind = entity
+        .kind
+        .ok_or_else(|| AppError::bad_request("That id isn't an alliance or corporation."))?;
+
+    let rule = tier_db::TierRule {
+        entity_id: entity.id,
+        kind,
+        tier,
+        name: entity.name,
+    };
+    let mut tx = state.db.begin().await?;
+    tier_db::set_rule(&mut *tx, &rule).await?;
+    audit::record(
+        &mut *tx,
+        Actor::Account(session.account),
+        "tier.rule.set",
+        Some(&format!("{}:{}", kind.as_str(), entity.id)),
+        json!({ "name": rule.name, "tier": tier.as_str() }),
+    )
+    .await?;
+    crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/admin/tiers/{entity_id}`
+pub async fn remove_tier_rule(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(entity_id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_TIERS).await?;
+    let mut tx = state.db.begin().await?;
+    if !tier_db::remove_rule(&mut *tx, entity_id).await? {
+        return Err(AppError::not_found("No rule for that id."));
+    }
+    audit::record(
+        &mut *tx,
+        Actor::Account(session.account),
+        "tier.rule.remove",
+        Some(&entity_id.to_string()),
+        json!({}),
+    )
+    .await?;
+    crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveIn {
+    pub names: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveOut {
+    pub alliances: Vec<EntityOut>,
+    pub corporations: Vec<EntityOut>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntityOut {
+    pub id: i64,
+    pub name: String,
+}
+
+/// `POST /api/admin/tiers/resolve`: exact alliance and corporation names to
+/// ids, via ESI.
+pub async fn resolve_names(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Json(body): Json<ResolveIn>,
+) -> Result<Json<ResolveOut>, AppError> {
+    session.require(&state, ADMIN_TIERS).await?;
+    let names: Vec<String> = body
+        .names
+        .iter()
+        .map(|n| n.trim().to_owned())
+        .filter(|n| !n.is_empty())
+        .collect();
+    if names.is_empty() || names.len() > 50 {
+        return Err(AppError::bad_request("Send 1 to 50 names."));
+    }
+    let resolved = state
+        .esi
+        .resolve_names(&names)
+        .await
+        .map_err(esi_unavailable)?;
+    let out = |v: Vec<tether_esi::Entity>| {
+        v.into_iter()
+            .map(|e| EntityOut {
+                id: e.id,
+                name: e.name,
+            })
+            .collect()
+    };
+    Ok(Json(ResolveOut {
+        alliances: out(resolved.alliances),
+        corporations: out(resolved.corporations),
+    }))
+}
+
+fn esi_unavailable(err: tether_esi::EsiError) -> AppError {
+    tracing::warn!(error = %err, "ESI lookup failed");
+    AppError::new(
+        StatusCode::BAD_GATEWAY,
+        "ESI didn't answer. Try again in a moment.",
+    )
 }

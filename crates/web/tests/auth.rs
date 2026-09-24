@@ -68,7 +68,8 @@ async fn full_login_creates_a_session(db: PgPool) {
     let me: serde_json::Value = serde_json::from_str(&me.body).unwrap();
     assert_eq!(me["main"]["id"], 90000001);
     assert_eq!(me["main"]["name"], "Jita Trader");
-    assert_eq!(me["is_owner"], true);
+    // Only the browser that unlocked setup becomes owner.
+    assert_eq!(me["is_owner"], false);
 
     // Only a hash of the token is stored.
     let stored: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM core.sessions")
@@ -255,7 +256,7 @@ async fn me_requires_a_live_session(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn logging_in_with_another_character_while_signed_in_adds_an_alt(db: PgPool) {
     let h = harness(db, true).await;
-    let main = log_in_as(&h, "90000001:Main Pilot", None).await;
+    let main = log_in_owner(&h, "90000001:Main Pilot").await;
     let after_alt = log_in_as(&h, "90000002:Alt Pilot", Some(&main)).await;
 
     insta::assert_json_snapshot!("me_with_alt", me(&h, &after_alt).await);

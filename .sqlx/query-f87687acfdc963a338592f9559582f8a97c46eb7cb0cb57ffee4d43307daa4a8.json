@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.setup_sessions (token_hash, expires_at) VALUES ($1, now() + make_interval(secs => $2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f87687acfdc963a338592f9559582f8a97c46eb7cb0cb57ffee4d43307daa4a8"
+}

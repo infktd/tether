@@ -51,6 +51,9 @@ eve-esi-client = "0.5"
 # Pinned to the exact version eve-esi-client resolves (one copy in the
 # build); default features off so it can't pull in another reqwest.
 oauth2 = { version = "=5.0.0", default-features = false }
+# Same version and features as eve-esi-client's, so no second copy. Used for
+# the wizard's callback check and `doctor`.
+reqwest = "0.13"
 
 # Plugin runtime, used from milestone 2. Default features are trimmed: no
 # WAT text parser, no on-disk compile cache (zstd), no profiling, no GC

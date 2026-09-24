@@ -103,6 +103,36 @@ impl Respond for AffiliationFixture {
     }
 }
 
+pub const SETUP_TOKEN: &str = "test-setup-token-0123456789abcdef";
+
+fn fixture(name: &str) -> String {
+    let path = format!(
+        "{}/../../tests/fixtures/esi/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::fs::read_to_string(path).unwrap()
+}
+
+/// universe/ids and universe/names, served from recorded fixtures.
+pub async fn mount_universe(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/universe/ids"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("universe_ids.json"), "application/json"),
+        )
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/universe/names"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("universe_names.json"), "application/json"),
+        )
+        .mount(server)
+        .await;
+}
+
 pub async fn mount_affiliations(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/characters/affiliation"))
@@ -114,10 +144,20 @@ pub async fn mount_affiliations(server: &MockServer) {
 pub async fn harness(db: PgPool, configured: bool) -> Harness {
     let esi_server = MockServer::start().await;
     mount_affiliations(&esi_server).await;
+    mount_universe(&esi_server).await;
     harness_with_esi(db, configured, esi_server).await
 }
 
 pub async fn harness_with_esi(db: PgPool, configured: bool, esi_server: MockServer) -> Harness {
+    harness_full(db, configured, esi_server, SITE).await
+}
+
+pub async fn harness_full(
+    db: PgPool,
+    configured: bool,
+    esi_server: MockServer,
+    site: &str,
+) -> Harness {
     if configured {
         settings::set(&db, settings::SSO_CLIENT_ID, "client-123".into())
             .await
@@ -129,7 +169,9 @@ pub async fn harness_with_esi(db: PgPool, configured: bool, esi_server: MockServ
         db: db.clone(),
         esi: esi.clone(),
         sso: sso.clone(),
-        site: Arc::new(Site::new(SITE)),
+        site: Arc::new(Site::new(site)),
+        setup_token: Arc::new(Secret::new(SETUP_TOKEN.to_owned())),
+        limits: Arc::default(),
     });
     Harness {
         app,
@@ -270,4 +312,40 @@ pub fn post_json(uri: &str, token: &str, body: &str) -> Request<Body> {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_owned()))
         .unwrap()
+}
+
+pub const SETUP: &str = "__Host-tether_setup";
+
+/// Unlocks the wizard with the setup token; returns the setup cookie value.
+pub async fn unlock(h: &Harness) -> String {
+    let res = send(
+        &h.app,
+        Request::post("/api/setup/unlock")
+            .header(header::ORIGIN, SITE)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(format!(r#"{{"token":"{SETUP_TOKEN}"}}"#)))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    res.cookie_value(SETUP)
+}
+
+/// Logs in from an unlocked browser, which claims ownership.
+pub async fn log_in_owner(h: &Harness, character: &str) -> String {
+    let setup = unlock(h).await;
+    let (state, browser) = start_login(h, "/").await;
+    let res = send(
+        &h.app,
+        get(
+            &format!(
+                "/auth/callback?code=ok:{}&state={state}",
+                character.replace(' ', "%20")
+            ),
+            &[(LOGIN, &browser), (SETUP, &setup)],
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    res.cookie_value(SESSION)
 }

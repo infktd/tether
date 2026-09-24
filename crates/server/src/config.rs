@@ -34,12 +34,29 @@ pub struct ServeConfig {
     #[arg(long, env = "PUBLIC_URL", value_parser = parse_public_url)]
     pub public_url: Option<String>,
 
-    /// One-time token required by the first-run wizard.
+    /// Token required by the first-run wizard until an owner exists. At
+    /// least 32 characters; install.sh generates 64. If unset, one is
+    /// generated at startup and logged.
     #[arg(long, env = "SETUP_TOKEN", hide_env_values = true)]
     pub setup_token: Option<Secret<String>>,
 }
 
 impl ServeConfig {
+    /// Checks that clap can't express. Done after parsing because clap's own
+    /// errors echo the rejected value, and these values are secrets.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(token) = &self.setup_token
+            && token.expose().trim().len() < 32
+        {
+            // A short token means someone set it by hand: refuse, don't warn.
+            return Err(format!(
+                "SETUP_TOKEN must be at least 32 characters (got {}); deploy/install.sh generates a suitable one",
+                token.expose().trim().len()
+            ));
+        }
+        Ok(())
+    }
+
     pub fn public_url(&self) -> String {
         self.public_url
             .clone()
@@ -103,7 +120,7 @@ mod tests {
             "--domain",
             "d",
             "--setup-token",
-            "tok-hunter3",
+            "tok-hunter3-0123456789abcdef0123456789",
         ])
         .unwrap();
         let debug = format!("{config:?}");
@@ -111,6 +128,22 @@ mod tests {
             !debug.contains("hunter2") && !debug.contains("hunter3"),
             "{debug}"
         );
+    }
+
+    #[test]
+    fn short_setup_token_is_refused() {
+        let base = ["--database-url", "postgres://x", "--domain", "d"];
+        let short = parse(&[&base[..], &["--setup-token", "hunter2"]].concat()).unwrap();
+        let err = short.validate().unwrap_err();
+        assert!(err.contains("at least 32 characters"), "{err}");
+        assert!(
+            !err.contains("hunter2"),
+            "the token must not be echoed: {err}"
+        );
+        let long = "a".repeat(32);
+        let long = parse(&[&base[..], &["--setup-token", &long]].concat()).unwrap();
+        assert!(long.validate().is_ok());
+        assert!(parse(&base).unwrap().validate().is_ok());
     }
 
     #[test]

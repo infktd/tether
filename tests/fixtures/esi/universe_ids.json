@@ -1,0 +1,18 @@
+{
+    "alliances": [
+        {
+            "id": 1354830081,
+            "name": "Goonswarm Federation"
+        },
+        {
+            "id": 99005338,
+            "name": "Pandemic Horde"
+        }
+    ],
+    "corporations": [
+        {
+            "id": 667531913,
+            "name": "GoonWaffe"
+        }
+    ]
+}

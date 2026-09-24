@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
+    config.validate().map_err(anyhow::Error::msg)?;
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         public_url = config.public_url(),
@@ -90,13 +91,31 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding {}", config.listen))?;
     tracing::info!(listen = %config.listen, "listening");
+    let setup_token = match config.setup_token.clone() {
+        Some(token) => tether_core::Secret::new(token.expose().trim().to_owned()),
+        None => tether_core::new_token()?,
+    };
+    if !tether_db::accounts::owner_exists(&db).await? {
+        // Deliberate exception to "no secrets in logs": the fallback way to
+        // find the token (F8). Stops once an owner exists.
+        tracing::warn!(
+            setup_url = format!("{}/setup", config.public_url()),
+            setup_token = setup_token.expose(),
+            "first-run setup: open the setup page and enter this token"
+        );
+    }
+
     let state = tether_web::AppState {
         db,
         esi,
+        setup_token: std::sync::Arc::new(setup_token),
+        limits: std::sync::Arc::default(),
         sso: std::sync::Arc::new(tether_esi::sso::EveSso),
         site: std::sync::Arc::new(tether_web::Site::new(config.public_url())),
     };
-    axum::serve(listener, tether_web::router(state))
+    let app =
+        tether_web::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving HTTP")?;

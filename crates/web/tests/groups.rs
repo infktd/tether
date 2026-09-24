@@ -31,7 +31,7 @@ fn json(res: &Res) -> Value {
 
 /// Owner (first login) and an ordinary pilot.
 async fn owner_and_pilot(h: &Harness) -> (String, String) {
-    let owner = log_in_as(h, "90000001:Owner", None).await;
+    let owner = log_in_owner(h, "90000001:Owner").await;
     let pilot = log_in_as(h, "90000002:Pilot", None).await;
     (owner, pilot)
 }
