@@ -202,7 +202,15 @@ pub async fn check(
     jar: CookieJar,
     session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
-    crate::setup::setup_actor(&state, &jar, session.as_ref()).await?;
+    // A fragment either way: a redirect would swap a whole page into the
+    // result slot.
+    if let Err(err) = crate::setup::setup_actor(&state, &jar, session.as_ref()).await {
+        let fragment = CheckFragment {
+            ok: false,
+            detail: err.message().to_owned(),
+        };
+        return Ok(render(err.status(), &fragment));
+    }
     let (ok, detail) = check_public_url(state.site.public_url())
         .await
         .map_err(AppError::internal)?;

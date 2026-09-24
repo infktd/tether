@@ -245,6 +245,19 @@ async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn callback_check_fragment_explains_a_missing_setup_session(db: PgPool) {
+    let h = harness(db, false).await;
+    let res = send(&h.app, htmx(form("/setup/check", "", &[]))).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert!(
+        res.body.contains("Enter the setup token first."),
+        "{}",
+        res.body
+    );
+    assert!(!res.body.contains("<html"));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn static_assets_are_embedded_and_cacheable(db: PgPool) {
     let h = harness(db, false).await;
     for (path, content_type) in [

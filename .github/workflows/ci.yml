@@ -148,6 +148,22 @@ jobs:
           done
           docker compose -f deploy/docker-compose.yml logs
           exit 1
+      - name: Install Hurl (pinned, checksum-verified)
+        run: |
+          arch=$(dpkg --print-architecture)
+          case "$arch" in
+            amd64) sha=e76e6c0957f83f9b761416452871554d0f068384b6cd004bff82dd8795c62225 ;;
+            arm64) sha=7a393b9ff8c15f410657258850c9d27c3b4835b58ce43a6935cf298bb72a8c03 ;;
+          esac
+          curl -fsSL -o hurl.deb "https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl_8.0.1_${arch}.deb"
+          echo "$sha  hurl.deb" | sha256sum -c -
+          sudo apt-get install -y ./hurl.deb
+      - name: Hurl smoke tests (every page and endpoint)
+        run: |
+          hurl --test --insecure --jobs 1 \
+            --variable base=https://localhost \
+            --variable setup_token="$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" \
+            tests/hurl/*.hurl
       - name: Timescale telemetry is off
         run: |
           test "$(docker compose -f deploy/docker-compose.yml exec -T db \

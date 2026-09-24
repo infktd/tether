@@ -103,7 +103,8 @@ scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> stati
 deploy/install.sh localhost    # writes deploy/.env once, then starts the stack
 docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, tiers, jobs, sync
 docker compose -f deploy/docker-compose.yml up --build
-hurl --test tests/hurl/*.hurl
+# Hurl runs against a fresh stack (the setup flow expects no owner yet):
+hurl --test --insecure --jobs 1 --variable base=https://localhost --variable setup_token="$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" tests/hurl/*.hurl
 ```
 
 ## Do not
