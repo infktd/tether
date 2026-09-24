@@ -1,0 +1,20 @@
+# Development only: a database for `cargo test` and the sqlx macros.
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+# DATABASE_URL=postgres://tether:tether@127.0.0.1:5433/tether
+name: tether-dev
+
+services:
+  db:
+    image: timescale/timescaledb:2.30.1-pg16
+    command: ["postgres", "-c", "timescaledb.telemetry_level=off"]
+    environment:
+      POSTGRES_USER: tether
+      POSTGRES_PASSWORD: tether
+      POSTGRES_DB: tether
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - devdata:/var/lib/postgresql/data
+
+volumes:
+  devdata:

@@ -8,6 +8,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends mold \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+# sqlx checks queries against the committed .sqlx/ data; no database needed.
+ENV SQLX_OFFLINE=true
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \

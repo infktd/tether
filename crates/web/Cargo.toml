@@ -10,7 +10,10 @@ workspace = true
 
 [dependencies]
 axum.workspace = true
+tether-db.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+sqlx.workspace = true
 tokio.workspace = true
 tower.workspace = true

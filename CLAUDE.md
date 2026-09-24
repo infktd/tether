@@ -87,6 +87,11 @@ No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bu
 Keep this section updated as the project grows.
 
 ```bash
+docker compose -f deploy/docker-compose.dev.yml up -d   # dev/test database on 127.0.0.1:5433
+echo DATABASE_URL=postgres://tether:tether@127.0.0.1:5433/tether > .env
+cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,rustls --root tools
+tools/bin/sqlx migrate run
+tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; commit .sqlx/
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings

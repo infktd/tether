@@ -1,33 +1,30 @@
 //! The `tether` binary: runs the server and hosts the admin CLI.
 
+mod config;
+
 use std::io::IsTerminal;
-use std::net::SocketAddr;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
+
+use config::ServeConfig;
 
 #[derive(Parser)]
 #[command(name = "tether", version, about = "EVE Online alliance platform")]
-#[command(args_conflicts_with_subcommands = true)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
     /// With no subcommand, `tether` runs the server.
     #[command(flatten)]
-    serve: ServeArgs,
+    serve: Option<ServeConfig>,
 }
 
 #[derive(Subcommand)]
 enum Command {
     /// Run the web server (the default).
-    Serve(ServeArgs),
-}
-
-#[derive(Args)]
-struct ServeArgs {
-    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8080")]
-    listen: SocketAddr,
+    Serve(ServeConfig),
 }
 
 #[tokio::main]
@@ -39,17 +36,38 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    match cli.command.unwrap_or(Command::Serve(cli.serve)) {
-        Command::Serve(args) => serve(args.listen).await,
+    match cli.command {
+        Some(Command::Serve(config)) => serve(config).await,
+        None => match cli.serve {
+            Some(config) => serve(config).await,
+            None => anyhow::bail!("missing configuration; see `tether --help`"),
+        },
     }
 }
 
-async fn serve(listen: SocketAddr) -> anyhow::Result<()> {
-    let listener = tokio::net::TcpListener::bind(listen)
+async fn serve(config: ServeConfig) -> anyhow::Result<()> {
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        public_url = config.public_url(),
+        "starting"
+    );
+
+    let db = tether_db::connect(
+        &config.database_url,
+        &tether_db::ConnectOptions {
+            max_connections: config.database_max_connections,
+            ..Default::default()
+        },
+    )
+    .await?;
+    tether_db::migrate(&db).await?;
+    tracing::info!("database migrations applied");
+
+    let listener = tokio::net::TcpListener::bind(config.listen)
         .await
-        .with_context(|| format!("binding {listen}"))?;
-    tracing::info!(%listen, version = env!("CARGO_PKG_VERSION"), "listening");
-    axum::serve(listener, tether_web::router())
+        .with_context(|| format!("binding {}", config.listen))?;
+    tracing::info!(listen = %config.listen, "listening");
+    axum::serve(listener, tether_web::router(tether_web::AppState { db }))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving HTTP")
