@@ -98,7 +98,7 @@ fn parse_public_url(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, FromArgMatches, Parser};
 
     #[derive(Parser, Debug)]
     struct Wrapper {
@@ -106,10 +106,15 @@ mod tests {
         config: ServeConfig,
     }
 
+    /// Parses flags only. Env lookups are switched off so tests don't depend
+    /// on the machine (CI's test job sets DATABASE_URL, for one).
     fn parse(args: &[&str]) -> Result<ServeConfig, clap::Error> {
         let mut argv = vec!["tether"];
         argv.extend_from_slice(args);
-        Wrapper::try_parse_from(argv).map(|w| w.config)
+        let matches = Wrapper::command()
+            .mut_args(|arg| arg.env(None::<&str>))
+            .try_get_matches_from(argv)?;
+        Wrapper::from_arg_matches(&matches).map(|w| w.config)
     }
 
     #[test]
