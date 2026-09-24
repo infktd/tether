@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tether_core::tiers::{Affiliation, Tier};
 use tether_db::PgPool;
 use tether_db::accounts::AccountId;
+use tether_db::audit::{self, Actor};
 use tether_db::tiers as db;
 use tether_esi::{Esi, EsiError};
 use tether_jobs::{JobError, NewJob, Registry};
@@ -56,7 +57,8 @@ pub async fn refresh_account(
 pub async fn evaluate_account(db: &PgPool, account: AccountId) -> Result<Tier, sqlx::Error> {
     let rules = db::load_rules(db).await?;
     let tier = rules.evaluate(db::main_affiliation(db, account).await?);
-    let previous = db::set_account_tier(db, account, tier).await?;
+    let mut tx = db.begin().await?;
+    let previous = db::set_account_tier(&mut *tx, account, tier).await?;
     if previous != Some(tier) {
         tracing::info!(
             account = account.0,
@@ -64,7 +66,16 @@ pub async fn evaluate_account(db: &PgPool, account: AccountId) -> Result<Tier, s
             to = tier.as_str(),
             "tier changed"
         );
+        audit::record(
+            &mut *tx,
+            Actor::System,
+            "tier.change",
+            Some(&format!("account:{}", account.0)),
+            serde_json::json!({ "from": previous.map(Tier::as_str), "to": tier.as_str() }),
+        )
+        .await?;
     }
+    tx.commit().await?;
     Ok(tier)
 }
 

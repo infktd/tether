@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.group_requests (group_id, account_id) VALUES ($1, $2)\n        ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba34896249719197e48eee65ee2de93e1cd2af85f52c2e2b62094c498757f97d"
+}

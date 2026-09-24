@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.group_requests WHERE group_id = $1 AND account_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ab3249e3a77b0d2f182866b3b86aca34f0bfc63d3334eaa6e7f5c162eb4823e6"
+}

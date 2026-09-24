@@ -188,6 +188,19 @@ impl FromRequestParts<AppState> for CurrentSession {
     }
 }
 
+impl CurrentSession {
+    /// Fails with 403 unless the account holds `permission`.
+    pub async fn require(&self, state: &AppState, permission: &str) -> Result<(), AppError> {
+        let permissions = tether_db::permissions::effective(&state.db, self.account).await?;
+        if permissions.contains(permission) {
+            Ok(())
+        } else {
+            tracing::info!(account = self.account.0, permission, "permission denied");
+            Err(AppError::forbidden())
+        }
+    }
+}
+
 async fn find_session(
     state: &AppState,
     token: &str,

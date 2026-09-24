@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, tier, group_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "permission",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "permission"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "tier",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "tier"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "group_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "27a7c23f5ff6f882c2d92e5ff8a20b1786d9ae760f62f1d8db5a823dd28e1df9"
+}

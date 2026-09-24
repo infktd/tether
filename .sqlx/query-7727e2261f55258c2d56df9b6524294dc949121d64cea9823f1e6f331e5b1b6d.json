@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.account_id, c.name AS main_name\n        FROM core.group_requests r\n        JOIN core.accounts a ON a.id = r.account_id\n        JOIN core.characters c ON c.id = a.main_character_id\n        WHERE r.group_id = $1\n        ORDER BY r.requested_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "main_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7727e2261f55258c2d56df9b6524294dc949121d64cea9823f1e6f331e5b1b6d"
+}

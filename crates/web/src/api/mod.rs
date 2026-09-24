@@ -1,5 +1,8 @@
 //! JSON API.
 
+pub mod admin;
+pub mod groups;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -18,6 +21,8 @@ pub struct Me {
     pub tier: &'static str,
     pub main: CharacterRef,
     pub characters: Vec<CharacterSummary>,
+    pub groups: Vec<String>,
+    pub permissions: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +66,11 @@ pub async fn me(
             id: account.main.id,
             name: account.main.name,
         },
+        groups: tether_db::groups::names_for(&state.db, session.account).await?,
+        permissions: tether_db::permissions::effective(&state.db, session.account)
+            .await?
+            .into_iter()
+            .collect(),
     }))
 }
 
@@ -85,9 +95,6 @@ pub async fn set_main(
         crate::tiers::evaluate_account(&state.db, session.account).await?;
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(AppError::new(
-            StatusCode::NOT_FOUND,
-            "That character isn't on your account.",
-        ))
+        Err(AppError::not_found("That character isn't on your account."))
     }
 }

@@ -9,7 +9,7 @@ pub mod tiers;
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Router, middleware};
 
 pub use state::{AppState, Site};
@@ -23,6 +23,38 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/api/me", get(api::me))
         .route("/api/me/main", post(api::set_main))
+        .route("/api/groups", get(api::groups::list))
+        .route("/api/groups/{id}/join", post(api::groups::join))
+        .route("/api/groups/{id}/leave", post(api::groups::leave))
+        .route("/api/admin/groups", post(api::admin::create_group))
+        .route("/api/admin/groups/{id}", delete(api::admin::delete_group))
+        .route(
+            "/api/admin/groups/{id}/members",
+            post(api::admin::add_member),
+        )
+        .route(
+            "/api/admin/groups/{id}/members/{account_id}",
+            delete(api::admin::remove_member),
+        )
+        .route(
+            "/api/admin/groups/{id}/requests",
+            get(api::admin::list_requests),
+        )
+        .route(
+            "/api/admin/groups/{id}/requests/{account_id}/approve",
+            post(api::admin::approve_request),
+        )
+        .route(
+            "/api/admin/groups/{id}/requests/{account_id}/deny",
+            post(api::admin::deny_request),
+        )
+        .route("/api/admin/permissions", get(api::admin::list_permissions))
+        .route("/api/admin/permissions/grants", post(api::admin::grant))
+        .route(
+            "/api/admin/permissions/grants/{id}",
+            delete(api::admin::revoke),
+        )
+        .route("/api/admin/audit", get(api::admin::audit_log))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf::verify_origin,

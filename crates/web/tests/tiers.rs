@@ -70,6 +70,20 @@ async fn switching_main_re_evaluates_the_tier(db: PgPool) {
     )
     .await;
     assert_eq!(tier_of(&h, &token).await, "member");
+
+    // Each change is in the audit log, attributed to the system.
+    let changes: Vec<(Option<i64>, serde_json::Value)> = sqlx::query_as(
+        "SELECT actor_account_id, details FROM core.audit_log WHERE action = 'tier.change' ORDER BY id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    let to: Vec<&str> = changes
+        .iter()
+        .map(|(_, d)| d["to"].as_str().unwrap())
+        .collect();
+    assert_eq!(to, ["member", "guest", "member"]);
+    assert!(changes.iter().all(|(actor, _)| actor.is_none()));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

@@ -16,10 +16,17 @@ expression: "me(&h, &after_alt).await"
       "name": "Alt Pilot"
     }
   ],
+  "groups": [],
   "is_owner": true,
   "main": {
     "id": 90000001,
     "name": "Main Pilot"
   },
+  "permissions": [
+    "admin.audit",
+    "admin.groups",
+    "admin.permissions",
+    "admin.tiers"
+  ],
   "tier": "guest"
 }

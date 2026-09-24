@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH cleared AS (\n            DELETE FROM core.group_requests WHERE group_id = $1 AND account_id = $2\n        )\n        INSERT INTO core.group_members (group_id, account_id) VALUES ($1, $2)\n        ON CONFLICT DO NOTHING\n        RETURNING true AS \"added!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "added!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b36f83481ea192bb87c061439d8aa9028d8a45e6f81158e9cac8b01b19b616a6"
+}

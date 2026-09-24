@@ -144,8 +144,8 @@ pub async fn main_affiliation(
 }
 
 /// Records the account's tier and returns the previous one.
-pub async fn set_account_tier(
-    pool: &PgPool,
+pub async fn set_account_tier<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
     tier: Tier,
 ) -> Result<Option<Tier>, sqlx::Error> {
@@ -160,7 +160,7 @@ pub async fn set_account_tier(
         account.0,
         tier.as_str(),
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     Ok(previous.as_deref().and_then(Tier::parse))
 }

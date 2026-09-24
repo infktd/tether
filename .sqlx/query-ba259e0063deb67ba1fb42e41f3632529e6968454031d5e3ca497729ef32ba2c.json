@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.audit_log (actor_account_id, actor_name, action, target, details)\n        VALUES (\n            $1,\n            (SELECT c.name FROM core.accounts a\n             JOIN core.characters c ON c.id = a.main_character_id\n             WHERE a.id = $1),\n            $2, $3, $4\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba259e0063deb67ba1fb42e41f3632529e6968454031d5e3ca497729ef32ba2c"
+}
