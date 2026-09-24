@@ -9,7 +9,7 @@ use tether_net::Allowlist;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CLIENT: &str = "42f6d7703b3642f6a04658577ed01522";
+const CLIENT: &str = "0123456789abcdef0123456789abcdef";
 const RSA_KID: &str = "JWT-Signature-Key";
 const EC_KID: &str = "8878a23f-b40b-4cda-8e1e-2a1c7d2b0e3e";
 
