@@ -202,14 +202,13 @@ async fn set_tier(
         TierArg::Member => Tier::Member,
         TierArg::Allied => Tier::Allied,
     };
-    let entity = esi
-        .names(&[entity_id])
-        .await
-        .context("looking the id up on ESI")?
-        .into_iter()
-        .find(|e| e.id == entity_id)
-        .with_context(|| format!("ESI doesn't know id {entity_id}"))?;
-    let Some(kind) = entity.kind else {
+    let entity =
+        tether_esi::names::resolve(db, esi, &[entity_id], tether_esi::Priority::Interactive)
+            .await
+            .context("looking the id up on ESI")?
+            .remove(&entity_id)
+            .with_context(|| format!("ESI doesn't know id {entity_id}"))?;
+    let Some(kind) = entity.kind() else {
         bail!(
             "{entity_id} ({}) is not an alliance or corporation",
             entity.name

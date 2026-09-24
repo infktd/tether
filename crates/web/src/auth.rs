@@ -200,7 +200,14 @@ pub async fn callback(
 
     // Tier from the main's current affiliation. An ESI outage must not
     // block login: keep the stored tier and retry in the background.
-    if let Err(err) = tiers::refresh_account(&state.db, &state.esi, account).await {
+    if let Err(err) = tiers::refresh_account(
+        &state.db,
+        &state.esi,
+        account,
+        tether_esi::Priority::Interactive,
+    )
+    .await
+    {
         tracing::warn!(account = account.0, error = %err, "tier refresh at login failed; queued a retry");
         tiers::enqueue_refresh(&state.db, account).await?;
     }

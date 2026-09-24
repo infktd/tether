@@ -194,7 +194,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Token vault: refresh tokens encrypted at rest with granted scopes, access tokens cached and refreshed before expiry, `invalid_grant` marks the token revoked and prompts re-linking
 - [x] Verify SSO tokens against CCP's JWKS (signature, issuer, audience, expiry); detect character transfers by owner hash and unlink instead of refusing
 - [x] Recurring schedules on the Postgres job queue
-- [ ] ESI layer: shared Postgres response cache honouring Expires and ETag, interactive requests ahead of bulk syncs, error and rate budget state for the dashboard
+- [x] ESI layer: eve-esi-client's shared in-process cache (Expires, ETag) and limits, plus error and rate budget state for the dashboard, interactive requests ahead of bulk work, and a Postgres cache of entity names
 - [ ] Affiliation sync on a schedule re-evaluates every account's tier
 - [ ] Admin pages per docs/DESIGN.md: groups, permissions and tier rules
 - [ ] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
@@ -221,6 +221,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
 - [ ] Plugin database access: raw SQL in their own schema, or a narrower query API, after the spike
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
+- [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
 - [ ] Which three AA plugins to port first, confirmed with NMU leadership, before milestone 3
 - [ ] Licenses of those AA plugins, checked before porting any code

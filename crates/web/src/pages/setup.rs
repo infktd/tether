@@ -248,7 +248,7 @@ pub async fn search(
     }
     let resolved = state
         .esi
-        .resolve_names(&[name])
+        .resolve_names(&[name], tether_esi::Priority::Interactive)
         .await
         .map_err(esi_unavailable)?;
     let mut results: Vec<SearchResult> = resolved

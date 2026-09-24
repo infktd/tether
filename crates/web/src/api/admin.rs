@@ -519,16 +519,18 @@ pub async fn apply_tier_rule(
     entity_id: i64,
     tier: Tier,
 ) -> Result<tier_db::TierRule, AppError> {
-    let entity = state
-        .esi
-        .names(&[entity_id])
-        .await
-        .map_err(esi_unavailable)?
-        .into_iter()
-        .find(|e| e.id == entity_id)
-        .ok_or_else(|| AppError::not_found("ESI doesn't know that id."))?;
+    let entity = tether_esi::names::resolve(
+        &state.db,
+        &state.esi,
+        &[entity_id],
+        tether_esi::Priority::Interactive,
+    )
+    .await
+    .map_err(names_unavailable)?
+    .remove(&entity_id)
+    .ok_or_else(|| AppError::not_found("ESI doesn't know that id."))?;
     let kind = entity
-        .kind
+        .kind()
         .ok_or_else(|| AppError::bad_request("That id isn't an alliance or corporation."))?;
     let rule = tier_db::TierRule {
         entity_id: entity.id,
@@ -615,7 +617,7 @@ pub async fn resolve_names(
     }
     let resolved = state
         .esi
-        .resolve_names(&names)
+        .resolve_names(&names, tether_esi::Priority::Interactive)
         .await
         .map_err(esi_unavailable)?;
     let out = |v: Vec<tether_esi::Entity>| {
@@ -630,6 +632,13 @@ pub async fn resolve_names(
         alliances: out(resolved.alliances),
         corporations: out(resolved.corporations),
     }))
+}
+
+pub(crate) fn names_unavailable(err: tether_esi::names::NamesError) -> AppError {
+    match err {
+        tether_esi::names::NamesError::Esi(err) => esi_unavailable(err),
+        tether_esi::names::NamesError::Db(err) => err.into(),
+    }
 }
 
 pub(crate) fn esi_unavailable(err: tether_esi::EsiError) -> AppError {

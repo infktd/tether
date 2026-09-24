@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO core.entity_names (id, name, category) VALUES ($1, $2, $3)\n            ON CONFLICT (id) DO UPDATE\n            SET name = EXCLUDED.name, category = EXCLUDED.category, fetched_at = now()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8e8b634ceede7183fc77b5f9da688dac206a9493a69cc1b338f54c091017c7c3"
+}

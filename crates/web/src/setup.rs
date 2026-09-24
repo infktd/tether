@@ -122,17 +122,19 @@ async fn suggestion(state: &AppState, session: &CurrentSession) -> Option<Sugges
     let id = affiliation
         .alliance_id
         .unwrap_or(affiliation.corporation_id);
-    let entity = state
-        .esi
-        .names(&[id])
-        .await
-        .ok()?
-        .into_iter()
-        .find(|e| e.id == id)?;
+    let entity = tether_esi::names::resolve(
+        &state.db,
+        &state.esi,
+        &[id],
+        tether_esi::Priority::Interactive,
+    )
+    .await
+    .ok()?
+    .remove(&id)?;
     Some(Suggestion {
         id: entity.id,
+        kind: entity.kind().map_or("unknown", EntityKind::as_str),
         name: entity.name,
-        kind: entity.kind.map_or("unknown", EntityKind::as_str),
     })
 }
 

@@ -7,7 +7,7 @@ use tether_db::PgPool;
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::tiers as db;
-use tether_esi::{Esi, EsiError};
+use tether_esi::{Esi, EsiError, Priority};
 use tether_jobs::{JobError, NewJob, Registry};
 
 /// Job kind: refresh one account's affiliations and tier.
@@ -35,10 +35,11 @@ pub async fn refresh_account(
     db: &PgPool,
     esi: &Esi,
     account: AccountId,
+    priority: Priority,
 ) -> Result<Tier, TierError> {
     let ids = db::character_ids(db, account).await?;
     let fresh: Vec<(i64, Affiliation)> = esi
-        .affiliations(&ids)
+        .affiliations(&ids, priority)
         .await?
         .into_iter()
         .map(|a| {
@@ -123,7 +124,7 @@ pub fn register_jobs(registry: &mut Registry, db: PgPool, esi: Esi) {
         async move {
             let payload: RefreshAccount =
                 serde_json::from_value(job.payload).map_err(JobError::permanent)?;
-            match refresh_account(&db, &esi, AccountId(payload.account_id)).await {
+            match refresh_account(&db, &esi, AccountId(payload.account_id), Priority::Bulk).await {
                 Ok(_) => Ok(()),
                 Err(err) => Err(JobError::retry(err)),
             }

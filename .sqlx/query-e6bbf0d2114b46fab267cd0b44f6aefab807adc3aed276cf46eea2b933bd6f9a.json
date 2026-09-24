@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, name, category FROM core.entity_names\n        WHERE id = ANY($1) AND fetched_at > now() - make_interval(secs => $2)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "category",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "category"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e6bbf0d2114b46fab267cd0b44f6aefab807adc3aed276cf46eea2b933bd6f9a"
+}
