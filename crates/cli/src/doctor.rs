@@ -88,6 +88,8 @@ pub struct Env {
     /// `None` when ENCRYPTION_KEY is unset or invalid for this command.
     pub key: Option<EncryptionKey>,
     pub discord: Discord,
+    /// Normally `https://api.github.com`.
+    pub github_api_url: String,
     pub domain: String,
     pub public_url: String,
     pub sso_metadata_url: String,
@@ -160,6 +162,7 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(setup(&env.db, &env.public_url).await);
     checks.push(jobs(&env.db).await);
     checks.push(discord(env).await);
+    checks.push(updates(&env.db, &env.github_api_url).await);
     checks
 }
 
@@ -365,6 +368,34 @@ pub async fn discord(env: &Env) -> Check {
             NAME,
             err.to_string(),
             format!("Check the settings on {page}."),
+        ),
+    }
+}
+
+pub const GITHUB_API_URL: &str = "https://api.github.com";
+
+/// Update checks are the one reason the host itself talks to GitHub (until
+/// plugins): say whether they're on, and if so whether GitHub answers.
+pub async fn updates(db: &PgPool, api_url: &str) -> Check {
+    const NAME: &str = "update checks";
+    match tether_web::updates::enabled(db).await {
+        Ok(false) => {
+            return Check::ok(NAME, "off: Tether doesn't contact GitHub for updates");
+        }
+        Ok(true) => {}
+        Err(err) => return Check::fail(NAME, err.to_string(), "Fix the database check first."),
+    }
+    let client = match tether_web::updates::http_client() {
+        Ok(client) => client,
+        Err(err) => return Check::fail(NAME, err.to_string(), "This is a bug; please report it."),
+    };
+    match client.get(api_url).send().await {
+        // Any answer means it's reachable; the daily check reports the rest.
+        Ok(_) => Check::ok(NAME, "on: api.github.com answers"),
+        Err(err) => Check::warn(
+            NAME,
+            format!("on, but GitHub didn't answer: {}", chain(&err)),
+            "Allow outbound HTTPS to api.github.com, or switch update checks off on the System admin page.",
         ),
     }
 }

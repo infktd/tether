@@ -88,6 +88,7 @@ async fn doctor() -> anyhow::Result<ExitCode> {
         db,
         esi,
         key,
+        github_api_url: tether_cli::doctor::GITHUB_API_URL.to_owned(),
         discord: tether_discord::Discord::new(
             tether_discord::Endpoints::discord(),
             &user_agent(&config.public_url()),
@@ -141,6 +142,12 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     )?);
     let mut registry = tether_jobs::Registry::new();
     tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
+    tether_web::updates::register_jobs(
+        &mut registry,
+        db.clone(),
+        tether_web::updates::http_client()?,
+        tether_web::updates::UpdateSource::github(),
+    );
     tether_web::pings::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
     tether_web::discord_sync::register_jobs(
         &mut registry,
@@ -157,7 +164,8 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let schedules = tether_web::maintenance::schedules()
         .into_iter()
         .chain(tether_web::sync::schedules())
-        .chain(tether_web::discord_sync::schedules());
+        .chain(tether_web::discord_sync::schedules())
+        .chain(tether_web::updates::schedules());
     for spec in schedules {
         tether_jobs::schedule::ensure(&db, &spec).await?;
     }

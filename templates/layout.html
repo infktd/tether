@@ -29,6 +29,11 @@
       {% if shell.nav.any() %}
       <div class="flex flex-col gap-1">
         <div class="nav-heading">Admin</div>
+        {% if shell.nav.system %}
+        <a href="/admin/system" class="nav-item"{% if shell.active == "system" %} aria-current="page"{% endif %}>
+          {% call icons::icon("activity") %}{% endcall %} System
+        </a>
+        {% endif %}
         {% if shell.nav.groups %}
         <a href="/admin/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
           {% call icons::icon("users") %}{% endcall %} Groups
@@ -47,6 +52,11 @@
         {% if shell.nav.discord %}
         <a href="/admin/discord" class="nav-item"{% if shell.active == "discord" %} aria-current="page"{% endif %}>
           {% call icons::icon("message") %}{% endcall %} Discord
+        </a>
+        {% endif %}
+        {% if shell.nav.audit %}
+        <a href="/admin/audit" class="nav-item"{% if shell.active == "audit" %} aria-current="page"{% endif %}>
+          {% call icons::icon("scroll") %}{% endcall %} Audit log
         </a>
         {% endif %}
         {% if shell.nav.setup %}

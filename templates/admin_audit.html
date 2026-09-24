@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{% block title %}Audit log{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Audit log</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Audit log</h1>
+    <p class="text-muted-foreground mt-1">Every admin action and sign-in change, newest first. Entries can't be edited or deleted.</p>
+  </div>
+
+  <section class="card data-card">
+    {% if rows.is_empty() %}
+    <p class="p-5 text-sm text-muted-foreground">Nothing here yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">When (EVE)</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Details</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="num">{{ r.at }}</td>
+          <td>{{ r.actor }}</td>
+          <td><div class="num font-medium">{{ r.action }}</div>{% if !r.target.is_empty() %}<div class="text-xs text-muted-foreground num">{{ r.target }}</div>{% endif %}</td>
+          <td class="w-full whitespace-normal"><code class="num text-xs break-all">{{ r.details }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <div class="flex gap-3">
+    {% if let Some(before) = older %}<a class="btn" data-variant="outline" href="/admin/audit?before={{ before }}">Older</a>{% endif %}
+    <a class="btn" data-variant="ghost" href="/admin/audit">Newest</a>
+  </div>
+</div>
+{% endblock %}

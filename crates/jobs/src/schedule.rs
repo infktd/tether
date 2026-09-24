@@ -142,6 +142,29 @@ impl Scheduler {
     }
 }
 
+/// A schedule, for admins.
+#[derive(Debug, Clone)]
+pub struct ScheduleRow {
+    pub name: String,
+    pub kind: String,
+    pub every_secs: i32,
+    pub enabled: bool,
+    pub next_run_at: chrono::DateTime<chrono::Utc>,
+    pub last_enqueued_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub async fn list(pool: &PgPool) -> Result<Vec<ScheduleRow>, sqlx::Error> {
+    sqlx::query_as!(
+        ScheduleRow,
+        r#"
+        SELECT name, kind, every_secs, enabled, next_run_at, last_enqueued_at
+        FROM core.schedules ORDER BY name
+        "#
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Deletes succeeded jobs older than `keep`. Dead jobs stay for inspection.
 pub async fn prune_succeeded(pool: &PgPool, keep: Duration) -> Result<u64, sqlx::Error> {
     let result = sqlx::query!(

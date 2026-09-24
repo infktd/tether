@@ -25,6 +25,7 @@ pub mod setup;
 mod state;
 pub mod sync;
 pub mod tiers;
+pub mod updates;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -117,6 +118,14 @@ pub fn router(state: AppState) -> Router {
             "/pings",
             get(pages::pings::pings_page).post(pages::pings::send),
         )
+        .route("/admin/system", get(pages::system::system))
+        .route("/admin/system/updates", post(pages::system::set_updates))
+        .route(
+            "/admin/system/updates/check",
+            post(pages::system::check_updates),
+        )
+        .route("/admin/jobs/{id}/retry", post(pages::system::retry_job))
+        .route("/admin/audit", get(pages::system::audit_log))
         .route("/profile/discord/link", post(pages::discord::link))
         .route("/profile/discord/unlink", post(pages::discord::unlink))
         .route("/discord/callback", get(pages::discord::callback))

@@ -60,10 +60,12 @@ pub async fn index(
     let session = session.ok_or_else(AppError::unauthorized)?;
     let perms = permissions::effective(&state.db, session.account).await?;
     for (permission, page) in [
+        (tether_core::permissions::ADMIN_SYSTEM, "/admin/system"),
         (ADMIN_GROUPS, "/admin/groups"),
         (ADMIN_PERMISSIONS, "/admin/permissions"),
         (ADMIN_TIERS, "/admin/tiers"),
         (tether_core::permissions::ADMIN_DISCORD, "/admin/discord"),
+        (tether_core::permissions::ADMIN_AUDIT, "/admin/audit"),
     ] {
         if perms.contains(permission) {
             return Ok(Redirect::to(page));

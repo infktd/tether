@@ -200,7 +200,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
 - [x] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries (including taking back a role whose mapping was removed)
 - [x] Fleet pings to Discord channels with role targeting
-- [ ] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
+- [x] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
 - [ ] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor`; admin routes optionally on a separate listener (N6)
 
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)

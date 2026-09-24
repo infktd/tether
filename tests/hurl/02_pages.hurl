@@ -234,3 +234,34 @@ Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
+
+# The admin dashboard and audit log need a session.
+GET {{base}}/admin/system
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/system/updates
+Origin: {{base}}
+[Form]
+enabled: on
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/system/updates/check
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/jobs/1/retry
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"

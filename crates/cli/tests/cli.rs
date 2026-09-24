@@ -448,6 +448,7 @@ async fn doctor_prints_fixes_and_fails_overall(db: PgPool) {
         https_port: 443,
         key: None,
         discord: unreachable_discord(),
+        github_api_url: "http://127.0.0.1:9".into(),
     };
     let mut out = Vec::new();
 
@@ -480,6 +481,7 @@ async fn doctor_skips_network_checks_for_localhost(db: PgPool) {
         https_port: 443,
         key: None,
         discord: unreachable_discord(),
+        github_api_url: "http://127.0.0.1:9".into(),
     };
     let checks = doctor::checks(&env).await;
     for name in ["port 80", "port 443", "https", "public url"] {
@@ -520,6 +522,7 @@ async fn discord_env(db: PgPool, key: Option<EncryptionKey>, server: &MockServer
             "tether tests",
         )
         .unwrap(),
+        github_api_url: "http://127.0.0.1:9".into(),
     }
 }
 
@@ -597,4 +600,32 @@ async fn doctor_says_how_to_fix_a_rejected_bot_token(db: PgPool) {
     let check = doctor::discord(&discord_env(db, Some(key("01")), &server).await).await;
     assert_eq!(check.status, Status::Fail, "{check:?}");
     assert!(check.fix.unwrap().contains("Reset the token"));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn doctor_reports_update_checks(db: PgPool) {
+    let github = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&github)
+        .await;
+    let on = doctor::updates(&db, &github.uri()).await;
+    assert_eq!(on.status, Status::Ok, "{on:?}");
+    assert!(on.detail.starts_with("on"));
+
+    let unreachable = doctor::updates(&db, "http://127.0.0.1:9").await;
+    assert_eq!(unreachable.status, Status::Warn, "{unreachable:?}");
+    assert!(
+        unreachable
+            .fix
+            .unwrap()
+            .contains("switch update checks off")
+    );
+
+    settings::set(&db, "updates.enabled", json!(false))
+        .await
+        .unwrap();
+    let off = doctor::updates(&db, "http://127.0.0.1:9").await;
+    assert_eq!(off.status, Status::Ok);
+    assert!(off.detail.starts_with("off"));
 }

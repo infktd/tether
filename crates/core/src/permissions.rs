@@ -6,6 +6,7 @@ pub const ADMIN_PERMISSIONS: &str = "admin.permissions";
 pub const ADMIN_TIERS: &str = "admin.tiers";
 pub const ADMIN_AUDIT: &str = "admin.audit";
 pub const ADMIN_DISCORD: &str = "admin.discord";
+pub const ADMIN_SYSTEM: &str = "admin.system";
 pub const FLEET_PING: &str = "fleet.ping";
 
 /// Every permission that can be granted, with a description for admins.
@@ -23,6 +24,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Choose which alliances and corporations are Member or Allied",
     ),
     (ADMIN_AUDIT, "Read the audit log"),
+    (
+        ADMIN_SYSTEM,
+        "See ESI, job queue and update status; retry failed jobs; switch update checks",
+    ),
     (
         ADMIN_DISCORD,
         "Set up the Discord bot and choose which roles tiers and groups get",

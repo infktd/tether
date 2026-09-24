@@ -1,0 +1,132 @@
+{% extends "layout.html" %}
+{% block title %}System{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">System</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">System</h1>
+    <p class="text-muted-foreground mt-1">ESI health, the job queue and platform updates. Counts are since this instance last started.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  <section class="grid grid-cols-4 gap-4" aria-label="Summary">
+    <div class="card stat">
+      <div class="stat-label">ESI</div>
+      {% if let Some(online) = esi_online %}
+      <div class="stat-value"><span class="badge" data-variant="secondary">Answering</span></div>
+      <div class="stat-caption"><span class="num">{{ online }}</span> pilots online</div>
+      {% else %}
+      <div class="stat-value"><span class="badge" data-variant="destructive">Down</span></div>
+      <div class="stat-caption">{% if let Some(e) = esi_error %}{{ e }}{% endif %}</div>
+      {% endif %}
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Error budget</div>
+      <div class="stat-value num">{% if let Some(r) = budget.error_remain %}{{ r }}{% else %}—{% endif %}</div>
+      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% if let Some(low) = budget.lowest_error_remain %}; lowest <span class="num">{{ low }}</span>{% endif %}{% else %}ESI hasn't reported one yet{% endif %}</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Budget exceeded</div>
+      <div class="stat-value num">{{ budget.counts.error_limited }}</div>
+      <div class="stat-caption">HTTP 420s; must stay 0</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Dead jobs</div>
+      <div class="stat-value num">{{ dead_count }}</div>
+      <div class="stat-caption">Gave up after retrying</div>
+    </div>
+  </section>
+
+  <section class="card data-card">
+    <header><h2>ESI requests</h2></header>
+    <table class="table">
+      <thead><tr><th scope="col">OK</th><th scope="col">Not modified</th><th scope="col">4xx</th><th scope="col">5xx</th><th scope="col">420 (budget)</th><th scope="col">429 (rate)</th><th scope="col">No response</th></tr></thead>
+      <tbody>
+        <tr class="num">
+          <td>{{ budget.counts.ok }}</td><td>{{ budget.counts.not_modified }}</td><td>{{ budget.counts.client_errors }}</td><td>{{ budget.counts.server_errors }}</td><td>{{ budget.counts.error_limited }}</td><td>{{ budget.counts.rate_limited }}</td><td>{{ budget.counts.transport_errors }}</td>
+        </tr>
+      </tbody>
+    </table>
+    {% if !budget.groups.is_empty() %}
+    <table class="table">
+      <thead><tr><th scope="col">Rate-limit group</th><th scope="col">Limit</th><th scope="col">Remaining</th><th scope="col">Seen</th></tr></thead>
+      <tbody>
+        {% for g in budget.groups %}
+        <tr><td class="num">{{ g.name }}</td><td class="num">{{ g.limit }}</td><td class="num">{% if let Some(r) = g.remaining %}{{ r }}{% else %}—{% endif %}</td><td class="num">{{ g.observed_secs_ago }} s ago</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="card data-card">
+    <header><h2>Job queue</h2></header>
+    <table class="table">
+      <thead><tr>{% for j in jobs %}<th scope="col">{{ j.state }}</th>{% endfor %}</tr></thead>
+      <tbody><tr class="num">{% for j in jobs %}<td>{{ j.count }}</td>{% endfor %}</tr></tbody>
+    </table>
+    {% if !dead.is_empty() %}
+    <table class="table">
+      <thead><tr><th scope="col">Dead job</th><th scope="col">Last error</th><th scope="col">Tries</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for j in dead %}
+        <tr>
+          <td><div class="font-medium num">{{ j.kind }}</div><div class="text-xs text-muted-foreground num">#{{ j.id }} · {{ j.when }}</div></td>
+          <td class="w-full whitespace-normal"><div class="line-clamp-2 break-words text-sm">{{ j.error }}</div></td>
+          <td class="num">{{ j.attempts }}</td>
+          <td class="text-right">
+            <form method="post" action="/admin/jobs/{{ j.id }}/retry">
+              <button type="submit" class="btn" data-variant="outline" data-size="sm">Retry</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="card data-card">
+    <header><h2>Schedules</h2></header>
+    <table class="table">
+      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last queued</th><th scope="col">Next</th></tr></thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <td class="num">{{ s.name }}{% if !s.enabled %} <span class="badge" data-variant="outline">off</span>{% endif %}</td>
+          <td>{{ s.every }}</td>
+          <td class="num">{{ s.last_run }}</td>
+          <td class="num">{{ s.next_run }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <header><h2>Platform updates</h2><p>Once a day, Tether asks GitHub whether a newer release exists. Upgrading is still yours to do: change the image tag.</p></header>
+    <section class="flex flex-col gap-3 text-sm">
+      <p>This instance runs <span class="num text-foreground">{{ updates.current }}</span>.
+        {% if !updates.enabled %}Update checks are off.
+        {% else if updates.newer %}{% if let Some(latest) = updates.latest %}<strong class="text-foreground">{{ latest }} is available.</strong>{% endif %}{% if let Some(url) = updates.url %} <a class="underline underline-offset-4" href="{{ url }}" rel="noreferrer" target="_blank">Release notes</a>{% endif %}
+        {% else if let Some(latest) = updates.latest %}The latest release is {{ latest }}: up to date.
+        {% else if updates.no_releases %}Nothing has been released yet.
+        {% else %}Not checked yet.{% endif %}
+      </p>
+      {% if updates.enabled %}{% if let Some(e) = updates.error %}<p class="text-destructive">The last check failed: {{ e }}</p>{% endif %}{% endif %}
+      {% if let Some(at) = updates.checked_at %}<p class="text-xs text-muted-foreground">Last checked {{ at }} (EVE time)</p>{% endif %}
+    </section>
+    <footer class="gap-3">
+      <form method="post" action="/admin/system/updates" class="flex items-center gap-3">
+        <label class="label gap-2"><input type="checkbox" class="input" name="enabled" value="on"{% if updates.enabled %} checked{% endif %}> Check for updates</label>
+        <button type="submit" class="btn" data-variant="outline" data-size="sm">Save</button>
+      </form>
+      {% if updates.enabled %}
+      <form method="post" action="/admin/system/updates/check">
+        <button type="submit" class="btn" data-variant="outline" data-size="sm">Check now</button>
+      </form>
+      {% endif %}
+    </footer>
+  </section>
+</div>
+{% endblock %}

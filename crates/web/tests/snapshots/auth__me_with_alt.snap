@@ -27,6 +27,7 @@ expression: "me(&h, &after_alt).await"
     "admin.discord",
     "admin.groups",
     "admin.permissions",
+    "admin.system",
     "admin.tiers",
     "fleet.ping"
   ],

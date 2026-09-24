@@ -7,6 +7,7 @@ pub mod discord;
 pub mod headers;
 pub mod pings;
 pub mod setup;
+pub mod system;
 
 use askama::Template;
 use axum::Form;
@@ -145,6 +146,8 @@ pub struct AdminNav {
     pub permissions: bool,
     pub tiers: bool,
     pub discord: bool,
+    pub system: bool,
+    pub audit: bool,
     pub setup: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
@@ -152,7 +155,13 @@ pub struct AdminNav {
 
 impl AdminNav {
     pub fn any(&self) -> bool {
-        self.groups || self.permissions || self.tiers || self.discord || self.setup
+        self.groups
+            || self.permissions
+            || self.tiers
+            || self.discord
+            || self.system
+            || self.audit
+            || self.setup
     }
 }
 
@@ -242,6 +251,8 @@ pub(crate) async fn load(
         permissions: perms.contains(tether_core::permissions::ADMIN_PERMISSIONS),
         tiers: perms.contains(tether_core::permissions::ADMIN_TIERS),
         discord: perms.contains(tether_core::permissions::ADMIN_DISCORD),
+        system: perms.contains(tether_core::permissions::ADMIN_SYSTEM),
+        audit: perms.contains(tether_core::permissions::ADMIN_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };
