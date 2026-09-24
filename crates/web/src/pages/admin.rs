@@ -24,7 +24,7 @@ use crate::auth::CurrentSession;
 use crate::error::AppError;
 
 /// Signed in (else the login page) and holding `permission` (else 403).
-async fn guard(
+pub(crate) async fn guard(
     state: &AppState,
     session: Option<CurrentSession>,
     permission: &str,
@@ -44,7 +44,7 @@ fn policy_label(policy: JoinPolicy) -> &'static str {
     }
 }
 
-fn tier_label(tier: &str) -> &'static str {
+pub(crate) fn tier_label(tier: &str) -> &'static str {
     match tier {
         "member" => "Member",
         "allied" => "Allied",
@@ -63,6 +63,7 @@ pub async fn index(
         (ADMIN_GROUPS, "/admin/groups"),
         (ADMIN_PERMISSIONS, "/admin/permissions"),
         (ADMIN_TIERS, "/admin/tiers"),
+        (tether_core::permissions::ADMIN_DISCORD, "/admin/discord"),
     ] {
         if perms.contains(permission) {
             return Ok(Redirect::to(page));
@@ -430,6 +431,18 @@ pub struct GrantForm {
     grantee: String,
 }
 
+/// A `<select>` value: `tier:member` or `group:<id>`.
+pub(crate) fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
+    match value.split_once(':') {
+        Some(("tier", tier)) => admin::grantee(Some(tier), None),
+        Some(("group", id)) => id
+            .parse()
+            .map_err(|_| AppError::bad_request("Choose a tier or a group."))
+            .and_then(|id| admin::grantee(None, Some(id))),
+        _ => Err(AppError::bad_request("Choose a tier or a group.")),
+    }
+}
+
 /// `POST /admin/permissions/grant`
 pub async fn grant(
     State(state): State<AppState>,
@@ -437,15 +450,7 @@ pub async fn grant(
     Form(form): Form<GrantForm>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
-    let grantee = match form.grantee.split_once(':') {
-        Some(("tier", tier)) => admin::grantee(Some(tier), None),
-        Some(("group", id)) => id
-            .parse()
-            .map_err(|_| AppError::bad_request("Choose a tier or a group."))
-            .and_then(|id| admin::grantee(None, Some(id))),
-        _ => Err(AppError::bad_request("Choose a tier or a group.")),
-    };
-    let result = match grantee {
+    let result = match parse_grantee(&form.grantee) {
         Ok(grantee) => admin::grant(&state, session.account, &form.permission, grantee)
             .await
             .map(|_| ()),

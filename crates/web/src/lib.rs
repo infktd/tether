@@ -13,6 +13,7 @@ pub mod auth;
 mod csrf;
 #[cfg(feature = "dev-login")]
 mod dev_login;
+pub mod discord;
 mod error;
 pub mod maintenance;
 pub mod openapi;
@@ -92,6 +93,18 @@ pub fn router(state: AppState) -> Router {
             post(pages::admin::remove_rule),
         )
         .route("/admin/tiers/search", post(pages::admin::search))
+        .route(
+            "/admin/discord",
+            get(pages::discord::admin).post(pages::discord::save_settings),
+        )
+        .route("/admin/discord/mappings", post(pages::discord::add_mapping))
+        .route(
+            "/admin/discord/mappings/{id}/remove",
+            post(pages::discord::remove_mapping),
+        )
+        .route("/profile/discord/link", post(pages::discord::link))
+        .route("/profile/discord/unlink", post(pages::discord::unlink))
+        .route("/discord/callback", get(pages::discord::callback))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/auth/login", get(auth::login))
@@ -212,10 +225,18 @@ mod tests {
         AppState {
             vault: std::sync::Arc::new(tether_esi::vault::TokenVault::new(
                 db.clone(),
-                key,
+                key.clone(),
                 sso.clone(),
                 "https://tether.test/auth/callback".into(),
             )),
+            key: key.clone(),
+            discord: std::sync::Arc::new(
+                tether_discord::Discord::new(
+                    tether_discord::Endpoints::local("127.0.0.1:9"),
+                    "tether tests",
+                )
+                .unwrap(),
+            ),
             db,
             esi: tether_esi::Esi::new("tether tests", Some("http://127.0.0.1:9")).unwrap(),
             sso,

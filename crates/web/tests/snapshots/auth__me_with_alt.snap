@@ -24,6 +24,7 @@ expression: "me(&h, &after_alt).await"
   },
   "permissions": [
     "admin.audit",
+    "admin.discord",
     "admin.groups",
     "admin.permissions",
     "admin.tiers"

@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod assets;
+pub mod discord;
 pub mod headers;
 pub mod setup;
 
@@ -142,12 +143,13 @@ pub struct AdminNav {
     pub groups: bool,
     pub permissions: bool,
     pub tiers: bool,
+    pub discord: bool,
     pub setup: bool,
 }
 
 impl AdminNav {
     pub fn any(&self) -> bool {
-        self.groups || self.permissions || self.tiers || self.setup
+        self.groups || self.permissions || self.tiers || self.discord || self.setup
     }
 }
 
@@ -201,6 +203,7 @@ struct ProfilePage {
     characters: Vec<CharacterRow>,
     groups: Vec<String>,
     permissions: Vec<String>,
+    discord: Option<discord::DiscordCard>,
     error: Option<String>,
 }
 
@@ -235,6 +238,7 @@ pub(crate) async fn load(
         groups: perms.contains(tether_core::permissions::ADMIN_GROUPS),
         permissions: perms.contains(tether_core::permissions::ADMIN_PERMISSIONS),
         tiers: perms.contains(tether_core::permissions::ADMIN_TIERS),
+        discord: perms.contains(tether_core::permissions::ADMIN_DISCORD),
         setup: account.is_owner,
     };
     let characters = account
@@ -288,6 +292,7 @@ pub async fn profile(
             characters: loaded.characters,
             groups,
             permissions,
+            discord: discord::card(&state, session.account).await?,
             error: None,
         },
     ))

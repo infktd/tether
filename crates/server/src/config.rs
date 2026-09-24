@@ -1,7 +1,7 @@
 //! Configuration, read from the environment (flags work too, for local use).
 //!
-//! `.env` in a deployment holds only DOMAIN, POSTGRES_PASSWORD and
-//! SETUP_TOKEN; compose turns those into the variables below. Everything else
+//! `.env` in a deployment holds only DOMAIN, POSTGRES_PASSWORD, SETUP_TOKEN
+//! and ENCRYPTION_KEY; compose turns those into the variables below. Everything else
 //! is configured in the browser and stored in the database.
 
 use std::net::SocketAddr;
@@ -21,7 +21,9 @@ pub struct ServeConfig {
     #[arg(long, env = "DATABASE_MAX_CONNECTIONS", default_value_t = 10)]
     pub database_max_connections: u32,
 
-    /// Background job workers (tokio tasks in this process).
+    /// Background job workers (tokio tasks in this process). Keep this well
+    /// below DATABASE_MAX_CONNECTIONS: some jobs (Discord role removal) hold
+    /// a connection across Discord calls.
     #[arg(long, env = "JOB_WORKERS", default_value_t = 4)]
     pub job_workers: usize,
 
@@ -83,6 +85,10 @@ pub struct ToolConfig {
 
     #[arg(long, env = "PUBLIC_URL", value_parser = parse_public_url)]
     pub public_url: Option<String>,
+
+    /// Lets `doctor` open the stored Discord secrets to check them.
+    #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]
+    pub encryption_key: Option<Secret<String>>,
 }
 
 impl ToolConfig {

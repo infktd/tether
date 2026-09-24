@@ -117,10 +117,19 @@ pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<Str
     Ok(permissions.into_iter().collect())
 }
 
-fn split(grantee: Grantee) -> (Option<&'static str>, Option<i64>) {
+pub(crate) fn split(grantee: Grantee) -> (Option<&'static str>, Option<i64>) {
     match grantee {
         Grantee::Tier(tier) => (Some(tier.as_str()), None),
         Grantee::Group(group) => (None, Some(group.0)),
+    }
+}
+
+/// Rebuilds a grantee from its `(tier, group_id)` columns.
+pub(crate) fn grantee_from(tier: Option<String>, group: Option<i64>) -> Option<Grantee> {
+    match (tier, group) {
+        (Some(tier), None) => Some(Grantee::Tier(Tier::parse(&tier)?)),
+        (None, Some(group)) => Some(Grantee::Group(GroupId(group))),
+        _ => None,
     }
 }
 
@@ -130,11 +139,7 @@ fn to_grant(
     tier: Option<String>,
     group: Option<i64>,
 ) -> Option<Grant> {
-    let grantee = match (tier, group) {
-        (Some(tier), None) => Grantee::Tier(Tier::parse(&tier)?),
-        (None, Some(group)) => Grantee::Group(GroupId(group)),
-        _ => return None,
-    };
+    let grantee = grantee_from(tier, group)?;
     Some(Grant {
         id,
         permission,

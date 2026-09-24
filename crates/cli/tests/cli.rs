@@ -4,8 +4,11 @@ use serde_json::json;
 use sqlx::PgPool;
 use tether_cli::doctor::{self, Status};
 use tether_cli::{Command, JobsCommand, TierArg, TiersCommand, UsersCommand, run};
+use tether_core::Secret;
+use tether_core::crypto::EncryptionKey;
 use tether_db::accounts::{self, AccountId};
 use tether_db::settings;
+use tether_discord::{Discord, DiscordConfig, Endpoints};
 use tether_esi::Esi;
 use tether_jobs::NewJob;
 use wiremock::matchers::{method, path};
@@ -443,6 +446,8 @@ async fn doctor_prints_fixes_and_fails_overall(db: PgPool) {
         sso_metadata_url: format!("{}/.well-known/oauth-authorization-server", server.uri()),
         http_port: 80,
         https_port: 443,
+        key: None,
+        discord: unreachable_discord(),
     };
     let mut out = Vec::new();
 
@@ -454,7 +459,10 @@ async fn doctor_prints_fixes_and_fails_overall(db: PgPool) {
     assert!(out.contains("[FAIL] dns"));
     assert!(out.contains("[skip] port 80: needs DNS"));
     assert!(out.contains("[skip] https: needs DNS"));
-    assert!(out.contains("[skip] discord"));
+    assert!(
+        out.contains("[WARN] discord: ENCRYPTION_KEY isn't set"),
+        "{out}"
+    );
     assert!(out.contains("fix: Create an A"));
 }
 
@@ -470,10 +478,123 @@ async fn doctor_skips_network_checks_for_localhost(db: PgPool) {
         sso_metadata_url: format!("{}/.well-known/oauth-authorization-server", server.uri()),
         http_port: 80,
         https_port: 443,
+        key: None,
+        discord: unreachable_discord(),
     };
     let checks = doctor::checks(&env).await;
     for name in ["port 80", "port 443", "https", "public url"] {
         let check = checks.iter().find(|c| c.name == name).unwrap();
         assert_eq!(check.status, Status::Skip, "{check:?}");
     }
+}
+
+fn unreachable_discord() -> Discord {
+    Discord::new(Endpoints::local("127.0.0.1:9"), "tether tests").unwrap()
+}
+
+fn key(byte: &str) -> EncryptionKey {
+    EncryptionKey::from_hex(&Secret::new(byte.repeat(32))).unwrap()
+}
+
+fn discord_fixture(name: &str) -> serde_json::Value {
+    let path = format!(
+        "{}/../../tests/fixtures/discord/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+async fn discord_env(db: PgPool, key: Option<EncryptionKey>, server: &MockServer) -> doctor::Env {
+    let (_, esi) = mock_esi().await;
+    doctor::Env {
+        db,
+        esi,
+        domain: "localhost".into(),
+        public_url: "https://tether.test".into(),
+        sso_metadata_url: "http://127.0.0.1:9/".into(),
+        http_port: 80,
+        https_port: 443,
+        key,
+        discord: Discord::new(
+            Endpoints::local(server.address().to_string()),
+            "tether tests",
+        )
+        .unwrap(),
+    }
+}
+
+async fn save_discord(db: &PgPool, key: &EncryptionKey) {
+    let config = DiscordConfig {
+        application_id: 111_111_111_111_111_111,
+        client_secret: Secret::new("client-secret".to_owned()),
+        bot_token: Secret::new("bot-token".to_owned()),
+        guild_id: 222_222_222_222_222_222,
+    };
+    let mut tx = db.begin().await.unwrap();
+    tether_discord::store::save(&mut tx, key, &config)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn doctor_checks_the_discord_bot(db: PgPool) {
+    let server = MockServer::start().await;
+    for (route, fixture) in [
+        ("/api/v10/users/@me", "bot_user"),
+        ("/api/v10/guilds/222222222222222222", "guild"),
+        ("/api/v10/guilds/222222222222222222/roles", "roles"),
+        (
+            "/api/v10/guilds/222222222222222222/members/111111111111111111",
+            "bot_member",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_json(discord_fixture(fixture)))
+            .mount(&server)
+            .await;
+    }
+
+    // No key for this command: can't look.
+    let check = doctor::discord(&discord_env(db.clone(), None, &server).await).await;
+    assert_eq!(check.status, Status::Warn, "{check:?}");
+    assert!(check.fix.unwrap().contains("docker compose exec"));
+
+    // Not set up yet.
+    let check = doctor::discord(&discord_env(db.clone(), Some(key("01")), &server).await).await;
+    assert_eq!(check.status, Status::Warn, "{check:?}");
+    assert!(
+        check
+            .fix
+            .unwrap()
+            .contains("https://tether.test/admin/discord")
+    );
+
+    save_discord(&db, &key("01")).await;
+    let check = doctor::discord(&discord_env(db.clone(), Some(key("01")), &server).await).await;
+    assert_eq!(check.status, Status::Ok, "{check:?}");
+    assert_eq!(check.detail, "bot Tether is in New Miner's Union");
+
+    // ENCRYPTION_KEY changed since the secrets were saved.
+    let check = doctor::discord(&discord_env(db.clone(), Some(key("02")), &server).await).await;
+    assert_eq!(check.status, Status::Fail, "{check:?}");
+    assert!(check.fix.unwrap().contains("ENCRYPTION_KEY"));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn doctor_says_how_to_fix_a_rejected_bot_token(db: PgPool) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v10/users/@me"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(json!({"code": 0, "message": "401: Unauthorized"})),
+        )
+        .mount(&server)
+        .await;
+    save_discord(&db, &key("01")).await;
+    let check = doctor::discord(&discord_env(db, Some(key("01")), &server).await).await;
+    assert_eq!(check.status, Status::Fail, "{check:?}");
+    assert!(check.fix.unwrap().contains("Reset the token"));
 }

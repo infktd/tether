@@ -25,6 +25,7 @@ clap.workspace = true
 tether-cli.workspace = true
 tether-core.workspace = true
 tether-db.workspace = true
+tether-discord.workspace = true
 tether-esi.workspace = true
 tether-jobs.workspace = true
 tether-web.workspace = true

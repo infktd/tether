@@ -30,6 +30,7 @@ tether-esi.workspace = true
 tether-jobs.workspace = true
 thiserror.workspace = true
 tether-db.workspace = true
+tether-discord.workspace = true
 tracing.workspace = true
 utoipa.workspace = true
 

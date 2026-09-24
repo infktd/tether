@@ -14,6 +14,7 @@ use tether_db::settings;
 use tether_esi::Esi;
 
 use tether_core::crypto::EncryptionKey;
+use tether_discord::{Discord, Endpoints};
 use tether_esi::sso::{
     PendingLogin, RefreshFuture, Sso, SsoConfig, SsoError, SsoFuture, SsoIdentity, SsoTokens,
 };
@@ -169,6 +170,10 @@ pub struct Harness {
     pub vault: Arc<TokenVault>,
     /// Mock ESI; serves recorded fixtures.
     pub esi_server: MockServer,
+    /// Mock Discord; tests mount what they need.
+    pub discord_server: MockServer,
+    pub discord: Arc<Discord>,
+    pub key: EncryptionKey,
 }
 
 /// Serves `tests/fixtures/esi/characters_affiliation.json`, filtered to the
@@ -272,7 +277,17 @@ pub async fn harness_full(
         sso.clone(),
         format!("{site}/auth/callback"),
     ));
+    let discord_server = MockServer::start().await;
+    let discord = Arc::new(
+        Discord::new(
+            Endpoints::local(discord_server.address().to_string()),
+            "tether tests",
+        )
+        .unwrap(),
+    );
     let app = router(AppState {
+        key: test_key(),
+        discord: discord.clone(),
         db: db.clone(),
         esi: esi.clone(),
         vault: vault.clone(),
@@ -288,6 +303,9 @@ pub async fn harness_full(
         sso,
         vault,
         esi_server,
+        discord_server,
+        discord,
+        key: test_key(),
     }
 }
 

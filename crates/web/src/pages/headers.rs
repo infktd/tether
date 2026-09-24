@@ -10,10 +10,14 @@ use crate::AppState;
 /// Only our own origin, plus character portraits and logos from CCP's image
 /// server (the one external request browsers make, per DESIGN.md). `data:`
 /// images are allowed because Basecoat draws select chevrons as inline SVG
-/// images; images can't run script. No inline scripts, no eval, no framing.
+/// images; images can't run script. Forms post only to us, but browsers
+/// apply form-action to the redirect after a post too, so the "Link
+/// Discord" form (post, then 303 to Discord's authorize page) needs
+/// discord.com. No inline scripts, no eval, no framing.
 const CSP: &str = "default-src 'self'; img-src 'self' data: https://images.evetech.net; \
     script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; \
-    object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    object-src 'none'; base-uri 'self'; form-action 'self' https://discord.com; \
+    frame-ancestors 'none'";
 
 pub async fn security_headers(
     State(state): State<AppState>,

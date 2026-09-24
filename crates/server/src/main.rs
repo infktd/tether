@@ -79,9 +79,19 @@ async fn admin(command: tether_cli::Command) -> anyhow::Result<()> {
 
 async fn doctor() -> anyhow::Result<ExitCode> {
     let (config, db, esi) = tool_context().await?;
+    // A bad key is reported by the Discord check, not fatal here.
+    let key = config
+        .encryption_key
+        .as_ref()
+        .and_then(|k| tether_core::crypto::EncryptionKey::from_hex(k).ok());
     let env = tether_cli::doctor::Env {
         db,
         esi,
+        key,
+        discord: tether_discord::Discord::new(
+            tether_discord::Endpoints::discord(),
+            &user_agent(&config.public_url()),
+        )?,
         domain: config.domain.clone(),
         public_url: config.public_url(),
         sso_metadata_url: tether_cli::doctor::SSO_METADATA_URL.to_owned(),
@@ -124,7 +134,13 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
 
     let esi = tether_esi::Esi::new(&user_agent(&config.public_url()), None)?;
 
+    let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
+    let discord = std::sync::Arc::new(tether_discord::Discord::new(
+        tether_discord::Endpoints::discord(),
+        &user_agent(&config.public_url()),
+    )?);
     let mut registry = tether_jobs::Registry::new();
+    tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
     tether_web::tiers::register_jobs(&mut registry, db.clone(), esi.clone());
     tether_web::maintenance::register_jobs(&mut registry, db.clone());
     tether_web::sync::register_jobs(&mut registry, db.clone(), esi.clone());
@@ -163,7 +179,6 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         );
     }
 
-    let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
     let verifier = tether_esi::jwt::JwtVerifier::new(
         &user_agent(&config.public_url()),
         tether_esi::jwt::CCP_JWKS_URL,
@@ -173,12 +188,14 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let site = tether_web::Site::new(config.public_url());
     let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
         db.clone(),
-        key,
+        key.clone(),
         sso.clone(),
         site.sso_callback_url(),
     ));
     let state = tether_web::AppState {
         vault,
+        key,
+        discord,
         db,
         esi,
         setup_token: std::sync::Arc::new(setup_token),

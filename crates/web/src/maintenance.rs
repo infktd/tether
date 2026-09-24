@@ -1,5 +1,5 @@
-//! Housekeeping on a schedule: expired sessions, login attempts and setup
-//! sessions, and succeeded jobs older than a week.
+//! Housekeeping on a schedule: expired sessions, login attempts, setup
+//! sessions and Discord link attempts, and succeeded jobs older than a week.
 
 use std::time::Duration;
 
@@ -21,11 +21,13 @@ pub fn schedules() -> Vec<ScheduleSpec> {
 
 pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
     let expired = tether_db::auth::prune_expired(db).await?;
+    let discord_links = tether_db::discord::prune_attempts(db).await?;
     let jobs = tether_jobs::schedule::prune_succeeded(db, KEEP_SUCCEEDED).await?;
     tracing::info!(
         sessions = expired.sessions,
         login_attempts = expired.login_attempts,
         setup_sessions = expired.setup_sessions,
+        discord_links,
         jobs,
         "pruned"
     );

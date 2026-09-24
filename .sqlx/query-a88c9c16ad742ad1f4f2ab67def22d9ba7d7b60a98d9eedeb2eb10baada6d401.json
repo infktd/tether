@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.discord_links (account_id, discord_user_id, username)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (account_id) DO UPDATE\n            SET discord_user_id = EXCLUDED.discord_user_id,\n                username = EXCLUDED.username,\n                linked_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a88c9c16ad742ad1f4f2ab67def22d9ba7d7b60a98d9eedeb2eb10baada6d401"
+}

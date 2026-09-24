@@ -197,8 +197,8 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] ESI layer: eve-esi-client's shared in-process cache (Expires, ETag) and limits, plus error and rate budget state for the dashboard, interactive requests ahead of bulk work, and a Postgres cache of entity names
 - [x] Affiliation sync on a schedule re-evaluates every account's tier
 - [x] Admin pages per docs/DESIGN.md: groups, permissions and tier rules
-- [ ] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
-- [ ] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries
+- [x] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
+- [ ] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries (including taking back a role whose mapping was removed)
 - [ ] Fleet pings to Discord channels with role targeting
 - [ ] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
 - [ ] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor`; admin routes optionally on a separate listener (N6)
@@ -219,6 +219,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] Project name, before the first public repo
 - [ ] License: AGPL or MIT/Apache, before the first public repo
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
+- [ ] Whether Guests may join the Discord server through Tether, at the milestone 1 review. For now only Member and Allied pilots can link: anyone with an EVE character is Guest, so letting Guests link would bypass the server's own invites
 - [ ] Plugin database access: raw SQL in their own schema, or a narrower query API, after the spike
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts

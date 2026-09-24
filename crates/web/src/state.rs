@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use tether_core::Secret;
+use tether_core::crypto::EncryptionKey;
 use tether_db::PgPool;
+use tether_discord::Discord;
 use tether_esi::Esi;
 
 use crate::ratelimit::RateLimiter;
@@ -14,6 +16,9 @@ pub struct AppState {
     pub esi: Esi,
     pub sso: Arc<dyn Sso>,
     pub vault: Arc<TokenVault>,
+    /// Seals instance secrets (the Discord bot token and client secret).
+    pub key: EncryptionKey,
+    pub discord: Arc<Discord>,
     pub site: Arc<Site>,
     /// Required by the first-run wizard until an owner exists.
     pub setup_token: Arc<Secret<String>>,
@@ -65,6 +70,11 @@ impl Site {
 
     pub fn sso_callback_url(&self) -> String {
         format!("{}/auth/callback", self.public_url)
+    }
+
+    /// The redirect registered with the Discord application.
+    pub fn discord_callback_url(&self) -> String {
+        format!("{}/discord/callback", self.public_url)
     }
 }
 

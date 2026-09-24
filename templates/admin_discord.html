@@ -1,0 +1,123 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Discord{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Discord</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Discord</h1>
+    <p class="text-muted-foreground mt-1">Members link Discord from their profile and join the server with the roles for their tier and groups. Tether only talks to Discord's REST API; nothing runs in the server.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if let Some(status) = status %}
+  <section class="card">
+    <header><h2>Connected</h2></header>
+    <section class="flex flex-col gap-3 text-sm">
+      <p>Bot <strong class="text-foreground">{{ status.bot_name }}</strong> is in <strong class="text-foreground">{{ status.guild_name }}</strong>.</p>
+      {% if !status.missing_permissions.is_empty() %}
+      <div class="alert" data-variant="destructive" role="alert"><section>The bot is missing {{ status.missing_permissions.join(", ") }}. Give its role those permissions in Server Settings → Roles, or re-invite it with the link below.</section></div>
+      {% endif %}
+    </section>
+  </section>
+  {% else if let Some(status_error) = status_error %}
+  <div class="alert" data-variant="destructive" role="alert"><section>Can't check Discord with the saved settings: {{ status_error }}</section></div>
+  {% endif %}
+
+  <form class="card" method="post" action="/admin/discord" autocomplete="off">
+    <header>
+      <h2>Bot settings</h2>
+      <p>One Discord application provides both the bot and the member login.</p>
+    </header>
+    <section class="flex flex-col gap-4">
+      <ol class="list-decimal pl-5 flex flex-col gap-2 text-foreground-soft">
+        <li>Open <a class="underline underline-offset-4" href="https://discord.com/developers/applications" rel="noreferrer" target="_blank">discord.com/developers/applications</a> and create an application. Its <strong class="text-foreground">Application ID</strong> is on General Information.</li>
+        <li>Under OAuth2, copy the <strong class="text-foreground">Client Secret</strong> and add this redirect exactly:
+          <div class="mt-2 rounded-sm border bg-background px-3 py-2 num text-foreground select-all break-all">{{ callback_url }}</div>
+        </li>
+        <li>Under Bot, reset and copy the <strong class="text-foreground">token</strong>. No privileged intents are needed.</li>
+        <li>In Discord, turn on Developer Mode (User Settings → Advanced), then right-click your server and copy its <strong class="text-foreground">Server ID</strong>.</li>
+      </ol>
+      <div class="grid grid-cols-2 gap-4 border-t pt-4 max-w-2xl">
+        <div class="grid gap-2">
+          <label class="label" for="application_id">Application ID</label>
+          <input class="input num" type="text" inputmode="numeric" id="application_id" name="application_id" value="{{ application_id }}" spellcheck="false" required>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="guild_id">Server ID</label>
+          <input class="input num" type="text" inputmode="numeric" id="guild_id" name="guild_id" value="{{ guild_id }}" spellcheck="false" required>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="client_secret">Client secret</label>
+          <input class="input" type="password" id="client_secret" name="client_secret" maxlength="200" autocomplete="new-password" spellcheck="false"{% if has_client_secret %} placeholder="Saved; leave blank to keep"{% else %} required{% endif %}>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="bot_token">Bot token</label>
+          <input class="input" type="password" id="bot_token" name="bot_token" maxlength="200" autocomplete="new-password" spellcheck="false"{% if has_bot_token %} placeholder="Saved; leave blank to keep"{% else %} required{% endif %}>
+        </div>
+      </div>
+      <p class="text-xs text-muted-foreground">The secret and token are stored encrypted and never shown again.</p>
+    </section>
+    <footer class="gap-3">
+      <button type="submit" class="btn" data-variant="primary">Save and check</button>
+      {% if let Some(invite_url) = invite_url %}
+      <a class="btn" data-variant="outline" href="{{ invite_url }}" rel="noreferrer" target="_blank">{% call icons::icon("external") %}{% endcall %} Add the bot to the server</a>
+      {% endif %}
+    </footer>
+  </form>
+
+  <section class="card data-card">
+    <header><h2>Roles</h2><p>Who gets which Discord role. Member and Allied pilots get these as they link and join; keeping them in step as tiers and groups change comes next.</p></header>
+    {% if mappings.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No roles mapped yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Discord role</th><th scope="col">Given to</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for m in mappings %}
+        <tr>
+          <td class="font-medium">{{ m.role_name }}</td>
+          <td>{% if m.kind == "tier" %}Tier: {% else %}Group: {% endif %}{{ m.grantee }}</td>
+          <td class="text-right">
+            <form method="post" action="/admin/discord/mappings/{{ m.id }}/remove" hx-confirm="Stop giving {{ m.role_name }} to {{ m.grantee }}?">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  {% if !roles.is_empty() %}
+  <form class="card" method="post" action="/admin/discord/mappings">
+    <header><h2>Map a role</h2><p>The bot can only give roles below its own. Tether never gives out Administrator, and roles with moderation or server-management permissions never go to Guest or Open groups.</p></header>
+    <section class="grid grid-cols-2 gap-4 max-w-2xl">
+      <div class="grid gap-2">
+        <label class="label" for="role_id">Discord role</label>
+        <select class="select input" id="role_id" name="role_id">
+          {% for r in roles %}<option value="{{ r.id }}"{% if r.unavailable.is_some() %} disabled{% endif %}>{{ r.name }}{% if let Some(why) = r.unavailable %} ({{ why }}){% endif %}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="grantee">Give to</label>
+        <select class="select input" id="grantee" name="grantee">
+          <optgroup label="Tiers">
+            <option value="tier:member">Member</option>
+            <option value="tier:allied">Allied</option>
+            <option value="tier:guest">Guest</option>
+          </optgroup>
+          {% if !groups.is_empty() %}
+          <optgroup label="Groups">
+            {% for g in groups %}<option value="group:{{ g.id }}">{{ g.name }}</option>{% endfor %}
+          </optgroup>
+          {% endif %}
+        </select>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Map role</button></footer>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

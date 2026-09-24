@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.secrets (name, sealed) VALUES ($1, $2)\n        ON CONFLICT (name) DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cef9dacb9e7cb89361f80df9bdfcae34045aa4c28eff71505bf25aa2eceaeb20"
+}

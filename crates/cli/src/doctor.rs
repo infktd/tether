@@ -5,8 +5,11 @@ use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
+use tether_core::crypto::EncryptionKey;
 use tether_db::PgPool;
 use tether_db::settings;
+use tether_discord::store::StoreError;
+use tether_discord::{Discord, DiscordError};
 use tether_esi::Esi;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -82,6 +85,9 @@ impl Check {
 pub struct Env {
     pub db: PgPool,
     pub esi: Esi,
+    /// `None` when ENCRYPTION_KEY is unset or invalid for this command.
+    pub key: Option<EncryptionKey>,
+    pub discord: Discord,
     pub domain: String,
     pub public_url: String,
     pub sso_metadata_url: String,
@@ -153,10 +159,7 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(sso(&env.db, &env.sso_metadata_url, &env.public_url).await);
     checks.push(setup(&env.db, &env.public_url).await);
     checks.push(jobs(&env.db).await);
-    checks.push(Check::skip(
-        "discord",
-        "Discord is configured from milestone 1",
-    ));
+    checks.push(discord(env).await);
     checks
 }
 
@@ -298,6 +301,71 @@ pub async fn reachable(public_url: &str) -> Check {
             "EVE SSO redirects browsers to this URL after login, so it must reach this instance. Fix DNS, ports and TLS above first.",
         ),
         Err(err) => Check::fail(NAME, err.to_string(), "This is a bug; please report it."),
+    }
+}
+
+pub async fn discord(env: &Env) -> Check {
+    const NAME: &str = "discord";
+    let page = format!("{}/admin/discord", env.public_url);
+    let Some(key) = &env.key else {
+        return Check::warn(
+            NAME,
+            "ENCRYPTION_KEY isn't set (or isn't valid) for this command, so the Discord secrets can't be checked",
+            "Run doctor inside the container, where .env is loaded: `docker compose exec tether tether doctor`.",
+        );
+    };
+    let stored = match tether_discord::store::stored(&env.db, key).await {
+        Ok(stored) => stored,
+        Err(StoreError::Crypto(_)) => {
+            return Check::fail(
+                NAME,
+                "the stored bot token and client secret can't be decrypted",
+                format!(
+                    "ENCRYPTION_KEY in .env changed since they were saved. Put the old key back, or enter the secret and token again on {page}."
+                ),
+            );
+        }
+        Err(err) => return Check::fail(NAME, err.to_string(), "Fix the database check first."),
+    };
+    let Some(config) = stored.config() else {
+        return Check::warn(
+            NAME,
+            "Discord isn't set up; members can't link or get roles",
+            format!("Open {page} and follow the steps."),
+        );
+    };
+    match env.discord.check(&config).await {
+        Ok(check) if !check.missing_permissions.is_empty() => Check::fail(
+            NAME,
+            format!(
+                "bot {} is in {} but is missing {}",
+                check.bot_name,
+                check.guild_name,
+                check.missing_permissions.join(", ")
+            ),
+            "Give the bot's role those permissions in Server Settings → Roles, or re-invite it with the link on the Discord admin page.",
+        ),
+        Ok(check) => Check::ok(
+            NAME,
+            format!("bot {} is in {}", check.bot_name, check.guild_name),
+        ),
+        Err(DiscordError::BadBotToken) => Check::fail(
+            NAME,
+            "Discord rejected the bot token",
+            format!(
+                "Reset the token under Bot in the Discord developer portal and save it on {page}."
+            ),
+        ),
+        Err(err) if err.is_transient() => Check::fail(
+            NAME,
+            err.to_string(),
+            "Allow outbound HTTPS to discord.com. If Discord itself is down, try again later.",
+        ),
+        Err(err) => Check::fail(
+            NAME,
+            err.to_string(),
+            format!("Check the settings on {page}."),
+        ),
     }
 }
 

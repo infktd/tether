@@ -15,6 +15,7 @@ tether-esi = { path = "crates/esi" }
 tether-jobs = { path = "crates/jobs" }
 tether-web = { path = "crates/web" }
 tether-cli = { path = "crates/cli" }
+tether-discord = { path = "crates/discord" }
 
 anyhow = "1"
 askama = "0.16"
@@ -60,6 +61,12 @@ oauth2 = { version = "=5.0.0", default-features = false }
 # Same version and features as eve-esi-client's, so no second copy. Used for
 # the wizard's callback check and `doctor`.
 reqwest = "0.13"
+# Discord REST only (no gateway). Default features off: no brotli
+# decompression; certificates are verified with the platform verifier, the
+# same one reqwest already uses. rustls picks up the aws-lc-rs provider
+# already in the build, so there is no second crypto backend.
+twilight-http = { version = "0.17", default-features = false, features = ["rustls-platform-verifier"] }
+twilight-model = "0.17"
 
 # Plugin runtime, used from milestone 2. Default features are trimmed: no
 # WAT text parser, no on-disk compile cache (zstd), no profiling, no GC

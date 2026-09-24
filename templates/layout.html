@@ -36,6 +36,11 @@
           {% call icons::icon("layers") %}{% endcall %} Tier rules
         </a>
         {% endif %}
+        {% if shell.nav.discord %}
+        <a href="/admin/discord" class="nav-item"{% if shell.active == "discord" %} aria-current="page"{% endif %}>
+          {% call icons::icon("message") %}{% endcall %} Discord
+        </a>
+        {% endif %}
         {% if shell.nav.setup %}
         <a href="/setup" class="nav-item"{% if shell.active == "setup" %} aria-current="page"{% endif %}>
           {% call icons::icon("settings") %}{% endcall %} Setup

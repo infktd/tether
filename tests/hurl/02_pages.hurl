@@ -11,6 +11,7 @@ HTTP 200
 header "Content-Type" contains "text/html"
 header "Content-Security-Policy" contains "script-src 'self'"
 header "Content-Security-Policy" contains "img-src 'self' data: https://images.evetech.net"
+header "Content-Security-Policy" contains "form-action 'self' https://discord.com;"
 header "X-Frame-Options" == "DENY"
 header "X-Content-Type-Options" == "nosniff"
 header "Strict-Transport-Security" exists
@@ -146,3 +147,52 @@ Origin: {{base}}
 [Form]
 name: Goonswarm Federation
 HTTP 401
+
+# Discord: the admin page and linking need a session.
+GET {{base}}/admin/discord
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/discord
+Origin: {{base}}
+[Form]
+application_id: 1
+guild_id: 2
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/discord/mappings
+Origin: {{base}}
+[Form]
+role_id: 1
+grantee: tier:member
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/discord/mappings/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/profile/discord/link
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/profile/discord/unlink
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+# A callback that no browser started.
+GET {{base}}/discord/callback?code=x&state=y
+HTTP 400
+[Asserts]
+header "Content-Type" contains "text/html"
+body contains "expired or was already used"

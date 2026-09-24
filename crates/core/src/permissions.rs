@@ -5,6 +5,7 @@ pub const ADMIN_GROUPS: &str = "admin.groups";
 pub const ADMIN_PERMISSIONS: &str = "admin.permissions";
 pub const ADMIN_TIERS: &str = "admin.tiers";
 pub const ADMIN_AUDIT: &str = "admin.audit";
+pub const ADMIN_DISCORD: &str = "admin.discord";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
@@ -21,6 +22,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Choose which alliances and corporations are Member or Allied",
     ),
     (ADMIN_AUDIT, "Read the audit log"),
+    (
+        ADMIN_DISCORD,
+        "Set up the Discord bot and choose which roles tiers and groups get",
+    ),
 ];
 
 pub fn is_known(permission: &str) -> bool {

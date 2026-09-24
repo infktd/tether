@@ -9,6 +9,10 @@ pub const SSO_CLIENT_ID: &str = "sso.client_id";
 pub const SSO_LAST_SUCCESS: &str = "sso.last_success";
 /// `{"at": <rfc3339>, "error": <message>}` of the last failed exchange.
 pub const SSO_LAST_ERROR: &str = "sso.last_error";
+/// Discord application id (also the OAuth2 client id), as a string.
+pub const DISCORD_APPLICATION_ID: &str = "discord.application_id";
+/// The Discord server members join, as a string.
+pub const DISCORD_GUILD_ID: &str = "discord.guild_id";
 
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,
