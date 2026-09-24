@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod auth;
 pub mod settings;
+pub mod tiers;
 
 use std::time::Duration;
 

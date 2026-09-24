@@ -14,8 +14,8 @@ use tether_db::accounts::{self, AccountId};
 use tether_db::{auth as db, settings};
 use tether_esi::sso::SsoConfig;
 
-use crate::AppState;
 use crate::error::AppError;
+use crate::{AppState, tiers};
 
 /// `__Host-` cookies must be Secure, Path=/ and have no Domain, so they
 /// can't be set or shadowed by other subdomains.
@@ -138,6 +138,13 @@ pub async fn callback(
             "That character is already linked to another account.",
         ));
     };
+
+    // Tier from the main's current affiliation. An ESI outage must not
+    // block login: keep the stored tier and retry in the background.
+    if let Err(err) = tiers::refresh_account(&state.db, &state.esi, account).await {
+        tracing::warn!(account = account.0, error = %err, "tier refresh at login failed; queued a retry");
+        tiers::enqueue_refresh(&state.db, account).await?;
+    }
 
     // Rotate: drop any session this browser already had, then issue a new
     // token.

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.accounts new\n        SET tier = $2, tier_evaluated_at = now()\n        FROM core.accounts old\n        WHERE new.id = $1 AND old.id = new.id\n        RETURNING old.tier\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tier",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "tier"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "62816fda0f587adc5838ee0ae50c0c46d1ba641c2b5e071dcb5c015939e1ed81"
+}

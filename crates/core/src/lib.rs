@@ -1,6 +1,7 @@
 //! Domain types and rules: accounts, characters, tiers, groups, permissions.
 
 mod secret;
+pub mod tiers;
 mod token;
 
 pub use secret::Secret;

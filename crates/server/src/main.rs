@@ -66,8 +66,17 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_db::migrate(&db).await?;
     tracing::info!("database migrations applied");
 
-    // No job kinds yet; later tasks register handlers here.
-    let registry = tether_jobs::Registry::new();
+    let esi = tether_esi::Esi::new(
+        &format!(
+            "tether/{} (+{})",
+            env!("CARGO_PKG_VERSION"),
+            config.public_url()
+        ),
+        None,
+    )?;
+
+    let mut registry = tether_jobs::Registry::new();
+    tether_web::tiers::register_jobs(&mut registry, db.clone(), esi.clone());
     let workers = tether_jobs::WorkerPool::start(
         db.clone(),
         registry,
@@ -83,6 +92,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tracing::info!(listen = %config.listen, "listening");
     let state = tether_web::AppState {
         db,
+        esi,
         sso: std::sync::Arc::new(tether_esi::sso::EveSso),
         site: std::sync::Arc::new(tether_web::Site::new(config.public_url())),
     };

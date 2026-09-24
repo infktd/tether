@@ -181,7 +181,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Minimal job queue with retries and a dead-letter state
 - [x] EVE SSO login and callback with Postgres-backed sessions
 - [x] Accounts, characters, alt linking, main switching, owner bootstrap on first login
-- [ ] Tier evaluation from the main's corp and alliance at login
+- [x] Tier evaluation from the main's corp and alliance at login
 - [ ] Groups, permissions and audit log
 - [ ] First-run wizard API: ESI credentials, alliance selection, callback check
 - [ ] `dev-login` feature flag for fixture sessions, excluded from release builds

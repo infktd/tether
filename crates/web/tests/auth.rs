@@ -1,169 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test code
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+mod common;
 
-use axum::Router;
-use axum::body::{Body, to_bytes};
-use axum::http::{HeaderMap, Request, StatusCode, header};
+use axum::http::StatusCode;
+use common::*;
 use sqlx::PgPool;
-use tether_core::Secret;
-use tether_db::settings;
-use tether_esi::sso::{PendingLogin, Sso, SsoConfig, SsoError, SsoFuture, SsoIdentity};
-use tether_web::{AppState, Site, router};
-use tower::ServiceExt;
-
-const SITE: &str = "https://tether.test";
-
-/// Stands in for CCP. `begin` issues a state and PKCE verifier; `finish`
-/// accepts codes of the form `ok:<character_id>:<name>` and checks that the
-/// verifier it receives is one it issued.
-#[derive(Default)]
-struct FakeSso {
-    issued: Mutex<HashMap<String, String>>,
-    seen_verifiers: Mutex<Vec<String>>,
-}
-
-impl Sso for FakeSso {
-    fn begin(&self, config: &SsoConfig) -> Result<PendingLogin, SsoError> {
-        let mut issued = self.issued.lock().unwrap();
-        let state = format!("state-{}", issued.len());
-        let verifier = format!("verifier-{}", issued.len());
-        issued.insert(state.clone(), verifier.clone());
-        Ok(PendingLogin {
-            authorize_url: format!(
-                "https://login.test/authorize?client_id={}&redirect_uri={}&state={state}",
-                config.client_id, config.redirect_uri
-            ),
-            state,
-            pkce_verifier: Secret::new(verifier),
-        })
-    }
-
-    fn finish<'a>(
-        &'a self,
-        _config: &'a SsoConfig,
-        code: String,
-        pkce_verifier: Secret<String>,
-    ) -> SsoFuture<'a> {
-        Box::pin(async move {
-            let verifier = pkce_verifier.expose().clone();
-            let known = self.issued.lock().unwrap().values().any(|v| *v == verifier);
-            self.seen_verifiers.lock().unwrap().push(verifier);
-            if !known {
-                return Err(SsoError::Exchange("unknown PKCE verifier".into()));
-            }
-            let mut parts = code.splitn(3, ':');
-            match (parts.next(), parts.next(), parts.next()) {
-                (Some("ok"), Some(id), Some(name)) => Ok(SsoIdentity {
-                    character_id: id.parse().unwrap(),
-                    character_name: name.to_owned(),
-                }),
-                _ => Err(SsoError::Exchange("invalid_grant".into())),
-            }
-        })
-    }
-}
-
-struct Harness {
-    app: Router,
-    db: PgPool,
-    sso: Arc<FakeSso>,
-}
-
-async fn harness(db: PgPool, configured: bool) -> Harness {
-    if configured {
-        settings::set(&db, settings::SSO_CLIENT_ID, "client-123".into())
-            .await
-            .unwrap();
-    }
-    let sso = Arc::new(FakeSso::default());
-    let app = router(AppState {
-        db: db.clone(),
-        sso: sso.clone(),
-        site: Arc::new(Site::new(SITE)),
-    });
-    Harness { app, db, sso }
-}
-
-struct Res {
-    status: StatusCode,
-    headers: HeaderMap,
-    body: String,
-}
-
-impl Res {
-    fn location(&self) -> &str {
-        self.headers
-            .get(header::LOCATION)
-            .unwrap()
-            .to_str()
-            .unwrap()
-    }
-
-    /// The raw Set-Cookie header for `name`.
-    fn set_cookie(&self, name: &str) -> Option<String> {
-        self.headers
-            .get_all(header::SET_COOKIE)
-            .iter()
-            .map(|v| v.to_str().unwrap().to_owned())
-            .find(|c| c.starts_with(&format!("{name}=")))
-    }
-
-    fn cookie_value(&self, name: &str) -> String {
-        let raw = self.set_cookie(name).unwrap();
-        raw[name.len() + 1..].split(';').next().unwrap().to_owned()
-    }
-}
-
-async fn send(app: &Router, request: Request<Body>) -> Res {
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let body = to_bytes(response.into_body(), 1 << 16).await.unwrap();
-    Res {
-        status,
-        headers,
-        body: String::from_utf8(body.to_vec()).unwrap(),
-    }
-}
-
-fn get(uri: &str, cookies: &[(&str, &str)]) -> Request<Body> {
-    let mut req = Request::get(uri);
-    if !cookies.is_empty() {
-        let header: Vec<String> = cookies.iter().map(|(k, v)| format!("{k}={v}")).collect();
-        req = req.header(header::COOKIE, header.join("; "));
-    }
-    req.body(Body::empty()).unwrap()
-}
-
-fn query_param<'a>(url: &'a str, key: &str) -> &'a str {
-    url.split(['?', '&'])
-        .find_map(|kv| kv.strip_prefix(&format!("{key}=")))
-        .unwrap()
-}
-
-const LOGIN: &str = "__Host-tether_login";
-const SESSION: &str = "__Host-tether_session";
-
-/// Runs /auth/login and returns (state, login cookie value).
-async fn start_login(h: &Harness, return_to: &str) -> (String, String) {
-    let res = send(
-        &h.app,
-        get(&format!("/auth/login?return_to={return_to}"), &[]),
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let state = query_param(res.location(), "state").to_owned();
-    (state, res.cookie_value(LOGIN))
-}
-
-async fn session_count(db: &PgPool) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM core.sessions")
-        .fetch_one(db)
-        .await
-        .unwrap()
-}
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn login_is_unavailable_until_sso_is_configured(db: PgPool) {
@@ -327,36 +168,6 @@ async fn open_redirect_return_to_falls_back_to_root(db: PgPool) {
     assert_eq!(res.location(), "/");
 }
 
-async fn log_in(h: &Harness, existing_session: Option<&str>) -> String {
-    log_in_as(h, "90000001:Pilot", existing_session).await
-}
-
-/// Logs in with `character` ("<id>:<name>"), optionally while signed in.
-async fn log_in_as(h: &Harness, character: &str, existing_session: Option<&str>) -> String {
-    let res = callback_as(h, character, existing_session).await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    res.cookie_value(SESSION)
-}
-
-async fn callback_as(h: &Harness, character: &str, existing_session: Option<&str>) -> Res {
-    let (state, browser) = start_login(h, "/").await;
-    let mut cookies = vec![(LOGIN, browser.as_str())];
-    if let Some(s) = existing_session {
-        cookies.push((SESSION, s));
-    }
-    send(
-        &h.app,
-        get(
-            &format!(
-                "/auth/callback?code=ok:{}&state={state}",
-                character.replace(' ', "%20")
-            ),
-            &cookies,
-        ),
-    )
-    .await
-}
-
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn logging_in_again_rotates_the_session(db: PgPool) {
     let h = harness(db, true).await;
@@ -369,14 +180,6 @@ async fn logging_in_again_rotates_the_session(db: PgPool) {
     assert_eq!(old.status, StatusCode::UNAUTHORIZED);
     let new = send(&h.app, get("/api/me", &[(SESSION, &second)])).await;
     assert_eq!(new.status, StatusCode::OK);
-}
-
-fn post(uri: &str, headers: &[(&str, &str)]) -> Request<Body> {
-    let mut req = Request::post(uri);
-    for (k, v) in headers {
-        req = req.header(*k, *v);
-    }
-    req.body(Body::empty()).unwrap()
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -449,12 +252,6 @@ async fn me_requires_a_live_session(db: PgPool) {
     );
 }
 
-async fn me(h: &Harness, token: &str) -> serde_json::Value {
-    let res = send(&h.app, get("/api/me", &[(SESSION, token)])).await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    serde_json::from_str(&res.body).unwrap()
-}
-
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn logging_in_with_another_character_while_signed_in_adds_an_alt(db: PgPool) {
     let h = harness(db, true).await;
@@ -481,15 +278,6 @@ async fn character_linked_elsewhere_is_refused_and_session_kept(db: PgPool) {
     let me = me(&h, &mine).await;
     assert_eq!(me["characters"].as_array().unwrap().len(), 1);
     assert_eq!(me["is_owner"], false);
-}
-
-fn post_json(uri: &str, token: &str, body: &str) -> Request<Body> {
-    Request::post(uri)
-        .header(header::COOKIE, format!("{SESSION}={token}"))
-        .header(header::ORIGIN, SITE)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_owned()))
-        .unwrap()
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

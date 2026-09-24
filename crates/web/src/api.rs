@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use tether_core::tiers::Tier;
 use tether_db::accounts;
 
 use crate::AppState;
@@ -14,6 +15,7 @@ use crate::error::AppError;
 pub struct Me {
     pub account_id: i64,
     pub is_owner: bool,
+    pub tier: &'static str,
     pub main: CharacterRef,
     pub characters: Vec<CharacterSummary>,
 }
@@ -39,9 +41,13 @@ pub async fn me(
     let account = accounts::get(&state.db, session.account)
         .await?
         .ok_or_else(AppError::unauthorized)?;
+    let tier = tether_db::tiers::account_tier(&state.db, session.account)
+        .await?
+        .unwrap_or(Tier::Guest);
     Ok(Json(Me {
         account_id: account.id.0,
         is_owner: account.is_owner,
+        tier: tier.as_str(),
         characters: account
             .characters
             .iter()
@@ -75,6 +81,8 @@ pub async fn set_main(
             character_id = body.character_id,
             "main changed"
         );
+        // The tier follows the main; affiliations were fetched at login.
+        crate::tiers::evaluate_account(&state.db, session.account).await?;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::new(

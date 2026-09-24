@@ -5,6 +5,7 @@ pub mod auth;
 mod csrf;
 mod error;
 mod state;
+pub mod tiers;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -69,6 +70,7 @@ mod tests {
     fn state(db: PgPool) -> AppState {
         AppState {
             db,
+            esi: tether_esi::Esi::new("tether tests", Some("http://127.0.0.1:9")).unwrap(),
             sso: std::sync::Arc::new(tether_esi::sso::EveSso),
             site: std::sync::Arc::new(Site::new("https://tether.test")),
         }

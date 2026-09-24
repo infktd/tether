@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
 use tether_db::PgPool;
+use tether_esi::Esi;
 use tether_esi::sso::Sso;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub esi: Esi,
     pub sso: Arc<dyn Sso>,
     pub site: Arc<Site>,
 }

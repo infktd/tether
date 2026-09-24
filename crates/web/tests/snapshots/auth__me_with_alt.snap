@@ -20,5 +20,6 @@ expression: "me(&h, &after_alt).await"
   "main": {
     "id": 90000001,
     "name": "Main Pilot"
-  }
+  },
+  "tier": "guest"
 }

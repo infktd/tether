@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.tier_rules (entity_id, entity_kind, tier, name)\n        VALUES ($1, $2, $3, $4)\n        ON CONFLICT (entity_id) DO UPDATE\n        SET entity_kind = EXCLUDED.entity_kind, tier = EXCLUDED.tier, name = EXCLUDED.name\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "39a9190433018ef2d10a9366da6f37924a682717ed4f311dc0e35cd7167d6a7e"
+}
