@@ -1,0 +1,67 @@
+use std::sync::Arc;
+
+use tether_db::PgPool;
+use tether_esi::sso::Sso;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: PgPool,
+    pub sso: Arc<dyn Sso>,
+    pub site: Arc<Site>,
+}
+
+/// Where this instance is reachable from browsers.
+#[derive(Debug)]
+pub struct Site {
+    public_url: String,
+    origin: String,
+}
+
+impl Site {
+    /// `public_url` is e.g. `https://auth.example.com` (no trailing slash).
+    pub fn new(public_url: impl Into<String>) -> Self {
+        let public_url: String = public_url.into();
+        let public_url = public_url.trim_end_matches('/').to_owned();
+        // Origin is scheme://host[:port], i.e. everything before any path.
+        let after_scheme = public_url.find("://").map_or(0, |i| i + 3);
+        let origin = match public_url[after_scheme..].find('/') {
+            Some(i) => public_url[..after_scheme + i].to_owned(),
+            None => public_url.clone(),
+        };
+        Self { public_url, origin }
+    }
+
+    pub fn public_url(&self) -> &str {
+        &self.public_url
+    }
+
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub fn sso_callback_url(&self) -> String {
+        format!("{}/auth/callback", self.public_url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Site;
+
+    #[test]
+    fn origin_drops_any_path() {
+        assert_eq!(
+            Site::new("https://a.example.com/").origin(),
+            "https://a.example.com"
+        );
+        assert_eq!(
+            Site::new("http://localhost:8080").origin(),
+            "http://localhost:8080"
+        );
+        assert_eq!(Site::new("https://x.io/tether").origin(), "https://x.io");
+        assert_eq!(
+            Site::new("https://a.example.com").sso_callback_url(),
+            "https://a.example.com/auth/callback"
+        );
+    }
+}

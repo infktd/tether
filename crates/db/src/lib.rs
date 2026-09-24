@@ -1,5 +1,8 @@
 //! Postgres pool, migrations and repositories.
 
+pub mod auth;
+pub mod settings;
+
 use std::time::Duration;
 
 use sqlx::migrate::Migrator;

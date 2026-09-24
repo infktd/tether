@@ -81,7 +81,12 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding {}", config.listen))?;
     tracing::info!(listen = %config.listen, "listening");
-    axum::serve(listener, tether_web::router(tether_web::AppState { db }))
+    let state = tether_web::AppState {
+        db,
+        sso: std::sync::Arc::new(tether_esi::sso::EveSso),
+        site: std::sync::Arc::new(tether_web::Site::new(config.public_url())),
+    };
+    axum::serve(listener, tether_web::router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving HTTP")?;

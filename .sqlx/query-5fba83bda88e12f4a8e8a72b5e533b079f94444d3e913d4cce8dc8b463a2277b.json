@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.login_attempts (state, browser_hash, pkce_verifier, return_to, expires_at)\n        VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Text",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5fba83bda88e12f4a8e8a72b5e533b079f94444d3e913d4cce8dc8b463a2277b"
+}
