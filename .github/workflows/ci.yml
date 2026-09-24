@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml pins the channel, components and wasm target;
+      # rustup installs them on first use.
+      - run: rustup show
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y mold
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:2.30.1-pg16
+        env:
+          POSTGRES_USER: tether
+          POSTGRES_PASSWORD: tether
+          POSTGRES_DB: tether
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tether"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://tether:tether@localhost:5432/tether
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y mold
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  # Every crate tagged `[package.metadata.tether] target = "wasm32-wasip2"`
+  # is built and linted for that target, and must come out as a component.
+  # A missing `export!` only fails at wasm link time, so the native jobs
+  # above can't catch it.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Find wasm crates
+        id: crates
+        run: |
+          crates=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.metadata.tether.target == "wasm32-wasip2") | .name' \
+            | tr '\n' ' ')
+          echo "Found: ${crates:-none}"
+          echo "list=$crates" >> "$GITHUB_OUTPUT"
+      - name: Build, lint and check component format
+        run: |
+          for crate in ${{ steps.crates.outputs.list }}; do
+            cargo clippy -p "$crate" --target wasm32-wasip2 -- -D warnings
+            cargo build -p "$crate" --target wasm32-wasip2 --release
+            wasm="target/wasm32-wasip2/release/${crate//-/_}.wasm"
+            # Component binaries have layer 1 in the header: 0d 00 01 00.
+            header=$(od -An -tx1 -j4 -N4 "$wasm" | tr -d ' \n')
+            if [ "$header" != "0d000100" ]; then
+              echo "$wasm is not a WASM component (header $header)"
+              exit 1
+            fi
+            echo "$wasm: component, $(stat -c %s "$wasm") bytes"
+          done

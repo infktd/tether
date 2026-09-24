@@ -175,7 +175,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 
 **Milestone 0 tasks, in order**
 
-- [ ] Workspace scaffold, CI running fmt, clippy with warnings as errors, and tests
+- [x] Workspace scaffold, CI running fmt, clippy with warnings as errors, and tests
 - [ ] Multi-arch Dockerfile, compose file and Caddyfile; `docker compose up` serves a health endpoint over HTTPS
 - [ ] Config from env, Postgres pool, migrations run automatically at startup
 - [ ] Minimal job queue with retries and a dead-letter state

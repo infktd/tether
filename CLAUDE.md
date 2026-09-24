@@ -90,6 +90,8 @@ cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
+cargo clippy -p hello-plugin --target wasm32-wasip2 -- -D warnings
+cargo build -p hello-plugin --target wasm32-wasip2 --release
 tailwindcss -i assets/app.css -o static/app.css --minify
 docker compose -f deploy/docker-compose.yml up --build
 hurl --test tests/hurl/*.hurl

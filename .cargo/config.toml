@@ -1,0 +1,7 @@
+# mold is installed in CI and the Docker builder. Linux developers without
+# mold can remove these lines locally or install it (`apt install mold`).
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

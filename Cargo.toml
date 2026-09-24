@@ -1,0 +1,61 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "examples/hello-plugin"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+tether-core = { path = "crates/core" }
+tether-db = { path = "crates/db" }
+tether-esi = { path = "crates/esi" }
+tether-jobs = { path = "crates/jobs" }
+tether-web = { path = "crates/web" }
+tether-cli = { path = "crates/cli" }
+
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4.6", features = ["derive", "env"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Pulls in aws-lc-sys (a C build) through reqwest's default TLS backend.
+# Accepted as a build-time cost; follow-up: make reqwest's TLS backend a
+# feature in eve-esi-client so the host can drop it (see PRD open questions).
+eve-esi-client = "0.5"
+
+# Plugin runtime, used from milestone 2. Default features are trimmed: no
+# WAT text parser, no on-disk compile cache (zstd), no profiling, no GC
+# proposals, and WASIp2 only. Verified to compile.
+wasmtime = { version = "49", default-features = false, features = [
+    "runtime",
+    "cranelift",
+    "component-model",
+    "async",
+    "std",
+    "parallel-compilation",
+    "pooling-allocator",
+] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
+wit-bindgen = "0.62"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+# Dependencies rarely need debug info; skipping it keeps target/ smaller and
+# links faster. Our own crates keep full debug info.
+[profile.dev.package."*"]
+debug = false
