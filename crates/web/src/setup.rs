@@ -306,7 +306,7 @@ pub async fn check_public_url(public_url: &str) -> Result<(bool, String), getran
     let nonce = new_token()?;
     let nonce = &nonce.expose()[..32];
     let url = format!("{public_url}/api/setup/probe?nonce={nonce}");
-    Ok(match fetch(&url).await {
+    Ok(match fetch(public_url, &url).await {
         Ok((status, body)) if status == reqwest::StatusCode::OK && body == probe_body(nonce) => {
             (true, "This instance answered at its public URL.".to_owned())
         }
@@ -320,13 +320,21 @@ pub async fn check_public_url(public_url: &str) -> Result<(bool, String), getran
     })
 }
 
-async fn fetch(url: &str) -> Result<(reqwest::StatusCode, String), String> {
-    let client = reqwest::Client::builder()
-        .timeout(CHECK_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())?;
-    let response = client.get(url).send().await.map_err(|e| error_chain(&e))?;
+/// Only the instance's own address (plus the usual allow-list) is
+/// reachable from here.
+async fn fetch(public_url: &str, url: &str) -> Result<(reqwest::StatusCode, String), String> {
+    let client = tether_net::Outbound::new(
+        tether_net::Allowlist::production().with_url(public_url),
+        concat!("tether/", env!("CARGO_PKG_VERSION")),
+        CHECK_TIMEOUT,
+    )
+    .map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|e| error_chain(&e))?;
     let status = response.status();
     let body = response.text().await.map_err(|e| error_chain(&e))?;
     Ok((status, body))

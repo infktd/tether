@@ -281,7 +281,13 @@ pub async fn harness_full(
     let discord = Arc::new(
         Discord::new(
             Endpoints::local(discord_server.address().to_string()),
-            "tether tests",
+            tether_net::Outbound::new(
+                tether_net::Allowlist::production()
+                    .with_local(&discord_server.address().to_string()),
+                "tether tests",
+                std::time::Duration::from_secs(10),
+            )
+            .unwrap(),
         )
         .unwrap(),
     );

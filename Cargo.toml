@@ -16,6 +16,7 @@ tether-jobs = { path = "crates/jobs" }
 tether-web = { path = "crates/web" }
 tether-cli = { path = "crates/cli" }
 tether-discord = { path = "crates/discord" }
+tether-net = { path = "crates/net" }
 
 anyhow = "1"
 askama = "0.16"

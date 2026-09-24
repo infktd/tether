@@ -17,6 +17,7 @@ serde_json.workspace = true
 sqlx.workspace = true
 tether-core.workspace = true
 tether-db.workspace = true
+tether-net.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 twilight-http.workspace = true

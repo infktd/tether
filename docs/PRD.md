@@ -201,7 +201,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries (including taking back a role whose mapping was removed)
 - [x] Fleet pings to Discord channels with role targeting
 - [x] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
-- [ ] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor`; admin routes optionally on a separate listener (N6)
+- [x] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor` (admin routes on a separate listener, N6, moved to the pre-launch checklist)
 
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
 
@@ -211,6 +211,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [ ] `doctor` passes on the VPS, including DNS, ports 80 and 443, TLS and the public URL checks; confirm ports from outside too, since `doctor` checks from the server itself
 - [ ] Milestone 1's "ESI error budget never exceeded in a week of staging": run a staging instance for a week and review the dashboard
 - [ ] Encrypted nightly backups (N7), deferred from milestone 1
+- [ ] Admin routes on a private interface such as Tailscale (N6), deferred from milestone 1 until the VPS and Tailscale setup are real. The catch: EVE SSO only returns to the one registered callback on the public domain, and session cookies are per host. Options: a separate admin listener with a one-time login hand-off from the public site, or admin pages refusing clients outside configured private networks (admins reach the normal domain over Tailscale)
 
 ## Open questions
 

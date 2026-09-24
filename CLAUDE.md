@@ -52,6 +52,8 @@ Allowed outbound destinations, and nothing else:
 - GitHub (`github.com`, `api.github.com`, release asset hosts) for plugin installs and update checks, which admins can switch off
 - Let's Encrypt (ACME), from Caddy only, for TLS certificates. No other CA
 
+All HTTP from Tether's own code goes through `tether_net::Outbound`, which refuses any host or port not in `tether_net::ALLOWED` (checked before sending and at DNS; redirects are off unless a client opts in, and then stay on the list). Adding a host there is adding an outbound destination: ask first. Libraries with their own clients: eve-esi-client's ESI and SSO endpoints are fixed in the library, and twilight's Discord endpoint is checked against the list; `doctor` verifies the configured endpoints.
+
 No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bundled into the build. The one exception is dev-only tooling (such as Scalar at `/docs`), which may load from a CDN because it is compiled out of release builds. Keep this list in sync with the `doctor` checks and PRD requirement N5.
 
 ## Rust conventions

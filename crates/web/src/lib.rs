@@ -237,11 +237,19 @@ mod tests {
         (status, String::from_utf8(body.to_vec()).unwrap())
     }
 
+    fn local_net() -> tether_net::Outbound {
+        tether_net::Outbound::new(
+            tether_net::Allowlist::production().with_local("127.0.0.1:9"),
+            "tether tests",
+            Duration::from_secs(1),
+        )
+        .unwrap()
+    }
+
     fn state(db: PgPool) -> AppState {
         let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
             std::sync::Arc::new(tether_esi::sso::EveSso::new(
-                tether_esi::jwt::JwtVerifier::new("tether tests", "http://127.0.0.1:9/jwks")
-                    .unwrap(),
+                tether_esi::jwt::JwtVerifier::new(local_net(), "http://127.0.0.1:9/jwks").unwrap(),
             ));
         let key =
             tether_core::crypto::EncryptionKey::from_hex(&tether_core::Secret::new("0".repeat(64)))
@@ -257,7 +265,7 @@ mod tests {
             discord: std::sync::Arc::new(
                 tether_discord::Discord::new(
                     tether_discord::Endpoints::local("127.0.0.1:9"),
-                    "tether tests",
+                    local_net(),
                 )
                 .unwrap(),
             ),

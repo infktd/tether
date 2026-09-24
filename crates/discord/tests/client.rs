@@ -36,7 +36,12 @@ async fn mock_discord() -> (MockServer, Discord) {
     let server = MockServer::start().await;
     let discord = Discord::new(
         Endpoints::local(server.address().to_string()),
-        "tether-test",
+        tether_net::Outbound::new(
+            tether_net::Allowlist::production().with_local(&server.address().to_string()),
+            "tether-test",
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap(),
     )
     .unwrap();
     (server, discord)
@@ -488,4 +493,20 @@ async fn messages_ping_only_the_chosen_target_and_carry_a_nonce() {
 
 fn has_content_type_json() -> wiremock::matchers::HeaderExactMatcher {
     header("content-type", "application/json")
+}
+
+#[test]
+fn endpoints_must_be_on_the_allow_list() {
+    let net = tether_net::Outbound::new(
+        tether_net::Allowlist::production(),
+        "tether-test",
+        std::time::Duration::from_secs(10),
+    )
+    .unwrap();
+    assert!(Discord::new(Endpoints::discord(), net.clone()).is_ok());
+    let err = Discord::new(Endpoints::local("evil.example:80"), net).unwrap_err();
+    assert!(
+        err.to_string().contains("isn't an allowed destination"),
+        "{err}"
+    );
 }

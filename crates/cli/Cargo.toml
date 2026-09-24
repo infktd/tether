@@ -20,6 +20,7 @@ tether-db.workspace = true
 tether-discord.workspace = true
 tether-esi.workspace = true
 tether-jobs.workspace = true
+tether-net.workspace = true
 tether-web.workspace = true
 tokio.workspace = true
 

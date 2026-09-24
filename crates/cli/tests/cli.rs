@@ -490,8 +490,17 @@ async fn doctor_skips_network_checks_for_localhost(db: PgPool) {
     }
 }
 
+fn local_net(host_port: &str) -> tether_net::Outbound {
+    tether_net::Outbound::new(
+        tether_net::Allowlist::production().with_local(host_port),
+        "tether tests",
+        std::time::Duration::from_secs(10),
+    )
+    .unwrap()
+}
+
 fn unreachable_discord() -> Discord {
-    Discord::new(Endpoints::local("127.0.0.1:9"), "tether tests").unwrap()
+    Discord::new(Endpoints::local("127.0.0.1:9"), local_net("127.0.0.1:9")).unwrap()
 }
 
 fn key(byte: &str) -> EncryptionKey {
@@ -519,7 +528,7 @@ async fn discord_env(db: PgPool, key: Option<EncryptionKey>, server: &MockServer
         key,
         discord: Discord::new(
             Endpoints::local(server.address().to_string()),
-            "tether tests",
+            local_net(&server.address().to_string()),
         )
         .unwrap(),
         github_api_url: "http://127.0.0.1:9".into(),
@@ -628,4 +637,19 @@ async fn doctor_reports_update_checks(db: PgPool) {
     let off = doctor::updates(&db, "http://127.0.0.1:9").await;
     assert_eq!(off.status, Status::Ok);
     assert!(off.detail.starts_with("off"));
+}
+
+#[test]
+fn doctor_proves_the_allow_list_holds() {
+    let check = doctor::outbound();
+    // CI and dev machines normally have no proxy set; either way the
+    // self-test ran.
+    assert!(
+        matches!(check.status, Status::Ok | Status::Warn),
+        "{check:?}"
+    );
+    if check.status == Status::Ok {
+        assert!(check.detail.contains("esi.evetech.net"));
+        assert!(check.detail.contains("Let's Encrypt"));
+    }
 }

@@ -91,7 +91,7 @@ struct Keys {
 }
 
 pub struct JwtVerifier {
-    http: reqwest::Client,
+    http: tether_net::Outbound,
     jwks_url: String,
     keys: RwLock<Option<Keys>>,
 }
@@ -105,16 +105,16 @@ impl std::fmt::Debug for JwtVerifier {
 }
 
 impl JwtVerifier {
-    /// `jwks_url` is [`CCP_JWKS_URL`] outside tests.
-    pub fn new(user_agent: &str, jwks_url: impl Into<String>) -> Result<Self, JwtError> {
-        let http = reqwest::Client::builder()
-            .user_agent(user_agent)
-            .timeout(Duration::from_secs(10))
-            .build()
+    /// `jwks_url` is [`CCP_JWKS_URL`] outside tests, and must be on the
+    /// client's allow-list.
+    pub fn new(http: tether_net::Outbound, jwks_url: impl Into<String>) -> Result<Self, JwtError> {
+        let jwks_url = jwks_url.into();
+        http.allowlist()
+            .check(&jwks_url)
             .map_err(|e| JwtError::Keys(e.to_string()))?;
         Ok(Self {
             http,
-            jwks_url: jwks_url.into(),
+            jwks_url,
             keys: RwLock::new(None),
         })
     }
@@ -192,6 +192,7 @@ impl JwtVerifier {
         let body: serde_json::Value = self
             .http
             .get(&self.jwks_url)
+            .map_err(|e| JwtError::Keys(e.to_string()))?
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)

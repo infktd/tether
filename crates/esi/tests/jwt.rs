@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde_json::{Value, json};
 use tether_esi::jwt::{JwtError, JwtVerifier};
+use tether_net::Allowlist;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -86,8 +87,11 @@ async fn ccp() -> (MockServer, JwtVerifier) {
         )
         .mount(&server)
         .await;
-    let verifier =
-        JwtVerifier::new("tether tests", format!("{}/oauth/jwks", server.uri())).unwrap();
+    let verifier = JwtVerifier::new(
+        outbound(Allowlist::production().with_local(&server.address().to_string())),
+        format!("{}/oauth/jwks", server.uri()),
+    )
+    .unwrap();
     (server, verifier)
 }
 
@@ -225,7 +229,11 @@ async fn unknown_keys_trigger_one_refetch_then_fail() {
 
 #[tokio::test]
 async fn jwks_outage_is_reported() {
-    let verifier = JwtVerifier::new("tether tests", "http://127.0.0.1:1/oauth/jwks").unwrap();
+    let verifier = JwtVerifier::new(
+        outbound(Allowlist::production().with_local("127.0.0.1:1")),
+        "http://127.0.0.1:1/oauth/jwks",
+    )
+    .unwrap();
     let err = verifier
         .verify(&sign_rsa(&claims(json!({})), RSA_KID), CLIENT)
         .await
@@ -249,4 +257,21 @@ fn base64_url_encode(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+fn outbound(allow: Allowlist) -> tether_net::Outbound {
+    tether_net::Outbound::new(allow, "tether tests", std::time::Duration::from_secs(5)).unwrap()
+}
+
+#[test]
+fn the_jwks_url_must_be_allowed() {
+    let err = JwtVerifier::new(
+        outbound(Allowlist::production()),
+        "https://evil.example/oauth/jwks",
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("isn't an allowed destination"),
+        "{err}"
+    );
 }

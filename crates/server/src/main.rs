@@ -91,7 +91,7 @@ async fn doctor() -> anyhow::Result<ExitCode> {
         github_api_url: tether_cli::doctor::GITHUB_API_URL.to_owned(),
         discord: tether_discord::Discord::new(
             tether_discord::Endpoints::discord(),
-            &user_agent(&config.public_url()),
+            outbound(&plain_agent())?,
         )?,
         domain: config.domain.clone(),
         public_url: config.public_url(),
@@ -107,8 +107,23 @@ async fn doctor() -> anyhow::Result<ExitCode> {
     })
 }
 
+/// For CCP (ESI, SSO): they ask for a way to reach the operator.
 fn user_agent(public_url: &str) -> String {
     format!("tether/{} (+{public_url})", env!("CARGO_PKG_VERSION"))
+}
+
+/// For everyone else: names the software, not the instance.
+fn plain_agent() -> String {
+    format!("tether/{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// The allow-listed HTTP client (N5).
+fn outbound(user_agent: &str) -> anyhow::Result<tether_net::Outbound> {
+    Ok(tether_net::Outbound::new(
+        tether_net::Allowlist::production(),
+        user_agent,
+        std::time::Duration::from_secs(10),
+    )?)
 }
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
@@ -138,14 +153,14 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
     let discord = std::sync::Arc::new(tether_discord::Discord::new(
         tether_discord::Endpoints::discord(),
-        &user_agent(&config.public_url()),
+        outbound(&plain_agent())?,
     )?);
     let mut registry = tether_jobs::Registry::new();
     tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
     tether_web::updates::register_jobs(
         &mut registry,
         db.clone(),
-        tether_web::updates::http_client()?,
+        tether_web::updates::http_client(tether_net::Allowlist::production())?,
         tether_web::updates::UpdateSource::github(),
     );
     tether_web::pings::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
@@ -199,7 +214,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     }
 
     let verifier = tether_esi::jwt::JwtVerifier::new(
-        &user_agent(&config.public_url()),
+        outbound(&user_agent(&config.public_url()))?,
         tether_esi::jwt::CCP_JWKS_URL,
     )?;
     let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =

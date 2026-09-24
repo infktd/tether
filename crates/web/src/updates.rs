@@ -125,7 +125,7 @@ struct Release {
 /// first: a plain version tag, and a link into this repository only.
 pub async fn check(
     db: &PgPool,
-    http: &reqwest::Client,
+    http: &tether_net::Outbound,
     source: &UpdateSource,
 ) -> Result<(), JobError> {
     if !enabled(db).await.map_err(JobError::retry)? {
@@ -144,6 +144,7 @@ pub async fn check(
     let result = async {
         let response = http
             .get(&url)
+            .map_err(|e| e.to_string())?
             .header("accept", "application/vnd.github+json")
             .send()
             .await
@@ -261,21 +262,19 @@ pub fn is_newer(tag: &str, current: &str) -> bool {
     matches!((parse(tag), parse(current)), (Some(t), Some(c)) if t > c)
 }
 
-/// The client for GitHub: no redirects, so it can't be sent elsewhere, and
-/// a User-Agent that names the software but not this instance (GitHub
+/// The client for GitHub: allow-listed like every other, with a
+/// User-Agent that names the software but not this instance (GitHub
 /// needn't learn the alliance's domain).
-pub fn http_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .user_agent(format!("tether/{CURRENT}"))
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+pub fn http_client(
+    allow: tether_net::Allowlist,
+) -> Result<tether_net::Outbound, tether_net::OutboundError> {
+    tether_net::Outbound::new(allow, &format!("tether/{CURRENT}"), Duration::from_secs(10))
 }
 
 pub fn register_jobs(
     registry: &mut Registry,
     db: PgPool,
-    http: reqwest::Client,
+    http: tether_net::Outbound,
     source: UpdateSource,
 ) {
     registry.register(UPDATE_JOB, move |_job| {

@@ -163,6 +163,7 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(jobs(&env.db).await);
     checks.push(discord(env).await);
     checks.push(updates(&env.db, &env.github_api_url).await);
+    checks.push(outbound());
     checks
 }
 
@@ -275,11 +276,11 @@ pub async fn tls(public_url: &str) -> Check {
             "Unset PUBLIC_URL so it defaults to https://DOMAIN.",
         );
     }
-    let client = match http_client() {
-        Ok(c) => c,
+    let request = match get(&format!("{public_url}/health")) {
+        Ok(request) => request,
         Err(err) => return Check::fail(NAME, err, "This is a bug; please report it."),
     };
-    match client.get(format!("{public_url}/health")).send().await {
+    match request.send().await {
         Ok(r) if r.status().is_success() => Check::ok(NAME, "valid certificate, /health answers"),
         Ok(r) => Check::fail(
             NAME,
@@ -385,11 +386,15 @@ pub async fn updates(db: &PgPool, api_url: &str) -> Check {
         Ok(true) => {}
         Err(err) => return Check::fail(NAME, err.to_string(), "Fix the database check first."),
     }
-    let client = match tether_web::updates::http_client() {
-        Ok(client) => client,
-        Err(err) => return Check::fail(NAME, err.to_string(), "This is a bug; please report it."),
+    let request =
+        tether_web::updates::http_client(tether_net::Allowlist::production().with_url(api_url))
+            .map_err(|e| e.to_string())
+            .and_then(|client| client.get(api_url).map_err(|e| e.to_string()));
+    let request = match request {
+        Ok(request) => request,
+        Err(err) => return Check::fail(NAME, err, "This is a bug; please report it."),
     };
-    match client.get(api_url).send().await {
+    match request.send().await {
         // Any answer means it's reachable; the daily check reports the rest.
         Ok(_) => Check::ok(NAME, "on: api.github.com answers"),
         Err(err) => Check::warn(
@@ -398,6 +403,55 @@ pub async fn updates(db: &PgPool, api_url: &str) -> Check {
             "Allow outbound HTTPS to api.github.com, or switch update checks off on the System admin page.",
         ),
     }
+}
+
+/// eve-esi-client's fixed base URL (it makes its own connections).
+const ESI_BASE_URL: &str = "https://esi.evetech.net";
+
+/// The allow-list (N5): every endpoint the server is configured to call must
+/// be on it, and proxy settings that the libraries with their own HTTP
+/// clients honour are flagged.
+pub fn outbound() -> Check {
+    const NAME: &str = "outbound";
+    let allow = tether_net::Allowlist::production();
+    let endpoints = [
+        ("ESI", ESI_BASE_URL.to_owned()),
+        ("EVE SSO keys", tether_esi::jwt::CCP_JWKS_URL.to_owned()),
+        ("EVE SSO", SSO_METADATA_URL.to_owned()),
+        ("Discord", tether_discord::Endpoints::discord().api_base()),
+        ("GitHub", GITHUB_API_URL.to_owned()),
+    ];
+    let off_list: Vec<String> = endpoints
+        .iter()
+        .filter(|(_, url)| allow.check(url).is_err())
+        .map(|(what, url)| format!("{what} ({url})"))
+        .collect();
+    if !off_list.is_empty() {
+        return Check::fail(
+            NAME,
+            format!("configured but not allowed: {}", off_list.join(", ")),
+            "This is a bug; please report it.",
+        );
+    }
+    let proxies = tether_net::proxy_variables();
+    if !proxies.is_empty() {
+        return Check::warn(
+            NAME,
+            format!(
+                "{} set: ESI and EVE SSO requests may go through a proxy",
+                proxies.join(", ")
+            ),
+            "Unset them in the app's environment, unless routing Tether's traffic through that proxy is intended.",
+        );
+    }
+    let hosts: Vec<&str> = allow.hosts().collect();
+    Check::ok(
+        NAME,
+        format!(
+            "the server only contacts {}; browsers also load images.evetech.net, and Caddy talks to Let's Encrypt",
+            hosts.join(", ")
+        ),
+    )
 }
 
 pub async fn esi(esi: &Esi) -> Check {
@@ -426,19 +480,14 @@ pub async fn sso(db: &PgPool, metadata_url: &str, public_url: &str) -> Check {
         }
         Err(err) => return Check::fail(NAME, err.to_string(), "Fix the database check first."),
     };
-    let reachable = match http_client() {
-        Ok(client) => client
-            .get(metadata_url)
-            .send()
-            .await
-            .map_err(|e| chain(&e))
-            .and_then(|r| {
-                if r.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(format!("HTTP {}", r.status()))
-                }
-            }),
+    let reachable = match get(metadata_url) {
+        Ok(request) => request.send().await.map_err(|e| chain(&e)).and_then(|r| {
+            if r.status().is_success() {
+                Ok(())
+            } else {
+                Err(format!("HTTP {}", r.status()))
+            }
+        }),
         Err(err) => Err(err),
     };
     if let Err(err) = reachable {
@@ -547,12 +596,16 @@ pub async fn jobs(db: &PgPool) -> Check {
     }
 }
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())
+/// A GET through the allow-listed client, which may also reach the one
+/// address being checked (the instance itself, or a test stand-in).
+fn get(url: &str) -> Result<tether_net::Request, String> {
+    let client = tether_net::Outbound::new(
+        tether_net::Allowlist::production().with_url(url),
+        concat!("tether/", env!("CARGO_PKG_VERSION")),
+        TIMEOUT,
+    )
+    .map_err(|e| e.to_string())?;
+    client.get(url).map_err(|e| e.to_string())
 }
 
 fn chain(err: &dyn std::error::Error) -> String {

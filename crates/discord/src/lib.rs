@@ -95,7 +95,8 @@ impl Endpoints {
         }
     }
 
-    fn api_base(&self) -> String {
+    /// The REST API's base URL.
+    pub fn api_base(&self) -> String {
         match &self.local {
             Some(host) => format!("http://{host}/api/v10"),
             None => "https://discord.com/api/v10".to_owned(),
@@ -310,7 +311,7 @@ struct OAuthError {
 
 pub struct Discord {
     endpoints: Endpoints,
-    http: reqwest::Client,
+    http: tether_net::Outbound,
     /// The bot client, kept so twilight's rate limiter sees every call.
     /// Rebuilt when the token changes (keyed by its hash).
     bot: Mutex<Option<(Vec<u8>, Arc<Client>)>>,
@@ -327,13 +328,13 @@ impl std::fmt::Debug for Discord {
 }
 
 impl Discord {
-    pub fn new(endpoints: Endpoints, user_agent: &str) -> Result<Self, DiscordError> {
-        let http = reqwest::Client::builder()
-            .user_agent(user_agent)
-            .timeout(TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|err| DiscordError::Config(format!("building the HTTP client: {err}")))?;
+    /// OAuth2 calls go through `http`; the bot's calls (twilight, which
+    /// makes its own connections) go to `endpoints`, which must be on the
+    /// same allow-list.
+    pub fn new(endpoints: Endpoints, http: tether_net::Outbound) -> Result<Self, DiscordError> {
+        http.allowlist()
+            .check(&endpoints.api_base())
+            .map_err(|err| DiscordError::Config(err.to_string()))?;
         Ok(Self {
             endpoints,
             http,
@@ -379,7 +380,8 @@ impl Discord {
     ) -> Result<UserToken, DiscordError> {
         let response = self
             .http
-            .post(format!("{}/oauth2/token", self.endpoints.api_base()))
+            .post(&format!("{}/oauth2/token", self.endpoints.api_base()))
+            .map_err(|err| DiscordError::Config(err.to_string()))?
             .basic_auth(config.application_id, Some(config.client_secret.expose()))
             .form(&[
                 ("grant_type", "authorization_code"),
@@ -417,7 +419,11 @@ impl Discord {
     ) -> Result<(), DiscordError> {
         let response = self
             .http
-            .post(format!("{}/oauth2/token/revoke", self.endpoints.api_base()))
+            .post(&format!(
+                "{}/oauth2/token/revoke",
+                self.endpoints.api_base()
+            ))
+            .map_err(|err| DiscordError::Config(err.to_string()))?
             .basic_auth(config.application_id, Some(config.client_secret.expose()))
             .form(&[
                 ("token", token.access_token.expose().as_str()),

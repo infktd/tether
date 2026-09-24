@@ -146,7 +146,7 @@ async fn release(server: &MockServer, status: u16, body: serde_json::Value) {
 async fn update_checks_report_newer_releases_and_distrust_github(db: PgPool) {
     let h = harness(db, true).await;
     let github = MockServer::start().await;
-    let http = updates::http_client().unwrap();
+    let http = github_client(&github);
 
     // Nothing is sent before an owner exists to switch it off.
     release(
@@ -256,7 +256,7 @@ async fn update_checks_can_be_switched_off(db: PgPool) {
     let off = send(&h.app, form("/admin/system/updates", "", &owner)).await;
     assert_eq!(off.location(), "/admin/system");
     assert!(!updates::status(&h.db).await.unwrap().enabled);
-    let http = updates::http_client().unwrap();
+    let http = github_client(&github);
     updates::check(&h.db, &http, &source(&github))
         .await
         .unwrap();
@@ -327,7 +327,7 @@ async fn github_learns_nothing_about_the_instance_and_checks_do_not_pile_up(db: 
         .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({})))
         .mount(&github)
         .await;
-    let http = updates::http_client().unwrap();
+    let http = github_client(&github);
     updates::check(&h.db, &http, &source(&github))
         .await
         .unwrap();
@@ -354,4 +354,11 @@ async fn github_learns_nothing_about_the_instance_and_checks_do_not_pile_up(db: 
             .await
             .unwrap();
     assert_eq!(audited, 3);
+}
+
+fn github_client(github: &MockServer) -> tether_net::Outbound {
+    updates::http_client(
+        tether_net::Allowlist::production().with_local(&github.address().to_string()),
+    )
+    .unwrap()
 }

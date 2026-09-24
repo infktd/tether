@@ -3226,6 +3226,7 @@ dependencies = [
  "tether-discord",
  "tether-esi",
  "tether-jobs",
+ "tether-net",
  "tether-web",
  "tokio",
  "wiremock",
@@ -3264,6 +3265,7 @@ dependencies = [
  "sqlx",
  "tether-core",
  "tether-db",
+ "tether-net",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3285,6 +3287,7 @@ dependencies = [
  "sqlx",
  "tether-core",
  "tether-db",
+ "tether-net",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3305,6 +3308,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tether-net"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
 name = "tether-server"
 version = "0.1.0"
 dependencies = [
@@ -3317,6 +3331,7 @@ dependencies = [
  "tether-discord",
  "tether-esi",
  "tether-jobs",
+ "tether-net",
  "tether-web",
  "tokio",
  "tracing",
@@ -3343,6 +3358,7 @@ dependencies = [
  "tether-discord",
  "tether-esi",
  "tether-jobs",
+ "tether-net",
  "thiserror 2.0.21",
  "tokio",
  "tower",
