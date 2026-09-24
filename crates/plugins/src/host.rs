@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use wasmtime::component::{HasData, Linker};
 
+use crate::jobs;
 use crate::page::{self, PageProblem};
 use crate::storage::Storage;
 use crate::{CallError, PluginLimits, Runtime, RuntimeError, Sandbox};
@@ -44,16 +45,47 @@ pub struct CallState {
     dropped_logs: usize,
     /// `None` for plugins not approved for storage.
     storage: Option<Storage>,
+    /// `None` where no queue is wired up (tests of pages alone).
+    jobs: Option<jobs::Queue>,
+    job_calls: usize,
 }
 
 impl CallState {
-    fn new(plugin: &str, storage: Option<Storage>) -> Self {
+    fn new(plugin: &str, storage: Option<Storage>, jobs: Option<jobs::Queue>) -> Self {
         Self {
             plugin: plugin.to_owned(),
             logs: Vec::new(),
             dropped_logs: 0,
             storage,
+            jobs,
+            job_calls: 0,
         }
+    }
+
+    /// The queue, if this call may use it once more.
+    fn queue(&mut self) -> Result<jobs::Queue, jobs::Error> {
+        self.job_calls += 1;
+        if self.job_calls > jobs::MAX_CALLS {
+            return Err(jobs::Error::Invalid(format!(
+                "more than {} enqueue or cancel calls in one call",
+                jobs::MAX_CALLS
+            )));
+        }
+        self.jobs.clone().ok_or(jobs::Error::Unavailable)
+    }
+}
+
+impl tether::plugin::jobs::Host for CallState {
+    async fn enqueue(&mut self, job: jobs::NewJob) -> Result<(), jobs::Error> {
+        let queue = self.queue()?;
+        let job = jobs::check(job, chrono::Utc::now())?;
+        queue.enqueue(self.plugin.clone(), job).await
+    }
+
+    async fn cancel(&mut self, key: String) -> Result<bool, jobs::Error> {
+        let queue = self.queue()?;
+        jobs::check_key(&key)?;
+        queue.cancel(self.plugin.clone(), key).await
     }
 }
 
@@ -195,6 +227,13 @@ impl LoadedPlugin {
     }
 }
 
+/// How a job went, plus what the plugin logged while running it.
+#[derive(Debug)]
+pub struct JobRun {
+    pub result: Result<(), jobs::JobError>,
+    pub logs: Vec<LogRecord>,
+}
+
 /// A page, checked, plus what the plugin logged while making it.
 #[derive(Debug)]
 pub struct Rendered {
@@ -218,6 +257,7 @@ pub enum RenderError {
 pub struct Host {
     runtime: Arc<Runtime>,
     linker: Linker<Sandbox<CallState>>,
+    jobs: Option<jobs::Queue>,
 }
 
 impl std::fmt::Debug for Host {
@@ -231,11 +271,25 @@ impl Host {
         let mut linker = runtime.linker::<CallState>()?;
         Plugin::add_to_linker::<_, HasState>(&mut linker, |sandbox| &mut sandbox.data)
             .map_err(|e| RuntimeError::Link(e.to_string()))?;
-        Ok(Self { runtime, linker })
+        Ok(Self {
+            runtime,
+            linker,
+            jobs: None,
+        })
+    }
+
+    /// Where plugins' `enqueue` and `cancel` go.
+    pub fn with_jobs(mut self, queue: jobs::Queue) -> Self {
+        self.jobs = Some(queue);
+        self
     }
 
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+
+    fn call_state(&self, plugin: &LoadedPlugin) -> CallState {
+        CallState::new(&plugin.id, plugin.storage.clone(), self.jobs.clone())
     }
 
     /// Compiles, vets and links a plugin. A plugin importing anything the
@@ -269,9 +323,7 @@ impl Host {
         request: Request,
         limits: &PluginLimits,
     ) -> Result<Rendered, RenderError> {
-        let store = self
-            .runtime
-            .store(CallState::new(&plugin.id, plugin.storage.clone()), limits);
+        let store = self.runtime.store(self.call_state(plugin), limits);
         let (answer, logs) = self
             .runtime
             .run(&plugin.id, store, limits, async |store| {
@@ -297,6 +349,46 @@ impl Host {
         })?;
         page::check(&page)?;
         Ok(Rendered { page, logs })
+    }
+
+    /// Runs one of the plugin's jobs.
+    pub async fn run_job(
+        &self,
+        plugin: &LoadedPlugin,
+        job: jobs::Job,
+        limits: &PluginLimits,
+    ) -> Result<JobRun, CallError> {
+        let store = self.runtime.store(self.call_state(plugin), limits);
+        let (result, logs) = self
+            .runtime
+            .run_as(
+                crate::CallKind::Job,
+                &plugin.id,
+                store,
+                limits,
+                async |store| {
+                    let instance = plugin.pre.instantiate_async(&mut *store).await?;
+                    let result = instance.call_run_job(&mut *store, &job).await?;
+                    let state = &mut store.data_mut().data;
+                    if state.dropped_logs > 0 {
+                        tracing::warn!(
+                            plugin = state.plugin,
+                            dropped = state.dropped_logs,
+                            "plugin wrote too many log lines; the rest were dropped"
+                        );
+                    }
+                    Ok((result, std::mem::take(&mut state.logs)))
+                },
+            )
+            .await?;
+        let result = result.map_err(|err| match err {
+            // The plugin's own words, for admins: bounded and clean.
+            jobs::JobError::Retry(text) => jobs::JobError::Retry(printable(&text, MAX_LOG_TEXT)),
+            jobs::JobError::Permanent(text) => {
+                jobs::JobError::Permanent(printable(&text, MAX_LOG_TEXT))
+            }
+        });
+        Ok(JobRun { result, logs })
     }
 }
 

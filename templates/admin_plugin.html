@@ -22,6 +22,72 @@
   {% include "admin_error.html" %}
   {% if let Some(why) = failure %}<div class="alert" data-variant="destructive" role="alert"><section><strong>It couldn't be loaded.</strong> <span class="break-words">{{ why }}</span></section></div>{% endif %}
 
+  {% if !schedules.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Schedules</h2><p>Declared in the plugin; they run while it's enabled.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last queued</th><th scope="col">Next</th></tr></thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <td class="num">{{ s.name }}{% if !s.enabled %} <span class="badge" data-variant="outline">off</span>{% endif %}</td>
+          <td>{{ s.every }}</td>
+          <td class="num">{{ s.last_run }}</td>
+          <td class="num">{{ s.next_run }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <section class="card data-card">
+    <header><h2>Jobs <span class="num text-muted-foreground font-normal">{{ active_jobs }}</span></h2><p>Queued or running now; EVE time.</p></header>
+    {% if upcoming.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Nothing queued.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Job</th><th scope="col">Key</th><th scope="col">Runs</th><th scope="col">Tries</th></tr></thead>
+      <tbody>
+        {% for j in upcoming %}
+        <tr><td class="num">{{ j.name }}{% if j.state == "running" %} <span class="badge" data-variant="secondary">running</span>{% endif %}</td><td class="num">{{ j.key }}</td><td class="num">{{ j.when }}</td><td class="num">{{ j.attempts }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if !dead.is_empty() %}
+    <table class="table">
+      <thead><tr><th scope="col">Gave up</th><th scope="col">Last error</th><th scope="col">Tries</th></tr></thead>
+      <tbody>
+        {% for j in dead %}
+        <tr><td><div class="font-medium num">{{ j.name }}</div><div class="text-xs text-muted-foreground num">{{ j.key }} · {{ j.when }}</div></td><td class="w-full whitespace-normal"><div class="line-clamp-2 break-words text-sm">{{ j.error }}</div></td><td class="num">{{ j.attempts }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="card data-card">
+    <header><h2>Log</h2><p>What the plugin wrote, newest first; the last 1,000 lines are kept.</p></header>
+    {% if logs.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Nothing yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">When</th><th scope="col">Level</th><th scope="col">From</th><th scope="col">Message</th></tr></thead>
+      <tbody>
+        {% for l in logs %}
+        <tr>
+          <td class="num whitespace-nowrap">{{ l.at }}</td>
+          <td><span class="badge" data-variant="{% if l.level == "error" %}destructive{% else %}outline{% endif %}">{{ l.level }}</span></td>
+          <td class="num">{{ l.source }}</td>
+          <td class="w-full whitespace-normal"><div class="break-words text-sm num">{{ l.message }}</div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
   {% include "admin_plugin_about.html" %}
 
   <form class="card" method="post" action="/admin/plugins/{{ about.id }}/uninstall">

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT name, kind, payload, every_secs,\n               EXISTS (SELECT 1 FROM core.jobs j\n                       WHERE j.schedule = s.name AND j.state IN ('queued', 'running')) AS \"busy!\"\n        FROM core.schedules s\n        WHERE enabled AND next_run_at <= now()\n        ORDER BY next_run_at\n        FOR UPDATE SKIP LOCKED\n        ",
+  "query": "\n        SELECT name, every_secs, enabled, next_run_at, last_enqueued_at\n        FROM core.schedules WHERE starts_with(name, $1) ORDER BY name\n        ",
   "describe": {
     "columns": [
       {
@@ -16,28 +16,6 @@
       },
       {
         "ordinal": 1,
-        "name": "kind",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "core.schedules",
-            "name": "kind"
-          }
-        }
-      },
-      {
-        "ordinal": 2,
-        "name": "payload",
-        "type_info": "Jsonb",
-        "origin": {
-          "Table": {
-            "table": "core.schedules",
-            "name": "payload"
-          }
-        }
-      },
-      {
-        "ordinal": 3,
         "name": "every_secs",
         "type_info": "Int4",
         "origin": {
@@ -48,22 +26,51 @@
         }
       },
       {
-        "ordinal": 4,
-        "name": "busy!",
+        "ordinal": 2,
+        "name": "enabled",
         "type_info": "Bool",
-        "origin": "Expression"
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "next_run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "next_run_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "last_enqueued_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "last_enqueued_at"
+          }
+        }
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       false,
       false,
       false,
       false,
-      null
+      true
     ]
   },
-  "hash": "4f368742b96d3216b895ac5eadf815bee6f2cb5d828d8d286bce634bd3025673"
+  "hash": "881f212b90a1a3738a05ca39fda10e18ab702743bf19e708f686e64b849de483"
 }

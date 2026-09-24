@@ -27,7 +27,7 @@ use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::plugin_keys::{self, PinnedBy};
 use tether_db::plugins as db;
-use tether_db::{plugin_storage, secrets};
+use tether_db::{plugin_jobs, plugin_storage, secrets};
 use tether_plugins::host::{Host, LoadedPlugin};
 use tether_plugins::manifest;
 use tether_plugins::package::{self, Package, PackageError, Trust, Verified};
@@ -186,9 +186,10 @@ impl std::fmt::Debug for Plugins {
 }
 
 impl Plugins {
-    pub fn new(host: Host, key: EncryptionKey) -> Arc<Self> {
+    /// `db` is where plugins' jobs are queued.
+    pub fn new(host: Host, key: EncryptionKey, db: PgPool) -> Arc<Self> {
         Arc::new(Self {
-            host,
+            host: host.with_jobs(crate::plugin_jobs::PluginQueue::new(db)),
             key,
             slots: RwLock::default(),
             lifecycle: tokio::sync::Mutex::new(()),
@@ -288,10 +289,20 @@ impl Plugins {
                 return Err("its database storage couldn't be read".to_owned());
             }
         };
-        self.host
+        let schedules = crate::plugin_jobs::declared(&package.manifest);
+        let loaded = self
+            .host
             .load(&installed.id, package.component, storage)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // Its schedules run only while it does.
+        plugin_jobs::sync_schedules(db, &installed.id, &schedules)
+            .await
+            .map_err(|e| {
+                tracing::error!(plugin = installed.id, error = %e, "syncing plugin schedules");
+                "its schedules couldn't be set up".to_owned()
+            })?;
+        Ok(loaded)
     }
 
     /// The plugin's pool, connected as its role, once its pending
@@ -834,6 +845,10 @@ async fn set_enabled_now(
     if !db::exists(&mut *tx, id).await? {
         return Err(AppError::not_found("No plugin with that id is installed."));
     }
+    if !enabled {
+        // Switched back on when it next loads.
+        plugin_jobs::set_schedules_enabled(&mut *tx, id, false).await?;
+    }
     if db::set_enabled(&mut *tx, id, enabled).await? {
         audit::record(
             &mut *tx,
@@ -890,6 +905,14 @@ async fn uninstall_now(
     // Stopped first: its pool must be closed before its role goes.
     plugins.deactivate(id).await;
     let mut tx = state.db.begin().await?;
+    // The plugin's row first, as enqueue locks it: the same lock order on
+    // both sides, so they can't deadlock.
+    sqlx::query_scalar!(
+        r#"SELECT true AS "locked!" FROM core.plugins WHERE id = $1 FOR UPDATE"#,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     let storage = plugin_storage::get(&mut *tx, id).await?;
     if let Some(names) = &storage {
         plugin_storage::drop(&mut tx, names)
@@ -897,6 +920,7 @@ async fn uninstall_now(
             .map_err(AppError::internal)?;
         secrets::delete(&mut *tx, &password_secret(id)).await?;
     }
+    plugin_jobs::remove(&mut tx, id).await?;
     let version = db::uninstall(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No plugin with that id is installed."))?;

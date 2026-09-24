@@ -31,21 +31,58 @@
 /// The generated bindings (their ABI glue needs `unsafe`). Plugins use the
 /// re-exports below.
 #[doc(hidden)]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, clippy::too_many_arguments)]
 pub mod bindings {
     wit_bindgen::generate!({
         world: "plugin",
         path: "../../wit",
         pub_export_macro: true,
+        export_macro_name: "export_bindings",
         default_bindings_module: "tether_plugin_sdk::bindings",
     });
 }
 
-/// What a plugin implements.
-pub use bindings::Guest as Plugin;
+/// What a plugin implements: its pages, and optionally its jobs.
+pub trait Plugin {
+    /// Renders one of the plugin's pages.
+    fn render(request: Request) -> Result<Page, PageError>;
+
+    /// Runs a scheduled or queued job (see [`jobs`]). Plugins without jobs
+    /// can leave this out.
+    fn run_job(job: jobs::Job) -> Result<(), jobs::JobError> {
+        Err(jobs::JobError::Permanent(format!(
+            "this plugin has no job called {:?}",
+            job.name
+        )))
+    }
+}
+
 /// Exports a type implementing [`Plugin`] as the plugin:
 /// `tether_plugin_sdk::export!(MyPlugin);`
-pub use bindings::export;
+#[macro_export]
+macro_rules! export {
+    ($plugin:ty) => {
+        const _: () = {
+            struct TetherPluginExport;
+
+            impl $crate::bindings::Guest for TetherPluginExport {
+                fn render(
+                    request: $crate::Request,
+                ) -> ::core::result::Result<$crate::Page, $crate::PageError> {
+                    <$plugin as $crate::Plugin>::render(request)
+                }
+
+                fn run_job(
+                    job: $crate::jobs::Job,
+                ) -> ::core::result::Result<(), $crate::jobs::JobError> {
+                    <$plugin as $crate::Plugin>::run_job(job)
+                }
+            }
+
+    $crate::bindings::export_bindings!(TetherPluginExport with_types_in $crate::bindings);
+        };
+    };
+}
 pub use bindings::tether::plugin::page::{
     Badge, Card, Column, Link, Section, Stat, Tab, Table, Tone, Value,
 };
@@ -70,6 +107,64 @@ pub mod log {
 
     pub fn error(message: impl AsRef<str>) {
         write(Level::Error, message.as_ref());
+    }
+}
+
+/// Background work: the schedules declared in `plugin.toml`
+/// (`[[capabilities.schedules]]`) and one-off jobs queued here. Either way
+/// the host calls [`Plugin::run_job`].
+///
+/// ```ignore
+/// use tether_plugin_sdk::jobs;
+///
+/// // A ping at the chunk's arrival; queuing it again moves it.
+/// jobs::enqueue(
+///     jobs::NewJob::new("ping")
+///         .key("moon:40161234")
+///         .payload(r#"{"moon": 40161234}"#)
+///         .at("2026-09-30T18:05:00Z"),
+/// )?;
+/// jobs::cancel("moon:40161234")?;
+/// ```
+pub mod jobs {
+    pub use crate::bindings::tether::plugin::jobs::{Error, Job, JobError, NewJob};
+
+    /// Queues a job; with a key, replaces the queued job with that key.
+    pub fn enqueue(job: NewJob) -> Result<(), Error> {
+        crate::bindings::tether::plugin::jobs::enqueue(&job)
+    }
+
+    /// Removes the queued job with this key; whether there was one.
+    pub fn cancel(key: &str) -> Result<bool, Error> {
+        crate::bindings::tether::plugin::jobs::cancel(key)
+    }
+
+    impl NewJob {
+        pub fn new(name: impl Into<String>) -> Self {
+            Self {
+                name: name.into(),
+                key: None,
+                payload: "{}".to_owned(),
+                run_at: None,
+            }
+        }
+
+        pub fn key(mut self, key: impl Into<String>) -> Self {
+            self.key = Some(key.into());
+            self
+        }
+
+        /// JSON text.
+        pub fn payload(mut self, json: impl Into<String>) -> Self {
+            self.payload = json.into();
+            self
+        }
+
+        /// When to run it: an RFC 3339 instant, e.g. `2026-09-30T18:05:00Z`.
+        pub fn at(mut self, rfc3339: impl Into<String>) -> Self {
+            self.run_at = Some(rfc3339.into());
+            self
+        }
     }
 }
 

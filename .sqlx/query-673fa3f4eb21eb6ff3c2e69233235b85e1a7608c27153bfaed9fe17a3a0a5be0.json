@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.plugin_logs l\n        USING (\n            SELECT id FROM (\n                SELECT id, row_number() OVER (PARTITION BY plugin_id ORDER BY id DESC) AS n\n                FROM core.plugin_logs\n            ) ranked WHERE n > $1\n        ) old\n        WHERE l.id = old.id\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "673fa3f4eb21eb6ff3c2e69233235b85e1a7608c27153bfaed9fe17a3a0a5be0"
+}

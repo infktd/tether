@@ -4,9 +4,14 @@
 //! `?sql=...` (repeated for `transaction`) and `?p=<kind>:<value>` for
 //! each parameter: `n:` null, `b:true`, `i:42`, `f:1.5`, `t:text`,
 //! `ts:<rfc3339>`, `j:<json>`, `x:<hex bytes>`.
+//!
+//! Jobs too: `enqueue?name=&key=&payload=&at=` and `cancel?key=`. Each job
+//! run is recorded in a `runs` table (when the package's migration made
+//! one); a job named `fail` asks to be retried, `boom` gives up.
 
+use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value};
-use tether_plugin_sdk::{Page, PageError, Plugin, Request};
+use tether_plugin_sdk::{Page, PageError, Plugin, Request, log};
 
 struct Probe;
 
@@ -47,6 +52,13 @@ impl Plugin for Probe {
             .map(|(_, v)| param(v))
             .collect();
         let first = sql.first().copied().unwrap_or("");
+        let arg = |name: &str| {
+            request
+                .query
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        };
         let outcome = match request.path.as_str() {
             "query" => match storage::query(first, &params) {
                 Ok(rows) => format!("ok rows={} {:?}", rows.rows.len(), rows),
@@ -66,9 +78,59 @@ impl Plugin for Probe {
                     Err(e) => format!("err {e:?}"),
                 }
             }
+            "enqueue" => {
+                let mut job = NewJob::new(arg("name").unwrap_or_default());
+                if let Some(key) = arg("key") {
+                    job = job.key(key);
+                }
+                if let Some(payload) = arg("payload") {
+                    job = job.payload(payload);
+                }
+                if let Some(at) = arg("at") {
+                    job = job.at(at);
+                }
+                match jobs::enqueue(job) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(e) => format!("err {e:?}"),
+                }
+            }
+            "cancel" => match jobs::cancel(&arg("key").unwrap_or_default()) {
+                Ok(found) => format!("ok {found}"),
+                Err(e) => format!("err {e:?}"),
+            },
             _ => return Err(PageError::NotFound),
         };
         Ok(Page::new("Probe").text(shown(outcome)))
+    }
+
+    fn run_job(job: Job) -> Result<(), JobError> {
+        log::info(format!("running {} (attempt {})", job.name, job.attempt));
+        // Plugins without storage (or without the table) just log.
+        let _ = storage::execute(
+            "INSERT INTO runs (name, job_key, payload, scheduled_at, attempt) \
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                job.name.clone().into(),
+                job.key.clone().into(),
+                Value::json(job.payload.clone()),
+                Value::timestamp(job.scheduled_at.clone()),
+                i64::from(job.attempt).into(),
+            ],
+        );
+        match job.name.as_str() {
+            "fail" => Err(JobError::Retry("not yet".into())),
+            // Queues itself again under its key, then asks to be retried.
+            "requeue" => {
+                let mut again = NewJob::new("requeue").at("2020-01-01T00:00:00Z");
+                if let Some(key) = &job.key {
+                    again = again.key(key.clone());
+                }
+                let _ = jobs::enqueue(again);
+                Err(JobError::Retry("again".into()))
+            }
+            "boom" => Err(JobError::Permanent("never".into())),
+            _ => Ok(()),
+        }
     }
 }
 

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO core.schedules (name, kind, payload, every_secs, enabled)\n            VALUES ($1, $2, $3, $4, true)\n            ON CONFLICT (name) DO UPDATE\n            SET kind = EXCLUDED.kind, payload = EXCLUDED.payload,\n                every_secs = EXCLUDED.every_secs, enabled = true, updated_at = now()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b679f406d10d1ca67505776fa3873be3afbdaac1115d8a62ee69799571ae8683"
+}

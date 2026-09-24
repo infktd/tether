@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.plugin_logs\n        WHERE plugin_id = $1 AND id <= (\n            SELECT id FROM core.plugin_logs WHERE plugin_id = $1\n            ORDER BY id DESC OFFSET $2 LIMIT 1\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9ac645aead4e01332eeab275088c7258072c0416cbd5d5bb3d263f264f1cb198"
+}

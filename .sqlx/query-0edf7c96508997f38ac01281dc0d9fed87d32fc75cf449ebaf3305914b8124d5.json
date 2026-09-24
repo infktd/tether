@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.schedules SET enabled = $2, updated_at = now() WHERE starts_with(name, $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0edf7c96508997f38ac01281dc0d9fed87d32fc75cf449ebaf3305914b8124d5"
+}

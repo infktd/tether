@@ -55,6 +55,8 @@ pub struct Job {
     /// 1 on the first run.
     pub attempt: i32,
     pub max_attempts: i32,
+    /// When it was meant to run: retries don't move this.
+    pub scheduled_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,8 +95,8 @@ pub async fn enqueue<'e>(
 ) -> Result<JobId, sqlx::Error> {
     let id = sqlx::query_scalar!(
         r#"
-        INSERT INTO core.jobs (kind, payload, max_attempts, run_at)
-        VALUES ($1, $2, $3, COALESCE($4, now()))
+        INSERT INTO core.jobs (kind, payload, max_attempts, run_at, scheduled_at)
+        VALUES ($1, $2, $3, COALESCE($4, now()), COALESCE($4, now()))
         RETURNING id
         "#,
         job.kind,
@@ -132,7 +134,8 @@ pub(crate) async fn claim(
             FOR UPDATE SKIP LOCKED
             LIMIT 1
         )
-        RETURNING id, kind, payload, attempts, max_attempts
+        RETURNING id, kind, payload, attempts, max_attempts,
+                  COALESCE(scheduled_at, created_at) AS "scheduled_at!"
         "#,
         kinds,
         lease.as_secs_f64(),
@@ -145,6 +148,7 @@ pub(crate) async fn claim(
         payload: r.payload,
         attempt: r.attempts,
         max_attempts: r.max_attempts,
+        scheduled_at: r.scheduled_at,
     }))
 }
 
@@ -169,6 +173,13 @@ pub(crate) async fn complete(pool: &PgPool, job: &Job) -> Result<bool, sqlx::Err
 /// Records a failure: back to `queued` after `retry_in`, or `dead` when
 /// attempts are used up or the failure is permanent. Returns the new state,
 /// or `None` if this claim no longer owns the job.
+/// A keyed job going back to `queued` can collide with a replacement
+/// queued (but not yet committed) meanwhile; running the update again sees
+/// the replacement and supersedes instead.
+fn is_key_collision(err: &sqlx::Error) -> bool {
+    matches!(err, sqlx::Error::Database(db) if db.constraint() == Some("jobs_plugin_key_idx"))
+}
+
 pub(crate) async fn fail(
     pool: &PgPool,
     job: &Job,
@@ -176,24 +187,97 @@ pub(crate) async fn fail(
     permanent: bool,
     retry_in: Duration,
 ) -> Result<Option<JobState>, sqlx::Error> {
+    match fail_once(pool, job, error, permanent, retry_in).await {
+        Err(err) if is_key_collision(&err) => {
+            fail_once(pool, job, error, permanent, retry_in).await
+        }
+        other => other,
+    }
+}
+
+async fn fail_once(
+    pool: &PgPool,
+    job: &Job,
+    error: &str,
+    permanent: bool,
+    retry_in: Duration,
+) -> Result<Option<JobState>, sqlx::Error> {
     let error = truncate(error, MAX_ERROR_LEN);
+    // A keyed plugin job that was queued again meanwhile is superseded by
+    // the newer one: it ends instead of going back into the queue.
     let state = sqlx::query_scalar!(
         r#"
-        UPDATE core.jobs
-        SET state = CASE WHEN $3 OR attempts >= max_attempts THEN 'dead' ELSE 'queued' END,
+        UPDATE core.jobs j
+        SET state = CASE WHEN $3 OR j.attempts >= j.max_attempts OR newer.exists
+                         THEN 'dead' ELSE 'queued' END,
             run_at = now() + make_interval(secs => $4),
-            finished_at = CASE WHEN $3 OR attempts >= max_attempts THEN now() END,
+            finished_at = CASE WHEN $3 OR j.attempts >= j.max_attempts OR newer.exists
+                               THEN now() END,
             locked_until = NULL,
-            last_error = $5,
+            last_error = CASE WHEN newer.exists
+                              THEN 'replaced by a newer job with the same key' ELSE $5 END,
             updated_at = now()
-        WHERE id = $1 AND state = 'running' AND attempts = $2
-        RETURNING state
+        FROM (SELECT EXISTS (
+            SELECT 1 FROM core.jobs o, core.jobs me
+            WHERE me.id = $1 AND me.job_key IS NOT NULL AND o.id <> me.id
+              AND o.plugin_id = me.plugin_id AND o.job_key = me.job_key AND o.state = 'queued'
+        ) AS exists) newer
+        WHERE j.id = $1 AND j.state = 'running' AND j.attempts = $2
+        RETURNING j.state
         "#,
         job.id.0,
         job.attempt,
         permanent,
         retry_in.as_secs_f64(),
         error,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(state.as_deref().and_then(JobState::parse))
+}
+
+/// Puts a running job back to wait `delay` without counting the attempt:
+/// for work that can't start yet (a plugin that isn't running). Returns the
+/// new state (`dead` if a newer keyed job replaced it), or `None` if this
+/// claim no longer owns the job.
+pub(crate) async fn defer(
+    pool: &PgPool,
+    job: &Job,
+    delay: Duration,
+) -> Result<Option<JobState>, sqlx::Error> {
+    match defer_once(pool, job, delay).await {
+        Err(err) if is_key_collision(&err) => defer_once(pool, job, delay).await,
+        other => other,
+    }
+}
+
+async fn defer_once(
+    pool: &PgPool,
+    job: &Job,
+    delay: Duration,
+) -> Result<Option<JobState>, sqlx::Error> {
+    let state = sqlx::query_scalar!(
+        r#"
+        UPDATE core.jobs j
+        SET state = CASE WHEN newer.exists THEN 'dead' ELSE 'queued' END,
+            attempts = j.attempts - 1,
+            run_at = now() + make_interval(secs => $3),
+            finished_at = CASE WHEN newer.exists THEN now() END,
+            last_error = CASE WHEN newer.exists
+                              THEN 'replaced by a newer job with the same key' ELSE j.last_error END,
+            locked_until = NULL,
+            updated_at = now()
+        FROM (SELECT EXISTS (
+            SELECT 1 FROM core.jobs o, core.jobs me
+            WHERE me.id = $1 AND me.job_key IS NOT NULL AND o.id <> me.id
+              AND o.plugin_id = me.plugin_id AND o.job_key = me.job_key AND o.state = 'queued'
+        ) AS exists) newer
+        WHERE j.id = $1 AND j.state = 'running' AND j.attempts = $2
+        RETURNING j.state
+        "#,
+        job.id.0,
+        job.attempt,
+        delay.as_secs_f64(),
     )
     .fetch_optional(pool)
     .await?;
@@ -278,6 +362,12 @@ pub async fn retry<'e>(
         UPDATE core.jobs
         SET state = 'queued', attempts = 0, run_at = now(), finished_at = NULL, updated_at = now()
         WHERE id = $1 AND state = 'dead'
+          -- A keyed job whose key is queued again was replaced; keep it so.
+          AND NOT EXISTS (
+            SELECT 1 FROM core.jobs o, core.jobs me
+            WHERE me.id = $1 AND me.job_key IS NOT NULL AND o.id <> me.id
+              AND o.plugin_id = me.plugin_id AND o.job_key = me.job_key AND o.state = 'queued'
+          )
         "#,
         id.0,
     )

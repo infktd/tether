@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.jobs\n        WHERE plugin_id IS NOT NULL AND state IN ('succeeded', 'dead')\n          AND finished_at < now() - make_interval(hours => $1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "911eabb19cf6f9d3f5f6fb47a910feaf2d48bb7d0e34a33231192236feb22a5f"
+}

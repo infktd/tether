@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.jobs WHERE plugin_id = $1 AND job_key = $2 AND state = 'queued'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eab9a6c1a505614575929948493002d671f682caad14e5fb8799ed329406b433"
+}

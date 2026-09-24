@@ -472,10 +472,58 @@ pub async fn discard(
 
 // ---- one plugin -------------------------------------------------------------
 
+pub struct ScheduleView {
+    pub name: String,
+    pub every: String,
+    pub enabled: bool,
+    pub next_run: String,
+    pub last_run: String,
+}
+
+pub struct JobView {
+    pub name: String,
+    pub key: String,
+    pub state: String,
+    pub attempts: i32,
+    pub when: String,
+    pub error: String,
+}
+
+pub struct LogView {
+    pub at: String,
+    pub level: String,
+    pub source: String,
+    pub message: String,
+}
+
+fn every(secs: i32) -> String {
+    match secs {
+        s if s % 86_400 == 0 => format!("every {} day(s)", s / 86_400),
+        s if s % 3_600 == 0 => format!("every {} hour(s)", s / 3_600),
+        s => format!("every {} minute(s)", s / 60),
+    }
+}
+
+fn job_view(j: tether_db::plugin_jobs::JobRow) -> JobView {
+    JobView {
+        name: j.name,
+        key: j.key.unwrap_or_default(),
+        state: j.state,
+        attempts: j.attempts,
+        when: time(j.run_at),
+        error: j.last_error.unwrap_or_default(),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "admin_plugin.html")]
 struct PluginPage {
     shell: Shell,
+    schedules: Vec<ScheduleView>,
+    active_jobs: i64,
+    upcoming: Vec<JobView>,
+    dead: Vec<JobView>,
+    logs: Vec<LogView>,
     about: About,
     enabled: bool,
     status: &'static str,
@@ -501,11 +549,38 @@ async fn plugin_page(
         .clone();
     let status = state.plugins.status(id);
     let (label, variant) = status_label(&status, installed.enabled);
+    let schedules = tether_db::plugin_jobs::schedules(&state.db, id)
+        .await?
+        .into_iter()
+        .map(|s| ScheduleView {
+            name: s.name,
+            every: every(s.every_secs),
+            enabled: s.enabled,
+            next_run: time(s.next_run_at),
+            last_run: s.last_enqueued_at.map_or_else(|| "never".to_owned(), time),
+        })
+        .collect();
+    let (active_jobs, upcoming, dead) = tether_db::plugin_jobs::jobs(&state.db, id, 20).await?;
+    let logs = tether_db::plugin_jobs::logs(&state.db, id, 50)
+        .await?
+        .into_iter()
+        .map(|l| LogView {
+            at: l.at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            level: l.level,
+            source: l.source,
+            message: l.message,
+        })
+        .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         code,
         &PluginPage {
             shell,
+            schedules,
+            active_jobs,
+            upcoming: upcoming.into_iter().map(job_view).collect(),
+            dead: dead.into_iter().map(job_view).collect(),
+            logs,
             about: About::new(&package),
             enabled: installed.enabled,
             status: label,

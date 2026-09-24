@@ -63,11 +63,15 @@ pub async fn run_due(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let due = sqlx::query!(
         r#"
-        SELECT name, kind, payload, every_secs,
+        SELECT name, kind, payload, every_secs, next_run_at,
                EXISTS (SELECT 1 FROM core.jobs j
                        WHERE j.schedule = s.name AND j.state IN ('queued', 'running')) AS "busy!"
         FROM core.schedules s
         WHERE enabled AND next_run_at <= now()
+          -- A plugin schedule outlives its plugin only by mistake; skip it
+          -- rather than fail every schedule's tick.
+          AND (s.payload->>'plugin' IS NULL
+               OR EXISTS (SELECT 1 FROM core.plugins p WHERE p.id = s.payload->>'plugin'))
         ORDER BY next_run_at
         FOR UPDATE SKIP LOCKED
         "#
@@ -89,10 +93,14 @@ pub async fn run_due(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
             continue;
         }
         sqlx::query!(
-            "INSERT INTO core.jobs (kind, payload, schedule) VALUES ($1, $2, $3)",
+            r#"
+            INSERT INTO core.jobs (kind, payload, schedule, plugin_id, scheduled_at)
+            VALUES ($1, $2, $3, $2::jsonb ->> 'plugin', $4)
+            "#,
             s.kind,
             s.payload,
             s.name,
+            s.next_run_at,
         )
         .execute(&mut *tx)
         .await?;

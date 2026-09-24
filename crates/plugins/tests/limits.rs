@@ -263,3 +263,40 @@ async fn a_plugin_defining_its_own_resources_is_refused() {
         "{err}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jobs_dont_wait_for_a_busy_plugin_and_pages_dont_wait_for_jobs() {
+    let host = host().await;
+    let job = |plugin: &'static str| {
+        let host = host.clone();
+        async move {
+            let limits = limits(400, 5_000, 64);
+            let store = host.runtime.store((), &limits);
+            host.runtime
+                .run_as(
+                    tether_plugins::CallKind::Job,
+                    plugin,
+                    store,
+                    &limits,
+                    async |store| {
+                        let guest =
+                            Limits::instantiate_async(&mut *store, &host.component, &host.linker)
+                                .await?;
+                        guest.call_spin(&mut *store).await
+                    },
+                )
+                .await
+        }
+    };
+    // A job spinning for its CPU budget...
+    let running = tokio::spawn(job("a"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // ...a second job of the same plugin is turned away at once...
+    let started = Instant::now();
+    assert_eq!(job("a").await.unwrap_err(), CallError::Busy);
+    assert!(started.elapsed() < Duration::from_millis(50));
+    // ...and its pages still run.
+    let out = call!(host, "a", &PluginLimits::default(), call_echo, "page").unwrap();
+    assert_eq!(out, "page");
+    assert_eq!(running.await.unwrap().unwrap_err(), CallError::CpuLimit);
+}

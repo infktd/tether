@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.jobs\n        SET state = 'queued', attempts = 0, run_at = now(), finished_at = NULL, updated_at = now()\n        WHERE id = $1 AND state = 'dead'\n          -- A keyed job whose key is queued again was replaced; keep it so.\n          AND NOT EXISTS (\n            SELECT 1 FROM core.jobs o, core.jobs me\n            WHERE me.id = $1 AND me.job_key IS NOT NULL AND o.id <> me.id\n              AND o.plugin_id = me.plugin_id AND o.job_key = me.job_key AND o.state = 'queued'\n          )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e642897bdffd909204c8ad3366df34035fb06bb482e38c557126cff771055443"
+}

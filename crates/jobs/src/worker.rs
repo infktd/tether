@@ -19,6 +19,8 @@ pub enum JobError {
     Retry(String),
     /// Will never succeed (bad payload, deleted target): dead-letter now.
     Permanent(String),
+    /// Can't start yet: try again after this, without using an attempt.
+    Defer(Duration),
 }
 
 impl JobError {
@@ -108,6 +110,8 @@ pub enum Outcome {
     Succeeded(JobId),
     Retrying(JobId),
     Dead(JobId),
+    /// Put back to wait, without using an attempt.
+    Deferred(JobId),
     /// The job outlived its lease and was reclaimed by another worker, so
     /// this outcome was discarded.
     LostLease(JobId),
@@ -180,6 +184,14 @@ async fn execute(
         Err(JobError::Permanent(message)) => {
             record_failure(pool, config, &job, &message, true).await
         }
+        Err(JobError::Defer(delay)) => match queue::defer(pool, &job, delay).await? {
+            Some(JobState::Queued) => {
+                tracing::debug!(delay_s = delay.as_secs(), "job deferred");
+                Ok(Outcome::Deferred(job.id))
+            }
+            Some(_) => Ok(Outcome::Dead(job.id)),
+            None => Ok(Outcome::LostLease(job.id)),
+        },
     }
 }
 

@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT name, kind, payload, every_secs, next_run_at,\n               EXISTS (SELECT 1 FROM core.jobs j\n                       WHERE j.schedule = s.name AND j.state IN ('queued', 'running')) AS \"busy!\"\n        FROM core.schedules s\n        WHERE enabled AND next_run_at <= now()\n          -- A plugin schedule outlives its plugin only by mistake; skip it\n          -- rather than fail every schedule's tick.\n          AND (s.payload->>'plugin' IS NULL\n               OR EXISTS (SELECT 1 FROM core.plugins p WHERE p.id = s.payload->>'plugin'))\n        ORDER BY next_run_at\n        FOR UPDATE SKIP LOCKED\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "every_secs",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "every_secs"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "next_run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "next_run_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "busy!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "467fe89ee2ccc779e2b7f049a20859999ac777e878b6fbe3e9288c1046a7acd4"
+}

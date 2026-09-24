@@ -219,6 +219,8 @@ pub async fn send(
         Err(JobError::Permanent(reason)) => {
             tracing::warn!(ping = id, reason, "fleet ping failed");
         }
+        // deliver never defers; the retry job would pick it up anyway.
+        Err(JobError::Defer(_)) => {}
     }
     Ok(id)
 }

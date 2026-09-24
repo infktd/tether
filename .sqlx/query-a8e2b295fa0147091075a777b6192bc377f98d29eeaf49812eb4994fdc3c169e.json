@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_logs (plugin_id, source, level, message)\n        SELECT $1, $2, level, message FROM UNNEST($3::text[], $4::text[]) AS l (level, message)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a8e2b295fa0147091075a777b6192bc377f98d29eeaf49812eb4994fdc3c169e"
+}

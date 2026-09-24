@@ -20,6 +20,7 @@ pub mod maintenance;
 pub mod openapi;
 pub mod pages;
 pub mod pings;
+pub mod plugin_jobs;
 pub mod plugins;
 mod ratelimit;
 pub mod setup;
@@ -284,6 +285,14 @@ mod tests {
         let key =
             tether_core::crypto::EncryptionKey::from_hex(&tether_core::Secret::new("0".repeat(64)))
                 .unwrap();
+        let plugins = crate::plugins::Plugins::new(
+            tether_plugins::host::Host::new(std::sync::Arc::new(
+                tether_plugins::Runtime::new().unwrap(),
+            ))
+            .unwrap(),
+            key.clone(),
+            db.clone(),
+        );
         AppState {
             vault: std::sync::Arc::new(tether_esi::vault::TokenVault::new(
                 db.clone(),
@@ -305,13 +314,7 @@ mod tests {
             site: std::sync::Arc::new(Site::new("https://tether.test")),
             setup_token: std::sync::Arc::new(tether_core::Secret::new("t".repeat(32))),
             limits: std::sync::Arc::default(),
-            plugins: crate::plugins::Plugins::new(
-                tether_plugins::host::Host::new(std::sync::Arc::new(
-                    tether_plugins::Runtime::new().unwrap(),
-                ))
-                .unwrap(),
-                key.clone(),
-            ),
+            plugins,
         }
     }
 

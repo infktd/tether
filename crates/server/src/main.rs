@@ -158,6 +158,24 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         tether_discord::Endpoints::discord(),
         outbound(&plain_agent())?,
     )?);
+    // Plugins load in the background: the site serves while they compile,
+    // and one that fails is shown to admins instead of stopping startup.
+    let plugins = tether_web::plugins::Plugins::new(
+        tether_plugins::host::Host::new(std::sync::Arc::new(
+            tether_plugins::Runtime::new().context("starting the plugin runtime")?,
+        ))
+        .context("starting the plugin host")?,
+        key.clone(),
+        db.clone(),
+    );
+    {
+        let (plugins, db) = (plugins.clone(), db.clone());
+        tokio::spawn(async move {
+            if let Err(err) = plugins.start(&db).await {
+                tracing::error!(error = %err, "loading plugins");
+            }
+        });
+    }
     let mut registry = tether_jobs::Registry::new();
     tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
     tether_web::updates::register_jobs(
@@ -197,6 +215,18 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             ..Default::default()
         },
     );
+    // Plugin jobs claim from their own workers: core jobs never wait
+    // behind them.
+    let mut plugin_registry = tether_jobs::Registry::new();
+    tether_web::plugin_jobs::register_jobs(&mut plugin_registry, db.clone(), plugins.clone());
+    let plugin_workers = tether_jobs::WorkerPool::start(
+        db.clone(),
+        plugin_registry,
+        tether_jobs::WorkerConfig {
+            workers: tether_web::plugin_jobs::WORKERS,
+            ..Default::default()
+        },
+    );
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
@@ -229,23 +259,6 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         sso.clone(),
         site.sso_callback_url(),
     ));
-    // Plugins load in the background: the site serves while they compile,
-    // and one that fails is shown to admins instead of stopping startup.
-    let plugins = tether_web::plugins::Plugins::new(
-        tether_plugins::host::Host::new(std::sync::Arc::new(
-            tether_plugins::Runtime::new().context("starting the plugin runtime")?,
-        ))
-        .context("starting the plugin host")?,
-        key.clone(),
-    );
-    {
-        let (plugins, db) = (plugins.clone(), db.clone());
-        tokio::spawn(async move {
-            if let Err(err) = plugins.start(&db).await {
-                tracing::error!(error = %err, "loading plugins");
-            }
-        });
-    }
     let state = tether_web::AppState {
         vault,
         key,
@@ -268,6 +281,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     // HTTP has drained; stop scheduling, then let running jobs finish.
     scheduler.shutdown().await;
     workers.shutdown().await;
+    plugin_workers.shutdown().await;
     Ok(())
 }
 

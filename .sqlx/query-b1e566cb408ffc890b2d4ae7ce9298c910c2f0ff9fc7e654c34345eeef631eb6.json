@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.jobs j\n        SET state = CASE WHEN $3 OR j.attempts >= j.max_attempts OR newer.exists\n                         THEN 'dead' ELSE 'queued' END,\n            run_at = now() + make_interval(secs => $4),\n            finished_at = CASE WHEN $3 OR j.attempts >= j.max_attempts OR newer.exists\n                               THEN now() END,\n            locked_until = NULL,\n            last_error = CASE WHEN newer.exists\n                              THEN 'replaced by a newer job with the same key' ELSE $5 END,\n            updated_at = now()\n        FROM (SELECT EXISTS (\n            SELECT 1 FROM core.jobs o, core.jobs me\n            WHERE me.id = $1 AND me.job_key IS NOT NULL AND o.id <> me.id\n              AND o.plugin_id = me.plugin_id AND o.job_key = me.job_key AND o.state = 'queued'\n        ) AS exists) newer\n        WHERE j.id = $1 AND j.state = 'running' AND j.attempts = $2\n        RETURNING j.state\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.jobs",
+            "name": "state"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Bool",
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b1e566cb408ffc890b2d4ae7ce9298c910c2f0ff9fc7e654c34345eeef631eb6"
+}

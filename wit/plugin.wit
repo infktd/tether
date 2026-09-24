@@ -185,11 +185,68 @@ interface storage {
     transaction: func(statements: list<statement>) -> result<list<u64>, error>;
 }
 
+/// Background work on Tether's job queue: the schedules declared in
+/// `plugin.toml`, and one-off jobs a plugin queues itself. Either way the
+/// host calls the plugin's `run-job` export.
+interface jobs {
+    /// A job to run, as `run-job` gets it.
+    record job {
+        /// The schedule's name, or the name it was queued under.
+        name: string,
+        key: option<string>,
+        /// JSON text given when it was queued; `{}` for schedules.
+        payload: string,
+        /// When it was meant to run (RFC 3339). It may run later: after
+        /// downtime, a restart, or retries.
+        scheduled-at: string,
+        /// 1 on the first run.
+        attempt: u32,
+    }
+
+    variant job-error {
+        /// Try again later, with backoff.
+        retry(string),
+        /// Never going to work: give up now.
+        permanent(string),
+    }
+
+    record new-job {
+        /// Lowercase letters, digits and `_`, at most 40.
+        name: string,
+        /// Queuing a job under a key replaces the queued job with the same
+        /// key, so a job can be moved or updated without duplicates.
+        key: option<string>,
+        /// JSON text, at most 64 KiB.
+        payload: string,
+        /// When to run it (RFC 3339), at most 120 days ahead; none, or a
+        /// past time, runs it as soon as possible.
+        run-at: option<string>,
+    }
+
+    variant error {
+        /// The job or key breaks a rule; why.
+        invalid(string),
+        /// The plugin already has as many queued jobs as it may.
+        too-many,
+        /// The queue couldn't be reached.
+        unavailable,
+    }
+
+    /// Queues a job, or with a key, replaces the queued one with that key.
+    enqueue: func(job: new-job) -> result<_, error>;
+    /// Removes the queued job with this key; whether there was one.
+    cancel: func(key: string) -> result<bool, error>;
+}
+
 world plugin {
     import log;
     import storage;
+    import jobs;
+    use jobs.{job, job-error};
     use page.{page, request, page-error};
 
     /// Renders one of the plugin's pages.
     export render: func(request: request) -> result<page, page-error>;
+    /// Runs a scheduled or queued job.
+    export run-job: func(job: job) -> result<_, job-error>;
 }

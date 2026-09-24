@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*) AS \"n!\" FROM core.jobs\n        WHERE plugin_id = $1 AND schedule IS NULL AND created_at > now() - interval '1 day'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "596a4272eff60a39576cd00e2ab711e7894692c50d25d39e16aa7939bcc2ce5d"
+}

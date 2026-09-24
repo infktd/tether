@@ -211,9 +211,61 @@ storage::transaction(&[
 
 Setting these yourself (`SET`, `set_config`, `ALTER ROLE`) doesn't lift them: the host puts them back before every statement. Uninstalling a plugin deletes its schema and everything in it.
 
+## Jobs
+
+Work that shouldn't wait for a page view, such as syncing from ESI or a ping at a set time, runs as a job. There are two kinds, and both arrive at `run_job`:
+
+- **Schedules**, declared in `plugin.toml` (`[[capabilities.schedules]]`, `every = "30m"`, from 5 minutes to 7 days). They run while the plugin is enabled.
+- **One-off jobs**, queued from a page or another job with `jobs::enqueue`. Give one a key to be able to move or cancel it: queuing under the same key replaces the queued job, and `jobs::cancel(key)` removes it.
+
+```rust
+use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
+use tether_plugin_sdk::{Page, PageError, Plugin, Request};
+
+struct Moons;
+
+impl Plugin for Moons {
+    fn render(request: Request) -> Result<Page, PageError> { /* ... */ }
+
+    fn run_job(job: Job) -> Result<(), JobError> {
+        match job.name.as_str() {
+            "sync" => {
+                // For each extraction: a ping when the chunk arrives. Queuing
+                // again after a reschedule moves it.
+                jobs::enqueue(
+                    NewJob::new("ping")
+                        .key("moon:40161234")
+                        .payload(r#"{"moon": 40161234}"#)
+                        .at("2026-09-30T18:05:00Z"),
+                ).map_err(|e| JobError::Retry(format!("{e:?}")))?;
+                Ok(())
+            }
+            "ping" => Ok(()),
+            other => Err(JobError::Permanent(format!("no job {other}"))),
+        }
+    }
+}
+```
+
+- `job.scheduled_at` is when it was meant to run. After downtime, a restart or retries it runs late, so check it when timing matters (a ping for a chunk that arrived hours ago may not be worth sending).
+- Return `JobError::Retry` for trouble that may pass (retried with backoff, up to 5 tries) and `JobError::Permanent` for a job that will never work. Hitting a limit or trapping counts as a retry.
+- A job whose plugin is disabled or still loading waits for it without using up its tries; uninstalling removes all of the plugin's jobs.
+- A time in the past means "as soon as possible": it runs after jobs already waiting, and `scheduled_at` still says the time you gave. One job of a plugin runs at a time, on workers apart from Tether's own and from page views.
+
+| Limit | Value |
+| --- | --- |
+| One job run | 60 s in all, 10 s of CPU, 64 MiB of memory |
+| Queued and running jobs | 1,000 per plugin (replacing a queued one by key still works at the limit) |
+| Jobs created | 5,000 per plugin per day, finished ones included; finished jobs are kept a day |
+| How far ahead | 120 days |
+| Payload | JSON, at most 64 KiB |
+| Name | lowercase letters, digits and `_`, at most 40 |
+| Key | ASCII letters, digits and `. _ : -`, at most 100 |
+| `enqueue` and `cancel` calls | 100 per page render or job run |
+
 ## Logging
 
-`log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see. The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
+`log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
 
 ## Limits
 
@@ -238,9 +290,10 @@ API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0
 
 - `log`: write to the plugin's log;
 - pages: `render`;
-- `storage`: SQL in the plugin's own schema (see Storage).
+- `storage`: SQL in the plugin's own schema (see Storage);
+- `jobs`: schedules and one-off jobs (see Jobs).
 
-Coming during milestone 2, in this order: background jobs and schedules, permissions and forms, ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
+Coming during milestone 2, in this order: permissions and forms, ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
 
 ## Checklist before publishing
 

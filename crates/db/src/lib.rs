@@ -7,6 +7,7 @@ pub mod discord;
 pub mod groups;
 pub mod permissions;
 pub mod pings;
+pub mod plugin_jobs;
 pub mod plugin_keys;
 pub mod plugin_storage;
 pub mod plugins;

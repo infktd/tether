@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.jobs (kind, payload, plugin_id, job_key, run_at, scheduled_at)\n        VALUES ($1, $2, $3, $4, GREATEST(COALESCE($5, now()), now()), COALESCE($5, now()))\n        ON CONFLICT (plugin_id, job_key) WHERE state = 'queued' AND job_key IS NOT NULL\n        DO UPDATE SET payload = EXCLUDED.payload, run_at = EXCLUDED.run_at,\n            scheduled_at = EXCLUDED.scheduled_at, attempts = 0, last_error = NULL,\n            updated_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "49f3dd4ec161979a62a5d269ffb4bf28096795add4682e335ac5518dd88f9cdd"
+}

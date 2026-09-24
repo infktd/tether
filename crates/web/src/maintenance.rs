@@ -1,6 +1,6 @@
 //! Housekeeping on a schedule: expired sessions, login attempts, setup
-//! sessions and Discord link attempts, plugin uploads nobody approved, and
-//! succeeded jobs older than a week.
+//! sessions and Discord link attempts, plugin uploads nobody approved, old
+//! plugin log lines, and succeeded jobs older than a week.
 
 use std::time::Duration;
 
@@ -25,6 +25,9 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
     let discord_links = tether_db::discord::prune_attempts(db).await?;
     let plugin_uploads =
         tether_db::plugins::prune_uploads(db, crate::plugins::UPLOAD_HOURS).await?;
+    let plugin_logs = tether_db::plugin_jobs::prune_logs(db, crate::plugin_jobs::KEEP_LOGS).await?;
+    let plugin_jobs =
+        tether_db::plugin_jobs::prune_finished(db, crate::plugin_jobs::KEEP_FINISHED_HOURS).await?;
     let jobs = tether_jobs::schedule::prune_succeeded(db, KEEP_SUCCEEDED).await?;
     tracing::info!(
         sessions = expired.sessions,
@@ -32,6 +35,8 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         setup_sessions = expired.setup_sessions,
         discord_links,
         plugin_uploads,
+        plugin_logs,
+        plugin_jobs,
         jobs,
         "pruned"
     );

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE core.jobs\n        SET state = 'running',\n            attempts = attempts + 1,\n            locked_until = now() + make_interval(secs => $2),\n            updated_at = now()\n        WHERE id = (\n            SELECT id FROM core.jobs\n            WHERE kind = ANY($1)\n              AND ((state = 'queued' AND run_at <= now())\n                OR (state = 'running' AND locked_until < now()))\n            ORDER BY run_at, id\n            FOR UPDATE SKIP LOCKED\n            LIMIT 1\n        )\n        RETURNING id, kind, payload, attempts, max_attempts\n        ",
+  "query": "\n        UPDATE core.jobs\n        SET state = 'running',\n            attempts = attempts + 1,\n            locked_until = now() + make_interval(secs => $2),\n            updated_at = now()\n        WHERE id = (\n            SELECT id FROM core.jobs\n            WHERE kind = ANY($1)\n              AND ((state = 'queued' AND run_at <= now())\n                OR (state = 'running' AND locked_until < now()))\n            ORDER BY run_at, id\n            FOR UPDATE SKIP LOCKED\n            LIMIT 1\n        )\n        RETURNING id, kind, payload, attempts, max_attempts,\n                  COALESCE(scheduled_at, created_at) AS \"scheduled_at!\"\n        ",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,12 @@
             "name": "max_attempts"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "scheduled_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -70,8 +76,9 @@
       false,
       false,
       false,
-      false
+      false,
+      null
     ]
   },
-  "hash": "cebd4ce457813ff58225be2101637d6045077cbf7236901dbbb499784aab9195"
+  "hash": "8e4d6749ba6f3916d36e3c34e8ae7d880659fd769f83a274bed523bdb86c088f"
 }

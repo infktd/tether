@@ -401,6 +401,7 @@ async fn startup_loads_enabled_plugins_and_checks_them(db: PgPool) {
             ))
             .unwrap(),
             test_key(),
+            h.db.clone(),
         )
     };
     let restarted = fresh();

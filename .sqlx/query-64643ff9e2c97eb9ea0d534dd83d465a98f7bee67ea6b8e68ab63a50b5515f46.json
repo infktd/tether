@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.schedules WHERE starts_with(name, $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "64643ff9e2c97eb9ea0d534dd83d465a98f7bee67ea6b8e68ab63a50b5515f46"
+}

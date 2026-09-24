@@ -295,6 +295,7 @@ pub async fn harness_full(
     let plugins = tether_web::plugins::Plugins::new(
         tether_plugins::host::Host::new(Arc::new(tether_plugins::Runtime::new().unwrap())).unwrap(),
         test_key(),
+        db.clone(),
     );
     let app = router(AppState {
         key: test_key(),

@@ -32,6 +32,7 @@
 //! API (the WIT world) builds on top of [`Runtime::linker`].
 
 pub mod host;
+pub mod jobs;
 pub mod manifest;
 pub mod package;
 pub mod page;
@@ -114,6 +115,11 @@ pub enum CallError {
     /// should only see that the plugin failed.
     #[error("the plugin crashed: {0}")]
     Trap(String),
+    /// A job call found its plugin (or every job slot) busy. Jobs don't
+    /// wait for a slot: they'd spend their own deadline waiting, and hold
+    /// a worker other plugins' jobs need. Try again shortly.
+    #[error("the plugin is busy with another job")]
+    Busy,
 }
 
 /// Memory and table caps for one store. Counts the total across every
@@ -200,8 +206,22 @@ pub struct Runtime {
     engine: Engine,
     calls: Arc<Semaphore>,
     per_plugin: Mutex<HashMap<String, Arc<Semaphore>>>,
+    /// Jobs queue apart from pages, so long jobs never hold the permits
+    /// page views need.
+    job_calls: Arc<Semaphore>,
+    per_plugin_jobs: Mutex<HashMap<String, Arc<Semaphore>>>,
     compiles: Arc<Semaphore>,
 }
+
+/// What a call is for: pages and jobs wait in separate queues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallKind {
+    Page,
+    Job,
+}
+
+/// Jobs one plugin may have running at once.
+pub const JOBS_PER_PLUGIN: usize = 1;
 
 impl std::fmt::Debug for Runtime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -237,6 +257,8 @@ impl Runtime {
             // shares these workers.
             calls: Arc::new(Semaphore::new((cores / 2).max(1))),
             per_plugin: Mutex::new(HashMap::new()),
+            job_calls: Arc::new(Semaphore::new((cores / 2).max(1))),
+            per_plugin_jobs: Mutex::new(HashMap::new()),
             compiles: Arc::new(Semaphore::new(1)),
         })
     }
@@ -352,11 +374,15 @@ impl Runtime {
         store
     }
 
-    fn plugin_queue(&self, plugin: &str) -> Arc<Semaphore> {
-        let mut queues = self.per_plugin.lock().unwrap_or_else(|p| p.into_inner());
+    fn plugin_queue(&self, plugin: &str, kind: CallKind) -> Arc<Semaphore> {
+        let (queues, permits) = match kind {
+            CallKind::Page => (&self.per_plugin, CALLS_PER_PLUGIN),
+            CallKind::Job => (&self.per_plugin_jobs, JOBS_PER_PLUGIN),
+        };
+        let mut queues = queues.lock().unwrap_or_else(|p| p.into_inner());
         queues
             .entry(plugin.to_owned())
-            .or_insert_with(|| Arc::new(Semaphore::new(CALLS_PER_PLUGIN)))
+            .or_insert_with(|| Arc::new(Semaphore::new(permits)))
             .clone()
     }
 
@@ -370,6 +396,23 @@ impl Runtime {
     pub async fn run<T, R, F>(
         &self,
         plugin: &str,
+        store: Store<Sandbox<T>>,
+        limits: &PluginLimits,
+        call: F,
+    ) -> Result<R, CallError>
+    where
+        T: Send + 'static,
+        F: AsyncFnOnce(&mut Store<Sandbox<T>>) -> wasmtime::Result<R>,
+    {
+        self.run_as(CallKind::Page, plugin, store, limits, call)
+            .await
+    }
+
+    /// [`Runtime::run`], queuing as `kind`.
+    pub async fn run_as<T, R, F>(
+        &self,
+        kind: CallKind,
+        plugin: &str,
         mut store: Store<Sandbox<T>>,
         limits: &PluginLimits,
         call: F,
@@ -380,17 +423,28 @@ impl Runtime {
     {
         // One deadline for waiting and running together.
         let deadline = tokio::time::Instant::now() + limits.deadline;
-        let queue = self.plugin_queue(plugin);
-        let waited = tokio::time::timeout_at(deadline, async {
-            let own = queue.acquire_owned().await;
-            let shared = self.calls.clone().acquire_owned().await;
-            (own, shared)
-        })
-        .await;
-        let _permits = match waited {
-            Ok((Ok(own), Ok(shared))) => (own, shared),
-            Ok(_) => return Err(CallError::Trap("the runtime is shutting down".to_owned())),
-            Err(_) => return Err(CallError::Timeout(limits.deadline)),
+        let queue = self.plugin_queue(plugin, kind);
+        let overall = match kind {
+            CallKind::Page => self.calls.clone(),
+            CallKind::Job => self.job_calls.clone(),
+        };
+        let _permits = if kind == CallKind::Job {
+            match (queue.try_acquire_owned(), overall.try_acquire_owned()) {
+                (Ok(own), Ok(shared)) => (own, shared),
+                _ => return Err(CallError::Busy),
+            }
+        } else {
+            let waited = tokio::time::timeout_at(deadline, async {
+                let own = queue.acquire_owned().await;
+                let shared = overall.acquire_owned().await;
+                (own, shared)
+            })
+            .await;
+            match waited {
+                Ok((Ok(own), Ok(shared))) => (own, shared),
+                Ok(_) => return Err(CallError::Trap("the runtime is shutting down".to_owned())),
+                Err(_) => return Err(CallError::Timeout(limits.deadline)),
+            }
         };
         let outcome = tokio::time::timeout_at(deadline, call(&mut store)).await;
         if store.data().limiter.exceeded {
