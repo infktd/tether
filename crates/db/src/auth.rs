@@ -152,3 +152,32 @@ pub async fn delete_session(pool: &PgPool, token_hash: &[u8]) -> Result<(), sqlx
     .await?;
     Ok(())
 }
+
+/// Rows removed by [`prune_expired`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Pruned {
+    pub sessions: u64,
+    pub login_attempts: u64,
+    pub setup_sessions: u64,
+}
+
+/// Deletes expired sessions, login attempts and setup sessions.
+pub async fn prune_expired(pool: &PgPool) -> Result<Pruned, sqlx::Error> {
+    let sessions = sqlx::query!("DELETE FROM core.sessions WHERE expires_at < now()")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    let login_attempts = sqlx::query!("DELETE FROM core.login_attempts WHERE expires_at < now()")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    let setup_sessions = sqlx::query!("DELETE FROM core.setup_sessions WHERE expires_at < now()")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(Pruned {
+        sessions,
+        login_attempts,
+        setup_sessions,
+    })
+}

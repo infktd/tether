@@ -6,6 +6,7 @@
 //! then the job is dead-lettered (`state = 'dead'`) for an admin to inspect.
 
 mod queue;
+pub mod schedule;
 mod worker;
 
 pub use queue::{Job, JobId, JobState, JobSummary, NewJob, counts, enqueue, list, retry};

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.jobs WHERE state = 'succeeded' AND finished_at < now() - make_interval(secs => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "16cdafa232be7cb7b1efcde0f34970652c0746afc06d59c5aa0fc49160e02f93"
+}

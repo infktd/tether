@@ -193,7 +193,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 
 - [x] Token vault: refresh tokens encrypted at rest with granted scopes, access tokens cached and refreshed before expiry, `invalid_grant` marks the token revoked and prompts re-linking
 - [x] Verify SSO tokens against CCP's JWKS (signature, issuer, audience, expiry); detect character transfers by owner hash and unlink instead of refusing
-- [ ] Recurring schedules on the Postgres job queue
+- [x] Recurring schedules on the Postgres job queue
 - [ ] ESI layer: shared Postgres response cache honouring Expires and ETag, interactive requests ahead of bulk syncs, error and rate budget state for the dashboard
 - [ ] Affiliation sync on a schedule re-evaluates every account's tier
 - [ ] Admin pages per docs/DESIGN.md: groups, permissions and tier rules

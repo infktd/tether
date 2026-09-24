@@ -13,6 +13,7 @@ mod csrf;
 #[cfg(feature = "dev-login")]
 mod dev_login;
 mod error;
+pub mod maintenance;
 pub mod openapi;
 pub mod pages;
 mod ratelimit;

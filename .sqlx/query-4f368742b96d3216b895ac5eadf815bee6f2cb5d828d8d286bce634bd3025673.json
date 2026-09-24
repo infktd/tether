@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT name, kind, payload, every_secs,\n               EXISTS (SELECT 1 FROM core.jobs j\n                       WHERE j.schedule = s.name AND j.state IN ('queued', 'running')) AS \"busy!\"\n        FROM core.schedules s\n        WHERE enabled AND next_run_at <= now()\n        ORDER BY next_run_at\n        FOR UPDATE SKIP LOCKED\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "every_secs",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.schedules",
+            "name": "every_secs"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "busy!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "4f368742b96d3216b895ac5eadf815bee6f2cb5d828d8d286bce634bd3025673"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.schedules SET last_enqueued_at = now() WHERE name = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "37ea2cd3f5e0fd0fa5a8a0f301306e58e7f83a2b6b9f745a442a7d68d3b1ccb4"
+}

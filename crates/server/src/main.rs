@@ -126,6 +126,12 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
 
     let mut registry = tether_jobs::Registry::new();
     tether_web::tiers::register_jobs(&mut registry, db.clone(), esi.clone());
+    tether_web::maintenance::register_jobs(&mut registry, db.clone());
+    for spec in tether_web::maintenance::schedules() {
+        tether_jobs::schedule::ensure(&db, &spec).await?;
+    }
+    let scheduler =
+        tether_jobs::schedule::Scheduler::start(db.clone(), std::time::Duration::from_secs(15));
     let workers = tether_jobs::WorkerPool::start(
         db.clone(),
         registry,
@@ -183,7 +189,8 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         .await
         .context("serving HTTP")?;
 
-    // HTTP has drained; let running jobs finish before exiting.
+    // HTTP has drained; stop scheduling, then let running jobs finish.
+    scheduler.shutdown().await;
     workers.shutdown().await;
     Ok(())
 }
