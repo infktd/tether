@@ -1,0 +1,156 @@
+# Design
+
+The look is dark, quiet and dense: zinc neutrals, 1px borders instead of shadows, Geist for text, Geist Mono for anything that counts or ticks, and one accent color. Reference mockup: "Alliance Platform Mockup", Moon Tracker member view.
+
+Every core page and every plugin page follows this file. When a screen needs something not covered here, extend this file first, then build it.
+
+## Principles
+
+- **Borders, not shadows.** Surfaces separate with 1px `--border` lines and a slightly lighter card fill. No drop shadows, glows or gradients.
+- **One accent per screen.** The accent marks the single most important state (fresh moons, unread counts, the next countdown). Everything else is neutral.
+- **Dense but readable.** Tables are the main way data is shown. Comfortable row height, clear column headers, no zebra stripes.
+- **Numbers are monospaced.** Timers, ISK, counts, coordinates and timestamps use Geist Mono so columns align and countdowns don't jitter.
+- **Dark mode only for v1.** Tokens are named so a light theme can be added later without touching components.
+
+## Tokens
+
+Written as shadcn-style theme variables, so they work unchanged with Basecoat, shadcn-svelte or shadcn/ui.
+
+```css
+:root {
+  /* surfaces */
+  --background: #09090b;        /* page */
+  --sidebar: #0c0c0e;           /* sidebar, cards */
+  --card: #0c0c0e;
+  --muted: #18181b;             /* tab track, subtle fills */
+  --accent-surface: #1c1c20;    /* active nav item, hover rows */
+
+  /* text */
+  --foreground: #fafafa;        /* primary text */
+  --foreground-soft: #d4d4d8;   /* secondary text in tables and nav */
+  --muted-foreground: #a1a1aa;  /* labels, captions, meta */
+  --faint: #3f3f46;             /* watermarks, badge outlines */
+
+  /* lines */
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #a1a1aa;
+
+  /* primary action: inverted, white on dark */
+  --primary: #fafafa;
+  --primary-foreground: #09090b;
+
+  /* accent: one per screen */
+  --accent: #f59e0b;            /* amber */
+  --accent-soft: #292012;       /* accent badge background */
+
+  /* status */
+  --info: #60a5fa;              /* allied, healthy, informational */
+  --info-foreground: #93c5fd;
+  --info-soft: #13203a;
+  --destructive: #ef4444;
+  --destructive-soft: #2a1215;
+
+  /* shape */
+  --radius-sm: 6px;             /* buttons, inputs, badges, nav items */
+  --radius: 8px;                /* tab track, avatars */
+  --radius-lg: 10px;            /* cards, panels, tables */
+}
+```
+
+The accent is a per-instance setting. Alliances pick it in the admin theme settings; amber is the default. Good alternatives keep similar lightness: `#fb923c`, `#a78bfa`, `#34d399`.
+
+Status colors must differ in lightness as well as hue, and pair color with a text label or dot, never color alone.
+
+## Typography
+
+Fonts are **bundled and self-hosted**, never loaded from Google Fonts or any CDN (see the opsec rule in `CLAUDE.md`). Geist and Geist Mono are open-licensed.
+
+```css
+--font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+--font-mono: "Geist Mono", ui-monospace, monospace;
+```
+
+| Use | Size | Weight | Notes |
+| --- | --- | --- | --- |
+| Page title (h1) | 28px | 600 | letter-spacing -0.02em |
+| Section title (h2) | 15px | 600 | card and panel headers |
+| Body, table cells | 14px | 400 | primary text |
+| Nav items, buttons | 14px | 500 | |
+| Labels, table headers | 13px | 500 | `--muted-foreground` |
+| Captions, meta | 12px | 400 | `--muted-foreground` |
+| Stat values | 26px | 500 | Geist Mono |
+| Timers, ISK, counts | inherits | 400–500 | Geist Mono |
+
+## Spacing and layout
+
+A 4px base. Common steps: 4, 8, 12, 16, 20, 24, 32.
+
+| Element | Value |
+| --- | --- |
+| Sidebar width | 256px, fixed, right border |
+| Top bar height | 64px, bottom border |
+| Content padding | 28px top and bottom, 32px sides |
+| Gap between page sections | 24px |
+| Gap between cards | 16px |
+| Card padding | 20px |
+| Right rail (detail panels) | 340px |
+| Desktop design width | 1440px; layouts must hold down to 1280px |
+
+Page structure: sidebar → top bar with breadcrumb, search and icon buttons → page header (title, one-line description, actions on the right) → optional stat row → main content with an optional right rail.
+
+## Components
+
+**Buttons**, 36px tall (32px inside tables), `--radius-sm`, 14px/500, 16px horizontal padding.
+- Primary: `--primary` fill, `--primary-foreground` text. At most one per screen region.
+- Outline: `--background` fill, `--border` border, `--foreground` text. The default for secondary actions.
+- Destructive: outline style with `--destructive` text; filled only inside confirmation dialogs.
+- Icon-only: 36×36 outline button with an `aria-label`.
+
+**Inputs**, 36px tall, `--background` fill, `--input` border, `--radius-sm`. Search inputs carry a 16px leading icon. Every input has a `<label>`, visually hidden if the design omits it.
+
+**Cards and panels**: `--card` fill, 1px `--border`, `--radius-lg`, 20px padding. Titles are h2 at 15px/600.
+
+**Stat cards**: label (13px muted), value (26px Geist Mono), caption (12px muted). Four across on desktop.
+
+**Tables**: live inside a card. Header row 13px/500 muted, left-aligned; body 14px; 16px vertical cell padding; 20px horizontal padding on the outer columns, 12px on inner ones; 1px `--border` between rows; row actions right-aligned as small outline buttons. Primary cell: name at 14px/500 with a 12px muted sub-line. Sorting and filtering happen on the server.
+
+**Tabs**: a segmented control. `--muted` track with 4px padding and `--radius`; the active tab is a `--background` pill with `--foreground` text; inactive tabs are muted text on the track.
+
+**Badges**: 12px, 2px × 8px padding, `--radius-sm`.
+- Neutral (tags, ore types): 1px `--faint` outline, `--foreground-soft` text.
+- Status: soft fill (`--accent-soft`, `--info-soft`, `--destructive-soft`) with matching text and a 6px leading dot.
+
+**Sidebar navigation**: grouped under 12px/500 muted headings. Items are 36px tall links with a 16px icon, 14px text, `--radius-sm`. Active item: `--accent-surface` fill, `--foreground` text, weight 500, `aria-current="page"`. Count pills use the accent fill with dark text. The signed-in character sits at the bottom above a top border.
+
+**Watermark**: on pages showing sensitive data, a single line in 11px Geist Mono, `--faint` color, bottom-right of the data card: `Viewing as <character> · <EVE time>`. Decorative, `aria-hidden`.
+
+**Icons**: Lucide-style outline icons, 16px, stroke width 2, `currentColor`. Bundled as inline SVG or a sprite, never fetched. No emoji.
+
+## Data display
+
+- **Relative times** for recent events ("1h 12m ago") with the absolute EVE time in a tooltip or sub-line.
+- **Countdowns** in Geist Mono, updated live from the server (server-sent events); the nearest one gets the accent color.
+- **EVE time (UTC)** everywhere, labeled "EVE".
+- **ISK** abbreviated in tables (`1.24b`, `350.2m`), full value on hover or in detail views.
+- **EVE names** (systems, moons, structures, characters) exactly as ESI returns them. Character portraits and corp or alliance logos come from CCP's image server at 32px in tables and 36px in the sidebar, with initials as the fallback.
+
+## Interaction and accessibility
+
+- Real `<button>`, `<a href>`, `<input>` and `<label>` elements, never click handlers on divs.
+- Visible focus: a 2px `--ring` outline with 2px offset on every focusable element.
+- Text contrast of at least 4.5:1; `--muted-foreground` on `--background` passes, `--faint` is for decoration only.
+- Hover states lighten surfaces by one step (`--card` → `--accent-surface`); no motion beyond 150ms color and opacity transitions.
+
+## Plugins
+
+Plugins never ship their own styles. They return a declarative page description (headers, stat rows, tables, cards, tabs, forms, badges) and the host renders it with these components, so every plugin looks native. Any exception needs a documented reason and still uses these tokens.
+
+## Don't
+
+- No drop shadows, gradients, glows or glassmorphism.
+- No more than one accent color per screen.
+- No Google Fonts, CDNs or remote assets at runtime.
+- No emoji in the UI.
+- No zebra-striped tables or heavy table borders.
+- No light-gray text below 4.5:1 contrast for anything a user needs to read.
