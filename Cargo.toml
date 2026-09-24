@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "examples/hello-plugin"]
+members = [
+    "crates/*",
+    "crates/plugins/test-guest",
+    "crates/plugins/test-guest-net",
+    "crates/plugins/test-guest-hoard",
+    "examples/hello-plugin",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,6 +23,7 @@ tether-web = { path = "crates/web" }
 tether-cli = { path = "crates/cli" }
 tether-discord = { path = "crates/discord" }
 tether-net = { path = "crates/net" }
+tether-plugins = { path = "crates/plugins" }
 
 anyhow = "1"
 askama = "0.16"
@@ -69,9 +76,11 @@ reqwest = "0.13"
 twilight-http = { version = "0.17", default-features = false, features = ["rustls-platform-verifier"] }
 twilight-model = "0.17"
 
-# Plugin runtime, used from milestone 2. Default features are trimmed: no
-# WAT text parser, no on-disk compile cache (zstd), no profiling, no GC
-# proposals, and WASIp2 only. Verified to compile.
+# Plugin runtime (tether-plugins). Default features are trimmed: no WAT
+# text parser, no on-disk compile cache (zstd), no profiling, no GC
+# proposals, no pooling allocator (it reserves ~6 GiB of address space per
+# memory; on-demand allocation with per-store limits suits a few plugins),
+# and WASIp2 only.
 wasmtime = { version = "49", default-features = false, features = [
     "runtime",
     "cranelift",
@@ -79,7 +88,6 @@ wasmtime = { version = "49", default-features = false, features = [
     "async",
     "std",
     "parallel-compilation",
-    "pooling-allocator",
 ] }
 wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
 wit-bindgen = "0.62"

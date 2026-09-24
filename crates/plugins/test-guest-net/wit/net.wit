@@ -1,0 +1,8 @@
+// Test-only world: a guest that tries to open a network connection itself,
+// to prove the runtime won't load a plugin that imports sockets.
+package tether:test-guest-net@0.1.0;
+
+world net {
+    /// Tries to connect to the given address; returns what happened.
+    export connect: func(addr: string) -> string;
+}

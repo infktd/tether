@@ -207,7 +207,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 
 Decisions from the milestone 2 kickoff are folded into the tasks below. New crates: `zip` (packages), `toml` (manifests), `minisign-verify` (signatures); `chacha20poly1305`'s `stream` feature for encrypted snapshots.
 
-- [ ] Plugin runtime core (`tether-plugins`): Wasmtime trimmed to the features used, an instance per call, epoch interruption, a memory cap and a call deadline per plugin; tests that an infinite loop, a memory bomb or a trap can't hurt the host or other plugins
+- [x] Plugin runtime core (`tether-plugins`): Wasmtime trimmed to the features used, an instance per call, epoch interruption, a memory cap and a call deadline per plugin; tests that an infinite loop, a memory bomb or a trap can't hurt the host or other plugins
 - [ ] Host API v1 as WIT (`tether:plugin@1`; `host_api = "1"` is the WIT major version), the guest SDK crate with an `AGENTS.md`, a real example plugin; CI builds and lints guests for `wasm32-wasip2`
 - [ ] Packages: `plugin.toml` parsing and validation; safe .zip reading (size caps, no path escapes); minisign signatures with the publisher key pinned on first install; key rotation, where the old key signs a statement endorsing the new one; an admin can re-pin a plugin's key after a confirmation step; both audited
 - [ ] Plugin lifecycle: install from an uploaded .zip, verify, capability approval screen, migrate, activate with no restart; enable, disable, uninstall; all audited

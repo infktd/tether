@@ -1,0 +1,16 @@
+// Test-only world: a guest defining its own resource type, whose handles
+// would live in host memory outside the sandbox's limits. The runtime
+// must refuse to load it.
+package tether:test-guest-hoard@0.1.0;
+
+interface hoard {
+    resource token {
+        constructor();
+    }
+    /// Creates `count` handles and never drops them.
+    fill: func(count: u32) -> u32;
+}
+
+world hoarder {
+    export hoard;
+}

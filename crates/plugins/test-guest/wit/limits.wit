@@ -1,0 +1,16 @@
+// Test-only world: a guest that misbehaves on request, so the runtime's
+// limits can be proven. Not part of the plugin host API.
+package tether:test-guest@0.1.0;
+
+world limits {
+    /// Loops forever.
+    export spin: func();
+    /// Allocates and touches `mib` MiB, returning how many bytes it holds.
+    export allocate: func(mib: u32) -> u64;
+    /// Panics.
+    export crash: func();
+    /// Recurses `depth` levels deep.
+    export recurse: func(depth: u32) -> u32;
+    /// Returns its input.
+    export echo: func(text: string) -> string;
+}
