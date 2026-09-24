@@ -3,12 +3,13 @@
 mod config;
 
 use std::io::IsTerminal;
+use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use config::ServeConfig;
+use config::{ServeConfig, ToolConfig};
 
 #[derive(Parser)]
 #[command(name = "tether", version, about = "EVE Online alliance platform")]
@@ -25,10 +26,15 @@ struct Cli {
 enum Command {
     /// Run the web server (the default).
     Serve(ServeConfig),
+    /// Check DNS, ports, TLS, database, ESI and SSO, with a fix for each
+    /// problem.
+    Doctor,
+    #[command(flatten)]
+    Admin(tether_cli::Command),
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -40,12 +46,58 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::Serve(config)) => serve(config).await,
+        Some(Command::Serve(config)) => serve(config).await.map(|()| ExitCode::SUCCESS),
+        Some(Command::Doctor) => doctor().await,
+        Some(Command::Admin(command)) => admin(command).await.map(|()| ExitCode::SUCCESS),
         None => match cli.serve {
-            Some(config) => serve(config).await,
+            Some(config) => serve(config).await.map(|()| ExitCode::SUCCESS),
             None => anyhow::bail!("missing configuration; see `tether --help`"),
         },
     }
+}
+
+/// Connection for one-off commands: small pool, no long retry loop.
+async fn tool_context() -> anyhow::Result<(ToolConfig, tether_db::PgPool, tether_esi::Esi)> {
+    let config = ToolConfig::try_parse_from(["tether"])?;
+    let db = tether_db::connect(
+        &config.database_url,
+        &tether_db::ConnectOptions {
+            max_connections: 2,
+            attempts: 1,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let esi = tether_esi::Esi::new(&user_agent(&config.public_url()), None)?;
+    Ok((config, db, esi))
+}
+
+async fn admin(command: tether_cli::Command) -> anyhow::Result<()> {
+    let (_, db, esi) = tool_context().await?;
+    tether_cli::run(command, &db, &esi, &mut std::io::stdout().lock()).await
+}
+
+async fn doctor() -> anyhow::Result<ExitCode> {
+    let (config, db, esi) = tool_context().await?;
+    let env = tether_cli::doctor::Env {
+        db,
+        esi,
+        domain: config.domain.clone(),
+        public_url: config.public_url(),
+        sso_metadata_url: tether_cli::doctor::SSO_METADATA_URL.to_owned(),
+        http_port: 80,
+        https_port: 443,
+    };
+    let healthy = tether_cli::doctor::run(&env, &mut std::io::stdout().lock()).await?;
+    Ok(if healthy {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+fn user_agent(public_url: &str) -> String {
+    format!("tether/{} (+{public_url})", env!("CARGO_PKG_VERSION"))
 }
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
@@ -70,14 +122,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_db::migrate(&db).await?;
     tracing::info!("database migrations applied");
 
-    let esi = tether_esi::Esi::new(
-        &format!(
-            "tether/{} (+{})",
-            env!("CARGO_PKG_VERSION"),
-            config.public_url()
-        ),
-        None,
-    )?;
+    let esi = tether_esi::Esi::new(&user_agent(&config.public_url()), None)?;
 
     let mut registry = tether_jobs::Registry::new();
     tether_web::tiers::register_jobs(&mut registry, db.clone(), esi.clone());

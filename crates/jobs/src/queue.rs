@@ -200,6 +200,92 @@ pub(crate) async fn fail(
     Ok(state.as_deref().and_then(JobState::parse))
 }
 
+/// A job row for admins.
+#[derive(Debug, Clone)]
+pub struct JobSummary {
+    pub id: JobId,
+    pub kind: String,
+    pub state: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub run_at: DateTime<Utc>,
+    pub last_error: Option<String>,
+}
+
+/// Newest first, optionally only one state.
+pub async fn list(
+    pool: &PgPool,
+    state: Option<JobState>,
+    limit: i64,
+) -> Result<Vec<JobSummary>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, kind, state, attempts, max_attempts, run_at, last_error
+        FROM core.jobs
+        WHERE $1::text IS NULL OR state = $1
+        ORDER BY id DESC
+        LIMIT $2
+        "#,
+        state.map(JobState::as_str),
+        limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| JobSummary {
+            id: JobId(r.id),
+            kind: r.kind,
+            state: r.state,
+            attempts: r.attempts,
+            max_attempts: r.max_attempts,
+            run_at: r.run_at,
+            last_error: r.last_error,
+        })
+        .collect())
+}
+
+/// Jobs per state, in queue order.
+pub async fn counts(pool: &PgPool) -> Result<Vec<(JobState, i64)>, sqlx::Error> {
+    let rows = sqlx::query!(r#"SELECT state, count(*) AS "n!" FROM core.jobs GROUP BY state"#)
+        .fetch_all(pool)
+        .await?;
+    Ok([
+        JobState::Queued,
+        JobState::Running,
+        JobState::Succeeded,
+        JobState::Dead,
+    ]
+    .into_iter()
+    .map(|state| {
+        let n = rows
+            .iter()
+            .find(|r| r.state == state.as_str())
+            .map_or(0, |r| r.n);
+        (state, n)
+    })
+    .collect())
+}
+
+/// Puts a dead job back in the queue with fresh attempts. Returns false if
+/// it isn't dead.
+pub async fn retry<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: JobId,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE core.jobs
+        SET state = 'queued', attempts = 0, run_at = now(), finished_at = NULL, updated_at = now()
+        WHERE id = $1 AND state = 'dead'
+        "#,
+        id.0,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 fn truncate(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;

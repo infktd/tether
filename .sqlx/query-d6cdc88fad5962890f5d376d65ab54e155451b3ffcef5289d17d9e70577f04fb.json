@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id\n        FROM core.accounts a\n        LEFT JOIN core.characters c ON c.account_id = a.id\n        WHERE a.id = $1 OR c.id = $1 OR lower(c.name) = lower($2)\n        ORDER BY a.id = $1 DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d6cdc88fad5962890f5d376d65ab54e155451b3ffcef5289d17d9e70577f04fb"
+}

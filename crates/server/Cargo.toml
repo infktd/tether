@@ -19,6 +19,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+tether-cli.workspace = true
 tether-core.workspace = true
 tether-db.workspace = true
 tether-esi.workspace = true

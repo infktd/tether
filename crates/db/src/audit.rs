@@ -12,6 +12,8 @@ pub enum Actor {
     Account(AccountId),
     /// Scheduled or automatic work (tier sync, jobs).
     System,
+    /// The `tether` admin CLI, run by whoever has shell access to the host.
+    Cli,
 }
 
 /// Records one entry. Call it in the same transaction as the change it
@@ -23,18 +25,19 @@ pub async fn record<'e>(
     target: Option<&str>,
     details: Value,
 ) -> Result<(), sqlx::Error> {
-    let actor_id = match actor {
-        Actor::Account(a) => Some(a.0),
-        Actor::System => None,
+    let (actor_id, fixed_name) = match actor {
+        Actor::Account(a) => (Some(a.0), None),
+        Actor::System => (None, None),
+        Actor::Cli => (None, Some("cli")),
     };
     sqlx::query!(
         r#"
         INSERT INTO core.audit_log (actor_account_id, actor_name, action, target, details)
         VALUES (
             $1,
-            (SELECT c.name FROM core.accounts a
-             JOIN core.characters c ON c.id = a.main_character_id
-             WHERE a.id = $1),
+            COALESCE($5, (SELECT c.name FROM core.accounts a
+                          JOIN core.characters c ON c.id = a.main_character_id
+                          WHERE a.id = $1)),
             $2, $3, $4
         )
         "#,
@@ -42,6 +45,7 @@ pub async fn record<'e>(
         action,
         target,
         details,
+        fixed_name,
     )
     .execute(executor)
     .await?;

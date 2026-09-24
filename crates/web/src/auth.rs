@@ -107,11 +107,34 @@ pub async fn callback(
         .await
         .map_err(|err| {
             tracing::warn!(error = %err, "SSO exchange failed");
-            AppError::new(
+            err
+        });
+    // Remembered for `doctor`: a success proves the client id and callback
+    // URL are registered correctly; a failure usually means they aren't.
+    let now = chrono::Utc::now().to_rfc3339();
+    let identity = match identity {
+        Ok(identity) => {
+            settings::set(
+                &state.db,
+                settings::SSO_LAST_SUCCESS,
+                serde_json::json!({ "at": now }),
+            )
+            .await?;
+            identity
+        }
+        Err(err) => {
+            settings::set(
+                &state.db,
+                settings::SSO_LAST_ERROR,
+                serde_json::json!({ "at": now, "error": err.to_string() }),
+            )
+            .await?;
+            return Err(AppError::new(
                 StatusCode::BAD_GATEWAY,
                 "EVE SSO did not confirm the login. Please try again.",
-            )
-        })?;
+            ));
+        }
+    };
 
     // Signed in already? Then this login adds an alt to that account.
     let current = match jar.get(SESSION_COOKIE) {

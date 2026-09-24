@@ -64,6 +64,28 @@ impl ServeConfig {
     }
 }
 
+/// What the admin commands need, read from the same environment as the
+/// server, so `docker compose exec app tether <command>` just works.
+#[derive(clap::Parser, Debug)]
+pub struct ToolConfig {
+    #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+    pub database_url: Secret<String>,
+
+    #[arg(long, env = "DOMAIN")]
+    pub domain: String,
+
+    #[arg(long, env = "PUBLIC_URL", value_parser = parse_public_url)]
+    pub public_url: Option<String>,
+}
+
+impl ToolConfig {
+    pub fn public_url(&self) -> String {
+        self.public_url
+            .clone()
+            .unwrap_or_else(|| format!("https://{}", self.domain))
+    }
+}
+
 fn parse_public_url(value: &str) -> Result<String, String> {
     let trimmed = value.trim_end_matches('/');
     if trimmed.starts_with("https://") || trimmed.starts_with("http://") {

@@ -8,5 +8,5 @@
 mod queue;
 mod worker;
 
-pub use queue::{Job, JobId, JobState, NewJob, enqueue};
+pub use queue::{Job, JobId, JobState, JobSummary, NewJob, counts, enqueue, list, retry};
 pub use worker::{JobError, Outcome, Registry, WorkerConfig, WorkerPool, run_once};

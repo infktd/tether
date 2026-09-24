@@ -253,10 +253,24 @@ pub async fn callback_check(
     session: Option<CurrentSession>,
 ) -> Result<Json<CheckOut>, AppError> {
     setup_actor(&state, &jar, session.as_ref()).await?;
-    let nonce = new_token().map_err(AppError::internal)?;
+    let (ok, detail) = check_public_url(state.site.public_url())
+        .await
+        .map_err(AppError::internal)?;
+    Ok(Json(CheckOut {
+        ok,
+        url: state.site.public_url().to_owned(),
+        detail,
+    }))
+}
+
+/// Fetches `{public_url}/api/setup/probe` and checks this instance (not
+/// some other server) answered. `Ok((reachable, explanation))`; `Err` only
+/// if no nonce could be generated.
+pub async fn check_public_url(public_url: &str) -> Result<(bool, String), getrandom::Error> {
+    let nonce = new_token()?;
     let nonce = &nonce.expose()[..32];
-    let url = format!("{}/api/setup/probe?nonce={nonce}", state.site.public_url());
-    let (ok, detail) = match fetch(&url).await {
+    let url = format!("{public_url}/api/setup/probe?nonce={nonce}");
+    Ok(match fetch(&url).await {
         Ok((status, body)) if status == reqwest::StatusCode::OK && body == probe_body(nonce) => {
             (true, "This instance answered at its public URL.".to_owned())
         }
@@ -267,12 +281,7 @@ pub async fn callback_check(
             ),
         ),
         Err(err) => (false, format!("Could not reach the public URL: {err}")),
-    };
-    Ok(Json(CheckOut {
-        ok,
-        url: state.site.public_url().to_owned(),
-        detail,
-    }))
+    })
 }
 
 async fn fetch(url: &str) -> Result<(reqwest::StatusCode, String), String> {

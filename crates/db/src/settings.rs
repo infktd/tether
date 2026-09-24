@@ -4,6 +4,11 @@ use serde_json::Value;
 
 /// EVE SSO application client id (PKCE; there is no client secret).
 pub const SSO_CLIENT_ID: &str = "sso.client_id";
+/// `{"at": <rfc3339>}` of the last successful SSO token exchange; proves the
+/// client id and registered callback URL work.
+pub const SSO_LAST_SUCCESS: &str = "sso.last_success";
+/// `{"at": <rfc3339>, "error": <message>}` of the last failed exchange.
+pub const SSO_LAST_ERROR: &str = "sso.last_error";
 
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,

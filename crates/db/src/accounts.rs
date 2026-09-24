@@ -217,6 +217,68 @@ pub async fn set_main(
     Ok(result.rows_affected() == 1)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountSummary {
+    pub id: AccountId,
+    pub main_name: String,
+    pub tier: String,
+    pub is_owner: bool,
+    pub characters: i64,
+    pub groups: Vec<String>,
+}
+
+/// Accounts for the admin CLI, owner first, then by main name.
+pub async fn list_summaries(pool: &PgPool, limit: i64) -> Result<Vec<AccountSummary>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT a.id, m.name AS main_name, a.tier, a.is_owner,
+               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS "characters!",
+               COALESCE((SELECT array_agg(g.name ORDER BY g.name)
+                         FROM core.group_members gm JOIN core.groups g ON g.id = gm.group_id
+                         WHERE gm.account_id = a.id), '{}') AS "groups!"
+        FROM core.accounts a
+        JOIN core.characters m ON m.id = a.main_character_id
+        ORDER BY a.is_owner DESC, m.name
+        LIMIT $1
+        "#,
+        limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| AccountSummary {
+            id: AccountId(r.id),
+            main_name: r.main_name,
+            tier: r.tier,
+            is_owner: r.is_owner,
+            characters: r.characters,
+            groups: r.groups,
+        })
+        .collect())
+}
+
+/// Finds an account by account id, character id or exact character name
+/// (case-insensitive).
+pub async fn find(pool: &PgPool, query: &str) -> Result<Option<AccountId>, sqlx::Error> {
+    let id: Option<i64> = query.trim().parse().ok();
+    let found = sqlx::query_scalar!(
+        r#"
+        SELECT a.id
+        FROM core.accounts a
+        LEFT JOIN core.characters c ON c.account_id = a.id
+        WHERE a.id = $1 OR c.id = $1 OR lower(c.name) = lower($2)
+        ORDER BY a.id = $1 DESC
+        LIMIT 1
+        "#,
+        id,
+        query.trim(),
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.map(AccountId))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

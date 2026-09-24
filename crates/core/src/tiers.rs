@@ -31,7 +31,8 @@ impl Tier {
 
 impl fmt::Display for Tier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        // `pad` honours width and alignment, so tiers line up in tables.
+        f.pad(self.as_str())
     }
 }
 
@@ -161,6 +162,11 @@ mod tests {
             TierRules::default().evaluate(aff(NMU_CORP, Some(NMU))),
             Tier::Guest
         );
+    }
+
+    #[test]
+    fn display_honours_padding() {
+        assert_eq!(format!("[{:<7}]", Tier::Member), "[member ]");
     }
 
     #[test]

@@ -9,3 +9,18 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tether-core.workspace = true
+tether-db.workspace = true
+tether-esi.workspace = true
+tether-jobs.workspace = true
+tether-web.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true

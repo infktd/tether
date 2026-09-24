@@ -167,4 +167,9 @@ impl Esi {
             })
             .collect())
     }
+
+    /// Players online, from `GET /status`: the cheapest proof ESI answers.
+    pub async fn players_online(&self) -> Result<i64, EsiError> {
+        Ok(self.client.get_status().send().await?.into_inner().players)
+    }
 }

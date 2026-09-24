@@ -1,0 +1,78 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id, m.name AS main_name, a.tier, a.is_owner,\n               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS \"characters!\",\n               COALESCE((SELECT array_agg(g.name ORDER BY g.name)\n                         FROM core.group_members gm JOIN core.groups g ON g.id = gm.group_id\n                         WHERE gm.account_id = a.id), '{}') AS \"groups!\"\n        FROM core.accounts a\n        JOIN core.characters m ON m.id = a.main_character_id\n        ORDER BY a.is_owner DESC, m.name\n        LIMIT $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "main_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "tier",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "tier"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "is_owner",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "is_owner"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "characters!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "groups!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "054f5bf525fa291fdd1bc557c6f5915b0daafc9ad979e1e7ff25fca474e51120"
+}

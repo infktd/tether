@@ -2657,6 +2657,21 @@ dependencies = [
 [[package]]
 name = "tether-cli"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "reqwest",
+ "serde_json",
+ "sqlx",
+ "tether-core",
+ "tether-db",
+ "tether-esi",
+ "tether-jobs",
+ "tether-web",
+ "tokio",
+ "wiremock",
+]
 
 [[package]]
 name = "tether-core"
@@ -2709,6 +2724,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "tether-cli",
  "tether-core",
  "tether-db",
  "tether-esi",
@@ -2726,6 +2742,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "chrono",
+ "getrandom 0.4.3",
  "insta",
  "reqwest",
  "serde",
