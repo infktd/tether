@@ -1,0 +1,56 @@
+name: tether
+
+# Variables come from deploy/.env, written by deploy/install.sh.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ${TETHER_IMAGE:-tether:local}
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set in .env}
+      SETUP_TOKEN: ${SETUP_TOKEN:?SETUP_TOKEN must be set in .env}
+      DATABASE_URL: postgres://tether:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/tether
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: timescale/timescaledb:2.30.1-pg16
+    # Opsec: TimescaleDB phones home by default.
+    command: ["postgres", "-c", "timescaledb.telemetry_level=off"]
+    environment:
+      POSTGRES_USER: tether
+      POSTGRES_DB: tether
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tether", "-d", "tether"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.11
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates persist across restarts, avoiding CA rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

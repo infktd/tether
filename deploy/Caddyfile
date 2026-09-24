@@ -1,0 +1,12 @@
+{
+	# Opsec (CLAUDE.md, PRD N5): certificates from Let's Encrypt only.
+	# Naming the issuer explicitly turns off Caddy's ZeroSSL fallback.
+	cert_issuer acme {
+		dir https://acme-v02.api.letsencrypt.org/directory
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

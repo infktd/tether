@@ -1,5 +1,6 @@
 //! The `tether` binary: runs the server and hosts the admin CLI.
 
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 
 use anyhow::Context;
@@ -33,6 +34,8 @@ struct ServeArgs {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        // No color codes in `docker compose logs` or other non-terminals.
+        .with_ansi(std::io::stdout().is_terminal())
         .init();
 
     let cli = Cli::parse();

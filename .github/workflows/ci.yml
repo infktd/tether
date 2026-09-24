@@ -84,3 +84,30 @@ jobs:
             fi
             echo "$wasm: component, $(stat -c %s "$wasm") bytes"
           done
+
+  # The top rule: a fresh `docker compose up` must give a working instance.
+  # Built natively on each architecture, then the full stack is started and
+  # /health checked over HTTPS through Caddy.
+  docker:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install and start the stack
+        run: deploy/install.sh localhost
+      - name: Health over HTTPS
+        run: |
+          for i in $(seq 1 60); do
+            if curl -skf https://localhost/health | grep -qx ok; then
+              echo "healthy"; exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f deploy/docker-compose.yml logs
+          exit 1
+      - name: Timescale telemetry is off
+        run: |
+          test "$(docker compose -f deploy/docker-compose.yml exec -T db \
+            psql -U tether -tAc 'show timescaledb.telemetry_level')" = off

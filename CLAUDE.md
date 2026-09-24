@@ -94,6 +94,7 @@ cargo fmt --all
 cargo clippy -p hello-plugin --target wasm32-wasip2 -- -D warnings
 cargo build -p hello-plugin --target wasm32-wasip2 --release
 tailwindcss -i assets/app.css -o static/app.css --minify
+deploy/install.sh localhost    # writes deploy/.env once, then starts the stack
 docker compose -f deploy/docker-compose.yml up --build
 hurl --test tests/hurl/*.hurl
 ```
