@@ -220,7 +220,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] Project name, before the first public repo
 - [ ] License: AGPL or MIT/Apache, before the first public repo
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
-- [ ] Whether Guests may join the Discord server through Tether, at the milestone 1 review. For now only Member and Allied pilots can link: anyone with an EVE character is Guest, so letting Guests link would bypass the server's own invites
+- [ ] Whether Guests may join the Discord server through Tether: deferred at the milestone 1 review. Only Member and Allied pilots can link; Guests (recruits, visitors) usually have the server's invite link before they ever reach Tether
 - [ ] Plugin database access: raw SQL in their own schema, or a narrower query API, after the spike
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts
