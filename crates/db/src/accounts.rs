@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(login(&pool, 1, "Pilot", None).await, SignIn::Existing(a));
         // Characters from before owner hashes were recorded adopt the first
         // hash they're seen with.
-        sqlx::query!("UPDATE core.characters SET owner_hash = NULL WHERE id = 1")
+        sqlx::query("UPDATE core.characters SET owner_hash = NULL WHERE id = 1")
             .execute(&pool)
             .await
             .unwrap();

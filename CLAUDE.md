@@ -85,6 +85,7 @@ No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bu
 ## Testing
 
 - `#[sqlx::test]` for anything that touches the database; each test gets a fresh database.
+- Test code uses the unchecked `sqlx::query(...)`, never the `query!` macros: `cargo sqlx prepare` doesn't cache queries that only exist in `#[cfg(test)]` code, so CI's offline build fails on them. Before pushing, check offline from scratch: touch the sources, then `SQLX_OFFLINE=true cargo clippy --workspace --all-targets` with `.env` moved aside.
 - ESI is mocked with `wiremock` using recorded response fixtures in `tests/fixtures/esi/`. Tests never call real ESI or Discord.
 - `tokio::time::pause()` for scheduler and job timing tests.
 - `insta` snapshots for API response shapes.
