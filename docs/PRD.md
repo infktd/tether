@@ -88,13 +88,13 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 
 | ID | Area | Requirement |
 | --- | --- | --- |
-| N1 | Install | Three containers: host, Postgres, Caddy. `.env` holds only the domain, a generated database password and a generated setup token |
+| N1 | Install | Three containers: host, Postgres, Caddy. `.env` holds only the domain, a generated database password, a generated setup token and a generated encryption key |
 | N2 | Install | Core migrations run automatically on startup; no manual migrate, collect or create-user steps |
 | N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure |
 | N4 | Platforms | Images for amd64 and arm64 |
 | N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only; no other CA). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
-| N7 | Security | Refresh tokens and secrets encrypted at rest; backups encrypted |
+| N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (backups deferred to the pre-launch checklist) |
 | N8 | Security | Plugins never receive tokens; the host checks admin approval and user consent on every ESI call |
 | N9 | Security | Each plugin's database role is limited to its own schema, with a statement timeout |
 | N10 | Security | Every admin action and every plugin data access is written to the audit log |
@@ -118,7 +118,7 @@ Rust for the host and the server-rendered UI, WASM for v1 plugins. The plugin ru
 | Plugins (later) | TypeScript tier in Deno sandboxes, same manifest and SDK surface | Opens authoring to web developers, decided in phase 4 |
 | API spec | OpenAPI generated with utoipa, served with Scalar in dev | Documents the JSON API for bots, scripts and testing |
 | Frontend | Server-rendered Rust templates (askama) with Basecoat components and htmx; CSS built with Tailwind's standalone CLI | One binary, no JS framework or npm, shadcn look per docs/DESIGN.md |
-| Discord | In-process bot task (serenity or twilight) | One process, retries through the job queue |
+| Discord | In-process, REST only (twilight-http); no gateway connection | One process, retries through the job queue; members join through OAuth linking, and ESI alone drives role changes |
 | TLS | Caddy with automatic certificates | Zero-config HTTPS |
 | Build speed | Cargo workspace split by crate, mold linker on Linux, sccache; Cranelift only as an optional nightly extra | Keeps incremental builds fast as the codebase grows |
 
@@ -189,12 +189,28 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] OpenAPI via utoipa, Scalar at `/docs` in dev builds
 - [x] UI shell per docs/DESIGN.md with askama, Basecoat and htmx: layout, login, profile and wizard pages
 
+**Milestone 1 tasks, in order**
+
+- [ ] Token vault: refresh tokens encrypted at rest with granted scopes, access tokens cached and refreshed before expiry, `invalid_grant` marks the token revoked and prompts re-linking
+- [ ] Verify SSO tokens against CCP's JWKS (signature, issuer, audience, expiry); detect character transfers by owner hash and unlink instead of refusing
+- [ ] Recurring schedules on the Postgres job queue
+- [ ] ESI layer: shared Postgres response cache honouring Expires and ETag, interactive requests ahead of bulk syncs, error and rate budget state for the dashboard
+- [ ] Affiliation sync on a schedule re-evaluates every account's tier
+- [ ] Admin pages per docs/DESIGN.md: groups, permissions and tier rules
+- [ ] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
+- [ ] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries
+- [ ] Fleet pings to Discord channels with role targeting
+- [ ] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
+- [ ] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor`; admin routes optionally on a separate listener (N6)
+
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
 
 - [ ] Fresh VPS with a real domain: `deploy/install.sh <domain>`, then only the browser wizard; no other shell commands
 - [ ] Register the production callback URL (`https://<domain>/auth/callback`) on the EVE application
 - [ ] Caddy obtains a Let's Encrypt certificate for the domain
 - [ ] `doctor` passes on the VPS, including DNS, ports 80 and 443, TLS and the public URL checks; confirm ports from outside too, since `doctor` checks from the server itself
+- [ ] Milestone 1's "ESI error budget never exceeded in a week of staging": run a staging instance for a week and review the dashboard
+- [ ] Encrypted nightly backups (N7), deferred from milestone 1
 
 ## Open questions
 
@@ -202,7 +218,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 
 - [ ] Project name, before the first public repo
 - [ ] License: AGPL or MIT/Apache, before the first public repo
-- [ ] Discord library: serenity or twilight, before milestone 1
+- [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
 - [ ] Plugin database access: raw SQL in their own schema, or a narrower query API, after the spike
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike

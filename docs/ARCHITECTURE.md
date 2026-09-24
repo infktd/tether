@@ -119,7 +119,7 @@ Postgres holds everything, including the job queue.
 - TimescaleDB hypertables for time series such as mining ledgers, wallet journals and fleet participation.
 - Job queue: a `jobs` table polled with `SELECT … FOR UPDATE SKIP LOCKED`; exponential backoff; dead-letter state; visible in the admin panel. Workers are tokio tasks inside the host; the count is a config value.
 - Core migrations are embedded in the binary and run on startup. Plugin migrations run on install and upgrade inside a transaction after a snapshot.
-- Nightly encrypted `pg_dump` to a local directory, optionally to S3-compatible storage.
+- Nightly encrypted `pg_dump` to a local directory, optionally to S3-compatible storage (deferred to the pre-launch checklist).
 
 ## Identity and permissions
 
@@ -148,7 +148,7 @@ Server-rendered HTML from Rust. No JS framework, no npm, no separate frontend bu
 
 ## Discord
 
-Built into the host, not a plugin. One bot connection serves the core and every plugin.
+Built into the host, not a plugin. REST only (twilight-http): no gateway connection. One bot serves the core and every plugin. Members join the server through OAuth linking, which adds them with their roles; after that, only ESI affiliation drives role changes, and leaving the Discord server isn't tracked.
 
 - Account linking via OAuth from the profile page.
 - Tier and group to role mappings, applied automatically as membership changes.
@@ -181,7 +181,7 @@ volumes:
   pgdata:
 ```
 
-- `.env` holds only the domain, a generated database password and a generated setup token. Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
+- `.env` holds only the domain, a generated database password, a generated setup token and a generated encryption key (for tokens and secrets at rest; it never enters the database). Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
 - The wizard's first step requires the setup token, which is also printed to the logs at startup as a fallback. Once an owner exists the wizard is disabled permanently and the token is ignored.
 - `doctor` checks DNS, external reachability of 80 and 443, TLS, database, ESI credentials and callback match, and the Discord token, printing a fix for each failure.
 - Upgrades: change the image tag and restart. Migrations run after an automatic snapshot; rollback is the previous tag plus that snapshot.
