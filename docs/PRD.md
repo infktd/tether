@@ -94,7 +94,7 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 | N4 | Platforms | Images for amd64 and arm64 |
 | N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only; no other CA). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
-| N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (backups deferred to the pre-launch checklist) |
+| N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (milestone 2, with the snapshots) |
 | N8 | Security | Plugins never receive tokens; the host checks admin approval and user consent on every ESI call |
 | N9 | Security | Each plugin's database role is limited to its own schema, with a statement timeout |
 | N10 | Security | Every admin action and every plugin data access is written to the audit log |
@@ -203,6 +203,25 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
 - [x] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor` (admin routes on a separate listener, N6, moved to the pre-launch checklist)
 
+**Milestone 2 tasks, in order**
+
+Decisions from the milestone 2 kickoff are folded into the tasks below. New crates: `zip` (packages), `toml` (manifests), `minisign-verify` (signatures); `chacha20poly1305`'s `stream` feature for encrypted snapshots.
+
+- [ ] Plugin runtime core (`tether-plugins`): Wasmtime trimmed to the features used, an instance per call, epoch interruption, a memory cap and a call deadline per plugin; tests that an infinite loop, a memory bomb or a trap can't hurt the host or other plugins
+- [ ] Host API v1 as WIT (`tether:plugin@1`; `host_api = "1"` is the WIT major version), the guest SDK crate with an `AGENTS.md`, a real example plugin; CI builds and lints guests for `wasm32-wasip2`
+- [ ] Packages: `plugin.toml` parsing and validation; safe .zip reading (size caps, no path escapes); minisign signatures with the publisher key pinned on first install; key rotation, where the old key signs a statement endorsing the new one; an admin can re-pin a plugin's key after a confirmation step; both audited
+- [ ] Plugin lifecycle: install from an uploaded .zip, verify, capability approval screen, migrate, activate with no restart; enable, disable, uninstall; all audited
+- [ ] Plugin storage (N9): a schema and a login role per plugin (generated credentials, stored encrypted) that can only touch that schema: `search_path` locked to it, no privileges on core, other plugins' schemas or `public`, no CREATEROLE, CREATEDB or BYPASSRLS; CONNECTION LIMIT, `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout` on the role; a small pool per plugin in the host; parameterised SQL through the host API with caps on rows and bytes returned; plugin migrations; tests proving a plugin role can't read core tables or another plugin's schema
+- [ ] Plugin jobs, declared schedules and logs (shown in the admin panel), on the core job queue
+- [ ] Plugin permissions (`plugin.<id>.<name>`, granted like core ones), declarative pages rendered by the host's templates, navigation entries, and forms that call back into the plugin through htmx
+- [ ] ESI, identity and Discord host interfaces: data-source characters designated by an admin, per-user scope consent on the profile page (revocable), admin approval and user consent checked on every call, plugins never see a token, every access audited (F16, N8, N10)
+- [ ] Plugin HTTP capability: exact HTTPS hosts declared in the manifest and approved by the admin at install (again on upgrade if they change); no redirects outside them; per-plugin rate limits and response size caps; every call audited; named plugin secrets (such as an API key) entered by the admin, stored encrypted and injected by the host into requests to the declared host, never visible to the plugin, which can't set its own Authorization or cookie headers; `doctor` lists the approved hosts
+- [ ] Install from a GitHub repo URL; daily plugin update checks; one-click upgrade after a schema snapshot, one-step rollback; updates must be signed by the pinned key (F15, F18)
+- [ ] Personal access tokens with explicit scopes and expiry, stored hashed, managed on the profile page (F19)
+- [ ] Snapshots, rollback and backups (N14, N7): `pg_dump` from `postgresql-client-16` in the app image into a snapshots volume, encrypted (streamed XChaCha20-Poly1305 with the instance key), free disk checked first, the last 5 kept per kind (core, each plugin); taken before pending core migrations and plugin upgrades; `tether rollback` shows the snapshot's time, warns that newer data is lost and asks to confirm; restores wrap `timescaledb_pre_restore()` / `timescaledb_post_restore()` and refuse a TimescaleDB version mismatch; nightly encrypted backups reuse it; a test snapshots, migrates, rolls back and checks the data
+
+Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md.
+
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
 
 - [ ] Fresh VPS with a real domain: `deploy/install.sh <domain>`, then only the browser wizard; no other shell commands
@@ -210,7 +229,6 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [ ] Caddy obtains a Let's Encrypt certificate for the domain
 - [ ] `doctor` passes on the VPS, including DNS, ports 80 and 443, TLS and the public URL checks; confirm ports from outside too, since `doctor` checks from the server itself
 - [ ] Milestone 1's "ESI error budget never exceeded in a week of staging": run a staging instance for a week and review the dashboard
-- [ ] Encrypted nightly backups (N7), deferred from milestone 1
 - [ ] Admin routes on a private interface such as Tailscale (N6), deferred from milestone 1 until the VPS and Tailscale setup are real. The catch: EVE SSO only returns to the one registered callback on the public domain, and session cookies are per host. Options: a separate admin listener with a one-time login hand-off from the public site, or admin pages refusing clients outside configured private networks (admins reach the normal domain over Tailscale)
 
 ## Open questions
@@ -221,11 +239,11 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] License: AGPL or MIT/Apache, before the first public repo
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
 - [ ] Whether Guests may join the Discord server through Tether: deferred at the milestone 1 review. Only Member and Allied pilots can link; Guests (recruits, visitors) usually have the server's invite link before they ever reach Tether
-- [ ] Plugin database access: raw SQL in their own schema, or a narrower query API, after the spike
+- [x] Plugin database access: raw SQL in the plugin's own schema, through a per-plugin login role Postgres confines to it (details in milestone 2)
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
 - [ ] Which three AA plugins to port first, confirmed with NMU leadership, before milestone 3
 - [ ] Licenses of those AA plugins, checked before porting any code
 - [ ] Re-read CCP's current developer license for data retention and sharing rules, before NMU goes live
-- [ ] Plugin signing: minisign or cosign keys, or GitHub artifact attestations, before milestone 2
+- [x] Plugin signing: minisign, publisher key pinned on first install, rotation endorsed by the old key, admin re-pin with confirmation
