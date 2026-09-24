@@ -360,7 +360,7 @@ async fn doctor_sso_reports_what_logins_have_proven(db: PgPool) {
     settings::set(
         &db,
         settings::SSO_CLIENT_ID,
-        json!("124fd7288d20455b8006457ac00a943d"),
+        json!("0123456789abcdef0123456789abcdef"),
     )
     .await
     .unwrap();

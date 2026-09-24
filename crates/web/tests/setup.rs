@@ -84,7 +84,7 @@ async fn the_wizard_from_fresh_install_to_complete(db: PgPool) {
         &h.app,
         post(
             "/api/setup/sso",
-            r#"{"client_id":"124fd7288d20455b8006457ac00a943d"}"#,
+            r#"{"client_id":"0123456789abcdef0123456789abcdef"}"#,
             &[(SETUP, &setup)],
             SITE,
         ),
