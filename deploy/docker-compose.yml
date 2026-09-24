@@ -10,6 +10,7 @@ services:
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN must be set in .env}
       SETUP_TOKEN: ${SETUP_TOKEN:?SETUP_TOKEN must be set in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env; re-run deploy/install.sh to add it}
       DATABASE_URL: postgres://tether:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/tether
     depends_on:
       db:

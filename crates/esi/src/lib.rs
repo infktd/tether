@@ -2,5 +2,6 @@
 
 mod client;
 pub mod sso;
+pub mod vault;
 
 pub use client::{CharacterAffiliation, Entity, Esi, EsiError, NamedEntity, ResolvedNames};

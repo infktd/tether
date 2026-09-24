@@ -1,10 +1,11 @@
 //! EVE SSO login (OAuth2 authorization code with PKCE).
 //!
-//! Milestone 0 only needs to know which character logged in, so no scopes
-//! are requested and no tokens are kept. The token vault is F9.
+//! No scopes are requested yet; the tokens a login returns go to the
+//! token vault (`crate::vault`).
 
 use std::future::Future;
 use std::pin::Pin;
+use std::time::SystemTime;
 
 use eve_esi_client::auth::SsoClient;
 use tether_core::Secret;
@@ -24,10 +25,20 @@ pub struct PendingLogin {
     pub pkce_verifier: Secret<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Tokens from a login or refresh. Never logged: `Secret` redacts them.
+#[derive(Debug, Clone)]
+pub struct SsoTokens {
+    pub access_token: Secret<String>,
+    /// SSO may rotate this on refresh; `None` means keep the old one.
+    pub refresh_token: Option<Secret<String>>,
+    pub expires_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SsoIdentity {
     pub character_id: i64,
     pub character_name: String,
+    pub tokens: SsoTokens,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,9 +49,17 @@ pub enum SsoError {
     Exchange(String),
     #[error("the SSO token did not identify a character")]
     NoCharacter,
+    /// The refresh token is dead (`invalid_grant` and friends): the user
+    /// must log in with the character again.
+    #[error("EVE SSO revoked the token: {0}")]
+    Revoked(String),
+    /// Worth retrying later.
+    #[error("EVE SSO unavailable: {0}")]
+    Unavailable(String),
 }
 
 pub type SsoFuture<'a> = Pin<Box<dyn Future<Output = Result<SsoIdentity, SsoError>> + Send + 'a>>;
+pub type RefreshFuture<'a> = Pin<Box<dyn Future<Output = Result<SsoTokens, SsoError>> + Send + 'a>>;
 
 /// The login provider. A trait so tests can swap in a fake.
 ///
@@ -56,6 +75,21 @@ pub trait Sso: Send + Sync {
         code: String,
         pkce_verifier: Secret<String>,
     ) -> SsoFuture<'a>;
+
+    /// Exchanges a refresh token for a new access token.
+    fn refresh<'a>(
+        &'a self,
+        config: &'a SsoConfig,
+        refresh_token: Secret<String>,
+    ) -> RefreshFuture<'a>;
+}
+
+fn tokens_from(set: eve_esi_client::auth::TokenSet) -> SsoTokens {
+    SsoTokens {
+        access_token: Secret::new(set.access_token),
+        refresh_token: set.refresh_token.map(Secret::new),
+        expires_at: set.expires_at,
+    }
 }
 
 /// The real EVE SSO, via eve-esi-client.
@@ -100,11 +134,31 @@ impl Sso for EveSso {
                 .and_then(|id| i64::try_from(id).ok())
                 .ok_or(SsoError::NoCharacter)?;
             let character_name = tokens.character_name().ok_or(SsoError::NoCharacter)?;
-            // The tokens are dropped here; milestone 0 stores none.
             Ok(SsoIdentity {
                 character_id,
                 character_name,
+                tokens: tokens_from(tokens),
             })
+        })
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        config: &'a SsoConfig,
+        refresh_token: Secret<String>,
+    ) -> RefreshFuture<'a> {
+        Box::pin(async move {
+            let set = Self::client(config)?
+                .refresh(refresh_token.expose())
+                .await
+                .map_err(|err| {
+                    if err.is_permanent() {
+                        SsoError::Revoked(err.to_string())
+                    } else {
+                        SsoError::Unavailable(err.to_string())
+                    }
+                })?;
+            Ok(tokens_from(set))
         })
     }
 }

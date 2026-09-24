@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.character_tokens\n        SET refresh_token = COALESCE($2, refresh_token), last_refreshed_at = now(), updated_at = now()\n        WHERE character_id = $1 AND state = 'valid'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "06303cc5d4587b1017e33f55753c3aed296381264930b03bec27410df4fa45b8"
+}

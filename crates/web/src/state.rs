@@ -6,12 +6,14 @@ use tether_esi::Esi;
 
 use crate::ratelimit::RateLimiter;
 use tether_esi::sso::Sso;
+use tether_esi::vault::TokenVault;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub esi: Esi,
     pub sso: Arc<dyn Sso>,
+    pub vault: Arc<TokenVault>,
     pub site: Arc<Site>,
     /// Required by the first-run wizard until an owner exists.
     pub setup_token: Arc<Secret<String>>,

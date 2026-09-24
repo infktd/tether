@@ -7,10 +7,17 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use sqlx::PgPool;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime};
 use tether_core::Secret;
 use tether_db::settings;
 use tether_esi::Esi;
-use tether_esi::sso::{PendingLogin, Sso, SsoConfig, SsoError, SsoFuture, SsoIdentity};
+
+use tether_core::crypto::EncryptionKey;
+use tether_esi::sso::{
+    PendingLogin, RefreshFuture, Sso, SsoConfig, SsoError, SsoFuture, SsoIdentity, SsoTokens,
+};
+use tether_esi::vault::TokenVault;
 use tether_web::{AppState, Site, router};
 use tower::ServiceExt;
 use wiremock::matchers::{method, path};
@@ -21,10 +28,47 @@ pub const SITE: &str = "https://tether.test";
 /// Stands in for CCP. `begin` issues a state and PKCE verifier; `finish`
 /// accepts codes of the form `ok:<character_id>:<name>` and checks that the
 /// verifier it receives is one it issued.
-#[derive(Default)]
 pub struct FakeSso {
     issued: Mutex<HashMap<String, String>>,
     pub seen_verifiers: Mutex<Vec<String>>,
+    /// Lifetime of issued access tokens (zero: already due for refresh).
+    pub token_ttl: Mutex<Duration>,
+    pub refresh_outcome: Mutex<RefreshOutcome>,
+    pub refresh_calls: AtomicUsize,
+    pub refresh_tokens_seen: Mutex<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshOutcome {
+    /// New access token and a rotated refresh token.
+    Rotate,
+    /// New access token, same refresh token.
+    Keep,
+    Revoked,
+    Unavailable,
+}
+
+impl Default for FakeSso {
+    fn default() -> Self {
+        Self {
+            issued: Mutex::default(),
+            seen_verifiers: Mutex::default(),
+            token_ttl: Mutex::new(Duration::from_secs(20 * 60)),
+            refresh_outcome: Mutex::new(RefreshOutcome::Rotate),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_tokens_seen: Mutex::default(),
+        }
+    }
+}
+
+impl FakeSso {
+    fn tokens(&self, access: String, refresh: Option<String>) -> SsoTokens {
+        SsoTokens {
+            access_token: Secret::new(access),
+            refresh_token: refresh.map(Secret::new),
+            expires_at: Some(SystemTime::now() + *self.token_ttl.lock().unwrap()),
+        }
+    }
 }
 
 impl Sso for FakeSso {
@@ -61,8 +105,42 @@ impl Sso for FakeSso {
                 (Some("ok"), Some(id), Some(name)) => Ok(SsoIdentity {
                     character_id: id.parse().unwrap(),
                     character_name: name.to_owned(),
+                    tokens: self.tokens(
+                        format!("access-{id}-login"),
+                        Some(format!("refresh-{id}-1")),
+                    ),
                 }),
                 _ => Err(SsoError::Exchange("invalid_grant".into())),
+            }
+        })
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        _config: &'a SsoConfig,
+        refresh_token: Secret<String>,
+    ) -> RefreshFuture<'a> {
+        Box::pin(async move {
+            let n = self.refresh_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let seen = refresh_token.expose().clone();
+            self.refresh_tokens_seen.lock().unwrap().push(seen.clone());
+            // Let concurrent callers pile up behind the single refresh.
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let outcome = *self.refresh_outcome.lock().unwrap();
+            match outcome {
+                RefreshOutcome::Rotate => {
+                    let base = seen
+                        .rsplit_once('-')
+                        .map_or(seen.as_str(), |(b, _)| b)
+                        .to_owned();
+                    Ok(self.tokens(
+                        format!("access-refreshed-{n}"),
+                        Some(format!("{base}-{}", n + 1)),
+                    ))
+                }
+                RefreshOutcome::Keep => Ok(self.tokens(format!("access-refreshed-{n}"), None)),
+                RefreshOutcome::Revoked => Err(SsoError::Revoked("invalid_grant".into())),
+                RefreshOutcome::Unavailable => Err(SsoError::Unavailable("timeout".into())),
             }
         })
     }
@@ -73,6 +151,7 @@ pub struct Harness {
     pub db: PgPool,
     pub esi: Esi,
     pub sso: Arc<FakeSso>,
+    pub vault: Arc<TokenVault>,
     /// Mock ESI; serves recorded fixtures.
     pub esi_server: MockServer,
 }
@@ -101,6 +180,13 @@ impl Respond for AffiliationFixture {
             .collect();
         ResponseTemplate::new(200).set_body_json(items)
     }
+}
+
+pub fn test_key() -> EncryptionKey {
+    EncryptionKey::from_hex(&Secret::new(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
+    ))
+    .unwrap()
 }
 
 pub const SETUP_TOKEN: &str = "test-setup-token-0123456789abcdef";
@@ -165,9 +251,16 @@ pub async fn harness_full(
     }
     let sso = Arc::new(FakeSso::default());
     let esi = Esi::new("tether tests", Some(&esi_server.uri())).unwrap();
+    let vault = Arc::new(TokenVault::new(
+        db.clone(),
+        test_key(),
+        sso.clone(),
+        format!("{site}/auth/callback"),
+    ));
     let app = router(AppState {
         db: db.clone(),
         esi: esi.clone(),
+        vault: vault.clone(),
         sso: sso.clone(),
         site: Arc::new(Site::new(site)),
         setup_token: Arc::new(Secret::new(SETUP_TOKEN.to_owned())),
@@ -178,6 +271,7 @@ pub async fn harness_full(
         db,
         esi,
         sso,
+        vault,
         esi_server,
     }
 }

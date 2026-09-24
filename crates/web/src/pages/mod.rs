@@ -170,6 +170,8 @@ pub struct CharacterRow {
     pub id: i64,
     pub name: String,
     pub is_main: bool,
+    /// SSO revoked the character's token; logging in with it again fixes it.
+    pub needs_login: bool,
 }
 
 #[derive(Template)]
@@ -210,6 +212,7 @@ async fn load(
     let tier = tier_db::account_tier(&state.db, session.account)
         .await?
         .unwrap_or(Tier::Guest);
+    let token_states = tether_db::tokens::states_for_account(&state.db, session.account).await?;
     let characters = account
         .characters
         .iter()
@@ -217,6 +220,7 @@ async fn load(
             id: c.id,
             name: c.name.clone(),
             is_main: c.id == account.main.id,
+            needs_login: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Revoked),
         })
         .collect();
     Ok(Loaded {

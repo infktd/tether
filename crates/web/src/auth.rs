@@ -166,6 +166,16 @@ pub async fn callback(
         ));
     };
 
+    // Scopes: what we asked for (none yet). Task 2 of milestone 1 switches
+    // this to the verified `scp` claim.
+    if let Err(err) = state
+        .vault
+        .store(identity.character_id, &identity.tokens, &[])
+        .await
+    {
+        return Err(AppError::internal(err));
+    }
+
     let mut jar = jar;
     if became_owner {
         let mut tx = state.db.begin().await?;

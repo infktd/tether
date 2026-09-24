@@ -34,6 +34,11 @@ pub struct ServeConfig {
     #[arg(long, env = "PUBLIC_URL", value_parser = parse_public_url)]
     pub public_url: Option<String>,
 
+    /// 64 hex characters (32 bytes) encrypting tokens and secrets at rest.
+    /// install.sh generates it; it never enters the database.
+    #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]
+    pub encryption_key: Secret<String>,
+
     /// Token required by the first-run wizard until an owner exists. At
     /// least 32 characters; install.sh generates 64. If unset, one is
     /// generated at startup and logged.
@@ -45,6 +50,8 @@ impl ServeConfig {
     /// Checks that clap can't express. Done after parsing because clap's own
     /// errors echo the rejected value, and these values are secrets.
     pub fn validate(&self) -> Result<(), String> {
+        tether_core::crypto::EncryptionKey::from_hex(&self.encryption_key)
+            .map_err(|err| err.to_string())?;
         if let Some(token) = &self.setup_token
             && token.expose().trim().len() < 32
         {
@@ -100,6 +107,8 @@ mod tests {
     use super::*;
     use clap::{CommandFactory, FromArgMatches, Parser};
 
+    const KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
     #[derive(Parser, Debug)]
     struct Wrapper {
         #[command(flatten)]
@@ -122,6 +131,8 @@ mod tests {
         let config = parse(&[
             "--database-url",
             "postgres://u:p@db/x",
+            "--encryption-key",
+            KEY,
             "--domain",
             "auth.example.com",
         ])
@@ -133,7 +144,14 @@ mod tests {
 
     #[test]
     fn public_url_override_is_validated_and_trimmed() {
-        let base = ["--database-url", "postgres://u:p@db/x", "--domain", "d"];
+        let base = [
+            "--database-url",
+            "postgres://u:p@db/x",
+            "--encryption-key",
+            KEY,
+            "--domain",
+            "d",
+        ];
         let ok = parse(&[&base[..], &["--public-url", "http://localhost:8080/"]].concat()).unwrap();
         assert_eq!(ok.public_url(), "http://localhost:8080");
         assert!(parse(&[&base[..], &["--public-url", "localhost"]].concat()).is_err());
@@ -144,6 +162,8 @@ mod tests {
         let config = parse(&[
             "--database-url",
             "postgres://u:hunter2@db/x",
+            "--encryption-key",
+            KEY,
             "--domain",
             "d",
             "--setup-token",
@@ -159,7 +179,14 @@ mod tests {
 
     #[test]
     fn short_setup_token_is_refused() {
-        let base = ["--database-url", "postgres://x", "--domain", "d"];
+        let base = [
+            "--database-url",
+            "postgres://x",
+            "--encryption-key",
+            KEY,
+            "--domain",
+            "d",
+        ];
         let short = parse(&[&base[..], &["--setup-token", "hunter2"]].concat()).unwrap();
         let err = short.validate().unwrap_err();
         assert!(err.contains("at least 32 characters"), "{err}");
@@ -171,6 +198,24 @@ mod tests {
         let long = parse(&[&base[..], &["--setup-token", &long]].concat()).unwrap();
         assert!(long.validate().is_ok());
         assert!(parse(&base).unwrap().validate().is_ok());
+    }
+
+    #[test]
+    fn bad_encryption_key_is_refused_without_echo() {
+        let config = parse(&[
+            "--database-url",
+            "postgres://x",
+            "--domain",
+            "d",
+            "--encryption-key",
+            "hunter2-not-hex",
+        ])
+        .unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("64 hex characters"), "{err}");
+        assert!(!err.contains("hunter2"), "{err}");
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("hunter2"), "{debug}");
     }
 
     #[test]

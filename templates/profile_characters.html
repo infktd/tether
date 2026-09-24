@@ -16,6 +16,7 @@
             <div>
               <div class="font-medium">{{ c.name }}</div>
               <div class="text-xs text-muted-foreground">{% if c.is_main %}Main character{% else %}Alt{% endif %}</div>
+              {% if c.needs_login %}<a href="/auth/login?return_to=/profile" class="text-xs text-destructive underline underline-offset-4">EVE revoked access: log in with this character again</a>{% endif %}
             </div>
           </div>
         </td>

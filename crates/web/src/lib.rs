@@ -160,10 +160,21 @@ mod tests {
     }
 
     fn state(db: PgPool) -> AppState {
+        let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
+            std::sync::Arc::new(tether_esi::sso::EveSso);
+        let key =
+            tether_core::crypto::EncryptionKey::from_hex(&tether_core::Secret::new("0".repeat(64)))
+                .unwrap();
         AppState {
+            vault: std::sync::Arc::new(tether_esi::vault::TokenVault::new(
+                db.clone(),
+                key,
+                sso.clone(),
+                "https://tether.test/auth/callback".into(),
+            )),
             db,
             esi: tether_esi::Esi::new("tether tests", Some("http://127.0.0.1:9")).unwrap(),
-            sso: std::sync::Arc::new(tether_esi::sso::EveSso),
+            sso,
             site: std::sync::Arc::new(Site::new("https://tether.test")),
             setup_token: std::sync::Arc::new(tether_core::Secret::new("t".repeat(32))),
             limits: std::sync::Arc::default(),

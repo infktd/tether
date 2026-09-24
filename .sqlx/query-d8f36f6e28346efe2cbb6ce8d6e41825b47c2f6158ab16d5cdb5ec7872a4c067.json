@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.character_tokens (character_id, refresh_token, scopes)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (character_id) DO UPDATE\n        SET refresh_token = EXCLUDED.refresh_token, scopes = EXCLUDED.scopes,\n            state = 'valid', revoked_at = NULL, revoked_reason = NULL, updated_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8f36f6e28346efe2cbb6ce8d6e41825b47c2f6158ab16d5cdb5ec7872a4c067"
+}

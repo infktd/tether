@@ -26,8 +26,15 @@ else
 DOMAIN=$domain
 POSTGRES_PASSWORD=$(secret)
 SETUP_TOKEN=$(secret)
+ENCRYPTION_KEY=$(secret)
 ENV
     echo "Wrote deploy/.env"
+fi
+
+# Installs from before the token vault lack a key: add one, never replace.
+if ! grep -q '^ENCRYPTION_KEY=' .env; then
+    printf 'ENCRYPTION_KEY=%s\n' "$(secret)" >> .env
+    echo "Added ENCRYPTION_KEY to deploy/.env"
 fi
 
 docker compose up -d --build

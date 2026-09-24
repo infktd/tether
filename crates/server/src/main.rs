@@ -153,13 +153,24 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         );
     }
 
+    let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
+    let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
+        std::sync::Arc::new(tether_esi::sso::EveSso);
+    let site = tether_web::Site::new(config.public_url());
+    let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
+        db.clone(),
+        key,
+        sso.clone(),
+        site.sso_callback_url(),
+    ));
     let state = tether_web::AppState {
+        vault,
         db,
         esi,
         setup_token: std::sync::Arc::new(setup_token),
         limits: std::sync::Arc::default(),
-        sso: std::sync::Arc::new(tether_esi::sso::EveSso),
-        site: std::sync::Arc::new(tether_web::Site::new(config.public_url())),
+        sso,
+        site: std::sync::Arc::new(site),
     };
     let app =
         tether_web::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();

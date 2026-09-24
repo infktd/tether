@@ -8,6 +8,7 @@ pub mod permissions;
 pub mod settings;
 pub mod setup;
 pub mod tiers;
+pub mod tokens;
 
 use std::time::Duration;
 
