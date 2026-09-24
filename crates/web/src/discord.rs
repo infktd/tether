@@ -177,6 +177,41 @@ pub async fn save_settings(
     Ok(check)
 }
 
+/// Saves the nickname template (empty turns nickname management off) and
+/// queues a sync of every linked member.
+pub async fn save_nickname_template(
+    state: &AppState,
+    actor: AccountId,
+    template: &str,
+) -> Result<(), AppError> {
+    let template = template.trim();
+    if !template.is_empty() {
+        tether_core::nickname::validate(template).map_err(AppError::bad_request)?;
+    }
+    let mut tx = state.db.begin().await?;
+    tether_db::settings::set(
+        &mut *tx,
+        tether_db::settings::DISCORD_NICKNAME_TEMPLATE,
+        template.into(),
+    )
+    .await?;
+    audit::record(
+        &mut *tx,
+        Actor::Account(actor),
+        "discord.nickname_template",
+        None,
+        json!({ "template": template }),
+    )
+    .await?;
+    tether_jobs::enqueue(
+        &mut *tx,
+        tether_jobs::NewJob::new(crate::discord_sync::SYNC_ALL_JOB, json!({})).max_attempts(10),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Maps a Discord role to a tier or group. Only roles the bot can give;
 /// never Administrator; and moderation or management roles never to Guest
 /// or an Open group, which anyone can be in.
@@ -276,27 +311,24 @@ fn mapping_details(role_id: i64, role_name: &str, grantee: Grantee) -> serde_jso
     }
 }
 
+/// How long a guild check is reused while linking and syncing.
+pub(crate) const CHECK_TTL: Duration = Duration::from_secs(60);
+
 /// The roles to give an account now, checked against the server as it is:
 /// a role that has since gained Administrator, moved above the bot, or
 /// gained moderation powers while only Guest or Open groups get it, is
 /// skipped (and logged) rather than handed out.
-async fn grantable_roles(
-    state: &AppState,
-    config: &DiscordConfig,
+pub(crate) fn grantable(
+    wanted: &[db::RoleFor],
+    check: &GuildCheck,
     account: AccountId,
-) -> Result<Vec<u64>, AppError> {
-    let wanted = db::roles_for(&state.db, account).await?;
-    if wanted.is_empty() {
-        return Ok(Vec::new());
-    }
-    let check = state.discord.check(config).await.map_err(discord_error)?;
+) -> Vec<u64> {
     let mut roles = Vec::new();
     for want in wanted {
         let Ok(id) = u64::try_from(want.role_id) else {
             continue;
         };
-        let role = check.roles.iter().find(|r| r.id == id);
-        match role {
+        match check.roles.iter().find(|r| r.id == id) {
             Some(r) if r.assignable && !r.administrator && !(r.privileged && want.open_only) => {
                 roles.push(id);
             }
@@ -307,7 +339,22 @@ async fn grantable_roles(
             ),
         }
     }
-    Ok(roles)
+    roles
+}
+
+async fn grantable_roles(
+    state: &AppState,
+    config: &DiscordConfig,
+    account: AccountId,
+) -> Result<Vec<u64>, AppError> {
+    let wanted = db::roles_for(&state.db, account).await?;
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Fresh, not cached: a role that just gained Administrator must not
+    // go out to someone linking now.
+    let check = state.discord.check(config).await.map_err(discord_error)?;
+    Ok(grantable(&wanted, &check, account))
 }
 
 /// Starts linking: returns the cookie jar and where to send the browser.
@@ -473,6 +520,9 @@ async fn link_with_token(
                 ?joined,
                 "Discord linked"
             );
+            // Sets the nickname, and tidies roles if they were already in
+            // the server.
+            db::queue_sync(&state.db, account).await?;
             Ok(joined)
         }
         Err(err) => {
@@ -580,13 +630,50 @@ pub async fn strip_roles(
         .into_iter()
         .filter_map(|r| u64::try_from(r).ok())
         .collect();
-    let result = match discord.remove_roles(&config, user, &roles).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.is_transient() => Err(JobError::retry(err)),
-        Err(err) => Err(JobError::permanent(err)),
-    };
+    let result = strip(db_pool, discord, &config, user, &roles).await;
     tx.commit().await.map_err(JobError::retry)?;
     result
+}
+
+async fn strip(
+    db_pool: &PgPool,
+    discord: &Discord,
+    config: &DiscordConfig,
+    user: u64,
+    roles: &[u64],
+) -> Result<(), JobError> {
+    let refused = discord
+        .remove_roles(config, user, roles)
+        .await
+        .map_err(crate::discord_sync::discord_failure)?;
+    // A Tether nickname ("[NMU] Name") would still say they belong.
+    let template =
+        tether_db::settings::get_string(db_pool, tether_db::settings::DISCORD_NICKNAME_TEMPLATE)
+            .await
+            .map_err(JobError::retry)?;
+    if template.is_some_and(|t| !t.trim().is_empty()) {
+        match discord.set_nick(config, user, None).await {
+            Ok(()) => {}
+            Err(err)
+                if matches!(
+                    err.code(),
+                    Some(
+                        tether_discord::codes::UNKNOWN_MEMBER
+                            | tether_discord::codes::MISSING_PERMISSIONS
+                    )
+                ) => {}
+            Err(err) => return Err(crate::discord_sync::discord_failure(err)),
+        }
+    }
+    // Nothing else remembers these roles must go: retry (and in the end
+    // dead-letter, where an admin sees it) rather than count it as done.
+    if !refused.is_empty() {
+        return Err(JobError::retry(format!(
+            "Discord refused to take {} role(s); move the bot's role above them",
+            refused.len()
+        )));
+    }
+    Ok(())
 }
 
 pub fn register_jobs(

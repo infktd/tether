@@ -198,7 +198,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Affiliation sync on a schedule re-evaluates every account's tier
 - [x] Admin pages per docs/DESIGN.md: groups, permissions and tier rules
 - [x] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
-- [ ] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries (including taking back a role whose mapping was removed)
+- [x] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries (including taking back a role whose mapping was removed)
 - [ ] Fleet pings to Discord channels with role targeting
 - [ ] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
 - [ ] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor`; admin routes optionally on a separate listener (N6)

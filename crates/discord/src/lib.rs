@@ -9,7 +9,7 @@
 pub mod store;
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use tether_core::{Secret, hash_token};
@@ -220,6 +220,8 @@ impl DiscordUser {
 pub struct GuildCheck {
     pub bot_name: String,
     pub guild_name: String,
+    /// Nobody can change the server owner's nickname.
+    pub owner_id: u64,
     /// Bot permissions from [`BOT_PERMISSIONS`] it doesn't have.
     pub missing_permissions: Vec<&'static str>,
     /// Highest first, without `@everyone`.
@@ -238,6 +240,13 @@ pub struct GuildRole {
     pub privileged: bool,
     /// Below the bot's highest role and not managed: the bot can give it.
     pub assignable: bool,
+}
+
+/// A member of the server, as far as syncing cares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub roles: Vec<u64>,
+    pub nick: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +277,8 @@ pub struct Discord {
     /// The bot client, kept so twilight's rate limiter sees every call.
     /// Rebuilt when the token changes (keyed by its hash).
     bot: Mutex<Option<(Vec<u8>, Arc<Client>)>>,
+    /// The last check, for syncing many members in a row.
+    checked: Mutex<Option<(Instant, Vec<u8>, GuildCheck)>>,
 }
 
 impl std::fmt::Debug for Discord {
@@ -290,6 +301,7 @@ impl Discord {
             endpoints,
             http,
             bot: Mutex::new(None),
+            checked: Mutex::new(None),
         })
     }
 
@@ -464,9 +476,71 @@ impl Discord {
         Ok(GuildCheck {
             bot_name: me.name,
             guild_name: guild.name,
+            owner_id: guild.owner_id.get(),
             missing_permissions,
             roles,
         })
+    }
+
+    /// Like [`Discord::check`], but reuses a result younger than `max_age`
+    /// for the same configuration: syncing hundreds of members shouldn't ask
+    /// for the server's roles hundreds of times.
+    pub async fn check_cached(
+        &self,
+        config: &DiscordConfig,
+        max_age: Duration,
+    ) -> Result<GuildCheck, DiscordError> {
+        let key = config_key(config);
+        {
+            let cached = self.checked.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some((at, k, check)) = cached.as_ref()
+                && *k == key
+                && at.elapsed() < max_age
+            {
+                return Ok(check.clone());
+            }
+        }
+        let check = self.check(config).await?;
+        *self.checked.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some((Instant::now(), key, check.clone()));
+        Ok(check)
+    }
+
+    /// The member's roles and nickname; `None` if they aren't in the server.
+    pub async fn member(
+        &self,
+        config: &DiscordConfig,
+        user_id: u64,
+    ) -> Result<Option<Member>, DiscordError> {
+        let bot = self.bot(config);
+        let (guild_id, user) = (id(config.guild_id, "server id")?, id(user_id, "user id")?);
+        let member = match bot.guild_member(guild_id, user).await {
+            Ok(response) => response.model().await.map_err(protocol)?,
+            Err(err) => {
+                let err = DiscordError::from(err);
+                if err.code() == Some(codes::UNKNOWN_MEMBER) {
+                    return Ok(None);
+                }
+                return Err(err);
+            }
+        };
+        Ok(Some(Member {
+            roles: member.roles.iter().map(|r| r.get()).collect(),
+            nick: member.nick,
+        }))
+    }
+
+    /// Sets (or with `None`, clears) the member's nickname.
+    pub async fn set_nick(
+        &self,
+        config: &DiscordConfig,
+        user_id: u64,
+        nick: Option<&str>,
+    ) -> Result<(), DiscordError> {
+        let bot = self.bot(config);
+        let (guild_id, user) = (id(config.guild_id, "server id")?, id(user_id, "user id")?);
+        bot.update_guild_member(guild_id, user).nick(nick).await?;
+        Ok(())
     }
 
     /// Adds the member to the server with `roles`; if they are already in
@@ -506,22 +580,36 @@ impl Discord {
         let bot = self.bot(config);
         let (guild_id, user) = (id(config.guild_id, "server id")?, id(user_id, "user id")?);
         for role in roles {
-            bot.add_guild_member_role(guild_id, user, id(*role, "role id")?)
-                .await?;
+            match bot
+                .add_guild_member_role(guild_id, user, id(*role, "role id")?)
+                .await
+                .map_err(DiscordError::from)
+            {
+                Ok(_) => {}
+                // One role the bot may not give (moved above it since the
+                // check) mustn't stop the others.
+                Err(err) if err.code() == Some(codes::MISSING_PERMISSIONS) => {
+                    tracing::warn!(role_id = role, "Discord refused to give a role; skipped");
+                }
+                Err(err) => return Err(err),
+            }
         }
         Ok(())
     }
 
-    /// Removes `roles` from a member. Someone who has left the server, or a
-    /// role that no longer exists, is nothing to do.
+    /// Removes `roles` from a member, returning any the bot was refused
+    /// (50013: moved above it), so one can't stop the others and the caller
+    /// can decide whether to try again. Someone who has left the server, or
+    /// a role that no longer exists, is nothing to do.
     pub async fn remove_roles(
         &self,
         config: &DiscordConfig,
         user_id: u64,
         roles: &[u64],
-    ) -> Result<(), DiscordError> {
+    ) -> Result<Vec<u64>, DiscordError> {
         let bot = self.bot(config);
         let (guild_id, user) = (id(config.guild_id, "server id")?, id(user_id, "user id")?);
+        let mut refused = Vec::new();
         for role in roles {
             match bot
                 .remove_guild_member_role(guild_id, user, id(*role, "role id")?)
@@ -529,12 +617,16 @@ impl Discord {
                 .map_err(DiscordError::from)
             {
                 Ok(_) => {}
-                Err(err) if err.code() == Some(codes::UNKNOWN_MEMBER) => return Ok(()),
+                Err(err) if err.code() == Some(codes::UNKNOWN_MEMBER) => return Ok(Vec::new()),
                 Err(err) if err.code() == Some(codes::UNKNOWN_ROLE) => {}
+                Err(err) if err.code() == Some(codes::MISSING_PERMISSIONS) => {
+                    tracing::warn!(role_id = role, "Discord refused to take a role");
+                    refused.push(*role);
+                }
                 Err(err) => return Err(err),
             }
         }
-        Ok(())
+        Ok(refused)
     }
 
     fn bot(&self, config: &DiscordConfig) -> Arc<Client> {
@@ -555,6 +647,16 @@ impl Discord {
         *cached = Some((fingerprint, client.clone()));
         client
     }
+}
+
+/// Identifies a configuration without keeping its secrets around.
+fn config_key(config: &DiscordConfig) -> Vec<u8> {
+    hash_token(&format!(
+        "{}:{}:{}",
+        config.application_id,
+        config.guild_id,
+        config.bot_token.expose()
+    ))
 }
 
 fn id<T>(value: u64, what: &str) -> Result<Id<T>, DiscordError> {

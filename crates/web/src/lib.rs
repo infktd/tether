@@ -14,6 +14,7 @@ mod csrf;
 #[cfg(feature = "dev-login")]
 mod dev_login;
 pub mod discord;
+pub mod discord_sync;
 mod error;
 pub mod maintenance;
 pub mod openapi;
@@ -96,6 +97,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/admin/discord",
             get(pages::discord::admin).post(pages::discord::save_settings),
+        )
+        .route(
+            "/admin/discord/nickname",
+            post(pages::discord::save_nickname),
         )
         .route("/admin/discord/mappings", post(pages::discord::add_mapping))
         .route(

@@ -54,6 +54,14 @@ impl ServeConfig {
     pub fn validate(&self) -> Result<(), String> {
         tether_core::crypto::EncryptionKey::from_hex(&self.encryption_key)
             .map_err(|err| err.to_string())?;
+        // Jobs may each hold a connection while they wait on Discord; the
+        // web side needs some left.
+        if self.job_workers.saturating_add(2) > self.database_max_connections as usize {
+            return Err(format!(
+                "JOB_WORKERS ({}) must be at least 2 below DATABASE_MAX_CONNECTIONS ({})",
+                self.job_workers, self.database_max_connections
+            ));
+        }
         if let Some(token) = &self.setup_token
             && token.expose().trim().len() < 32
         {
@@ -204,6 +212,22 @@ mod tests {
         let long = parse(&[&base[..], &["--setup-token", &long]].concat()).unwrap();
         assert!(long.validate().is_ok());
         assert!(parse(&base).unwrap().validate().is_ok());
+    }
+
+    #[test]
+    fn job_workers_leave_connections_for_requests() {
+        let base = [
+            "--database-url",
+            "postgres://x",
+            "--encryption-key",
+            KEY,
+            "--domain",
+            "d",
+        ];
+        let tight = parse(&[&base[..], &["--job-workers", "9"]].concat()).unwrap();
+        assert!(tight.validate().unwrap_err().contains("JOB_WORKERS"));
+        let ok = parse(&[&base[..], &["--job-workers", "8"]].concat()).unwrap();
+        assert!(ok.validate().is_ok());
     }
 
     #[test]

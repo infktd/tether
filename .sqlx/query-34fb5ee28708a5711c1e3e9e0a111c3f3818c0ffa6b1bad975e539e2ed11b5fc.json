@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT core.discord_queue_sync($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "discord_queue_sync",
+        "type_info": "Void",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "34fb5ee28708a5711c1e3e9e0a111c3f3818c0ffa6b1bad975e539e2ed11b5fc"
+}

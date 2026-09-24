@@ -50,6 +50,7 @@ struct DiscordPage {
     guild_id: String,
     has_client_secret: bool,
     has_bot_token: bool,
+    nickname_template: String,
     invite_url: Option<String>,
     status: Option<Status>,
     /// Discord couldn't be checked with the saved settings.
@@ -84,6 +85,10 @@ async fn page(
         .map(|(app, guild)| Discord::bot_invite_url(app, guild));
     let (has_client_secret, has_bot_token) =
         (stored.client_secret.is_some(), stored.bot_token.is_some());
+    let nickname_template =
+        tether_db::settings::get_string(&state.db, tether_db::settings::DISCORD_NICKNAME_TEMPLATE)
+            .await?
+            .unwrap_or_default();
 
     let (check, status_error) = match stored.config() {
         Some(config) => match state.discord.check(&config).await {
@@ -138,6 +143,7 @@ async fn page(
         guild_id,
         has_client_secret,
         has_bot_token,
+        nickname_template,
         invite_url,
         status,
         status_error,
@@ -194,6 +200,25 @@ pub async fn save_settings(
     match discord::save_settings(&state, session.account, &input).await {
         Ok(_) => Ok(Redirect::to("/admin/discord").into_response()),
         Err(err) => page(&state, shell, Some(&input), Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NicknameForm {
+    #[serde(default)]
+    template: String,
+}
+
+/// `POST /admin/discord/nickname`
+pub async fn save_nickname(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<NicknameForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
+    match discord::save_nickname_template(&state, session.account, &form.template).await {
+        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
 

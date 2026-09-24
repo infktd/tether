@@ -163,6 +163,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/discord/nickname
+Origin: {{base}}
+[Form]
+template: [{corp}] {name}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/discord/mappings
 Origin: {{base}}
 [Form]

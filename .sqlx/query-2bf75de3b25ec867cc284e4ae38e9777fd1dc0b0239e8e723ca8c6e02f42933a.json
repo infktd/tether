@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.entity_tickers (id, ticker) VALUES ($1, $2)\n        ON CONFLICT (id) DO UPDATE SET ticker = EXCLUDED.ticker, fetched_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2bf75de3b25ec867cc284e4ae38e9777fd1dc0b0239e8e723ca8c6e02f42933a"
+}

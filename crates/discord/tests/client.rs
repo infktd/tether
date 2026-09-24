@@ -313,9 +313,37 @@ async fn removing_roles_from_someone_who_left_is_done_and_outages_are_transient(
     assert!(err.is_transient(), "{err:?}");
     assert!(!err.to_string().contains("bad gateway"));
 
+    // A role the bot may not take is skipped; the rest still go.
     let (server, discord) = mock_discord().await;
     Mock::given(method("DELETE"))
+        .and(path(format!(
+            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{MEMBER_ROLE}"
+        )))
         .respond_with(api_error(403, 50013, "Missing Permissions"))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!(
+            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{ALLIED_ROLE}"
+        )))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let refused = discord
+        .remove_roles(
+            &config(),
+            USER.parse().unwrap(),
+            &[MEMBER_ROLE, ALLIED_ROLE],
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused, [MEMBER_ROLE]);
+
+    // Other refusals still fail.
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("DELETE"))
+        .respond_with(api_error(403, 50001, "Missing Access"))
         .mount(&server)
         .await;
     let err = discord
@@ -323,7 +351,7 @@ async fn removing_roles_from_someone_who_left_is_done_and_outages_are_transient(
         .await
         .unwrap_err();
     assert!(!err.is_transient());
-    assert_eq!(err.code(), Some(50013));
+    assert_eq!(err.code(), Some(50001));
 }
 
 #[tokio::test]
@@ -338,4 +366,73 @@ async fn revoking_sends_the_token_to_discord() {
         .mount(&server)
         .await;
     discord.revoke(&config(), &user_token()).await.unwrap();
+}
+
+#[tokio::test]
+async fn member_reads_roles_and_nick_and_none_when_they_left() {
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("added_member")))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(api_error(404, 10007, "Unknown Member"))
+        .mount(&server)
+        .await;
+    let member = discord
+        .member(&config(), USER.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(member.roles, [MEMBER_ROLE]);
+    assert_eq!(member.nick, None);
+    assert!(
+        discord
+            .member(&config(), USER.parse().unwrap())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn set_nick_patches_the_member() {
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("PATCH"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .and(body_json(
+            serde_json::json!({ "nick": "[SWA] The Mittani" }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("added_member")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    discord
+        .set_nick(&config(), USER.parse().unwrap(), Some("[SWA] The Mittani"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn check_cached_asks_discord_once() {
+    let (server, discord) = mock_discord().await;
+    mock_guild(&server).await;
+    let ttl = std::time::Duration::from_secs(60);
+    discord.check_cached(&config(), ttl).await.unwrap();
+    discord.check_cached(&config(), ttl).await.unwrap();
+    let roles_calls = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/roles"))
+        .count();
+    assert_eq!(roles_calls, 1);
+    // A different configuration isn't served from the cache.
+    let mut other = config();
+    other.bot_token = Secret::new("other-token".to_owned());
+    assert!(discord.check_cached(&other, ttl).await.is_err());
 }

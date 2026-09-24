@@ -95,3 +95,55 @@ pub async fn resolve(
     found.extend(fresh.into_iter().map(|e| (e.id, e)));
     Ok(found)
 }
+
+/// Tickers are refetched after this.
+pub const TICKER_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// A corporation's or alliance's ticker, cached for a day.
+pub async fn ticker(
+    db: &PgPool,
+    esi: &Esi,
+    id: i64,
+    kind: tether_core::tiers::EntityKind,
+    priority: Priority,
+) -> Result<String, NamesError> {
+    let cached = sqlx::query_scalar!(
+        r#"
+        SELECT ticker FROM core.entity_tickers
+        WHERE id = $1 AND fetched_at > now() - make_interval(secs => $2)
+        "#,
+        id,
+        TICKER_MAX_AGE.as_secs_f64(),
+    )
+    .fetch_optional(db)
+    .await?;
+    if let Some(ticker) = cached {
+        return Ok(ticker);
+    }
+    let fetched = match kind {
+        tether_core::tiers::EntityKind::Corporation => esi.corporation_ticker(id, priority).await,
+        tether_core::tiers::EntityKind::Alliance => esi.alliance_ticker(id, priority).await,
+    };
+    let ticker = match fetched {
+        Ok(ticker) => ticker,
+        // ESI is down (daily downtime, say): an old ticker beats none.
+        Err(err) => {
+            let stale =
+                sqlx::query_scalar!("SELECT ticker FROM core.entity_tickers WHERE id = $1", id)
+                    .fetch_optional(db)
+                    .await?;
+            return stale.ok_or(NamesError::Esi(err));
+        }
+    };
+    sqlx::query!(
+        r#"
+        INSERT INTO core.entity_tickers (id, ticker) VALUES ($1, $2)
+        ON CONFLICT (id) DO UPDATE SET ticker = EXCLUDED.ticker, fetched_at = now()
+        "#,
+        id,
+        ticker,
+    )
+    .execute(db)
+    .await?;
+    Ok(ticker)
+}

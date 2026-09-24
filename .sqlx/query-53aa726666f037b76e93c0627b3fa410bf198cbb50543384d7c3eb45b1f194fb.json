@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT ticker FROM core.entity_tickers\n        WHERE id = $1 AND fetched_at > now() - make_interval(secs => $2)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ticker",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_tickers",
+            "name": "ticker"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "53aa726666f037b76e93c0627b3fa410bf198cbb50543384d7c3eb45b1f194fb"
+}

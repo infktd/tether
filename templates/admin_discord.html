@@ -119,5 +119,15 @@
     <footer><button type="submit" class="btn" data-variant="primary">Map role</button></footer>
   </form>
   {% endif %}
+
+  <form class="card" method="post" action="/admin/discord/nickname">
+    <header><h2>Nicknames</h2><p>Set every linked member's server nickname from their main character. Leave empty to leave nicknames alone.</p></header>
+    <section class="grid gap-2 max-w-xl">
+      <label class="label" for="template">Template</label>
+      <input class="input num" type="text" id="template" name="template" value="{{ nickname_template }}" maxlength="100" placeholder="[{corp}] {name}" spellcheck="false">
+      <p class="text-xs text-muted-foreground">Use {name}, {corp} and {alliance} (the tickers). Empty brackets are dropped for pilots without an alliance, and nicknames are cut to Discord's 32 characters. The server owner's nickname can't be changed by bots.</p>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Save template</button></footer>
+  </form>
 </div>
 {% endblock %}

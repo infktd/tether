@@ -835,3 +835,467 @@ async fn starting_again_replaces_the_pending_link(db: PgPool) {
         .unwrap();
     assert_eq!(pending, 1);
 }
+
+// ---- role sync and nicknames ----------------------------------------------
+
+fn sync_context(h: &Harness) -> tether_web::discord_sync::SyncContext {
+    tether_web::discord_sync::SyncContext {
+        db: h.db.clone(),
+        key: h.key.clone(),
+        discord: h.discord.clone(),
+        esi: h.esi.clone(),
+    }
+}
+
+/// Links the pilot (a Member) with a join Discord accepts.
+async fn linked_pilot(h: &Harness) -> (String, String, i64) {
+    let (owner, pilot) = set_up(h).await;
+    mount_member_oauth(&h.discord_server).await;
+    Mock::given(method("PUT"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(fixture("added_member")))
+        .mount(&h.discord_server)
+        .await;
+    let (state, browser) = start_link(h, &pilot).await;
+    let res = callback(h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
+    assert_eq!(res.location(), "/profile", "{}", res.body);
+    let account = me(h, &pilot).await["account_id"].as_i64().unwrap();
+    (owner, pilot, account)
+}
+
+/// The member as Discord has them now.
+async fn mount_member(h: &Harness, roles: &[&str], nick: Option<&str>) {
+    let mut member = fixture("added_member");
+    member["roles"] = serde_json::json!(roles);
+    member["nick"] = serde_json::json!(nick);
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(member))
+        .mount(&h.discord_server)
+        .await;
+}
+
+async fn mount_role_edits(h: &Harness) {
+    for verb in ["PUT", "DELETE"] {
+        Mock::given(method(verb))
+            .and(wiremock::matchers::path_regex(format!(
+                "^/api/v10/guilds/{GUILD}/members/{USER}/roles/[0-9]+$"
+            )))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&h.discord_server)
+            .await;
+    }
+}
+
+async fn role_edits(h: &Harness) -> Vec<(String, String)> {
+    h.discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().contains("/roles/"))
+        .map(|r| {
+            (
+                r.method.to_string(),
+                r.url.path().rsplit('/').next().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+async fn clear_jobs(db: &PgPool) {
+    sqlx::query("DELETE FROM core.jobs")
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn changes_to_a_linked_member_queue_one_sync(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    clear_jobs(&h.db).await;
+
+    // Tier changes, twice: one sync waits, not two.
+    for tier in ["allied", "guest"] {
+        sqlx::query("UPDATE core.accounts SET tier = $2 WHERE id = $1")
+            .bind(account)
+            .bind(tier)
+            .execute(&h.db)
+            .await
+            .unwrap();
+    }
+    let expected = [serde_json::json!({ "account_id": account })];
+    assert_eq!(jobs_of_kind(&h.db, "discord.sync_member").await, expected);
+
+    // Group membership.
+    clear_jobs(&h.db).await;
+    let group = send(
+        &h.app,
+        form(
+            "/admin/groups",
+            "name=Miners&description=&join_policy=assigned",
+            &owner,
+        ),
+    )
+    .await
+    .location()
+    .to_owned();
+    send(
+        &h.app,
+        form(&format!("{group}/members"), "character=the+mittani", &owner),
+    )
+    .await;
+    assert_eq!(jobs_of_kind(&h.db, "discord.sync_member").await, expected);
+
+    // The main moves corporation (the nickname shows its ticker).
+    clear_jobs(&h.db).await;
+    sqlx::query("UPDATE core.characters SET corporation_id = 98133756 WHERE id = 443630591")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(jobs_of_kind(&h.db, "discord.sync_member").await, expected);
+
+    // Unlinked accounts don't queue anything.
+    clear_jobs(&h.db).await;
+    let owner_account = me(&h, &owner).await["account_id"].as_i64().unwrap();
+    sqlx::query("UPDATE core.accounts SET tier = 'allied' WHERE id = $1")
+        .bind(owner_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert!(jobs_of_kind(&h.db, "discord.sync_member").await.is_empty());
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn syncing_gives_and_takes_managed_roles_and_leaves_others_alone(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, ALLIED_ROLE, "tier:allied").await;
+    // Has Allied (managed, no longer due) and a role Tether doesn't manage.
+    mount_member(&h, &[ALLIED_ROLE, "700000000000000000"], None).await;
+    mount_role_edits(&h).await;
+
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    let mut edits = role_edits(&h).await;
+    edits.sort();
+    assert_eq!(
+        edits,
+        [
+            ("DELETE".to_owned(), ALLIED_ROLE.to_owned()),
+            ("PUT".to_owned(), MEMBER_ROLE.to_owned()),
+        ]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_member_who_left_the_alliance_loses_their_roles(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    mount_member(&h, &[MEMBER_ROLE], None).await;
+    mount_role_edits(&h).await;
+    sqlx::query("UPDATE core.accounts SET tier = 'guest' WHERE id = $1")
+        .bind(account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        role_edits(&h).await,
+        [("DELETE".to_owned(), MEMBER_ROLE.to_owned())]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_role_whose_mapping_was_removed_is_taken_back(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    let id: i64 = sqlx::query_scalar("SELECT id FROM core.discord_role_mappings")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    clear_jobs(&h.db).await;
+    send(
+        &h.app,
+        form(&format!("/admin/discord/mappings/{id}/remove"), "", &owner),
+    )
+    .await;
+    let queued = jobs_of_kind(&h.db, "discord.sync_all").await;
+    assert_eq!(
+        queued,
+        [serde_json::json!({ "removed_role_id": 500_000_000_000_000_003_i64 })]
+    );
+
+    // sync_all fans out one sync per linked member, carrying the role.
+    assert_eq!(
+        tether_web::discord_sync::sync_all(&h.db, Some(500_000_000_000_000_003))
+            .await
+            .unwrap(),
+        1
+    );
+    let member_jobs = jobs_of_kind(&h.db, "discord.sync_member").await;
+    assert_eq!(
+        member_jobs,
+        [
+            serde_json::json!({ "account_id": account, "removed_role_ids": [500_000_000_000_000_003_i64] })
+        ]
+    );
+
+    mount_member(&h, &[MEMBER_ROLE], None).await;
+    mount_role_edits(&h).await;
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[500_000_000_000_000_003],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        role_edits(&h).await,
+        [("DELETE".to_owned(), MEMBER_ROLE.to_owned())]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn nicknames_follow_the_template(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+
+    let bad = send(
+        &h.app,
+        form(
+            "/admin/discord/nickname",
+            "template=%5B%7Bcorp%7D%5D",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert!(bad.body.contains("needs {name}"), "{}", bad.body);
+
+    clear_jobs(&h.db).await;
+    let saved = send(
+        &h.app,
+        form(
+            "/admin/discord/nickname",
+            "template=%5B%7Bcorp%7D%5D+%7Bname%7D",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(saved.location(), "/admin/discord");
+    assert_eq!(jobs_of_kind(&h.db, "discord.sync_all").await.len(), 1);
+    assert!(
+        page(&h, "/admin/discord", &owner)
+            .await
+            .body
+            .contains(r#"value="[{corp}] {name}""#)
+    );
+
+    // The Mittani's corporation is the State War Academy (SWA).
+    let corp = std::fs::read_to_string(format!(
+        "{}/../../tests/fixtures/esi/corporations_1000167.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/corporations/1000167"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(corp, "application/json"))
+        .expect(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_member(&h, &[], None).await;
+    Mock::given(method("PATCH"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .and(body_json(
+            serde_json::json!({ "nick": "[SWA] The Mittani" }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("added_member")))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let ctx = sync_context(&h);
+    tether_web::discord_sync::sync_member(&ctx, tether_db::accounts::AccountId(account), &[])
+        .await
+        .unwrap();
+    // The ticker is cached for the next sync.
+    let ticker: String =
+        sqlx::query_scalar("SELECT ticker FROM core.entity_tickers WHERE id = 1000167")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(ticker, "SWA");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn syncing_someone_not_in_the_server_does_nothing(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_json(serde_json::json!({"code": 10007, "message": "Unknown Member"})),
+        )
+        .mount(&h.discord_server)
+        .await;
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(role_edits(&h).await.is_empty());
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_role_held_back_as_too_powerful_is_not_taken_either(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    const FC: &str = "500000000000000006";
+    map(&h, &owner, FC, "tier:member").await;
+    // A Discord admin gives Fleet Commander Administrator afterwards.
+    let mut roles = fixture("roles");
+    for role in roles.as_array_mut().unwrap() {
+        if role["id"] == FC {
+            role["permissions"] = "8".into();
+        }
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/roles")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(roles))
+        .with_priority(1)
+        .mount(&h.discord_server)
+        .await;
+    mount_member(&h, &[FC], None).await;
+    mount_role_edits(&h).await;
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(role_edits(&h).await.is_empty(), "neither given nor taken");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn roles_sync_even_when_esi_is_down(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    send(
+        &h.app,
+        form(
+            "/admin/discord/nickname",
+            "template=%5B%7Bcorp%7D%5D+%7Bname%7D",
+            &owner,
+        ),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/corporations/1000167"))
+        .respond_with(
+            ResponseTemplate::new(503).set_body_raw(r#"{"error":"downtime"}"#, "application/json"),
+        )
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("added_member")))
+        .expect(0)
+        .mount(&h.discord_server)
+        .await;
+    mount_member(&h, &[], None).await;
+    mount_role_edits(&h).await;
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        role_edits(&h).await,
+        [("PUT".to_owned(), MEMBER_ROLE.to_owned())]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_refused_takeback_is_retried_not_counted_as_done(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot, _) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    send(
+        &h.app,
+        form("/admin/discord/nickname", "template=%7Bname%7D", &owner),
+    )
+    .await;
+    Mock::given(method("DELETE"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+            ),
+        )
+        .mount(&h.discord_server)
+        .await;
+    // Unlinking clears the Tether nickname too.
+    Mock::given(method("PATCH"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .and(body_json(serde_json::json!({ "nick": null })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("added_member")))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    send(&h.app, form("/profile/discord/unlink", "", &pilot)).await;
+    let err = tether_web::discord::strip_roles(&h.db, &h.key, &h.discord, 333_333_333_333_333_333)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, tether_jobs::JobError::Retry(m) if m.contains("refused")),
+        "{err:?}"
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_sync_whose_removed_role_is_refused_retries(db: PgPool) {
+    let h = harness(db, true).await;
+    let (_, _, account) = linked_pilot(&h).await;
+    mount_member(&h, &[MEMBER_ROLE], None).await;
+    Mock::given(method("DELETE"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+            ),
+        )
+        .mount(&h.discord_server)
+        .await;
+    let err = tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[500_000_000_000_000_003],
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&err, tether_jobs::JobError::Retry(m) if m.contains("refused")),
+        "{err:?}"
+    );
+}

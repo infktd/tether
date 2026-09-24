@@ -250,6 +250,30 @@ impl Esi {
         Ok(out)
     }
 
+    /// A corporation's ticker (public).
+    pub async fn corporation_ticker(
+        &self,
+        id: i64,
+        priority: Priority,
+    ) -> Result<String, EsiError> {
+        let request = self
+            .client
+            .get_corporations_corporation_id()
+            .corporation_id(id)
+            .send();
+        Ok(self.call(priority, request).await?.ticker)
+    }
+
+    /// An alliance's ticker (public).
+    pub async fn alliance_ticker(&self, id: i64, priority: Priority) -> Result<String, EsiError> {
+        let request = self
+            .client
+            .get_alliances_alliance_id()
+            .alliance_id(id)
+            .send();
+        Ok(self.call(priority, request).await?.ticker)
+    }
+
     /// Players online, from `GET /status`: the cheapest proof ESI answers.
     pub async fn players_online(&self) -> Result<i64, EsiError> {
         let request = self.client.get_status().send();

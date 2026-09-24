@@ -141,12 +141,22 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     )?);
     let mut registry = tether_jobs::Registry::new();
     tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
+    tether_web::discord_sync::register_jobs(
+        &mut registry,
+        tether_web::discord_sync::SyncContext {
+            db: db.clone(),
+            key: key.clone(),
+            discord: discord.clone(),
+            esi: esi.clone(),
+        },
+    );
     tether_web::tiers::register_jobs(&mut registry, db.clone(), esi.clone());
     tether_web::maintenance::register_jobs(&mut registry, db.clone());
     tether_web::sync::register_jobs(&mut registry, db.clone(), esi.clone());
     let schedules = tether_web::maintenance::schedules()
         .into_iter()
-        .chain(tether_web::sync::schedules());
+        .chain(tether_web::sync::schedules())
+        .chain(tether_web::discord_sync::schedules());
     for spec in schedules {
         tether_jobs::schedule::ensure(&db, &spec).await?;
     }

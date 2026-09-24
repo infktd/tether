@@ -1,0 +1,26 @@
+{
+    "state": "active",
+    "type": "player_owned",
+    "name": "Otherworld Enterprises",
+    "ticker": "OTHER",
+    "description": "<font size=\"14\" color=\"#bfffffff\"></font><font size=\"12\" color=\"#ff01deff\">C</font><font size=\"12\" color=\"#ff03ddff\">r</font><font size=\"12\" color=\"#ff04dbfe\">a</font><font size=\"12\" color=\"#ff06dafe\">z</font><font size=\"12\" color=\"#ff07d9fd\">y</font><font size=\"12\" color=\"#ff09d7fd\"> </font><font size=\"12\" color=\"#ff0ad6fd\">s</font><font size=\"12\" color=\"#ff0cd5fc\">w</font><font size=\"12\" color=\"#ff0dd3fc\">e</font><font size=\"12\" color=\"#ff0fd2fb\">d</font><font size=\"12\" color=\"#ff10d1fb\">e</font><font size=\"12\" color=\"#ff12cffb\"> </font><font size=\"12\" color=\"#ff13cefa\">r</font><font size=\"12\" color=\"#ff15cdfa\">u</font><font size=\"12\" color=\"#ff17cbf9\">n</font><font size=\"12\" color=\"#ff18caf9\">n</font><font size=\"12\" color=\"#ff1ac9f9\">i</font><font size=\"12\" color=\"#ff1bc7f8\">n</font><font size=\"12\" color=\"#ff1dc6f8\">g</font><font size=\"12\" color=\"#ff1ec5f7\"> </font><font size=\"12\" color=\"#ff20c3f7\">E</font><font size=\"12\" color=\"#ff21c2f6\">V</font><font size=\"12\" color=\"#ff23c1f6\">E</font><font size=\"12\" color=\"#ff24bff6\">-</font><font size=\"12\" color=\"#ff26bef5\">F</font><font size=\"12\" color=\"#ff27bdf5\">i</font><font size=\"12\" color=\"#ff29bbf4\">l</font><font size=\"12\" color=\"#ff2bbaf4\">e</font><font size=\"12\" color=\"#ff2cb8f4\">s</font><font size=\"12\" color=\"#ff2eb7f3\">.</font><font size=\"12\" color=\"#ff2fb6f3\">c</font><font size=\"12\" color=\"#ff31b4f2\">o</font><font size=\"12\" color=\"#ff32b3f2\">m</font><font size=\"12\" color=\"#ff34b2f2\">,</font><font size=\"12\" color=\"#ff35b0f1\"> </font><font size=\"12\" color=\"#ff37aff1\">E</font><font size=\"12\" color=\"#ff38aef0\">V</font><font size=\"12\" color=\"#ff3aacf0\">E</font><font size=\"12\" color=\"#ff3babf0\">-</font><font size=\"12\" color=\"#ff3daaef\">S</font><font size=\"12\" color=\"#ff3fa8ef\">e</font><font size=\"12\" color=\"#ff40a7ee\">a</font><font size=\"12\" color=\"#ff42a6ee\">r</font><font size=\"12\" color=\"#ff43a4ee\">c</font><font size=\"12\" color=\"#ff45a3ed\">h</font><font size=\"12\" color=\"#ff46a2ed\">.</font><font size=\"12\" color=\"#ff48a0ec\">c</font><font size=\"12\" color=\"#ff499fec\">o</font><font size=\"12\" color=\"#ff4b9eec\">m</font><font size=\"12\" color=\"#ff4c9ceb\">,</font><font size=\"12\" color=\"#ff4e9beb\"> </font><font size=\"12\" color=\"#ff509aea\">E</font><font size=\"12\" color=\"#ff5198ea\">V</font><font size=\"12\" color=\"#ff5397e9\">E</font><font size=\"12\" color=\"#ff5496e9\">B</font><font size=\"12\" color=\"#ff5694e9\">o</font><font size=\"12\" color=\"#ff5793e8\">a</font><font size=\"12\" color=\"#ff5992e8\">r</font><font size=\"12\" color=\"#ff5a90e7\">d</font><font size=\"12\" color=\"#ff5c8fe7\">.</font><font size=\"12\" color=\"#ff5d8ee7\">c</font><font size=\"12\" color=\"#ff5f8ce6\">o</font><font size=\"12\" color=\"#ff608be6\">m</font><font size=\"12\" color=\"#ff628ae5\">,</font><font size=\"12\" color=\"#ff7976df\"> </font><font size=\"12\" color=\"#ff7b74df\">E</font><font size=\"12\" color=\"#ff7c73df\">V</font><font size=\"12\" color=\"#ff7e72de\">E</font><font size=\"12\" color=\"#ff7f70de\">-</font><font size=\"12\" color=\"#ff816fdd\">O</font><font size=\"12\" color=\"#ff826ddd\">f</font><font size=\"12\" color=\"#ff846cdc\">f</font><font size=\"12\" color=\"#ff856bdc\">l</font><font size=\"12\" color=\"#ff8769dc\">n</font><font size=\"12\" color=\"#ff8868db\">e</font><font size=\"12\" color=\"#ff8a67db\">.</font><font size=\"12\" color=\"#ff8c65da\">n</font><font size=\"12\" color=\"#ff8d64da\">e</font><font size=\"12\" color=\"#ff8f63da\">t</font>",
+    "url": "https://eve-files.com",
+    "palette": {
+        "main_color": "#323232",
+        "secondary_color": "#4e00b1",
+        "tertiary_color": "#00d248"
+    },
+    "date_founded": "2004-05-30T23:55:00Z",
+    "ceo_id": 196379789,
+    "creator_id": 196379789,
+    "alliance_id": 159826257,
+    "home_station_id": 60008494,
+    "member_count": 1,
+    "tax_rates": {
+        "isk": 0.0,
+        "loyalty_point": 0.0
+    },
+    "shares": 19000,
+    "war_eligible": true,
+    "friendly_fire": "illegal"
+}

@@ -293,3 +293,55 @@ pub async fn mapped_role_ids<'e>(
     .fetch_all(executor)
     .await
 }
+
+/// Every account with Discord linked.
+pub async fn linked_accounts<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<Vec<AccountId>, sqlx::Error> {
+    let ids = sqlx::query_scalar!("SELECT account_id FROM core.discord_links ORDER BY account_id")
+        .fetch_all(executor)
+        .await?;
+    Ok(ids.into_iter().map(AccountId).collect())
+}
+
+/// Queues a sync for the account if it is linked and none is waiting (the
+/// same function the triggers use).
+pub async fn queue_sync<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("SELECT core.discord_queue_sync($1)", account.0)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// What the nickname template is filled from: the account's main.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainCharacter {
+    pub name: String,
+    pub corporation_id: Option<i64>,
+    pub alliance_id: Option<i64>,
+}
+
+pub async fn main_character<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<Option<MainCharacter>, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        SELECT c.name, c.corporation_id, c.alliance_id
+        FROM core.accounts a
+        JOIN core.characters c ON c.id = a.main_character_id
+        WHERE a.id = $1
+        "#,
+        account.0
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| MainCharacter {
+        name: r.name,
+        corporation_id: r.corporation_id,
+        alliance_id: r.alliance_id,
+    }))
+}

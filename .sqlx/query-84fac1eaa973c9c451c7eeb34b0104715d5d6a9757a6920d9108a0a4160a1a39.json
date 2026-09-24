@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.name, c.corporation_id, c.alliance_id\n        FROM core.accounts a\n        JOIN core.characters c ON c.id = a.main_character_id\n        WHERE a.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "alliance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "alliance_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "84fac1eaa973c9c451c7eeb34b0104715d5d6a9757a6920d9108a0a4160a1a39"
+}

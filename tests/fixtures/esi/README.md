@@ -9,3 +9,6 @@ for use with wiremock. Tests never call real ESI.
 | `universe_ids.json` | `POST /universe/ids` with `["Goonswarm Federation", "GoonWaffe", "Pandemic Horde", "No Such Alliance Exists 123"]` | 2026-09-24 |
 | `universe_names.json` | `POST /universe/names` with `[159826257, 1695357456, 1164409536, 98133756]` | 2026-09-24 |
 | `status.json` | `GET /status` | 2026-09-24 |
+| `corporations_1164409536.json` | `GET /corporations/1164409536` (Otherworld Enterprises, Chribba's) | 2026-09-24 |
+| `corporations_1000167.json` | `GET /corporations/1000167` (State War Academy, an NPC corporation) | 2026-09-24 |
+| `alliances_159826257.json` | `GET /alliances/159826257` (Otherworld Empire) | 2026-09-24 |

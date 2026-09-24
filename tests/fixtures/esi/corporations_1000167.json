@@ -1,0 +1,22 @@
+{
+    "state": "active",
+    "type": "npc_owned",
+    "name": "State War Academy",
+    "ticker": "SWA",
+    "description": "The State War Academy was founded shortly after the Caldari State came into being while the war with the Gallente Federation was still in full swing. Due to this, the academy has always had a very combat oriented slant, as opposed to the broader scope of ship handling.",
+    "palette": {
+        "main_color": "#000000",
+        "secondary_color": "#d20101",
+        "tertiary_color": "#e3ff00"
+    },
+    "ceo_id": 3004193,
+    "home_station_id": 60014659,
+    "member_count": 2998459,
+    "tax_rates": {
+        "isk": 11.0,
+        "loyalty_point": 0.0
+    },
+    "shares": 100000000,
+    "war_eligible": false,
+    "friendly_fire": "illegal"
+}

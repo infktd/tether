@@ -13,6 +13,9 @@ pub const SSO_LAST_ERROR: &str = "sso.last_error";
 pub const DISCORD_APPLICATION_ID: &str = "discord.application_id";
 /// The Discord server members join, as a string.
 pub const DISCORD_GUILD_ID: &str = "discord.guild_id";
+/// Nickname template such as `[{corp}] {name}`; unset means Tether leaves
+/// nicknames alone.
+pub const DISCORD_NICKNAME_TEMPLATE: &str = "discord.nickname_template";
 
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,
