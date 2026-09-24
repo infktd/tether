@@ -167,11 +167,11 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 
 **Spike tasks** (branch `spike/plugin-runtime`)
 
-- [ ] Minimal axum host embedding Wasmtime with one WIT interface exposing a host function
-- [ ] Rust guest plugin compiled to a WASM component that calls it
-- [ ] Host function fetches one public ESI endpoint through the host on the plugin's behalf
-- [ ] Plugin returns data the host renders as one HTML page
-- [ ] Write `docs/SPIKE_REPORT.md`: friction points, build and startup times, binary sizes, and whether the component model feels right
+- [x] Minimal axum host embedding Wasmtime with one WIT interface exposing a host function
+- [x] Rust guest plugin compiled to a WASM component that calls it
+- [x] Host function fetches one public ESI endpoint through the host on the plugin's behalf
+- [x] Plugin returns data the host renders as one HTML page
+- [x] Write `docs/SPIKE_REPORT.md`: friction points, build and startup times, binary sizes, and whether the component model feels right
 
 **Milestone 0 tasks, in order**
 
