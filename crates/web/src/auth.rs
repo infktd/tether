@@ -25,7 +25,7 @@ pub const SESSION_COOKIE: &str = "__Host-tether_session";
 pub const LOGIN_COOKIE: &str = "__Host-tether_login";
 
 const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
-const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+pub(crate) const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const SESSION_TOUCH_EVERY: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Deserialize)]

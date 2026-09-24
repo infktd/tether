@@ -8,6 +8,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+dev-login = ["tether-web/dev-login"]
+
 [[bin]]
 name = "tether"
 path = "src/main.rs"

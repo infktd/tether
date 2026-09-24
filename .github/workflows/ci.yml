@@ -60,6 +60,25 @@ jobs:
           sqlx migrate run
           SQLX_OFFLINE=false cargo sqlx prepare --workspace --check
       - run: cargo test --workspace
+      - name: Tests with dev-login
+        run: cargo test -p tether-web --features dev-login
+
+  # dev-login signs anyone in without SSO. Prove a release build refuses it.
+  dev-login-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y mold
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Release build with dev-login must fail
+        run: |
+          if cargo check --release -p tether-server --features dev-login 2> guard.log; then
+            echo "A release build with dev-login compiled; it must not."
+            exit 1
+          fi
+          grep -q "the dev-login feature must never be enabled in release builds" guard.log
+          echo "Release build refused dev-login, as required."
 
   # Every crate tagged `[package.metadata.tether] target = "wasm32-wasip2"`
   # is built and linted for that target, and must come out as a component.

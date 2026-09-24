@@ -1,8 +1,15 @@
 //! HTTP routes, auth middleware and the OpenAPI document.
 
+// dev-login creates sessions without SSO. It must never reach a release
+// build; CI checks that this guard fires.
+#[cfg(all(feature = "dev-login", not(debug_assertions)))]
+compile_error!("the dev-login feature must never be enabled in release builds");
+
 mod api;
 pub mod auth;
 mod csrf;
+#[cfg(feature = "dev-login")]
+mod dev_login;
 mod error;
 mod ratelimit;
 pub mod setup;
@@ -16,8 +23,16 @@ use axum::{Router, middleware};
 
 pub use state::{AppState, Limits, Site};
 
+/// Whether this build includes fixture logins (never true in release).
+pub const DEV_LOGIN: bool = cfg!(feature = "dev-login");
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new();
+    #[cfg(feature = "dev-login")]
+    let router = router
+        .route("/dev/login", get(dev_login::list))
+        .route("/dev/login/{fixture}", get(dev_login::login));
+    router
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/auth/login", get(auth::login))

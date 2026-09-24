@@ -50,6 +50,9 @@ async fn main() -> anyhow::Result<()> {
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     config.validate().map_err(anyhow::Error::msg)?;
+    if tether_web::DEV_LOGIN {
+        tracing::warn!("dev-login is compiled in: /dev/login signs anyone in without SSO");
+    }
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         public_url = config.public_url(),

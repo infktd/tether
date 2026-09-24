@@ -184,7 +184,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Tier evaluation from the main's corp and alliance at login
 - [x] Groups, permissions and audit log
 - [x] First-run wizard API: ESI credentials, alliance selection, callback check
-- [ ] `dev-login` feature flag for fixture sessions, excluded from release builds
+- [x] `dev-login` feature flag for fixture sessions, excluded from release builds
 - [ ] Admin CLI and `doctor`
 - [ ] OpenAPI via utoipa, Scalar at `/docs` in dev builds
 - [ ] UI shell per docs/DESIGN.md with askama, Basecoat and htmx: layout, login, profile and wizard pages

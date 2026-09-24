@@ -8,6 +8,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Fixture sessions for manual testing. Refuses to compile in release builds.
+dev-login = []
+
 [dependencies]
 axum.workspace = true
 axum-extra.workspace = true
