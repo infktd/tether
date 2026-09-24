@@ -187,7 +187,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] `dev-login` feature flag for fixture sessions, excluded from release builds
 - [x] Admin CLI and `doctor`
 - [x] OpenAPI via utoipa, Scalar at `/docs` in dev builds
-- [ ] UI shell per docs/DESIGN.md with askama, Basecoat and htmx: layout, login, profile and wizard pages
+- [x] UI shell per docs/DESIGN.md with askama, Basecoat and htmx: layout, login, profile and wizard pages
 
 ## Open questions
 

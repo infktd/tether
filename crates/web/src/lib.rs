@@ -14,6 +14,7 @@ mod csrf;
 mod dev_login;
 mod error;
 pub mod openapi;
+pub mod pages;
 mod ratelimit;
 pub mod setup;
 mod state;
@@ -39,6 +40,17 @@ pub fn router(state: AppState) -> Router {
     let router = router.route("/docs", get(openapi::docs));
     router
         .route("/api/openapi.json", get(openapi::spec))
+        .route("/", get(pages::home))
+        .route("/login", get(pages::login))
+        .route("/profile", get(pages::profile))
+        .route("/profile/main", post(pages::make_main))
+        .route("/setup", get(pages::setup::page))
+        .route("/setup/unlock", post(pages::setup::unlock))
+        .route("/setup/sso", post(pages::setup::sso))
+        .route("/setup/check", post(pages::setup::check))
+        .route("/setup/alliance", post(pages::setup::choose_alliance))
+        .route("/setup/alliance/search", post(pages::setup::search))
+        .route("/static/{*path}", get(pages::assets::serve))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/auth/login", get(auth::login))
@@ -92,9 +104,15 @@ pub fn router(state: AppState) -> Router {
         .route("/api/setup/sso", post(setup::set_sso))
         .route("/api/setup/probe", get(setup::probe))
         .route("/api/setup/callback-check", post(setup::callback_check))
+        .fallback(pages::not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf::verify_origin,
+        ))
+        // Outermost, so every response carries them, rejections included.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            pages::headers::security_headers,
         ))
         .with_state(state)
 }

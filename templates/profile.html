@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Profile{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Profile</span>{% endblock %}
+{% block content %}
+<div class="flex items-end justify-between gap-4">
+  <div>
+    <h1 class="page-title">Profile</h1>
+    <p class="text-muted-foreground mt-1">Your characters, access tier and groups.</p>
+  </div>
+  <a href="/auth/login?return_to=/profile" class="btn" data-variant="outline">
+    {% call icons::icon("plus") %}{% endcall %} Add character
+  </a>
+</div>
+
+<section class="grid grid-cols-4 gap-4" aria-label="Summary">
+  <div class="card stat">
+    <div class="stat-label">Tier</div>
+    <div class="stat-value"><span class="tier-badge" data-tier="{{ tier }}">{{ tier_label }}</span></div>
+    <div class="stat-caption">From your main's corporation and alliance</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">Characters</div>
+    <div class="stat-value num">{{ characters.len() }}</div>
+    <div class="stat-caption">Linked to this account</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">Groups</div>
+    <div class="stat-value num">{{ groups.len() }}</div>
+    <div class="stat-caption">{% if groups.is_empty() %}None yet{% else %}{{ groups.join(", ") }}{% endif %}</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">Permissions</div>
+    <div class="stat-value num">{{ permissions.len() }}</div>
+    <div class="stat-caption">{% if is_owner %}Owner: everything{% else %}From your tier and groups{% endif %}</div>
+  </div>
+</section>
+
+{% include "profile_characters.html" %}
+
+{% if !permissions.is_empty() %}
+<section class="card">
+  <header><h2>Permissions</h2></header>
+  <section class="flex flex-wrap gap-2">
+    {% for p in permissions %}<span class="badge" data-variant="outline">{{ p }}</span>{% endfor %}
+  </section>
+</section>
+{% endif %}
+{% endblock %}

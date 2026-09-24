@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+{% include "head.html" %}
+<title>{% block title %}{% endblock %} · Tether</title>
+</head>
+<body>
+<main class="min-h-screen flex items-start justify-center px-4 py-24">
+  <div class="w-full {% block width %}max-w-[400px]{% endblock %} flex flex-col gap-6">
+    <div class="text-[15px] font-semibold tracking-tight">Tether</div>
+    {% block content %}{% endblock %}
+  </div>
+</main>
+</body>
+</html>

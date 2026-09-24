@@ -99,7 +99,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo clippy -p hello-plugin --target wasm32-wasip2 -- -D warnings
 cargo build -p hello-plugin --target wasm32-wasip2 --release
-tailwindcss -i assets/app.css -o static/app.css --minify
+scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
 deploy/install.sh localhost    # writes deploy/.env once, then starts the stack
 docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, tiers, jobs, sync
 docker compose -f deploy/docker-compose.yml up --build

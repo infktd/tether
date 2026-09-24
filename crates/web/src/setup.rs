@@ -74,6 +74,15 @@ pub async fn status(
     jar: CookieJar,
     session: Option<CurrentSession>,
 ) -> Result<Json<SetupStatus>, AppError> {
+    Ok(Json(load_status(&state, &jar, session.as_ref()).await?))
+}
+
+/// The wizard's state as seen by this browser. Shared by the API and pages.
+pub async fn load_status(
+    state: &AppState,
+    jar: &CookieJar,
+    session: Option<&CurrentSession>,
+) -> Result<SetupStatus, AppError> {
     let sso_configured = settings::get_string(&state.db, settings::SSO_CLIENT_ID)
         .await?
         .is_some();
@@ -90,20 +99,20 @@ pub async fn status(
     };
 
     let mut suggested = None;
-    if let (SetupState::NeedsAlliance, Some(session)) = (&setup_state, &session)
-        && session.require(&state, ADMIN_TIERS).await.is_ok()
+    if let (SetupState::NeedsAlliance, Some(session)) = (&setup_state, session)
+        && session.require(state, ADMIN_TIERS).await.is_ok()
     {
-        suggested = suggestion(&state, session).await;
+        suggested = suggestion(state, session).await;
     }
 
-    Ok(Json(SetupStatus {
+    Ok(SetupStatus {
         state: setup_state,
         callback_url: state.site.sso_callback_url(),
         sso_configured,
         owner_exists,
-        unlocked: !owner_exists && has_setup_session(&state, &jar).await?,
+        unlocked: !owner_exists && has_setup_session(state, jar).await?,
         suggested,
-    }))
+    })
 }
 
 async fn suggestion(state: &AppState, session: &CurrentSession) -> Option<Suggestion> {
@@ -144,7 +153,17 @@ pub async fn unlock(
     jar: CookieJar,
     Json(body): Json<UnlockIn>,
 ) -> Result<Response, AppError> {
-    // Cheap insurance on top of a 256-bit token: 5 attempts a minute per IP.
+    let cookie = unlock_session(&state, ip, &body.token).await?;
+    Ok((jar.add(cookie), StatusCode::NO_CONTENT).into_response())
+}
+
+/// Checks the setup token and starts a setup session, returning its cookie.
+/// Rate-limited per client IP: cheap insurance on top of a 256-bit token.
+pub async fn unlock_session(
+    state: &AppState,
+    ip: Option<std::net::IpAddr>,
+    token: &str,
+) -> Result<axum_extra::extract::cookie::Cookie<'static>, AppError> {
     if let Some(ip) = ip
         && let Err(retry_after) = state
             .limits
@@ -152,21 +171,13 @@ pub async fn unlock(
             .check(ip, std::time::Instant::now())
     {
         tracing::warn!(%ip, "setup unlock rate limited");
-        return Ok((
-            StatusCode::TOO_MANY_REQUESTS,
-            [(
-                axum::http::header::RETRY_AFTER,
-                retry_after.as_secs().max(1).to_string(),
-            )],
-            "Too many attempts. Wait a minute and try again.",
-        )
-            .into_response());
+        return Err(AppError::too_many_requests(retry_after.as_secs()));
     }
     if accounts::owner_exists(&state.db).await? {
         return Err(finished());
     }
     // Comparing hashes keeps the comparison time independent of the token.
-    if hash_token(body.token.trim()) != hash_token(state.setup_token.expose()) {
+    if hash_token(token.trim()) != hash_token(state.setup_token.expose()) {
         tracing::warn!("wrong setup token entered");
         return Err(AppError::new(
             StatusCode::FORBIDDEN,
@@ -176,8 +187,7 @@ pub async fn unlock(
     let session = new_token().map_err(AppError::internal)?;
     setup::start_session(&state.db, &hash_token(session.expose()), SETUP_TTL).await?;
     audit::record(&state.db, Actor::System, "setup.unlock", None, json!({})).await?;
-    let jar = jar.add(cookie(SETUP_COOKIE, &session, SETUP_TTL)?);
-    Ok((jar, StatusCode::NO_CONTENT).into_response())
+    cookie(SETUP_COOKIE, &session, SETUP_TTL)
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -199,13 +209,26 @@ pub async fn set_sso(
     session: Option<CurrentSession>,
     Json(body): Json<SsoIn>,
 ) -> Result<Json<SsoOut>, AppError> {
-    let actor = setup_actor(&state, &jar, session.as_ref()).await?;
-    let client_id = body.client_id.trim();
+    save_client_id(&state, &jar, session.as_ref(), &body.client_id).await?;
+    Ok(Json(SsoOut {
+        callback_url: state.site.sso_callback_url(),
+    }))
+}
+
+/// Validates and stores the SSO client id, for whoever may change setup.
+pub async fn save_client_id(
+    state: &AppState,
+    jar: &CookieJar,
+    session: Option<&CurrentSession>,
+    client_id: &str,
+) -> Result<(), AppError> {
+    let actor = setup_actor(state, jar, session).await?;
+    let client_id = client_id.trim();
     let valid = (16..=64).contains(&client_id.len())
         && client_id.chars().all(|c| c.is_ascii_alphanumeric());
     if !valid {
         return Err(AppError::bad_request(
-            "That doesn't look like an EVE SSO client id (16 to 64 letters and digits).",
+            "That doesn't look like an EVE SSO client ID (16 to 64 letters and digits).",
         ));
     }
     let mut tx = state.db.begin().await?;
@@ -219,9 +242,7 @@ pub async fn set_sso(
     )
     .await?;
     tx.commit().await?;
-    Ok(Json(SsoOut {
-        callback_url: state.site.sso_callback_url(),
-    }))
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -324,7 +345,7 @@ fn error_chain(err: &dyn std::error::Error) -> String {
 
 /// Who may change setup: the unlocked browser before an owner exists, and
 /// only the owner afterwards.
-async fn setup_actor(
+pub async fn setup_actor(
     state: &AppState,
     jar: &CookieJar,
     session: Option<&CurrentSession>,

@@ -1,0 +1,37 @@
+{%- import "icons.html" as icons -%}
+<section class="card data-card" id="characters">
+  <header><h2>Characters</h2></header>
+  {% if let Some(error) = error %}<div class="alert mx-5" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}
+  <table class="table">
+    <thead>
+      <tr><th scope="col">Character</th><th scope="col">Character ID</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr>
+    </thead>
+    <tbody>
+      {% for c in characters %}
+      <tr>
+        <td>
+          <div class="flex items-center gap-3">
+            {% let avatar_name = c.name.as_str() %}{% let avatar_id = c.id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+            {% include "avatar.html" %}
+            <div>
+              <div class="font-medium">{{ c.name }}</div>
+              <div class="text-xs text-muted-foreground">{% if c.is_main %}Main character{% else %}Alt{% endif %}</div>
+            </div>
+          </div>
+        </td>
+        <td class="num text-foreground-soft">{{ c.id }}</td>
+        <td class="text-right">
+          {% if c.is_main %}
+          <span class="badge" data-variant="outline">{% call icons::icon("check") %}{% endcall %} Main</span>
+          {% else %}
+          <form method="post" action="/profile/main" hx-post="/profile/main" hx-target="#characters" hx-swap="outerHTML">
+            <input type="hidden" name="character_id" value="{{ c.id }}">
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Make main</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>

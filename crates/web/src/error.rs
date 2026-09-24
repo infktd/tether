@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 pub struct AppError {
     status: StatusCode,
     message: Cow<'static, str>,
+    retry_after: Option<u64>,
 }
 
 impl AppError {
@@ -16,7 +17,23 @@ impl AppError {
         Self {
             status,
             message: message.into(),
+            retry_after: None,
         }
+    }
+
+    /// 429 with a `Retry-After` header.
+    pub fn too_many_requests(retry_after_secs: u64) -> Self {
+        Self {
+            retry_after: Some(retry_after_secs.max(1)),
+            ..Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many attempts. Wait a minute and try again.",
+            )
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 
     pub fn unauthorized() -> Self {
@@ -57,7 +74,13 @@ impl From<sqlx::Error> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        (self.status, self.message).into_response()
+        let mut response = (self.status, self.message).into_response();
+        if let Some(secs) = self.retry_after {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, secs.into());
+        }
+        response
     }
 }
 

@@ -58,6 +58,8 @@ Written as shadcn-style theme variables, so they work unchanged with Basecoat, s
 }
 ```
 
+**With Basecoat.** shadcn's `accent` role is a hover surface, not a highlight. So Basecoat's `accent` utilities (`bg-accent`, `text-accent-foreground`) map to `--accent-surface` and `--foreground`, and the amber `--accent` is exposed as the `highlight` colour (`text-highlight`, `bg-highlight-soft`). The mapping lives in `assets/app.css`.
+
 The accent is a per-instance setting. Alliances pick it in the admin theme settings; amber is the default. Good alternatives keep similar lightness: `#fb923c`, `#a78bfa`, `#34d399`.
 
 Status colors must differ in lightness as well as hue, and pair color with a text label or dot, never color alone.

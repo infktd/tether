@@ -1,0 +1,16 @@
+{%- if results.is_empty() -%}
+<p class="text-sm text-muted-foreground">{{ empty_message }}</p>
+{%- else -%}
+<div class="rounded-sm border divide-y">
+  {% for r in results %}
+  <form method="post" action="/setup/alliance" class="flex items-center justify-between gap-4 px-4 py-3">
+    <input type="hidden" name="entity_id" value="{{ r.id }}">
+    <div>
+      <div class="font-medium">{{ r.name }}</div>
+      <div class="text-xs text-muted-foreground">{{ r.kind }} · <span class="num">{{ r.id }}</span></div>
+    </div>
+    <button type="submit" class="btn" data-variant="outline" data-size="sm">Make Member</button>
+  </form>
+  {% endfor %}
+</div>
+{%- endif -%}

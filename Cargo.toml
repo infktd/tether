@@ -17,6 +17,7 @@ tether-web = { path = "crates/web" }
 tether-cli = { path = "crates/cli" }
 
 anyhow = "1"
+askama = "0.16"
 axum = "0.8"
 axum-extra = { version = "0.12", features = ["cookie"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }

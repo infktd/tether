@@ -1,0 +1,8 @@
+{#- Expects avatar_id, avatar_name, avatar_size (px) and avatar_class (the
+    matching size utility) in scope. Portraits come from CCP's image server;
+    fixtures (id <= 0) get initials. -#}
+{%- if let Some(src) = crate::pages::portrait_url(avatar_id) -%}
+<img src="{{ src }}" alt="" width="{{ avatar_size }}" height="{{ avatar_size }}" class="avatar-img {{ avatar_class }}">
+{%- else -%}
+<span class="avatar-initials {{ avatar_class }}" aria-hidden="true">{{ crate::pages::initials(avatar_name) }}</span>
+{%- endif -%}

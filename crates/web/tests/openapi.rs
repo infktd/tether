@@ -86,12 +86,10 @@ async fn documented_routes_are_served(db: PgPool) {
             .body(axum::body::Body::from("{}"))
             .unwrap();
         let res = send(&h.app, req).await;
-        // An unmatched route is an empty 404/405 from axum; our handlers
-        // always explain themselves, so a 404 with a message is fine.
-        let unrouted = matches!(
-            res.status,
-            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-        ) && res.body.is_empty();
+        // An unmatched path gets the HTML fallback page, and a wrong method
+        // an empty 405; our handlers' own 404s carry a specific message.
+        let unrouted = res.body.contains("nothing at this address")
+            || (res.status == StatusCode::METHOD_NOT_ALLOWED && res.body.is_empty());
         assert!(!unrouted, "{method} {uri} is not routed ({})", res.status);
     }
 }

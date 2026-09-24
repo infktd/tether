@@ -1,0 +1,252 @@
+/* Tether styles: Tailwind + vendored Basecoat, themed with docs/DESIGN.md.
+   Build with scripts/css.sh; the output (static/app.css) is committed. */
+
+@import "tailwindcss";
+@import "./vendor/basecoat/basecoat.css";
+
+@source "../templates";
+
+/* Fonts are bundled and served by the host; never a CDN (CLAUDE.md). */
+@font-face {
+  font-family: "Geist";
+  src: url("/static/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/static/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* Tokens from docs/DESIGN.md. Dark only for v1; `.dark` is on <html>, and
+   listing both keeps these ahead of Basecoat's defaults. */
+:root,
+.dark {
+  /* surfaces */
+  --background: #09090b;
+  --sidebar: #0c0c0e;
+  --card: #0c0c0e;
+  --muted: #18181b;
+  --accent-surface: #1c1c20;
+
+  /* text */
+  --foreground: #fafafa;
+  --foreground-soft: #d4d4d8;
+  --muted-foreground: #a1a1aa;
+  --faint: #3f3f46;
+
+  /* lines */
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #a1a1aa;
+
+  /* primary action: inverted, white on dark */
+  --primary: #fafafa;
+  --primary-foreground: #09090b;
+
+  /* accent: one per screen */
+  --accent: #f59e0b;
+  --accent-soft: #292012;
+
+  /* status */
+  --info: #60a5fa;
+  --info-foreground: #93c5fd;
+  --info-soft: #13203a;
+  --destructive: #ef4444;
+  --destructive-soft: #2a1215;
+
+  /* shape */
+  --radius: 8px;
+
+  /* Basecoat's remaining shadcn roles, in terms of the tokens above. */
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+  --sidebar-foreground: var(--foreground-soft);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent-surface);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --sidebar-width: 256px;
+
+  color-scheme: dark;
+}
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --radius-sm: 6px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* shadcn's "accent" is a hover surface; DESIGN.md's --accent is the one
+     highlight colour. Basecoat only reaches accent through these utilities,
+     so remap them and expose the amber as `highlight`. */
+  --color-accent: var(--accent-surface);
+  --color-accent-foreground: var(--foreground);
+  --color-highlight: var(--accent);
+  --color-highlight-soft: var(--accent-soft);
+
+  --color-foreground-soft: var(--foreground-soft);
+  --color-faint: var(--faint);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-soft: var(--info-soft);
+  --color-destructive-soft: var(--destructive-soft);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: 14px;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  /* Visible focus everywhere (DESIGN.md accessibility). */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* DESIGN.md: borders, not shadows. */
+@layer components {
+  .btn,
+  .card,
+  .input,
+  .badge,
+  .alert {
+    box-shadow: none;
+  }
+  .card {
+    @apply bg-card border rounded-lg;
+  }
+  /* Buttons: 36px tall, 16px sides, 14px/500. */
+  .btn:not([data-size]),
+  .btn[data-size="default"] {
+    @apply h-9 px-4;
+  }
+  .table th {
+    @apply text-muted-foreground font-medium;
+    font-size: 13px;
+  }
+}
+
+/* App shell and page pieces from DESIGN.md that Basecoat doesn't cover. */
+@layer components {
+  .page-title {
+    @apply text-[28px] font-semibold leading-tight;
+    letter-spacing: -0.02em;
+  }
+  .card > header > h2 {
+    @apply text-[15px] font-semibold;
+  }
+
+  .nav-heading {
+    @apply px-3 pb-1 text-xs font-medium text-muted-foreground;
+  }
+  .nav-item {
+    @apply flex h-9 items-center gap-3 rounded-sm px-3 text-sm font-medium text-foreground-soft transition-colors duration-150 hover:bg-accent hover:text-foreground;
+  }
+  .nav-item[aria-current="page"] {
+    @apply bg-accent text-foreground;
+  }
+
+  /* Stat cards: label 13px muted, value 26px mono, caption 12px muted. */
+  .stat {
+    @apply flex flex-col gap-1 p-5;
+  }
+  .stat-label {
+    @apply text-[13px] font-medium text-muted-foreground;
+  }
+  .stat-value {
+    @apply text-[26px] font-medium leading-tight;
+  }
+  .stat-caption {
+    @apply truncate text-xs text-muted-foreground;
+  }
+
+  /* Tables live in cards; outer columns get 20px, inner 12px. */
+  .data-card {
+    @apply gap-0 py-0;
+  }
+  .data-card > header {
+    @apply px-5 py-4;
+  }
+  .data-card .table td,
+  .data-card .table th {
+    @apply px-3 py-4 border-t;
+  }
+  .data-card .table td:first-child,
+  .data-card .table th:first-child {
+    @apply pl-5;
+  }
+  .data-card .table td:last-child,
+  .data-card .table th:last-child {
+    @apply pr-5;
+  }
+
+  /* Status badges pair colour with a dot and a label, never colour alone. */
+  .tier-badge {
+    @apply inline-flex items-center gap-2 rounded-sm px-2 py-0.5 text-xs font-medium align-middle;
+  }
+  .tier-badge::before {
+    content: "";
+    @apply size-1.5 rounded-full bg-current;
+  }
+  .tier-badge[data-tier="member"] {
+    @apply bg-highlight-soft text-highlight;
+  }
+  .tier-badge[data-tier="allied"] {
+    @apply bg-info-soft text-info-foreground;
+  }
+  .tier-badge[data-tier="guest"] {
+    @apply border border-faint text-foreground-soft;
+  }
+
+  .avatar-img {
+    @apply shrink-0 rounded-md bg-muted;
+  }
+  .avatar-initials {
+    @apply inline-flex shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-foreground-soft;
+  }
+
+  .steps {
+    @apply flex gap-2 text-sm;
+  }
+  .steps > li {
+    @apply flex flex-1 items-center gap-2 rounded-sm border px-3 py-2 text-muted-foreground;
+  }
+  .steps > li[data-state="current"] {
+    @apply border-ring text-foreground;
+  }
+  .steps > li[data-state="done"] {
+    @apply text-foreground-soft;
+  }
+  .step-marker {
+    @apply inline-flex size-5 items-center justify-center rounded-full border text-xs;
+  }
+
+  .status-text[data-status="ok"] {
+    @apply text-info-foreground;
+  }
+  .status-text[data-status="error"] {
+    @apply text-destructive;
+  }
+}
+
+@layer utilities {
+  /* Numbers, timers, ids and timestamps. */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}

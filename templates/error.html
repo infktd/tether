@@ -1,0 +1,13 @@
+{% extends "bare.html" %}
+{% block title %}{{ status }}{% endblock %}
+{% block content %}
+<section class="card" role="alert">
+  <header>
+    <h2><span class="num text-muted-foreground">{{ status }}</span> {{ title }}</h2>
+    <p>{{ message }}</p>
+  </header>
+  <footer>
+    <a href="/" class="btn" data-variant="outline">Go home</a>
+  </footer>
+</section>
+{% endblock %}

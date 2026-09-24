@@ -500,18 +500,36 @@ pub async fn set_tier_rule(
         Some(tier @ (Tier::Member | Tier::Allied)) => tier,
         _ => return Err(AppError::bad_request("tier must be member or allied.")),
     };
+    apply_tier_rule(
+        &state,
+        Actor::Account(session.account),
+        body.entity_id,
+        tier,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Makes an alliance or corporation Member or Allied. Its name and kind come
+/// from ESI, never the client. Audited, and queues a re-evaluation of every
+/// account. Callers check permissions.
+pub async fn apply_tier_rule(
+    state: &AppState,
+    actor: Actor,
+    entity_id: i64,
+    tier: Tier,
+) -> Result<tier_db::TierRule, AppError> {
     let entity = state
         .esi
-        .names(&[body.entity_id])
+        .names(&[entity_id])
         .await
         .map_err(esi_unavailable)?
         .into_iter()
-        .find(|e| e.id == body.entity_id)
+        .find(|e| e.id == entity_id)
         .ok_or_else(|| AppError::not_found("ESI doesn't know that id."))?;
     let kind = entity
         .kind
         .ok_or_else(|| AppError::bad_request("That id isn't an alliance or corporation."))?;
-
     let rule = tier_db::TierRule {
         entity_id: entity.id,
         kind,
@@ -522,7 +540,7 @@ pub async fn set_tier_rule(
     tier_db::set_rule(&mut *tx, &rule).await?;
     audit::record(
         &mut *tx,
-        Actor::Account(session.account),
+        actor,
         "tier.rule.set",
         Some(&format!("{}:{}", kind.as_str(), entity.id)),
         json!({ "name": rule.name, "tier": tier.as_str() }),
@@ -530,7 +548,7 @@ pub async fn set_tier_rule(
     .await?;
     crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(rule)
 }
 
 /// `DELETE /api/admin/tiers/{entity_id}`
@@ -614,7 +632,7 @@ pub async fn resolve_names(
     }))
 }
 
-fn esi_unavailable(err: tether_esi::EsiError) -> AppError {
+pub(crate) fn esi_unavailable(err: tether_esi::EsiError) -> AppError {
     tracing::warn!(error = %err, "ESI lookup failed");
     AppError::new(
         StatusCode::BAD_GATEWAY,

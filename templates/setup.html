@@ -1,0 +1,125 @@
+{% extends "bare.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Setup{% endblock %}
+{% block width %}max-w-[640px]{% endblock %}
+{% block content %}
+<div>
+  <h1 class="page-title">Set up Tether</h1>
+  <p class="text-muted-foreground mt-1">Four steps, all in the browser.</p>
+</div>
+
+<ol class="steps" aria-label="Setup steps">
+  {% for step in steps %}
+  <li data-state="{{ step.state }}"{% if step.state == "current" %} aria-current="step"{% endif %}>
+    <span class="step-marker num">{% if step.state == "done" %}{% call icons::icon("check") %}{% endcall %}{% else %}{{ loop.index }}{% endif %}</span>
+    {{ step.label }}
+  </li>
+  {% endfor %}
+</ol>
+
+{% if let Some(error) = error %}
+<div class="alert" data-variant="destructive" role="alert"><section>{{ error }}</section></div>
+{% endif %}
+
+{% match view %}
+{% when SetupView::Token %}
+<form class="card" method="post" action="/setup/unlock">
+  <header>
+    <h2>Enter the setup token</h2>
+    <p>It proves you run this server. It's <span class="num">SETUP_TOKEN</span> in <span class="num">deploy/.env</span>, and it's printed in the app's startup logs.</p>
+  </header>
+  <section class="grid gap-2">
+    <label class="label" for="token">Setup token</label>
+    <input class="input num" type="password" id="token" name="token" autocomplete="off" required>
+  </section>
+  <footer><button type="submit" class="btn" data-variant="primary">Continue</button></footer>
+</form>
+
+{% when SetupView::Sso %}
+<form class="card" method="post" action="/setup/sso">
+  <header>
+    <h2>Connect EVE Online login</h2>
+    <p>Create an application for this instance on CCP's developer site, then paste its client ID here.</p>
+  </header>
+  <section class="flex flex-col gap-4">
+    <ol class="list-decimal pl-5 flex flex-col gap-2 text-foreground-soft">
+      <li>Open <a class="underline underline-offset-4" href="https://developers.eveonline.com/applications" rel="noreferrer" target="_blank">developers.eveonline.com/applications</a> and create a new application.</li>
+      <li>Choose <strong class="text-foreground">Authentication only</strong>. Tether asks for no scopes yet.</li>
+      <li>Set the callback URL to exactly:
+        <div class="mt-2 rounded-sm border bg-background px-3 py-2 num text-foreground select-all break-all">{{ callback_url }}</div>
+      </li>
+    </ol>
+    <div class="flex items-center gap-3">
+      <button type="button" class="btn" data-variant="outline" hx-post="/setup/check" hx-target="#check-result" hx-swap="innerHTML">Check this address reaches Tether</button>
+      <div id="check-result" class="text-sm" aria-live="polite"></div>
+    </div>
+    <div class="grid gap-2 border-t pt-4">
+      <label class="label" for="client_id">Client ID</label>
+      <input class="input num" type="text" id="client_id" name="client_id" value="{{ client_id }}" autocomplete="off" spellcheck="false" required>
+    </div>
+  </section>
+  <footer><button type="submit" class="btn" data-variant="primary">Save client ID</button></footer>
+</form>
+
+{% when SetupView::Owner %}
+<section class="card">
+  <header>
+    <h2>Log in as the owner</h2>
+    <p>The character you log in with from this browser owns the instance. You can add alts afterwards.</p>
+  </header>
+  <section>
+    <a href="/auth/login?return_to=/setup" class="btn" data-variant="primary">Log in with EVE Online</a>
+  </section>
+  <footer class="flex-col items-start gap-2 text-xs text-muted-foreground">
+    <span>Client ID <span class="num text-foreground-soft">{{ client_id }}</span>, callback <span class="num text-foreground-soft">{{ callback_url }}</span></span>
+    <a href="/setup?change=sso" class="underline underline-offset-4">Use a different client ID</a>
+  </footer>
+</section>
+
+{% when SetupView::Alliance %}
+<section class="card">
+  <header>
+    <h2>Choose your alliance</h2>
+    <p>Characters whose main is in a Member alliance or corporation get Member access. You can add allies later.</p>
+  </header>
+  <section class="flex flex-col gap-4">
+    {% if let Some(s) = suggested %}
+    <form method="post" action="/setup/alliance" class="flex items-center justify-between gap-4 rounded-sm border px-4 py-3">
+      <input type="hidden" name="entity_id" value="{{ s.id }}">
+      <div>
+        <div class="font-medium">{{ s.name }}</div>
+        <div class="text-xs text-muted-foreground">Your main's {{ s.kind }} · <span class="num">{{ s.id }}</span></div>
+      </div>
+      <button type="submit" class="btn" data-variant="primary">Make Member</button>
+    </form>
+    {% endif %}
+    <form hx-post="/setup/alliance/search" hx-target="#search-results" hx-swap="innerHTML" method="post" action="/setup/alliance/search" class="grid gap-2">
+      <label class="label" for="name">{% if suggested.is_some() %}Or find another by exact name{% else %}Find your alliance or corporation by exact name{% endif %}</label>
+      <div class="flex gap-2">
+        <input class="input" type="search" id="name" name="name" required>
+        <button type="submit" class="btn" data-variant="outline">Search</button>
+      </div>
+    </form>
+    <div id="search-results"></div>
+  </section>
+</section>
+
+{% when SetupView::NeedOwnerLogin %}
+<section class="card">
+  <header>
+    <h2>Log in as the owner to continue</h2>
+    <p>The owner chooses which alliance gets Member access.</p>
+  </header>
+  <section><a href="/auth/login?return_to=/setup" class="btn" data-variant="primary">Log in with EVE Online</a></section>
+</section>
+
+{% when SetupView::Complete %}
+<section class="card">
+  <header>
+    <h2>Setup is complete</h2>
+    <p>Members can log in now. Tier rules, groups and permissions are managed by admins.</p>
+  </header>
+  <footer><a href="/" class="btn" data-variant="primary">Continue</a></footer>
+</section>
+{% endmatch %}
+{% endblock %}

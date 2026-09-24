@@ -1,0 +1,54 @@
+{%- import "icons.html" as icons -%}
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+{% include "head.html" %}
+<title>{% block title %}{% endblock %} · Tether</title>
+</head>
+<body>
+<div class="grid min-h-screen grid-cols-[256px_minmax(0,1fr)]">
+  <aside class="bg-sidebar border-r flex flex-col">
+    <div class="h-16 flex items-center px-5 border-b">
+      <a href="/" class="text-[15px] font-semibold tracking-tight">Tether</a>
+    </div>
+    <nav class="flex-1 px-3 py-5 flex flex-col gap-6" aria-label="Main">
+      <div class="flex flex-col gap-1">
+        <div class="nav-heading">Account</div>
+        <a href="/profile" class="nav-item"{% if shell.active == "profile" %} aria-current="page"{% endif %}>
+          {% call icons::icon("user") %}{% endcall %} Profile
+        </a>
+      </div>
+      {% if shell.user.is_owner %}
+      <div class="flex flex-col gap-1">
+        <div class="nav-heading">Admin</div>
+        <a href="/setup" class="nav-item"{% if shell.active == "setup" %} aria-current="page"{% endif %}>
+          {% call icons::icon("settings") %}{% endcall %} Setup
+        </a>
+      </div>
+      {% endif %}
+    </nav>
+    <div class="border-t p-3 flex items-center gap-3">
+      {% let avatar_name = shell.user.name.as_str() %}{% let avatar_id = shell.user.character_id %}{% let avatar_size = 36 %}{% let avatar_class = "size-9" %}
+      {% include "avatar.html" %}
+      <div class="min-w-0 flex-1">
+        <div class="truncate text-sm font-medium">{{ shell.user.name }}</div>
+        <div class="text-xs text-muted-foreground">{{ shell.user.tier_label }}</div>
+      </div>
+      <form method="post" action="/auth/logout">
+        <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Log out" title="Log out">
+          {% call icons::icon("log-out") %}{% endcall %}
+        </button>
+      </form>
+    </div>
+  </aside>
+  <div class="flex flex-col min-w-0">
+    <header class="h-16 border-b flex items-center px-8 text-sm text-muted-foreground">
+      {% block breadcrumb %}{% endblock %}
+    </header>
+    <main class="px-8 py-7 flex flex-col gap-6 w-full max-w-[1440px]">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+</body>
+</html>

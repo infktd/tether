@@ -216,11 +216,11 @@ pub async fn send(app: &Router, request: Request<Body>) -> Res {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
-    let body = to_bytes(response.into_body(), 1 << 16).await.unwrap();
+    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     Res {
         status,
         headers,
-        body: String::from_utf8(body.to_vec()).unwrap(),
+        body: String::from_utf8_lossy(&body).into_owned(),
     }
 }
 
