@@ -312,7 +312,11 @@ async fn doctor_ports() {
     assert_eq!(doctor::port("port 443", ip, open).await.status, Status::Ok);
     let closed = doctor::port("port 80", ip, 1).await;
     assert_eq!(closed.status, Status::Fail);
-    assert!(closed.fix.unwrap().contains("Open TCP 1"));
+    let fix = closed.fix.unwrap();
+    assert!(fix.contains("Open TCP 1"));
+    for layer in ["security lists", "network security groups", "iptables"] {
+        assert!(fix.contains(layer), "fix should mention {layer}: {fix}");
+    }
 }
 
 #[tokio::test]

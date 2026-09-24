@@ -239,20 +239,22 @@ pub async fn port(name: &'static str, ip: IpAddr, port: u16) -> Check {
     match tokio::time::timeout(TIMEOUT, tokio::net::TcpStream::connect(addr)).await {
         Ok(Ok(_)) => Check::ok(
             name,
-            format!("{addr} accepts connections (checked from this server)"),
+            format!(
+                "{addr} accepts connections (checked from this server; cloud firewalls can still block outside traffic)"
+            ),
         ),
         Ok(Err(err)) => Check::fail(
             name,
             format!("{addr} refused: {err}"),
             format!(
-                "Open TCP {port} to the internet in the cloud firewall (e.g. Oracle's VCN security list) and the host firewall, and make sure Caddy is running."
+                "Open TCP {port} in every firewall in the path: the cloud provider's (Oracle security lists, Azure network security groups, AWS security groups) and the host's (iptables/nftables, ufw), and make sure Caddy is running. This check runs from the server itself, so it can pass while those still block outside traffic."
             ),
         ),
         Err(_) => Check::fail(
             name,
             format!("{addr} timed out"),
             format!(
-                "Something is dropping TCP {port}: check the cloud firewall and the host firewall."
+                "Something is dropping TCP {port}. Check every firewall in the path: the cloud provider's (Oracle security lists, Azure network security groups, AWS security groups) and the host's (iptables/nftables, ufw)."
             ),
         ),
     }

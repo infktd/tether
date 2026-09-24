@@ -129,7 +129,7 @@ Five milestones, about 510 to 870 hours in total. A short plugin-runtime spike g
 | Milestone | Scope | Accepted when | Est. hours |
 | --- | --- | --- | --- |
 | S. Plugin spike | Throwaway prototype | A WASM plugin calls one host function, fetches one ESI endpoint through the host, and renders one page | 20–40 |
-| 0. Foundations | F1–F8, N1–N4 | Fresh VPS to working SSO login with no shell commands; `doctor` passes; NMU test characters land in Member | 140–220 |
+| 0. Foundations | F1–F8, N1–N4 | Fresh VPS to working SSO login with no shell commands; `doctor` passes; NMU test characters land in Member. **Accepted locally** (real SSO login, owner claim, NMU in Member, `doctor` ok); the VPS parts are deferred to the pre-launch checklist below | 140–220 |
 | 1. ESI and Discord | F9–F14, N5–N7, N13 | A character leaving the alliance loses Member and Discord roles with no admin action; ESI error budget never exceeded in a week of staging | 80–120 |
 | 2. Plugin runtime | F15–F19, N8–N10, N14 | A signed plugin installs from GitHub, requests consent, runs jobs and renders pages with no restart; upgrade and rollback both work | 150–250 |
 | 3. First-party plugins | F20–F22, N11, N12, N15 | NMU and the multiboxing corp run on it daily; SeAT and Alliance Auth are shut down | 120–240 |
@@ -188,6 +188,13 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Admin CLI and `doctor`
 - [x] OpenAPI via utoipa, Scalar at `/docs` in dev builds
 - [x] UI shell per docs/DESIGN.md with askama, Basecoat and htmx: layout, login, profile and wizard pages
+
+**Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
+
+- [ ] Fresh VPS with a real domain: `deploy/install.sh <domain>`, then only the browser wizard; no other shell commands
+- [ ] Register the production callback URL (`https://<domain>/auth/callback`) on the EVE application
+- [ ] Caddy obtains a Let's Encrypt certificate for the domain
+- [ ] `doctor` passes on the VPS, including DNS, ports 80 and 443, TLS and the public URL checks; confirm ports from outside too, since `doctor` checks from the server itself
 
 ## Open questions
 
