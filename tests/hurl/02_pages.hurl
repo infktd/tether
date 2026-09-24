@@ -265,3 +265,76 @@ Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
+
+# Plugins: every page and action needs a session (and admin.plugins).
+GET {{base}}/admin/plugins
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/plugin-uploads/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/plugins/nmu.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/plugin-keys/nmu.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+# Refused before the body is read.
+POST {{base}}/admin/plugins
+Origin: {{base}}
+[MultipartFormData]
+package: not a package
+signature: not a signature
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugin-uploads/1/approve
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugin-uploads/1/discard
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/enable
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/disable
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/uninstall
+Origin: {{base}}
+[Form]
+confirmation: nmu.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugin-keys/nmu.hello
+Origin: {{base}}
+[Form]
+expected_old: RWQ
+new_key: RWQ
+confirmation: nmu.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"

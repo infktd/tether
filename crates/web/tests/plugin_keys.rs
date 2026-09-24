@@ -58,7 +58,7 @@ async fn pinned(db: &PgPool) -> Option<(String, String)> {
 
 async fn audited(db: &PgPool) -> Vec<(String, serde_json::Value)> {
     sqlx::query_as("SELECT action, details FROM core.audit_log WHERE target = $1 ORDER BY id")
-        .bind(ID)
+        .bind(format!("plugin:{ID}"))
         .fetch_all(db)
         .await
         .unwrap()

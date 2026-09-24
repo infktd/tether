@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.plugin_uploads WHERE uploaded_at < now() - make_interval(hours => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fd06902bf2fb84152f01e14c59bc0bef6f5fb218204273bc5a7755aa489f97db"
+}

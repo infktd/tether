@@ -6,6 +6,7 @@ pub mod assets;
 pub mod discord;
 pub mod headers;
 pub mod pings;
+pub mod plugins;
 pub mod setup;
 pub mod system;
 
@@ -147,6 +148,7 @@ pub struct AdminNav {
     pub tiers: bool,
     pub discord: bool,
     pub system: bool,
+    pub plugins: bool,
     pub audit: bool,
     pub setup: bool,
     /// Not an admin page: fleet pings, for FCs.
@@ -160,6 +162,7 @@ impl AdminNav {
             || self.tiers
             || self.discord
             || self.system
+            || self.plugins
             || self.audit
             || self.setup
     }
@@ -252,6 +255,7 @@ pub(crate) async fn load(
         tiers: perms.contains(tether_core::permissions::ADMIN_TIERS),
         discord: perms.contains(tether_core::permissions::ADMIN_DISCORD),
         system: perms.contains(tether_core::permissions::ADMIN_SYSTEM),
+        plugins: perms.contains(tether_core::permissions::ADMIN_PLUGINS),
         audit: perms.contains(tether_core::permissions::ADMIN_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,

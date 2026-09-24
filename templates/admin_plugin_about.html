@@ -1,0 +1,43 @@
+{#- What a plugin is and asks for: the approval screen and the plugin's page. -#}
+<section class="card">
+  <header><h2>What it asks for</h2><p>What the plugin can do beyond showing its own pages. Nothing else is possible for it.</p></header>
+  <section>
+    <dl class="grid gap-4 text-sm">
+      {% for c in about.capabilities %}
+      <div class="grid gap-1">
+        <dt class="font-medium">{{ c.title }}</dt>
+        <dd class="text-muted-foreground break-words num">{{ c.detail }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+</section>
+
+<section class="card data-card">
+  <header><h2>Permissions it adds</h2><p>You grant these to tiers and groups like Tether's own.</p></header>
+  {% if about.permissions.is_empty() %}
+  <p class="px-5 pb-5 text-sm text-muted-foreground">None.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th scope="col">Permission</th><th scope="col">What it allows</th></tr></thead>
+    <tbody>
+      {% for p in about.permissions %}
+      <tr><td class="num">{{ p.name }}</td><td class="w-full whitespace-normal">{{ p.description }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="card">
+  <header><h2>Package</h2></header>
+  <section>
+    <dl class="grid gap-4 text-sm">
+      <div class="grid gap-1"><dt class="font-medium">Plugin id</dt><dd class="num">{{ about.id }}</dd></div>
+      <div class="grid gap-1"><dt class="font-medium">Version</dt><dd class="num">{{ about.version }}</dd></div>
+      {% if let Some(repo) = about.repository %}<div class="grid gap-1"><dt class="font-medium">Source</dt><dd class="num break-all">{{ repo }}</dd></div>{% endif %}
+      <div class="grid gap-1"><dt class="font-medium">Publisher key</dt><dd class="num break-all">{{ about.key }}</dd></div>
+      <div class="grid gap-1"><dt class="font-medium">Contents</dt><dd class="text-muted-foreground"><span class="num">{{ about.migrations }}</span> database migrations, <span class="num">{{ about.assets }}</span> images</dd></div>
+    </dl>
+  </section>
+</section>

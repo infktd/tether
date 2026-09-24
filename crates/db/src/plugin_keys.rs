@@ -21,6 +21,38 @@ impl PinnedBy {
     }
 }
 
+/// A pinned key and how it got there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pin {
+    pub plugin_id: String,
+    pub public_key: String,
+    pub pinned_by: String,
+    pub pinned_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn pin<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+) -> Result<Option<Pin>, sqlx::Error> {
+    sqlx::query_as!(
+        Pin,
+        "SELECT plugin_id, public_key, pinned_by, pinned_at FROM core.plugin_keys WHERE plugin_id = $1",
+        plugin_id
+    )
+    .fetch_optional(executor)
+    .await
+}
+
+/// Every pin, by plugin id.
+pub async fn list(pool: &crate::PgPool) -> Result<Vec<Pin>, sqlx::Error> {
+    sqlx::query_as!(
+        Pin,
+        "SELECT plugin_id, public_key, pinned_by, pinned_at FROM core.plugin_keys ORDER BY plugin_id"
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     plugin_id: &str,

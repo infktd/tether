@@ -23,6 +23,8 @@ pub struct AppState {
     /// Required by the first-run wizard until an owner exists.
     pub setup_token: Arc<Secret<String>>,
     pub limits: Arc<Limits>,
+    /// Plugins running in this process.
+    pub plugins: Arc<crate::plugins::Plugins>,
 }
 
 /// Rate limits for endpoints worth guessing at.

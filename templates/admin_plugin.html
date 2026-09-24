@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}{{ about.name }}{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/plugins">Plugins</a>&nbsp;/&nbsp;<span class="text-foreground">{{ about.name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title">{{ about.name }} <span class="badge align-middle" data-variant="{{ variant }}">{{ status }}</span></h1>
+      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}Version <span class="num">{{ about.version }}</span>, installed {{ installed }} EVE</p>
+    </div>
+    {% if enabled %}
+    <form method="post" action="/admin/plugins/{{ about.id }}/disable">
+      <button type="submit" class="btn" data-variant="outline">Disable</button>
+    </form>
+    {% else %}
+    <form method="post" action="/admin/plugins/{{ about.id }}/enable">
+      <button type="submit" class="btn" data-variant="primary">Enable</button>
+    </form>
+    {% endif %}
+  </div>
+  {% include "admin_error.html" %}
+  {% if let Some(why) = failure %}<div class="alert" data-variant="destructive" role="alert"><section><strong>It couldn't be loaded.</strong> <span class="break-words">{{ why }}</span></section></div>{% endif %}
+
+  {% include "admin_plugin_about.html" %}
+
+  <form class="card" method="post" action="/admin/plugins/{{ about.id }}/uninstall">
+    <header><h2>Uninstall</h2><p>Stops the plugin and removes it. Its pinned key stays, so a later package under this id must still be signed with it.</p></header>
+    <section class="grid gap-2 max-w-md">
+      <label class="label" for="confirmation">Type <span class="num">{{ about.id }}</span> to confirm</label>
+      <input class="input" id="confirmation" name="confirmation" autocomplete="off" required>
+    </section>
+    <footer><button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Uninstall</button></footer>
+  </form>
+</div>
+{% endblock %}

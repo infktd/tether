@@ -1,0 +1,92 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Plugins{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Plugins</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Plugins</h1>
+    <p class="text-muted-foreground mt-1">Add features without a restart. Each plugin runs sandboxed and gets only what you approve.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if !uploads.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Waiting for approval</h2><p>Uploads nobody approves are dropped after {{ upload_hours }} hours.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">Plugin</th><th scope="col">Uploaded</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for u in uploads %}
+        <tr>
+          <td><div class="font-medium num">{{ u.plugin_id }}</div><div class="text-xs text-muted-foreground num">Version {{ u.version }}</div></td>
+          <td><div class="text-sm">{{ u.by }}</div><div class="text-xs text-muted-foreground num">{{ u.when }} EVE</div></td>
+          <td class="text-right">
+            <div class="inline-flex gap-2">
+              <a class="btn" data-variant="outline" data-size="sm" href="/admin/plugin-uploads/{{ u.id }}">Review</a>
+              <form method="post" action="/admin/plugin-uploads/{{ u.id }}/discard"><button type="submit" class="btn" data-variant="outline" data-size="sm">Discard</button></form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <section class="card data-card">
+    <header><h2>Installed <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2></header>
+    {% if plugins.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No plugins yet. Upload one below.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Plugin</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Installed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for p in plugins %}
+        <tr>
+          <td><div class="font-medium">{{ p.name }}</div><div class="text-xs text-muted-foreground num">{{ p.id }}</div></td>
+          <td class="num">{{ p.version }}</td>
+          <td><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span></td>
+          <td class="num">{{ p.installed }}</td>
+          <td class="text-right"><a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ p.id }}">Manage</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <form class="card" method="post" action="/admin/plugins" enctype="multipart/form-data" hx-boost="false">
+    <header><h2>Upload a plugin</h2><p>The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig). Nothing is installed until you approve it on the next page.</p></header>
+    <section class="grid gap-4 max-w-md">
+      <div class="grid gap-2">
+        <label class="label" for="package">Package</label>
+        <input class="input" id="package" name="package" type="file" accept=".zip,application/zip" required>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="signature">Signature</label>
+        <input class="input" id="signature" name="signature" type="file" accept=".minisig" required>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Upload and check</button></footer>
+  </form>
+
+  {% if !pins.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Pinned keys</h2><p>Every version of a plugin must be signed with its pinned publisher key. Pins stay after uninstalling.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">Plugin</th><th scope="col">Key</th><th scope="col">Pinned</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for k in pins %}
+        <tr>
+          <td class="num">{{ k.plugin_id }}</td>
+          <td class="w-full whitespace-normal"><div class="break-all text-xs num">{{ k.key }}</div></td>
+          <td><div class="text-sm">{{ k.how }}</div><div class="text-xs text-muted-foreground num">{{ k.when }} EVE</div></td>
+          <td class="text-right"><a class="btn" data-variant="outline" data-size="sm" href="/admin/plugin-keys/{{ k.plugin_id }}">Details</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

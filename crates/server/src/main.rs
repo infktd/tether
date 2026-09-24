@@ -226,6 +226,22 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         sso.clone(),
         site.sso_callback_url(),
     ));
+    // Plugins load in the background: the site serves while they compile,
+    // and one that fails is shown to admins instead of stopping startup.
+    let plugins = tether_web::plugins::Plugins::new(
+        tether_plugins::host::Host::new(std::sync::Arc::new(
+            tether_plugins::Runtime::new().context("starting the plugin runtime")?,
+        ))
+        .context("starting the plugin host")?,
+    );
+    {
+        let (plugins, db) = (plugins.clone(), db.clone());
+        tokio::spawn(async move {
+            if let Err(err) = plugins.start(&db).await {
+                tracing::error!(error = %err, "loading plugins");
+            }
+        });
+    }
     let state = tether_web::AppState {
         vault,
         key,
@@ -236,6 +252,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         limits: std::sync::Arc::default(),
         sso,
         site: std::sync::Arc::new(site),
+        plugins,
     };
     let app =
         tether_web::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();

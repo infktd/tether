@@ -16,7 +16,8 @@ dev-docs = []
 
 [dependencies]
 askama.workspace = true
-axum.workspace = true
+# multipart: plugin package uploads (the multer crate).
+axum = { workspace = true, features = ["multipart"] }
 axum-extra.workspace = true
 chrono.workspace = true
 getrandom.workspace = true

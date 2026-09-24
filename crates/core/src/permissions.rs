@@ -7,6 +7,7 @@ pub const ADMIN_TIERS: &str = "admin.tiers";
 pub const ADMIN_AUDIT: &str = "admin.audit";
 pub const ADMIN_DISCORD: &str = "admin.discord";
 pub const ADMIN_SYSTEM: &str = "admin.system";
+pub const ADMIN_PLUGINS: &str = "admin.plugins";
 pub const FLEET_PING: &str = "fleet.ping";
 
 /// Every permission that can be granted, with a description for admins.
@@ -27,6 +28,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     (
         ADMIN_SYSTEM,
         "See ESI, job queue and update status; retry failed jobs; switch update checks",
+    ),
+    (
+        ADMIN_PLUGINS,
+        "Install, enable, disable and uninstall plugins, approve what they may access, and re-pin publisher keys",
     ),
     (
         ADMIN_DISCORD,

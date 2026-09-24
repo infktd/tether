@@ -61,6 +61,7 @@ pub async fn index(
     let perms = permissions::effective(&state.db, session.account).await?;
     for (permission, page) in [
         (tether_core::permissions::ADMIN_SYSTEM, "/admin/system"),
+        (tether_core::permissions::ADMIN_PLUGINS, "/admin/plugins"),
         (ADMIN_GROUPS, "/admin/groups"),
         (ADMIN_PERMISSIONS, "/admin/permissions"),
         (ADMIN_TIERS, "/admin/tiers"),

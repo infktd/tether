@@ -1,0 +1,38 @@
+{% extends "layout.html" %}
+{% block title %}Key for {{ plugin_id }}{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/plugins">Plugins</a>&nbsp;/&nbsp;<span class="text-foreground">Key for {{ plugin_id }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Publisher key</h1>
+    <p class="text-muted-foreground mt-1">Every package for <span class="num">{{ plugin_id }}</span> must be signed with this key.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  <section class="card">
+    <header><h2>Pinned key</h2></header>
+    <section>
+      <dl class="grid gap-4 text-sm">
+        <div class="grid gap-1"><dt class="font-medium">Key</dt><dd class="num break-all">{{ key }}</dd></div>
+        <div class="grid gap-1"><dt class="font-medium">Pinned by</dt><dd>{{ how }}, {{ when }} EVE</dd></div>
+      </dl>
+    </section>
+  </section>
+
+  <form class="card" method="post" action="/admin/plugin-keys/{{ plugin_id }}">
+    <header><h2>Replace the key</h2><p>Only for a publisher who lost their key and can't sign a rotation. Confirm the new key with them somewhere other than where you got the package: whoever holds it can publish anything under this id. An installed version signed with the old key stops loading at the next restart.</p></header>
+    <input type="hidden" name="expected_old" value="{{ key }}">
+    <section class="grid gap-4 max-w-xl">
+      <div class="grid gap-2">
+        <label class="label" for="new_key">New public key</label>
+        <input class="input num" id="new_key" name="new_key" value="{{ new_key }}" autocomplete="off" spellcheck="false" required>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="confirmation">Type <span class="num">{{ plugin_id }}</span> to confirm</label>
+        <input class="input" id="confirmation" name="confirmation" autocomplete="off" required>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn btn-destructive-outline" data-variant="outline">Replace the pinned key</button></footer>
+  </form>
+</div>
+{% endblock %}

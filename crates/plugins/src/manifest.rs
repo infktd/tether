@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The only host API major version this host speaks.
 pub const HOST_API: &str = "1";
@@ -20,7 +20,7 @@ fn bad(text: impl Into<String>) -> ManifestError {
     ManifestError(text.into())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub plugin: Identity,
@@ -33,7 +33,7 @@ pub struct Manifest {
     pub permissions: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
     /// e.g. `nmu.mining-ledger`.
@@ -46,14 +46,14 @@ pub struct Identity {
     pub repository: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Publisher {
     /// The minisign public key (the base64 line of the `.pub` file).
     pub key: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
     #[serde(default)]
@@ -78,7 +78,7 @@ pub struct Capabilities {
 
 /// Where a secret goes: `[capabilities.secrets.janice_api_key]` with
 /// `host = "janice.e-351.com"`, `header = "X-ApiKey"`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecretSpec {
     /// One of `capabilities.http`.
@@ -105,7 +105,7 @@ const RESERVED_HEADERS: &[&str] = &[
     "keep-alive",
 ];
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EsiScopes {
     /// Scopes each user consents to on their profile.
@@ -117,7 +117,7 @@ pub struct EsiScopes {
     pub data_source: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Schedule {
     pub name: String,

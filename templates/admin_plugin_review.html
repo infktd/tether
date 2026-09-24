@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Review {{ about.name }}{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/plugins">Plugins</a>&nbsp;/&nbsp;<span class="text-foreground">Review {{ about.name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title">{{ about.name }}</h1>
+      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}Version <span class="num">{{ about.version }}</span>, uploaded {{ uploaded }} EVE</p>
+    </div>
+    <div class="flex gap-2">
+      <form method="post" action="/admin/plugin-uploads/{{ upload_id }}/discard">
+        <button type="submit" class="btn" data-variant="outline">Discard</button>
+      </form>
+      <form method="post" action="/admin/plugin-uploads/{{ upload_id }}/approve">
+        <button type="submit" class="btn" data-variant="primary">Approve and install</button>
+      </form>
+    </div>
+  </div>
+  {% include "admin_error.html" %}
+
+  <div class="alert" role="status">
+    <section><strong>{{ trust_title }}.</strong> {{ trust_detail }}</section>
+  </div>
+
+  {% include "admin_plugin_about.html" %}
+</div>
+{% endblock %}

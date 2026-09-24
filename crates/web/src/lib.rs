@@ -28,7 +28,7 @@ pub mod sync;
 pub mod tiers;
 pub mod updates;
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Router, middleware};
@@ -127,6 +127,35 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/jobs/{id}/retry", post(pages::system::retry_job))
         .route("/admin/audit", get(pages::system::audit_log))
+        // Uploads and keys live outside /admin/plugins/, so no plugin id
+        // can collide with their routes.
+        .route(
+            "/admin/plugins",
+            get(pages::plugins::list).merge(
+                post(pages::plugins::upload)
+                    .layer(DefaultBodyLimit::max(pages::plugins::UPLOAD_BODY_LIMIT)),
+            ),
+        )
+        .route("/admin/plugin-uploads/{id}", get(pages::plugins::review))
+        .route(
+            "/admin/plugin-uploads/{id}/approve",
+            post(pages::plugins::approve),
+        )
+        .route(
+            "/admin/plugin-uploads/{id}/discard",
+            post(pages::plugins::discard),
+        )
+        .route(
+            "/admin/plugin-keys/{id}",
+            get(pages::plugins::key).post(pages::plugins::repin),
+        )
+        .route("/admin/plugins/{id}", get(pages::plugins::plugin))
+        .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
+        .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))
+        .route(
+            "/admin/plugins/{id}/uninstall",
+            post(pages::plugins::uninstall),
+        )
         .route("/profile/discord/link", post(pages::discord::link))
         .route("/profile/discord/unlink", post(pages::discord::unlink))
         .route("/discord/callback", get(pages::discord::callback))
@@ -276,6 +305,12 @@ mod tests {
             site: std::sync::Arc::new(Site::new("https://tether.test")),
             setup_token: std::sync::Arc::new(tether_core::Secret::new("t".repeat(32))),
             limits: std::sync::Arc::default(),
+            plugins: crate::plugins::Plugins::new(
+                tether_plugins::host::Host::new(std::sync::Arc::new(
+                    tether_plugins::Runtime::new().unwrap(),
+                ))
+                .unwrap(),
+            ),
         }
     }
 

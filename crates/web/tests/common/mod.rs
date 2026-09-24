@@ -174,6 +174,7 @@ pub struct Harness {
     pub discord_server: MockServer,
     pub discord: Arc<Discord>,
     pub key: EncryptionKey,
+    pub plugins: Arc<tether_web::plugins::Plugins>,
 }
 
 /// Serves `tests/fixtures/esi/characters_affiliation.json`, filtered to the
@@ -291,6 +292,9 @@ pub async fn harness_full(
         )
         .unwrap(),
     );
+    let plugins = tether_web::plugins::Plugins::new(
+        tether_plugins::host::Host::new(Arc::new(tether_plugins::Runtime::new().unwrap())).unwrap(),
+    );
     let app = router(AppState {
         key: test_key(),
         discord: discord.clone(),
@@ -301,6 +305,7 @@ pub async fn harness_full(
         site: Arc::new(Site::new(site)),
         setup_token: Arc::new(Secret::new(SETUP_TOKEN.to_owned())),
         limits: Arc::default(),
+        plugins: plugins.clone(),
     });
     Harness {
         app,
@@ -312,6 +317,7 @@ pub async fn harness_full(
         discord_server,
         discord,
         key: test_key(),
+        plugins,
     }
 }
 

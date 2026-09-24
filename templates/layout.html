@@ -34,6 +34,11 @@
           {% call icons::icon("activity") %}{% endcall %} System
         </a>
         {% endif %}
+        {% if shell.nav.plugins %}
+        <a href="/admin/plugins" class="nav-item"{% if shell.active == "plugins" %} aria-current="page"{% endif %}>
+          {% call icons::icon("package") %}{% endcall %} Plugins
+        </a>
+        {% endif %}
         {% if shell.nav.groups %}
         <a href="/admin/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
           {% call icons::icon("users") %}{% endcall %} Groups
