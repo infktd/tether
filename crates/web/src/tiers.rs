@@ -53,12 +53,26 @@ pub async fn refresh_account(
         })
         .collect();
     db::update_affiliations(db, &fresh).await?;
-    Ok(evaluate_account(db, account).await?)
+    Ok(evaluate_account(db, account).await?.tier)
+}
+
+/// A tier evaluation's result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Evaluated {
+    pub tier: Tier,
+    pub previous: Option<Tier>,
+}
+
+impl Evaluated {
+    /// True when the account's tier moved (what Discord role sync reacts to).
+    pub fn changed(&self) -> bool {
+        self.previous != Some(self.tier)
+    }
 }
 
 /// Re-evaluates the tier from stored affiliations (no ESI call), e.g. after
 /// the main changes.
-pub async fn evaluate_account(db: &PgPool, account: AccountId) -> Result<Tier, sqlx::Error> {
+pub async fn evaluate_account(db: &PgPool, account: AccountId) -> Result<Evaluated, sqlx::Error> {
     let rules = db::load_rules(db).await?;
     let tier = rules.evaluate(db::main_affiliation(db, account).await?);
     let mut tx = db.begin().await?;
@@ -80,7 +94,7 @@ pub async fn evaluate_account(db: &PgPool, account: AccountId) -> Result<Tier, s
         .await?;
     }
     tx.commit().await?;
-    Ok(tier)
+    Ok(Evaluated { tier, previous })
 }
 
 /// Queues a background refresh, retried with backoff while ESI is down.

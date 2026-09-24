@@ -83,6 +83,13 @@ pub async fn remove_rule<'e>(
     Ok(result.rows_affected() == 1)
 }
 
+/// Every linked character, for the affiliation sync.
+pub async fn all_character_ids(pool: &PgPool) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT id FROM core.characters ORDER BY id")
+        .fetch_all(pool)
+        .await
+}
+
 pub async fn character_ids(pool: &PgPool, account: AccountId) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         "SELECT id FROM core.characters WHERE account_id = $1 ORDER BY id",

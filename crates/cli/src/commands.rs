@@ -33,7 +33,7 @@ pub enum Command {
         #[arg(long, default_value_t = 20)]
         limit: i64,
     },
-    /// Queue an affiliation and tier refresh for every account now.
+    /// Queue an affiliation sync for every character now.
     Sync,
 }
 
@@ -310,29 +310,24 @@ async fn retry_job(db: &PgPool, job_id: i64, out: &mut dyn Write) -> anyhow::Res
 }
 
 async fn sync(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
-    let ids = accounts::all_ids(db).await?;
     let mut tx = db.begin().await?;
-    for id in &ids {
-        let payload = json!({ "account_id": id.0 });
-        tether_jobs::enqueue(
-            &mut *tx,
-            tether_jobs::NewJob::new(tether_web::tiers::REFRESH_ACCOUNT_JOB, payload),
-        )
-        .await?;
-    }
+    let job = tether_jobs::enqueue(
+        &mut *tx,
+        tether_jobs::NewJob::new(tether_web::sync::AFFILIATION_SYNC_JOB, json!({})),
+    )
+    .await?;
     audit::record(
         &mut *tx,
         Actor::Cli,
         "sync.trigger",
-        None,
-        json!({ "accounts": ids.len() }),
+        Some(&format!("job:{job}")),
+        json!({}),
     )
     .await?;
     tx.commit().await?;
     writeln!(
         out,
-        "Queued an affiliation refresh for {} account(s).",
-        ids.len()
+        "Queued an affiliation sync for every character (job {job})."
     )?;
     Ok(())
 }

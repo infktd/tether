@@ -19,6 +19,7 @@ pub mod pages;
 mod ratelimit;
 pub mod setup;
 mod state;
+pub mod sync;
 pub mod tiers;
 
 use axum::extract::State;

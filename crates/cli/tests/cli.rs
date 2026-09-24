@@ -271,24 +271,21 @@ async fn jobs_lists_and_retries_dead_jobs(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn sync_queues_a_refresh_per_account(db: PgPool) {
+async fn sync_queues_one_affiliation_sync(db: PgPool) {
     let (_esi_server, esi) = mock_esi().await;
     account(&db, 1, "A", false).await;
     account(&db, 2, "B", false).await;
 
     let out = cli(&db, &esi, Command::Sync).await.unwrap();
 
-    assert!(out.contains("2 account(s)"));
-    let queued: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.jobs WHERE kind = 'tiers.refresh_account'")
-            .fetch_one(&db)
-            .await
-            .unwrap();
-    assert_eq!(queued, 2);
-    assert_eq!(
-        audit_actors(&db).await,
-        [("sync.trigger".into(), Some("cli".into()))]
-    );
+    assert!(out.contains("Queued an affiliation sync"), "{out}");
+    let queued: Vec<String> = sqlx::query_scalar("SELECT kind FROM core.jobs")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(queued, ["affiliation.sync"]);
+    let audits = audit_actors(&db).await;
+    assert_eq!(audits, [("sync.trigger".into(), Some("cli".into()))]);
 }
 
 // ---- doctor ----------------------------------------------------------------
