@@ -310,6 +310,7 @@ mod tests {
                     tether_plugins::Runtime::new().unwrap(),
                 ))
                 .unwrap(),
+                key.clone(),
             ),
         }
     }

@@ -8,6 +8,7 @@ pub mod groups;
 pub mod permissions;
 pub mod pings;
 pub mod plugin_keys;
+pub mod plugin_storage;
 pub mod plugins;
 pub mod secrets;
 pub mod settings;

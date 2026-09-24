@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(pg_terminate_backend(pid)) AS \"n!\" FROM pg_stat_activity WHERE usename = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Name"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b7cfe32a7596762fe0410b6333d4e62af421bb8166cb9344ce205eaa8a23b0d3"
+}

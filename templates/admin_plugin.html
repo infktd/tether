@@ -25,7 +25,7 @@
   {% include "admin_plugin_about.html" %}
 
   <form class="card" method="post" action="/admin/plugins/{{ about.id }}/uninstall">
-    <header><h2>Uninstall</h2><p>Stops the plugin and removes it. Its pinned key stays, so a later package under this id must still be signed with it.</p></header>
+    <header><h2>Uninstall</h2><p>Stops the plugin and removes it{% if about.storage %}, and deletes its data: its database schema and everything in it{% endif %}. Its pinned key stays, so a later package under this id must still be signed with it.</p></header>
     <section class="grid gap-2 max-w-md">
       <label class="label" for="confirmation">Type <span class="num">{{ about.id }}</span> to confirm</label>
       <input class="input" id="confirmation" name="confirmation" autocomplete="off" required>

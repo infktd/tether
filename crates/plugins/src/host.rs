@@ -9,7 +9,9 @@ use std::sync::Arc;
 use wasmtime::component::{HasData, Linker};
 
 use crate::page::{self, PageProblem};
+use crate::storage::Storage;
 use crate::{CallError, PluginLimits, Runtime, RuntimeError, Sandbox};
+use tether::plugin::storage::{Error as StorageError, Rows, Statement, Value as StorageValue};
 
 wasmtime::component::bindgen!({
     world: "plugin",
@@ -40,14 +42,48 @@ pub struct CallState {
     plugin: String,
     logs: Vec<LogRecord>,
     dropped_logs: usize,
+    /// `None` for plugins not approved for storage.
+    storage: Option<Storage>,
 }
 
 impl CallState {
-    fn new(plugin: &str) -> Self {
+    fn new(plugin: &str, storage: Option<Storage>) -> Self {
         Self {
             plugin: plugin.to_owned(),
             logs: Vec::new(),
             dropped_logs: 0,
+            storage,
+        }
+    }
+}
+
+impl tether::plugin::storage::Host for CallState {
+    async fn query(
+        &mut self,
+        sql: String,
+        params: Vec<StorageValue>,
+    ) -> Result<Rows, StorageError> {
+        match &self.storage {
+            Some(storage) => storage.query(&sql, &params).await,
+            None => Err(StorageError::NotApproved),
+        }
+    }
+
+    async fn execute(
+        &mut self,
+        sql: String,
+        params: Vec<StorageValue>,
+    ) -> Result<u64, StorageError> {
+        match &self.storage {
+            Some(storage) => storage.execute(&sql, &params).await,
+            None => Err(StorageError::NotApproved),
+        }
+    }
+
+    async fn transaction(&mut self, statements: Vec<Statement>) -> Result<Vec<u64>, StorageError> {
+        match &self.storage {
+            Some(storage) => storage.transaction(&statements).await,
+            None => Err(StorageError::NotApproved),
         }
     }
 }
@@ -138,6 +174,7 @@ impl HasData for HasState {
 pub struct LoadedPlugin {
     id: String,
     pre: PluginPre<Sandbox<CallState>>,
+    storage: Option<Storage>,
 }
 
 impl std::fmt::Debug for LoadedPlugin {
@@ -151,6 +188,10 @@ impl std::fmt::Debug for LoadedPlugin {
 impl LoadedPlugin {
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    pub fn storage(&self) -> Option<&Storage> {
+        self.storage.as_ref()
     }
 }
 
@@ -199,8 +240,15 @@ impl Host {
 
     /// Compiles, vets and links a plugin. A plugin importing anything the
     /// host doesn't provide (another API version, the filesystem) fails
-    /// here, naming the import.
-    pub async fn load(&self, id: &str, component: Vec<u8>) -> Result<LoadedPlugin, RuntimeError> {
+    /// here, naming the import. `storage` is its database access, for
+    /// plugins approved for it; without, storage calls answer
+    /// `not-approved`.
+    pub async fn load(
+        &self,
+        id: &str,
+        component: Vec<u8>,
+        storage: Option<Storage>,
+    ) -> Result<LoadedPlugin, RuntimeError> {
         let component = self.runtime.compile(component).await?;
         let pre = self
             .linker
@@ -210,6 +258,7 @@ impl Host {
         Ok(LoadedPlugin {
             id: id.to_owned(),
             pre,
+            storage,
         })
     }
 
@@ -220,7 +269,9 @@ impl Host {
         request: Request,
         limits: &PluginLimits,
     ) -> Result<Rendered, RenderError> {
-        let store = self.runtime.store(CallState::new(&plugin.id), limits);
+        let store = self
+            .runtime
+            .store(CallState::new(&plugin.id, plugin.storage.clone()), limits);
         let (answer, logs) = self
             .runtime
             .run(&plugin.id, store, limits, async |store| {

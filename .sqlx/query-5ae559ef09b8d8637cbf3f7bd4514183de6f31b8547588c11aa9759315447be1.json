@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_terminate_backend($1) AS \"ended!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ended!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5ae559ef09b8d8637cbf3f7bd4514183de6f31b8547588c11aa9759315447be1"
+}

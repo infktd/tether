@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT schema_name, role_name FROM core.plugin_storage WHERE plugin_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schema_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_storage",
+            "name": "schema_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "role_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_storage",
+            "name": "role_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2a496514c204ed0924ba1e8d0ec815e28bdcf6267541a3e543e4729f9f7f03d1"
+}

@@ -135,11 +135,11 @@ The host is the only thing that talks to ESI. It owns every token, schedules eve
 Postgres holds everything, including the job queue.
 
 - `core` schema: users, characters, tokens, corps, alliances, tiers, groups, permissions, audit log.
-- `plugin_<id>` schemas: one per plugin; its database role can only touch its own schema.
+- `plugin_<id>` schemas: one per plugin with `storage = true`, owned by Tether's role. The plugin's own login role (random password, sealed in `core.secrets`) can use and create objects only there: no rights on `core`, `public` or other plugins' schemas, no temporary tables, no advisory locks. The host reaches it through a small pool per plugin, and sets timeouts, memory and `search_path` before every statement, since a role can change its own defaults. Uninstalling drops the schema and role.
+- TimescaleDB hypertables are for Tether's own time series for now: plugin roles have no access to `public`, where TimescaleDB's functions live. If a plugin needs one, the host can offer it through a host call.
 - `esi_cache`: shared cached responses with expiry, host-only.
-- TimescaleDB hypertables for time series such as mining ledgers, wallet journals and fleet participation.
 - Job queue: a `jobs` table polled with `SELECT … FOR UPDATE SKIP LOCKED`; exponential backoff; dead-letter state; visible in the admin panel. Workers are tokio tasks inside the host; the count is a config value.
-- Core migrations are embedded in the binary and run on startup. Plugin migrations run on install and upgrade inside a transaction after a snapshot.
+- Core migrations are embedded in the binary and run on startup. Plugin migrations run on install and upgrade, each in its own transaction as the plugin's role, recorded with a checksum so an applied one can't change; upgrades take a snapshot first (task 12).
 - Nightly encrypted `pg_dump` to a local directory, optionally to S3-compatible storage (deferred to the pre-launch checklist).
 
 ## Identity and permissions

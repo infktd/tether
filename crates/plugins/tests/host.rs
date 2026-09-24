@@ -23,7 +23,7 @@ fn component(package: &str) -> Vec<u8> {
 
 async fn load(package: &str) -> (Host, LoadedPlugin) {
     let host = Host::new(Arc::new(Runtime::new().unwrap().with_call_limit(8))).unwrap();
-    let plugin = host.load(package, component(package)).await.unwrap();
+    let plugin = host.load(package, component(package), None).await.unwrap();
     (host, plugin)
 }
 
@@ -129,7 +129,7 @@ async fn a_component_that_isnt_a_plugin_is_refused_at_load() {
     // The limits test guest exports its own world, not `render`.
     let host = Host::new(Arc::new(Runtime::new().unwrap())).unwrap();
     let err = host
-        .load("not-a-plugin", component("tether-plugins-test-guest"))
+        .load("not-a-plugin", component("tether-plugins-test-guest"), None)
         .await
         .unwrap_err();
     assert!(matches!(err, RuntimeError::Rejected(_)), "{err}");

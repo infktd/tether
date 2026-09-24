@@ -18,15 +18,20 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use serde_json::json;
+use sqlx::Connection;
 use sqlx::PgConnection;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use tether_core::crypto::EncryptionKey;
 use tether_db::PgPool;
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::plugin_keys::{self, PinnedBy};
 use tether_db::plugins as db;
+use tether_db::{plugin_storage, secrets};
 use tether_plugins::host::{Host, LoadedPlugin};
 use tether_plugins::manifest;
 use tether_plugins::package::{self, Package, PackageError, Trust, Verified};
+use tether_plugins::storage::Storage;
 
 use crate::error::AppError;
 
@@ -162,6 +167,8 @@ enum Slot {
 /// The plugins running in this process.
 pub struct Plugins {
     host: Host,
+    /// Opens plugins' database passwords.
+    key: EncryptionKey,
     slots: RwLock<BTreeMap<String, Slot>>,
     /// Held across every lifecycle change (database, then load or unload),
     /// so concurrent changes can't leave a plugin running that the
@@ -179,9 +186,10 @@ impl std::fmt::Debug for Plugins {
 }
 
 impl Plugins {
-    pub fn new(host: Host) -> Arc<Self> {
+    pub fn new(host: Host, key: EncryptionKey) -> Arc<Self> {
         Arc::new(Self {
             host,
+            key,
             slots: RwLock::default(),
             lifecycle: tokio::sync::Mutex::new(()),
             uploads: tokio::sync::Semaphore::new(1),
@@ -269,14 +277,80 @@ impl Plugins {
         if package.manifest.plugin.id != installed.id {
             return Err("the stored package is for another plugin".to_owned());
         }
+        let storage = match plugin_storage::get(db, &installed.id).await {
+            Ok(Some(names)) => Some(self.storage(db, &installed.id, &names, &package).await?),
+            Ok(None) if package.manifest.capabilities.storage => {
+                return Err("its database storage is missing".to_owned());
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(plugin = installed.id, error = %e, "reading plugin storage");
+                return Err("its database storage couldn't be read".to_owned());
+            }
+        };
         self.host
-            .load(&installed.id, package.component)
+            .load(&installed.id, package.component, storage)
             .await
             .map_err(|e| e.to_string())
     }
 
-    fn deactivate(&self, id: &str) {
-        if self.slots().remove(id).is_some() {
+    /// The plugin's pool, connected as its role, once its pending
+    /// migrations have run.
+    async fn storage(
+        &self,
+        db: &PgPool,
+        id: &str,
+        names: &plugin_storage::Names,
+        package: &Package,
+    ) -> Result<Storage, String> {
+        let sealed = secrets::get(db, &password_secret(id))
+            .await
+            .map_err(|e| {
+                tracing::error!(plugin = id, error = %e, "reading a plugin's database password");
+                "its database password couldn't be read".to_owned()
+            })?
+            .ok_or("its database password is missing")?;
+        let password = self
+            .key
+            .open(&sealed, &secrets::context(&password_secret(id)))
+            .map_err(|_| "its database password can't be opened with this instance's key")?;
+        let options = db
+            .connect_options()
+            .as_ref()
+            .clone()
+            .username(&names.role_name)
+            .password(password.expose())
+            .application_name(&format!("tether plugin {id}"));
+        migrate(db, &options, id, &package.migrations).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(POOL_CONNECTIONS)
+            .min_connections(0)
+            .acquire_timeout(tether_plugins::storage::ACQUIRE_TIMEOUT)
+            .idle_timeout(Some(std::time::Duration::from_secs(60)))
+            // Session state a statement can leave behind: open cursors,
+            // listens and any other settings. (Limits are put back before
+            // every statement too.)
+            .after_release(|conn, _| {
+                Box::pin(async move {
+                    sqlx::raw_sql("CLOSE ALL; UNLISTEN *; RESET ALL")
+                        .execute(conn)
+                        .await?;
+                    Ok(true)
+                })
+            })
+            .connect_lazy_with(options);
+        Ok(Storage::new(id, &names.schema_name, pool))
+    }
+
+    /// Stops a plugin; closes its database pool.
+    async fn deactivate(&self, id: &str) {
+        let removed = self.slots().remove(id);
+        if let Some(slot) = removed {
+            if let Slot::Running(plugin) = slot
+                && let Some(storage) = plugin.storage()
+            {
+                storage.pool().close().await;
+            }
             tracing::info!(plugin = id, "plugin unloaded");
         }
     }
@@ -292,6 +366,112 @@ impl Plugins {
         }
         Ok(())
     }
+}
+
+/// Connections in a plugin's pool: as many as it may have calls running.
+const POOL_CONNECTIONS: u32 = tether_plugins::CALLS_PER_PLUGIN as u32;
+/// Plugins with storage, at most: their pools together stay well inside
+/// Postgres's connection limit, leaving core its own.
+pub const MAX_STORAGE_PLUGINS: i64 = 20;
+/// Its role's connection limit: the pool, a migration, and one to spare.
+const ROLE_CONNECTIONS: u32 = POOL_CONNECTIONS + 2;
+/// How long one plugin migration may run before its session is ended.
+pub const MIGRATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Where a plugin's database password is kept (sealed) in `core.secrets`.
+fn password_secret(plugin_id: &str) -> String {
+    format!("plugin.{plugin_id}.db_password")
+}
+
+/// Runs a plugin's pending migrations over its own role's connection, one
+/// transaction each, recording each with its checksum. A migration already
+/// applied must be unchanged. The host ends the session of one that runs
+/// past [`MIGRATION_DEADLINE`] (a plugin's SQL can lift its own statement
+/// timeout).
+async fn migrate(
+    db: &PgPool,
+    options: &PgConnectOptions,
+    plugin: &str,
+    migrations: &[package::Migration],
+) -> Result<(), String> {
+    let failed = |e: sqlx::Error| {
+        tracing::error!(plugin, error = %e, "plugin migrations");
+        "its migrations couldn't be checked".to_owned()
+    };
+    let applied = plugin_storage::applied(db, plugin).await.map_err(failed)?;
+    for (version, sha) in &applied {
+        let found = migrations
+            .iter()
+            .find(|m| i64::from(m.version) == i64::from(*version));
+        match found {
+            None => {
+                return Err(format!(
+                    "migration {version:04} was applied, but this package doesn't have it"
+                ));
+            }
+            Some(m) if sha256(m.sql.as_bytes()) != *sha => {
+                return Err(format!(
+                    "migration {version:04}_{} changed since it was applied",
+                    m.name
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    let pending = &migrations[applied.len().min(migrations.len())..];
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut conn = PgConnection::connect_with(options).await.map_err(|e| {
+        tracing::error!(plugin, error = %e, "connecting as a plugin role");
+        "it couldn't connect to its database".to_owned()
+    })?;
+    // Qualified: on the plugin's own connection, an unqualified name could
+    // resolve to a function of its own, and this pid is ended as Tether.
+    let pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+        .fetch_one(&mut conn)
+        .await
+        .map_err(failed)?;
+    for m in pending {
+        let label = format!("{:04}_{}", m.version, m.name);
+        let run = async {
+            let mut tx = conn.begin().await?;
+            sqlx::raw_sql("SET LOCAL statement_timeout = '60s'")
+                .execute(&mut *tx)
+                .await?;
+            // The plugin's own SQL, as its role: Postgres confines it.
+            sqlx::raw_sql(sqlx::AssertSqlSafe(m.sql.clone()))
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await
+        };
+        match tokio::time::timeout(MIGRATION_DEADLINE, run).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let why = match &e {
+                    sqlx::Error::Database(db) => tether_plugins::host::printable(db.message(), 500),
+                    other => other.to_string(),
+                };
+                return Err(format!("migration {label} failed: {why}"));
+            }
+            Err(_) => {
+                if let Err(e) = plugin_storage::terminate(db, pid).await {
+                    tracing::error!(plugin, error = %e, "ending a migration that ran too long");
+                }
+                return Err(format!(
+                    "migration {label} ran longer than {} seconds",
+                    MIGRATION_DEADLINE.as_secs()
+                ));
+            }
+        }
+        let version = i32::try_from(m.version).map_err(|_| "a migration number is too big")?;
+        plugin_storage::record_migration(db, plugin, version, &m.name, &sha256(m.sql.as_bytes()))
+            .await
+            .map_err(failed)?;
+        tracing::info!(plugin, migration = label, "plugin migration applied");
+    }
+    let _ = conn.close().await;
+    Ok(())
 }
 
 pub(crate) fn sha256(bytes: &[u8]) -> Vec<u8> {
@@ -331,12 +511,12 @@ fn package_error(err: PackageError) -> AppError {
     }
 }
 
-/// What this version of Tether can't give a plugin yet.
+/// What a package can't ask for.
 fn unsupported(package: &Package) -> Option<&'static str> {
-    if package.manifest.capabilities.storage || !package.migrations.is_empty() {
+    if !package.manifest.capabilities.storage && !package.migrations.is_empty() {
         return Some(
-            "This plugin needs its own database storage, which this version of Tether can't \
-             provide yet.",
+            "This package has database migrations but doesn't ask for storage \
+             (capabilities.storage).",
         );
     }
     None
@@ -449,7 +629,7 @@ async fn check_upload(
     state
         .plugins
         .host
-        .load(&id, verified.into_package().component)
+        .load(&id, verified.into_package().component, None)
         .await
         .map_err(|e| {
             fail(AppError::new(
@@ -538,6 +718,16 @@ async fn approve_now(
             "A plugin with this id is already installed.",
         ));
     }
+    let storage = if manifest.capabilities.storage {
+        if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
+            return Err(AppError::bad_request(
+                "Too many plugins have database storage already. Uninstall one first.",
+            ));
+        }
+        Some(create_storage(state, &mut tx, &id).await?)
+    } else {
+        None
+    };
     audit::record(
         &mut *tx,
         Actor::Account(actor),
@@ -550,6 +740,9 @@ async fn approve_now(
             "sha256": hex(&package_sha256),
             "capabilities": manifest.capabilities,
             "permissions": manifest.permissions,
+            "storage": storage
+                .as_ref()
+                .map(|n| json!({ "schema": n.schema_name, "role": n.role_name })),
         }),
     )
     .await?;
@@ -559,6 +752,41 @@ async fn approve_now(
         plugins.activate(&state.db, &installed).await;
     }
     Ok(id)
+}
+
+/// Creates a plugin's role (with a random password, kept sealed) and
+/// schema in the install's transaction. Returns the names, for the audit
+/// log.
+async fn create_storage(
+    state: &crate::AppState,
+    tx: &mut PgConnection,
+    id: &str,
+) -> Result<plugin_storage::Names, AppError> {
+    let mut random = [0u8; 4];
+    getrandom::fill(&mut random).map_err(AppError::internal)?;
+    let names = plugin_storage::Names {
+        schema_name: format!("plugin_{id}"),
+        role_name: format!("tp_{}_{id}", hex(&random)),
+    };
+    let password = tether_core::new_token().map_err(AppError::internal)?;
+    let verifier = tether_core::scram::verifier(&password).map_err(AppError::internal)?;
+    plugin_storage::create(
+        tx,
+        id,
+        &names,
+        &verifier,
+        ROLE_CONNECTIONS,
+        tether_plugins::storage::ROLE_SETTINGS,
+    )
+    .await
+    .map_err(AppError::internal)?;
+    let name = password_secret(id);
+    let sealed = state
+        .key
+        .seal(&password, &secrets::context(&name))
+        .map_err(AppError::internal)?;
+    secrets::put(&mut *tx, &name, &sealed).await?;
+    Ok(names)
 }
 
 /// Throws an upload away.
@@ -627,7 +855,7 @@ async fn set_enabled_now(
             plugins.activate(&state.db, &installed).await;
         }
     } else {
-        plugins.deactivate(id);
+        plugins.deactivate(id).await;
     }
     Ok(())
 }
@@ -656,7 +884,19 @@ async fn uninstall_now(
 ) -> Result<(), AppError> {
     let plugins = &state.plugins;
     let _lifecycle = plugins.lifecycle.lock().await;
+    if !db::exists(&state.db, id).await? {
+        return Err(AppError::not_found("No plugin with that id is installed."));
+    }
+    // Stopped first: its pool must be closed before its role goes.
+    plugins.deactivate(id).await;
     let mut tx = state.db.begin().await?;
+    let storage = plugin_storage::get(&mut *tx, id).await?;
+    if let Some(names) = &storage {
+        plugin_storage::drop(&mut tx, names)
+            .await
+            .map_err(AppError::internal)?;
+        secrets::delete(&mut *tx, &password_secret(id)).await?;
+    }
     let version = db::uninstall(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No plugin with that id is installed."))?;
@@ -665,10 +905,9 @@ async fn uninstall_now(
         Actor::Account(actor),
         "plugin.uninstalled",
         Some(&target(id)),
-        json!({ "version": version }),
+        json!({ "version": version, "data_deleted": storage.is_some() }),
     )
     .await?;
     tx.commit().await?;
-    plugins.deactivate(id);
     Ok(())
 }

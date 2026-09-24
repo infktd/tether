@@ -35,6 +35,7 @@ pub mod host;
 pub mod manifest;
 pub mod package;
 pub mod page;
+pub mod storage;
 #[cfg(feature = "testing")]
 pub mod testing;
 

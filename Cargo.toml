@@ -6,6 +6,7 @@ members = [
     "crates/plugins/test-guest-net",
     "crates/plugins/test-guest-hoard",
     "crates/plugins/test-guest-pages",
+    "crates/plugins/test-guest-storage",
     "examples/hello-plugin",
 ]
 

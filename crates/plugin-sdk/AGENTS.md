@@ -175,13 +175,49 @@ The host refuses a page (and logs why, for admins) if it breaks these rules:
 | Times | a real instant in RFC 3339, e.g. `2026-09-24T18:00:00Z`, at most 40 bytes |
 | Link paths | at most 200 bytes of relative segments made of ASCII letters, digits, `-`, `_`, `.`: no leading or trailing `/`, no empty segments, no `.` or `..` segments, no scheme, query or fragment |
 
+## Storage
+
+A plugin that declares `storage = true` gets its own Postgres schema, and SQL through `tether_plugin_sdk::storage`. Create tables with migrations in the package (`migrations/0001_create_notes.sql`, `0002_...`). The host runs each migration once, in its own transaction, as your plugin's database role; a migration can't be changed once applied, so fix mistakes in a new one.
+
+```rust
+use tether_plugin_sdk::storage::{self, Statement, Value};
+
+storage::execute("INSERT INTO notes (body, at) VALUES ($1, $2)", &["o7".into(), Value::timestamp("2026-09-24T18:00:00Z")])?;
+let rows = storage::query("SELECT id, body FROM notes ORDER BY id DESC LIMIT $1", &[20.into()])?;
+for row in &rows.rows {
+    let body = row[1].as_text().unwrap_or("");
+}
+storage::transaction(&[
+    Statement::new("UPDATE stock SET qty = qty - $1 WHERE item = $2", vec![5.into(), "Veldspar".into()]),
+    Statement::new("INSERT INTO moves (item, qty) VALUES ($1, $2)", vec!["Veldspar".into(), (-5).into()]),
+])?;
+```
+
+- Always pass data as `$1`, `$2`... parameters, never by formatting it into SQL. One call runs one statement (`transaction` runs several, all or none).
+- Your schema is on the search path, so use plain table names. You can't see Tether's tables, other plugins' schemas or `public`, can't make temporary tables or other schemas, and can't use advisory locks.
+- Values: `Null`, `Boolean`, `Integer` (int2/4/8), `Float` (float4/8), `Text` (text, varchar, char; dates read as `YYYY-MM-DD`), `Bytes` (bytea), `Timestamp` (RFC 3339; timestamptz, and timestamp read as UTC) and `Json` (json, jsonb). Cast anything else in SQL: `amount::text` for numeric, `id::text` for uuid.
+- `rows.columns` names the columns; it's empty when there are no rows.
+- Errors: `NotApproved` (no `storage = true`), `Invalid` (a limit or a type), `Database` (Postgres's SQLSTATE code, e.g. `23505` for a duplicate, and message), `Timeout`, `TooLarge`.
+
+| Limit | Value |
+| --- | --- |
+| One statement | 5 s (`statement_timeout`); waiting for a lock, 2 s |
+| SQL per statement | 64 KiB |
+| Parameters | 100 per statement, 1 MiB per call in all |
+| Statements in a `transaction` | 50 |
+| A result | 5,000 rows and 4 MiB (text, bytes and JSON, plus 16 bytes per value) |
+| Memory per sort or hash | 16 MB (`work_mem`); temporary files 256 MB |
+| One migration | 60 s per statement, 2 minutes in all |
+
+Setting these yourself (`SET`, `set_config`, `ALTER ROLE`) doesn't lift them: the host puts them back before every statement. Uninstalling a plugin deletes its schema and everything in it.
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see. The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
 
 ## Limits
 
-Every call runs in a fresh sandbox; nothing is kept between calls (state goes in storage, when that arrives). Per call:
+Every call runs in a fresh sandbox; nothing is kept between calls (state goes in storage). Per call:
 
 | Limit | Default |
 | --- | --- |
@@ -201,9 +237,10 @@ Hitting a limit ends that call only; the next call starts clean. Admins see whic
 API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0.0`) is unstable until Tether's milestone 3 ends. After that, nothing in 1.x changes: new things arrive as new types, functions or interfaces, so a plugin built against an earlier 1.x keeps loading. Today it has:
 
 - `log`: write to the plugin's log;
-- pages: `render`.
+- pages: `render`;
+- `storage`: SQL in the plugin's own schema (see Storage).
 
-Coming during milestone 2, in this order: storage (SQL in the plugin's own schema), background jobs and schedules, permissions and forms, ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
+Coming during milestone 2, in this order: background jobs and schedules, permissions and forms, ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
 
 ## Checklist before publishing
 

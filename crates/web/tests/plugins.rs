@@ -6,11 +6,9 @@
 
 mod common;
 
-use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use common::*;
 use sqlx::PgPool;
 use tether_plugins::host::Request as PageRequest;
@@ -23,29 +21,7 @@ const ID: &str = "nmu.hello";
 fn hello_component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
     COMPONENT
-        .get_or_init(|| {
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-            let target = root.join("target/test-guests");
-            let output = std::process::Command::new(env!("CARGO"))
-                .current_dir(&root)
-                .args([
-                    "build",
-                    "-p",
-                    "hello-plugin",
-                    "--target",
-                    "wasm32-wasip2",
-                    "--release",
-                ])
-                .env("CARGO_TARGET_DIR", &target)
-                .output()
-                .expect("running cargo");
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            std::fs::read(target.join("wasm32-wasip2/release/hello_plugin.wasm")).unwrap()
-        })
+        .get_or_init(|| build_guest("hello-plugin"))
         .clone()
 }
 
@@ -69,55 +45,6 @@ fn package(id: &str, key: &Key, extra: &str) -> (Vec<u8>, String) {
     ]);
     let signature = key.sign(&bytes);
     (bytes, signature)
-}
-
-const BOUNDARY: &str = "tether-test-boundary";
-
-fn multipart(fields: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut body = Vec::new();
-    for (name, data) in fields {
-        body.extend_from_slice(
-            format!(
-                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"; \
-                 filename=\"{name}.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-            )
-            .as_bytes(),
-        );
-        body.extend_from_slice(data);
-        body.extend_from_slice(b"\r\n");
-    }
-    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
-    body
-}
-
-fn upload_request(token: &str, body: Vec<u8>) -> Request<Body> {
-    Request::post("/admin/plugins")
-        .header(header::ORIGIN, SITE)
-        .header(
-            header::CONTENT_TYPE,
-            format!("multipart/form-data; boundary={BOUNDARY}"),
-        )
-        .header(header::COOKIE, format!("{SESSION}={token}"))
-        .body(Body::from(body))
-        .unwrap()
-}
-
-async fn upload(h: &Harness, token: &str, package: &[u8], signature: &str) -> Res {
-    let body = multipart(&[("package", package), ("signature", signature.as_bytes())]);
-    send(&h.app, upload_request(token, body)).await
-}
-
-fn form(uri: &str, body: &str, token: &str) -> Request<Body> {
-    Request::post(uri)
-        .header(header::ORIGIN, SITE)
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .header(header::COOKIE, format!("{SESSION}={token}"))
-        .body(Body::from(body.to_owned()))
-        .unwrap()
-}
-
-async fn page(h: &Harness, uri: &str, token: &str) -> Res {
-    send(&h.app, get(uri, &[(SESSION, token)])).await
 }
 
 async fn actions(db: &PgPool) -> Vec<String> {
@@ -380,15 +307,14 @@ async fn bad_uploads_are_refused_and_audited(db: PgPool) {
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(res.body.contains("signature"), "{}", res.body);
 
-    // Storage isn't available yet.
-    let storage_manifest =
-        manifest(ID, &key, "").replace("[capabilities]\n", "[capabilities]\nstorage = true\n");
-    let storage = testing::zip(&[
-        ("plugin.toml", storage_manifest.as_bytes()),
+    // Migrations without asking for storage.
+    let manifest_text = manifest(ID, &key, "");
+    let confused = testing::zip(&[
+        ("plugin.toml", manifest_text.as_bytes()),
         ("plugin.wasm", &hello_component()),
+        ("migrations/0001_t.sql", b"CREATE TABLE t (x int);"),
     ]);
-    let storage_sig = key.sign(&storage);
-    let res = upload(&h, &owner, &storage, &storage_sig).await;
+    let res = upload(&h, &owner, &confused, &key.sign(&confused)).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(res.body.contains("storage"), "{}", res.body);
 
@@ -474,6 +400,7 @@ async fn startup_loads_enabled_plugins_and_checks_them(db: PgPool) {
                 tether_plugins::Runtime::new().unwrap(),
             ))
             .unwrap(),
+            test_key(),
         )
     };
     let restarted = fresh();

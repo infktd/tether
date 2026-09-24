@@ -124,8 +124,70 @@ interface page {
     }
 }
 
+/// SQL in the plugin's own Postgres schema, for plugins approved for
+/// storage (`storage = true`). Each call is one transaction: `query` and
+/// `execute` run one statement, `transaction` runs several together or
+/// none. Statements take `$1`, `$2`... parameters; never build SQL from
+/// data. Only the plugin's own schema is visible.
+interface storage {
+    /// A parameter, or a value in a result row.
+    variant value {
+        null,
+        boolean(bool),
+        /// int2, int4 and int8 columns.
+        integer(s64),
+        /// float4 and float8.
+        float(f64),
+        /// text, varchar, char and name; also date, as `YYYY-MM-DD`.
+        text(string),
+        bytes(list<u8>),
+        /// An instant in RFC 3339 (timestamptz, and timestamp read as UTC).
+        timestamp(string),
+        /// JSON text (json, jsonb).
+        json(string),
+    }
+
+    record statement {
+        sql: string,
+        params: list<value>,
+    }
+
+    record rows {
+        columns: list<string>,
+        rows: list<list<value>>,
+    }
+
+    /// What Postgres said: the SQLSTATE code (e.g. `23505` for a unique
+    /// violation) and its message.
+    record database-error {
+        code: string,
+        message: string,
+    }
+
+    variant error {
+        /// This plugin wasn't approved for storage.
+        not-approved,
+        /// A statement or its parameters break a limit or aren't valid; or a
+        /// column has a type storage can't return (cast it, e.g. `::text`).
+        invalid(string),
+        database(database-error),
+        /// It ran past the time a statement may take.
+        timeout,
+        /// The result has more rows or bytes than a call may return.
+        too-large,
+    }
+
+    /// Runs a statement and returns its rows.
+    query: func(sql: string, params: list<value>) -> result<rows, error>;
+    /// Runs a statement and returns how many rows it changed.
+    execute: func(sql: string, params: list<value>) -> result<u64, error>;
+    /// Runs statements in one transaction; if one fails, none apply.
+    transaction: func(statements: list<statement>) -> result<list<u64>, error>;
+}
+
 world plugin {
     import log;
+    import storage;
     use page.{page, request, page-error};
 
     /// Renders one of the plugin's pages.

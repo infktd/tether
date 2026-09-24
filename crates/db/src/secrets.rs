@@ -37,3 +37,13 @@ pub async fn get<'e>(
         .fetch_optional(executor)
         .await
 }
+
+pub async fn delete<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    name: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM core.secrets WHERE name = $1", name)
+        .execute(executor)
+        .await?;
+    Ok(())
+}

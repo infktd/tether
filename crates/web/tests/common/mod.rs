@@ -294,6 +294,7 @@ pub async fn harness_full(
     );
     let plugins = tether_web::plugins::Plugins::new(
         tether_plugins::host::Host::new(Arc::new(tether_plugins::Runtime::new().unwrap())).unwrap(),
+        test_key(),
     );
     let app = router(AppState {
         key: test_key(),
@@ -487,4 +488,93 @@ pub async fn log_in_owner(h: &Harness, character: &str) -> String {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     res.cookie_value(SESSION)
+}
+
+// ---- plugins -----------------------------------------------------------------
+
+/// Builds a wasm32-wasip2 workspace crate into its own target directory
+/// (so it doesn't wait on the lock of the build running the tests) and
+/// returns the component.
+pub fn build_guest(package: &str) -> Vec<u8> {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let target = root.join("target/test-guests");
+    let output = std::process::Command::new(env!("CARGO"))
+        .current_dir(&root)
+        .args([
+            "build",
+            "-p",
+            package,
+            "--target",
+            "wasm32-wasip2",
+            "--release",
+        ])
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .expect("running cargo");
+    assert!(
+        output.status.success(),
+        "building {package}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let file = format!("wasm32-wasip2/release/{}.wasm", package.replace('-', "_"));
+    std::fs::read(target.join(file)).unwrap()
+}
+
+pub const BOUNDARY: &str = "tether-test-boundary";
+
+pub fn multipart(fields: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (name, data) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"; \
+                 filename=\"{name}.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(data);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+    body
+}
+
+pub fn upload_request(token: &str, body: Vec<u8>) -> Request<Body> {
+    Request::post("/admin/plugins")
+        .header(header::ORIGIN, SITE)
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        )
+        .header(header::COOKIE, format!("{SESSION}={token}"))
+        .body(Body::from(body))
+        .unwrap()
+}
+
+pub async fn upload(h: &Harness, token: &str, package: &[u8], signature: &str) -> Res {
+    let body = multipart(&[("package", package), ("signature", signature.as_bytes())]);
+    send(&h.app, upload_request(token, body)).await
+}
+
+pub fn form(uri: &str, body: &str, token: &str) -> Request<Body> {
+    Request::post(uri)
+        .header(header::ORIGIN, SITE)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::COOKIE, format!("{SESSION}={token}"))
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+pub async fn page(h: &Harness, uri: &str, token: &str) -> Res {
+    send(&h.app, get(uri, &[(SESSION, token)])).await
+}
+
+/// Uploads and approves a signed package; returns where approving went.
+pub async fn install_package(h: &Harness, token: &str, package: &[u8], signature: &str) -> String {
+    let res = upload(h, token, package, signature).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let review = res.location().to_owned();
+    let res = send(&h.app, form(&format!("{review}/approve"), "", token)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    res.location().to_owned()
 }

@@ -73,6 +73,150 @@ pub mod log {
     }
 }
 
+/// SQL in the plugin's own database schema, for plugins approved for
+/// storage (`storage = true` in `plugin.toml`). Tables come from the
+/// package's `migrations/`; each call is one transaction.
+///
+/// ```ignore
+/// use tether_plugin_sdk::storage::{self, Value};
+///
+/// storage::execute(
+///     "INSERT INTO notes (body, at) VALUES ($1, now())",
+///     &["o7".into()],
+/// )?;
+/// let rows = storage::query("SELECT body FROM notes ORDER BY at DESC LIMIT 10", &[])?;
+/// ```
+pub mod storage {
+    pub use crate::bindings::tether::plugin::storage::{
+        DatabaseError, Error, Rows, Statement, Value,
+    };
+
+    /// Runs a statement and returns its rows (at most 5,000 rows and 4 MiB).
+    pub fn query(sql: &str, params: &[Value]) -> Result<Rows, Error> {
+        crate::bindings::tether::plugin::storage::query(sql, params)
+    }
+
+    /// Runs a statement and returns how many rows it changed.
+    pub fn execute(sql: &str, params: &[Value]) -> Result<u64, Error> {
+        crate::bindings::tether::plugin::storage::execute(sql, params)
+    }
+
+    /// Runs statements in one transaction (at most 50): all or none.
+    pub fn transaction(statements: &[Statement]) -> Result<Vec<u64>, Error> {
+        crate::bindings::tether::plugin::storage::transaction(statements)
+    }
+
+    impl Statement {
+        pub fn new(sql: impl Into<String>, params: Vec<Value>) -> Self {
+            Self {
+                sql: sql.into(),
+                params,
+            }
+        }
+    }
+
+    impl Rows {
+        /// Where a column is, by name; `None` if it isn't there (or there
+        /// are no rows, which carry no column names).
+        pub fn column(&self, name: &str) -> Option<usize> {
+            self.columns.iter().position(|c| c == name)
+        }
+    }
+
+    impl Value {
+        pub fn as_text(&self) -> Option<&str> {
+            match self {
+                Value::Text(t) | Value::Timestamp(t) | Value::Json(t) => Some(t),
+                _ => None,
+            }
+        }
+
+        pub fn as_integer(&self) -> Option<i64> {
+            match self {
+                Value::Integer(n) => Some(*n),
+                _ => None,
+            }
+        }
+
+        pub fn as_float(&self) -> Option<f64> {
+            match self {
+                Value::Float(n) => Some(*n),
+                Value::Integer(n) => Some(*n as f64),
+                _ => None,
+            }
+        }
+
+        pub fn as_bool(&self) -> Option<bool> {
+            match self {
+                Value::Boolean(b) => Some(*b),
+                _ => None,
+            }
+        }
+
+        pub fn is_null(&self) -> bool {
+            matches!(self, Value::Null)
+        }
+
+        /// An RFC 3339 instant, e.g. `2026-09-24T18:00:00Z`.
+        pub fn timestamp(rfc3339: impl Into<String>) -> Self {
+            Value::Timestamp(rfc3339.into())
+        }
+
+        /// JSON text, for json and jsonb columns.
+        pub fn json(text: impl Into<String>) -> Self {
+            Value::Json(text.into())
+        }
+    }
+
+    impl From<&str> for Value {
+        fn from(text: &str) -> Self {
+            Value::Text(text.to_owned())
+        }
+    }
+
+    impl From<String> for Value {
+        fn from(text: String) -> Self {
+            Value::Text(text)
+        }
+    }
+
+    impl From<i64> for Value {
+        fn from(n: i64) -> Self {
+            Value::Integer(n)
+        }
+    }
+
+    impl From<i32> for Value {
+        fn from(n: i32) -> Self {
+            Value::Integer(n.into())
+        }
+    }
+
+    impl From<f64> for Value {
+        fn from(n: f64) -> Self {
+            Value::Float(n)
+        }
+    }
+
+    impl From<bool> for Value {
+        fn from(b: bool) -> Self {
+            Value::Boolean(b)
+        }
+    }
+
+    impl From<Vec<u8>> for Value {
+        fn from(bytes: Vec<u8>) -> Self {
+            Value::Bytes(bytes)
+        }
+    }
+
+    impl<T: Into<Value>> From<Option<T>> for Value {
+        fn from(value: Option<T>) -> Self {
+            value.map_or(Value::Null, Into::into)
+        }
+    }
+}
+
 impl Page {
     pub fn new(title: impl Into<String>) -> Self {
         Self {

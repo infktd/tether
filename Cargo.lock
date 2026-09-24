@@ -3832,6 +3832,8 @@ dependencies = [
  "ed25519-dalek",
  "minisign-verify",
  "serde",
+ "serde_json",
+ "sqlx",
  "tether-plugins",
  "thiserror 2.0.21",
  "tokio",
@@ -3865,6 +3867,13 @@ dependencies = [
 
 [[package]]
 name = "tether-plugins-test-guest-pages"
+version = "0.1.0"
+dependencies = [
+ "tether-plugin-sdk",
+]
+
+[[package]]
+name = "tether-plugins-test-guest-storage"
 version = "0.1.0"
 dependencies = [
  "tether-plugin-sdk",

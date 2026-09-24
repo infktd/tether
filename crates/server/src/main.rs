@@ -233,6 +233,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             tether_plugins::Runtime::new().context("starting the plugin runtime")?,
         ))
         .context("starting the plugin host")?,
+        key.clone(),
     );
     {
         let (plugins, db) = (plugins.clone(), db.clone());
