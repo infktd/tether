@@ -30,7 +30,10 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,sqlx::postgres::notice=warn".into()),
+        )
         // No color codes in `docker compose logs` or other non-terminals.
         .with_ansi(std::io::stdout().is_terminal())
         .init();
@@ -63,6 +66,17 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_db::migrate(&db).await?;
     tracing::info!("database migrations applied");
 
+    // No job kinds yet; later tasks register handlers here.
+    let registry = tether_jobs::Registry::new();
+    let workers = tether_jobs::WorkerPool::start(
+        db.clone(),
+        registry,
+        tether_jobs::WorkerConfig {
+            workers: config.job_workers,
+            ..Default::default()
+        },
+    );
+
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("binding {}", config.listen))?;
@@ -70,7 +84,11 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     axum::serve(listener, tether_web::router(tether_web::AppState { db }))
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("serving HTTP")
+        .context("serving HTTP")?;
+
+    // HTTP has drained; let running jobs finish before exiting.
+    workers.shutdown().await;
+    Ok(())
 }
 
 async fn shutdown_signal() {

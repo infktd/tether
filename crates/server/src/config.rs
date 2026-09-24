@@ -21,6 +21,10 @@ pub struct ServeConfig {
     #[arg(long, env = "DATABASE_MAX_CONNECTIONS", default_value_t = 10)]
     pub database_max_connections: u32,
 
+    /// Background job workers (tokio tasks in this process).
+    #[arg(long, env = "JOB_WORKERS", default_value_t = 4)]
+    pub job_workers: usize,
+
     /// Public domain of this instance, e.g. auth.example.com.
     #[arg(long, env = "DOMAIN")]
     pub domain: String,

@@ -178,7 +178,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Workspace scaffold, CI running fmt, clippy with warnings as errors, and tests
 - [x] Multi-arch Dockerfile, compose file and Caddyfile; `docker compose up` serves a health endpoint over HTTPS
 - [x] Config from env, Postgres pool, migrations run automatically at startup
-- [ ] Minimal job queue with retries and a dead-letter state
+- [x] Minimal job queue with retries and a dead-letter state
 - [ ] EVE SSO login and callback with Postgres-backed sessions
 - [ ] Accounts, characters, alt linking, main switching, owner bootstrap on first login
 - [ ] Tier evaluation from the main's corp and alliance at login

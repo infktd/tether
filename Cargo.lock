@@ -241,6 +241,7 @@ checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "num-traits",
+ "serde",
  "windows-link",
 ]
 
@@ -1626,6 +1627,15 @@ version = "0.1.0"
 [[package]]
 name = "tether-jobs"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "sqlx",
+ "tether-db",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "tether-server"
@@ -1636,6 +1646,7 @@ dependencies = [
  "clap",
  "tether-core",
  "tether-db",
+ "tether-jobs",
  "tether-web",
  "tokio",
  "tracing",
