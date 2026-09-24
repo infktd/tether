@@ -43,6 +43,7 @@ Allowed outbound destinations, and nothing else:
 - CCP's image server (`images.evetech.net`)
 - Discord API and gateway
 - GitHub (`github.com`, `api.github.com`, release asset hosts) for plugin installs and update checks, which admins can switch off
+- Let's Encrypt (ACME), from Caddy only, for TLS certificates. No other CA
 
 No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bundled into the build. The one exception is dev-only tooling (such as Scalar at `/docs`), which may load from a CDN because it is compiled out of release builds. Keep this list in sync with the `doctor` checks and PRD requirement N5.
 

@@ -92,7 +92,7 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 | N2 | Install | Core migrations run automatically on startup; no manual migrate, collect or create-user steps |
 | N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure |
 | N4 | Platforms | Images for amd64 and arm64 |
-| N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord and GitHub (plugin installs and update checks). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
+| N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only; no other CA). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
 | N7 | Security | Refresh tokens and secrets encrypted at rest; backups encrypted |
 | N8 | Security | Plugins never receive tokens; the host checks admin approval and user consent on every ESI call |

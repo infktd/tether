@@ -28,7 +28,7 @@ Plugins reach ESI, storage and Discord only through host functions, never direct
 | Job workers | ESI syncs and plugin background tasks | tokio tasks on a Postgres queue |
 | UI | Server-rendered pages, navigation, plugin pages | askama templates, Basecoat, htmx |
 | Database | Core data, per-plugin schemas, time series | Postgres 16+, TimescaleDB |
-| Reverse proxy | TLS, HTTP/2 | Caddy |
+| Reverse proxy | TLS, HTTP/2; certificates from Let's Encrypt only | Caddy |
 
 ## Plugin model
 
