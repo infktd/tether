@@ -1,6 +1,7 @@
 //! Server-rendered pages (askama + Basecoat + htmx). Interactive pieces are
 //! htmx requests to endpoints that return HTML fragments.
 
+pub mod admin;
 pub mod assets;
 pub mod headers;
 pub mod setup;
@@ -132,6 +133,22 @@ pub struct ShellUser {
 pub struct Shell {
     pub user: ShellUser,
     pub active: &'static str,
+    /// Admin links the sidebar may show.
+    pub nav: AdminNav,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AdminNav {
+    pub groups: bool,
+    pub permissions: bool,
+    pub tiers: bool,
+    pub setup: bool,
+}
+
+impl AdminNav {
+    pub fn any(&self) -> bool {
+        self.groups || self.permissions || self.tiers || self.setup
+    }
 }
 
 /// `GET /`: send visitors where they belong.
@@ -194,14 +211,14 @@ struct CharactersFragment {
     error: Option<String>,
 }
 
-struct Loaded {
-    shell: Shell,
+pub(crate) struct Loaded {
+    pub(crate) shell: Shell,
     tier: Tier,
     is_owner: bool,
     characters: Vec<CharacterRow>,
 }
 
-async fn load(
+pub(crate) async fn load(
     state: &AppState,
     session: &CurrentSession,
     active: &'static str,
@@ -213,6 +230,13 @@ async fn load(
         .await?
         .unwrap_or(Tier::Guest);
     let token_states = tether_db::tokens::states_for_account(&state.db, session.account).await?;
+    let perms = permissions::effective(&state.db, session.account).await?;
+    let nav = AdminNav {
+        groups: perms.contains(tether_core::permissions::ADMIN_GROUPS),
+        permissions: perms.contains(tether_core::permissions::ADMIN_PERMISSIONS),
+        tiers: perms.contains(tether_core::permissions::ADMIN_TIERS),
+        setup: account.is_owner,
+    };
     let characters = account
         .characters
         .iter()
@@ -232,6 +256,7 @@ async fn load(
                 is_owner: account.is_owner,
             },
             active,
+            nav,
         },
         tier,
         is_owner: account.is_owner,

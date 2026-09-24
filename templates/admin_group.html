@@ -1,0 +1,85 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}{{ group.name }}{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title">{{ group.name }}</h1>
+      <p class="text-muted-foreground mt-1">{% if group.description.is_empty() %}{{ group.policy_label }}{% else %}{{ group.description }} · {{ group.policy_label }}{% endif %}</p>
+    </div>
+    <form method="post" action="/admin/groups/{{ group.id }}/delete" hx-confirm="Delete the group {{ group.name }}? Its members lose what it granted.">
+      <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete group</button>
+    </form>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if !requests.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Requests to join</h2></header>
+    <table class="table">
+      <thead><tr><th scope="col">Pilot</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for r in requests %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = r.main_name.as_str() %}{% let avatar_id = r.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ r.main_name }}</span>
+            </div>
+          </td>
+          <td class="text-right">
+            <div class="inline-flex gap-2">
+              <form method="post" action="/admin/groups/{{ group.id }}/requests/{{ r.account_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>
+              <form method="post" action="/admin/groups/{{ group.id }}/requests/{{ r.account_id }}/deny"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Deny</button></form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <section class="card data-card">
+    <header><h2>Members <span class="num text-muted-foreground font-normal">{{ members.len() }}</span></h2></header>
+    {% if members.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No members yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Pilot</th><th scope="col">Tier</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = m.main_name.as_str() %}{% let avatar_id = m.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ m.main_name }}</span>
+            </div>
+          </td>
+          <td><span class="tier-badge" data-tier="{{ m.tier }}">{{ m.tier_label }}</span></td>
+          <td class="text-right">
+            <form method="post" action="/admin/groups/{{ group.id }}/members/{{ m.account_id }}/remove" hx-confirm="Remove {{ m.main_name }} from {{ group.name }}?">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <form class="card" method="post" action="/admin/groups/{{ group.id }}/members">
+    <header><h2>Add a member</h2><p>Any of their characters' exact names works; the whole account joins.</p></header>
+    <section class="grid gap-2 max-w-md">
+      <label class="label" for="character">Character name</label>
+      <input class="input" id="character" name="character" required>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Add member</button></footer>
+  </form>
+</div>
+{% endblock %}

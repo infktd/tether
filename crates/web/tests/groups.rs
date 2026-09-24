@@ -299,9 +299,9 @@ async fn permissions_granted_to_groups_and_tiers_take_effect(db: PgPool) {
         StatusCode::FORBIDDEN
     );
 
-    // Grants to the pilot's tier (guest here) apply too.
+    // Admin permissions can't go to Guest: anyone who logs in with EVE is.
     let body = r#"{"permission":"admin.groups","tier":"guest"}"#;
-    call(
+    let refused = call(
         &h,
         "POST",
         "/api/admin/permissions/grants",
@@ -309,10 +309,13 @@ async fn permissions_granted_to_groups_and_tiers_take_effect(db: PgPool) {
         Some(body),
     )
     .await;
-    assert_eq!(
-        me(&h, &pilot).await["permissions"],
-        serde_json::json!(["admin.groups"])
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused
+            .body
+            .contains("anyone who logs in with EVE is Guest")
     );
+    assert_eq!(me(&h, &pilot).await["permissions"], serde_json::json!([]));
 
     let actions: Vec<String> = audit_actions(&h, &owner)
         .await

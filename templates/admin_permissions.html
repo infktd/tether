@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+{% block title %}Permissions{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Permissions</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Permissions</h1>
+    <p class="text-muted-foreground mt-1">Granted to tiers and groups only, never to individual accounts. The owner always has everything.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  <section class="card data-card">
+    <header><h2>Grants</h2></header>
+    <table class="table">
+      <thead><tr><th scope="col">Permission</th><th scope="col">Granted to</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>
+            <div class="font-medium num">{{ row.name }}</div>
+            <div class="text-xs text-muted-foreground">{{ row.description }}</div>
+          </td>
+          <td>
+            {% if row.grants.is_empty() %}<span class="text-sm text-muted-foreground">Owner only</span>{% endif %}
+            <div class="flex flex-wrap gap-2">
+              {% for g in row.grants %}
+              <form method="post" action="/admin/permissions/{{ g.id }}/revoke" class="grant-chip" hx-confirm="Revoke {{ row.name }} from {{ g.label }}?">
+                <span>{% if g.kind == "tier" %}Tier: {% else %}Group: {% endif %}{{ g.label }}</span>
+                <button type="submit" aria-label="Revoke {{ row.name }} from {{ g.label }}" title="Revoke">×</button>
+              </form>
+              {% endfor %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <form class="card" method="post" action="/admin/permissions/grant" hx-confirm="Grant this permission? Everyone in that tier or group gets it.">
+    <header><h2>Grant a permission</h2><p>Admin permissions can't go to Guest or to Open groups: anyone can be in those.</p></header>
+    <section class="grid grid-cols-2 gap-4 max-w-2xl">
+      <div class="grid gap-2">
+        <label class="label" for="permission">Permission</label>
+        <select class="select input" id="permission" name="permission">
+          {% for row in rows %}<option value="{{ row.name }}">{{ row.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="grantee">To</label>
+        <select class="select input" id="grantee" name="grantee">
+          <optgroup label="Tiers">
+            <option value="tier:member">Member</option>
+            <option value="tier:allied">Allied</option>
+            <option value="tier:guest">Guest</option>
+          </optgroup>
+          {% if !groups.is_empty() %}
+          <optgroup label="Groups">
+            {% for g in groups %}<option value="group:{{ g.id }}">{{ g.name }}</option>{% endfor %}
+          </optgroup>
+          {% endif %}
+        </select>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Grant</button></footer>
+  </form>
+</div>
+{% endblock %}

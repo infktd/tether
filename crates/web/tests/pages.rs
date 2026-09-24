@@ -301,7 +301,7 @@ async fn security_headers_on_pages_errors_and_api(db: PgPool) {
             .unwrap();
         assert!(csp.contains("script-src 'self'"), "{uri}");
         assert!(
-            csp.contains("img-src 'self' https://images.evetech.net"),
+            csp.contains("img-src 'self' data: https://images.evetech.net"),
             "{uri}"
         );
         assert_eq!(res.headers[header::X_FRAME_OPTIONS], "DENY", "{uri}");

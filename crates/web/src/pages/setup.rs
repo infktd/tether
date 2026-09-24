@@ -15,7 +15,7 @@ use tether_db::settings;
 
 use super::{PageError, render};
 use crate::AppState;
-use crate::api::admin::{apply_tier_rule, esi_unavailable};
+use crate::admin::{apply_tier_rule, esi_unavailable};
 use crate::auth::CurrentSession;
 use crate::error::AppError;
 use crate::setup::{

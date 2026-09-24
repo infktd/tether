@@ -10,7 +10,7 @@ HTTP 200
 [Asserts]
 header "Content-Type" contains "text/html"
 header "Content-Security-Policy" contains "script-src 'self'"
-header "Content-Security-Policy" contains "img-src 'self' https://images.evetech.net"
+header "Content-Security-Policy" contains "img-src 'self' data: https://images.evetech.net"
 header "X-Frame-Options" == "DENY"
 header "X-Content-Type-Options" == "nosniff"
 header "Strict-Transport-Security" exists
@@ -91,3 +91,58 @@ HTTP 404
 
 GET {{base}}/docs
 HTTP 404
+
+# Admin pages: signed out, every one sends you to log in.
+GET {{base}}/admin
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/groups
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/groups/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/permissions
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/tiers
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups
+Origin: {{base}}
+[Form]
+name: Officers
+join_policy: assigned
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/permissions/grant
+Origin: {{base}}
+[Form]
+permission: admin.audit
+grantee: tier:guest
+HTTP 303
+
+POST {{base}}/admin/tiers
+Origin: {{base}}
+[Form]
+entity_id: 1
+tier: member
+HTTP 303
+
+POST {{base}}/admin/tiers/search
+Origin: {{base}}
+[Form]
+name: Goonswarm Federation
+HTTP 401

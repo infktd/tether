@@ -182,6 +182,7 @@ pub async fn remove_request<'e>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingRequest {
     pub account_id: i64,
+    pub main_id: i64,
     pub main_name: String,
 }
 
@@ -189,7 +190,7 @@ pub async fn requests(pool: &PgPool, group: GroupId) -> Result<Vec<PendingReques
     sqlx::query_as!(
         PendingRequest,
         r#"
-        SELECT r.account_id, c.name AS main_name
+        SELECT r.account_id, c.id AS main_id, c.name AS main_name
         FROM core.group_requests r
         JOIN core.accounts a ON a.id = r.account_id
         JOIN core.characters c ON c.id = a.main_character_id
@@ -212,6 +213,66 @@ pub async fn names_for(pool: &PgPool, account: AccountId) -> Result<Vec<String>,
         ORDER BY g.name
         "#,
         account.0,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// A group with its member and pending-request counts, for admins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupSummary {
+    pub group: Group,
+    pub members: i64,
+    pub pending: i64,
+}
+
+pub async fn summaries(pool: &PgPool) -> Result<Vec<GroupSummary>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT g.id, g.name, g.description, g.join_policy,
+               (SELECT count(*) FROM core.group_members m WHERE m.group_id = g.id) AS "members!",
+               (SELECT count(*) FROM core.group_requests r WHERE r.group_id = g.id) AS "pending!"
+        FROM core.groups g
+        ORDER BY g.name
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| GroupSummary {
+            group: Group {
+                id: GroupId(r.id),
+                name: r.name,
+                description: r.description,
+                join_policy: policy(&r.join_policy),
+            },
+            members: r.members,
+            pending: r.pending,
+        })
+        .collect())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub account_id: i64,
+    pub main_id: i64,
+    pub main_name: String,
+    pub tier: String,
+}
+
+pub async fn members(pool: &PgPool, group: GroupId) -> Result<Vec<Member>, sqlx::Error> {
+    sqlx::query_as!(
+        Member,
+        r#"
+        SELECT a.id AS account_id, c.id AS main_id, c.name AS main_name, a.tier
+        FROM core.group_members m
+        JOIN core.accounts a ON a.id = m.account_id
+        JOIN core.characters c ON c.id = a.main_character_id
+        WHERE m.group_id = $1
+        ORDER BY c.name
+        "#,
+        group.0,
     )
     .fetch_all(pool)
     .await

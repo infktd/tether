@@ -7,6 +7,7 @@ compile_error!("the dev-login feature must never be enabled in release builds");
 #[cfg(all(feature = "dev-docs", not(debug_assertions)))]
 compile_error!("the dev-docs feature must never be enabled in release builds");
 
+pub mod admin;
 mod api;
 pub mod auth;
 mod csrf;
@@ -53,6 +54,44 @@ pub fn router(state: AppState) -> Router {
         .route("/setup/alliance", post(pages::setup::choose_alliance))
         .route("/setup/alliance/search", post(pages::setup::search))
         .route("/static/{*path}", get(pages::assets::serve))
+        .route("/admin", get(pages::admin::index))
+        .route(
+            "/admin/groups",
+            get(pages::admin::groups).post(pages::admin::create_group),
+        )
+        .route("/admin/groups/{id}", get(pages::admin::group))
+        .route(
+            "/admin/groups/{id}/delete",
+            post(pages::admin::delete_group),
+        )
+        .route("/admin/groups/{id}/members", post(pages::admin::add_member))
+        .route(
+            "/admin/groups/{id}/members/{account_id}/remove",
+            post(pages::admin::remove_member),
+        )
+        .route(
+            "/admin/groups/{id}/requests/{account_id}/approve",
+            post(pages::admin::approve),
+        )
+        .route(
+            "/admin/groups/{id}/requests/{account_id}/deny",
+            post(pages::admin::deny),
+        )
+        .route("/admin/permissions", get(pages::admin::permissions))
+        .route("/admin/permissions/grant", post(pages::admin::grant))
+        .route(
+            "/admin/permissions/{grant_id}/revoke",
+            post(pages::admin::revoke),
+        )
+        .route(
+            "/admin/tiers",
+            get(pages::admin::tiers).post(pages::admin::set_rule),
+        )
+        .route(
+            "/admin/tiers/{entity_id}/remove",
+            post(pages::admin::remove_rule),
+        )
+        .route("/admin/tiers/search", post(pages::admin::search))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/auth/login", get(auth::login))

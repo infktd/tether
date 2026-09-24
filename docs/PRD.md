@@ -196,7 +196,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Recurring schedules on the Postgres job queue
 - [x] ESI layer: eve-esi-client's shared in-process cache (Expires, ETag) and limits, plus error and rate budget state for the dashboard, interactive requests ahead of bulk work, and a Postgres cache of entity names
 - [x] Affiliation sync on a schedule re-evaluates every account's tier
-- [ ] Admin pages per docs/DESIGN.md: groups, permissions and tier rules
+- [x] Admin pages per docs/DESIGN.md: groups, permissions and tier rules
 - [ ] Discord setup (secrets in the vault) and account linking via OAuth, adding the member to the server with roles
 - [ ] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries
 - [ ] Fleet pings to Discord channels with role targeting

@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block title %}Groups{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Groups</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Groups</h1>
+    <p class="text-muted-foreground mt-1">Groups add access on top of tiers. Grant them permissions on the Permissions page.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  <section class="card data-card">
+    <header><h2>All groups</h2></header>
+    {% if groups.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No groups yet.</p>
+    {% else %}
+    <table class="table">
+      <thead>
+        <tr><th scope="col">Group</th><th scope="col">Joining</th><th scope="col">Members</th><th scope="col">Pending</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr>
+      </thead>
+      <tbody>
+        {% for g in groups %}
+        <tr>
+          <td>
+            <div class="font-medium">{{ g.name }}</div>
+            {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
+          </td>
+          <td><span class="badge" data-variant="outline">{{ g.policy_label }}</span></td>
+          <td class="num">{{ g.members }}</td>
+          <td class="num">{% if g.pending > 0 %}<span class="text-highlight">{{ g.pending }}</span>{% else %}0{% endif %}</td>
+          <td class="text-right"><a href="/admin/groups/{{ g.id }}" class="btn" data-variant="outline" data-size="sm">Manage</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <form class="card" method="post" action="/admin/groups">
+    <header><h2>New group</h2></header>
+    <section class="grid grid-cols-3 gap-4">
+      <div class="grid gap-2">
+        <label class="label" for="name">Name</label>
+        <input class="input" id="name" name="name" value="{{ form.name }}" maxlength="100" required>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="description">Description</label>
+        <input class="input" id="description" name="description" value="{{ form.description }}" maxlength="500">
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="join_policy">Joining</label>
+        <select class="select input" id="join_policy" name="join_policy">
+          <option value="assigned"{% if form.join_policy == "assigned" %} selected{% endif %}>Assigned by admins</option>
+          <option value="request"{% if form.join_policy == "request" %} selected{% endif %}>Request to join</option>
+          <option value="open"{% if form.join_policy == "open" %} selected{% endif %}>Open</option>
+        </select>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Create group</button></footer>
+  </form>
+</div>
+{% endblock %}

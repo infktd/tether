@@ -70,6 +70,19 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Grant>, sqlx::Error> {
         .collect())
 }
 
+/// Permissions granted to a group.
+pub async fn of_group<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    group: GroupId,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT permission FROM core.permission_grants WHERE group_id = $1",
+        group.0
+    )
+    .fetch_all(executor)
+    .await
+}
+
 /// What the account may do: everything for the owner; otherwise the grants
 /// to its tier plus the grants to its groups.
 pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<String>, sqlx::Error> {

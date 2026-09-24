@@ -12,7 +12,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         ADMIN_GROUPS,
         "Create and delete groups, manage members and join requests",
     ),
-    (ADMIN_PERMISSIONS, "Grant and revoke permissions"),
+    (
+        ADMIN_PERMISSIONS,
+        "Grant and revoke permissions (effectively full admin: holders can grant themselves anything)",
+    ),
     (
         ADMIN_TIERS,
         "Choose which alliances and corporations are Member or Allied",

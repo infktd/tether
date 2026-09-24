@@ -8,9 +8,10 @@ use axum::response::Response;
 use crate::AppState;
 
 /// Only our own origin, plus character portraits and logos from CCP's image
-/// server (the one external request browsers make, per DESIGN.md). No
-/// inline scripts, no eval, no framing.
-const CSP: &str = "default-src 'self'; img-src 'self' https://images.evetech.net; \
+/// server (the one external request browsers make, per DESIGN.md). `data:`
+/// images are allowed because Basecoat draws select chevrons as inline SVG
+/// images; images can't run script. No inline scripts, no eval, no framing.
+const CSP: &str = "default-src 'self'; img-src 'self' data: https://images.evetech.net; \
     script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; \
     object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 

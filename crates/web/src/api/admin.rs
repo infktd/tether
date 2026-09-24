@@ -6,21 +6,20 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tether_core::permissions::{
-    ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, CORE_PERMISSIONS, JoinPolicy,
-    is_known,
+    ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, CORE_PERMISSIONS,
 };
 use tether_core::tiers::Tier;
-use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
 use tether_db::tiers as tier_db;
 
 use crate::AppState;
+use crate::admin::{self, MembershipChange};
 use crate::auth::CurrentSession;
-use crate::error::{AppError, is_foreign_key_violation, is_unique_violation};
+use crate::error::AppError;
 
 // ---- groups ---------------------------------------------------------------
 
@@ -46,35 +45,14 @@ pub async fn create_group(
     Json(body): Json<NewGroup>,
 ) -> Result<(StatusCode, Json<Created>), AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    let name = body.name.trim();
-    if name.is_empty() || name.len() > 100 {
-        return Err(AppError::bad_request(
-            "Group names are 1 to 100 characters.",
-        ));
-    }
-    let policy = JoinPolicy::parse(&body.join_policy)
-        .ok_or_else(|| AppError::bad_request("join_policy must be open, request or assigned."))?;
-
-    let mut tx = state.db.begin().await?;
-    let id = match groups::create(&mut *tx, name, body.description.trim(), policy).await {
-        Ok(id) => id,
-        Err(err) if is_unique_violation(&err) => {
-            return Err(AppError::new(
-                StatusCode::CONFLICT,
-                "A group with that name already exists.",
-            ));
-        }
-        Err(err) => return Err(err.into()),
-    };
-    audit::record(
-        &mut *tx,
-        Actor::Account(session.account),
-        "group.create",
-        Some(&format!("group:{}", id.0)),
-        json!({ "name": name, "join_policy": policy.as_str() }),
+    let id = admin::create_group(
+        &state,
+        session.account,
+        &body.name,
+        &body.description,
+        &body.join_policy,
     )
     .await?;
-    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(Created { id: id.0 })))
 }
 
@@ -87,20 +65,7 @@ pub async fn delete_group(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    let mut tx = state.db.begin().await?;
-    let group = groups::get(&mut *tx, GroupId(id))
-        .await?
-        .ok_or_else(|| AppError::not_found("No such group."))?;
-    groups::delete(&mut *tx, group.id).await?;
-    audit::record(
-        &mut *tx,
-        Actor::Account(session.account),
-        "group.delete",
-        Some(&format!("group:{id}")),
-        json!({ "name": group.name }),
-    )
-    .await?;
-    tx.commit().await?;
+    admin::delete_group(&state, session.account, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -119,7 +84,15 @@ pub async fn add_member(
     Json(body): Json<MemberIn>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    change_membership(&state, &session, id, body.account_id, MembershipChange::Add).await
+    admin::change_membership(
+        &state,
+        session.account,
+        id,
+        body.account_id,
+        MembershipChange::Add,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /api/admin/groups/{id}/members/{account_id}`
@@ -131,7 +104,15 @@ pub async fn remove_member(
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    change_membership(&state, &session, id, account_id, MembershipChange::Remove).await
+    admin::change_membership(
+        &state,
+        session.account,
+        id,
+        account_id,
+        MembershipChange::Remove,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/admin/groups/{id}/requests/{account_id}/approve`
@@ -143,7 +124,15 @@ pub async fn approve_request(
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    change_membership(&state, &session, id, account_id, MembershipChange::Approve).await
+    admin::change_membership(
+        &state,
+        session.account,
+        id,
+        account_id,
+        MembershipChange::Approve,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/admin/groups/{id}/requests/{account_id}/deny`
@@ -155,75 +144,14 @@ pub async fn deny_request(
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    change_membership(&state, &session, id, account_id, MembershipChange::Deny).await
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MembershipChange {
-    Add,
-    Remove,
-    Approve,
-    Deny,
-}
-
-impl MembershipChange {
-    fn action(self) -> &'static str {
-        match self {
-            Self::Add => "group.member.add",
-            Self::Remove => "group.member.remove",
-            Self::Approve => "group.request.approve",
-            Self::Deny => "group.request.deny",
-        }
-    }
-}
-
-async fn change_membership(
-    state: &AppState,
-    session: &CurrentSession,
-    group_id: i64,
-    account_id: i64,
-    change: MembershipChange,
-) -> Result<StatusCode, AppError> {
-    let (group, account) = (GroupId(group_id), AccountId(account_id));
-    let no_request = || AppError::not_found("No pending request from that account.");
-    let mut tx = state.db.begin().await?;
-    groups::get(&mut *tx, group)
-        .await?
-        .ok_or_else(|| AppError::not_found("No such group."))?;
-    let changed = match change {
-        MembershipChange::Remove => groups::remove_member(&mut *tx, group, account).await?,
-        MembershipChange::Deny => {
-            if !groups::remove_request(&mut *tx, group, account).await? {
-                return Err(no_request());
-            }
-            true
-        }
-        MembershipChange::Add | MembershipChange::Approve => {
-            if matches!(change, MembershipChange::Approve)
-                && !groups::remove_request(&mut *tx, group, account).await?
-            {
-                return Err(no_request());
-            }
-            match groups::add_member(&mut *tx, group, account).await {
-                Ok(added) => added,
-                Err(err) if is_foreign_key_violation(&err) => {
-                    return Err(AppError::not_found("No such account."));
-                }
-                Err(err) => return Err(err.into()),
-            }
-        }
-    };
-    if changed {
-        audit::record(
-            &mut *tx,
-            Actor::Account(session.account),
-            change.action(),
-            Some(&format!("group:{group_id}")),
-            json!({ "account_id": account_id }),
-        )
-        .await?;
-    }
-    tx.commit().await?;
+    admin::change_membership(
+        &state,
+        session.account,
+        id,
+        account_id,
+        MembershipChange::Deny,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -326,46 +254,8 @@ pub async fn grant(
     Json(body): Json<GrantIn>,
 ) -> Result<(StatusCode, Json<Created>), AppError> {
     session.require(&state, ADMIN_PERMISSIONS).await?;
-    if !is_known(&body.permission) {
-        return Err(AppError::bad_request(format!(
-            "Unknown permission {:?}.",
-            body.permission
-        )));
-    }
-    let grantee = match (body.tier.as_deref(), body.group_id) {
-        (Some(tier), None) => Grantee::Tier(
-            Tier::parse(tier)
-                .ok_or_else(|| AppError::bad_request("tier must be member, allied or guest."))?,
-        ),
-        (None, Some(group)) => Grantee::Group(GroupId(group)),
-        _ => {
-            return Err(AppError::bad_request(
-                "Grant to exactly one of tier or group_id.",
-            ));
-        }
-    };
-
-    let mut tx = state.db.begin().await?;
-    if let Grantee::Group(group) = grantee {
-        groups::get(&mut *tx, group)
-            .await?
-            .ok_or_else(|| AppError::not_found("No such group."))?;
-    }
-    let Some(id) = permissions::grant(&mut *tx, &body.permission, grantee).await? else {
-        return Err(AppError::new(
-            StatusCode::CONFLICT,
-            "That grant already exists.",
-        ));
-    };
-    audit::record(
-        &mut *tx,
-        Actor::Account(session.account),
-        "permission.grant",
-        Some(&format!("grant:{id}")),
-        grant_details(&body.permission, grantee),
-    )
-    .await?;
-    tx.commit().await?;
+    let grantee = admin::grantee(body.tier.as_deref(), body.group_id)?;
+    let id = admin::grant(&state, session.account, &body.permission, grantee).await?;
     Ok((StatusCode::CREATED, Json(Created { id })))
 }
 
@@ -378,27 +268,8 @@ pub async fn revoke(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_PERMISSIONS).await?;
-    let mut tx = state.db.begin().await?;
-    let grant = permissions::revoke(&mut *tx, id)
-        .await?
-        .ok_or_else(|| AppError::not_found("No such grant."))?;
-    audit::record(
-        &mut *tx,
-        Actor::Account(session.account),
-        "permission.revoke",
-        Some(&format!("grant:{id}")),
-        grant_details(&grant.permission, grant.grantee),
-    )
-    .await?;
-    tx.commit().await?;
+    admin::revoke(&state, session.account, id).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn grant_details(permission: &str, grantee: Grantee) -> Value {
-    match grantee {
-        Grantee::Tier(tier) => json!({ "permission": permission, "tier": tier.as_str() }),
-        Grantee::Group(group) => json!({ "permission": permission, "group_id": group.0 }),
-    }
 }
 
 // ---- audit log ------------------------------------------------------------
@@ -496,11 +367,9 @@ pub async fn set_tier_rule(
     Json(body): Json<TierRuleIn>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_TIERS).await?;
-    let tier = match Tier::parse(&body.tier) {
-        Some(tier @ (Tier::Member | Tier::Allied)) => tier,
-        _ => return Err(AppError::bad_request("tier must be member or allied.")),
-    };
-    apply_tier_rule(
+    let tier = Tier::parse(&body.tier)
+        .ok_or_else(|| AppError::bad_request("tier must be member or allied."))?;
+    admin::apply_tier_rule(
         &state,
         Actor::Account(session.account),
         body.entity_id,
@@ -508,49 +377,6 @@ pub async fn set_tier_rule(
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Makes an alliance or corporation Member or Allied. Its name and kind come
-/// from ESI, never the client. Audited, and queues a re-evaluation of every
-/// account. Callers check permissions.
-pub async fn apply_tier_rule(
-    state: &AppState,
-    actor: Actor,
-    entity_id: i64,
-    tier: Tier,
-) -> Result<tier_db::TierRule, AppError> {
-    let entity = tether_esi::names::resolve(
-        &state.db,
-        &state.esi,
-        &[entity_id],
-        tether_esi::Priority::Interactive,
-    )
-    .await
-    .map_err(names_unavailable)?
-    .remove(&entity_id)
-    .ok_or_else(|| AppError::not_found("ESI doesn't know that id."))?;
-    let kind = entity
-        .kind()
-        .ok_or_else(|| AppError::bad_request("That id isn't an alliance or corporation."))?;
-    let rule = tier_db::TierRule {
-        entity_id: entity.id,
-        kind,
-        tier,
-        name: entity.name,
-    };
-    let mut tx = state.db.begin().await?;
-    tier_db::set_rule(&mut *tx, &rule).await?;
-    audit::record(
-        &mut *tx,
-        actor,
-        "tier.rule.set",
-        Some(&format!("{}:{}", kind.as_str(), entity.id)),
-        json!({ "name": rule.name, "tier": tier.as_str() }),
-    )
-    .await?;
-    crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(rule)
 }
 
 /// `DELETE /api/admin/tiers/{entity_id}`
@@ -562,20 +388,7 @@ pub async fn remove_tier_rule(
     Path(entity_id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_TIERS).await?;
-    let mut tx = state.db.begin().await?;
-    if !tier_db::remove_rule(&mut *tx, entity_id).await? {
-        return Err(AppError::not_found("No rule for that id."));
-    }
-    audit::record(
-        &mut *tx,
-        Actor::Account(session.account),
-        "tier.rule.remove",
-        Some(&entity_id.to_string()),
-        json!({}),
-    )
-    .await?;
-    crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
-    tx.commit().await?;
+    admin::remove_tier_rule(&state, session.account, entity_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -619,7 +432,7 @@ pub async fn resolve_names(
         .esi
         .resolve_names(&names, tether_esi::Priority::Interactive)
         .await
-        .map_err(esi_unavailable)?;
+        .map_err(admin::esi_unavailable)?;
     let out = |v: Vec<tether_esi::Entity>| {
         v.into_iter()
             .map(|e| EntityOut {
@@ -632,19 +445,4 @@ pub async fn resolve_names(
         alliances: out(resolved.alliances),
         corporations: out(resolved.corporations),
     }))
-}
-
-pub(crate) fn names_unavailable(err: tether_esi::names::NamesError) -> AppError {
-    match err {
-        tether_esi::names::NamesError::Esi(err) => esi_unavailable(err),
-        tether_esi::names::NamesError::Db(err) => err.into(),
-    }
-}
-
-pub(crate) fn esi_unavailable(err: tether_esi::EsiError) -> AppError {
-    tracing::warn!(error = %err, "ESI lookup failed");
-    AppError::new(
-        StatusCode::BAD_GATEWAY,
-        "ESI didn't answer. Try again in a moment.",
-    )
 }
