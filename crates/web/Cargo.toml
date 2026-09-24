@@ -11,6 +11,8 @@ workspace = true
 [features]
 # Fixture sessions for manual testing. Refuses to compile in release builds.
 dev-login = []
+# Scalar at /docs, loaded from a CDN. Refuses to compile in release builds.
+dev-docs = []
 
 [dependencies]
 axum.workspace = true
@@ -27,6 +29,7 @@ tether-jobs.workspace = true
 thiserror.workspace = true
 tether-db.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true

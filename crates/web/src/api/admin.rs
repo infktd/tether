@@ -24,7 +24,7 @@ use crate::error::{AppError, is_foreign_key_violation, is_unique_violation};
 
 // ---- groups ---------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct NewGroup {
     pub name: String,
     #[serde(default)]
@@ -32,12 +32,14 @@ pub struct NewGroup {
     pub join_policy: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Created {
     pub id: i64,
 }
 
 /// `POST /api/admin/groups`
+#[utoipa::path(post, path = "/api/admin/groups", tag = "admin", security(("session" = [])), request_body = NewGroup,
+    responses((status = 201, body = Created), (status = 400), (status = 403), (status = 409, description = "Name taken")))]
 pub async fn create_group(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -77,6 +79,8 @@ pub async fn create_group(
 }
 
 /// `DELETE /api/admin/groups/{id}`
+#[utoipa::path(delete, path = "/api/admin/groups/{id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn delete_group(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -100,12 +104,14 @@ pub async fn delete_group(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MemberIn {
     pub account_id: i64,
 }
 
 /// `POST /api/admin/groups/{id}/members`
+#[utoipa::path(post, path = "/api/admin/groups/{id}/members", tag = "admin", security(("session" = [])), request_body = MemberIn,
+    params(("id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn add_member(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -117,6 +123,8 @@ pub async fn add_member(
 }
 
 /// `DELETE /api/admin/groups/{id}/members/{account_id}`
+#[utoipa::path(delete, path = "/api/admin/groups/{id}/members/{account_id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("account_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn remove_member(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -127,6 +135,8 @@ pub async fn remove_member(
 }
 
 /// `POST /api/admin/groups/{id}/requests/{account_id}/approve`
+#[utoipa::path(post, path = "/api/admin/groups/{id}/requests/{account_id}/approve", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("account_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn approve_request(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -137,6 +147,8 @@ pub async fn approve_request(
 }
 
 /// `POST /api/admin/groups/{id}/requests/{account_id}/deny`
+#[utoipa::path(post, path = "/api/admin/groups/{id}/requests/{account_id}/deny", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("account_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn deny_request(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -215,13 +227,15 @@ async fn change_membership(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RequestOut {
     pub account_id: i64,
     pub main_name: String,
 }
 
 /// `GET /api/admin/groups/{id}/requests`
+#[utoipa::path(get, path = "/api/admin/groups/{id}/requests", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path)), responses((status = 200, body = Vec<RequestOut>), (status = 403)))]
 pub async fn list_requests(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -242,19 +256,19 @@ pub async fn list_requests(
 
 // ---- permissions ----------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PermissionsOut {
     pub available: Vec<PermissionInfo>,
     pub grants: Vec<GrantOut>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PermissionInfo {
     pub name: &'static str,
     pub description: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GrantOut {
     pub id: i64,
     pub permission: String,
@@ -265,6 +279,8 @@ pub struct GrantOut {
 }
 
 /// `GET /api/admin/permissions`
+#[utoipa::path(get, path = "/api/admin/permissions", tag = "admin", security(("session" = [])),
+    responses((status = 200, body = PermissionsOut), (status = 403)))]
 pub async fn list_permissions(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -294,7 +310,7 @@ pub async fn list_permissions(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct GrantIn {
     pub permission: String,
     pub tier: Option<String>,
@@ -302,6 +318,8 @@ pub struct GrantIn {
 }
 
 /// `POST /api/admin/permissions/grants`: grant to a tier or a group.
+#[utoipa::path(post, path = "/api/admin/permissions/grants", tag = "admin", security(("session" = [])), request_body = GrantIn,
+    responses((status = 201, body = Created), (status = 400), (status = 403), (status = 404), (status = 409)))]
 pub async fn grant(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -352,6 +370,8 @@ pub async fn grant(
 }
 
 /// `DELETE /api/admin/permissions/grants/{id}`
+#[utoipa::path(delete, path = "/api/admin/permissions/grants/{id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn revoke(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -383,13 +403,13 @@ fn grant_details(permission: &str, grantee: Grantee) -> Value {
 
 // ---- audit log ------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct AuditQuery {
     pub limit: Option<i64>,
     pub before: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuditEntryOut {
     pub id: i64,
     pub at: DateTime<Utc>,
@@ -397,10 +417,13 @@ pub struct AuditEntryOut {
     pub actor_name: Option<String>,
     pub action: String,
     pub target: Option<String>,
+    #[schema(value_type = Object)]
     pub details: Value,
 }
 
 /// `GET /api/admin/audit?limit=&before=`: newest first.
+#[utoipa::path(get, path = "/api/admin/audit", tag = "admin", security(("session" = [])), params(AuditQuery),
+    responses((status = 200, body = Vec<AuditEntryOut>), (status = 403)))]
 pub async fn audit_log(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -427,7 +450,7 @@ pub async fn audit_log(
 
 // ---- tier rules ------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TierRuleOut {
     pub entity_id: i64,
     pub kind: &'static str,
@@ -436,6 +459,8 @@ pub struct TierRuleOut {
 }
 
 /// `GET /api/admin/tiers`
+#[utoipa::path(get, path = "/api/admin/tiers", tag = "admin", security(("session" = [])),
+    responses((status = 200, body = Vec<TierRuleOut>), (status = 403)))]
 pub async fn list_tier_rules(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -455,7 +480,7 @@ pub async fn list_tier_rules(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TierRuleIn {
     pub entity_id: i64,
     pub tier: String,
@@ -463,6 +488,8 @@ pub struct TierRuleIn {
 
 /// `POST /api/admin/tiers`: make an alliance or corporation Member or
 /// Allied. Its name and kind come from ESI, not the client.
+#[utoipa::path(post, path = "/api/admin/tiers", tag = "admin", security(("session" = [])), request_body = TierRuleIn,
+    responses((status = 204), (status = 400), (status = 403), (status = 404, description = "ESI doesn't know the id"), (status = 502, description = "ESI unavailable")))]
 pub async fn set_tier_rule(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -507,6 +534,8 @@ pub async fn set_tier_rule(
 }
 
 /// `DELETE /api/admin/tiers/{entity_id}`
+#[utoipa::path(delete, path = "/api/admin/tiers/{entity_id}", tag = "admin", security(("session" = [])),
+    params(("entity_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
 pub async fn remove_tier_rule(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -530,18 +559,18 @@ pub async fn remove_tier_rule(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ResolveIn {
     pub names: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ResolveOut {
     pub alliances: Vec<EntityOut>,
     pub corporations: Vec<EntityOut>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EntityOut {
     pub id: i64,
     pub name: String,
@@ -549,6 +578,8 @@ pub struct EntityOut {
 
 /// `POST /api/admin/tiers/resolve`: exact alliance and corporation names to
 /// ids, via ESI.
+#[utoipa::path(post, path = "/api/admin/tiers/resolve", tag = "admin", security(("session" = [])), request_body = ResolveIn,
+    responses((status = 200, body = ResolveOut), (status = 400), (status = 403), (status = 502)))]
 pub async fn resolve_names(
     State(state): State<AppState>,
     session: CurrentSession,

@@ -41,6 +41,7 @@ tower = { version = "0.5", features = ["util"] }
 insta = { version = "1", features = ["json"] }
 wiremock = "0.6"
 tracing = "0.1"
+utoipa = { version = "6", features = ["chrono", "axum_extras"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Pulls in aws-lc-sys (a C build) through reqwest's default TLS backend.

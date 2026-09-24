@@ -1,9 +1,11 @@
 //! HTTP routes, auth middleware and the OpenAPI document.
 
-// dev-login creates sessions without SSO. It must never reach a release
-// build; CI checks that this guard fires.
+// dev-login creates sessions without SSO, and dev-docs loads Scalar from a
+// CDN. Neither may reach a release build; CI checks these guards fire.
 #[cfg(all(feature = "dev-login", not(debug_assertions)))]
 compile_error!("the dev-login feature must never be enabled in release builds");
+#[cfg(all(feature = "dev-docs", not(debug_assertions)))]
+compile_error!("the dev-docs feature must never be enabled in release builds");
 
 mod api;
 pub mod auth;
@@ -11,6 +13,7 @@ mod csrf;
 #[cfg(feature = "dev-login")]
 mod dev_login;
 mod error;
+pub mod openapi;
 mod ratelimit;
 pub mod setup;
 mod state;
@@ -32,7 +35,10 @@ pub fn router(state: AppState) -> Router {
     let router = router
         .route("/dev/login", get(dev_login::list))
         .route("/dev/login/{fixture}", get(dev_login::login));
+    #[cfg(feature = "dev-docs")]
+    let router = router.route("/docs", get(openapi::docs));
     router
+        .route("/api/openapi.json", get(openapi::spec))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/auth/login", get(auth::login))
@@ -94,11 +100,16 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// Liveness: the process is up and serving HTTP.
+#[utoipa::path(get, path = "/health", tag = "health",
+    responses((status = 200, body = String, content_type = "text/plain", example = "ok")))]
 async fn health() -> &'static str {
     "ok"
 }
 
 /// Readiness: the database answers.
+#[utoipa::path(get, path = "/ready", tag = "health",
+    responses((status = 200, body = String, content_type = "text/plain", example = "ready"),
+              (status = 503, description = "Database unavailable")))]
 async fn ready(State(state): State<AppState>) -> (StatusCode, &'static str) {
     match tether_db::ping(&state.db).await {
         Ok(()) => (StatusCode::OK, "ready"),

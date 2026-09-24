@@ -13,7 +13,7 @@ use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GroupOut {
     pub id: i64,
     pub name: String,
@@ -24,6 +24,8 @@ pub struct GroupOut {
 }
 
 /// `GET /api/groups`
+#[utoipa::path(get, path = "/api/groups", tag = "groups", security(("session" = [])),
+    responses((status = 200, body = Vec<GroupOut>)))]
 pub async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -44,13 +46,19 @@ pub async fn list(
     ))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JoinOut {
     /// `member` (joined an open group) or `requested` (awaiting approval).
     pub status: &'static str,
 }
 
 /// `POST /api/groups/{id}/join`
+#[utoipa::path(post, path = "/api/groups/{id}/join", tag = "groups", security(("session" = [])),
+    params(("id" = i64, Path, description = "Group id")),
+    responses((status = 200, body = JoinOut, description = "Joined an open group"),
+              (status = 202, body = JoinOut, description = "Request sent for approval"),
+              (status = 403, description = "Members are assigned by admins"),
+              (status = 404, description = "No such group")))]
 pub async fn join(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -105,6 +113,9 @@ pub async fn join(
 }
 
 /// `POST /api/groups/{id}/leave`: leave, or withdraw a pending request.
+#[utoipa::path(post, path = "/api/groups/{id}/leave", tag = "groups", security(("session" = [])),
+    params(("id" = i64, Path, description = "Group id")),
+    responses((status = 204, description = "Left, or withdrew a pending request")))]
 pub async fn leave(
     State(state): State<AppState>,
     session: CurrentSession,

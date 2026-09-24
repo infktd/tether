@@ -10,6 +10,9 @@ workspace = true
 
 [features]
 dev-login = ["tether-web/dev-login"]
+dev-docs = ["tether-web/dev-docs"]
+# Everything for local development.
+dev = ["dev-login", "dev-docs"]
 
 [[bin]]
 name = "tether"

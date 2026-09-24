@@ -14,7 +14,7 @@ use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Me {
     pub account_id: i64,
     pub is_owner: bool,
@@ -25,13 +25,13 @@ pub struct Me {
     pub permissions: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CharacterRef {
     pub id: i64,
     pub name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CharacterSummary {
     pub id: i64,
     pub name: String,
@@ -39,6 +39,8 @@ pub struct CharacterSummary {
 }
 
 /// `GET /api/me`: the signed-in account and its characters.
+#[utoipa::path(get, path = "/api/me", tag = "account", security(("session" = [])),
+    responses((status = 200, body = Me), (status = 401, description = "Not signed in")))]
 pub async fn me(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -74,12 +76,15 @@ pub async fn me(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetMain {
     pub character_id: i64,
 }
 
 /// `POST /api/me/main`: make one of your characters the main.
+#[utoipa::path(post, path = "/api/me/main", tag = "account", security(("session" = [])), request_body = SetMain,
+    responses((status = 204, description = "Main changed; tier re-evaluated"),
+              (status = 404, description = "Not one of your characters")))]
 pub async fn set_main(
     State(state): State<AppState>,
     session: CurrentSession,

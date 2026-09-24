@@ -93,7 +93,7 @@ cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features
 tools/bin/sqlx migrate run
 tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; commit .sqlx/
 cargo check --workspace
-cargo run -p tether-server --features dev-login   # /dev/login fixture sessions (debug builds only)
+cargo run -p tether-server --features dev   # /dev/login fixtures and Scalar at /docs (debug builds only)
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all

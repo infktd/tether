@@ -32,7 +32,7 @@ pub const SETUP_COOKIE: &str = "__Host-tether_setup";
 const SETUP_TTL: Duration = Duration::from_secs(60 * 60);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SetupState {
     /// No SSO client id yet: unlock with the setup token and enter it.
@@ -44,7 +44,7 @@ pub enum SetupState {
     Complete,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SetupStatus {
     pub state: SetupState,
     /// Register exactly this with CCP.
@@ -59,7 +59,7 @@ pub struct SetupStatus {
     pub suggested: Option<Suggestion>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Suggestion {
     pub id: i64,
     pub name: String,
@@ -67,6 +67,8 @@ pub struct Suggestion {
 }
 
 /// `GET /api/setup`: public; says which step comes next.
+#[utoipa::path(get, path = "/api/setup", tag = "setup",
+    responses((status = 200, body = SetupStatus)))]
 pub async fn status(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -125,12 +127,17 @@ async fn suggestion(state: &AppState, session: &CurrentSession) -> Option<Sugges
     })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UnlockIn {
     pub token: String,
 }
 
 /// `POST /api/setup/unlock`: exchange the setup token for a setup session.
+#[utoipa::path(post, path = "/api/setup/unlock", tag = "setup", request_body = UnlockIn,
+    responses((status = 204, description = "Unlocked; sets the setup cookie"),
+              (status = 403, description = "Wrong token"),
+              (status = 410, description = "Setup is finished"),
+              (status = 429, description = "Too many attempts from this IP")))]
 pub async fn unlock(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -173,17 +180,19 @@ pub async fn unlock(
     Ok((jar, StatusCode::NO_CONTENT).into_response())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SsoIn {
     pub client_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SsoOut {
     pub callback_url: String,
 }
 
 /// `POST /api/setup/sso`: set the EVE SSO client id.
+#[utoipa::path(post, path = "/api/setup/sso", tag = "setup", request_body = SsoIn,
+    responses((status = 200, body = SsoOut), (status = 400), (status = 401), (status = 403)))]
 pub async fn set_sso(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -215,13 +224,15 @@ pub async fn set_sso(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ProbeQuery {
     pub nonce: String,
 }
 
 /// `GET /api/setup/probe?nonce=`: echoes the nonce so the callback check
 /// can tell this instance answered.
+#[utoipa::path(get, path = "/api/setup/probe", tag = "setup", params(ProbeQuery),
+    responses((status = 200, body = String, content_type = "text/plain"), (status = 400)))]
 pub async fn probe(Query(query): Query<ProbeQuery>) -> Result<String, AppError> {
     let ok = !query.nonce.is_empty()
         && query.nonce.len() <= 64
@@ -236,7 +247,7 @@ fn probe_body(nonce: &str) -> String {
     format!("tether-probe:{nonce}")
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CheckOut {
     pub ok: bool,
     pub url: String,
@@ -247,6 +258,8 @@ pub struct CheckOut {
 /// redirect will reach it (DNS, TLS, reverse proxy) and confirm this
 /// instance answers. Matching the URL registered at CCP is proven by the
 /// first login.
+#[utoipa::path(post, path = "/api/setup/callback-check", tag = "setup",
+    responses((status = 200, body = CheckOut), (status = 401), (status = 403)))]
 pub async fn callback_check(
     State(state): State<AppState>,
     jar: CookieJar,
