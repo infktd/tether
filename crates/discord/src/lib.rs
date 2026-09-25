@@ -25,9 +25,11 @@ use twilight_model::id::Id;
 pub const AUTHORIZE_URL: &str = "https://discord.com/oauth2/authorize";
 /// `identify` to learn who they are; `guilds.join` so the bot can add them.
 pub const SCOPES: &str = "identify guilds.join";
-/// What the bot needs: Create Instant Invite (to add members), Manage
-/// Nicknames and Manage Roles.
+/// What the bot needs: Create Instant Invite (to add members), Kick Members
+/// (members who lose access leave the server, as in AA), Manage Nicknames
+/// and Manage Roles.
 pub const BOT_PERMISSIONS: Permissions = Permissions::CREATE_INVITE
+    .union(Permissions::KICK_MEMBERS)
     .union(Permissions::MANAGE_NICKNAMES)
     .union(Permissions::MANAGE_ROLES);
 
@@ -285,6 +287,8 @@ impl Mention {
 pub struct Member {
     pub roles: Vec<u64>,
     pub nick: Option<String>,
+    /// Their Discord name (display name if set), for the stored link.
+    pub username: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -493,6 +497,7 @@ impl Discord {
         let is_admin = granted.contains(Permissions::ADMINISTRATOR);
         let missing_permissions = [
             (Permissions::CREATE_INVITE, "Create Invite"),
+            (Permissions::KICK_MEMBERS, "Kick Members"),
             (Permissions::MANAGE_NICKNAMES, "Manage Nicknames"),
             (Permissions::MANAGE_ROLES, "Manage Roles"),
         ]
@@ -570,7 +575,28 @@ impl Discord {
         Ok(Some(Member {
             roles: member.roles.iter().map(|r| r.get()).collect(),
             nick: member.nick,
+            username: member
+                .user
+                .global_name
+                .clone()
+                .unwrap_or_else(|| member.user.name.clone()),
         }))
+    }
+
+    /// Removes a member from the server. Someone already gone is nothing
+    /// to do.
+    pub async fn kick(&self, config: &DiscordConfig, user_id: u64) -> Result<(), DiscordError> {
+        let bot = self.bot(config);
+        let (guild_id, user) = (id(config.guild_id, "server id")?, id(user_id, "user id")?);
+        match bot
+            .remove_guild_member(guild_id, user)
+            .await
+            .map_err(DiscordError::from)
+        {
+            Ok(_) => Ok(()),
+            Err(err) if err.code() == Some(codes::UNKNOWN_MEMBER) => Ok(()),
+            Err(err) => Err(err),
+        }
     }
 
     /// Sets (or with `None`, clears) the member's nickname.
@@ -850,8 +876,8 @@ mod tests {
     #[test]
     fn bot_invite_asks_for_exactly_what_the_bot_uses() {
         let url = Discord::bot_invite_url(123, 456);
-        // 1 (invite) + 1<<27 (nicknames) + 1<<28 (roles)
-        assert!(url.contains("permissions=402653185"), "{url}");
+        // 1 (invite) + 2 (kick) + 1<<27 (nicknames) + 1<<28 (roles)
+        assert!(url.contains("permissions=402653187"), "{url}");
         assert!(url.contains("scope=bot&"));
         assert!(url.contains("guild_id=456&disable_guild_select=true"));
     }

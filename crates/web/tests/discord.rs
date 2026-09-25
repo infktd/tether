@@ -123,7 +123,32 @@ async fn set_up(h: &Harness) -> (String, String) {
     make_member(h, &pilot).await;
     let saved = send(&h.app, form("/admin/discord", SETTINGS, &owner)).await;
     assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+    // Nickname syncing (on by default, as AA) off: tests that want it
+    // turn it on.
+    let off = send(&h.app, form("/admin/discord/options", "", &owner)).await;
+    assert_eq!(off.status, StatusCode::SEE_OTHER, "{}", off.body);
     (owner, pilot)
+}
+
+/// Turns nickname syncing on with a format for Member.
+async fn name_format(h: &Harness, owner: &str, format: &str) -> Res {
+    send(
+        &h.app,
+        form("/admin/discord/options", "sync_names=on", owner),
+    )
+    .await;
+    let body = format!(
+        "state_id=1&format={}",
+        format
+            .replace('%', "%25")
+            .replace('[', "%5B")
+            .replace(']', "%5D")
+            .replace('{', "%7B")
+            .replace('}', "%7D")
+            .replace(' ', "+")
+            .replace(':', "%3A")
+    );
+    send(&h.app, form("/admin/discord/names", &body, owner)).await
 }
 
 async fn map(h: &Harness, owner: &str, role: &str, grantee: &str) -> Res {
@@ -140,7 +165,7 @@ async fn map(h: &Harness, owner: &str, role: &str, grantee: &str) -> Res {
 
 /// Starts linking; returns the state Discord would echo and the link cookie.
 async fn start_link(h: &Harness, token: &str) -> (String, String) {
-    let res = send(&h.app, form("/profile/discord/link", "", token)).await;
+    let res = send(&h.app, form("/services/discord/link", "", token)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let location = res.location().to_owned();
     assert!(
@@ -370,7 +395,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
     let group_id = group.rsplit('/').next().unwrap();
     map(&h, &owner, BLUE_ROLE, &format!("group:{group_id}")).await;
 
-    let profile = page(&h, "/dashboard", &pilot).await;
+    let profile = page(&h, "/services", &pilot).await;
     assert!(profile.body.contains("Link Discord"), "{}", profile.body);
 
     mount_member_oauth(&h.discord_server).await;
@@ -389,12 +414,12 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
     let (state, browser) = start_link(&h, &pilot).await;
     let res = callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), "/dashboard");
+    assert_eq!(res.location(), "/services");
     assert!(res.set_cookie(LINK).unwrap().contains("Max-Age=0"));
 
-    let profile = page(&h, "/dashboard", &pilot).await;
-    assert!(profile.body.contains("Linked as"), "{}", profile.body);
-    assert!(profile.body.contains("Unpercieved"));
+    let profile = page(&h, "/services", &pilot).await;
+    assert!(profile.body.contains("Unpercieved"), "{}", profile.body);
+    assert!(profile.body.contains("Unlink"));
     let audit: serde_json::Value =
         sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'discord.link'")
             .fetch_one(&h.db)
@@ -440,7 +465,7 @@ async fn a_member_already_in_the_server_gets_the_roles_added(db: PgPool) {
 
     let (state, browser) = start_link(&h, &pilot).await;
     let res = callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-    assert_eq!(res.location(), "/dashboard", "{}", res.body);
+    assert_eq!(res.location(), "/services", "{}", res.body);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -531,32 +556,65 @@ async fn unlinking_queues_taking_the_roles_away(db: PgPool) {
     let (state, browser) = start_link(&h, &pilot).await;
     callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
 
-    let res = send(&h.app, form("/profile/discord/unlink", "", &pilot)).await;
-    assert_eq!(res.location(), "/dashboard");
+    let res = send(&h.app, form("/services/discord/unlink", "", &pilot)).await;
+    assert_eq!(res.location(), "/services");
     assert!(
-        page(&h, "/dashboard", &pilot)
+        page(&h, "/services", &pilot)
             .await
             .body
             .contains("Link Discord")
     );
-    let jobs = jobs_of_kind(&h.db, "discord.strip_roles").await;
+    let jobs = jobs_of_kind(&h.db, "discord.remove_member").await;
     assert_eq!(
         jobs,
         [serde_json::json!({ "discord_user_id": 333_333_333_333_333_333_i64 })]
     );
 
-    // The job takes every role Tether hands out.
-    for role in [MEMBER_ROLE, BLUE_ROLE] {
-        Mock::given(method("DELETE"))
-            .and(path(format!(
-                "/api/v10/guilds/{GUILD}/members/{USER}/roles/{role}"
-            )))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(1)
-            .mount(&h.discord_server)
-            .await;
-    }
-    tether_web::discord::strip_roles(&h.db, &h.key, &h.discord, 333_333_333_333_333_333)
+    // The job removes them from the server (AA).
+    Mock::given(method("DELETE"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    tether_web::discord::remove_member(&h.db, &h.key, &h.discord, 333_333_333_333_333_333, true)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_member_the_bot_may_not_kick_loses_tethers_roles_instead(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = set_up(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    mount_member_oauth(&h.discord_server).await;
+    Mock::given(method("PUT"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(fixture("added_member")))
+        .mount(&h.discord_server)
+        .await;
+    let (state, browser) = start_link(&h, &pilot).await;
+    callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
+    send(&h.app, form("/services/discord/unlink", "", &pilot)).await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+            ),
+        )
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!(
+            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{MEMBER_ROLE}"
+        )))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    tether_web::discord::remove_member(&h.db, &h.key, &h.discord, 333_333_333_333_333_333, true)
         .await
         .unwrap();
 }
@@ -587,13 +645,13 @@ async fn stripping_skips_someone_who_linked_again(db: PgPool) {
     for _ in 0..2 {
         let (state, browser) = start_link(&h, &pilot).await;
         callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-        send(&h.app, form("/profile/discord/unlink", "", &pilot)).await;
+        send(&h.app, form("/services/discord/unlink", "", &pilot)).await;
     }
     let (state, browser) = start_link(&h, &pilot).await;
     callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
     // Unlinked twice, linked again: both queued strips are no-ops now.
-    assert_eq!(jobs_of_kind(&h.db, "discord.strip_roles").await.len(), 2);
-    tether_web::discord::strip_roles(&h.db, &h.key, &h.discord, 333_333_333_333_333_333)
+    assert_eq!(jobs_of_kind(&h.db, "discord.remove_member").await.len(), 2);
+    tether_web::discord::remove_member(&h.db, &h.key, &h.discord, 333_333_333_333_333_333, true)
         .await
         .unwrap();
 }
@@ -616,16 +674,16 @@ async fn deleting_an_account_queues_taking_its_roles_away(db: PgPool) {
         .execute(&h.db)
         .await
         .unwrap();
-    assert_eq!(jobs_of_kind(&h.db, "discord.strip_roles").await.len(), 1);
+    assert_eq!(jobs_of_kind(&h.db, "discord.remove_member").await.len(), 1);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn the_profile_has_no_discord_card_until_it_is_set_up(db: PgPool) {
     let h = harness(db, true).await;
     let (_, pilot) = owner_and_pilot(&h).await;
-    let profile = page(&h, "/dashboard", &pilot).await;
+    let profile = page(&h, "/services", &pilot).await;
     assert!(!profile.body.contains("Link Discord"));
-    let link = send(&h.app, form("/profile/discord/link", "", &pilot)).await;
+    let link = send(&h.app, form("/services/discord/link", "", &pilot)).await;
     assert_eq!(link.status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
@@ -636,14 +694,10 @@ async fn guests_cannot_join_the_server(db: PgPool) {
     let (owner, pilot) = owner_and_pilot(&h).await;
     send(&h.app, form("/admin/discord", SETTINGS, &owner)).await;
 
-    let profile = page(&h, "/dashboard", &pilot).await;
-    assert!(
-        profile
-            .body
-            .contains("Guests can't join the Discord server")
-    );
+    let profile = page(&h, "/services", &pilot).await;
+    assert!(profile.body.contains("Your access doesn't include Discord"));
     assert!(!profile.body.contains("Link Discord"));
-    let refused = send(&h.app, form("/profile/discord/link", "", &pilot)).await;
+    let refused = send(&h.app, form("/services/discord/link", "", &pilot)).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN);
 
     // Started as Member, dropped to Guest before coming back from Discord.
@@ -738,7 +792,7 @@ async fn a_role_that_became_too_powerful_is_not_handed_out(db: PgPool) {
         .await;
     let (state, browser) = start_link(&h, &pilot).await;
     let res = callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-    assert_eq!(res.location(), "/dashboard", "{}", res.body);
+    assert_eq!(res.location(), "/services", "{}", res.body);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -806,9 +860,10 @@ async fn a_partial_join_is_undone_and_its_roles_queued_for_removal(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(links, 0);
+    // They were in the server before: only Tether's roles go, no kick.
     assert_eq!(
-        jobs_of_kind(&h.db, "discord.strip_roles").await,
-        [serde_json::json!({ "discord_user_id": 333_333_333_333_333_333_i64 })]
+        jobs_of_kind(&h.db, "discord.remove_member").await,
+        [serde_json::json!({ "discord_user_id": 333_333_333_333_333_333_i64, "kick": false })]
     );
     let undone: serde_json::Value =
         sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'discord.unlink'")
@@ -854,7 +909,7 @@ async fn linked_pilot(h: &Harness) -> (String, String, i64) {
         .await;
     let (state, browser) = start_link(h, &pilot).await;
     let res = callback(h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-    assert_eq!(res.location(), "/dashboard", "{}", res.body);
+    assert_eq!(res.location(), "/services", "{}", res.body);
     let account = me(h, &pilot).await["account_id"].as_i64().unwrap();
     (owner, pilot, account)
 }
@@ -992,7 +1047,7 @@ async fn syncing_gives_and_takes_managed_roles_and_leaves_others_alone(db: PgPoo
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn a_member_who_left_the_alliance_loses_their_roles(db: PgPool) {
+async fn a_member_who_left_the_alliance_is_removed_from_the_server(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
     map(&h, &owner, MEMBER_ROLE, "state:1").await;
@@ -1004,6 +1059,7 @@ async fn a_member_who_left_the_alliance_loses_their_roles(db: PgPool) {
         .await
         .unwrap();
 
+    clear_jobs(&h.db).await;
     tether_web::discord_sync::sync_member(
         &sync_context(&h),
         tether_db::accounts::AccountId(account),
@@ -1011,10 +1067,10 @@ async fn a_member_who_left_the_alliance_loses_their_roles(db: PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(
-        role_edits(&h).await,
-        [("DELETE".to_owned(), MEMBER_ROLE.to_owned())]
-    );
+    // Guest has no Discord access: unlinked, and the queued job removes
+    // them from the server (AA), rather than roles being edited.
+    assert!(role_edits(&h).await.is_empty());
+    assert_eq!(jobs_of_kind(&h.db, "discord.remove_member").await.len(), 1);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -1069,39 +1125,23 @@ async fn a_role_whose_mapping_was_removed_is_taken_back(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn nicknames_follow_the_template(db: PgPool) {
+async fn nicknames_follow_the_name_formatter(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
 
-    let bad = send(
-        &h.app,
-        form(
-            "/admin/discord/nickname",
-            "template=%5B%7Bcorp%7D%5D",
-            &owner,
-        ),
-    )
-    .await;
+    let bad = name_format(&h, &owner, "[{corp}] {name}").await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
-    assert!(bad.body.contains("needs {name}"), "{}", bad.body);
+    assert!(bad.body.contains("isn&#39;t a field"), "{}", bad.body);
 
     clear_jobs(&h.db).await;
-    let saved = send(
-        &h.app,
-        form(
-            "/admin/discord/nickname",
-            "template=%5B%7Bcorp%7D%5D+%7Bname%7D",
-            &owner,
-        ),
-    )
-    .await;
+    let saved = name_format(&h, &owner, "[{corp_ticker}] {character_name:.20}").await;
     assert_eq!(saved.location(), "/admin/discord");
-    assert_eq!(jobs_of_kind(&h.db, "discord.sync_all").await.len(), 1);
+    assert!(!jobs_of_kind(&h.db, "discord.sync_all").await.is_empty());
     assert!(
         page(&h, "/admin/discord", &owner)
             .await
             .body
-            .contains(r#"value="[{corp}] {name}""#)
+            .contains(r#"value="[{corp_ticker}] {character_name:.20}""#)
     );
 
     // The Mittani's corporation is the State War Academy (SWA).
@@ -1198,15 +1238,7 @@ async fn roles_sync_even_when_esi_is_down(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
     map(&h, &owner, MEMBER_ROLE, "state:1").await;
-    send(
-        &h.app,
-        form(
-            "/admin/discord/nickname",
-            "template=%5B%7Bcorp%7D%5D+%7Bname%7D",
-            &owner,
-        ),
-    )
-    .await;
+    name_format(&h, &owner, "[{corp_ticker}] {character_name}").await;
     Mock::given(method("GET"))
         .and(path("/corporations/1000167"))
         .respond_with(
@@ -1239,11 +1271,7 @@ async fn a_refused_takeback_is_retried_not_counted_as_done(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot, _) = linked_pilot(&h).await;
     map(&h, &owner, MEMBER_ROLE, "state:1").await;
-    send(
-        &h.app,
-        form("/admin/discord/nickname", "template=%7Bname%7D", &owner),
-    )
-    .await;
+    name_format(&h, &owner, "{character_name}").await;
     Mock::given(method("DELETE"))
         .respond_with(
             ResponseTemplate::new(403).set_body_json(
@@ -1260,10 +1288,16 @@ async fn a_refused_takeback_is_retried_not_counted_as_done(db: PgPool) {
         .expect(1)
         .mount(&h.discord_server)
         .await;
-    send(&h.app, form("/profile/discord/unlink", "", &pilot)).await;
-    let err = tether_web::discord::strip_roles(&h.db, &h.key, &h.discord, 333_333_333_333_333_333)
-        .await
-        .unwrap_err();
+    send(&h.app, form("/services/discord/unlink", "", &pilot)).await;
+    let err = tether_web::discord::remove_member(
+        &h.db,
+        &h.key,
+        &h.discord,
+        333_333_333_333_333_333,
+        true,
+    )
+    .await
+    .unwrap_err();
     assert!(
         matches!(&err, tether_jobs::JobError::Retry(m) if m.contains("refused")),
         "{err:?}"
@@ -1749,4 +1783,158 @@ async fn a_ping_nothing_will_send_shows_as_failed(db: PgPool) {
     let listed = page(&h, "/pings", &owner).await.body;
     assert!(listed.contains("Failed"), "{listed}");
     assert!(listed.contains("unavailable for too long"));
+}
+
+// ---- services -------------------------------------------------------------
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_services_page_shows_discord_by_access(db: PgPool) {
+    let h = harness(db, true).await;
+    let (_, pilot) = set_up(&h).await;
+    let page_ = page(&h, "/services", &pilot).await;
+    assert_eq!(page_.status, StatusCode::OK);
+    assert!(page_.body.contains("Link Discord"), "{}", page_.body);
+    let nav = page(&h, "/dashboard", &pilot).await;
+    assert!(nav.body.contains(r#"href="/services""#));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn losing_discord_access_unlinks_notifies_and_removes(db: PgPool) {
+    let h = harness(db, true).await;
+    let (_, pilot, account) = linked_pilot(&h).await;
+    clear_jobs(&h.db).await;
+    // Back to Guest, which has no Discord access.
+    sqlx::query("UPDATE core.accounts SET state_id = 3 WHERE id = $1")
+        .bind(account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(
+        tether_db::discord::link_for(&h.db, tether_db::accounts::AccountId(account))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        jobs_of_kind(&h.db, "discord.remove_member").await,
+        [serde_json::json!({ "discord_user_id": 333_333_333_333_333_333_i64 })]
+    );
+    let notices = tether_db::notifications::list(&h.db, tether_db::accounts::AccountId(account))
+        .await
+        .unwrap();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.title == "Discord Account Disabled"),
+        "{notices:?}"
+    );
+    let _ = pilot;
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn changing_who_has_discord_access_checks_everyone(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, _) = linked_pilot(&h).await;
+    clear_jobs(&h.db).await;
+    let grant: i64 = sqlx::query_scalar(
+        "SELECT id FROM core.permission_grants WHERE permission = 'discord.access_discord' AND state_id = 2",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let res = send(
+        &h.app,
+        form(&format!("/admin/permissions/{grant}/revoke"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(jobs_of_kind(&h.db, "discord.sync_all").await.len(), 1);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn unmapped_roles_go_when_the_setting_is_on(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _, account) = linked_pilot(&h).await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    send(
+        &h.app,
+        form(
+            "/admin/groups/reserved",
+            "name=Allied&reason=Discord+only",
+            &owner,
+        ),
+    )
+    .await;
+    let res = send(
+        &h.app,
+        form("/admin/discord/options", "strip_unmapped=on", &owner),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/discord");
+    // Member (mapped), Allied (a reserved name), Fleet Commander (can
+    // @everyone: staff), Server Booster (Discord's own).
+    mount_member(
+        &h,
+        &[
+            MEMBER_ROLE,
+            "500000000000000004",
+            "500000000000000006",
+            "500000000000000005",
+        ],
+        None,
+    )
+    .await;
+    mount_role_edits(&h).await;
+    let sync = || async {
+        tether_web::discord_sync::sync_member(
+            &sync_context(&h),
+            tether_db::accounts::AccountId(account),
+            &[],
+        )
+        .await
+        .unwrap();
+    };
+    sync().await;
+    assert!(role_edits(&h).await.is_empty());
+    // Not reserved any more: it goes.
+    send(
+        &h.app,
+        form("/admin/groups/reserved/remove", "name=Allied", &owner),
+    )
+    .await;
+    sync().await;
+    assert_eq!(
+        role_edits(&h).await,
+        [("DELETE".to_owned(), "500000000000000004".to_owned())]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_sync_refreshes_the_stored_discord_name(db: PgPool) {
+    let h = harness(db, true).await;
+    let (_, _, account) = linked_pilot(&h).await;
+    sqlx::query("UPDATE core.discord_links SET username = 'old name'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    mount_member(&h, &[], None).await;
+    tether_web::discord_sync::sync_member(
+        &sync_context(&h),
+        tether_db::accounts::AccountId(account),
+        &[],
+    )
+    .await
+    .unwrap();
+    let link = tether_db::discord::link_for(&h.db, tether_db::accounts::AccountId(account))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(link.username, "Unpercieved");
 }

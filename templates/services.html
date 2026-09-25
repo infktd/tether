@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+{% block title %}Services{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Services</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title">Services</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">The alliance's services you can use. Access comes with your state and groups; if you lose it, you're removed from the service.</p>
+  </div>
+  {% if let Some(discord) = discord %}
+  <section class="card data-card">
+    <table class="table">
+      <thead><tr><th scope="col">Service</th><th scope="col">Account</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="font-medium">Discord</div>
+            <div class="text-xs text-muted-foreground">The server, with the roles for your state and groups</div>
+          </td>
+          <td>
+            {% if let Some(name) = discord.linked %}<span class="font-medium">{{ name }}</span>
+            {% else if !discord.may_join %}<span class="text-sm text-muted-foreground">Your access doesn't include Discord</span>
+            {% else %}<span class="text-sm text-muted-foreground">Not linked</span>{% endif %}
+          </td>
+          <td class="text-right">
+            {% if discord.linked.is_some() %}
+            <form method="post" action="/services/discord/unlink" hx-boost="true" hx-confirm="Unlink Discord? You'll leave the server.">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Unlink</button>
+            </form>
+            {% else if discord.may_join %}
+            <form method="post" action="/services/discord/link">
+              <button type="submit" class="btn" data-variant="primary" data-size="sm">Link Discord</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  {% else %}
+  <section class="card"><section><p class="text-sm text-muted-foreground">No services are set up yet.</p></section></section>
+  {% endif %}
+</div>
+{% endblock %}

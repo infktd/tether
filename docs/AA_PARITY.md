@@ -24,8 +24,8 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Permissions; Permissions Audit | Permissions | Add **Permissions Audit** |
 | Token Management | **Token Management** | done |
 | Notifications | same | done |
-| Services, Services Management; "Can access the Discord service" | Discord (admin), Discord card on the profile | **Services** page for users; access by permission (see Services) |
-| Name format config, `{character_name}`, `{corp_ticker}` ... | nickname template: `{name}`, `{corp}`, `{alliance}` | AA's **Name Formatter** fields, one format per state |
+| Services, Services Management; "Can access the Discord service" | **Services** page; `discord.access_discord` | done |
+| Name format config, `{character_name}`, `{corp_ticker}` ... | **Name Formatter**, AA's fields | done |
 | Corporation Stats: Mains, Members, Unregistered, Update Now | Corp Stats, inside Compliance | Own page **Corporation Stats**, AA's tabs |
 | Member Audit → Reports → User Compliance; Compliance Groups; Register Character | Compliance page, Compliant group, Register your characters | **Compliance Report**, **Compliance Group**, **Register Character** |
 | Auto Groups | none | Build |
@@ -51,7 +51,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Leave requests, `GROUPMANAGEMENT_AUTO_LEAVE` | leaving non-open groups needs approval unless auto-leave is on | same (setting off by default) | done |
 | Group Management: Group Requests (Join/Leave, Accept/Reject), Group Membership (View Members, Audit Members, Copy Direct Join Link) | | same | done |
 | Group Audit Log (RequestLog) | per group: requestor, character, corporation, type, action, actor | same, plus the global audit log | done |
-| Reserved group names | names groups can't use; matching Discord roles left alone | names groups can't use; Discord side with Services (the strip-unmapped option) | partial: Discord with Services |
+| Reserved group names | names groups can't use; matching Discord roles left alone | same (Discord's strip-unmapped option leaves them) | done |
 | `request_groups` permission | who may request non-public groups (usually via Member) | same, granted to Member | done |
 | Permissions on users, groups, states | | states and groups only (never users, F6) | done, deliberately stricter |
 | Staff can't change permissions; superuser can | | `admin.permissions`; owner holds everything | done |
@@ -62,9 +62,9 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Menu (reorder, hide, folders, custom links) | | fixed sidebar | missing: milestone 2 |
 | Themes, Custom CSS | | dark theme; accent colour setting designed but not built | partial: build the accent setting; no custom CSS (plugins never ship CSS) |
 | Analytics | opt-out telemetry to Google Analytics | none | skip: no telemetry (N5) |
-| Services framework | per-service access permission; access removed when the permission goes | Discord for any state but Guest | partial: access by permission |
-| Discord | Link Discord Server, roles mirror groups, nickname sync, kicked on losing access | explicit role mapping, state roles, nickname sync, fleet pings; not kicked | partial: see Behaviour |
-| Name Formatter | one format per service per state; AA's field list | one template, three fields | partial |
+| Services framework | per-service access permission; access removed when the permission goes | same, for Discord | done |
+| Discord | Link Discord Server, roles mirror groups, nickname sync, kicked on losing access | explicit role mapping (plus an option to strip unmapped roles), nickname sync, kicked on losing access or unlinking, fleet pings | done (mapping deliberately explicit) |
+| Name Formatter | one format per service per state; AA's field list | one format per state (Discord), AA's fields and format specs | done |
 | Mumble, TeamSpeak 3, Openfire/Jabber, phpBB3, SMF, IPS4, XenForo, Discourse | | none | after launch |
 | Periodic tasks: affiliation update, token cleanup | | hourly affiliation sync, daily token check | done |
 
@@ -146,9 +146,9 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 
 **Services and Discord**
 
-- **Losing access kicks.** When an account loses Discord access (state, permission, deactivation, a lost main, or its deletion), the bot removes the member from the server and unlinks them, and they're notified. The bot needs Kick Members. Unlinking by the user also leaves the server. *Tether today: mapped roles are stripped; the member stays in the server and stays linked.*
+- **Losing access kicks.** When an account loses Discord access (state, permission, deactivation, a lost main, or its deletion), the bot removes the member from the server and unlinks them, and they're notified. The bot needs Kick Members. Unlinking by the user also leaves the server. If the bot may not kick someone (no Kick Members, or the server owner), it takes Tether's roles instead.
 - Access is by a permission ("Can access the Discord service", granted to Member and Blue by default), re-checked on state, permission and group changes.
-- **Roles: explicit mapping stays** (AA mirrors groups and states by name and creates roles; a same-named group can then hand out a privileged role). **(decided)** A setting adds AA's behaviour of removing every unmapped role except Discord-managed roles and reserved names. **(decided)**
+- **Roles: explicit mapping stays** (AA mirrors groups and states by name and creates roles; a same-named group can then hand out a privileged role). **(decided)** A setting adds AA's behaviour of removing every unmapped role except Discord-managed roles and reserved names **(decided)**, and (stricter than AA) moderation and admin roles, so one checkbox can't strip the server's staff.
 - **Name Formatter**: one format per state; AA's fields (`character_name`, `character_id`, `corp_ticker`, `corp_name`, `corp_id`, `alliance_ticker`, `alliance_name`, `alliance_id`, `alliance_or_corp_name`, `alliance_or_corp_ticker`, `username`) with format specs such as `{character_name:.20}`; default `{character_name}`; 32 characters.
 - The stored Discord username refreshes with the daily sync.
 

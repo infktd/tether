@@ -38,26 +38,6 @@
 
 {% include "profile_characters.html" %}
 
-{% if let Some(discord) = discord %}
-<section class="card">
-  <header><h2>Discord</h2></header>
-  <section class="flex items-center justify-between gap-4">
-    {% if let Some(name) = discord.linked %}
-    <p class="text-sm">Linked as <strong class="text-foreground">{{ name }}</strong>. You get the server roles for your state and groups.</p>
-    <form method="post" action="/profile/discord/unlink" hx-boost="true" hx-confirm="Unlink Discord? You'll lose the roles Tether gave you.">
-      <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Unlink</button>
-    </form>
-    {% else if !discord.may_join %}
-    <p class="text-sm text-muted-foreground">Guests can't join the Discord server through Tether.</p>
-    {% else %}
-    <p class="text-sm">Link your Discord account to join the server with the roles for your state and groups.</p>
-    <form method="post" action="/profile/discord/link" hx-boost="false">
-      <button type="submit" class="btn" data-variant="primary">Link Discord</button>
-    </form>
-    {% endif %}
-  </section>
-</section>
-{% endif %}
 
 <section class="card">
   <header><h2>Corporation Stats</h2><p>Share your corporation's member list so officers can see who hasn't registered. Any member can share it; an admin approves it before it's used.</p></header>

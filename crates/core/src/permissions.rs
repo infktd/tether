@@ -16,6 +16,8 @@ pub const ADMIN_USERS: &str = "admin.users";
 pub const GROUP_MANAGEMENT: &str = "group_management";
 /// AA's `request_groups`: see and ask to join groups that aren't Public.
 pub const REQUEST_GROUPS: &str = "request_groups";
+/// AA's `discord.access_discord`: may link Discord and be in the server.
+pub const DISCORD_ACCESS: &str = "discord.access_discord";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
@@ -28,6 +30,7 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Group Management: accept and reject requests, see and remove members, and read the audit log of every group that isn't Internal",
     ),
     (REQUEST_GROUPS, "Can request non-public groups"),
+    (DISCORD_ACCESS, "Can access the Discord service"),
     (
         ADMIN_PERMISSIONS,
         "Grant and revoke permissions (effectively full admin: holders can grant themselves anything)",

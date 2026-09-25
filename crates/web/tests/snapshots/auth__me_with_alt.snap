@@ -32,6 +32,7 @@ expression: "me(&h, &after_alt).await"
     "admin.system",
     "admin.users",
     "compliance.view",
+    "discord.access_discord",
     "fleet.ping",
     "group_management",
     "request_groups"

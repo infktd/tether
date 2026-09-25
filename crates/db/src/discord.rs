@@ -319,9 +319,10 @@ pub async fn queue_sync<'e>(
     Ok(())
 }
 
-/// What the nickname template is filled from: the account's main.
+/// What the Name Formatter fills from: the account's main.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainCharacter {
+    pub id: i64,
     pub name: String,
     pub corporation_id: Option<i64>,
     pub alliance_id: Option<i64>,
@@ -333,7 +334,7 @@ pub async fn main_character<'e>(
 ) -> Result<Option<MainCharacter>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT c.name, c.corporation_id, c.alliance_id
+        SELECT c.id, c.name, c.corporation_id, c.alliance_id
         FROM core.accounts a
         JOIN core.characters c ON c.id = a.main_character_id
         WHERE a.id = $1
@@ -343,8 +344,144 @@ pub async fn main_character<'e>(
     .fetch_optional(executor)
     .await?;
     Ok(row.map(|r| MainCharacter {
+        id: r.id,
         name: r.name,
         corporation_id: r.corporation_id,
         alliance_id: r.alliance_id,
     }))
+}
+
+/// Updates a link's stored Discord name (refreshed on each sync).
+pub async fn set_username<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    discord_user_id: i64,
+    username: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE core.discord_links SET username = $3
+        WHERE account_id = $1 AND discord_user_id = $2 AND username <> $3
+        "#,
+        account.0,
+        discord_user_id,
+        username,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// The Name Formatter's format for a state, if it has one.
+pub async fn name_format<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    state: tether_core::states::StateId,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT format FROM core.discord_name_formats WHERE state_id = $1",
+        state.0
+    )
+    .fetch_optional(executor)
+    .await
+}
+
+/// Every state's format, by state.
+pub async fn name_formats<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<Vec<(tether_core::states::StateId, String)>, sqlx::Error> {
+    let rows = sqlx::query!("SELECT state_id, format FROM core.discord_name_formats")
+        .fetch_all(executor)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (tether_core::states::StateId(r.state_id), r.format))
+        .collect())
+}
+
+/// Sets a state's format, or with `None` returns it to AA's default.
+pub async fn set_name_format<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    state: tether_core::states::StateId,
+    format: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    match format {
+        Some(format) => {
+            sqlx::query!(
+                r#"
+                INSERT INTO core.discord_name_formats (state_id, format) VALUES ($1, $2)
+                ON CONFLICT (state_id) DO UPDATE SET format = EXCLUDED.format
+                "#,
+                state.0,
+                format
+            )
+            .execute(executor)
+            .await?;
+        }
+        None => {
+            sqlx::query!(
+                "DELETE FROM core.discord_name_formats WHERE state_id = $1",
+                state.0
+            )
+            .execute(executor)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// The account's state, for its name format.
+pub async fn account_state_id<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<Option<tether_core::states::StateId>, sqlx::Error> {
+    let id = sqlx::query_scalar!(
+        "SELECT state_id FROM core.accounts WHERE id = $1",
+        account.0
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(id.map(tether_core::states::StateId))
+}
+
+/// Removes the account's link only if it's still to this Discord user.
+pub async fn unlink_user<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    discord_user_id: i64,
+) -> Result<Option<Link>, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        DELETE FROM core.discord_links WHERE account_id = $1 AND discord_user_id = $2
+        RETURNING discord_user_id, username, linked_at
+        "#,
+        account.0,
+        discord_user_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| Link {
+        account,
+        discord_user_id: r.discord_user_id,
+        username: r.username,
+        linked_at: r.linked_at,
+    }))
+}
+
+/// Marks this Discord user's queued removal as roles-only (they were in
+/// the server before a link that failed).
+pub async fn keep_in_server<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    discord_user_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE core.jobs SET payload = payload || '{"kick": false}'::jsonb
+        WHERE kind = 'discord.remove_member' AND state = 'queued'
+          AND payload->>'discord_user_id' = $1::bigint::text
+        "#,
+        discord_user_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
 }

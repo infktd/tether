@@ -425,9 +425,10 @@ async fn admin_permissions_never_go_to_guest_or_open_groups(db: PgPool) {
     assert_eq!(open_grant.status, StatusCode::BAD_REQUEST);
     assert!(open_grant.body.contains("anyone can join it"));
 
-    // Only the default: request_groups for Member.
+    // Only the defaults: request_groups and Discord access.
     let grants: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM core.permission_grants WHERE permission <> 'request_groups'",
+        "SELECT count(*) FROM core.permission_grants \
+         WHERE permission NOT IN ('request_groups', 'discord.access_discord')",
     )
     .fetch_one(&h.db)
     .await

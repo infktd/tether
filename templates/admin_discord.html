@@ -150,14 +150,30 @@
     {% endif %}
   </section>
 
-  <form class="card" method="post" action="/admin/discord/nickname">
-    <header><h2>Nicknames</h2><p>Set every linked member's server nickname from their main character. Leave empty to leave nicknames alone.</p></header>
-    <section class="grid gap-2 max-w-xl">
-      <label class="label" for="template">Template</label>
-      <input class="input num" type="text" id="template" name="template" value="{{ nickname_template }}" maxlength="100" placeholder="[{corp}] {name}" spellcheck="false">
-      <p class="text-xs text-muted-foreground">Use {name}, {corp} and {alliance} (the tickers). Empty brackets are dropped for pilots without an alliance, and nicknames are cut to Discord's 32 characters. The server owner's nickname can't be changed by bots.</p>
+  <form class="card" method="post" action="/admin/discord/options">
+    <header><h2>Service settings</h2></header>
+    <section class="grid gap-3">
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="sync_names" value="on"{% if options.sync_names %} checked{% endif %}> <span><span class="font-medium">Set nicknames</span> · every linked member's server nickname comes from the Name Formatter below.</span></label>
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="strip_unmapped" value="on"{% if options.strip_unmapped %} checked{% endif %}> <span><span class="font-medium">Remove unmapped roles</span> · linked members lose every role not mapped to them here, except Discord's own roles and roles named after a reserved group name.</span></label>
     </section>
-    <footer><button type="submit" class="btn" data-variant="primary">Save template</button></footer>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
   </form>
+
+  <section class="card">
+    <header><h2>Name Formatter</h2><p>One nickname format per state, filled from each member's main character. Empty uses <span class="num">{character_name}</span>. Nicknames are cut to Discord's 32 characters, empty brackets are dropped for pilots without an alliance, and the server owner's nickname can't be changed by bots.</p></header>
+    <section class="flex flex-col gap-4">
+      <p class="text-xs text-muted-foreground">Fields: {% for f in fields %}<span class="num">{{ "{" }}{{ f }}{{ "}" }}</span>{% if !loop.last %}, {% endif %}{% endfor %}. A field can take a format spec, such as <span class="num">{character_name:.20}</span> to cut it to 20 characters.</p>
+      {% for f in formats %}
+      <form method="post" action="/admin/discord/names" class="flex items-end gap-2 max-w-2xl">
+        <input type="hidden" name="state_id" value="{{ f.state_id }}">
+        <div class="grid gap-2 grow">
+          <label class="label" for="format-{{ f.state_id }}">{{ f.state_name }}</label>
+          <input class="input num" type="text" id="format-{{ f.state_id }}" name="format" value="{{ f.format }}" maxlength="100" placeholder="{character_name}" spellcheck="false">
+        </div>
+        <button type="submit" class="btn" data-variant="outline">Save</button>
+      </form>
+      {% endfor %}
+    </section>
+  </section>
 </div>
 {% endblock %}

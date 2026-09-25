@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.discord_links SET username = $3\n        WHERE account_id = $1 AND discord_user_id = $2 AND username <> $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "379c85cf100b3cf483953bad2e776627045d947b8c7265394826813efb6c4d73"
+}

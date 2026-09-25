@@ -13,9 +13,12 @@ pub const SSO_LAST_ERROR: &str = "sso.last_error";
 pub const DISCORD_APPLICATION_ID: &str = "discord.application_id";
 /// The Discord server members join, as a string.
 pub const DISCORD_GUILD_ID: &str = "discord.guild_id";
-/// Nickname template such as `[{corp}] {name}`; unset means Tether leaves
-/// nicknames alone.
-pub const DISCORD_NICKNAME_TEMPLATE: &str = "discord.nickname_template";
+/// AA's `DISCORD_SYNC_NAMES`: whether Tether sets members' nicknames (by
+/// the Name Formatter). On unless set.
+pub const DISCORD_SYNC_NAMES: &str = "discord.sync_names";
+/// Removes every role Tether doesn't map to a member, except Discord's
+/// own (integration) roles and reserved group names. Off unless set.
+pub const DISCORD_STRIP_UNMAPPED: &str = "discord.strip_unmapped";
 
 /// AA's `GROUPMANAGEMENT_AUTO_LEAVE`: `true` lets members leave
 /// requestable groups without approval. Off unless set.
@@ -29,10 +32,19 @@ pub async fn get_bool<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     key: &str,
 ) -> Result<bool, sqlx::Error> {
+    get_bool_or(executor, key, false).await
+}
+
+/// A boolean setting, `default` when unset.
+pub async fn get_bool_or<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    key: &str,
+    default: bool,
+) -> Result<bool, sqlx::Error> {
     Ok(get(executor, key)
         .await?
         .and_then(|v| v.as_bool())
-        .unwrap_or(false))
+        .unwrap_or(default))
 }
 
 pub async fn get<'e>(

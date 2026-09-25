@@ -41,6 +41,13 @@ pub struct Status {
     pub missing_permissions: Vec<&'static str>,
 }
 
+/// A state's Name Formatter format on the admin page (empty: AA's default).
+pub struct FormatRow {
+    pub state_id: i64,
+    pub state_name: String,
+    pub format: String,
+}
+
 #[derive(Template)]
 #[template(path = "admin_discord.html")]
 struct DiscordPage {
@@ -50,7 +57,9 @@ struct DiscordPage {
     guild_id: String,
     has_client_secret: bool,
     has_bot_token: bool,
-    nickname_template: String,
+    formats: Vec<FormatRow>,
+    options: discord::Options,
+    fields: &'static [&'static str],
     invite_url: Option<String>,
     status: Option<Status>,
     /// Discord couldn't be checked with the saved settings.
@@ -88,10 +97,7 @@ async fn page(
         .map(|(app, guild)| Discord::bot_invite_url(app, guild));
     let (has_client_secret, has_bot_token) =
         (stored.client_secret.is_some(), stored.bot_token.is_some());
-    let nickname_template =
-        tether_db::settings::get_string(&state.db, tether_db::settings::DISCORD_NICKNAME_TEMPLATE)
-            .await?
-            .unwrap_or_default();
+    let saved_formats = db::name_formats(&state.db).await?;
 
     let (check, status_error) = match stored.config() {
         Some(config) => match state.discord.check(&config).await {
@@ -101,6 +107,18 @@ async fn page(
         None => (None, None),
     };
     let states = state_options(state).await?;
+    let formats = states
+        .iter()
+        .map(|s| FormatRow {
+            state_id: s.id,
+            state_name: s.name.clone(),
+            format: saved_formats
+                .iter()
+                .find(|(id, _)| id.0 == s.id)
+                .map(|(_, f)| f.clone())
+                .unwrap_or_default(),
+        })
+        .collect();
     let all_groups = groups::summaries(&state.db).await?;
     let group_name = |id: GroupId| {
         all_groups
@@ -158,7 +176,9 @@ async fn page(
         guild_id,
         has_client_secret,
         has_bot_token,
-        nickname_template,
+        formats,
+        options: discord::options(&state.db).await?,
+        fields: tether_core::nickname::FIELDS,
         invite_url,
         status,
         status_error,
@@ -222,19 +242,52 @@ pub async fn save_settings(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct NicknameForm {
+pub struct NameFormatForm {
+    state_id: i64,
     #[serde(default)]
-    template: String,
+    format: String,
 }
 
-/// `POST /admin/discord/nickname`
-pub async fn save_nickname(
+/// `POST /admin/discord/names`: one state's Name Formatter format.
+pub async fn save_name_format(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Form(form): Form<NicknameForm>,
+    Form(form): Form<NameFormatForm>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
-    match discord::save_nickname_template(&state, session.account, &form.template).await {
+    match discord::save_name_format(
+        &state,
+        session.account,
+        tether_core::states::StateId(form.state_id),
+        &form.format,
+    )
+    .await
+    {
+        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Err(err) => page(&state, shell, None, Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OptionsForm {
+    #[serde(default)]
+    sync_names: Option<String>,
+    #[serde(default)]
+    strip_unmapped: Option<String>,
+}
+
+/// `POST /admin/discord/options`
+pub async fn save_options(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<OptionsForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
+    let options = discord::Options {
+        sync_names: form.sync_names.is_some(),
+        strip_unmapped: form.strip_unmapped.is_some(),
+    };
+    match discord::save_options(&state, session.account, options).await {
         Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
@@ -308,7 +361,28 @@ pub async fn remove_mapping(
     }
 }
 
-/// `POST /profile/discord/link`: off to Discord to approve.
+#[derive(Template)]
+#[template(path = "services.html")]
+struct ServicesPage {
+    shell: Shell,
+    discord: Option<DiscordCard>,
+}
+
+/// `GET /services`: AA's Services page (Discord, for now).
+pub async fn services(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    let loaded = super::load(&state, &session, "services").await?;
+    let page = ServicesPage {
+        shell: loaded.shell,
+        discord: card(&state, session.account).await?,
+    };
+    Ok(render(StatusCode::OK, &page))
+}
+
+/// `POST /services/discord/link`: off to Discord to approve.
 pub async fn link(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -319,14 +393,15 @@ pub async fn link(
     Ok((jar, Redirect::to(&url)).into_response())
 }
 
-/// `POST /profile/discord/unlink`
+/// `POST /services/discord/unlink`: unlinks, which removes them from the
+/// server.
 pub async fn unlink(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     discord::unlink(&state, session.account).await?;
-    Ok(Redirect::to("/dashboard").into_response())
+    Ok(Redirect::to("/services").into_response())
 }
 
 /// `GET /discord/callback`: Discord sends the member back here.
@@ -339,16 +414,16 @@ pub async fn callback(
     let account = session.map(|s| s.account);
     let (jar, result) = discord::finish_link(&state, account, jar, query).await;
     match result {
-        Ok(_) => (jar, Redirect::to("/dashboard")).into_response(),
+        Ok(_) => (jar, Redirect::to("/services")).into_response(),
         Err(err) => (jar, error_page(err.status(), err.message())).into_response(),
     }
 }
 
-/// The profile page's Discord card: `None` when Discord isn't set up.
+/// The Services page's Discord card: `None` when Discord isn't set up.
 pub struct DiscordCard {
     /// The linked Discord name.
     pub linked: Option<String>,
-    /// Not Guest: may join the server.
+    /// Holds Discord access: may join the server.
     pub may_join: bool,
 }
 

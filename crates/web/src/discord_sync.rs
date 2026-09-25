@@ -75,24 +75,31 @@ pub(crate) fn discord_failure(err: DiscordError) -> JobError {
     }
 }
 
-/// The nickname for the account, if a template is set. Tickers come from
-/// ESI through the cache (stale ones if ESI is down).
+/// The account's nickname by its state's Name Formatter format (AA's
+/// default `{character_name}`), unless nickname syncing is off. Tickers and
+/// names come from ESI through the cache (stale ones if ESI is down).
 async fn nickname_for(
     ctx: &SyncContext,
     account: AccountId,
 ) -> Result<Option<String>, tether_esi::names::NamesError> {
-    let Some(template) = settings::get_string(&ctx.db, settings::DISCORD_NICKNAME_TEMPLATE)
-        .await?
-        .filter(|t| !t.trim().is_empty())
-    else {
+    if !settings::get_bool_or(&ctx.db, settings::DISCORD_SYNC_NAMES, true).await? {
         return Ok(None);
-    };
+    }
     let Some(main) = db::main_character(&ctx.db, account).await? else {
         return Ok(None);
     };
-    let mut corp = String::new();
-    if let Some(id) = main.corporation_id {
-        corp = tether_esi::names::ticker(
+    let format = match db::account_state_id(&ctx.db, account).await? {
+        Some(state) => db::name_format(&ctx.db, state).await?,
+        None => None,
+    }
+    .unwrap_or_else(|| nickname::DEFAULT_FORMAT.to_owned());
+    let wants = |field: &str| format.contains(field);
+    let (mut corp_ticker, mut alliance_ticker) = (String::new(), String::new());
+    if let Some(id) = main
+        .corporation_id
+        .filter(|_| wants("corp_ticker") || wants("alliance_or_corp_ticker"))
+    {
+        corp_ticker = tether_esi::names::ticker(
             &ctx.db,
             &ctx.esi,
             id,
@@ -101,18 +108,41 @@ async fn nickname_for(
         )
         .await?;
     }
-    let mut alliance = String::new();
-    if let Some(id) = main.alliance_id {
-        alliance =
+    if let Some(id) = main
+        .alliance_id
+        .filter(|_| wants("alliance_ticker") || wants("alliance_or_corp_ticker"))
+    {
+        alliance_ticker =
             tether_esi::names::ticker(&ctx.db, &ctx.esi, id, EntityKind::Alliance, Priority::Bulk)
                 .await?;
     }
+    let ids: Vec<i64> = [main.corporation_id, main.alliance_id]
+        .into_iter()
+        .flatten()
+        .collect();
+    let names = if (wants("corp_name") || wants("alliance_name") || wants("alliance_or_corp_name"))
+        && !ids.is_empty()
+    {
+        tether_esi::names::resolve(&ctx.db, &ctx.esi, &ids, Priority::Bulk).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+    let name_of = |id: Option<i64>| {
+        id.and_then(|id| names.get(&id))
+            .map_or(String::new(), |n| n.name.clone())
+    };
+    let (corp_name, alliance_name) = (name_of(main.corporation_id), name_of(main.alliance_id));
     Ok(Some(nickname::render(
-        &template,
+        &format,
         &Parts {
-            name: &main.name,
-            corp: &corp,
-            alliance: &alliance,
+            character_name: &main.name,
+            character_id: main.id,
+            corp_ticker: &corp_ticker,
+            corp_name: &corp_name,
+            corp_id: main.corporation_id,
+            alliance_ticker: &alliance_ticker,
+            alliance_name: &alliance_name,
+            alliance_id: main.alliance_id,
         },
     )))
 }
@@ -121,6 +151,8 @@ async fn nickname_for(
 struct Synced {
     user: u64,
     nick: Option<String>,
+    /// Their current Discord name, to keep the stored one fresh.
+    username: String,
     owner_id: u64,
     /// Roles this job was asked to take back (their mapping is gone) that
     /// Discord refused: nothing else remembers them.
@@ -146,6 +178,17 @@ pub async fn sync_member(
     else {
         return Ok(());
     };
+    // Losing Discord access (state, permission, groups, deactivation, a
+    // lost main) unlinks, which removes them from the server (AA).
+    if !crate::discord::has_access(&ctx.db, account)
+        .await
+        .map_err(|err| JobError::retry(err.message().to_owned()))?
+    {
+        crate::discord::revoke_access(&ctx.db, account)
+            .await
+            .map_err(JobError::retry)?;
+        return Ok(());
+    }
 
     // Under the user's lock, like linking and role removal.
     let mut tx = ctx.db.begin().await.map_err(JobError::retry)?;
@@ -188,6 +231,10 @@ pub async fn sync_member(
     let Some(synced) = synced? else {
         return Ok(());
     };
+    // AA refreshes stored Discord names daily; every sync does here.
+    db::set_username(&ctx.db, account, link.discord_user_id, &synced.username)
+        .await
+        .map_err(JobError::retry)?;
 
     let nick = match nickname_for(ctx, account).await {
         Ok(nick) => nick,
@@ -269,9 +316,37 @@ async fn sync_roles(
     let assignable = |role: &u64| check.roles.iter().any(|r| r.id == *role && r.assignable);
     let current: HashSet<u64> = member.roles.iter().copied().collect();
     let mut add: Vec<u64> = desired.difference(&current).copied().collect();
+    // With the setting on, every role they aren't mapped to goes, as in
+    // AA, except Discord's own (integration) roles, which no bot may take,
+    // roles named after a reserved group name, and (stricter than AA)
+    // moderation and admin roles, so a checkbox can't strip the server's
+    // staff.
+    let strip_unmapped = settings::get_bool(&ctx.db, settings::DISCORD_STRIP_UNMAPPED)
+        .await
+        .map_err(JobError::retry)?;
+    let reserved: HashSet<String> = if strip_unmapped {
+        tether_db::groups::reserved(&ctx.db)
+            .await
+            .map_err(JobError::retry)?
+            .into_iter()
+            .map(|r| r.name)
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    let strippable = |role: &u64| {
+        strip_unmapped
+            && check.roles.iter().any(|r| {
+                r.id == *role
+                    && !r.managed
+                    && !r.administrator
+                    && !r.privileged
+                    && !reserved.contains(&r.name.trim().to_lowercase())
+            })
+    };
     let mut remove: Vec<u64> = current
         .iter()
-        .filter(|r| managed.contains(r) && !mapped_to_them.contains(r))
+        .filter(|r| (managed.contains(r) || strippable(r)) && !mapped_to_them.contains(r))
         .copied()
         .collect();
     let (removable, stuck): (Vec<u64>, Vec<u64>) = remove.drain(..).partition(|r| assignable(r));
@@ -310,6 +385,7 @@ async fn sync_roles(
     Ok(Some(Synced {
         user,
         nick: member.nick,
+        username: member.username,
         owner_id: check.owner_id,
         unremoved,
     }))

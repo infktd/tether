@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT state_id, format FROM core.discord_name_formats",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_name_formats",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "format",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.discord_name_formats",
+            "name": "format"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b36d0cc04d350f22fea20fa88914e5b0dd1f3fb838dfcc9f9ee5ec29b565b2f0"
+}

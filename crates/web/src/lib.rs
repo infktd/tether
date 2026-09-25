@@ -181,9 +181,10 @@ pub fn router(state: AppState) -> Router {
             get(pages::discord::admin).post(pages::discord::save_settings),
         )
         .route(
-            "/admin/discord/nickname",
-            post(pages::discord::save_nickname),
+            "/admin/discord/names",
+            post(pages::discord::save_name_format),
         )
+        .route("/admin/discord/options", post(pages::discord::save_options))
         .route("/admin/discord/mappings", post(pages::discord::add_mapping))
         .route(
             "/admin/discord/mappings/{id}/remove",
@@ -294,8 +295,9 @@ pub fn router(state: AppState) -> Router {
             "/profile/plugins/{id}/offer/{character}/withdraw",
             post(pages::plugin_access::withdraw),
         )
-        .route("/profile/discord/link", post(pages::discord::link))
-        .route("/profile/discord/unlink", post(pages::discord::unlink))
+        .route("/services", get(pages::discord::services))
+        .route("/services/discord/link", post(pages::discord::link))
+        .route("/services/discord/unlink", post(pages::discord::unlink))
         .route("/discord/callback", get(pages::discord::callback))
         .route("/health", get(health))
         .route("/ready", get(ready))

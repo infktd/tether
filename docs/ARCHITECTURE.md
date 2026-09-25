@@ -172,11 +172,11 @@ Server-rendered HTML from Rust. No JS framework, no npm, no separate frontend bu
 
 ## Discord
 
-Built into the host, not a plugin. REST only (twilight-http): no gateway connection. One bot serves the core and every plugin. Members join the server through OAuth linking, which adds them with their roles; after that, only ESI affiliation drives role changes, and leaving the Discord server isn't tracked.
+Built into the host, not a plugin. REST only (twilight-http): no gateway connection. One bot serves the core and every plugin. Members with Discord access (`discord.access_discord`, a permission) join the server through OAuth linking, which adds them with their roles; after that, only ESI affiliation drives role changes, and leaving the Discord server isn't tracked. Losing access, or unlinking, removes them from the server.
 
 - Account linking via OAuth from the Dashboard.
 - Tier and group to role mappings, applied automatically as membership changes.
-- Optional nickname template, such as `[TICKER] Main Name`.
+- Nicknames from AA's Name Formatter: a format per state, such as `[{corp_ticker}] {character_name}` (switchable off).
 - Fleet ping broadcasts with channel and role targeting; plugins can send through the same path if declared.
 - Role changes go through the job queue with retries.
 

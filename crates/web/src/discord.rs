@@ -6,8 +6,9 @@
 //! and the bot adds them to the server with the roles mapped to their state
 //! and groups. The token is then revoked; it is never stored.
 //!
-//! Only pilots in a state other than Guest join the server through Tether:
-//! anyone with an EVE character is at least Guest.
+//! Only pilots with Discord access (a permission, AA's
+//! `discord.access_discord`) join the server through Tether; losing it
+//! unlinks them, and an unlinked member is removed from the server.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +32,7 @@ use crate::AppState;
 use crate::auth::{cookie, removal};
 use crate::error::{AppError, is_foreign_key_violation, is_unique_violation};
 
-pub const STRIP_ROLES_JOB: &str = "discord.strip_roles";
+pub const REMOVE_MEMBER_JOB: &str = "discord.remove_member";
 /// Binds a pending link to the browser that started it.
 pub const LINK_COOKIE: &str = "__Host-tether_discord";
 const LINK_TTL: Duration = Duration::from_secs(10 * 60);
@@ -108,16 +109,22 @@ pub async fn is_configured(state: &AppState) -> Result<bool, AppError> {
     Ok(stored(state).await?.config().is_some())
 }
 
-/// Guests don't join the server through Tether; every other state does.
+/// Discord access is a permission (AA's `discord.access_discord`,
+/// granted to Member and Blue by default).
 pub async fn may_join(state: &AppState, account: AccountId) -> Result<bool, AppError> {
-    let current = tether_db::states::account_state(&state.db, account).await?;
-    Ok(current.is_some_and(|s| !s.is_guest()))
+    has_access(&state.db, account).await
+}
+
+pub async fn has_access(db: &PgPool, account: AccountId) -> Result<bool, AppError> {
+    Ok(tether_db::permissions::effective(db, account)
+        .await?
+        .contains(tether_core::permissions::DISCORD_ACCESS))
 }
 
 fn guests_cannot_join() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
-        "Guests can't join the Discord server through Tether. Your access state comes from your main's corporation and alliance.",
+        "Your access doesn't include the Discord service. It comes from your main's state (Member and Blue have it by default) and your groups.",
     )
 }
 
@@ -175,38 +182,99 @@ pub async fn save_settings(
     Ok(check)
 }
 
-/// Saves the nickname template (empty turns nickname management off) and
-/// queues a sync of every linked member.
-pub async fn save_nickname_template(
+/// Sets a state's Name Formatter format (empty returns it to AA's default,
+/// `{character_name}`) and queues a sync of every linked member.
+pub async fn save_name_format(
     state: &AppState,
     actor: AccountId,
-    template: &str,
+    state_id: tether_core::states::StateId,
+    format: &str,
 ) -> Result<(), AppError> {
-    let template = template.trim();
-    if !template.is_empty() {
-        tether_core::nickname::validate(template).map_err(AppError::bad_request)?;
+    let format = format.trim();
+    if !format.is_empty() {
+        tether_core::nickname::validate(format).map_err(AppError::bad_request)?;
     }
+    let mut tx = state.db.begin().await?;
+    if tether_db::states::get(&mut *tx, state_id).await?.is_none() {
+        return Err(AppError::not_found("No such state."));
+    }
+    db::set_name_format(&mut *tx, state_id, (!format.is_empty()).then_some(format)).await?;
+    audit::record(
+        &mut *tx,
+        Actor::Account(actor),
+        "discord.name_format",
+        Some(&format!("state:{}", state_id.0)),
+        json!({ "format": format }),
+    )
+    .await?;
+    queue_sync_all(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The Discord service's two switches, as AA's settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    /// AA's `DISCORD_SYNC_NAMES`: set members' nicknames.
+    pub sync_names: bool,
+    /// Remove every role Tether doesn't map to a member (except Discord's
+    /// own roles and reserved group names).
+    pub strip_unmapped: bool,
+}
+
+pub async fn options(db: &PgPool) -> Result<Options, AppError> {
+    Ok(Options {
+        sync_names: tether_db::settings::get_bool_or(
+            db,
+            tether_db::settings::DISCORD_SYNC_NAMES,
+            true,
+        )
+        .await?,
+        strip_unmapped: tether_db::settings::get_bool(
+            db,
+            tether_db::settings::DISCORD_STRIP_UNMAPPED,
+        )
+        .await?,
+    })
+}
+
+pub async fn save_options(
+    state: &AppState,
+    actor: AccountId,
+    new: Options,
+) -> Result<(), AppError> {
     let mut tx = state.db.begin().await?;
     tether_db::settings::set(
         &mut *tx,
-        tether_db::settings::DISCORD_NICKNAME_TEMPLATE,
-        template.into(),
+        tether_db::settings::DISCORD_SYNC_NAMES,
+        json!(new.sync_names),
+    )
+    .await?;
+    tether_db::settings::set(
+        &mut *tx,
+        tether_db::settings::DISCORD_STRIP_UNMAPPED,
+        json!(new.strip_unmapped),
     )
     .await?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),
-        "discord.nickname_template",
+        "discord.options",
         None,
-        json!({ "template": template }),
+        json!({ "sync_names": new.sync_names, "strip_unmapped": new.strip_unmapped }),
     )
     .await?;
+    queue_sync_all(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn queue_sync_all(tx: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     tether_jobs::enqueue(
         &mut *tx,
         tether_jobs::NewJob::new(crate::discord_sync::SYNC_ALL_JOB, json!({})).max_attempts(10),
     )
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 
@@ -514,6 +582,13 @@ async fn link_with_token(
     .await?;
     tx.commit().await?;
 
+    // Someone already in the server who fails to link keeps their place:
+    // only Tether's roles are undone. If Discord can't say, assume so.
+    let already_in = state
+        .discord
+        .member(config, user.id)
+        .await
+        .map_or(true, |m| m.is_some());
     match state.discord.join(config, user.id, token, &roles).await {
         Ok(joined) => {
             tracing::info!(
@@ -533,14 +608,21 @@ async fn link_with_token(
             // them back. Someone relinking the account they already had
             // keeps it, and with it the roles they're due.
             if !relinking_same_user {
-                undo_link(state, account, user_id).await?;
+                undo_link(state, account, user_id, !already_in).await?;
             }
             Err(join_error(err))
         }
     }
 }
 
-async fn undo_link(state: &AppState, account: AccountId, user_id: i64) -> Result<(), AppError> {
+/// Undoes a link whose join failed. `kick`: they weren't in the server
+/// before, so they leave it; otherwise only Tether's roles go.
+async fn undo_link(
+    state: &AppState,
+    account: AccountId,
+    user_id: i64,
+    kick: bool,
+) -> Result<(), AppError> {
     let mut tx = state.db.begin().await?;
     db::lock_user(&mut tx, user_id).await?;
     if db::link_for(&mut *tx, account)
@@ -548,6 +630,9 @@ async fn undo_link(state: &AppState, account: AccountId, user_id: i64) -> Result
         .is_some_and(|l| l.discord_user_id == user_id)
     {
         db::unlink(&mut *tx, account).await?;
+        if !kick {
+            db::keep_in_server(&mut *tx, user_id).await?;
+        }
         audit::record(
             &mut *tx,
             Actor::System,
@@ -594,24 +679,35 @@ pub async fn unlink(state: &AppState, account: AccountId) -> Result<bool, AppErr
     Ok(true)
 }
 
-#[derive(Debug, Deserialize)]
-struct StripRoles {
-    discord_user_id: i64,
+fn yes() -> bool {
+    true
 }
 
-/// Takes every role Tether hands out from a Discord user who is no longer
-/// linked. Holds the user's lock throughout, so a relink either finished
-/// first (and is left alone) or waits until this is done. This holds a
-/// connection across Discord calls; that's fine because job workers
-/// (JOB_WORKERS, default 4) stay well below the pool size.
-pub async fn strip_roles(
+#[derive(Debug, Deserialize)]
+struct RemoveMember {
+    discord_user_id: i64,
+    /// False when a failed link undoes itself for someone who was already
+    /// in the server: only Tether's roles go.
+    #[serde(default = "yes")]
+    kick: bool,
+}
+
+/// Removes a Discord user who is no longer linked from the server (AA:
+/// losing access, or unlinking, kicks). If the bot may not kick them (no
+/// Kick Members, or they're the server owner), it takes every role Tether
+/// hands out instead. Holds the user's lock throughout, so a relink either
+/// finished first (and is left alone) or waits until this is done. This
+/// holds a connection across Discord calls; that's fine because job
+/// workers (JOB_WORKERS, default 4) stay well below the pool size.
+pub async fn remove_member(
     db_pool: &PgPool,
     key: &EncryptionKey,
     discord: &Discord,
     discord_user_id: i64,
+    kick: bool,
 ) -> Result<(), JobError> {
     let Some(config) = store::load(db_pool, key).await.map_err(JobError::retry)? else {
-        tracing::info!(discord_user_id, "Discord isn't set up; no roles to remove");
+        tracing::info!(discord_user_id, "Discord isn't set up; nobody to remove");
         return Ok(());
     };
     let user = u64::try_from(discord_user_id).map_err(JobError::permanent)?;
@@ -626,15 +722,44 @@ pub async fn strip_roles(
     {
         return Ok(());
     }
-    let roles: Vec<u64> = db::mapped_role_ids(&mut *tx)
+    let result = remove(db_pool, discord, &config, user, kick).await;
+    tx.commit().await.map_err(JobError::retry)?;
+    result
+}
+
+async fn remove(
+    db_pool: &PgPool,
+    discord: &Discord,
+    config: &DiscordConfig,
+    user: u64,
+    kick: bool,
+) -> Result<(), JobError> {
+    let check = discord
+        .check_cached(config, CHECK_TTL)
+        .await
+        .map_err(crate::discord_sync::discord_failure)?;
+    if kick && user != check.owner_id {
+        match discord.kick(config, user).await {
+            Ok(()) => {
+                tracing::info!(discord_user_id = user, "removed from the Discord server");
+                return Ok(());
+            }
+            Err(err) if err.code() == Some(tether_discord::codes::MISSING_PERMISSIONS) => {
+                tracing::warn!(
+                    discord_user_id = user,
+                    "the bot may not kick this member (give it Kick Members, above their roles); taking Tether's roles instead"
+                );
+            }
+            Err(err) => return Err(crate::discord_sync::discord_failure(err)),
+        }
+    }
+    let roles: Vec<u64> = db::mapped_role_ids(db_pool)
         .await
         .map_err(JobError::retry)?
         .into_iter()
         .filter_map(|r| u64::try_from(r).ok())
         .collect();
-    let result = strip(db_pool, discord, &config, user, &roles).await;
-    tx.commit().await.map_err(JobError::retry)?;
-    result
+    strip(db_pool, discord, config, user, &roles).await
 }
 
 async fn strip(
@@ -649,11 +774,11 @@ async fn strip(
         .await
         .map_err(crate::discord_sync::discord_failure)?;
     // A Tether nickname ("[NMU] Name") would still say they belong.
-    let template =
-        tether_db::settings::get_string(db_pool, tether_db::settings::DISCORD_NICKNAME_TEMPLATE)
+    let sync_names =
+        tether_db::settings::get_bool_or(db_pool, tether_db::settings::DISCORD_SYNC_NAMES, true)
             .await
             .map_err(JobError::retry)?;
-    if template.is_some_and(|t| !t.trim().is_empty()) {
+    if sync_names {
         match discord.set_nick(config, user, None).await {
             Ok(()) => {}
             Err(err)
@@ -678,18 +803,58 @@ async fn strip(
     Ok(())
 }
 
+/// Takes Discord away from an account that lost access (AA): unlinks it,
+/// which removes it from the server, audited and notified.
+pub async fn revoke_access(db_pool: &PgPool, account: AccountId) -> Result<bool, sqlx::Error> {
+    let Some(seen) = db::link_for(db_pool, account).await? else {
+        return Ok(false);
+    };
+    let mut tx = db_pool.begin().await?;
+    // Under the user's lock, like linking: a relink to someone else, or
+    // access regained, since the check is left alone.
+    db::lock_user(&mut tx, seen.discord_user_id).await?;
+    if tether_db::permissions::effective_in(&mut tx, account)
+        .await?
+        .contains(tether_core::permissions::DISCORD_ACCESS)
+    {
+        return Ok(false);
+    }
+    let Some(link) = db::unlink_user(&mut *tx, account, seen.discord_user_id).await? else {
+        return Ok(false);
+    };
+    audit::record(
+        &mut *tx,
+        Actor::System,
+        "discord.access_removed",
+        Some(&format!("account:{}", account.0)),
+        json!({ "discord_user_id": link.discord_user_id.to_string(), "username": link.username }),
+    )
+    .await?;
+    tether_db::notifications::notify(
+        &mut tx,
+        account,
+        tether_db::notifications::Level::Warning,
+        "Discord Account Disabled",
+        Some("Your Discord account was disabled as you no longer meet the access requirements."),
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(account = account.0, "Discord access removed");
+    Ok(true)
+}
+
 pub fn register_jobs(
     registry: &mut Registry,
     db: PgPool,
     key: EncryptionKey,
     discord: Arc<Discord>,
 ) {
-    registry.register(STRIP_ROLES_JOB, move |job| {
+    registry.register(REMOVE_MEMBER_JOB, move |job| {
         let (db, key, discord) = (db.clone(), key.clone(), discord.clone());
         async move {
-            let payload: StripRoles =
+            let payload: RemoveMember =
                 serde_json::from_value(job.payload).map_err(JobError::permanent)?;
-            strip_roles(&db, &key, &discord, payload.discord_user_id).await
+            remove_member(&db, &key, &discord, payload.discord_user_id, payload.kick).await
         }
     });
 }

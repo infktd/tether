@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT state_id FROM core.accounts WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "state_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f36b9416c9abf224be051abb94fabe04f3e7cd1c40a176f17804e00dc3ad3ef9"
+}

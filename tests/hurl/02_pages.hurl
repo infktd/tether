@@ -395,10 +395,24 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/discord/nickname
+POST {{base}}/admin/discord/names
 Origin: {{base}}
 [Form]
-template: [{corp}] {name}
+state_id: 1
+format: [{corp_ticker}] {character_name}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/discord/options
+Origin: {{base}}
+[Form]
+sync_names: on
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/services
 HTTP 303
 [Asserts]
 header "Location" == "/login"
@@ -418,13 +432,13 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/discord/link
+POST {{base}}/services/discord/link
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/discord/unlink
+POST {{base}}/services/discord/unlink
 Origin: {{base}}
 HTTP 303
 [Asserts]

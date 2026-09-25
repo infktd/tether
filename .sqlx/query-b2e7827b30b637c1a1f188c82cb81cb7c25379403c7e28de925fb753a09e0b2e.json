@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.jobs SET payload = payload || '{\"kick\": false}'::jsonb\n        WHERE kind = 'discord.remove_member' AND state = 'queued'\n          AND payload->>'discord_user_id' = $1::bigint::text\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b2e7827b30b637c1a1f188c82cb81cb7c25379403c7e28de925fb753a09e0b2e"
+}
