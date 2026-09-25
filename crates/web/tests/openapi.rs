@@ -33,6 +33,8 @@ const API_ROUTES: &[(&str, &str)] = &[
     ("post", "/api/admin/permissions/grants"),
     ("delete", "/api/admin/permissions/grants/{id}"),
     ("get", "/api/admin/audit"),
+    ("post", "/api/admin/accounts/{id}/deactivate"),
+    ("post", "/api/admin/accounts/{id}/reactivate"),
     ("get", "/api/admin/states"),
     ("post", "/api/admin/states"),
     ("patch", "/api/admin/states/{id}"),

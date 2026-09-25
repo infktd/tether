@@ -254,31 +254,33 @@ async fn me_requires_a_live_session(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn logging_in_with_another_character_while_signed_in_adds_an_alt(db: PgPool) {
+async fn add_character_adds_an_alt_that_cant_sign_in_alone(db: PgPool) {
     let h = harness(db, true).await;
     let main = log_in_owner(&h, "90000001:Main Pilot").await;
     let after_alt = log_in_as(&h, "90000002:Alt Pilot", Some(&main)).await;
 
     insta::assert_json_snapshot!("me_with_alt", me(&h, &after_alt).await);
 
-    // Logging in later with just the alt reaches the same account.
-    let via_alt = log_in_as(&h, "90000002:Alt Pilot", None).await;
-    assert_eq!(me(&h, &via_alt).await["main"]["id"], 90000001);
+    // Only the main signs in (AA).
+    let res = callback_as(&h, "90000002:Alt Pilot", None).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert!(res.set_cookie(SESSION).is_none());
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn character_linked_elsewhere_is_refused_and_session_kept(db: PgPool) {
+async fn add_character_moves_a_character_linked_elsewhere(db: PgPool) {
     let h = harness(db, true).await;
-    log_in_as(&h, "90000001:Someone Else", None).await;
+    let elsewhere = log_in_as(&h, "90000001:Someone Else", None).await;
     let mine = log_in_as(&h, "90000002:Mine", None).await;
 
     let res = callback_as(&h, "90000001:Someone Else", Some(&mine)).await;
 
-    assert_eq!(res.status, StatusCode::CONFLICT);
-    assert!(res.set_cookie(SESSION).is_none());
-    let me = me(&h, &mine).await;
-    assert_eq!(me["characters"].as_array().unwrap().len(), 1);
-    assert_eq!(me["is_owner"], false);
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let mine = res.cookie_value(SESSION);
+    let me_now = me(&h, &mine).await;
+    assert_eq!(me_now["characters"].as_array().unwrap().len(), 2);
+    assert_eq!(me_now["is_owner"], false);
+    assert!(me(&h, &elsewhere).await["main"].is_null());
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

@@ -93,7 +93,15 @@ pub(crate) async fn evaluate_in(
     account: AccountId,
     from: Option<&str>,
 ) -> Result<Evaluated, sqlx::Error> {
-    let main = db::main(&mut *tx, account).await?;
+    // A deactivated account, or one without a main, is Guest (AA).
+    let active = tether_db::accounts::is_active(&mut *tx, account)
+        .await?
+        .unwrap_or(false);
+    let main = if active {
+        db::main(&mut *tx, account).await?
+    } else {
+        None
+    };
     // The state comes from the main's affiliation alone, as in Alliance
     // Auth. Compliance (F11) is a flag on top: every character registered
     // with the state's scopes.

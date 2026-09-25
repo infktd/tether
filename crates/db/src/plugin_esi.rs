@@ -28,7 +28,7 @@ pub async fn account_characters(
         SELECT c.id, c.name, c.corporation_id, c.alliance_id
         FROM core.characters c JOIN core.accounts a ON a.id = c.account_id
         WHERE c.account_id = $1
-        ORDER BY c.id = a.main_character_id DESC, c.name
+        ORDER BY c.id = a.main_character_id DESC NULLS LAST, c.name
         "#,
         account.0
     )

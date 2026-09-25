@@ -30,6 +30,11 @@ pub enum VaultError {
     MissingScopes(Vec<String>),
     #[error("the token was revoked; the character must log in again")]
     Revoked,
+    /// The refreshed token belongs to another EVE account: the character
+    /// was sold. The token is marked revoked; the caller takes the
+    /// character away from its Tether account.
+    #[error("the character changed EVE account")]
+    OwnerChanged,
     #[error("EVE SSO isn't configured")]
     NotConfigured,
     #[error("EVE SSO unavailable: {0}")]
@@ -157,6 +162,16 @@ impl TokenVault {
         let config = self.config().await?;
         match self.sso.refresh(&config, refresh).await {
             Ok(fresh) => {
+                let known = tokens::owner_hash(&self.db, character_id).await?;
+                if let (Some(new), Some(known)) = (&fresh.owner_hash, &known)
+                    && new != known
+                {
+                    self.forget(character_id);
+                    self.revoke(character_id, "owner hash changed", &stored.sealed)
+                        .await?;
+                    tracing::warn!(character_id, "character changed EVE account");
+                    return Err(VaultError::OwnerChanged);
+                }
                 let rotated = match &fresh.refresh_token {
                     Some(t) => Some(self.key.seal(t, &context(character_id))?),
                     None => None,
@@ -167,23 +182,34 @@ impl TokenVault {
             }
             Err(SsoError::Revoked(reason)) => {
                 self.forget(character_id);
-                let mut tx = self.db.begin().await?;
-                if tokens::mark_revoked(&mut *tx, character_id, &reason).await? {
-                    audit::record(
-                        &mut *tx,
-                        Actor::System,
-                        "token.revoked",
-                        Some(&format!("character:{character_id}")),
-                        json!({ "reason": reason }),
-                    )
-                    .await?;
-                }
-                tx.commit().await?;
+                self.revoke(character_id, &reason, &stored.sealed).await?;
                 tracing::warn!(character_id, reason, "refresh token revoked");
                 Err(VaultError::Revoked)
             }
             Err(err) => Err(VaultError::Unavailable(err.to_string())),
         }
+    }
+
+    /// Marks the token revoked and audits it (once).
+    async fn revoke(
+        &self,
+        character_id: i64,
+        reason: &str,
+        sealed: &[u8],
+    ) -> Result<(), VaultError> {
+        let mut tx = self.db.begin().await?;
+        if tokens::mark_revoked(&mut *tx, character_id, reason, Some(sealed)).await? {
+            audit::record(
+                &mut *tx,
+                Actor::System,
+                "token.revoked",
+                Some(&format!("character:{character_id}")),
+                json!({ "reason": reason }),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn config(&self) -> Result<SsoConfig, VaultError> {

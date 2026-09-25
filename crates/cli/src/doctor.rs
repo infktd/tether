@@ -161,6 +161,7 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(sso(&env.db, &env.sso_metadata_url, &env.public_url).await);
     checks.push(setup(&env.db, &env.public_url).await);
     checks.push(jobs(&env.db).await);
+    checks.push(ownership(&env.db).await);
     checks.push(discord(env).await);
     checks.push(updates(&env.db, &env.github_api_url).await);
     checks.push(outbound());
@@ -570,6 +571,25 @@ pub async fn setup(db: &PgPool, public_url: &str) -> Check {
             "Member covers nobody yet, so everyone is Guest",
             "Choose your alliance in the setup wizard, on Admin → States, or with `tether states add Member <id>`.",
         )
+    }
+}
+
+/// Whether the ownership check stopped taking characters away because too
+/// many tokens died at once.
+pub async fn ownership(db: &PgPool) -> Check {
+    const NAME: &str = "ownership";
+    match tether_db::settings::get(db, tether_web::ownership::BREAKER_SETTING).await {
+        Ok(Some(tripped)) => Check::warn(
+            NAME,
+            format!(
+                "stopped: {} of {} tokens dead at once (since {})",
+                tripped["dead"], tripped["total"], tripped["at"]
+            ),
+            "Check EVE SSO and the application at developers.eveonline.com. If the revocations \
+             are real, run `tether ownership sweep --force`.",
+        ),
+        Ok(None) => Check::ok(NAME, "characters with dead tokens are handled"),
+        Err(err) => Check::fail(NAME, err.to_string(), "Check the database."),
     }
 }
 

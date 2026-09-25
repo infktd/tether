@@ -111,6 +111,7 @@ impl FakeSso {
             access_token: Secret::new(access),
             refresh_token: refresh.map(Secret::new),
             expires_at: Some(SystemTime::now() + *self.token_ttl.lock().unwrap()),
+            owner_hash: None,
         }
     }
 }
@@ -195,18 +196,38 @@ impl Sso for FakeSso {
             // Let concurrent callers pile up behind the single refresh.
             tokio::time::sleep(Duration::from_millis(20)).await;
             let outcome = *self.refresh_outcome.lock().unwrap();
+            // Refresh tokens are `refresh-<character id>-<n>`: the refreshed
+            // token carries that character's current owner hash.
+            let owner_hash = seen
+                .split('-')
+                .nth(1)
+                .and_then(|id| id.parse::<i64>().ok())
+                .map(|id| {
+                    self.owner_hashes
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("owner-{id}"))
+                });
+            let with_owner = |mut t: SsoTokens| {
+                t.owner_hash = owner_hash.clone();
+                t
+            };
             match outcome {
                 RefreshOutcome::Rotate => {
                     let base = seen
                         .rsplit_once('-')
                         .map_or(seen.as_str(), |(b, _)| b)
                         .to_owned();
-                    Ok(self.tokens(
+                    Ok(with_owner(self.tokens(
                         format!("access-refreshed-{n}"),
                         Some(format!("{base}-{}", n + 1)),
-                    ))
+                    )))
                 }
-                RefreshOutcome::Keep => Ok(self.tokens(format!("access-refreshed-{n}"), None)),
+                RefreshOutcome::Keep => Ok(with_owner(
+                    self.tokens(format!("access-refreshed-{n}"), None),
+                )),
                 RefreshOutcome::Revoked => Err(SsoError::Revoked("invalid_grant".into())),
                 RefreshOutcome::Unavailable => Err(SsoError::Unavailable("timeout".into())),
             }
@@ -470,8 +491,13 @@ pub async fn log_in_as(h: &Harness, character: &str, existing_session: Option<&s
     res.cookie_value(SESSION)
 }
 
+/// A login's SSO round trip. With a session, it's Add Character (as in
+/// AA, a plain login never links an alt); without, a plain sign-in.
 pub async fn callback_as(h: &Harness, character: &str, existing_session: Option<&str>) -> Res {
-    let (state, browser) = start_login(h, "/").await;
+    let (state, browser) = match existing_session {
+        Some(session) => start_add_character(h, session).await,
+        None => start_login(h, "/").await,
+    };
     let mut cookies = vec![(LOGIN, browser.as_str())];
     if let Some(s) = existing_session {
         cookies.push((SESSION, s));
@@ -484,6 +510,41 @@ pub async fn callback_as(h: &Harness, character: &str, existing_session: Option<
                 character.replace(' ', "%20")
             ),
             &cookies,
+        ),
+    )
+    .await
+}
+
+/// Starts Add Character for a signed-in account: (oauth state, login
+/// cookie).
+pub async fn start_add_character(h: &Harness, session: &str) -> (String, String) {
+    let res = send(
+        &h.app,
+        Request::post("/register/start")
+            .header(header::ORIGIN, SITE)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::COOKIE, format!("{SESSION}={session}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let state = query_param(res.location(), "state").to_owned();
+    (state, res.cookie_value(LOGIN))
+}
+
+/// A plain sign-in while already signed in (switches accounts, or is
+/// refused for an alt).
+pub async fn sign_in_while_signed_in(h: &Harness, character: &str, session: &str) -> Res {
+    let (state, browser) = start_login(h, "/").await;
+    send(
+        &h.app,
+        get(
+            &format!(
+                "/auth/callback?code=ok:{}&state={state}",
+                character.replace(' ', "%20")
+            ),
+            &[(LOGIN, browser.as_str()), (SESSION, session)],
         ),
     )
     .await

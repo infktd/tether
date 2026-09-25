@@ -32,6 +32,8 @@ use crate::{api, setup};
         api::admin::grant,
         api::admin::revoke,
         api::admin::audit_log,
+        api::admin::deactivate_account,
+        api::admin::reactivate_account,
         api::admin::list_states,
         api::admin::create_state,
         api::admin::rename_state,

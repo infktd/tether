@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT NOT a.active AS \"inactive!\"\n                FROM core.ownership_records r JOIN core.accounts a ON a.id = r.account_id\n                WHERE r.character_id = $1 AND r.owner_hash = $2\n                ORDER BY r.id DESC\n                LIMIT 1\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "inactive!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2e0ad47e64d18c692551d9ee275444309f02d18a12dd4cb9c4be7f702376458d"
+}

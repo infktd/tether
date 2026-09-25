@@ -3,11 +3,9 @@
 //! Scope compliance (F11), Alliance Auth style: a state's required scopes
 //! on every character; accounts that fall short keep their state but are
 //! flagged and leave the Compliant group; the checklist, the officers'
-//! page, the daily token check, and Corp Stats.
+//! page, and Corp Stats.
 
 mod common;
-
-use std::time::Duration;
 
 use axum::http::StatusCode;
 use common::*;
@@ -215,38 +213,6 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
         send(&h.app, get("/compliance", &[])).await.location(),
         "/login"
     );
-}
-
-#[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn the_daily_check_notices_revoked_tokens(db: PgPool) {
-    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
-    let member = tether_db::states::builtin(&db, Builtin::Member)
-        .await
-        .unwrap();
-    tether_db::compliance::add_scope(&db, member.id, SKILLS, None)
-        .await
-        .unwrap();
-    let h = harness(db, true).await;
-    // Every login grants the scope; access tokens are due for refresh at once.
-    *h.sso.granted_scopes.lock().unwrap() = vec![SKILLS.to_owned()];
-    *h.sso.token_ttl.lock().unwrap() = Duration::ZERO;
-    let token = log_in_as(&h, CHRIBBA, None).await;
-    assert_eq!(state_of(&h, &token).await, "Member");
-    assert_eq!(compliance(&h, &token).await, (true, true));
-
-    // Chribba revokes Tether's access on EVE's site: flagged, still Member.
-    *h.sso.refresh_outcome.lock().unwrap() = RefreshOutcome::Revoked;
-    let checked = tether_web::compliance::check_tokens(&h.db, &h.vault)
-        .await
-        .unwrap();
-    assert_eq!(checked, 1);
-    assert_eq!(state_of(&h, &token).await, "Member");
-    assert_eq!(compliance(&h, &token).await, (false, false));
-    // Checked today: not again until tomorrow.
-    let again = tether_web::compliance::check_tokens(&h.db, &h.vault)
-        .await
-        .unwrap();
-    assert_eq!(again, 0);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

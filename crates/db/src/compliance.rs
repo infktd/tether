@@ -164,7 +164,7 @@ pub async fn account_tokens<'e>(
 ) -> Result<Vec<CharacterToken>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT c.id, c.name, c.id = a.main_character_id AS "is_main!",
+        SELECT c.id, c.name, COALESCE(c.id = a.main_character_id, false) AS "is_main!",
                t.state AS "state?", t.scopes AS "scopes?"
         FROM core.characters c
         JOIN core.accounts a ON a.id = c.account_id
@@ -203,12 +203,38 @@ pub async fn compliant_with_revoked(pool: &PgPool) -> Result<Vec<AccountId>, sql
     Ok(ids.into_iter().map(AccountId).collect())
 }
 
-/// Valid tokens the daily check hasn't confirmed for `hours`, oldest first.
+/// How many tokens are stored.
+pub async fn token_count(pool: &PgPool) -> Result<usize, sqlx::Error> {
+    let n = sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM core.character_tokens"#)
+        .fetch_one(pool)
+        .await?;
+    Ok(usize::try_from(n).unwrap_or(usize::MAX))
+}
+
+/// Characters whose token is revoked (by EVE, or because the character
+/// changed EVE account), with the recorded reason.
+pub async fn revoked_characters(
+    pool: &PgPool,
+) -> Result<Vec<(i64, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        "SELECT character_id, revoked_reason, revoked_at FROM core.character_tokens WHERE state = 'revoked'"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.character_id, r.revoked_reason, r.revoked_at))
+        .collect())
+}
+
+/// Valid tokens the ownership check hasn't confirmed for `hours`, oldest
+/// first. Every token, scopes or not: each one proves who owns a
+/// character.
 pub async fn tokens_due(pool: &PgPool, hours: i32, limit: i64) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
         SELECT character_id FROM core.character_tokens
-        WHERE state = 'valid' AND cardinality(scopes) > 0
+        WHERE state = 'valid'
           AND (checked_at IS NULL OR checked_at < now() - make_interval(hours => $1))
         ORDER BY checked_at NULLS FIRST
         LIMIT $2

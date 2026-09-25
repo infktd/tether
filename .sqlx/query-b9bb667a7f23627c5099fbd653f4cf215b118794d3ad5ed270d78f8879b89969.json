@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.accounts SET active = false, deactivated_at = now(), deactivated_by = $2\n        WHERE id = $1 AND active AND NOT is_owner\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b9bb667a7f23627c5099fbd653f4cf215b118794d3ad5ed270d78f8879b89969"
+}

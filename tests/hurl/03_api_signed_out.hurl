@@ -64,6 +64,14 @@ HTTP 401
 GET {{base}}/api/admin/audit
 HTTP 401
 
+POST {{base}}/api/admin/accounts/1/deactivate
+Origin: {{base}}
+HTTP 401
+
+POST {{base}}/api/admin/accounts/1/reactivate
+Origin: {{base}}
+HTTP 401
+
 GET {{base}}/api/admin/states
 HTTP 401
 

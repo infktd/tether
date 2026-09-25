@@ -106,6 +106,14 @@
       {% block breadcrumb %}{% endblock %}
     </header>
     <main class="px-8 py-7 flex flex-col gap-6 w-full max-w-[1440px]">
+      {% if shell.no_main %}
+      <div class="alert" data-variant="destructive" role="status">
+        <section class="flex flex-wrap items-center justify-between gap-3">
+          <span>Your account has no main character: it was sold, or EVE access to it ended. You're Guest until you choose one.</span>
+          <a class="btn" data-variant="primary" data-size="sm" href="/profile#characters">Change Main</a>
+        </section>
+      </div>
+      {% endif %}
       {% if let Some(state_name) = shell.not_compliant %}
       <div class="alert" role="status">
         <section class="flex flex-wrap items-center justify-between gap-3">

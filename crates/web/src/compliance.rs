@@ -1,8 +1,8 @@
 //! Scope compliance (F11, F16, N8), Alliance Auth style: each state other
 //! than Guest requires scopes on every character of the account. Accounts
 //! that fall short keep their state but are flagged: their owners get a
-//! checklist, officers a list, and they're out of the Compliant group. Also the daily token check, which notices revoked tokens, and Corp
-//! Stats, which lists corporation members who never registered.
+//! checklist, officers a list, and they're out of the Compliant group. Also
+//! Corp Stats, which lists corporation members who never registered.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -19,7 +19,7 @@ use tether_db::auth::Purpose;
 use tether_db::compliance as db;
 use tether_db::states as state_db;
 use tether_esi::sso::SsoIdentity;
-use tether_esi::vault::{TokenVault, VaultError};
+use tether_esi::vault::TokenVault;
 use tether_esi::{Esi, Priority};
 use tether_jobs::schedule::ScheduleSpec;
 use tether_jobs::{JobError, NewJob, Registry};
@@ -27,29 +27,16 @@ use tether_jobs::{JobError, NewJob, Registry};
 use crate::AppState;
 use crate::error::AppError;
 
-/// Job kind: confirm stored tokens still work, oldest-checked first.
-pub const CHECK_TOKENS_JOB: &str = "compliance.check_tokens";
 /// Job kind: fetch the member list of every corporation with an approved
 /// Corp Stats source.
 pub const CORP_STATS_JOB: &str = "compliance.corp_stats";
-/// Each token is checked about once a day.
-const CHECK_EVERY_HOURS: i32 = 24;
-/// Tokens checked per hourly run: 24 runs cover 12,000 characters a day.
-const CHECK_BATCH: i64 = 500;
 
 pub fn schedules() -> Vec<ScheduleSpec> {
-    vec![
-        ScheduleSpec::new(
-            CHECK_TOKENS_JOB,
-            CHECK_TOKENS_JOB,
-            Duration::from_secs(60 * 60),
-        ),
-        ScheduleSpec::new(
-            CORP_STATS_JOB,
-            CORP_STATS_JOB,
-            Duration::from_secs(24 * 60 * 60),
-        ),
-    ]
+    vec![ScheduleSpec::new(
+        CORP_STATS_JOB,
+        CORP_STATS_JOB,
+        Duration::from_secs(24 * 60 * 60),
+    )]
 }
 
 // ---- requirements ----------------------------------------------------------
@@ -379,50 +366,6 @@ pub async fn approve_corp_source(
 
 // ---- jobs ------------------------------------------------------------------
 
-/// Confirms up to a batch of tokens still refresh. A revoked one is
-/// marked by the vault; its account is re-evaluated at once.
-pub async fn check_tokens(db: &PgPool, vault: &TokenVault) -> Result<usize, JobError> {
-    let due = db::tokens_due(db, CHECK_EVERY_HOURS, CHECK_BATCH)
-        .await
-        .map_err(JobError::retry)?;
-    let mut revoked = 0;
-    for character_id in &due {
-        match vault.verify(*character_id).await {
-            Ok(_) => {}
-            Err(VaultError::Revoked) => {
-                revoked += 1;
-                if let Some(account) = tether_db::plugin_esi::character_account(db, *character_id)
-                    .await
-                    .map_err(JobError::retry)?
-                {
-                    crate::states::evaluate_account(db, account)
-                        .await
-                        .map_err(JobError::retry)?;
-                }
-            }
-            // SSO is down or not set up: try the rest next hour.
-            Err(VaultError::Unavailable(_) | VaultError::NotConfigured) => break,
-            Err(err) => {
-                tracing::warn!(character_id, error = %err, "token check");
-            }
-        }
-        db::mark_checked(db, *character_id)
-            .await
-            .map_err(JobError::retry)?;
-    }
-    // Tokens found revoked elsewhere (a plugin call, Corp Stats) since.
-    for account in db::compliant_with_revoked(db)
-        .await
-        .map_err(JobError::retry)?
-    {
-        crate::states::evaluate_account(db, account)
-            .await
-            .map_err(JobError::retry)?;
-    }
-    tracing::info!(checked = due.len(), revoked, "token check done");
-    Ok(due.len())
-}
-
 /// Fetches every covered corporation's member list with one of its
 /// approved sources, and names members who never registered.
 pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<usize, JobError> {
@@ -495,14 +438,6 @@ pub fn register_jobs(
     esi: Esi,
     vault: std::sync::Arc<TokenVault>,
 ) {
-    let (check_db, check_vault) = (db.clone(), vault.clone());
-    registry.register(CHECK_TOKENS_JOB, move |_job| {
-        let (db, vault) = (check_db.clone(), check_vault.clone());
-        async move {
-            check_tokens(&db, &vault).await?;
-            Ok(())
-        }
-    });
     registry.register(CORP_STATS_JOB, move |_job| {
         let (db, esi, vault) = (db.clone(), esi.clone(), vault.clone());
         async move {

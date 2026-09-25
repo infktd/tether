@@ -52,3 +52,10 @@ pub async fn set<'e>(
     .await?;
     Ok(())
 }
+
+pub async fn delete<'e>(executor: impl sqlx::PgExecutor<'e>, key: &str) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM core.settings WHERE key = $1", key)
+        .execute(executor)
+        .await?;
+    Ok(())
+}

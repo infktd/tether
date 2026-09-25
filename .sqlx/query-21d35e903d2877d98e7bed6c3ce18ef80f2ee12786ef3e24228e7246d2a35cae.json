@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.accounts SET is_owner = false\n        WHERE id = $1 AND is_owner\n          AND NOT EXISTS (SELECT 1 FROM core.characters WHERE account_id = $1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "21d35e903d2877d98e7bed6c3ce18ef80f2ee12786ef3e24228e7246d2a35cae"
+}

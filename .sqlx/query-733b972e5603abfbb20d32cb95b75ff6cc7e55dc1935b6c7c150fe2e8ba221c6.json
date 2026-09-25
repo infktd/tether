@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.accounts SET main_character_id = $2 WHERE id = $1 AND main_character_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "733b972e5603abfbb20d32cb95b75ff6cc7e55dc1935b6c7c150fe2e8ba221c6"
+}

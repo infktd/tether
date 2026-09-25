@@ -57,6 +57,27 @@ pub async fn delete<'e>(
     Ok(result.rows_affected() == 1)
 }
 
+/// Takes the account out of every group (and its pending requests), for
+/// deactivation. Returns the groups it was in.
+pub async fn leave_all(
+    tx: &mut sqlx::PgConnection,
+    account: AccountId,
+) -> Result<Vec<GroupId>, sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM core.group_requests WHERE account_id = $1",
+        account.0
+    )
+    .execute(&mut *tx)
+    .await?;
+    let groups = sqlx::query_scalar!(
+        "DELETE FROM core.group_members WHERE account_id = $1 RETURNING group_id",
+        account.0
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    Ok(groups.into_iter().map(GroupId).collect())
+}
+
 /// Whether Tether manages the group's members itself (the Compliant group):
 /// nobody adds, removes, joins, leaves or deletes it by hand.
 pub async fn is_managed<'e>(
@@ -205,10 +226,11 @@ pub async fn requests(pool: &PgPool, group: GroupId) -> Result<Vec<PendingReques
     sqlx::query_as!(
         PendingRequest,
         r#"
-        SELECT r.account_id, c.id AS main_id, c.name AS main_name
+        SELECT r.account_id, COALESCE(c.id, 0) AS "main_id!",
+               COALESCE(c.name, '(no main)') AS "main_name!"
         FROM core.group_requests r
         JOIN core.accounts a ON a.id = r.account_id
-        JOIN core.characters c ON c.id = a.main_character_id
+        LEFT JOIN core.characters c ON c.id = a.main_character_id
         WHERE r.group_id = $1
         ORDER BY r.requested_at
         "#,
@@ -283,14 +305,15 @@ pub async fn members(pool: &PgPool, group: GroupId) -> Result<Vec<Member>, sqlx:
     sqlx::query_as!(
         Member,
         r#"
-        SELECT a.id AS account_id, c.id AS main_id, c.name AS main_name,
+        SELECT a.id AS account_id, COALESCE(c.id, 0) AS "main_id!",
+               COALESCE(c.name, '(no main)') AS "main_name!",
                s.name AS state, COALESCE(s.builtin, 'custom') AS "state_style!"
         FROM core.group_members m
         JOIN core.accounts a ON a.id = m.account_id
         JOIN core.states s ON s.id = a.state_id
-        JOIN core.characters c ON c.id = a.main_character_id
+        LEFT JOIN core.characters c ON c.id = a.main_character_id
         WHERE m.group_id = $1
-        ORDER BY c.name
+        ORDER BY c.name NULLS LAST
         "#,
         group.0,
     )

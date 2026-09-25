@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT is_owner FROM core.accounts WHERE id = $1",
+  "query": "SELECT is_owner AS \"is_owner!\" FROM core.accounts WHERE id = $1 AND active",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "is_owner",
+        "name": "is_owner!",
         "type_info": "Bool",
         "origin": {
           "Table": {
@@ -24,5 +24,5 @@
       false
     ]
   },
-  "hash": "f9cf21da3d4e3327343cfb765f6253bd089611483d37208fd670b0e9a5450a26"
+  "hash": "1d14b8bdb83b985b12e4eed04494abac6e7a6169f2ccbdc1a97a713d34ba08f1"
 }

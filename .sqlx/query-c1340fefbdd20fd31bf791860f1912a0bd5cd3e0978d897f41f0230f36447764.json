@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.ownership_records (character_id, character_name, owner_hash, account_id)\n        SELECT $1, $2, $3, $4\n        WHERE (\n            SELECT account_id FROM core.ownership_records\n            WHERE character_id = $1 AND owner_hash = $3\n            ORDER BY id DESC LIMIT 1\n        ) IS DISTINCT FROM $4\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c1340fefbdd20fd31bf791860f1912a0bd5cd3e0978d897f41f0230f36447764"
+}

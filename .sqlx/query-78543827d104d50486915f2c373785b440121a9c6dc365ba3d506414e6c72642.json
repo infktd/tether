@@ -1,21 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT account_id, owner_hash FROM core.characters WHERE id = $1",
+  "query": "SELECT owner_hash FROM core.characters WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "account_id",
-        "type_info": "Int8",
-        "origin": {
-          "Table": {
-            "table": "core.characters",
-            "name": "account_id"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
         "name": "owner_hash",
         "type_info": "Text",
         "origin": {
@@ -32,9 +21,8 @@
       ]
     },
     "nullable": [
-      false,
       true
     ]
   },
-  "hash": "eaac7b73ae52ad2ba234e3771fff841eaa058420ee649ba97664a21029f5addc"
+  "hash": "78543827d104d50486915f2c373785b440121a9c6dc365ba3d506414e6c72642"
 }

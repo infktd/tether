@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT character_id FROM core.character_tokens\n        WHERE state = 'valid' AND cardinality(scopes) > 0\n          AND (checked_at IS NULL OR checked_at < now() - make_interval(hours => $1))\n        ORDER BY checked_at NULLS FIRST\n        LIMIT $2\n        ",
+  "query": "\n        SELECT character_id FROM core.character_tokens\n        WHERE state = 'valid'\n          AND (checked_at IS NULL OR checked_at < now() - make_interval(hours => $1))\n        ORDER BY checked_at NULLS FIRST\n        LIMIT $2\n        ",
   "describe": {
     "columns": [
       {
@@ -25,5 +25,5 @@
       false
     ]
   },
-  "hash": "283ecb402d7bf0af10f26c57a8e26b588039a77b0e500011c2a7e823a49a26d7"
+  "hash": "3db3da27682bb27d6480e6f8ff29b53157e8833674aba58f061da91f54e322b7"
 }

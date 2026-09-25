@@ -36,12 +36,21 @@ pub enum Command {
     },
     /// Queue an affiliation sync for every character now.
     Sync,
+    /// Character ownership: the check the server runs every hour.
+    Ownership {
+        #[command(subcommand)]
+        command: OwnershipCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum UsersCommand {
     /// Show one account by account id, character id or character name.
     Show { query: String },
+    /// Deactivate an account: Guest, sessions ended, sign-in refused.
+    Deactivate { query: String },
+    /// Reactivate a deactivated account.
+    Reactivate { query: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -51,6 +60,17 @@ pub enum StatesCommand {
     Add { state: String, entity_id: i64 },
     /// Stop a state covering an alliance, corporation or character.
     Remove { state: String, entity_id: i64 },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OwnershipCommand {
+    /// Take away characters whose token has been dead for over a day.
+    /// With --force, even when a tenth or more of all tokens are dead
+    /// (normally a sign of SSO trouble: check before forcing).
+    Sweep {
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -89,6 +109,12 @@ pub async fn run(
         Command::Users {
             command: Some(UsersCommand::Show { query }),
         } => show_user(db, &query, out).await,
+        Command::Users {
+            command: Some(UsersCommand::Deactivate { query }),
+        } => set_active(db, &query, false, out).await,
+        Command::Users {
+            command: Some(UsersCommand::Reactivate { query }),
+        } => set_active(db, &query, true, out).await,
         Command::States { command: None } => list_states(db, out).await,
         Command::States {
             command: Some(StatesCommand::Add { state, entity_id }),
@@ -106,6 +132,15 @@ pub async fn run(
             ..
         } => retry_job(db, job_id, out).await,
         Command::Sync => sync(db, out).await,
+        Command::Ownership {
+            command: OwnershipCommand::Sweep { force },
+        } => {
+            let lost = tether_web::ownership::sweep_dead(db, force)
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+            writeln!(out, "{lost} character(s) left their accounts.")?;
+            Ok(())
+        }
     }
 }
 
@@ -136,6 +171,27 @@ async fn list_users(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn set_active(
+    db: &PgPool,
+    query: &str,
+    active: bool,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let Some(id) = accounts::find(db, query).await? else {
+        bail!("no account matches {query:?}");
+    };
+    tether_web::admin::set_active(db, Actor::Cli, id, active)
+        .await
+        .map_err(|err| anyhow::anyhow!("{}", err.message()))?;
+    writeln!(
+        out,
+        "account {} {}",
+        id.0,
+        if active { "reactivated" } else { "deactivated" }
+    )?;
+    Ok(())
+}
+
 async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Result<()> {
     let Some(id) = accounts::find(db, query).await? else {
         bail!("no account matches {query:?}");
@@ -153,9 +209,15 @@ async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Res
         if account.is_owner { " (owner)" } else { "" }
     )?;
     writeln!(out, "state: {state}")?;
+    if !account.active {
+        writeln!(out, "deactivated")?;
+    }
+    if account.main.is_none() {
+        writeln!(out, "no main character")?;
+    }
     writeln!(out, "characters:")?;
     for c in &account.characters {
-        let main = if c.id == account.main.id {
+        let main = if account.main.as_ref().is_some_and(|m| m.id == c.id) {
             "  (main)"
         } else {
             ""

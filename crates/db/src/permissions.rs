@@ -94,8 +94,9 @@ pub async fn effective_in(
     conn: &mut sqlx::PgConnection,
     account: AccountId,
 ) -> Result<BTreeSet<String>, sqlx::Error> {
+    // Deactivated accounts hold nothing (AA's inactive users).
     let owner = sqlx::query_scalar!(
-        "SELECT is_owner FROM core.accounts WHERE id = $1",
+        r#"SELECT is_owner AS "is_owner!" FROM core.accounts WHERE id = $1 AND active"#,
         account.0
     )
     .fetch_optional(&mut *conn)
@@ -117,7 +118,10 @@ pub async fn effective_in(
         FROM core.permission_grants g
         JOIN core.accounts a ON a.id = $1
         WHERE g.state_id = a.state_id
-           OR g.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)
+           -- Groups count only while the account has a main (AA: services
+           -- off until the owner picks one).
+           OR (a.main_character_id IS NOT NULL
+               AND g.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1))
         "#,
         account.0,
     )
@@ -259,7 +263,7 @@ mod tests {
             character_name: "Pilot",
             owner_hash: "h",
         };
-        accounts::sign_in(pool, login, None, id == 1)
+        accounts::sign_in(pool, login, id == 1)
             .await
             .unwrap()
             .outcome

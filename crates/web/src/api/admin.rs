@@ -319,6 +319,41 @@ pub async fn audit_log(
     ))
 }
 
+// ---- accounts -------------------------------------------------------------
+
+/// `POST /api/admin/accounts/{id}/deactivate`: as AA's inactive users:
+/// Guest, no permissions, sessions ended, sign-in refused. Not the owner.
+#[utoipa::path(post, path = "/api/admin/accounts/{id}/deactivate", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+pub async fn deactivate_account(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    session
+        .require(&state, tether_core::permissions::ADMIN_USERS)
+        .await?;
+    let target = tether_db::accounts::AccountId(id);
+    admin::set_active(&state.db, Actor::Account(session.account), target, false).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/admin/accounts/{id}/reactivate`
+#[utoipa::path(post, path = "/api/admin/accounts/{id}/reactivate", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+pub async fn reactivate_account(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    session
+        .require(&state, tether_core::permissions::ADMIN_USERS)
+        .await?;
+    let target = tether_db::accounts::AccountId(id);
+    admin::set_active(&state.db, Actor::Account(session.account), target, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ---- states ---------------------------------------------------------------
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

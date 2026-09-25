@@ -253,8 +253,11 @@ pub async fn roles_for<'e>(
         FROM core.discord_role_mappings m
         JOIN core.accounts a ON a.id = $1
         LEFT JOIN core.groups g ON g.id = m.group_id
-        WHERE m.state_id = a.state_id
-           OR m.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)
+        WHERE a.active
+          AND (m.state_id = a.state_id
+               -- Groups count only while the account has a main.
+               OR (a.main_character_id IS NOT NULL
+                   AND m.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)))
         GROUP BY m.role_id
         ORDER BY 1
         "#,

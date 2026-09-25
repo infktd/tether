@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.account_id, COALESCE(c.id, 0) AS \"main_id!\",\n               COALESCE(c.name, '(no main)') AS \"main_name!\"\n        FROM core.group_requests r\n        JOIN core.accounts a ON a.id = r.account_id\n        LEFT JOIN core.characters c ON c.id = a.main_character_id\n        WHERE r.group_id = $1\n        ORDER BY r.requested_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "main_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "main_name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "dd3cdc819019cad5646fbbb3d22c559591f6c2977d2223f3559049fcc22a5818"
+}

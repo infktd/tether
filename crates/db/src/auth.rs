@@ -148,8 +148,9 @@ pub async fn create_session(
     Ok(())
 }
 
-/// Looks up a live session. Sessions in use are extended to `ttl` from now,
-/// at most once per `touch_every` to avoid a write on every request.
+/// Looks up a live session of an active account, noting when it was last
+/// used (at most once per `touch_every`, to avoid a write per request).
+/// Sessions aren't extended: they end `ttl` after sign-in.
 pub async fn find_session(
     pool: &PgPool,
     token_hash: &[u8],
@@ -158,10 +159,10 @@ pub async fn find_session(
 ) -> Result<Option<SessionRecord>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT account_id, expires_at,
-               last_seen_at < now() - make_interval(secs => $2) AS "stale!"
-        FROM core.sessions
-        WHERE token_hash = $1 AND expires_at > now()
+        SELECT s.account_id, s.expires_at,
+               s.last_seen_at < now() - make_interval(secs => $2) AS "stale!"
+        FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id
+        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active
         "#,
         token_hash,
         touch_every.as_secs_f64(),
@@ -171,21 +172,18 @@ pub async fn find_session(
     let Some(row) = row else {
         return Ok(None);
     };
-    let mut expires_at = row.expires_at;
+    // A fixed lifetime from sign-in, as Django's sessions (AA): only the
+    // last-seen time moves.
+    let _ = ttl;
     if row.stale {
-        expires_at = sqlx::query_scalar!(
-            r#"
-            UPDATE core.sessions
-            SET last_seen_at = now(), expires_at = now() + make_interval(secs => $2)
-            WHERE token_hash = $1
-            RETURNING expires_at
-            "#,
+        sqlx::query!(
+            "UPDATE core.sessions SET last_seen_at = now() WHERE token_hash = $1",
             token_hash,
-            ttl.as_secs_f64(),
         )
-        .fetch_one(pool)
+        .execute(pool)
         .await?;
     }
+    let expires_at = row.expires_at;
     Ok(Some(SessionRecord {
         account: AccountId(row.account_id),
         expires_at,

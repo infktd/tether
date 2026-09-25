@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.id = a.main_character_id AS \"is_main!\",\n               t.state AS \"state?\", t.scopes AS \"scopes?\"\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE c.account_id = $1\n        ORDER BY 3 DESC, c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, COALESCE(c.id = a.main_character_id, false) AS \"is_main!\",\n               t.state AS \"state?\", t.scopes AS \"scopes?\"\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE c.account_id = $1\n        ORDER BY 3 DESC, c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -67,5 +67,5 @@
       false
     ]
   },
-  "hash": "5c167bf397e30248141d1e21f077f7e7cd35c7c00a1da60e4d6fba313f1b2f48"
+  "hash": "b72ab2ace396aa63f2602fdee88e7b9534df4fbcb8ad1b4781978647282b4e24"
 }

@@ -10,6 +10,7 @@ pub const ADMIN_SYSTEM: &str = "admin.system";
 pub const ADMIN_PLUGINS: &str = "admin.plugins";
 pub const FLEET_PING: &str = "fleet.ping";
 pub const COMPLIANCE_VIEW: &str = "compliance.view";
+pub const ADMIN_USERS: &str = "admin.users";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
@@ -26,6 +27,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Set up access states: who is Member, Blue or in a state you create, and in what order. Holders can only change who is in a state if they hold everything granted to it",
     ),
     (ADMIN_AUDIT, "Read the audit log"),
+    (
+        ADMIN_USERS,
+        "Deactivate and reactivate accounts (a deactivated account is Guest and can't sign in)",
+    ),
     (
         ADMIN_SYSTEM,
         "See ESI, job queue and update status; retry failed jobs; switch update checks",

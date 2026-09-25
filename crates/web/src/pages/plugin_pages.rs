@@ -429,8 +429,16 @@ async fn viewer(
                 alliance_id: c.alliance_id,
             })
             .collect();
+    // Plugins attribute and gate by the main: without one (sold, or its
+    // token gone), there's nothing true to tell them.
+    let main_id = tether_db::accounts::get(&state.db, session.account)
+        .await?
+        .and_then(|a| a.main)
+        .map(|m| m.id)
+        .ok_or_else(|| AppError::bad_request("Choose a main character first (Change Main)."))?;
     let main = characters
-        .first()
+        .iter()
+        .find(|c| c.id == main_id)
         .cloned()
         .ok_or_else(AppError::unauthorized)?;
     let current = tether_db::states::account_state(&state.db, session.account)

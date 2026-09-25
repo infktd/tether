@@ -19,6 +19,7 @@ pub mod discord_sync;
 mod error;
 pub mod maintenance;
 pub mod openapi;
+pub mod ownership;
 pub mod pages;
 pub mod pings;
 pub mod plugin_consent;
@@ -266,6 +267,14 @@ pub fn router(state: AppState) -> Router {
             delete(api::admin::revoke),
         )
         .route("/api/admin/audit", get(api::admin::audit_log))
+        .route(
+            "/api/admin/accounts/{id}/deactivate",
+            post(api::admin::deactivate_account),
+        )
+        .route(
+            "/api/admin/accounts/{id}/reactivate",
+            post(api::admin::reactivate_account),
+        )
         .route(
             "/api/admin/states",
             get(api::admin::list_states).post(api::admin::create_state),

@@ -67,12 +67,18 @@ async fn sign_in(
         character_name: name,
         owner_hash: "h",
     };
-    accounts::sign_in(db, login, current, owner)
-        .await
-        .unwrap()
-        .outcome
-        .account()
-        .unwrap()
+    match current {
+        Some(account) => {
+            accounts::link(db, login, account).await.unwrap();
+            account
+        }
+        None => accounts::sign_in(db, login, owner)
+            .await
+            .unwrap()
+            .outcome
+            .account()
+            .unwrap(),
+    }
 }
 
 async fn audit_actors(db: &PgPool) -> Vec<(String, Option<String>)> {

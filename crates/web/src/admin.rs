@@ -59,6 +59,108 @@ pub async fn create_group(
     Ok(id)
 }
 
+/// Deactivates (`active = false`) or reactivates an account, as AA's
+/// inactive users: Guest, no permissions, sessions ended, sign-in refused.
+/// Audited; the account is re-evaluated at once. Never the owner.
+pub async fn set_active(
+    db: &tether_db::PgPool,
+    actor: Actor,
+    account: AccountId,
+    active: bool,
+) -> Result<(), AppError> {
+    // Deactivating someone must not be a way past what you hold: only
+    // accounts whose permissions are all yours (the owner can't be
+    // deactivated at all).
+    if let Actor::Account(me) = actor {
+        let mine = tether_db::permissions::effective(db, me).await?;
+        // A deactivated account holds nothing now; what counts is what it
+        // gets back: its state's grants once re-evaluated.
+        let theirs = if active {
+            would_hold(db, account).await?
+        } else {
+            tether_db::permissions::effective(db, account).await?
+        };
+        if let Some(missing) = theirs.iter().find(|p| !mine.contains(*p)) {
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                format!("That account holds {missing}, which you don't, so you can't change it."),
+            ));
+        }
+    }
+    let mut tx = db.begin().await?;
+    let changed = if active {
+        tether_db::accounts::reactivate(&mut *tx, account).await?
+    } else {
+        tether_db::accounts::deactivate(
+            &mut tx,
+            account,
+            match actor {
+                Actor::Account(a) => Some(a),
+                _ => None,
+            },
+        )
+        .await?
+    };
+    if !changed {
+        return Err(
+            match tether_db::accounts::is_active(&mut *tx, account).await? {
+                None => AppError::not_found("No such account."),
+                Some(_) if !active => AppError::bad_request(
+                    "That account is already deactivated, or it's the owner, which can't be.",
+                ),
+                Some(_) => AppError::bad_request("That account is already active."),
+            },
+        );
+    }
+    // As AA's deactivation, the account leaves its groups (and so their
+    // Discord roles); reactivating doesn't bring them back.
+    let mut left = Vec::new();
+    if !active {
+        for group in groups::leave_all(&mut tx, account).await? {
+            audit::record(
+                &mut *tx,
+                actor,
+                "group.member.remove",
+                Some(&format!("group:{}", group.0)),
+                json!({ "account_id": account.0, "reason": "deactivated" }),
+            )
+            .await?;
+            left.push(group.0);
+        }
+    }
+    audit::record(
+        &mut *tx,
+        actor,
+        if active {
+            "account.reactivate"
+        } else {
+            "account.deactivate"
+        },
+        Some(&format!("account:{}", account.0)),
+        json!({ "groups_left": left }),
+    )
+    .await?;
+    tx.commit().await?;
+    crate::states::evaluate_account(db, account).await?;
+    Ok(())
+}
+
+/// What a deactivated account would hold once reactivated: the grants of
+/// the state its main would put it in (it left its groups on deactivation).
+async fn would_hold(
+    db: &tether_db::PgPool,
+    account: AccountId,
+) -> Result<std::collections::BTreeSet<String>, AppError> {
+    let mut conn = db.acquire().await?;
+    let rules = tether_db::states::load_rules(&mut conn).await?;
+    let main = tether_db::states::main(&mut *conn, account).await?;
+    let state = rules.evaluate(main);
+    Ok(tether_db::states::granted_to(&mut *conn, &[state])
+        .await?
+        .into_iter()
+        .collect())
+}
+
 /// Refusal for editing a group Tether manages.
 pub fn managed_group() -> AppError {
     AppError::bad_request(
@@ -132,6 +234,11 @@ pub async fn change_membership(
             true
         }
         MembershipChange::Add | MembershipChange::Approve => {
+            if tether_db::accounts::is_active(&mut *tx, account).await? == Some(false) {
+                return Err(AppError::bad_request(
+                    "That account is deactivated: reactivate it first.",
+                ));
+            }
             // Adding someone to a group hands them its permissions, so the
             // admin must already hold all of them: admin.groups alone mustn't
             // be a path to admin.permissions.

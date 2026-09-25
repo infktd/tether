@@ -33,6 +33,9 @@ pub struct SsoTokens {
     /// SSO may rotate this on refresh; `None` means keep the old one.
     pub refresh_token: Option<Secret<String>>,
     pub expires_at: Option<SystemTime>,
+    /// From a refresh: the owner hash in the new (verified) access token,
+    /// so a sold character is caught on refresh, as AA does.
+    pub owner_hash: Option<String>,
 }
 
 /// A login, from a verified access token.
@@ -91,11 +94,29 @@ pub trait Sso: Send + Sync {
     ) -> RefreshFuture<'a>;
 }
 
+/// Only errors about this one token mean it's dead. Errors about the whole
+/// application (`invalid_client`, `unauthorized_client`, `access_denied`:
+/// a wrong client id, or CCP suspending the app) say nothing about the
+/// character, and must never be taken as every token being revoked.
+fn refresh_error(err: eve_esi_client::auth::AuthError) -> SsoError {
+    use eve_esi_client::auth::AuthError;
+    match &err {
+        AuthError::Rejected { error, .. }
+            if error == "invalid_grant" || error == "invalid_token" =>
+        {
+            SsoError::Revoked(err.to_string())
+        }
+        AuthError::NoRefreshToken => SsoError::Revoked(err.to_string()),
+        _ => SsoError::Unavailable(err.to_string()),
+    }
+}
+
 fn tokens_from(set: eve_esi_client::auth::TokenSet) -> SsoTokens {
     SsoTokens {
         access_token: Secret::new(set.access_token),
         refresh_token: set.refresh_token.map(Secret::new),
         expires_at: set.expires_at,
+        owner_hash: None,
     }
 }
 
@@ -163,14 +184,51 @@ impl Sso for EveSso {
             let set = Self::client(config)?
                 .refresh(refresh_token.expose())
                 .await
+                .map_err(refresh_error)?;
+            let mut tokens = tokens_from(set);
+            // A token that doesn't verify isn't proof of a sale: treat it as
+            // SSO trouble, not a revocation.
+            let verified = self
+                .verifier
+                .verify(tokens.access_token.expose(), &config.client_id)
+                .await
                 .map_err(|err| {
-                    if err.is_permanent() {
-                        SsoError::Revoked(err.to_string())
-                    } else {
-                        SsoError::Unavailable(err.to_string())
-                    }
+                    SsoError::Unavailable(format!("token failed verification: {err}"))
                 })?;
-            Ok(tokens_from(set))
+            tokens.owner_hash = Some(verified.owner_hash);
+            Ok(tokens)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use eve_esi_client::auth::AuthError;
+
+    use super::{SsoError, refresh_error};
+
+    fn rejected(error: &str) -> AuthError {
+        AuthError::Rejected {
+            error: error.to_owned(),
+            description: None,
+        }
+    }
+
+    #[test]
+    fn only_errors_about_the_token_are_revocations() {
+        for dead in ["invalid_grant", "invalid_token"] {
+            assert!(
+                matches!(refresh_error(rejected(dead)), SsoError::Revoked(_)),
+                "{dead}"
+            );
+        }
+        // About the whole app (a wrong client id, a suspension): never a
+        // reason to drop every character.
+        for app in ["invalid_client", "unauthorized_client", "access_denied"] {
+            assert!(
+                matches!(refresh_error(rejected(app)), SsoError::Unavailable(_)),
+                "{app}"
+            );
+        }
     }
 }

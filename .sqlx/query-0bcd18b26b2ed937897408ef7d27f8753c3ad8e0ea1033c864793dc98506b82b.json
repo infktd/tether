@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"ok!\"\n        FROM core.character_tokens t\n        JOIN core.characters c ON c.id = t.character_id\n        JOIN core.accounts a ON a.id = c.account_id\n        WHERE t.character_id = $1 AND t.state = 'revoked'\n          AND CASE WHEN $2 THEN t.revoked_reason = 'owner hash changed'\n              ELSE t.revoked_at < now() - interval '1 day'\n                   -- Deactivated accounts keep their characters until an\n                   -- admin decides: else revoking would be a way out.\n                   AND a.active\n                   AND NOT (a.is_owner AND (\n                     SELECT count(*) FROM core.characters o WHERE o.account_id = a.id\n                   ) = 1)\n              END\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0bcd18b26b2ed937897408ef7d27f8753c3ad8e0ea1033c864793dc98506b82b"
+}

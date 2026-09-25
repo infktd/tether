@@ -245,9 +245,10 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
 async fn a_plain_login_keeps_the_scopes_a_character_registered(db: PgPool) {
     let (h, owner) = member_with_plugin(db).await;
     let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
-    // Logging in again asks for nothing, and mustn't replace the richer
+    // Signing in again asks for nothing, and mustn't replace the richer
     // token.
-    let owner = log_in_as(&h, "196379789:Chribba", Some(&owner)).await;
+    let _ = owner;
+    let owner = log_in_as(&h, "196379789:Chribba", None).await;
     assert!(h.sso.last_requested.lock().unwrap().is_empty());
     assert_eq!(state_of(&h, &owner).await, "Member");
     let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;

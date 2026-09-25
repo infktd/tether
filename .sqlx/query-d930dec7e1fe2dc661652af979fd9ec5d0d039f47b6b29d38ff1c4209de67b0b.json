@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT account_id, expires_at,\n               last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions\n        WHERE token_hash = $1 AND expires_at > now()\n        ",
+  "query": "\n        SELECT s.account_id, s.expires_at,\n               s.last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id\n        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active\n        ",
   "describe": {
     "columns": [
       {
@@ -44,5 +44,5 @@
       null
     ]
   },
-  "hash": "dd3f0cee190a8d825bced459239c79f622ed9d1fd01cccf207c502d78e0a4630"
+  "hash": "d930dec7e1fe2dc661652af979fd9ec5d0d039f47b6b29d38ff1c4209de67b0b"
 }

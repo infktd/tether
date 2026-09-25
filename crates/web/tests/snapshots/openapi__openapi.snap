@@ -13,6 +13,68 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
     "version": "0.1.0"
   },
   "paths": {
+    "/api/admin/accounts/{id}/deactivate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/accounts/{id}/deactivate`: as AA's inactive users:\nGuest, no permissions, sessions ended, sign-in refused. Not the owner.",
+        "operationId": "deactivate_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/accounts/{id}/reactivate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/accounts/{id}/reactivate`",
+        "operationId": "reactivate_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/admin/audit": {
       "get": {
         "tags": [
@@ -1438,7 +1500,6 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "account_id",
           "is_owner",
           "state",
-          "main",
           "characters",
           "groups",
           "permissions"
@@ -1464,7 +1525,15 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "type": "boolean"
           },
           "main": {
-            "$ref": "#/components/schemas/CharacterRef"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CharacterRef",
+                "description": "`None` after the main was sold or lost its token, until Change Main."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "permissions": {
             "type": "array",

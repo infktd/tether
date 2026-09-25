@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.character_tokens\n        SET state = 'revoked', revoked_at = now(), revoked_reason = $2, updated_at = now()\n        WHERE character_id = $1 AND state = 'valid'\n          AND ($3::bytea IS NULL OR refresh_token = $3)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a733ec1067df337de95dc426d4be223fc40593b3f0dcd20b0efa30c8495acec3"
+}

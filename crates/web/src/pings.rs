@@ -158,6 +158,7 @@ pub async fn send(
         .await?
         .ok_or_else(AppError::unauthorized)?
         .main
+        .ok_or_else(|| AppError::bad_request("Choose a main character first (Change Main)."))?
         .name;
     let nonce = format!(
         "tp-{}",

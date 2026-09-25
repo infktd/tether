@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM core.accounts WHERE id = $1",
+  "query": "DELETE FROM core.sessions WHERE account_id = $1",
   "describe": {
     "columns": [],
     "parameters": {
@@ -10,5 +10,5 @@
     },
     "nullable": []
   },
-  "hash": "ffbecc7cd9f5997fb073440c979c25369bc3aaf7bc13753e6c93602de40abe1a"
+  "hash": "59e7af3c8a06f045de7201afe1e10e6313faa8b42107e077cacaabb85aa7887b"
 }

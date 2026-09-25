@@ -25,7 +25,7 @@ pub const SESSION_COOKIE: &str = "__Host-tether_session";
 pub const LOGIN_COOKIE: &str = "__Host-tether_login";
 
 const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
-pub(crate) const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+pub(crate) const SESSION_TTL: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const SESSION_TOUCH_EVERY: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Deserialize)]
@@ -158,42 +158,80 @@ pub async fn callback(
         }
     };
 
-    // Signed in already? Then this login adds an alt to that account.
+    // Signed in already?
     let current = match jar.get(SESSION_COOKIE) {
         Some(cookie) => find_session(&state, cookie.value())
             .await?
             .map(|s| s.account),
         None => None,
     };
-    // The browser that entered the setup token claims ownership (F3).
-    let claim_owner = setup::has_setup_session(&state, &jar).await?;
-    let result = accounts::sign_in(
-        &state.db,
-        accounts::Login {
-            character_id: identity.character_id,
-            character_name: &identity.character_name,
-            owner_hash: &identity.owner_hash,
-        },
-        current,
-        claim_owner,
-    )
-    .await?;
-    let (outcome, became_owner) = (result.outcome, result.became_owner);
-    if let Some(transfer) = &result.transfer {
-        record_transfer(&state, identity.character_id, transfer).await?;
-    }
-    tracing::info!(
-        character_id = identity.character_id,
-        character = identity.character_name,
-        outcome = ?outcome,
-        "SSO login"
-    );
-    let Some(account) = outcome.account() else {
-        return Err(AppError::new(
-            StatusCode::CONFLICT,
-            "That character is already linked to another account.",
-        ));
+    let login = accounts::Login {
+        character_id: identity.character_id,
+        character_name: &identity.character_name,
+        owner_hash: &identity.owner_hash,
     };
+    // Two kinds of login, as in Alliance Auth. A plain login signs in (only
+    // with the main); anything a signed-in account started (Add Character,
+    // offers) links the character to that account, moving it from another
+    // account if need be: SSO just proved control of it.
+    let (account, became_owner, lost) = if attempt.purpose == db::Purpose::Login {
+        // The browser that entered the setup token claims ownership (F3).
+        let claim_owner = setup::has_setup_session(&state, &jar).await?;
+        let result = accounts::sign_in(&state.db, login, claim_owner).await?;
+        tracing::info!(
+            character_id = identity.character_id,
+            character = identity.character_name,
+            outcome = ?result.outcome,
+            "SSO login"
+        );
+        if let Some(lost) = &result.lost {
+            record_lost(&state, lost).await?;
+        }
+        let account = match result.outcome {
+            accounts::SignIn::NotMain => {
+                return Err(AppError::new(
+                    StatusCode::FORBIDDEN,
+                    "Unable to authenticate as the selected character. Please log in with the \
+                     main character associated with this account.",
+                ));
+            }
+            accounts::SignIn::Deactivated => {
+                return Err(AppError::new(
+                    StatusCode::FORBIDDEN,
+                    "This account has been deactivated.",
+                ));
+            }
+            accounts::SignIn::Existing(a)
+            | accounts::SignIn::Reattached(a)
+            | accounts::SignIn::Created(a) => a,
+        };
+        (account, result.became_owner, None)
+    } else {
+        // Only for the account that started it, still signed in here.
+        let Some(account) = current.filter(|c| Some(*c) == attempt.started_by) else {
+            return Err(AppError::new(
+                StatusCode::BAD_REQUEST,
+                "This was started from another session. Please sign in and try again.",
+            ));
+        };
+        let result = accounts::link(&state.db, login, account).await?;
+        if result.outcome == accounts::Linked::Deactivated {
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                "That character belongs to a deactivated account. Ask an admin.",
+            ));
+        }
+        tracing::info!(
+            character_id = identity.character_id,
+            account = account.0,
+            outcome = ?result.outcome,
+            "character linked"
+        );
+        (account, false, result.lost)
+    };
+    if let Some(lost) = &lost {
+        record_lost(&state, lost).await?;
+    }
 
     if let Err(err) = state
         .vault
@@ -202,19 +240,14 @@ pub async fn callback(
     {
         return Err(AppError::internal(err));
     }
-    // Offering a data source or a Corp Stats list: only for the account
-    // that started it, still signed in here, with the character on that
-    // account (otherwise it was just a login).
-    if attempt.started_by.is_some() && current == attempt.started_by && current == Some(account) {
-        match &attempt.purpose {
-            db::Purpose::DataSource(plugin) => {
-                crate::plugin_consent::finish(&state, account, &identity, plugin).await?;
-            }
-            db::Purpose::CorpSource => {
-                crate::compliance::finish_corp_offer(&state, account, &identity).await?;
-            }
-            db::Purpose::Login | db::Purpose::Register => {}
+    match &attempt.purpose {
+        db::Purpose::DataSource(plugin) => {
+            crate::plugin_consent::finish(&state, account, &identity, plugin).await?;
         }
+        db::Purpose::CorpSource => {
+            crate::compliance::finish_corp_offer(&state, account, &identity).await?;
+        }
+        db::Purpose::Login | db::Purpose::Register => {}
     }
 
     let mut jar = jar;
@@ -332,41 +365,8 @@ impl CurrentSession {
     }
 }
 
-/// Audits a character that changed EVE account and re-evaluates the state of
-/// the account that lost it.
-async fn record_transfer(
-    state: &AppState,
-    character_id: i64,
-    transfer: &accounts::Transfer,
-) -> Result<(), AppError> {
-    audit::record(
-        &state.db,
-        Actor::System,
-        "character.transferred",
-        Some(&format!("character:{character_id}")),
-        serde_json::json!({
-            "from_account": transfer.from.0,
-            "account_deleted": transfer.account_deleted,
-            "owner_lost": transfer.owner_lost,
-        }),
-    )
-    .await?;
-    if transfer.owner_lost {
-        tracing::warn!(
-            character_id,
-            "the owner's only character moved to another EVE account; the owner account is gone \
-             and first-run setup is open again to whoever holds SETUP_TOKEN"
-        );
-    } else {
-        tracing::info!(
-            character_id,
-            from = transfer.from.0,
-            "character transferred to another EVE account"
-        );
-    }
-    if !transfer.account_deleted {
-        states::evaluate_account(&state.db, transfer.from).await?;
-    }
+async fn record_lost(state: &AppState, lost: &accounts::Lost) -> Result<(), AppError> {
+    crate::ownership::after_lost(&state.db, lost).await?;
     Ok(())
 }
 

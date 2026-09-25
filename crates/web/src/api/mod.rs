@@ -19,7 +19,8 @@ pub struct Me {
     pub is_owner: bool,
     /// The access state's name: Member, Blue, Guest or one an admin made.
     pub state: String,
-    pub main: CharacterRef,
+    /// `None` after the main was sold or lost its token, until Change Main.
+    pub main: Option<CharacterRef>,
     pub characters: Vec<CharacterSummary>,
     pub groups: Vec<String>,
     pub permissions: Vec<String>,
@@ -61,13 +62,13 @@ pub async fn me(
             .map(|c| CharacterSummary {
                 id: c.id,
                 name: c.name.clone(),
-                is_main: c.id == account.main.id,
+                is_main: account.main.as_ref().is_some_and(|m| m.id == c.id),
             })
             .collect(),
-        main: CharacterRef {
-            id: account.main.id,
-            name: account.main.name,
-        },
+        main: account.main.map(|m| CharacterRef {
+            id: m.id,
+            name: m.name,
+        }),
         groups: tether_db::groups::names_for(&state.db, session.account).await?,
         permissions: tether_db::permissions::effective(&state.db, session.account)
             .await?

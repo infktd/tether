@@ -142,6 +142,9 @@ pub struct Shell {
     /// The account's state when not every character is registered with
     /// its scopes: shown as a banner until they are (F11).
     pub not_compliant: Option<String>,
+    /// The account lost its main (sold, or its token gone): Guest until
+    /// the owner picks one (AA).
+    pub no_main: bool,
 }
 
 pub struct PluginNavLink {
@@ -363,7 +366,7 @@ pub(crate) async fn load(
         .map(|c| CharacterRow {
             id: c.id,
             name: c.name.clone(),
-            is_main: c.id == account.main.id,
+            is_main: account.main.as_ref().is_some_and(|m| m.id == c.id),
             needs_login: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Revoked),
             status: "",
             scopes: Vec::new(),
@@ -377,8 +380,11 @@ pub(crate) async fn load(
     Ok(Loaded {
         shell: Shell {
             user: ShellUser {
-                name: account.main.name.clone(),
-                character_id: account.main.id,
+                name: account
+                    .main
+                    .as_ref()
+                    .map_or_else(|| "No main character".to_owned(), |m| m.name.clone()),
+                character_id: account.main.as_ref().map_or(0, |m| m.id),
                 state_name: access.name.clone(),
                 is_owner: account.is_owner,
             },
@@ -387,6 +393,7 @@ pub(crate) async fn load(
             plugin_nav,
             active_href: String::new(),
             not_compliant,
+            no_main: account.main.is_none(),
         },
         state: access,
         is_owner: account.is_owner,

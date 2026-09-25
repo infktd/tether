@@ -124,7 +124,7 @@ mod tests {
             character_name: "Admin Pilot",
             owner_hash: "h",
         };
-        let account = crate::accounts::sign_in(&pool, login, None, false)
+        let account = crate::accounts::sign_in(&pool, login, false)
             .await
             .unwrap()
             .outcome

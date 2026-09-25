@@ -77,7 +77,6 @@ pub async fn login(
             character_name: fixture.character_name,
             owner_hash: "dev-fixture",
         },
-        None,
         fixture.name == "owner",
     )
     .await?

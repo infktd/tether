@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c JOIN core.accounts a ON a.id = c.account_id\n        WHERE c.account_id = $1\n        ORDER BY c.id = a.main_character_id DESC, c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c JOIN core.accounts a ON a.id = c.account_id\n        WHERE c.account_id = $1\n        ORDER BY c.id = a.main_character_id DESC NULLS LAST, c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -60,5 +60,5 @@
       true
     ]
   },
-  "hash": "042b15df5853eeeaff918c3a1c0c1ed23fe716bd30680a98781a71a6ff51e696"
+  "hash": "daae515cb8999d44b1ee3923b49c9b4f4efee931821ad9275cae562e2a720521"
 }

@@ -2,7 +2,6 @@
 
 mod common;
 
-use axum::http::StatusCode;
 use common::*;
 use sqlx::PgPool;
 
@@ -15,10 +14,12 @@ fn sell(h: &Harness, character_id: i64) {
 }
 
 async fn transfer_audits(h: &Harness) -> Vec<serde_json::Value> {
-    sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'character.transferred'")
-        .fetch_all(&h.db)
-        .await
-        .unwrap()
+    sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'character.ownership_lost'",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -38,7 +39,7 @@ async fn a_sold_alt_moves_to_the_buyer(db: PgPool) {
     assert_eq!(seller_me["main"]["id"], 90000001);
     let audits = transfer_audits(&h).await;
     assert_eq!(audits.len(), 1);
-    assert_eq!(audits[0]["account_deleted"], false);
+    assert_eq!(audits[0]["was_main"], false);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -51,9 +52,10 @@ async fn buying_the_owners_only_character_does_not_buy_ownership(db: PgPool) {
     let buyer = log_in_as(&h, "196379789:Chribba", None).await;
 
     assert_eq!(me(&h, &buyer).await["is_owner"], false);
-    // The old owner account and its sessions are gone...
-    let old = send(&h.app, get("/api/me", &[(SESSION, &owner)])).await;
-    assert_eq!(old.status, StatusCode::UNAUTHORIZED);
+    // The old owner account has no characters and is owner no more...
+    let old = me(&h, &owner).await;
+    assert_eq!(old["is_owner"], false);
+    assert!(old["main"].is_null());
     // ...so setup reopens for whoever holds the setup token.
     let setup = send(&h.app, get("/api/setup", &[])).await;
     assert!(
@@ -63,6 +65,7 @@ async fn buying_the_owners_only_character_does_not_buy_ownership(db: PgPool) {
     );
     let audits = transfer_audits(&h).await;
     assert_eq!(audits[0]["owner_lost"], true);
+    assert_eq!(audits[0]["reason"], "sold");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
