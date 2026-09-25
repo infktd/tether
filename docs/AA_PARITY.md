@@ -59,13 +59,13 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Token Management | list tokens and scopes, delete, refresh | same; a refresh runs the ownership check, and a deleted token follows the dead-token rules (the character leaves a day later unless logged in again) | done |
 | Dashboard | Characters and Membership widgets; admin panels: Software Version, Task Queue, ESI status, Announcements; apps add widgets | Profile; admin System page (ESI health, job queue, error budget, updates) | partial: rename, admin panels, plugin widgets |
 | Admin site | Django admin for every model | purpose-built admin pages, API and CLI | done, deliberately different |
-| Menu (reorder, hide, folders, custom links) | | fixed sidebar | missing (after v1) |
+| Menu (reorder, hide, folders, custom links) | | fixed sidebar | missing: milestone 2 |
 | Themes, Custom CSS | | dark theme; accent colour setting designed but not built | partial: build the accent setting; no custom CSS (plugins never ship CSS) |
 | Analytics | opt-out telemetry to Google Analytics | none | skip: no telemetry (N5) |
 | Services framework | per-service access permission; access removed when the permission goes | Discord for any state but Guest | partial: access by permission |
 | Discord | Link Discord Server, roles mirror groups, nickname sync, kicked on losing access | explicit role mapping, state roles, nickname sync, fleet pings; not kicked | partial: see Behaviour |
 | Name Formatter | one format per service per state; AA's field list | one template, three fields | partial |
-| Mumble, TeamSpeak 3, Openfire/Jabber, phpBB3, SMF, IPS4, XenForo, Discourse | | none | skip for v1: plugin candidates on request |
+| Mumble, TeamSpeak 3, Openfire/Jabber, phpBB3, SMF, IPS4, XenForo, Discourse | | none | after launch |
 | Periodic tasks: affiliation update, token cleanup | | hourly affiliation sync, daily token check | done |
 
 ## Bundled AA apps
@@ -75,11 +75,11 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Auto Groups | none | missing: core |
 | Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corp Stats: unregistered members per corporation, daily | partial: core |
 | Permissions Audit | Permissions page lists grants | missing: core ("who has this permission") |
-| Fleet Activity Tracking | none | not planned: NMU doesn't use it |
+| Fleet Activity Tracking | none | planned: first-party plugin |
 | Fleet Operations (optimer) | Fleet Ops plugin (F22) | planned |
-| Structure Timers | none | not planned: NMU doesn't use it |
-| Ship Replacement (SRP) | none | not planned: NMU doesn't use it |
-| HR Applications | none | not planned: NMU doesn't use it |
+| Structure Timers | none | planned: first-party plugin |
+| Ship Replacement (SRP) | none | planned: first-party plugin |
+| HR Applications | none | planned: first-party plugin |
 
 ## Community apps
 
@@ -194,10 +194,11 @@ In order; each is one checklist item with tests, a security review where it appl
 11. **Fleet Pings fields**: fleet type, formup location, comms, doctrine, as aa-fleetpings.
 12. **Accent colour setting** from DESIGN.md.
 
-After v1: Menu customization, Secure Groups (Smart Groups with filters and grace), Blacklist notes.
+After v1: Secure Groups (Smart Groups with filters and grace), Blacklist notes. After launch: services other than Discord.
 
 ## Decisions (2026-09-25)
 
 1. **Apps, not plugins, in the UI.** Admins and users see "Apps" (Admin → Apps), as in AA. The SDK, WIT, manifest and code keep "plugin", the accurate technical term.
 2. **Order.** Tasks 1 to 5 above come first, then the Moon Mining and Member Audit plugins, then tasks 6 to 12, then the rest of milestone 2. They are in `docs/PRD.md`.
-3. **Other AA apps.** NMU uses none beyond Member Audit and Moon Mining for now, so Fleet Activity Tracking, Structure Timers, Structures, SRP and HR Applications stay off the plan until asked.
+3. **Other AA apps.** ~~NMU uses none beyond Member Audit and Moon Mining for now, so Fleet Activity Tracking, Structure Timers, Structures, SRP and HR Applications stay off the plan until asked.~~ Superseded by 4.
+4. **Feature parity is 1:1 with AA core** (2026-09-25, Jay): AA's bundled apps (Fleet Activity Tracking, Structure Timers, Ship Replacement, HR Applications; Fleet Operations is F22) are built as first-party plugins, and Menu customization moves into milestone 2. Services other than Discord (Mumble, TeamSpeak 3, Openfire, the forums) come after launch: NMU only uses Discord. Community apps stay as listed.
