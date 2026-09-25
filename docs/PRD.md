@@ -268,7 +268,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
-- [x] Which AA apps to port first: Member Audit and Moon Mining; NMU uses no others for now (Fleet Activity Tracking, timers, SRP, HR Applications and Structures stay off the plan until asked). Decided 2026-09-25
+- [x] Which AA apps to port first: Member Audit and Moon Mining, then (for 1:1 parity with AA core) Structure Timers, Fleet Activity Tracking, SRP and HR Applications; Structures and other community apps stay off the plan until asked. Decided 2026-09-25
 - [ ] Licenses of those AA plugins, checked before porting any code
 - [ ] Re-read CCP's current developer license for data retention and sharing rules, before NMU goes live
 - [x] Plugin signing: minisign, publisher key pinned on first install, rotation endorsed by the old key, admin re-pin with confirmation
