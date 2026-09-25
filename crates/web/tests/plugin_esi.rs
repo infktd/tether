@@ -3,7 +3,7 @@
 //! Plugin ESI, identity and Discord (F16, N8, N10): consent from the
 //! profile, data sources offered and approved, every call checked and
 //! logged, the host choosing the ids, and Discord only to assigned
-//! channels, pinging only tier roles.
+//! channels, pinging only state roles.
 
 mod common;
 
@@ -378,7 +378,7 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     let out = probe(
         &h,
         "send",
-        &[("text", "Moon popped @everyone"), ("tier", "member")],
+        &[("text", "Moon popped @everyone"), ("state", "member")],
     )
     .await;
     assert_eq!(out, "ok");
@@ -396,14 +396,17 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
         content.starts_with(&format!("<@&{DISCORD_MEMBER_ROLE}>")),
         "{content}"
     );
-    // Typed @everyone is defused, and only the tier role may ping.
+    // Typed @everyone is defused, and only the state role may ping.
     assert!(!content.contains("@everyone"), "{content}");
     assert_eq!(
         body["allowed_mentions"]["roles"],
         serde_json::json!([DISCORD_MEMBER_ROLE])
     );
 
-    // A tier with no role mapped can't be pinged.
-    let out = probe(&h, "send", &[("text", "hi"), ("tier", "allied")]).await;
+    // A state with no role mapped can't be pinged, nor one that doesn't
+    // exist.
+    let out = probe(&h, "send", &[("text", "hi"), ("state", "Blue")]).await;
+    assert!(out.contains("no Discord role"), "{out}");
+    let out = probe(&h, "send", &[("text", "hi"), ("state", "Admirals")]).await;
     assert!(out.contains("no Discord role"), "{out}");
 }

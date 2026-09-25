@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use tether_core::permissions::CORE_PERMISSIONS;
-use tether_core::tiers::Tier;
+use tether_core::states::StateId;
 
 use crate::PgPool;
 use crate::accounts::AccountId;
@@ -11,7 +11,7 @@ use crate::groups::GroupId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grantee {
-    Tier(Tier),
+    State(StateId),
     Group(GroupId),
 }
 
@@ -28,16 +28,16 @@ pub async fn grant<'e>(
     permission: &str,
     grantee: Grantee,
 ) -> Result<Option<i64>, sqlx::Error> {
-    let (tier, group) = split(grantee);
+    let (state, group) = split(grantee);
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.permission_grants (permission, tier, group_id)
+        INSERT INTO core.permission_grants (permission, state_id, group_id)
         VALUES ($1, $2, $3)
         ON CONFLICT DO NOTHING
         RETURNING id
         "#,
         permission,
-        tier,
+        state,
         group,
     )
     .fetch_optional(executor)
@@ -50,23 +50,23 @@ pub async fn revoke<'e>(
     grant_id: i64,
 ) -> Result<Option<Grant>, sqlx::Error> {
     let row = sqlx::query!(
-        "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, tier, group_id",
+        "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, state_id, group_id",
         grant_id
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.and_then(|r| to_grant(r.id, r.permission, r.tier, r.group_id)))
+    Ok(row.and_then(|r| to_grant(r.id, r.permission, r.state_id, r.group_id)))
 }
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Grant>, sqlx::Error> {
     let rows = sqlx::query!(
-        "SELECT id, permission, tier, group_id FROM core.permission_grants ORDER BY permission, id"
+        "SELECT id, permission, state_id, group_id FROM core.permission_grants ORDER BY permission, id"
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|r| to_grant(r.id, r.permission, r.tier, r.group_id))
+        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
         .collect())
 }
 
@@ -84,18 +84,26 @@ pub async fn of_group<'e>(
 }
 
 /// What the account may do: everything for the owner; otherwise the grants
-/// to its tier plus the grants to its groups.
+/// to its state plus the grants to its groups.
 pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<String>, sqlx::Error> {
+    effective_in(&mut *pool.acquire().await?, account).await
+}
+
+/// [`effective`], inside the caller's transaction.
+pub async fn effective_in(
+    conn: &mut sqlx::PgConnection,
+    account: AccountId,
+) -> Result<BTreeSet<String>, sqlx::Error> {
     let owner = sqlx::query_scalar!(
         "SELECT is_owner FROM core.accounts WHERE id = $1",
         account.0
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await?;
     match owner {
         None => return Ok(BTreeSet::new()),
         Some(true) => {
-            return Ok(available(pool)
+            return Ok(available(&mut *conn)
                 .await?
                 .into_iter()
                 .map(|(name, _)| name)
@@ -108,19 +116,21 @@ pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<Str
         SELECT DISTINCT g.permission AS "permission!"
         FROM core.permission_grants g
         JOIN core.accounts a ON a.id = $1
-        WHERE g.tier = a.tier
+        WHERE g.state_id = a.state_id
            OR g.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)
         "#,
         account.0,
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     Ok(permissions.into_iter().collect())
 }
 
 /// Every permission that can be granted: core's, then installed plugins',
 /// with their descriptions.
-pub async fn available(pool: &PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+pub async fn available<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
     let mut all: Vec<(String, String)> = CORE_PERMISSIONS
         .iter()
         .map(|(name, description)| ((*name).to_owned(), (*description).to_owned()))
@@ -128,7 +138,7 @@ pub async fn available(pool: &PgPool) -> Result<Vec<(String, String)>, sqlx::Err
     let plugins = sqlx::query!(
         "SELECT permission, description FROM core.plugin_permissions ORDER BY permission"
     )
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     all.extend(plugins.into_iter().map(|r| (r.permission, r.description)));
     Ok(all)
@@ -198,7 +208,7 @@ pub async fn remove_plugin_grants(
         r#"
         DELETE FROM core.permission_grants
         WHERE permission IN (SELECT permission FROM core.plugin_permissions WHERE plugin_id = $1)
-        RETURNING id, permission, tier, group_id
+        RETURNING id, permission, state_id, group_id
         "#,
         plugin_id
     )
@@ -206,33 +216,28 @@ pub async fn remove_plugin_grants(
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|r| to_grant(r.id, r.permission, r.tier, r.group_id))
+        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
         .collect())
 }
 
-pub(crate) fn split(grantee: Grantee) -> (Option<&'static str>, Option<i64>) {
+pub(crate) fn split(grantee: Grantee) -> (Option<i64>, Option<i64>) {
     match grantee {
-        Grantee::Tier(tier) => (Some(tier.as_str()), None),
+        Grantee::State(state) => (Some(state.0), None),
         Grantee::Group(group) => (None, Some(group.0)),
     }
 }
 
-/// Rebuilds a grantee from its `(tier, group_id)` columns.
-pub(crate) fn grantee_from(tier: Option<String>, group: Option<i64>) -> Option<Grantee> {
-    match (tier, group) {
-        (Some(tier), None) => Some(Grantee::Tier(Tier::parse(&tier)?)),
+/// Rebuilds a grantee from its `(state_id, group_id)` columns.
+pub(crate) fn grantee_from(state: Option<i64>, group: Option<i64>) -> Option<Grantee> {
+    match (state, group) {
+        (Some(state), None) => Some(Grantee::State(StateId(state))),
         (None, Some(group)) => Some(Grantee::Group(GroupId(group))),
         _ => None,
     }
 }
 
-fn to_grant(
-    id: i64,
-    permission: String,
-    tier: Option<String>,
-    group: Option<i64>,
-) -> Option<Grant> {
-    let grantee = grantee_from(tier, group)?;
+fn to_grant(id: i64, permission: String, state: Option<i64>, group: Option<i64>) -> Option<Grant> {
+    let grantee = grantee_from(state, group)?;
     Some(Grant {
         id,
         permission,
@@ -243,8 +248,9 @@ fn to_grant(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{accounts, groups, tiers};
+    use crate::{accounts, groups, states};
     use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, JoinPolicy};
+    use tether_core::states::Builtin;
 
     /// Character 1 claims ownership; others are ordinary accounts.
     async fn account(pool: &PgPool, id: i64) -> AccountId {
@@ -271,23 +277,25 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
-    async fn grants_come_from_tier_and_groups(pool: PgPool) {
+    async fn grants_come_from_state_and_groups(pool: PgPool) {
         account(&pool, 1).await; // owner
         let pilot = account(&pool, 2).await;
-        tiers::set_account_tier(&pool, pilot, Tier::Member)
+        let member = states::builtin(&pool, Builtin::Member).await.unwrap().id;
+        let blue = states::builtin(&pool, Builtin::Blue).await.unwrap().id;
+        states::set_account_state(&pool, pilot, member)
             .await
             .unwrap();
         let officers = groups::create(&pool, "Officers", "", JoinPolicy::Assigned)
             .await
             .unwrap();
-        grant(&pool, ADMIN_AUDIT, Grantee::Tier(Tier::Member))
+        grant(&pool, ADMIN_AUDIT, Grantee::State(member))
             .await
             .unwrap();
         let group_grant = grant(&pool, ADMIN_GROUPS, Grantee::Group(officers))
             .await
             .unwrap()
             .unwrap();
-        grant(&pool, "admin.tiers", Grantee::Tier(Tier::Allied))
+        grant(&pool, "admin.states", Grantee::State(blue))
             .await
             .unwrap();
 
@@ -305,10 +313,11 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn duplicate_grants_are_ignored(pool: PgPool) {
-        let first = grant(&pool, ADMIN_AUDIT, Grantee::Tier(Tier::Member))
+        let member = states::builtin(&pool, Builtin::Member).await.unwrap().id;
+        let first = grant(&pool, ADMIN_AUDIT, Grantee::State(member))
             .await
             .unwrap();
-        let again = grant(&pool, ADMIN_AUDIT, Grantee::Tier(Tier::Member))
+        let again = grant(&pool, ADMIN_AUDIT, Grantee::State(member))
             .await
             .unwrap();
         assert!(first.is_some());

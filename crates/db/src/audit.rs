@@ -10,7 +10,7 @@ use crate::accounts::AccountId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Actor {
     Account(AccountId),
-    /// Scheduled or automatic work (tier sync, jobs).
+    /// Scheduled or automatic work (state sync, jobs).
     System,
     /// The `tether` admin CLI, run by whoever has shell access to the host.
     Cli,

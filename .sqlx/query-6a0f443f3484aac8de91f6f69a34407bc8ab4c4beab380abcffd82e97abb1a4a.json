@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT permission AS \"permission!\" FROM core.permission_grants WHERE state_id = ANY($1) ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "permission!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "permission"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6a0f443f3484aac8de91f6f69a34407bc8ab4c4beab380abcffd82e97abb1a4a"
+}

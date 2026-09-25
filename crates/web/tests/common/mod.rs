@@ -26,6 +26,36 @@ use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
 
 pub const SITE: &str = "https://tether.test";
 
+/// The built-in states' ids in a fresh database (migration 0021 inserts
+/// them in this order).
+pub const MEMBER_STATE: i64 = 1;
+pub const BLUE_STATE: i64 = 2;
+pub const GUEST_STATE: i64 = 3;
+
+/// Makes a built-in state cover an alliance, corporation or character.
+pub async fn cover(
+    db: &sqlx::PgPool,
+    state: tether_core::states::Builtin,
+    kind: tether_core::states::EntityKind,
+    entity_id: i64,
+) {
+    let target = tether_db::states::builtin(db, state).await.unwrap();
+    tether_db::states::add_entity(
+        db,
+        target.id,
+        kind,
+        entity_id,
+        &format!("entity {entity_id}"),
+    )
+    .await
+    .unwrap();
+}
+
+/// The account's state's name, from `/api/me`.
+pub async fn state_of(h: &Harness, token: &str) -> String {
+    me(h, token).await["state"].as_str().unwrap().to_owned()
+}
+
 /// Stands in for CCP. `begin` issues a state and PKCE verifier; `finish`
 /// accepts codes of the form `ok:<character_id>:<name>` and checks that the
 /// verifier it receives is one it issued.
@@ -707,7 +737,7 @@ pub async fn discord_ready(h: &Harness, owner: &str) {
         ),
         (
             "/admin/discord/mappings",
-            format!("role_id={DISCORD_MEMBER_ROLE}&grantee=tier%3Amember"),
+            format!("role_id={DISCORD_MEMBER_ROLE}&grantee=state%3A{MEMBER_STATE}"),
         ),
     ] {
         let res = send(&h.app, form(uri, &body, owner)).await;

@@ -104,7 +104,7 @@ pub async fn ticker(
     db: &PgPool,
     esi: &Esi,
     id: i64,
-    kind: tether_core::tiers::EntityKind,
+    kind: tether_core::states::EntityKind,
     priority: Priority,
 ) -> Result<String, NamesError> {
     let cached = sqlx::query_scalar!(
@@ -121,8 +121,11 @@ pub async fn ticker(
         return Ok(ticker);
     }
     let fetched = match kind {
-        tether_core::tiers::EntityKind::Corporation => esi.corporation_ticker(id, priority).await,
-        tether_core::tiers::EntityKind::Alliance => esi.alliance_ticker(id, priority).await,
+        tether_core::states::EntityKind::Corporation => esi.corporation_ticker(id, priority).await,
+        tether_core::states::EntityKind::Alliance => esi.alliance_ticker(id, priority).await,
+        tether_core::states::EntityKind::Character => {
+            return Err(EsiError::InvalidInput("characters have no ticker".to_owned()).into());
+        }
     };
     let ticker = match fetched {
         Ok(ticker) => ticker,

@@ -76,7 +76,7 @@ async fn login_page(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn profile_shows_characters_tier_and_permissions(db: PgPool) {
+async fn profile_shows_characters_state_and_permissions(db: PgPool) {
     let h = harness(db, true).await;
     assert_eq!(
         send(&h.app, get("/profile", &[])).await.location(),
@@ -92,8 +92,11 @@ async fn profile_shows_characters_tier_and_permissions(db: PgPool) {
     assert!(html.contains("<h1 class=\"page-title\">Profile</h1>"));
     assert!(html.contains("https://images.evetech.net/characters/196379789/portrait?size=64"));
     assert!(html.contains("The Mittani"));
-    assert!(html.contains(r#"data-tier="guest""#));
-    assert!(html.contains("admin.tiers"), "owner sees their permissions");
+    assert!(html.contains(r#"data-state="guest""#));
+    assert!(
+        html.contains("admin.states"),
+        "owner sees their permissions"
+    );
     assert!(html.contains(r#"hx-post="/profile/main""#));
     assert!(html.contains(r#"aria-current="page""#));
     assert_only_allowed_external_urls(html);

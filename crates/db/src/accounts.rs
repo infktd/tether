@@ -327,7 +327,8 @@ pub async fn set_main(
 pub struct AccountSummary {
     pub id: AccountId,
     pub main_name: String,
-    pub tier: String,
+    /// The state's name.
+    pub state: String,
     pub is_owner: bool,
     pub characters: i64,
     pub groups: Vec<String>,
@@ -337,13 +338,14 @@ pub struct AccountSummary {
 pub async fn list_summaries(pool: &PgPool, limit: i64) -> Result<Vec<AccountSummary>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT a.id, m.name AS main_name, a.tier, a.is_owner,
+        SELECT a.id, m.name AS main_name, s.name AS state, a.is_owner,
                (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS "characters!",
                COALESCE((SELECT array_agg(g.name ORDER BY g.name)
                          FROM core.group_members gm JOIN core.groups g ON g.id = gm.group_id
                          WHERE gm.account_id = a.id), '{}') AS "groups!"
         FROM core.accounts a
         JOIN core.characters m ON m.id = a.main_character_id
+        JOIN core.states s ON s.id = a.state_id
         ORDER BY a.is_owner DESC, m.name
         LIMIT $1
         "#,
@@ -356,7 +358,7 @@ pub async fn list_summaries(pool: &PgPool, limit: i64) -> Result<Vec<AccountSumm
         .map(|r| AccountSummary {
             id: AccountId(r.id),
             main_name: r.main_name,
-            tier: r.tier,
+            state: r.state,
             is_owner: r.is_owner,
             characters: r.characters,
             groups: r.groups,

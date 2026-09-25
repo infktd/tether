@@ -148,9 +148,9 @@ async fn the_wizard_from_fresh_install_to_complete(db: PgPool) {
     let set = send(
         &h.app,
         post_json(
-            "/api/admin/tiers",
+            &format!("/api/admin/states/{MEMBER_STATE}/covers"),
             &owner,
-            r#"{"entity_id":159826257,"tier":"member"}"#,
+            r#"{"entity_id":159826257}"#,
         ),
     )
     .await;
@@ -159,7 +159,7 @@ async fn the_wizard_from_fresh_install_to_complete(db: PgPool) {
 
     assert_eq!(
         audit_actions(&h.db).await,
-        ["setup.unlock", "setup.sso", "setup.owner", "tier.rule.set"]
+        ["setup.unlock", "setup.sso", "setup.owner", "state.add"]
     );
 }
 
@@ -209,47 +209,46 @@ async fn unlock_is_rate_limited_per_ip(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn tier_rules_are_admin_only_validated_and_re_evaluate_everyone(db: PgPool) {
+async fn states_api_is_admin_only_validated_and_re_evaluates_everyone(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
-    assert_eq!(me(&h, &owner).await["tier"], "guest");
+    assert_eq!(me(&h, &owner).await["state"], "Guest");
+    let covers = format!("/api/admin/states/{MEMBER_STATE}/covers");
 
     let forbidden = send(
         &h.app,
-        post_json(
-            "/api/admin/tiers",
-            &pilot,
-            r#"{"entity_id":159826257,"tier":"member"}"#,
-        ),
+        post_json(&covers, &pilot, r#"{"entity_id":159826257}"#),
     )
     .await;
     assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
-    let bad_tier = send(
+    let guest = send(
         &h.app,
         post_json(
-            "/api/admin/tiers",
+            &format!("/api/admin/states/{GUEST_STATE}/covers"),
             &owner,
-            r#"{"entity_id":159826257,"tier":"guest"}"#,
+            r#"{"entity_id":159826257}"#,
         ),
     )
     .await;
-    assert_eq!(bad_tier.status, StatusCode::BAD_REQUEST);
-    let unknown = send(
-        &h.app,
-        post_json(
-            "/api/admin/tiers",
-            &owner,
-            r#"{"entity_id":5,"tier":"member"}"#,
-        ),
-    )
-    .await;
+    assert_eq!(guest.status, StatusCode::BAD_REQUEST);
+    let unknown = send(&h.app, post_json(&covers, &owner, r#"{"entity_id":5}"#)).await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    let no_state = send(
+        &h.app,
+        post_json(
+            "/api/admin/states/999/covers",
+            &owner,
+            r#"{"entity_id":159826257}"#,
+        ),
+    )
+    .await;
+    assert_eq!(no_state.status, StatusCode::NOT_FOUND);
 
     let resolved = send(
         &h.app,
         post_json(
-            "/api/admin/tiers/resolve",
+            "/api/admin/states/resolve",
             &owner,
             r#"{"names":["Goonswarm Federation","GoonWaffe"]}"#,
         ),
@@ -267,48 +266,94 @@ async fn tier_rules_are_admin_only_validated_and_re_evaluate_everyone(db: PgPool
 
     let set = send(
         &h.app,
-        post_json(
-            "/api/admin/tiers",
-            &owner,
-            r#"{"entity_id":159826257,"tier":"member"}"#,
-        ),
+        post_json(&covers, &owner, r#"{"entity_id":159826257}"#),
     )
     .await;
     assert_eq!(set.status, StatusCode::NO_CONTENT);
-    let rules = send(&h.app, get("/api/admin/tiers", &[(SESSION, &owner)])).await;
+    let again = send(
+        &h.app,
+        post_json(&covers, &owner, r#"{"entity_id":159826257}"#),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+    let states = json(&send(&h.app, get("/api/admin/states", &[(SESSION, &owner)])).await);
+    assert_eq!(states[0]["name"], "Member");
     assert_eq!(
-        json(&rules),
-        json!([{"entity_id": 159826257, "kind": "alliance", "tier": "member", "name": "Otherworld Empire"}])
+        states[0]["covers"],
+        json!([{"entity_id": 159826257, "kind": "alliance", "name": "Otherworld Empire"}])
     );
+    assert_eq!(states[2]["name"], "Guest");
+    assert_eq!(states[2]["builtin"], "guest");
 
     // The change queued a re-evaluation of every account; run it.
     let mut registry = tether_jobs::Registry::new();
-    tether_web::tiers::register_jobs(&mut registry, h.db.clone(), h.esi.clone());
+    tether_web::states::register_jobs(&mut registry, h.db.clone(), h.esi.clone());
     let config = tether_jobs::WorkerConfig::default();
     while tether_jobs::run_once(&h.db, &registry, &config)
         .await
         .unwrap()
         != tether_jobs::Outcome::Idle
     {}
-    assert_eq!(me(&h, &owner).await["tier"], "member");
-    assert_eq!(me(&h, &pilot).await["tier"], "guest");
+    assert_eq!(me(&h, &owner).await["state"], "Member");
+    assert_eq!(me(&h, &pilot).await["state"], "Guest");
 
-    let remove = send(
+    // A new state, moved above Member and covering the main's corporation,
+    // wins.
+    let created = send(
         &h.app,
-        Request::delete("/api/admin/tiers/159826257")
+        post_json("/api/admin/states", &owner, r#"{"name":"Directors"}"#),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let directors = json(&created)["id"].as_i64().unwrap();
+    for _ in 0..2 {
+        let moved = send(
+            &h.app,
+            post_json(
+                &format!("/api/admin/states/{directors}/move"),
+                &owner,
+                r#"{"direction":"up"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(moved.status, StatusCode::NO_CONTENT);
+    }
+    let added = send(
+        &h.app,
+        post_json(
+            &format!("/api/admin/states/{directors}/covers"),
+            &owner,
+            r#"{"entity_id":1164409536}"#,
+        ),
+    )
+    .await;
+    assert_eq!(added.status, StatusCode::NO_CONTENT, "{}", added.body);
+    while tether_jobs::run_once(&h.db, &registry, &config)
+        .await
+        .unwrap()
+        != tether_jobs::Outcome::Idle
+    {}
+    assert_eq!(me(&h, &owner).await["state"], "Directors");
+
+    let delete = |uri: String| {
+        Request::delete(uri)
             .header(header::ORIGIN, SITE)
             .header(header::COOKIE, format!("{SESSION}={owner}"))
             .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
+            .unwrap()
+    };
+    let builtin = send(&h.app, delete(format!("/api/admin/states/{MEMBER_STATE}"))).await;
+    assert_eq!(builtin.status, StatusCode::BAD_REQUEST);
+    let removed = send(&h.app, delete(format!("/api/admin/states/{directors}"))).await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT);
+    let remove = send(&h.app, delete(format!("{covers}/159826257"))).await;
     assert_eq!(remove.status, StatusCode::NO_CONTENT);
     while tether_jobs::run_once(&h.db, &registry, &config)
         .await
         .unwrap()
         != tether_jobs::Outcome::Idle
     {}
-    assert_eq!(me(&h, &owner).await["tier"], "guest");
+    assert_eq!(me(&h, &owner).await["state"], "Guest");
 }
 
 /// The callback check fetches the public URL for real, so serve the app on
@@ -387,4 +432,121 @@ async fn probe_only_echoes_safe_nonces(db: PgPool) {
     assert_eq!(ok.body, "tether-probe:abc123");
     let bad = send(&h.app, get("/api/setup/probe?nonce=%3Cscript%3E", &[])).await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn admin_states_is_not_a_way_to_other_permissions(db: PgPool) {
+    use tether_core::states::StateId;
+    use tether_db::permissions::{Grantee, grant};
+
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    // The pilot manages states (through Blue) but isn't a full admin.
+    grant(&h.db, "admin.states", Grantee::State(StateId(BLUE_STATE)))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE core.accounts SET state_id = $1 WHERE NOT is_owner")
+        .bind(BLUE_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+
+    let created = send(
+        &h.app,
+        post_json("/api/admin/states", &owner, r#"{"name":"Leadership"}"#),
+    )
+    .await;
+    let leadership = json(&created)["id"].as_i64().unwrap();
+    grant(
+        &h.db,
+        "admin.permissions",
+        Grantee::State(StateId(leadership)),
+    )
+    .await
+    .unwrap();
+
+    // Adding to Leadership would hand out admin.permissions: refused.
+    let covers = format!("/api/admin/states/{leadership}/covers");
+    let refused = send(
+        &h.app,
+        post_json(&covers, &pilot, r#"{"entity_id":98133756}"#),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert!(
+        refused.body.contains("admin.permissions"),
+        "{}",
+        refused.body
+    );
+    // So is moving it, or deleting it.
+    let moved = send(
+        &h.app,
+        post_json(
+            &format!("/api/admin/states/{leadership}/move"),
+            &pilot,
+            r#"{"direction":"up"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(moved.status, StatusCode::FORBIDDEN);
+    // A state holding only what the pilot holds is fine; the owner can do
+    // anything.
+    let blue = send(
+        &h.app,
+        post_json(
+            &format!("/api/admin/states/{BLUE_STATE}/covers"),
+            &pilot,
+            r#"{"entity_id":98133756}"#,
+        ),
+    )
+    .await;
+    assert_eq!(blue.status, StatusCode::NO_CONTENT, "{}", blue.body);
+    let by_owner = send(
+        &h.app,
+        post_json(&covers, &owner, r#"{"entity_id":1164409536}"#),
+    )
+    .await;
+    assert_eq!(by_owner.status, StatusCode::NO_CONTENT, "{}", by_owner.body);
+
+    // NPC corporations can't be covered: anyone can join one.
+    let npc = send(
+        &h.app,
+        post_json(&covers, &owner, r#"{"entity_id":1000167}"#),
+    )
+    .await;
+    assert_eq!(npc.status, StatusCode::BAD_REQUEST);
+
+    // Deleting Leadership records the grants it took with it, and its
+    // account (the owner, covered by corporation) moves straight on.
+    sqlx::query("UPDATE core.accounts SET state_id = $1 WHERE is_owner")
+        .bind(leadership)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let deleted = send(
+        &h.app,
+        Request::delete(format!("/api/admin/states/{leadership}"))
+            .header(header::ORIGIN, SITE)
+            .header(header::COOKIE, format!("{SESSION}={owner}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+    let details: serde_json::Value =
+        sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'state.delete'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(details["grants_removed"], json!(["admin.permissions"]));
+    assert_eq!(details["accounts"], 1);
+    let change: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'state.change' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(change["from"], "Leadership");
+    assert_eq!(me(&h, &owner).await["state"], "Guest");
 }

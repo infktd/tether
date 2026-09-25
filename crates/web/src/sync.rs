@@ -1,5 +1,5 @@
 //! The scheduled affiliation sync (F11): every linked character's
-//! corporation and alliance from ESI, then every account's tier.
+//! corporation and alliance from ESI, then every account's state.
 //!
 //! This is how a member who leaves the alliance loses access with no admin
 //! action: within one sync their main's new affiliation drops them to
@@ -8,14 +8,14 @@
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tether_core::tiers::Affiliation;
+use tether_core::states::Affiliation;
 use tether_db::PgPool;
-use tether_db::tiers as db;
+use tether_db::states as db;
 use tether_esi::{CharacterAffiliation, Esi, EsiError, Priority};
 use tether_jobs::schedule::ScheduleSpec;
 use tether_jobs::{JobError, Registry};
 
-use crate::tiers::{TierError, evaluate_account};
+use crate::states::{StateError, evaluate_account};
 
 pub const AFFILIATION_SYNC_JOB: &str = "affiliation.sync";
 /// ESI caches affiliations for an hour, so syncing more often gains nothing.
@@ -39,11 +39,11 @@ pub struct SyncSummary {
     /// Ids ESI rejected (deleted characters and the like).
     pub skipped: Vec<i64>,
     pub accounts: usize,
-    pub tier_changes: usize,
+    pub state_changes: usize,
     pub duration_ms: u64,
 }
 
-pub async fn affiliation_sync(db: &PgPool, esi: &Esi) -> Result<SyncSummary, TierError> {
+pub async fn affiliation_sync(db: &PgPool, esi: &Esi) -> Result<SyncSummary, StateError> {
     let started = Instant::now();
     let ids = db::all_character_ids(db).await?;
     let (fetched, skipped) = fetch(esi, &ids).await?;
@@ -62,17 +62,17 @@ pub async fn affiliation_sync(db: &PgPool, esi: &Esi) -> Result<SyncSummary, Tie
     db::update_affiliations(db, &fresh).await?;
 
     let accounts = tether_db::accounts::all_ids(db).await?;
-    let mut tier_changes = 0;
+    let mut state_changes = 0;
     for account in &accounts {
         if evaluate_account(db, *account).await?.changed() {
-            tier_changes += 1;
+            state_changes += 1;
         }
     }
     let summary = SyncSummary {
         characters: ids.len(),
         skipped,
         accounts: accounts.len(),
-        tier_changes,
+        state_changes,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     };
     let mut record = serde_json::to_value(&summary).unwrap_or_default();
@@ -81,7 +81,7 @@ pub async fn affiliation_sync(db: &PgPool, esi: &Esi) -> Result<SyncSummary, Tie
     tracing::info!(
         characters = summary.characters,
         skipped = summary.skipped.len(),
-        tier_changes = summary.tier_changes,
+        state_changes = summary.state_changes,
         duration_ms = summary.duration_ms,
         "affiliation sync done"
     );

@@ -18,7 +18,6 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use tether_core::crypto::EncryptionKey;
-use tether_core::tiers::Tier as CoreTier;
 use tether_db::permissions::Grantee;
 use tether_db::{PgPool, discord as discord_db, plugin_esi as db};
 use tether_discord::{Discord, Mention as DiscordMention, store};
@@ -27,7 +26,7 @@ use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
     Channel, Character, Consent, DiscordError, EsiError, EsiResponse, Fut, Mention, Named,
-    Services, Subject, Tier,
+    Services, Subject,
 };
 
 use crate::plugins::Plugins;
@@ -262,14 +261,6 @@ async fn esi_get(
     })
 }
 
-fn core_tier(tier: Tier) -> CoreTier {
-    match tier {
-        Tier::Member => CoreTier::Member,
-        Tier::Allied => CoreTier::Allied,
-        Tier::Guest => CoreTier::Guest,
-    }
-}
-
 async fn discord_send(
     deps: &Deps,
     plugins: &Weak<Plugins>,
@@ -320,17 +311,26 @@ async fn discord_send(
     }
     let target = match mention {
         Mention::None => DiscordMention::None,
-        Mention::Tier(tier) => {
-            let tier = core_tier(tier);
+        Mention::State(name) => {
+            // One answer for "no such state" and "no role": plugins don't
+            // learn which states exist.
+            let no_role =
+                || DiscordError::NotAllowed("no Discord role is mapped to that state".to_owned());
+            let name = name.trim();
+            if name.chars().count() > tether_core::states::MAX_NAME {
+                return Err(no_role());
+            }
+            let state = tether_db::states::by_name(&deps.db, name)
+                .await
+                .map_err(|e| unavailable(e.to_string()))?
+                .ok_or_else(no_role)?;
             let mappings = discord_db::mappings(&deps.db)
                 .await
                 .map_err(|e| unavailable(e.to_string()))?;
             let role = mappings
                 .iter()
-                .find(|m| m.grantee == Grantee::Tier(tier))
-                .ok_or_else(|| {
-                    DiscordError::NotAllowed("no Discord role is mapped to that tier".to_owned())
-                })?;
+                .find(|m| m.grantee == Grantee::State(state.id))
+                .ok_or_else(no_role)?;
             DiscordMention::Role(
                 u64::try_from(role.role_id).map_err(|e| unavailable(e.to_string()))?,
             )

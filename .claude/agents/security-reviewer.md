@@ -23,7 +23,7 @@ Review the change, not the whole codebase, but follow data and control flow into
 **Authorization and CSRF**
 - State-changing requests are POST/PUT/PATCH/DELETE and go through the Origin check; no state change on GET.
 - No IDOR: ids from the client (accounts, characters, groups, grants) are checked against what the caller may touch.
-- Permission grants only to tiers and groups; unknown permission names rejected.
+- Permission grants only to states and groups; unknown permission names rejected.
 
 **Tokens and secrets (N7, N8)**
 - Refresh tokens and other secrets are encrypted with the vault key and bound to their row (associated data); the key never reaches the database, logs, errors or panics.

@@ -28,9 +28,9 @@ expression: "me(&h, &after_alt).await"
     "admin.groups",
     "admin.permissions",
     "admin.plugins",
+    "admin.states",
     "admin.system",
-    "admin.tiers",
     "fleet.ping"
   ],
-  "tier": "guest"
+  "state": "Guest"
 }

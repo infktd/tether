@@ -45,7 +45,7 @@ Written as shadcn-style theme variables, so they work unchanged with Basecoat, s
   --accent-soft: #292012;       /* accent badge background */
 
   /* status */
-  --info: #60a5fa;              /* allied, healthy, informational */
+  --info: #60a5fa;              /* Blue, healthy, informational */
   --info-foreground: #93c5fd;
   --info-soft: #13203a;
   --destructive: #ef4444;
@@ -136,6 +136,21 @@ Page structure: sidebar → top bar with breadcrumb, search and icon buttons →
 - **EVE time (UTC)** everywhere, labeled "EVE".
 - **ISK** abbreviated in tables (`1.24b`, `350.2m`), full value on hover or in detail views.
 - **EVE names** (systems, moons, structures, characters) exactly as ESI returns them. Character portraits and corp or alliance logos come from CCP's image server at 32px in tables and 36px in the sidebar, with initials as the fallback.
+
+**State badges** show an account's access state as a status badge: Member in the accent, Blue in info, Guest and admin-made states neutral. The label is always the state's name.
+
+## Configuration pages
+
+Admin settings must make sense without documentation open. Alliance Auth's settings didn't; ours do. Every configuration page follows these rules on top of the rest of this file.
+
+- **Plain language, in terms of pilots.** Each setting carries one sentence on its effect ("Pilots whose main is in one of these get Member"), never internal names. Headings name the thing, not the table.
+- **Ordered lists are cards in order.** When order matters (states), each item is a card, top first, with up and down icon buttons, and one sentence says how the order is used ("The highest match wins").
+- **EVE entities are chips.** An alliance, corporation or character in a list is a chip: 20px logo or portrait, name, kind in muted text, and a remove icon button with an `aria-label`. They are added with an exact-name search whose results show the logo and kind before anything is added.
+- **Live counts.** Next to each item, how many accounts it covers right now, in Geist Mono.
+- **Preview before impact.** A change that would move any account's access shows a confirmation first, listing where accounts move ("12 accounts: Guest → Member") with Apply and Cancel. A change that moves nobody applies at once. Plain forms work without JavaScript; htmx only makes them smoother.
+- **Built-ins are marked.** Built-in items that can't be renamed or removed carry a lock icon and a one-line reason instead of hidden or disabled buttons.
+- **Works from defaults.** A fresh instance's defaults are usable as they are, and empty states say what to do next.
+- **Consequences in confirmations.** Destructive actions state what will happen ("Its 4 accounts become Guest"), not "Are you sure?".
 
 ## Interaction and accessibility
 

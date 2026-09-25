@@ -5,12 +5,11 @@
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 use tether_core::permissions::JoinPolicy;
-use tether_core::tiers::Tier;
+use tether_core::states::StateId;
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
-use tether_db::tiers as tier_db;
 
 use crate::AppState;
 use crate::error::{AppError, is_foreign_key_violation, is_unique_violation};
@@ -160,17 +159,13 @@ pub async fn change_membership(
     Ok(())
 }
 
-/// Exactly one of a tier or a group.
-pub fn grantee(tier: Option<&str>, group_id: Option<i64>) -> Result<Grantee, AppError> {
-    match (tier.filter(|t| !t.is_empty()), group_id) {
-        (Some(tier), None) => {
-            Ok(Grantee::Tier(Tier::parse(tier).ok_or_else(|| {
-                AppError::bad_request("tier must be member, allied or guest.")
-            })?))
-        }
+/// Exactly one of a state or a group.
+pub fn grantee(state_id: Option<i64>, group_id: Option<i64>) -> Result<Grantee, AppError> {
+    match (state_id, group_id) {
+        (Some(state), None) => Ok(Grantee::State(StateId(state))),
         (None, Some(group)) => Ok(Grantee::Group(GroupId(group))),
         _ => Err(AppError::bad_request(
-            "Grant to exactly one of tier or group_id.",
+            "Grant to exactly one of state_id or group_id.",
         )),
     }
 }
@@ -193,10 +188,15 @@ pub async fn grant(
     // Open group: admin rights there would be admin rights for strangers.
     let sensitive = tether_core::permissions::is_sensitive(permission);
     match grantee {
-        Grantee::Tier(Tier::Guest) if sensitive => {
-            return Err(AppError::bad_request(format!(
-                "{permission} can't go to Guest: anyone who logs in with EVE is Guest."
-            )));
+        Grantee::State(id) => {
+            let target = tether_db::states::get(&mut *tx, id)
+                .await?
+                .ok_or_else(|| AppError::not_found("No such state."))?;
+            if sensitive && target.is_guest() {
+                return Err(AppError::bad_request(format!(
+                    "{permission} can't go to Guest: anyone who logs in with EVE is Guest."
+                )));
+            }
         }
         Grantee::Group(group) => {
             let group = groups::get(&mut *tx, group)
@@ -208,7 +208,6 @@ pub async fn grant(
                 )));
             }
         }
-        Grantee::Tier(_) => {}
     }
     let Some(id) = permissions::grant(&mut *tx, permission, grantee).await? else {
         return Err(AppError::new(
@@ -247,77 +246,9 @@ pub async fn revoke(state: &AppState, actor: AccountId, id: i64) -> Result<(), A
 
 fn grant_details(permission: &str, grantee: Grantee) -> Value {
     match grantee {
-        Grantee::Tier(tier) => json!({ "permission": permission, "tier": tier.as_str() }),
+        Grantee::State(state) => json!({ "permission": permission, "state_id": state.0 }),
         Grantee::Group(group) => json!({ "permission": permission, "group_id": group.0 }),
     }
-}
-
-/// Makes an alliance or corporation Member or Allied. Its name and kind come
-/// from ESI (via the names cache), never the client. Queues a re-evaluation
-/// of every account.
-pub async fn apply_tier_rule(
-    state: &AppState,
-    actor: Actor,
-    entity_id: i64,
-    tier: Tier,
-) -> Result<tier_db::TierRule, AppError> {
-    if !matches!(tier, Tier::Member | Tier::Allied) {
-        return Err(AppError::bad_request("tier must be member or allied."));
-    }
-    let entity = tether_esi::names::resolve(
-        &state.db,
-        &state.esi,
-        &[entity_id],
-        tether_esi::Priority::Interactive,
-    )
-    .await
-    .map_err(names_unavailable)?
-    .remove(&entity_id)
-    .ok_or_else(|| AppError::not_found("ESI doesn't know that id."))?;
-    let kind = entity
-        .kind()
-        .ok_or_else(|| AppError::bad_request("That id isn't an alliance or corporation."))?;
-    let rule = tier_db::TierRule {
-        entity_id: entity.id,
-        kind,
-        tier,
-        name: entity.name,
-    };
-    let mut tx = state.db.begin().await?;
-    tier_db::set_rule(&mut *tx, &rule).await?;
-    audit::record(
-        &mut *tx,
-        actor,
-        "tier.rule.set",
-        Some(&format!("{}:{}", kind.as_str(), rule.entity_id)),
-        json!({ "name": rule.name, "tier": tier.as_str() }),
-    )
-    .await?;
-    crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(rule)
-}
-
-pub async fn remove_tier_rule(
-    state: &AppState,
-    actor: AccountId,
-    entity_id: i64,
-) -> Result<(), AppError> {
-    let mut tx = state.db.begin().await?;
-    if !tier_db::remove_rule(&mut *tx, entity_id).await? {
-        return Err(AppError::not_found("No rule for that id."));
-    }
-    audit::record(
-        &mut *tx,
-        Actor::Account(actor),
-        "tier.rule.remove",
-        Some(&entity_id.to_string()),
-        json!({}),
-    )
-    .await?;
-    crate::tiers::enqueue_evaluate_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(())
 }
 
 pub fn names_unavailable(err: tether_esi::names::NamesError) -> AppError {

@@ -19,7 +19,7 @@ use tether_plugins::host::{
     FieldKind, Page, PageError as PluginPageError, RenderError, Request, Section, Submission,
     SubmitResult, Tone, Value,
 };
-use tether_plugins::services::{Character, Tier, Viewer};
+use tether_plugins::services::{Builtin, Character, State as ViewerState, Viewer};
 use tether_plugins::{manifest, page as page_rules};
 
 use super::{PageError, Shell, load, render};
@@ -409,7 +409,7 @@ async fn open(
     ))
 }
 
-/// The account as the plugin sees it: its characters (main first), tier,
+/// The account as the plugin sees it: its characters (main first), state,
 /// and which of this plugin's own permissions it holds.
 async fn viewer(
     state: &AppState,
@@ -433,17 +433,23 @@ async fn viewer(
         .first()
         .cloned()
         .ok_or_else(AppError::unauthorized)?;
-    let tier = match tether_db::tiers::account_tier(&state.db, session.account).await? {
-        Some(tether_core::tiers::Tier::Member) => Tier::Member,
-        Some(tether_core::tiers::Tier::Allied) => Tier::Allied,
-        _ => Tier::Guest,
+    let current = tether_db::states::account_state(&state.db, session.account)
+        .await?
+        .ok_or_else(AppError::unauthorized)?;
+    let state_view = ViewerState {
+        builtin: current.builtin.map(|b| match b {
+            tether_core::states::Builtin::Member => Builtin::Member,
+            tether_core::states::Builtin::Blue => Builtin::Blue,
+            tether_core::states::Builtin::Guest => Builtin::Guest,
+        }),
+        name: current.name,
     };
     let prefix = format!("plugin.{plugin}.");
     Ok(Viewer {
         account_id: session.account.0,
         main,
         characters,
-        tier,
+        state: state_view,
         // Only names this plugin declares: ids can nest (nmu.esi and
         // nmu.esi.extra), so a prefix alone could leak another plugin's.
         permissions: running

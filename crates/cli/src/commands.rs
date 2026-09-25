@@ -3,13 +3,14 @@ use std::io::Write;
 use anyhow::{Context, bail};
 use clap::{Subcommand, ValueEnum};
 use serde_json::json;
-use tether_core::tiers::Tier;
+use tether_core::states::State;
 use tether_db::PgPool;
 use tether_db::accounts;
 use tether_db::audit::{self, Actor};
-use tether_db::tiers as tier_db;
+use tether_db::states as state_db;
 use tether_esi::Esi;
 use tether_jobs::{JobId, JobState};
+use tether_web::state_admin::Change;
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -18,10 +19,10 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<UsersCommand>,
     },
-    /// Show or change which alliances and corporations are Member or Allied.
-    Tiers {
+    /// Show the access states, or change what one covers.
+    States {
         #[command(subcommand)]
-        command: Option<TiersCommand>,
+        command: Option<StatesCommand>,
     },
     /// Inspect the job queue, or retry a dead job.
     Jobs {
@@ -44,23 +45,18 @@ pub enum UsersCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum TiersCommand {
-    /// Make an alliance or corporation (by EVE id) Member or Allied.
-    Set { entity_id: i64, tier: TierArg },
-    /// Remove the rule for an alliance or corporation.
-    Remove { entity_id: i64 },
+pub enum StatesCommand {
+    /// Make a state cover an alliance, corporation or character (by EVE id),
+    /// e.g. `tether states add Member 99000001`.
+    Add { state: String, entity_id: i64 },
+    /// Stop a state covering an alliance, corporation or character.
+    Remove { state: String, entity_id: i64 },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum JobsCommand {
     /// Put a dead job back in the queue.
     Retry { job_id: i64 },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum TierArg {
-    Member,
-    Allied,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -93,13 +89,13 @@ pub async fn run(
         Command::Users {
             command: Some(UsersCommand::Show { query }),
         } => show_user(db, &query, out).await,
-        Command::Tiers { command: None } => list_tiers(db, out).await,
-        Command::Tiers {
-            command: Some(TiersCommand::Set { entity_id, tier }),
-        } => set_tier(db, esi, entity_id, tier, out).await,
-        Command::Tiers {
-            command: Some(TiersCommand::Remove { entity_id }),
-        } => remove_tier(db, entity_id, out).await,
+        Command::States { command: None } => list_states(db, out).await,
+        Command::States {
+            command: Some(StatesCommand::Add { state, entity_id }),
+        } => add_to_state(db, esi, &state, entity_id, out).await,
+        Command::States {
+            command: Some(StatesCommand::Remove { state, entity_id }),
+        } => remove_from_state(db, esi, &state, entity_id, out).await,
         Command::Jobs {
             command: None,
             state,
@@ -117,8 +113,8 @@ async fn list_users(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
     let users = accounts::list_summaries(db, 1000).await?;
     writeln!(
         out,
-        "{:>6}  {:<28} {:<7} {:>5}  groups",
-        "id", "main", "tier", "chars"
+        "{:>6}  {:<28} {:<12} {:>5}  groups",
+        "id", "main", "state", "chars"
     )?;
     for u in &users {
         let name = if u.is_owner {
@@ -128,10 +124,10 @@ async fn list_users(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
         };
         writeln!(
             out,
-            "{:>6}  {:<28} {:<7} {:>5}  {}",
+            "{:>6}  {:<28} {:<12} {:>5}  {}",
             u.id.0,
             name,
-            u.tier,
+            u.state,
             u.characters,
             u.groups.join(", ")
         )?;
@@ -145,7 +141,9 @@ async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Res
         bail!("no account matches {query:?}");
     };
     let account = accounts::get(db, id).await?.context("account vanished")?;
-    let tier = tier_db::account_tier(db, id).await?.unwrap_or(Tier::Guest);
+    let state = state_db::account_state(db, id)
+        .await?
+        .map_or_else(|| "Guest".to_owned(), |s| s.name);
     let groups = tether_db::groups::names_for(db, id).await?;
     let permissions = tether_db::permissions::effective(db, id).await?;
     writeln!(
@@ -154,7 +152,7 @@ async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Res
         id.0,
         if account.is_owner { " (owner)" } else { "" }
     )?;
-    writeln!(out, "tier: {tier}")?;
+    writeln!(out, "state: {state}")?;
     writeln!(out, "characters:")?;
     for c in &account.characters {
         let main = if c.id == account.main.id {
@@ -170,95 +168,94 @@ async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Res
     Ok(())
 }
 
-async fn list_tiers(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
-    let rules = tier_db::list_rules(db).await?;
-    if rules.is_empty() {
+async fn list_states(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
+    let states = state_db::list(db).await?;
+    let covered = state_db::covered(db).await?;
+    let counts = state_db::counts(db).await?;
+    writeln!(
+        out,
+        "Checked from the top; the first state covering a main wins. Everyone else is Guest."
+    )?;
+    for s in &states {
         writeln!(
             out,
-            "No tier rules: everyone is Guest. Add one with `tether tiers set <id> member`."
+            "{}  ({} account(s))",
+            s.name,
+            counts.get(&s.id).copied().unwrap_or(0)
         )?;
-    }
-    for r in &rules {
-        writeln!(
-            out,
-            "{:<7} {:<12} {:>12}  {}",
-            r.tier,
-            r.kind.as_str(),
-            r.entity_id,
-            r.name
-        )?;
+        for c in covered.iter().filter(|c| c.state == s.id) {
+            writeln!(
+                out,
+                "  {:<12} {:>12}  {}",
+                c.kind.as_str(),
+                c.entity_id,
+                c.name
+            )?;
+        }
     }
     Ok(())
 }
 
-async fn set_tier(
+async fn find_state(db: &PgPool, name: &str) -> anyhow::Result<State> {
+    state_db::by_name(db, name)
+        .await?
+        .with_context(|| format!("no state is called {name:?}; see `tether states`"))
+}
+
+/// Through the same code as the admin pages and API: checks, audit and
+/// re-evaluation all happen there.
+async fn apply_change(db: &PgPool, esi: &Esi, change: Change) -> anyhow::Result<()> {
+    tether_web::state_admin::apply(db, esi, Actor::Cli, &change)
+        .await
+        .map_err(|err| anyhow::anyhow!("{}", err.message()))?;
+    Ok(())
+}
+
+async fn add_to_state(
     db: &PgPool,
     esi: &Esi,
+    state_name: &str,
     entity_id: i64,
-    tier: TierArg,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
-    let tier = match tier {
-        TierArg::Member => Tier::Member,
-        TierArg::Allied => Tier::Allied,
-    };
-    let entity =
-        tether_esi::names::resolve(db, esi, &[entity_id], tether_esi::Priority::Interactive)
-            .await
-            .context("looking the id up on ESI")?
-            .remove(&entity_id)
-            .with_context(|| format!("ESI doesn't know id {entity_id}"))?;
-    let Some(kind) = entity.kind() else {
-        bail!(
-            "{entity_id} ({}) is not an alliance or corporation",
-            entity.name
-        );
-    };
-    let rule = tier_db::TierRule {
+    let target = find_state(db, state_name).await?;
+    let change = Change::Add {
+        state: target.id,
         entity_id,
-        kind,
-        tier,
-        name: entity.name.clone(),
     };
-    let mut tx = db.begin().await?;
-    tier_db::set_rule(&mut *tx, &rule).await?;
-    audit::record(
-        &mut *tx,
-        Actor::Cli,
-        "tier.rule.set",
-        Some(&format!("{}:{entity_id}", kind.as_str())),
-        json!({ "name": entity.name, "tier": tier.as_str() }),
-    )
-    .await?;
-    tether_web::tiers::enqueue_evaluate_all(&mut *tx).await?;
-    tx.commit().await?;
+    apply_change(db, esi, change).await?;
+    let covered = state_db::covered(db).await?;
+    let added = covered
+        .iter()
+        .find(|c| c.state == target.id && c.entity_id == entity_id)
+        .context("the new entry vanished")?;
     writeln!(
         out,
-        "{} ({}) is now {tier}. Tiers will be re-evaluated shortly.",
-        entity.name,
-        kind.as_str()
+        "{} now covers {} ({}). States will be re-evaluated shortly.",
+        target.name,
+        added.name,
+        added.kind.as_str()
     )?;
     Ok(())
 }
 
-async fn remove_tier(db: &PgPool, entity_id: i64, out: &mut dyn Write) -> anyhow::Result<()> {
-    let mut tx = db.begin().await?;
-    if !tier_db::remove_rule(&mut *tx, entity_id).await? {
-        bail!("no tier rule for {entity_id}");
-    }
-    audit::record(
-        &mut *tx,
-        Actor::Cli,
-        "tier.rule.remove",
-        Some(&entity_id.to_string()),
-        json!({}),
-    )
-    .await?;
-    tether_web::tiers::enqueue_evaluate_all(&mut *tx).await?;
-    tx.commit().await?;
+async fn remove_from_state(
+    db: &PgPool,
+    esi: &Esi,
+    state_name: &str,
+    entity_id: i64,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let target = find_state(db, state_name).await?;
+    let change = Change::Remove {
+        state: target.id,
+        entity_id,
+    };
+    apply_change(db, esi, change).await?;
     writeln!(
         out,
-        "Removed the rule for {entity_id}. Tiers will be re-evaluated shortly."
+        "{} no longer covers {entity_id}. States will be re-evaluated shortly.",
+        target.name
     )?;
     Ok(())
 }

@@ -258,16 +258,21 @@ pub struct Member {
     pub account_id: i64,
     pub main_id: i64,
     pub main_name: String,
-    pub tier: String,
+    /// The account's state's name.
+    pub state: String,
+    /// `member`, `blue`, `guest` or `custom`, for the badge.
+    pub state_style: String,
 }
 
 pub async fn members(pool: &PgPool, group: GroupId) -> Result<Vec<Member>, sqlx::Error> {
     sqlx::query_as!(
         Member,
         r#"
-        SELECT a.id AS account_id, c.id AS main_id, c.name AS main_name, a.tier
+        SELECT a.id AS account_id, c.id AS main_id, c.name AS main_name,
+               s.name AS state, COALESCE(s.builtin, 'custom') AS "state_style!"
         FROM core.group_members m
         JOIN core.accounts a ON a.id = m.account_id
+        JOIN core.states s ON s.id = a.state_id
         JOIN core.characters c ON c.id = a.main_character_id
         WHERE m.group_id = $1
         ORDER BY c.name

@@ -8,9 +8,9 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use serde::Serialize;
-use tether_core::tiers::Tier;
+use tether_core::states::Builtin;
 use tether_core::{hash_token, new_token};
-use tether_db::{accounts, auth as db, tiers as tier_db};
+use tether_db::{accounts, auth as db, states as state_db};
 
 use crate::AppState;
 use crate::auth::{SESSION_COOKIE, SESSION_TTL, cookie};
@@ -21,9 +21,9 @@ pub struct Fixture {
     pub name: &'static str,
     pub character_id: i64,
     pub character_name: &'static str,
-    /// Forced tier. Overwritten if tiers are re-evaluated, since fixture
-    /// characters have no affiliation.
-    pub tier: &'static str,
+    /// Forced state: `member`, `blue` or `guest`. Overwritten if states
+    /// are re-evaluated, since fixture characters have no affiliation.
+    pub state: &'static str,
 }
 
 /// Negative character ids: EVE never issues them, so fixtures can't collide
@@ -33,25 +33,25 @@ pub const FIXTURES: &[Fixture] = &[
         name: "owner",
         character_id: -1,
         character_name: "Dev Owner",
-        tier: "member",
+        state: "member",
     },
     Fixture {
         name: "member",
         character_id: -2,
         character_name: "Dev Member",
-        tier: "member",
+        state: "member",
     },
     Fixture {
-        name: "allied",
+        name: "blue",
         character_id: -3,
-        character_name: "Dev Allied",
-        tier: "allied",
+        character_name: "Dev Blue",
+        state: "blue",
     },
     Fixture {
         name: "guest",
         character_id: -4,
         character_name: "Dev Guest",
-        tier: "guest",
+        state: "guest",
     },
 ];
 
@@ -85,8 +85,9 @@ pub async fn login(
     let account = outcome
         .account()
         .ok_or_else(|| AppError::internal("fixture character linked to another account"))?;
-    let tier = Tier::parse(fixture.tier).unwrap_or(Tier::Guest);
-    tier_db::set_account_tier(&state.db, account, tier).await?;
+    let forced = Builtin::parse(fixture.state).unwrap_or(Builtin::Guest);
+    let forced = state_db::builtin(&state.db, forced).await?;
+    state_db::set_account_state(&state.db, account, forced.id).await?;
 
     if let Some(old) = jar.get(SESSION_COOKIE) {
         db::delete_session(&state.db, &hash_token(old.value())).await?;

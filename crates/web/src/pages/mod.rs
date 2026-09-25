@@ -10,6 +10,7 @@ pub mod plugin_access;
 pub mod plugin_pages;
 pub mod plugins;
 pub mod setup;
+pub mod states;
 pub mod system;
 
 use askama::Template;
@@ -18,8 +19,8 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use tether_core::tiers::Tier;
-use tether_db::{accounts, groups, permissions, tiers as tier_db};
+use tether_core::states::State as AccessState;
+use tether_db::{accounts, groups, permissions, states as state_db};
 
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -56,14 +57,6 @@ pub fn initials(name: &str) -> String {
         .take(2)
         .flat_map(char::to_uppercase)
         .collect()
-}
-
-fn tier_label(tier: Tier) -> &'static str {
-    match tier {
-        Tier::Member => "Member",
-        Tier::Allied => "Allied",
-        Tier::Guest => "Guest",
-    }
 }
 
 /// Renders a template, or a plain 500 if rendering itself fails.
@@ -132,7 +125,7 @@ pub async fn not_found() -> Response {
 pub struct ShellUser {
     pub name: String,
     pub character_id: i64,
-    pub tier_label: &'static str,
+    pub state_name: String,
     pub is_owner: bool,
 }
 
@@ -156,7 +149,7 @@ pub struct PluginNavLink {
 pub struct AdminNav {
     pub groups: bool,
     pub permissions: bool,
-    pub tiers: bool,
+    pub states: bool,
     pub discord: bool,
     pub system: bool,
     pub plugins: bool,
@@ -170,7 +163,7 @@ impl AdminNav {
     pub fn any(&self) -> bool {
         self.groups
             || self.permissions
-            || self.tiers
+            || self.states
             || self.discord
             || self.system
             || self.plugins
@@ -223,8 +216,8 @@ pub struct CharacterRow {
 #[template(path = "profile.html")]
 struct ProfilePage {
     shell: Shell,
-    tier: &'static str,
-    tier_label: &'static str,
+    state_style: &'static str,
+    state_name: String,
     is_owner: bool,
     characters: Vec<CharacterRow>,
     groups: Vec<String>,
@@ -243,7 +236,7 @@ struct CharactersFragment {
 
 pub(crate) struct Loaded {
     pub(crate) shell: Shell,
-    tier: Tier,
+    state: AccessState,
     is_owner: bool,
     characters: Vec<CharacterRow>,
 }
@@ -256,15 +249,15 @@ pub(crate) async fn load(
     let account = accounts::get(&state.db, session.account)
         .await?
         .ok_or_else(AppError::unauthorized)?;
-    let tier = tier_db::account_tier(&state.db, session.account)
+    let access = state_db::account_state(&state.db, session.account)
         .await?
-        .unwrap_or(Tier::Guest);
+        .ok_or_else(AppError::unauthorized)?;
     let token_states = tether_db::tokens::states_for_account(&state.db, session.account).await?;
     let perms = permissions::effective(&state.db, session.account).await?;
     let nav = AdminNav {
         groups: perms.contains(tether_core::permissions::ADMIN_GROUPS),
         permissions: perms.contains(tether_core::permissions::ADMIN_PERMISSIONS),
-        tiers: perms.contains(tether_core::permissions::ADMIN_TIERS),
+        states: perms.contains(tether_core::permissions::ADMIN_STATES),
         discord: perms.contains(tether_core::permissions::ADMIN_DISCORD),
         system: perms.contains(tether_core::permissions::ADMIN_SYSTEM),
         plugins: perms.contains(tether_core::permissions::ADMIN_PLUGINS),
@@ -303,7 +296,7 @@ pub(crate) async fn load(
             user: ShellUser {
                 name: account.main.name.clone(),
                 character_id: account.main.id,
-                tier_label: tier_label(tier),
+                state_name: access.name.clone(),
                 is_owner: account.is_owner,
             },
             active,
@@ -311,7 +304,7 @@ pub(crate) async fn load(
             plugin_nav,
             active_href: String::new(),
         },
-        tier,
+        state: access,
         is_owner: account.is_owner,
         characters,
     })
@@ -335,8 +328,8 @@ pub async fn profile(
         StatusCode::OK,
         &ProfilePage {
             shell: loaded.shell,
-            tier: loaded.tier.as_str(),
-            tier_label: tier_label(loaded.tier),
+            state_style: loaded.state.style(),
+            state_name: loaded.state.name,
             is_owner: loaded.is_owner,
             characters: loaded.characters,
             groups,
@@ -363,7 +356,7 @@ pub async fn make_main(
 ) -> Result<Response, PageError> {
     let changed = accounts::set_main(&state.db, session.account, form.character_id).await?;
     if changed {
-        crate::tiers::evaluate_account(&state.db, session.account).await?;
+        crate::states::evaluate_account(&state.db, session.account).await?;
     }
     if !is_htmx(&headers) {
         return Ok(Redirect::to("/profile").into_response());

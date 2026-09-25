@@ -54,7 +54,7 @@ HTTP 401
 
 POST {{base}}/api/admin/permissions/grants
 Origin: {{base}}
-{"permission": "admin.audit", "tier": "member"}
+{"permission": "admin.audit", "state_id": 1}
 HTTP 401
 
 DELETE {{base}}/api/admin/permissions/grants/1
@@ -64,19 +64,38 @@ HTTP 401
 GET {{base}}/api/admin/audit
 HTTP 401
 
-GET {{base}}/api/admin/tiers
+GET {{base}}/api/admin/states
 HTTP 401
 
-POST {{base}}/api/admin/tiers
+POST {{base}}/api/admin/states
 Origin: {{base}}
-{"entity_id": 1, "tier": "member"}
+{"name": "Trial"}
 HTTP 401
 
-DELETE {{base}}/api/admin/tiers/1
+PATCH {{base}}/api/admin/states/4
+Origin: {{base}}
+{"name": "Other"}
+HTTP 401
+
+DELETE {{base}}/api/admin/states/4
 Origin: {{base}}
 HTTP 401
 
-POST {{base}}/api/admin/tiers/resolve
+POST {{base}}/api/admin/states/1/move
+Origin: {{base}}
+{"direction": "up"}
+HTTP 401
+
+POST {{base}}/api/admin/states/1/covers
+Origin: {{base}}
+{"entity_id": 1}
+HTTP 401
+
+DELETE {{base}}/api/admin/states/1/covers/1
+Origin: {{base}}
+HTTP 401
+
+POST {{base}}/api/admin/states/resolve
 Origin: {{base}}
 {"names": ["Goonswarm Federation"]}
 HTTP 401

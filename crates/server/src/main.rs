@@ -212,7 +212,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             esi: esi.clone(),
         },
     );
-    tether_web::tiers::register_jobs(&mut registry, db.clone(), esi.clone());
+    tether_web::states::register_jobs(&mut registry, db.clone(), esi.clone());
     tether_web::maintenance::register_jobs(&mut registry, db.clone());
     tether_web::sync::register_jobs(&mut registry, db.clone(), esi.clone());
     let schedules = tether_web::maintenance::schedules()

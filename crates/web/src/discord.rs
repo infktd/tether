@@ -3,10 +3,10 @@
 //!
 //! Linking: the member approves `identify guilds.join` at Discord, the
 //! callback trades the code for their access token, learns who they are,
-//! and the bot adds them to the server with the roles mapped to their tier
+//! and the bot adds them to the server with the roles mapped to their state
 //! and groups. The token is then revoked; it is never stored.
 //!
-//! Only Member and Allied pilots may join the server through Tether:
+//! Only pilots in a state other than Guest join the server through Tether:
 //! anyone with an EVE character is at least Guest.
 
 use std::sync::Arc;
@@ -18,13 +18,12 @@ use serde::Deserialize;
 use serde_json::json;
 use tether_core::crypto::EncryptionKey;
 use tether_core::permissions::JoinPolicy;
-use tether_core::tiers::Tier;
 use tether_core::{Secret, hash_token, new_token};
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::discord as db;
 use tether_db::permissions::Grantee;
-use tether_db::{PgPool, groups, tiers as tier_db};
+use tether_db::{PgPool, groups};
 use tether_discord::store::{self, StoreError};
 use tether_discord::{Discord, DiscordConfig, DiscordError, GuildCheck, Joined, UserToken};
 use tether_jobs::{JobError, Registry};
@@ -110,16 +109,16 @@ pub async fn is_configured(state: &AppState) -> Result<bool, AppError> {
     Ok(stored(state).await?.config().is_some())
 }
 
-/// Only Member and Allied pilots join the server through Tether.
+/// Guests don't join the server through Tether; every other state does.
 pub async fn may_join(state: &AppState, account: AccountId) -> Result<bool, AppError> {
-    let tier = tier_db::account_tier(&state.db, account).await?;
-    Ok(matches!(tier, Some(Tier::Member | Tier::Allied)))
+    let current = tether_db::states::account_state(&state.db, account).await?;
+    Ok(current.is_some_and(|s| !s.is_guest()))
 }
 
 fn guests_cannot_join() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
-        "Only Member and Allied pilots can join the Discord server. Your tier comes from your main's corporation and alliance.",
+        "Guests can't join the Discord server through Tether. Your access state comes from your main's corporation and alliance.",
     )
 }
 
@@ -212,7 +211,7 @@ pub async fn save_nickname_template(
     Ok(())
 }
 
-/// Maps a Discord role to a tier or group. Only roles the bot can give;
+/// Maps a Discord role to a state or group. Only roles the bot can give;
 /// never Administrator; and moderation or management roles never to Guest
 /// or an Open group, which anyone can be in.
 pub async fn add_mapping(
@@ -244,7 +243,10 @@ pub async fn add_mapping(
     let stored_id = i64::try_from(role.id).map_err(AppError::internal)?;
     let mut tx = state.db.begin().await?;
     let open = match grantee {
-        Grantee::Tier(tier) => tier == Tier::Guest,
+        Grantee::State(id) => tether_db::states::get(&mut *tx, id)
+            .await?
+            .ok_or_else(|| AppError::not_found("No such state."))?
+            .is_guest(),
         Grantee::Group(group) => {
             let group = groups::get(&mut *tx, group)
                 .await?
@@ -302,8 +304,8 @@ pub async fn remove_mapping(state: &AppState, actor: AccountId, id: i64) -> Resu
 
 fn mapping_details(role_id: i64, role_name: &str, grantee: Grantee) -> serde_json::Value {
     match grantee {
-        Grantee::Tier(tier) => {
-            json!({ "role_id": role_id.to_string(), "role": role_name, "tier": tier.as_str() })
+        Grantee::State(state) => {
+            json!({ "role_id": role_id.to_string(), "role": role_name, "state_id": state.0 })
         }
         Grantee::Group(group) => {
             json!({ "role_id": role_id.to_string(), "role": role_name, "group_id": group.0 })
@@ -467,7 +469,7 @@ async fn link_with_token(
             "That Discord account is linked to another pilot's account. Unlink it there first.",
         )
     };
-    // The tier may have changed since the link started.
+    // The state may have changed since the link started.
     if !may_join(state, account).await? {
         return Err(guests_cannot_join());
     }

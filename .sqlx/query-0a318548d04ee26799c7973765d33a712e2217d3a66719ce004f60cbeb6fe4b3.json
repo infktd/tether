@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.states SET priority = priority + 1 WHERE priority > 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "0a318548d04ee26799c7973765d33a712e2217d3a66719ce004f60cbeb6fe4b3"
+}

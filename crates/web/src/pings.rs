@@ -97,7 +97,7 @@ pub async fn remove_channel(
 }
 
 /// Who a ping may target: nobody, @here, @everyone, or a role Tether
-/// manages (the ones mapped to tiers and groups).
+/// manages (the ones mapped to states and groups).
 pub async fn targets(state: &AppState) -> Result<Vec<Target>, AppError> {
     let mut targets = vec![Target::None, Target::Here, Target::Everyone];
     let mut seen = std::collections::HashSet::new();

@@ -12,7 +12,7 @@ const BOT: &str = "111111111111111111";
 const GUILD: &str = "222222222222222222";
 const USER: &str = "333333333333333333";
 const MEMBER_ROLE: u64 = 500_000_000_000_000_003;
-const ALLIED_ROLE: u64 = 500_000_000_000_000_004;
+const BLUE_ROLE: u64 = 500_000_000_000_000_004;
 
 fn fixture(name: &str) -> serde_json::Value {
     let path = format!(
@@ -238,7 +238,7 @@ async fn joining_adds_the_member_with_roles() {
         .and(header("authorization", "Bot bot-token"))
         .and(body_json(serde_json::json!({
             "access_token": "user-access-token",
-            "roles": [MEMBER_ROLE.to_string(), ALLIED_ROLE.to_string()],
+            "roles": [MEMBER_ROLE.to_string(), BLUE_ROLE.to_string()],
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(fixture("added_member")))
         .expect(1)
@@ -249,7 +249,7 @@ async fn joining_adds_the_member_with_roles() {
             &config(),
             USER.parse().unwrap(),
             &user_token(),
-            &[MEMBER_ROLE, ALLIED_ROLE],
+            &[MEMBER_ROLE, BLUE_ROLE],
         )
         .await
         .unwrap();
@@ -264,7 +264,7 @@ async fn joining_when_already_in_the_server_adds_the_roles_one_by_one() {
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
-    for role in [MEMBER_ROLE, ALLIED_ROLE] {
+    for role in [MEMBER_ROLE, BLUE_ROLE] {
         Mock::given(method("PUT"))
             .and(path(format!(
                 "/api/v10/guilds/{GUILD}/members/{USER}/roles/{role}"
@@ -279,7 +279,7 @@ async fn joining_when_already_in_the_server_adds_the_roles_one_by_one() {
             &config(),
             USER.parse().unwrap(),
             &user_token(),
-            &[MEMBER_ROLE, ALLIED_ROLE],
+            &[MEMBER_ROLE, BLUE_ROLE],
         )
         .await
         .unwrap();
@@ -298,11 +298,7 @@ async fn removing_roles_from_someone_who_left_is_done_and_outages_are_transient(
         .mount(&server)
         .await;
     discord
-        .remove_roles(
-            &config(),
-            USER.parse().unwrap(),
-            &[MEMBER_ROLE, ALLIED_ROLE],
-        )
+        .remove_roles(&config(), USER.parse().unwrap(), &[MEMBER_ROLE, BLUE_ROLE])
         .await
         .unwrap();
 
@@ -329,18 +325,14 @@ async fn removing_roles_from_someone_who_left_is_done_and_outages_are_transient(
         .await;
     Mock::given(method("DELETE"))
         .and(path(format!(
-            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{ALLIED_ROLE}"
+            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{BLUE_ROLE}"
         )))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&server)
         .await;
     let refused = discord
-        .remove_roles(
-            &config(),
-            USER.parse().unwrap(),
-            &[MEMBER_ROLE, ALLIED_ROLE],
-        )
+        .remove_roles(&config(), USER.parse().unwrap(), &[MEMBER_ROLE, BLUE_ROLE])
         .await
         .unwrap();
     assert_eq!(refused, [MEMBER_ROLE]);

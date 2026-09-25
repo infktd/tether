@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.state_entities (state_id, entity_id, entity_kind, name)\n        VALUES ($1, $2, $3, $4)\n        ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3b73c00422e5c250e1a82a03725e57e6ef7d56ccb3e3f077907d1954ca00cb93"
+}

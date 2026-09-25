@@ -164,7 +164,7 @@ pub async fn mappings<'e>(
 ) -> Result<Vec<RoleMapping>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, role_id, role_name, tier, group_id
+        SELECT id, role_id, role_name, state_id, group_id
         FROM core.discord_role_mappings
         ORDER BY role_name, id
         "#
@@ -178,7 +178,7 @@ pub async fn mappings<'e>(
                 id: r.id,
                 role_id: r.role_id,
                 role_name: r.role_name,
-                grantee: grantee_from(r.tier, r.group_id)?,
+                grantee: grantee_from(r.state_id, r.group_id)?,
             })
         })
         .collect())
@@ -191,17 +191,17 @@ pub async fn add_mapping<'e>(
     role_name: &str,
     grantee: Grantee,
 ) -> Result<Option<i64>, sqlx::Error> {
-    let (tier, group) = split(grantee);
+    let (state, group) = split(grantee);
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.discord_role_mappings (role_id, role_name, tier, group_id)
+        INSERT INTO core.discord_role_mappings (role_id, role_name, state_id, group_id)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT DO NOTHING
         RETURNING id
         "#,
         role_id,
         role_name,
-        tier,
+        state,
         group,
     )
     .fetch_optional(executor)
@@ -215,7 +215,7 @@ pub async fn remove_mapping<'e>(
     let row = sqlx::query!(
         r#"
         DELETE FROM core.discord_role_mappings WHERE id = $1
-        RETURNING id, role_id, role_name, tier, group_id
+        RETURNING id, role_id, role_name, state_id, group_id
         "#,
         id
     )
@@ -226,7 +226,7 @@ pub async fn remove_mapping<'e>(
             id: r.id,
             role_id: r.role_id,
             role_name: r.role_name,
-            grantee: grantee_from(r.tier, r.group_id)?,
+            grantee: grantee_from(r.state_id, r.group_id)?,
         })
     }))
 }
@@ -239,7 +239,7 @@ pub struct RoleFor {
     pub open_only: bool,
 }
 
-/// The roles an account should have: those mapped to its tier and to its
+/// The roles an account should have: those mapped to its state and to its
 /// groups.
 pub async fn roles_for<'e>(
     executor: impl sqlx::PgExecutor<'e>,
@@ -248,12 +248,12 @@ pub async fn roles_for<'e>(
     let rows = sqlx::query!(
         r#"
         SELECT m.role_id AS "role_id!",
-               bool_and(COALESCE(m.tier = 'guest', false)
+               bool_and(COALESCE(m.state_id = core.guest_state(), false)
                         OR COALESCE(g.join_policy = 'open', false)) AS "open_only!"
         FROM core.discord_role_mappings m
         JOIN core.accounts a ON a.id = $1
         LEFT JOIN core.groups g ON g.id = m.group_id
-        WHERE m.tier = a.tier
+        WHERE m.state_id = a.state_id
            OR m.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)
         GROUP BY m.role_id
         ORDER BY 1

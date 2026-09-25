@@ -152,7 +152,7 @@ label = "Mining"
 path = ""
 ```
 
-- Permissions are granted like Tether's own, to tiers and groups, as `plugin.<id>.<name>`.
+- Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.
 - A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
 - Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
 - Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.
@@ -326,7 +326,7 @@ fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
 
 ## Who's looking
 
-`identity::viewer()` says who is looking at a page or posting a form: their account id, main, all their characters (with corporation and alliance), tier, and which of your plugin's permissions they hold (`viewer.can("manage")`). Jobs have no viewer.
+`identity::viewer()` says who is looking at a page or posting a form: their account id, main, all their characters (with corporation and alliance), access state (`viewer.state.name`, and `viewer.is_member()` / `viewer.is_guest()`; admins can add states above Member, such as a leadership state, so `is_member()` is false for them: gate on your own permissions rather than on state where you can), and which of your plugin's permissions they hold (`viewer.can("manage")`). Jobs have no viewer.
 
 ## ESI
 
@@ -376,12 +376,12 @@ let names = esi::names(&[40161234, 30000142])?;
 With `discord = ["send_message"]`, a plugin can post to the channels an admin assigned it (`discord::channels()`):
 
 ```rust
-use tether_plugin_sdk::discord::{self, Mention, Tier};
+use tether_plugin_sdk::discord::{self, Mention};
 let channel = discord::channels().first().map(|c| c.id.clone());
-discord::send(&channel.unwrap(), "Moon popped at 1DQ1-A I", Mention::Tier(Tier::Member))?;
+discord::send(&channel.unwrap(), "Moon popped at 1DQ1-A I", Mention::State("Member".into()))?;
 ```
 
-- Mentions are only the Discord role Tether maps to a tier; typed `@everyone` and `@here` are defused, and nobody else can be pinged.
+- Mentions are only the Discord role Tether maps to a state, named like `Mention::State("Member".into())`; typed `@everyone` and `@here` are defused, and nobody else can be pinged.
 - From `submit` and jobs only, not pages. At most 1,500 characters, 5 messages per call and 20 a minute per plugin.
 
 ## Logging

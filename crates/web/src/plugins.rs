@@ -1025,8 +1025,8 @@ async fn uninstall_now(
             "grants_removed": grants
                 .iter()
                 .map(|g| match g.grantee {
-                    tether_db::permissions::Grantee::Tier(tier) => {
-                        json!({ "permission": g.permission, "tier": tier.as_str() })
+                    tether_db::permissions::Grantee::State(state) => {
+                        json!({ "permission": g.permission, "state_id": state.0 })
                     }
                     tether_db::permissions::Grantee::Group(group) => {
                         json!({ "permission": g.permission, "group_id": group.0 })

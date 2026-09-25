@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.discord_role_mappings WHERE id = $1\n        RETURNING id, role_id, role_name, state_id, group_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "role_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "role_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "group_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d4eb51210cc8a29cf85a922e6b7a639e8b62ac6c80c79f3dd60fb8abca60abe8"
+}

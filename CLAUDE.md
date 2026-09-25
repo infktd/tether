@@ -111,7 +111,7 @@ cargo clippy -p hello-plugin -p tether-plugin-sdk --target wasm32-wasip2 -- -D w
 cargo build -p hello-plugin --target wasm32-wasip2 --release   # the plugin tests build their guests themselves
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
 deploy/install.sh localhost    # writes deploy/.env once, then starts the stack
-docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, tiers, jobs, sync
+docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync
 docker compose -f deploy/docker-compose.yml up --build
 # Hurl runs against a fresh stack (the setup flow expects no owner yet):
 hurl --test --insecure --jobs 1 --variable base=https://localhost --variable setup_token="$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" tests/hurl/*.hurl

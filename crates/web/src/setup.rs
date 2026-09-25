@@ -6,7 +6,7 @@
 //!    to register with CCP and can check the instance is reachable at it.
 //! 3. Log in with EVE SSO from the same browser: that account becomes the
 //!    owner, and the wizard's token step is disabled for good.
-//! 4. As owner, choose the Member alliance (`/api/admin/tiers`).
+//! 4. As owner, choose the Member alliance (`/api/admin/states`).
 
 use std::time::Duration;
 
@@ -17,11 +17,11 @@ use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tether_core::permissions::ADMIN_TIERS;
-use tether_core::tiers::EntityKind;
+use tether_core::permissions::ADMIN_STATES;
+use tether_core::states::{Builtin, EntityKind};
 use tether_core::{hash_token, new_token};
 use tether_db::audit::{self, Actor};
-use tether_db::{accounts, settings, setup, tiers as tier_db};
+use tether_db::{accounts, settings, setup, states as state_db};
 
 use crate::AppState;
 use crate::auth::{CurrentSession, cookie};
@@ -87,10 +87,11 @@ pub async fn load_status(
         .await?
         .is_some();
     let owner_exists = accounts::owner_exists(&state.db).await?;
-    let has_member_rule = tier_db::list_rules(&state.db)
+    let member = state_db::builtin(&state.db, Builtin::Member).await?;
+    let has_member_rule = state_db::covered(&state.db)
         .await?
         .iter()
-        .any(|r| r.tier == tether_core::tiers::Tier::Member);
+        .any(|c| c.state == member.id);
     let setup_state = match (sso_configured, owner_exists, has_member_rule) {
         (false, false, _) => SetupState::NeedsSso,
         (true, false, _) => SetupState::NeedsOwner,
@@ -100,7 +101,7 @@ pub async fn load_status(
 
     let mut suggested = None;
     if let (SetupState::NeedsAlliance, Some(session)) = (&setup_state, session)
-        && session.require(state, ADMIN_TIERS).await.is_ok()
+        && session.require(state, ADMIN_STATES).await.is_ok()
     {
         suggested = suggestion(state, session).await;
     }
@@ -116,9 +117,10 @@ pub async fn load_status(
 }
 
 async fn suggestion(state: &AppState, session: &CurrentSession) -> Option<Suggestion> {
-    let affiliation = tier_db::main_affiliation(&state.db, session.account)
+    let affiliation = state_db::main(&state.db, session.account)
         .await
-        .ok()??;
+        .ok()??
+        .affiliation?;
     let id = affiliation
         .alliance_id
         .unwrap_or(affiliation.corporation_id);

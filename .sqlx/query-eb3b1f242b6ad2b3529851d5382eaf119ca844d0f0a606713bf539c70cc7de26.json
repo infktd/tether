@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT g.permission AS \"permission!\"\n        FROM core.permission_grants g\n        JOIN core.accounts a ON a.id = $1\n        WHERE g.state_id = a.state_id\n           OR g.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "permission!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "permission"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eb3b1f242b6ad2b3529851d5382eaf119ca844d0f0a606713bf539c70cc7de26"
+}

@@ -61,7 +61,7 @@ async fn admin_pages_need_a_session_and_the_permission(db: PgPool) {
     for uri in [
         "/admin/groups",
         "/admin/permissions",
-        "/admin/tiers",
+        "/admin/states",
         "/admin",
     ] {
         assert_eq!(
@@ -99,7 +99,7 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
     for link in [
         "/admin/groups",
         "/admin/permissions",
-        "/admin/tiers",
+        "/admin/states",
         "/setup",
     ] {
         assert!(
@@ -113,9 +113,9 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
         "no Admin section for a plain pilot"
     );
 
-    // Grant tier rules to an assigned group the pilot is in: only that
+    // Grant states to an assigned group the pilot is in: only that
     // link appears.
-    let group = create_group(&h, &owner, "Tier Wranglers", "assigned").await;
+    let group = create_group(&h, &owner, "State Wranglers", "assigned").await;
     let group_id = group.rsplit('/').next().unwrap().to_owned();
     send(
         &h.app,
@@ -126,16 +126,16 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            &format!("permission=admin.tiers&grantee=group:{group_id}"),
+            &format!("permission=admin.states&grantee=group:{group_id}"),
             &owner,
         ),
     )
     .await;
     let pilot_nav = page(&h, "/profile", &pilot).await.body;
-    assert!(pilot_nav.contains(r#"href="/admin/tiers""#));
+    assert!(pilot_nav.contains(r#"href="/admin/states""#));
     assert!(!pilot_nav.contains(r#"href="/admin/groups""#));
     assert_eq!(
-        page(&h, "/admin/tiers", &pilot).await.status,
+        page(&h, "/admin/states", &pilot).await.status,
         StatusCode::OK
     );
     assert_eq!(
@@ -283,7 +283,7 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=admin.audit&grantee=tier:member",
+            &format!("permission=admin.audit&grantee=state:{MEMBER_STATE}"),
             &owner,
         ),
     )
@@ -298,7 +298,7 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     )
     .await;
     let listed = page(&h, "/admin/permissions", &owner).await;
-    assert!(listed.body.contains("Tier: Member"));
+    assert!(listed.body.contains("State: Member"));
     assert!(listed.body.contains("Group: Officers"));
     assert_eq!(
         me(&h, &pilot).await["permissions"],
@@ -342,7 +342,7 @@ async fn admin_permissions_never_go_to_guest_or_open_groups(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=admin.audit&grantee=tier:guest",
+            &format!("permission=admin.audit&grantee=state:{GUEST_STATE}"),
             &owner,
         ),
     )
@@ -463,43 +463,194 @@ async fn group_descriptions_are_capped(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn tier_rules_are_searched_added_and_removed_from_the_page(db: PgPool) {
+async fn states_are_found_previewed_added_and_removed_from_the_page(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _) = owner_and_pilot(&h).await;
 
-    let mut search = form("/admin/tiers/search", "name=Goonswarm+Federation", &owner);
+    let listed = page(&h, "/admin/states", &owner).await;
+    assert_eq!(listed.status, StatusCode::OK);
+    for name in ["Member", "Blue", "Guest"] {
+        assert!(listed.body.contains(name), "{name}");
+    }
+    assert!(listed.body.contains("Guest lists nobody"));
+    assert_no_external_urls(&listed.body);
+
+    let mut search = form(
+        "/admin/states/search",
+        &format!("state_id={BLUE_STATE}&name=Goonswarm+Federation"),
+        &owner,
+    );
     search
         .headers_mut()
         .insert("hx-request", "true".parse().unwrap());
     let found = send(&h.app, search).await;
     assert!(found.body.contains("Goonswarm Federation"));
-    assert!(found.body.contains("Make Member") && found.body.contains("Make Allied"));
+    assert!(found.body.contains("Add to Blue"));
+    assert!(found.body.contains("https://images.evetech.net/alliances/"));
     assert!(!found.body.contains("<html"));
 
-    let added = send(
+    // The owner's main (Chribba) is in Otherworld Empire: adding it to Blue
+    // moves them, so the page asks first and changes nothing yet.
+    let add = format!("/admin/states/{BLUE_STATE}/covers");
+    let asked = send(&h.app, form(&add, "entity_id=159826257", &owner)).await;
+    assert_eq!(asked.status, StatusCode::OK);
+    assert!(asked.body.contains("Add Otherworld Empire to Blue?"));
+    assert!(asked.body.contains(r#"name="confirm" value="1""#));
+    assert!(
+        !page(&h, "/admin/states", &owner)
+            .await
+            .body
+            .contains("Otherworld Empire")
+    );
+
+    let added = send(&h.app, form(&add, "entity_id=159826257&confirm=1", &owner)).await;
+    assert_eq!(added.location(), "/admin/states");
+    let listed = page(&h, "/admin/states", &owner).await;
+    assert!(listed.body.contains("Otherworld Empire"));
+    assert!(
+        listed
+            .body
+            .contains("https://images.evetech.net/alliances/159826257/logo")
+    );
+
+    // Guest lists nobody.
+    let guest = send(
         &h.app,
-        form("/admin/tiers", "entity_id=159826257&tier=allied", &owner),
+        form(
+            &format!("/admin/states/{GUEST_STATE}/covers"),
+            "entity_id=159826257&confirm=1",
+            &owner,
+        ),
     )
     .await;
-    assert_eq!(added.location(), "/admin/tiers");
-    let listed = page(&h, "/admin/tiers", &owner).await;
-    assert!(listed.body.contains("Otherworld Empire"));
-    assert!(listed.body.contains(r#"data-tier="allied""#));
+    assert_eq!(guest.status, StatusCode::BAD_REQUEST);
 
-    let removed = send(&h.app, form("/admin/tiers/159826257/remove", "", &owner)).await;
-    assert_eq!(removed.location(), "/admin/tiers");
+    let removed = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{BLUE_STATE}/covers/159826257/remove"),
+            "confirm=1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(removed.location(), "/admin/states");
     assert!(
-        !page(&h, "/admin/tiers", &owner)
+        !page(&h, "/admin/states", &owner)
             .await
             .body
             .contains("Otherworld Empire")
     );
 
     let actions: Vec<String> = sqlx::query_scalar(
-        "SELECT action FROM core.audit_log WHERE action LIKE 'tier.rule.%' ORDER BY id",
+        "SELECT action FROM core.audit_log WHERE action LIKE 'state.%' AND action <> 'state.change' ORDER BY id",
     )
     .fetch_all(&h.db)
     .await
     .unwrap();
-    assert_eq!(actions, ["tier.rule.set", "tier.rule.remove"]);
+    assert_eq!(actions, ["state.add", "state.remove"]);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn states_are_created_ordered_renamed_and_deleted(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+
+    let created = send(&h.app, form("/admin/states", "name=Trial", &owner)).await;
+    assert_eq!(created.location(), "/admin/states");
+    let order = |body: &str| {
+        ["Member", "Blue", "Trial", "Guest"].map(|n| body.find(&format!(">{n}</span>")).unwrap())
+    };
+    let o = order(&page(&h, "/admin/states", &owner).await.body);
+    assert!(
+        o[0] < o[1] && o[1] < o[2] && o[2] < o[3],
+        "new states go just above Guest"
+    );
+
+    let taken = send(&h.app, form("/admin/states", "name=trial", &owner)).await;
+    assert_eq!(taken.status, StatusCode::CONFLICT);
+
+    let trial: i64 = sqlx::query_scalar("SELECT id FROM core.states WHERE name = 'Trial'")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    // Nobody moves (Trial covers nobody), so no confirmation is needed.
+    let up = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{trial}/move"),
+            "direction=up",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(up.location(), "/admin/states");
+    let body = page(&h, "/admin/states", &owner).await.body;
+    assert!(body.find(">Trial</span>").unwrap() < body.find(">Blue</span>").unwrap());
+    // Nothing moves below Guest, and Guest doesn't move.
+    let guest = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{GUEST_STATE}/move"),
+            "direction=up",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(guest.status, StatusCode::BAD_REQUEST);
+
+    let renamed = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{trial}/rename"),
+            "name=Recruits",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(renamed.location(), "/admin/states");
+    let builtin = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{MEMBER_STATE}/rename"),
+            "name=Pilots",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(builtin.status, StatusCode::BAD_REQUEST);
+    let builtin = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{MEMBER_STATE}/delete"),
+            "confirm=1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(builtin.status, StatusCode::BAD_REQUEST);
+
+    let deleted = send(
+        &h.app,
+        form(&format!("/admin/states/{trial}/delete"), "", &owner),
+    )
+    .await;
+    assert_eq!(deleted.location(), "/admin/states");
+    assert!(
+        !page(&h, "/admin/states", &owner)
+            .await
+            .body
+            .contains("Recruits")
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM core.audit_log WHERE action LIKE 'state.%' AND action <> 'state.change' ORDER BY id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        actions,
+        ["state.create", "state.move", "state.rename", "state.delete"]
+    );
 }

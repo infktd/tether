@@ -6,7 +6,7 @@
 <div class="flex items-end justify-between gap-4">
   <div>
     <h1 class="page-title">Profile</h1>
-    <p class="text-muted-foreground mt-1">Your characters, access tier and groups.</p>
+    <p class="text-muted-foreground mt-1">Your characters, access state and groups.</p>
   </div>
   <a href="/auth/login?return_to=/profile" class="btn" data-variant="outline">
     {% call icons::icon("plus") %}{% endcall %} Add character
@@ -15,8 +15,8 @@
 
 <section class="grid grid-cols-4 gap-4" aria-label="Summary">
   <div class="card stat">
-    <div class="stat-label">Tier</div>
-    <div class="stat-value"><span class="tier-badge" data-tier="{{ tier }}">{{ tier_label }}</span></div>
+    <div class="stat-label">State</div>
+    <div class="stat-value"><span class="state-badge" data-state="{{ state_style }}">{{ state_name }}</span></div>
     <div class="stat-caption">From your main's corporation and alliance</div>
   </div>
   <div class="card stat">
@@ -32,7 +32,7 @@
   <div class="card stat">
     <div class="stat-label">Permissions</div>
     <div class="stat-value num">{{ permissions.len() }}</div>
-    <div class="stat-caption">{% if is_owner %}Owner: everything{% else %}From your tier and groups{% endif %}</div>
+    <div class="stat-caption">{% if is_owner %}Owner: everything{% else %}From your state and groups{% endif %}</div>
   </div>
 </section>
 
@@ -43,14 +43,14 @@
   <header><h2>Discord</h2></header>
   <section class="flex items-center justify-between gap-4">
     {% if let Some(name) = discord.linked %}
-    <p class="text-sm">Linked as <strong class="text-foreground">{{ name }}</strong>. You get the server roles for your tier and groups.</p>
+    <p class="text-sm">Linked as <strong class="text-foreground">{{ name }}</strong>. You get the server roles for your state and groups.</p>
     <form method="post" action="/profile/discord/unlink" hx-boost="true" hx-confirm="Unlink Discord? You'll lose the roles Tether gave you.">
       <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Unlink</button>
     </form>
     {% else if !discord.may_join %}
-    <p class="text-sm text-muted-foreground">Only Member and Allied pilots can join the Discord server.</p>
+    <p class="text-sm text-muted-foreground">Guests can't join the Discord server through Tether.</p>
     {% else %}
-    <p class="text-sm">Link your Discord account to join the server with the roles for your tier and groups.</p>
+    <p class="text-sm">Link your Discord account to join the server with the roles for your state and groups.</p>
     <form method="post" action="/profile/discord/link" hx-boost="false">
       <button type="submit" class="btn" data-variant="primary">Link Discord</button>
     </form>

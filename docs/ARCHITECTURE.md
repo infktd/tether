@@ -134,7 +134,7 @@ The host is the only thing that talks to ESI. It owns every token, schedules eve
 
 Postgres holds everything, including the job queue.
 
-- `core` schema: users, characters, tokens, corps, alliances, tiers, groups, permissions, audit log.
+- `core` schema: users, characters, tokens, corps, alliances, states, groups, permissions, audit log.
 - `plugin_<id>` schemas: one per plugin with `storage = true`, owned by Tether's role. The plugin's own login role (random password, sealed in `core.secrets`) can use and create objects only there: no rights on `core`, `public` or other plugins' schemas, no temporary tables, no advisory locks. The host reaches it through a small pool per plugin, and sets timeouts, memory and `search_path` before every statement, since a role can change its own defaults. Uninstalling drops the schema and role.
 - TimescaleDB hypertables are for Tether's own time series for now: plugin roles have no access to `public`, where TimescaleDB's functions live. If a plugin needs one, the host can offer it through a host call.
 - `esi_cache`: shared cached responses with expiry, host-only.
@@ -148,9 +148,9 @@ EVE SSO is the only login. No email.
 
 - One account holds many characters; the first linked is the main and can be changed. Alts are added by logging in with them while signed in.
 - The first account to log in on a fresh install becomes the owner.
-- Tiers: **Member** (main in a listed alliance or corp), **Allied** (main in a listed blue entity), **Guest** (everyone else). Re-evaluated on every affiliation sync via ESI's bulk affiliation endpoint.
-- Groups add access on top of tiers: open, request-to-join, admin-assigned.
-- Permissions come from the core and from plugin manifests, and are assigned to tiers or groups only. Every change is audit-logged.
+- States, Alliance Auth style: **Member**, **Blue** and **Guest** built in, plus any admins create, each with a priority and a list of alliances, corporations and characters. An account's state is the highest-priority state whose list matches its main; no match is Guest. Re-evaluated on every affiliation sync via ESI's bulk affiliation endpoint, and whenever the states change.
+- Groups add access on top of states: open, request-to-join, admin-assigned.
+- Permissions come from the core and from plugin manifests, and are assigned to states or groups only. Every change is audit-logged.
 - Personal access tokens with explicit scopes and expiry, for bots and scripts.
 
 ## UI

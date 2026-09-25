@@ -225,7 +225,7 @@ async fn assigned_groups_are_admin_only(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn permissions_granted_to_groups_and_tiers_take_effect(db: PgPool) {
+async fn permissions_granted_to_groups_and_states_take_effect(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
     let officers = create_group(&h, &owner, "Officers", "assigned").await;
@@ -300,7 +300,7 @@ async fn permissions_granted_to_groups_and_tiers_take_effect(db: PgPool) {
     );
 
     // Admin permissions can't go to Guest: anyone who logs in with EVE is.
-    let body = r#"{"permission":"admin.groups","tier":"guest"}"#;
+    let body = r#"{"permission":"admin.groups","state_id":3}"#;
     let refused = call(
         &h,
         "POST",
@@ -346,7 +346,7 @@ async fn invalid_grants_are_rejected(db: PgPool) {
     };
 
     assert_eq!(
-        grant(r#"{"permission":"admin.everything","tier":"member"}"#).await,
+        grant(r#"{"permission":"admin.everything","state_id":1}"#).await,
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
@@ -354,12 +354,12 @@ async fn invalid_grants_are_rejected(db: PgPool) {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        grant(r#"{"permission":"admin.audit","tier":"member","group_id":1}"#).await,
+        grant(r#"{"permission":"admin.audit","state_id":1,"group_id":1}"#).await,
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        grant(r#"{"permission":"admin.audit","tier":"admiral"}"#).await,
-        StatusCode::BAD_REQUEST
+        grant(r#"{"permission":"admin.audit","state_id":999}"#).await,
+        StatusCode::NOT_FOUND
     );
     assert_eq!(
         grant(r#"{"permission":"admin.audit","group_id":999}"#).await,
@@ -371,7 +371,7 @@ async fn invalid_grants_are_rejected(db: PgPool) {
         "POST",
         "/api/admin/permissions/grants",
         &pilot,
-        Some(r#"{"permission":"admin.audit","tier":"guest"}"#),
+        Some(r#"{"permission":"admin.audit","state_id":3}"#),
     )
     .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);

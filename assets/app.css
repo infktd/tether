@@ -195,21 +195,30 @@
   }
 
   /* Status badges pair colour with a dot and a label, never colour alone. */
-  .tier-badge {
+  .state-badge {
     @apply inline-flex items-center gap-2 rounded-sm px-2 py-0.5 text-xs font-medium align-middle;
   }
-  .tier-badge::before {
+  .state-badge::before {
     content: "";
     @apply size-1.5 rounded-full bg-current;
   }
-  .tier-badge[data-tier="member"] {
+  .state-badge[data-state="member"] {
     @apply bg-highlight-soft text-highlight;
   }
-  .tier-badge[data-tier="allied"] {
+  .state-badge[data-state="blue"] {
     @apply bg-info-soft text-info-foreground;
   }
-  .tier-badge[data-tier="guest"] {
+  .state-badge[data-state="guest"],
+  .state-badge[data-state="custom"] {
     @apply border border-faint text-foreground-soft;
+  }
+
+  /* An alliance, corporation or character in a list (DESIGN.md). */
+  .entity-chip {
+    @apply inline-flex items-center gap-2 rounded-sm border bg-background py-1 pl-1 pr-1 text-sm;
+  }
+  .entity-chip > img {
+    @apply size-5 rounded-sm bg-muted;
   }
 
   .avatar-img {

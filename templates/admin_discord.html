@@ -6,7 +6,7 @@
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>
     <h1 class="page-title">Discord</h1>
-    <p class="text-muted-foreground mt-1">Members link Discord from their profile and join the server with the roles for their tier and groups. Tether only talks to Discord's REST API; nothing runs in the server.</p>
+    <p class="text-muted-foreground mt-1">Members link Discord from their profile and join the server with the roles for their state and groups. Tether only talks to Discord's REST API; nothing runs in the server.</p>
   </div>
   {% include "admin_error.html" %}
 
@@ -67,7 +67,7 @@
   </form>
 
   <section class="card data-card">
-    <header><h2>Roles</h2><p>Who gets which Discord role. Member and Allied pilots get these when they link, and Tether keeps them in step as tiers and groups change. Roles it doesn't manage are left alone.</p></header>
+    <header><h2>Roles</h2><p>Who gets which Discord role. Pilots in any state but Guest get these when they link, and Tether keeps them in step as states and groups change. Roles it doesn't manage are left alone.</p></header>
     {% if mappings.is_empty() %}
     <p class="px-5 pb-5 text-sm text-muted-foreground">No roles mapped yet.</p>
     {% else %}
@@ -77,7 +77,7 @@
         {% for m in mappings %}
         <tr>
           <td class="font-medium">{{ m.role_name }}</td>
-          <td>{% if m.kind == "tier" %}Tier: {% else %}Group: {% endif %}{{ m.grantee }}</td>
+          <td>{% if m.kind == "state" %}State: {% else %}Group: {% endif %}{{ m.grantee }}</td>
           <td class="text-right">
             <form method="post" action="/admin/discord/mappings/{{ m.id }}/remove" hx-confirm="Stop giving {{ m.role_name }} to {{ m.grantee }}?">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
@@ -103,10 +103,8 @@
       <div class="grid gap-2">
         <label class="label" for="grantee">Give to</label>
         <select class="select input" id="grantee" name="grantee">
-          <optgroup label="Tiers">
-            <option value="tier:member">Member</option>
-            <option value="tier:allied">Allied</option>
-            <option value="tier:guest">Guest</option>
+          <optgroup label="States">
+            {% for s in states %}<option value="state:{{ s.id }}">{{ s.name }}</option>{% endfor %}
           </optgroup>
           {% if !groups.is_empty() %}
           <optgroup label="Groups">

@@ -12,7 +12,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use common::*;
 use sqlx::PgPool;
-use tether_core::tiers::Tier;
+use tether_core::states::StateId;
 use tether_db::permissions::Grantee;
 use tether_plugins::testing::{self, Key};
 
@@ -51,8 +51,8 @@ async fn install(h: &Harness, owner: &str) {
 }
 
 async fn grant_view(db: &PgPool) {
-    for tier in [Tier::Member, Tier::Allied, Tier::Guest] {
-        tether_db::permissions::grant(db, "plugin.nmu.pages.view", Grantee::Tier(tier))
+    for state in [MEMBER_STATE, BLUE_STATE, GUEST_STATE] {
+        tether_db::permissions::grant(db, "plugin.nmu.pages.view", Grantee::State(StateId(state)))
             .await
             .unwrap();
     }
@@ -291,7 +291,7 @@ async fn plugin_permissions_are_granted_like_core_ones(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=plugin.nmu.pages.view&grantee=tier%3Amember",
+            &format!("permission=plugin.nmu.pages.view&grantee=state%3A{MEMBER_STATE}"),
             &owner,
         ),
     )
@@ -301,7 +301,7 @@ async fn plugin_permissions_are_granted_like_core_ones(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=plugin.nmu.pages.nope&grantee=tier%3Amember",
+            &format!("permission=plugin.nmu.pages.nope&grantee=state%3A{MEMBER_STATE}"),
             &owner,
         ),
     )

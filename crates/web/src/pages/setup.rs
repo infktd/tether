@@ -8,20 +8,21 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
-use tether_core::permissions::ADMIN_TIERS;
-use tether_core::tiers::{EntityKind, Tier};
+use tether_core::permissions::ADMIN_STATES;
+use tether_core::states::{Builtin, EntityKind};
 use tether_db::audit::Actor;
 use tether_db::settings;
 
 use super::{PageError, render};
 use crate::AppState;
-use crate::admin::{apply_tier_rule, esi_unavailable};
+use crate::admin::esi_unavailable;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
 use crate::setup::{
     ClientIp, SetupState, SetupStatus, Suggestion, check_public_url, load_status, save_client_id,
     unlock_session,
 };
+use crate::state_admin::Change;
 
 pub enum SetupView {
     Token,
@@ -82,11 +83,11 @@ async fn render_page(
     status: StatusCode,
 ) -> Result<Response, PageError> {
     let s = load_status(state, jar, session).await?;
-    let can_manage_tiers = match session {
-        Some(session) => session.require(state, ADMIN_TIERS).await.is_ok(),
+    let can_manage_states = match session {
+        Some(session) => session.require(state, ADMIN_STATES).await.is_ok(),
         None => false,
     };
-    let view = choose_view(&s, change_sso, can_manage_tiers);
+    let view = choose_view(&s, change_sso, can_manage_states);
     let client_id = settings::get_string(&state.db, settings::SSO_CLIENT_ID)
         .await?
         .unwrap_or_default();
@@ -101,13 +102,13 @@ async fn render_page(
     Ok(render(status, &page))
 }
 
-fn choose_view(s: &SetupStatus, change_sso: bool, can_manage_tiers: bool) -> SetupView {
+fn choose_view(s: &SetupStatus, change_sso: bool, can_manage_states: bool) -> SetupView {
     match s.state {
         _ if !s.owner_exists && !s.unlocked => SetupView::Token,
         SetupState::NeedsSso => SetupView::Sso,
         SetupState::NeedsOwner if change_sso => SetupView::Sso,
         SetupState::NeedsOwner => SetupView::Owner,
-        SetupState::NeedsAlliance if can_manage_tiers => SetupView::Alliance,
+        SetupState::NeedsAlliance if can_manage_states => SetupView::Alliance,
         SetupState::NeedsAlliance => SetupView::NeedOwnerLogin,
         SetupState::Complete => SetupView::Complete,
     }
@@ -241,7 +242,7 @@ pub async fn search(
     session: CurrentSession,
     Form(form): Form<SearchForm>,
 ) -> Result<Response, PageError> {
-    session.require(&state, ADMIN_TIERS).await?;
+    session.require(&state, ADMIN_STATES).await?;
     let name = form.name.trim().to_owned();
     if name.is_empty() {
         return Err(AppError::bad_request("Enter a name.").into());
@@ -286,15 +287,23 @@ pub async fn choose_alliance(
     session: CurrentSession,
     Form(form): Form<AllianceForm>,
 ) -> Result<Response, PageError> {
-    session.require(&state, ADMIN_TIERS).await?;
-    match apply_tier_rule(
-        &state,
-        Actor::Account(session.account),
-        form.entity_id,
-        Tier::Member,
-    )
-    .await
-    {
+    session.require(&state, ADMIN_STATES).await?;
+    let result = async {
+        let member = tether_db::states::builtin(&state.db, Builtin::Member).await?;
+        let change = Change::Add {
+            state: member.id,
+            entity_id: form.entity_id,
+        };
+        crate::state_admin::apply(
+            &state.db,
+            &state.esi,
+            Actor::Account(session.account),
+            &change,
+        )
+        .await
+    }
+    .await;
+    match result {
         Ok(_) => Ok(Redirect::to("/setup").into_response()),
         Err(err) => with_error(&state, &jar, Some(&session), err).await,
     }

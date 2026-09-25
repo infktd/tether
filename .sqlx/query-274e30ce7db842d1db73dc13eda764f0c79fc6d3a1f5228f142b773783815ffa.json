@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.state_entities WHERE state_id = $1 AND entity_id = $2\n        RETURNING entity_kind, name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entity_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.state_entities",
+            "name": "entity_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.state_entities",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "274e30ce7db842d1db73dc13eda764f0c79fc6d3a1f5228f142b773783815ffa"
+}

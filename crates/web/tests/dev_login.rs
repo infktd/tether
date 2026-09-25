@@ -25,7 +25,7 @@ async fn fixtures_sign_in_without_sso(db: PgPool) {
         .await
         .cookie_value(SESSION);
     let me_member = me(&h, &member).await;
-    assert_eq!(me_member["tier"], "member");
+    assert_eq!(me_member["state"], "Member");
     assert_eq!(me_member["is_owner"], false);
 
     assert_eq!(

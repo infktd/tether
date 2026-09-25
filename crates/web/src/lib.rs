@@ -27,13 +27,14 @@ pub mod plugins;
 mod ratelimit;
 pub mod setup;
 mod state;
+pub mod state_admin;
+pub mod states;
 pub mod sync;
-pub mod tiers;
 pub mod updates;
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Router, middleware};
 
 pub use state::{AppState, Limits, Site};
@@ -92,14 +93,18 @@ pub fn router(state: AppState) -> Router {
             post(pages::admin::revoke),
         )
         .route(
-            "/admin/tiers",
-            get(pages::admin::tiers).post(pages::admin::set_rule),
+            "/admin/states",
+            get(pages::states::page).post(pages::states::create),
         )
+        .route("/admin/states/search", post(pages::states::search))
+        .route("/admin/states/{id}/rename", post(pages::states::rename))
+        .route("/admin/states/{id}/delete", post(pages::states::delete))
+        .route("/admin/states/{id}/move", post(pages::states::move_state))
+        .route("/admin/states/{id}/covers", post(pages::states::add))
         .route(
-            "/admin/tiers/{entity_id}/remove",
-            post(pages::admin::remove_rule),
+            "/admin/states/{id}/covers/{entity_id}/remove",
+            post(pages::states::remove),
         )
-        .route("/admin/tiers/search", post(pages::admin::search))
         .route(
             "/admin/discord",
             get(pages::discord::admin).post(pages::discord::save_settings),
@@ -248,14 +253,20 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/admin/audit", get(api::admin::audit_log))
         .route(
-            "/api/admin/tiers",
-            get(api::admin::list_tier_rules).post(api::admin::set_tier_rule),
+            "/api/admin/states",
+            get(api::admin::list_states).post(api::admin::create_state),
         )
         .route(
-            "/api/admin/tiers/{entity_id}",
-            delete(api::admin::remove_tier_rule),
+            "/api/admin/states/{id}",
+            patch(api::admin::rename_state).delete(api::admin::delete_state),
         )
-        .route("/api/admin/tiers/resolve", post(api::admin::resolve_names))
+        .route("/api/admin/states/{id}/move", post(api::admin::move_state))
+        .route("/api/admin/states/{id}/covers", post(api::admin::add_cover))
+        .route(
+            "/api/admin/states/{id}/covers/{entity_id}",
+            delete(api::admin::remove_cover),
+        )
+        .route("/api/admin/states/resolve", post(api::admin::resolve_names))
         .route("/api/setup", get(setup::status))
         .route("/api/setup/unlock", post(setup::unlock))
         .route("/api/setup/sso", post(setup::set_sso))

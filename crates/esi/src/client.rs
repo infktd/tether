@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use eve_esi_client::types::UniverseNamesPostItemCategory as Category;
 use eve_esi_client::{Client, ResponseValue};
-use tether_core::tiers::EntityKind;
+use tether_core::states::EntityKind;
 use tokio::sync::Semaphore;
 
 use crate::budget::{Budget, BudgetSnapshot};
@@ -75,17 +75,18 @@ pub struct NamedEntity {
 }
 
 impl NamedEntity {
-    /// Set for alliances and corporations.
+    /// Set for alliances, corporations and characters.
     pub fn kind(&self) -> Option<EntityKind> {
         EntityKind::parse(&self.category)
     }
 }
 
-/// Alliances and corporations whose names matched exactly.
+/// Alliances, corporations and characters whose names matched exactly.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResolvedNames {
     pub alliances: Vec<Entity>,
     pub corporations: Vec<Entity>,
+    pub characters: Vec<Entity>,
 }
 
 #[derive(Clone, Debug)]
@@ -220,7 +221,8 @@ impl Esi {
         Ok(out)
     }
 
-    /// Resolves exact names to alliance and corporation ids (public).
+    /// Resolves exact names to alliance, corporation and character ids
+    /// (public).
     pub async fn resolve_names(
         &self,
         names: &[String],
@@ -255,6 +257,13 @@ impl Esi {
             corporations: entities(
                 response
                     .corporations
+                    .into_iter()
+                    .map(|c| (c.id, c.name))
+                    .collect(),
+            ),
+            characters: entities(
+                response
+                    .characters
                     .into_iter()
                     .map(|c| (c.id, c.name))
                     .collect(),

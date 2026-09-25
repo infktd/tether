@@ -114,7 +114,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/admin/tiers
+GET {{base}}/admin/states
 HTTP 303
 [Asserts]
 header "Location" == "/login"
@@ -132,19 +132,59 @@ POST {{base}}/admin/permissions/grant
 Origin: {{base}}
 [Form]
 permission: admin.audit
-grantee: tier:guest
+grantee: state:3
 HTTP 303
 
-POST {{base}}/admin/tiers
+POST {{base}}/admin/states
+Origin: {{base}}
+[Form]
+name: Trial
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/1/covers
 Origin: {{base}}
 [Form]
 entity_id: 1
-tier: member
 HTTP 303
+[Asserts]
+header "Location" == "/login"
 
-POST {{base}}/admin/tiers/search
+POST {{base}}/admin/states/1/covers/1/remove
 Origin: {{base}}
 [Form]
+confirm: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/1/move
+Origin: {{base}}
+[Form]
+direction: up
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/4/rename
+Origin: {{base}}
+[Form]
+name: Other
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/4/delete
+Origin: {{base}}
+[Form]
+confirm: 1
+HTTP 303
+
+POST {{base}}/admin/states/search
+Origin: {{base}}
+[Form]
+state_id: 1
 name: Goonswarm Federation
 HTTP 401
 
@@ -175,7 +215,7 @@ POST {{base}}/admin/discord/mappings
 Origin: {{base}}
 [Form]
 role_id: 1
-grantee: tier:member
+grantee: state:1
 HTTP 303
 [Asserts]
 header "Location" == "/login"

@@ -15,7 +15,7 @@ use tether_db::{auth as db, settings};
 use tether_esi::sso::SsoConfig;
 
 use crate::error::AppError;
-use crate::{AppState, setup, tiers};
+use crate::{AppState, setup, states};
 use tether_db::audit::{self, Actor};
 
 /// `__Host-` cookies must be Secure, Path=/ and have no Domain, so they
@@ -222,9 +222,9 @@ pub async fn callback(
         jar = jar.remove(removal(setup::SETUP_COOKIE));
     }
 
-    // Tier from the main's current affiliation. An ESI outage must not
-    // block login: keep the stored tier and retry in the background.
-    if let Err(err) = tiers::refresh_account(
+    // State from the main's current affiliation. An ESI outage must not
+    // block login: keep the stored state and retry in the background.
+    if let Err(err) = states::refresh_account(
         &state.db,
         &state.esi,
         account,
@@ -232,8 +232,8 @@ pub async fn callback(
     )
     .await
     {
-        tracing::warn!(account = account.0, error = %err, "tier refresh at login failed; queued a retry");
-        tiers::enqueue_refresh(&state.db, account).await?;
+        tracing::warn!(account = account.0, error = %err, "state refresh at login failed; queued a retry");
+        states::enqueue_refresh(&state.db, account).await?;
     }
 
     // Rotate: drop any session this browser already had, then issue a new
@@ -307,7 +307,7 @@ impl CurrentSession {
     }
 }
 
-/// Audits a character that changed EVE account and re-evaluates the tier of
+/// Audits a character that changed EVE account and re-evaluates the state of
 /// the account that lost it.
 async fn record_transfer(
     state: &AppState,
@@ -340,7 +340,7 @@ async fn record_transfer(
         );
     }
     if !transfer.account_deleted {
-        tiers::evaluate_account(&state.db, transfer.from).await?;
+        states::evaluate_account(&state.db, transfer.from).await?;
     }
     Ok(())
 }

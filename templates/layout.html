@@ -59,9 +59,9 @@
           {% call icons::icon("shield") %}{% endcall %} Permissions
         </a>
         {% endif %}
-        {% if shell.nav.tiers %}
-        <a href="/admin/tiers" class="nav-item"{% if shell.active == "tiers" %} aria-current="page"{% endif %}>
-          {% call icons::icon("layers") %}{% endcall %} Tier rules
+        {% if shell.nav.states %}
+        <a href="/admin/states" class="nav-item"{% if shell.active == "states" %} aria-current="page"{% endif %}>
+          {% call icons::icon("layers") %}{% endcall %} States
         </a>
         {% endif %}
         {% if shell.nav.discord %}
@@ -87,7 +87,7 @@
       {% include "avatar.html" %}
       <div class="min-w-0 flex-1">
         <div class="truncate text-sm font-medium">{{ shell.user.name }}</div>
-        <div class="text-xs text-muted-foreground">{{ shell.user.tier_label }}</div>
+        <div class="text-xs text-muted-foreground">{{ shell.user.state_name }}</div>
       </div>
       <form method="post" action="/auth/logout">
         <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Log out" title="Log out">

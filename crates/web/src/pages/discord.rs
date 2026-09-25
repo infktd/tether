@@ -13,7 +13,7 @@ use tether_db::groups::{self, GroupId};
 use tether_db::permissions::Grantee;
 use tether_discord::{Discord, GuildCheck};
 
-use super::admin::{GroupOption, guard, parse_grantee, tier_label};
+use super::admin::{GroupOption, StateOption, guard, parse_grantee, state_name, state_options};
 use super::{PageError, Shell, error_page, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -24,7 +24,7 @@ pub struct MappingRow {
     pub id: i64,
     pub role_name: String,
     pub grantee: String,
-    /// `tier` or `group`.
+    /// `state` or `group`.
     pub kind: &'static str,
 }
 
@@ -59,6 +59,7 @@ struct DiscordPage {
     roles: Vec<RoleOption>,
     ping_channels: Vec<tether_db::pings::PingChannel>,
     other_channels: Vec<tether_discord::TextChannel>,
+    states: Vec<StateOption>,
     groups: Vec<GroupOption>,
     error: Option<String>,
 }
@@ -99,6 +100,7 @@ async fn page(
         },
         None => (None, None),
     };
+    let states = state_options(state).await?;
     let all_groups = groups::summaries(&state.db).await?;
     let group_name = |id: GroupId| {
         all_groups
@@ -111,7 +113,7 @@ async fn page(
         .into_iter()
         .map(|m| {
             let (grantee, kind) = match m.grantee {
-                Grantee::Tier(t) => (tier_label(t.as_str()).to_owned(), "tier"),
+                Grantee::State(id) => (state_name(&states, id), "state"),
                 Grantee::Group(g) => (group_name(g), "group"),
             };
             // Prefer Discord's current name, in case the role was renamed.
@@ -164,6 +166,7 @@ async fn page(
         roles,
         ping_channels,
         other_channels,
+        states,
         groups: all_groups
             .iter()
             .map(|g| GroupOption {
@@ -240,7 +243,7 @@ pub async fn save_nickname(
 #[derive(Debug, Deserialize)]
 pub struct MappingForm {
     role_id: String,
-    /// `tier:member` or `group:<id>`.
+    /// `state:<id>` or `group:<id>`.
     grantee: String,
 }
 
@@ -345,7 +348,7 @@ pub async fn callback(
 pub struct DiscordCard {
     /// The linked Discord name.
     pub linked: Option<String>,
-    /// Member or Allied: may join the server.
+    /// Not Guest: may join the server.
     pub may_join: bool,
 }
 

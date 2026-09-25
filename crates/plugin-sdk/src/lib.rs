@@ -127,7 +127,7 @@ pub mod log {
 
 /// Who is looking at a page or posting a form (none in jobs).
 pub mod identity {
-    pub use crate::bindings::tether::plugin::identity::{Character, Tier, Viewer};
+    pub use crate::bindings::tether::plugin::identity::{Builtin, Character, State, Viewer};
 
     /// The viewer, or `None` in a job.
     pub fn viewer() -> Option<Viewer> {
@@ -139,6 +139,16 @@ pub mod identity {
         /// `[permissions]`).
         pub fn can(&self, permission: &str) -> bool {
             self.permissions.iter().any(|p| p == permission)
+        }
+
+        /// Whether their access state is Member.
+        pub fn is_member(&self) -> bool {
+            self.state.builtin == Some(Builtin::Member)
+        }
+
+        /// Whether they're Guest: identity only.
+        pub fn is_guest(&self) -> bool {
+            self.state.builtin == Some(Builtin::Guest)
         }
     }
 }
@@ -203,16 +213,16 @@ pub mod esi {
 /// Discord messages to channels an admin assigned this plugin.
 pub mod discord {
     pub use crate::bindings::tether::plugin::discord::{Channel, Error, Mention};
-    pub use crate::bindings::tether::plugin::identity::Tier;
 
     pub fn channels() -> Vec<Channel> {
         crate::bindings::tether::plugin::discord::channels()
     }
 
     /// Posts to an assigned channel (at most 1,500 characters), pinging
-    /// nobody or the Discord role mapped to a tier. Not from pages.
+    /// nobody or the Discord role mapped to a state (by name, such as
+    /// `Mention::State("Member".into())`). Not from pages.
     pub fn send(channel: &str, text: &str, mention: Mention) -> Result<(), Error> {
-        crate::bindings::tether::plugin::discord::send(channel, text, mention)
+        crate::bindings::tether::plugin::discord::send(channel, text, &mention)
     }
 }
 

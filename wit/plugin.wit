@@ -266,10 +266,18 @@ interface storage {
 /// Who is looking. Only while drawing a page or handling a form; jobs
 /// have no viewer.
 interface identity {
-    enum tier {
+    /// The access states every instance has.
+    enum builtin {
         member,
-        allied,
+        blue,
         guest,
+    }
+
+    /// An access state: Member, Blue, Guest, or one an admin made.
+    record state {
+        name: string,
+        /// Set for Member, Blue and Guest, which can't be renamed.
+        builtin: option<builtin>,
     }
 
     record character {
@@ -285,7 +293,7 @@ interface identity {
         main: character,
         /// All of the account's characters, the main included.
         characters: list<character>,
-        tier: tier,
+        state: state,
         /// Which of this plugin's own permissions they hold (the names in
         /// `[permissions]`, without the `plugin.<id>.` prefix).
         permissions: list<string>,
@@ -364,11 +372,9 @@ interface esi {
 }
 
 /// Discord messages, for plugins approved for `send_message`, to channels
-/// an admin assigned. Mentions are only Tether-managed tier roles: never
+/// an admin assigned. Mentions are only Tether-managed state roles: never
 /// @everyone, @here or people.
 interface discord {
-    use identity.{tier};
-
     record channel {
         /// Discord's id, as text.
         id: string,
@@ -377,8 +383,9 @@ interface discord {
 
     variant mention {
         none,
-        /// The Discord role mapped to this tier.
-        tier(tier),
+        /// The Discord role mapped to the state with this name (any case),
+        /// e.g. "Member".
+        state(string),
     }
 
     variant error {

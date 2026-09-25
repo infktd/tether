@@ -1,4 +1,4 @@
-//! Admin pages: groups, permissions and tier rules. Plain forms that work
+//! Admin pages: groups and permissions (states are in `states`). Plain forms that work
 //! without JavaScript (post, then redirect); htmx boosts them. Every action
 //! goes through `crate::admin`, the same code as the JSON API.
 
@@ -8,12 +8,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, JoinPolicy};
-use tether_core::tiers::{EntityKind, Tier};
-use tether_db::audit::Actor;
+use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_STATES, JoinPolicy};
+use tether_db::accounts;
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
-use tether_db::{accounts, tiers as tier_db};
 
 use super::{PageError, Shell, load, render};
 use crate::AppState;
@@ -42,12 +40,29 @@ fn policy_label(policy: JoinPolicy) -> &'static str {
     }
 }
 
-pub(crate) fn tier_label(tier: &str) -> &'static str {
-    match tier {
-        "member" => "Member",
-        "allied" => "Allied",
-        _ => "Guest",
-    }
+/// A state in a `<select>`.
+pub struct StateOption {
+    pub id: i64,
+    pub name: String,
+}
+
+pub(crate) async fn state_options(state: &AppState) -> Result<Vec<StateOption>, AppError> {
+    Ok(tether_db::states::list(&state.db)
+        .await?
+        .into_iter()
+        .map(|s| StateOption {
+            id: s.id.0,
+            name: s.name,
+        })
+        .collect())
+}
+
+/// A state's name for display, from a list loaded once.
+pub(crate) fn state_name(states: &[StateOption], id: tether_core::states::StateId) -> String {
+    states
+        .iter()
+        .find(|s| s.id == id.0)
+        .map_or_else(|| format!("state {}", id.0), |s| s.name.clone())
 }
 
 /// `GET /admin`: the first admin page this account may see.
@@ -62,7 +77,7 @@ pub async fn index(
         (tether_core::permissions::ADMIN_PLUGINS, "/admin/plugins"),
         (ADMIN_GROUPS, "/admin/groups"),
         (ADMIN_PERMISSIONS, "/admin/permissions"),
-        (ADMIN_TIERS, "/admin/tiers"),
+        (ADMIN_STATES, "/admin/states"),
         (tether_core::permissions::ADMIN_DISCORD, "/admin/discord"),
         (tether_core::permissions::ADMIN_AUDIT, "/admin/audit"),
     ] {
@@ -167,8 +182,8 @@ pub struct MemberRow {
     pub account_id: i64,
     pub main_id: i64,
     pub main_name: String,
-    pub tier: String,
-    pub tier_label: &'static str,
+    pub state: String,
+    pub state_style: String,
 }
 
 pub struct RequestRow {
@@ -202,11 +217,11 @@ async fn group_page(
         .await?
         .into_iter()
         .map(|m| MemberRow {
-            tier_label: tier_label(&m.tier),
             account_id: m.account_id,
             main_id: m.main_id,
             main_name: m.main_name,
-            tier: m.tier,
+            state: m.state,
+            state_style: m.state_style,
         })
         .collect();
     let requests = groups::requests(&state.db, GroupId(id))
@@ -340,7 +355,7 @@ pub async fn deny(
 pub struct GrantBadge {
     pub id: i64,
     pub label: String,
-    /// `tier` or `group`.
+    /// `state` or `group`.
     pub kind: &'static str,
 }
 
@@ -360,6 +375,7 @@ pub struct GroupOption {
 struct PermissionsPage {
     shell: Shell,
     rows: Vec<PermissionRow>,
+    states: Vec<StateOption>,
     groups: Vec<GroupOption>,
     error: Option<String>,
 }
@@ -370,6 +386,7 @@ async fn permissions_page(
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let grants = permissions::list(&state.db).await?;
+    let states = state_options(state).await?;
     let all_groups = groups::summaries(&state.db).await?;
     let group_name = |id: GroupId| {
         all_groups
@@ -385,10 +402,10 @@ async fn permissions_page(
                 .iter()
                 .filter(|g| g.permission == name)
                 .map(|g| match g.grantee {
-                    Grantee::Tier(t) => GrantBadge {
+                    Grantee::State(id) => GrantBadge {
                         id: g.id,
-                        label: tier_label(t.as_str()).to_owned(),
-                        kind: "tier",
+                        label: state_name(&states, id),
+                        kind: "state",
                     },
                     Grantee::Group(group) => GrantBadge {
                         id: g.id,
@@ -405,6 +422,7 @@ async fn permissions_page(
     let page = PermissionsPage {
         shell,
         rows,
+        states,
         groups: all_groups
             .iter()
             .map(|g| GroupOption {
@@ -429,19 +447,23 @@ pub async fn permissions(
 #[derive(Debug, Deserialize)]
 pub struct GrantForm {
     permission: String,
-    /// `tier:member` or `group:<id>`.
+    /// `state:<id>` or `group:<id>`.
     grantee: String,
 }
 
-/// A `<select>` value: `tier:member` or `group:<id>`.
+/// A `<select>` value: `state:<id>` or `group:<id>`.
 pub(crate) fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
+    let choose = || AppError::bad_request("Choose a state or a group.");
     match value.split_once(':') {
-        Some(("tier", tier)) => admin::grantee(Some(tier), None),
+        Some(("state", id)) => id
+            .parse()
+            .map_err(|_| choose())
+            .and_then(|id| admin::grantee(Some(id), None)),
         Some(("group", id)) => id
             .parse()
-            .map_err(|_| AppError::bad_request("Choose a tier or a group."))
+            .map_err(|_| choose())
             .and_then(|id| admin::grantee(None, Some(id))),
-        _ => Err(AppError::bad_request("Choose a tier or a group.")),
+        _ => Err(choose()),
     }
 }
 
@@ -475,149 +497,4 @@ pub async fn revoke(
         Ok(()) => Ok(Redirect::to("/admin/permissions").into_response()),
         Err(err) => permissions_page(&state, shell, Some(err)).await,
     }
-}
-
-// ---- tier rules ------------------------------------------------------------
-
-pub struct RuleRow {
-    pub entity_id: i64,
-    pub name: String,
-    pub kind: &'static str,
-    pub tier: &'static str,
-    pub tier_label: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "admin_tiers.html")]
-struct TiersPage {
-    shell: Shell,
-    rules: Vec<RuleRow>,
-    error: Option<String>,
-}
-
-async fn tiers_page(
-    state: &AppState,
-    shell: Shell,
-    error: Option<AppError>,
-) -> Result<Response, PageError> {
-    let rules = tier_db::list_rules(&state.db)
-        .await?
-        .into_iter()
-        .map(|r| RuleRow {
-            entity_id: r.entity_id,
-            name: r.name,
-            kind: r.kind.as_str(),
-            tier: r.tier.as_str(),
-            tier_label: tier_label(r.tier.as_str()),
-        })
-        .collect();
-    let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    let page = TiersPage {
-        shell,
-        rules,
-        error: error.map(|e| e.message().to_owned()),
-    };
-    Ok(render(status, &page))
-}
-
-/// `GET /admin/tiers`
-pub async fn tiers(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-) -> Result<Response, PageError> {
-    let (_, shell) = guard(&state, session, ADMIN_TIERS, "tiers").await?;
-    tiers_page(&state, shell, None).await
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RuleForm {
-    entity_id: i64,
-    tier: String,
-}
-
-/// `POST /admin/tiers`
-pub async fn set_rule(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Form(form): Form<RuleForm>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_TIERS, "tiers").await?;
-    let result = match Tier::parse(&form.tier) {
-        Some(tier) => admin::apply_tier_rule(
-            &state,
-            Actor::Account(session.account),
-            form.entity_id,
-            tier,
-        )
-        .await
-        .map(|_| ()),
-        None => Err(AppError::bad_request("tier must be member or allied.")),
-    };
-    match result {
-        Ok(()) => Ok(Redirect::to("/admin/tiers").into_response()),
-        Err(err) => tiers_page(&state, shell, Some(err)).await,
-    }
-}
-
-/// `POST /admin/tiers/{entity_id}/remove`
-pub async fn remove_rule(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path(entity_id): Path<i64>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_TIERS, "tiers").await?;
-    match admin::remove_tier_rule(&state, session.account, entity_id).await {
-        Ok(()) => Ok(Redirect::to("/admin/tiers").into_response()),
-        Err(err) => tiers_page(&state, shell, Some(err)).await,
-    }
-}
-
-pub struct SearchRow {
-    pub id: i64,
-    pub name: String,
-    pub kind: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "admin_tier_search.html")]
-struct SearchFragment {
-    results: Vec<SearchRow>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SearchForm {
-    name: String,
-}
-
-/// `POST /admin/tiers/search` (htmx): exact-name lookup via ESI.
-pub async fn search(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    Form(form): Form<SearchForm>,
-) -> Result<Response, PageError> {
-    session.require(&state, ADMIN_TIERS).await?;
-    let name = form.name.trim();
-    if name.is_empty() || name.len() > 100 {
-        return Err(AppError::bad_request("Enter a name.").into());
-    }
-    let resolved = state
-        .esi
-        .resolve_names(&[name.to_owned()], tether_esi::Priority::Interactive)
-        .await
-        .map_err(admin::esi_unavailable)?;
-    let mut results: Vec<SearchRow> = resolved
-        .alliances
-        .into_iter()
-        .map(|e| SearchRow {
-            id: e.id,
-            name: e.name,
-            kind: EntityKind::Alliance.as_str(),
-        })
-        .collect();
-    results.extend(resolved.corporations.into_iter().map(|e| SearchRow {
-        id: e.id,
-        name: e.name,
-        kind: EntityKind::Corporation.as_str(),
-    }));
-    Ok(render(StatusCode::OK, &SearchFragment { results }))
 }

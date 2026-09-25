@@ -555,17 +555,20 @@ pub async fn setup(db: &PgPool, public_url: &str) -> Check {
             ),
         );
     }
-    let rules = tether_db::tiers::list_rules(db).await.unwrap_or_default();
-    if rules
-        .iter()
-        .any(|r| r.tier == tether_core::tiers::Tier::Member)
-    {
-        Check::ok(NAME, format!("owner exists, {} tier rule(s)", rules.len()))
+    let covered = tether_db::states::covered(db).await.unwrap_or_default();
+    let member = tether_db::states::builtin(db, tether_core::states::Builtin::Member)
+        .await
+        .ok();
+    if member.is_some_and(|m| covered.iter().any(|c| c.state == m.id)) {
+        Check::ok(
+            NAME,
+            format!("owner exists, states cover {} entities", covered.len()),
+        )
     } else {
         Check::warn(
             NAME,
-            "no Member alliance or corporation yet, so everyone is Guest",
-            "Choose one in the setup wizard or with `tether tiers set <id> member`.",
+            "Member covers nobody yet, so everyone is Guest",
+            "Choose your alliance in the setup wizard, on Admin → States, or with `tether states add Member <id>`.",
         )
     }
 }

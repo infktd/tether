@@ -1,11 +1,11 @@
-//! Domain types and rules: accounts, characters, tiers, groups, permissions.
+//! Domain types and rules: accounts, characters, states, groups, permissions.
 
 pub mod crypto;
 pub mod nickname;
 pub mod permissions;
 pub mod scram;
 mod secret;
-pub mod tiers;
+pub mod states;
 mod token;
 
 pub use secret::Secret;

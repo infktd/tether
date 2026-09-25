@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, role_id, role_name, state_id, group_id\n        FROM core.discord_role_mappings\n        ORDER BY role_name, id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "role_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "role_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "group_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "45e80d5f5cef355cc6359dd42b42471128a546e066ba2ac3108f62c057dcaa99"
+}

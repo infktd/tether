@@ -11,7 +11,7 @@ pub use crate::host::tether::plugin::discord::{Channel, Error as DiscordError, M
 pub use crate::host::tether::plugin::esi::{
     Consent, Error as EsiError, Named, Response as EsiResponse, Subject,
 };
-pub use crate::host::tether::plugin::identity::{Character, Tier, Viewer};
+pub use crate::host::tether::plugin::identity::{Builtin, Character, State, Viewer};
 
 /// ESI calls in one job run or form submission.
 pub const MAX_ESI_CALLS: usize = 100;

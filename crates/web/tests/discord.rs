@@ -17,7 +17,7 @@ const BOT: &str = "111111111111111111";
 const GUILD: &str = "222222222222222222";
 const USER: &str = "333333333333333333";
 const MEMBER_ROLE: &str = "500000000000000003";
-const ALLIED_ROLE: &str = "500000000000000004";
+const BLUE_ROLE: &str = "500000000000000004";
 const SETTINGS: &str = "application_id=111111111111111111&guild_id=222222222222222222\
                         &client_secret=client-secret-value&bot_token=bot-token-value";
 
@@ -105,10 +105,10 @@ async fn owner_and_pilot(h: &Harness) -> (String, String) {
     (owner, pilot)
 }
 
-/// Only Member and Allied pilots may join the server.
+/// Guests don't join the server through Tether; other states do.
 async fn make_member(h: &Harness, token: &str) {
     let account = me(h, token).await["account_id"].as_i64().unwrap();
-    sqlx::query("UPDATE core.accounts SET tier = 'member' WHERE id = $1")
+    sqlx::query("UPDATE core.accounts SET state_id = 1 WHERE id = $1")
         .bind(account)
         .execute(&h.db)
         .await
@@ -299,32 +299,32 @@ async fn roles_are_mapped_only_when_the_bot_can_give_them(db: PgPool) {
     let (owner, pilot) = set_up(&h).await;
 
     assert_eq!(
-        map(&h, &owner, MEMBER_ROLE, "tier:member").await.status,
+        map(&h, &owner, MEMBER_ROLE, "state:1").await.status,
         StatusCode::SEE_OTHER
     );
     let listed = page(&h, "/admin/discord", &owner).await;
-    assert!(listed.body.contains("Tier: Member"), "{}", listed.body);
+    assert!(listed.body.contains("State: Member"), "{}", listed.body);
     // Roles the bot can't give are offered, but disabled.
     assert!(listed.body.contains("Director (has Administrator)"));
     assert!(listed.body.contains("Tether (managed by an integration)"));
 
-    let director = map(&h, &owner, "500000000000000001", "tier:member").await;
+    let director = map(&h, &owner, "500000000000000001", "state:1").await;
     assert_eq!(director.status, StatusCode::BAD_REQUEST);
     assert!(director.body.contains("Administrator"));
-    let managed = map(&h, &owner, "500000000000000002", "tier:member").await;
+    let managed = map(&h, &owner, "500000000000000002", "state:1").await;
     assert_eq!(managed.status, StatusCode::BAD_REQUEST);
     assert!(
         managed.body.contains("The bot can&#39;t give Tether"),
         "{}",
         managed.body
     );
-    let unknown = map(&h, &owner, "123", "tier:member").await;
+    let unknown = map(&h, &owner, "123", "state:1").await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
-    let again = map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    let again = map(&h, &owner, MEMBER_ROLE, "state:1").await;
     assert_eq!(again.status, StatusCode::CONFLICT);
     let no_group = map(&h, &owner, MEMBER_ROLE, "group:999").await;
     assert_eq!(no_group.status, StatusCode::NOT_FOUND);
-    let pilot_try = map(&h, &pilot, ALLIED_ROLE, "tier:guest").await;
+    let pilot_try = map(&h, &pilot, BLUE_ROLE, "state:3").await;
     assert_eq!(pilot_try.status, StatusCode::FORBIDDEN);
 
     let id: i64 = sqlx::query_scalar("SELECT id FROM core.discord_role_mappings")
@@ -341,7 +341,7 @@ async fn roles_are_mapped_only_when_the_bot_can_give_them(db: PgPool) {
         !page(&h, "/admin/discord", &owner)
             .await
             .body
-            .contains("Tier: Member")
+            .contains("State: Member")
     );
 }
 
@@ -350,7 +350,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = set_up(&h).await;
     // The pilot is Member, and in a group.
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     let group = send(
         &h.app,
         form(
@@ -368,7 +368,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
     )
     .await;
     let group_id = group.rsplit('/').next().unwrap();
-    map(&h, &owner, ALLIED_ROLE, &format!("group:{group_id}")).await;
+    map(&h, &owner, BLUE_ROLE, &format!("group:{group_id}")).await;
 
     let profile = page(&h, "/profile", &pilot).await;
     assert!(profile.body.contains("Link Discord"), "{}", profile.body);
@@ -379,7 +379,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
         .and(has_header("authorization", "Bot bot-token-value"))
         .and(body_json(serde_json::json!({
             "access_token": "user-access-token-fixture",
-            "roles": [MEMBER_ROLE, ALLIED_ROLE],
+            "roles": [MEMBER_ROLE, BLUE_ROLE],
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(fixture("added_member")))
         .expect(1)
@@ -422,7 +422,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
 async fn a_member_already_in_the_server_gets_the_roles_added(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = set_up(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     mount_member_oauth(&h.discord_server).await;
     Mock::given(method("PUT"))
         .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
@@ -520,8 +520,8 @@ async fn a_discord_account_links_to_one_pilot_only(db: PgPool) {
 async fn unlinking_queues_taking_the_roles_away(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = set_up(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
-    map(&h, &owner, ALLIED_ROLE, "tier:allied").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    map(&h, &owner, BLUE_ROLE, "state:2").await;
     mount_member_oauth(&h.discord_server).await;
     Mock::given(method("PUT"))
         .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
@@ -546,7 +546,7 @@ async fn unlinking_queues_taking_the_roles_away(db: PgPool) {
     );
 
     // The job takes every role Tether hands out.
-    for role in [MEMBER_ROLE, ALLIED_ROLE] {
+    for role in [MEMBER_ROLE, BLUE_ROLE] {
         Mock::given(method("DELETE"))
             .and(path(format!(
                 "/api/v10/guilds/{GUILD}/members/{USER}/roles/{role}"
@@ -565,7 +565,7 @@ async fn unlinking_queues_taking_the_roles_away(db: PgPool) {
 async fn stripping_skips_someone_who_linked_again(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = set_up(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     mount_member_oauth(&h.discord_server).await;
     Mock::given(method("PUT"))
         .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
@@ -640,7 +640,7 @@ async fn guests_cannot_join_the_server(db: PgPool) {
     assert!(
         profile
             .body
-            .contains("Only Member and Allied pilots can join")
+            .contains("Guests can't join the Discord server")
     );
     assert!(!profile.body.contains("Link Discord"));
     let refused = send(&h.app, form("/profile/discord/link", "", &pilot)).await;
@@ -651,7 +651,7 @@ async fn guests_cannot_join_the_server(db: PgPool) {
     mount_member_oauth(&h.discord_server).await;
     let (state, browser) = start_link(&h, &pilot).await;
     let account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
-    sqlx::query("UPDATE core.accounts SET tier = 'guest' WHERE id = $1")
+    sqlx::query("UPDATE core.accounts SET state_id = 3 WHERE id = $1")
         .bind(account)
         .execute(&h.db)
         .await
@@ -689,7 +689,7 @@ async fn moderation_roles_never_go_to_guest_or_open_groups(db: PgPool) {
     .unwrap()
     .to_owned();
 
-    let to_guest = map(&h, &owner, FC, "tier:guest").await;
+    let to_guest = map(&h, &owner, FC, "state:3").await;
     assert_eq!(to_guest.status, StatusCode::BAD_REQUEST);
     assert!(
         to_guest.body.contains("moderation or server-management"),
@@ -700,11 +700,11 @@ async fn moderation_roles_never_go_to_guest_or_open_groups(db: PgPool) {
     assert_eq!(to_open.status, StatusCode::BAD_REQUEST);
     // Plain roles can go to anyone; moderation roles to Members.
     assert_eq!(
-        map(&h, &owner, ALLIED_ROLE, "tier:guest").await.status,
+        map(&h, &owner, BLUE_ROLE, "state:3").await.status,
         StatusCode::SEE_OTHER
     );
     assert_eq!(
-        map(&h, &owner, FC, "tier:member").await.status,
+        map(&h, &owner, FC, "state:1").await.status,
         StatusCode::SEE_OTHER
     );
 }
@@ -713,13 +713,13 @@ async fn moderation_roles_never_go_to_guest_or_open_groups(db: PgPool) {
 async fn a_role_that_became_too_powerful_is_not_handed_out(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = set_up(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
-    map(&h, &owner, ALLIED_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    map(&h, &owner, BLUE_ROLE, "state:1").await;
 
-    // Someone gives the Allied role Administrator in Discord afterwards.
+    // Someone gives the Blue role Administrator in Discord afterwards.
     let mut roles = fixture("roles");
     for role in roles.as_array_mut().unwrap() {
-        if role["id"] == ALLIED_ROLE {
+        if role["id"] == BLUE_ROLE {
             role["permissions"] = "8".into();
         }
     }
@@ -778,8 +778,8 @@ async fn a_failed_join_leaves_no_link(db: PgPool) {
 async fn a_partial_join_is_undone_and_its_roles_queued_for_removal(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = set_up(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
-    map(&h, &owner, ALLIED_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    map(&h, &owner, BLUE_ROLE, "state:1").await;
     mount_member_oauth(&h.discord_server).await;
     // Already in the server: the first role is added, the second refused.
     Mock::given(method("PUT"))
@@ -796,7 +796,7 @@ async fn a_partial_join_is_undone_and_its_roles_queued_for_removal(db: PgPool) {
         .await;
     Mock::given(method("PUT"))
         .and(path(format!(
-            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{ALLIED_ROLE}"
+            "/api/v10/guilds/{GUILD}/members/{USER}/roles/{BLUE_ROLE}"
         )))
         .respond_with(ResponseTemplate::new(502))
         .mount(&h.discord_server)
@@ -916,11 +916,11 @@ async fn changes_to_a_linked_member_queue_one_sync(db: PgPool) {
     let (owner, _, account) = linked_pilot(&h).await;
     clear_jobs(&h.db).await;
 
-    // Tier changes, twice: one sync waits, not two.
-    for tier in ["allied", "guest"] {
-        sqlx::query("UPDATE core.accounts SET tier = $2 WHERE id = $1")
+    // State changes, twice: one sync waits, not two.
+    for state_id in [2_i64, 3] {
+        sqlx::query("UPDATE core.accounts SET state_id = $2 WHERE id = $1")
             .bind(account)
-            .bind(tier)
+            .bind(state_id)
             .execute(&h.db)
             .await
             .unwrap();
@@ -959,7 +959,7 @@ async fn changes_to_a_linked_member_queue_one_sync(db: PgPool) {
     // Unlinked accounts don't queue anything.
     clear_jobs(&h.db).await;
     let owner_account = me(&h, &owner).await["account_id"].as_i64().unwrap();
-    sqlx::query("UPDATE core.accounts SET tier = 'allied' WHERE id = $1")
+    sqlx::query("UPDATE core.accounts SET state_id = 2 WHERE id = $1")
         .bind(owner_account)
         .execute(&h.db)
         .await
@@ -971,10 +971,10 @@ async fn changes_to_a_linked_member_queue_one_sync(db: PgPool) {
 async fn syncing_gives_and_takes_managed_roles_and_leaves_others_alone(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
-    map(&h, &owner, ALLIED_ROLE, "tier:allied").await;
-    // Has Allied (managed, no longer due) and a role Tether doesn't manage.
-    mount_member(&h, &[ALLIED_ROLE, "700000000000000000"], None).await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    map(&h, &owner, BLUE_ROLE, "state:2").await;
+    // Has Blue (managed, no longer due) and a role Tether doesn't manage.
+    mount_member(&h, &[BLUE_ROLE, "700000000000000000"], None).await;
     mount_role_edits(&h).await;
 
     tether_web::discord_sync::sync_member(
@@ -989,7 +989,7 @@ async fn syncing_gives_and_takes_managed_roles_and_leaves_others_alone(db: PgPoo
     assert_eq!(
         edits,
         [
-            ("DELETE".to_owned(), ALLIED_ROLE.to_owned()),
+            ("DELETE".to_owned(), BLUE_ROLE.to_owned()),
             ("PUT".to_owned(), MEMBER_ROLE.to_owned()),
         ]
     );
@@ -999,10 +999,10 @@ async fn syncing_gives_and_takes_managed_roles_and_leaves_others_alone(db: PgPoo
 async fn a_member_who_left_the_alliance_loses_their_roles(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     mount_member(&h, &[MEMBER_ROLE], None).await;
     mount_role_edits(&h).await;
-    sqlx::query("UPDATE core.accounts SET tier = 'guest' WHERE id = $1")
+    sqlx::query("UPDATE core.accounts SET state_id = 3 WHERE id = $1")
         .bind(account)
         .execute(&h.db)
         .await
@@ -1025,7 +1025,7 @@ async fn a_member_who_left_the_alliance_loses_their_roles(db: PgPool) {
 async fn a_role_whose_mapping_was_removed_is_taken_back(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     let id: i64 = sqlx::query_scalar("SELECT id FROM core.discord_role_mappings")
         .fetch_one(&h.db)
         .await
@@ -1147,7 +1147,7 @@ async fn nicknames_follow_the_template(db: PgPool) {
 async fn syncing_someone_not_in_the_server_does_nothing(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     Mock::given(method("GET"))
         .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
         .respond_with(
@@ -1171,7 +1171,7 @@ async fn a_role_held_back_as_too_powerful_is_not_taken_either(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
     const FC: &str = "500000000000000006";
-    map(&h, &owner, FC, "tier:member").await;
+    map(&h, &owner, FC, "state:1").await;
     // A Discord admin gives Fleet Commander Administrator afterwards.
     let mut roles = fixture("roles");
     for role in roles.as_array_mut().unwrap() {
@@ -1201,7 +1201,7 @@ async fn a_role_held_back_as_too_powerful_is_not_taken_either(db: PgPool) {
 async fn roles_sync_even_when_esi_is_down(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     send(
         &h.app,
         form(
@@ -1242,7 +1242,7 @@ async fn roles_sync_even_when_esi_is_down(db: PgPool) {
 async fn a_refused_takeback_is_retried_not_counted_as_done(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot, _) = linked_pilot(&h).await;
-    map(&h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
     send(
         &h.app,
         form("/admin/discord/nickname", "template=%7Bname%7D", &owner),
@@ -1322,7 +1322,7 @@ async fn pings_ready(h: &Harness) -> (String, String) {
     )
     .await;
     assert_eq!(added.location(), "/admin/discord", "{}", added.body);
-    map(h, &owner, MEMBER_ROLE, "tier:member").await;
+    map(h, &owner, MEMBER_ROLE, "state:1").await;
     (owner, pilot)
 }
 
@@ -1370,7 +1370,7 @@ async fn fleet_pings_need_the_permission(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=fleet.ping&grantee=tier:guest",
+            "permission=fleet.ping&grantee=state:3",
             &owner,
         ),
     )

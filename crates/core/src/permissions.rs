@@ -1,9 +1,9 @@
 //! Permissions. Core defines the ones below; plugins add their own from
-//! their manifests in milestone 2. Grants go to tiers and groups only.
+//! their manifests in milestone 2. Grants go to states and groups only.
 
 pub const ADMIN_GROUPS: &str = "admin.groups";
 pub const ADMIN_PERMISSIONS: &str = "admin.permissions";
-pub const ADMIN_TIERS: &str = "admin.tiers";
+pub const ADMIN_STATES: &str = "admin.states";
 pub const ADMIN_AUDIT: &str = "admin.audit";
 pub const ADMIN_DISCORD: &str = "admin.discord";
 pub const ADMIN_SYSTEM: &str = "admin.system";
@@ -21,8 +21,8 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Grant and revoke permissions (effectively full admin: holders can grant themselves anything)",
     ),
     (
-        ADMIN_TIERS,
-        "Choose which alliances and corporations are Member or Allied",
+        ADMIN_STATES,
+        "Set up access states: who is Member, Blue or in a state you create, and in what order. Holders can only change who is in a state if they hold everything granted to it",
     ),
     (ADMIN_AUDIT, "Read the audit log"),
     (
@@ -35,7 +35,7 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     ),
     (
         ADMIN_DISCORD,
-        "Set up the Discord bot and choose which roles tiers and groups get",
+        "Set up the Discord bot and choose which roles states and groups get",
     ),
     (
         FLEET_PING,

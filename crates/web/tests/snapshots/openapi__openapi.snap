@@ -366,7 +366,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "admin"
         ],
-        "summary": "`POST /api/admin/permissions/grants`: grant to a tier or a group.",
+        "summary": "`POST /api/admin/permissions/grants`: grant to a state or a group.",
         "operationId": "grant",
         "requestBody": {
           "content": {
@@ -430,13 +430,13 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ]
       }
     },
-    "/api/admin/tiers": {
+    "/api/admin/states": {
       "get": {
         "tags": [
           "admin"
         ],
-        "summary": "`GET /api/admin/tiers`",
-        "operationId": "list_tier_rules",
+        "summary": "`GET /api/admin/states`: highest priority first.",
+        "operationId": "list_states",
         "responses": {
           "200": {
             "content": {
@@ -444,7 +444,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/TierRuleOut"
+                    "$ref": "#/components/schemas/StateOut"
                   }
                 }
               }
@@ -462,27 +462,32 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "admin"
         ],
-        "summary": "`POST /api/admin/tiers`: make an alliance or corporation Member or\nAllied. Its name and kind come from ESI, not the client.",
-        "operationId": "set_tier_rule",
+        "summary": "`POST /api/admin/states`: a new state, just above Guest.",
+        "operationId": "create_state",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TierRuleIn"
+                "$ref": "#/components/schemas/StateNameIn"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "204": {},
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
           "400": {},
           "403": {},
-          "404": {
-            "description": "ESI doesn't know the id"
-          },
-          "502": {
-            "description": "ESI unavailable"
+          "409": {
+            "description": "Name taken"
           }
         },
         "security": [
@@ -492,12 +497,12 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ]
       }
     },
-    "/api/admin/tiers/resolve": {
+    "/api/admin/states/resolve": {
       "post": {
         "tags": [
           "admin"
         ],
-        "summary": "`POST /api/admin/tiers/resolve`: exact alliance and corporation names to\nids, via ESI.",
+        "summary": "`POST /api/admin/states/resolve`: exact alliance, corporation and\ncharacter names to ids, via ESI.",
         "operationId": "resolve_names",
         "requestBody": {
           "content": {
@@ -530,14 +535,141 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ]
       }
     },
-    "/api/admin/tiers/{entity_id}": {
+    "/api/admin/states/{id}": {
       "delete": {
         "tags": [
           "admin"
         ],
-        "summary": "`DELETE /api/admin/tiers/{entity_id}`",
-        "operationId": "remove_tier_rule",
+        "summary": "`DELETE /api/admin/states/{id}`: delete a state an admin made; its\naccounts are re-evaluated.",
+        "operationId": "delete_state",
         "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PATCH /api/admin/states/{id}`: rename a state an admin made.",
+        "operationId": "rename_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StateNameIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/covers": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/{id}/covers`: add an alliance, corporation or\ncharacter. Its name and kind come from ESI, not the client.",
+        "operationId": "add_cover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {
+            "description": "No such state, or ESI doesn't know the id"
+          },
+          "409": {},
+          "502": {
+            "description": "ESI unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/covers/{entity_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/states/{id}/covers/{entity_id}`",
+        "operationId": "remove_cover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
           {
             "name": "entity_id",
             "in": "path",
@@ -550,6 +682,47 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ],
         "responses": {
           "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/move": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/{id}/move`: swap with the state above or below.\nChanging who is in a state needs every permission granted to it.",
+        "operationId": "move_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
           "403": {},
           "404": {}
         },
@@ -720,7 +893,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         },
         "responses": {
           "204": {
-            "description": "Main changed; tier re-evaluated"
+            "description": "Main changed; state re-evaluated"
           },
           "404": {
             "description": "Not one of your characters"
@@ -1019,6 +1192,39 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "CoverIn": {
+        "type": "object",
+        "required": [
+          "entity_id"
+        ],
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CoveredOut": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`alliance`, `corporation` or `character`."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "Created": {
         "type": "object",
         "required": [
@@ -1063,11 +1269,12 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "permission": {
             "type": "string"
           },
-          "tier": {
+          "state_id": {
             "type": [
-              "string",
+              "integer",
               "null"
-            ]
+            ],
+            "format": "int64"
           }
         }
       },
@@ -1092,11 +1299,12 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "permission": {
             "type": "string"
           },
-          "tier": {
+          "state_id": {
             "type": [
-              "string",
+              "integer",
               "null"
-            ]
+            ],
+            "format": "int64"
           }
         }
       },
@@ -1149,7 +1357,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "required": [
           "account_id",
           "is_owner",
-          "tier",
+          "state",
           "main",
           "characters",
           "groups",
@@ -1184,8 +1392,9 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
               "type": "string"
             }
           },
-          "tier": {
-            "type": "string"
+          "state": {
+            "type": "string",
+            "description": "The access state's name: Member, Blue, Guest or one an admin made."
           }
         }
       },
@@ -1198,6 +1407,26 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "account_id": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "MoveIn": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "`up` (higher priority) or `down`."
+          },
+          "past": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The state expected to be passed; refused with 409 if the order\nchanged."
           }
         }
       },
@@ -1289,10 +1518,17 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "type": "object",
         "required": [
           "alliances",
-          "corporations"
+          "corporations",
+          "characters"
         ],
         "properties": {
           "alliances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityOut"
+            }
+          },
+          "characters": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EntityOut"
@@ -1389,6 +1625,59 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "StateNameIn": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "StateOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "priority",
+          "accounts",
+          "covers"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Accounts in the state now."
+          },
+          "builtin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`member`, `blue` or `guest` for the built-in states."
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoveredOut"
+            }
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Higher wins; Guest is 0."
+          }
+        }
+      },
       "Suggestion": {
         "type": "object",
         "required": [
@@ -1405,46 +1694,6 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "type": "string"
           },
           "name": {
-            "type": "string"
-          }
-        }
-      },
-      "TierRuleIn": {
-        "type": "object",
-        "required": [
-          "entity_id",
-          "tier"
-        ],
-        "properties": {
-          "entity_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "tier": {
-            "type": "string"
-          }
-        }
-      },
-      "TierRuleOut": {
-        "type": "object",
-        "required": [
-          "entity_id",
-          "kind",
-          "tier",
-          "name"
-        ],
-        "properties": {
-          "entity_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "tier": {
             "type": "string"
           }
         }
@@ -1485,7 +1734,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
     },
     {
       "name": "admin",
-      "description": "Groups, permissions, tier rules and the audit log"
+      "description": "Groups, permissions, states and the audit log"
     },
     {
       "name": "setup",

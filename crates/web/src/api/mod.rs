@@ -7,7 +7,6 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
-use tether_core::tiers::Tier;
 use tether_db::accounts;
 
 use crate::AppState;
@@ -18,7 +17,8 @@ use crate::error::AppError;
 pub struct Me {
     pub account_id: i64,
     pub is_owner: bool,
-    pub tier: &'static str,
+    /// The access state's name: Member, Blue, Guest or one an admin made.
+    pub state: String,
     pub main: CharacterRef,
     pub characters: Vec<CharacterSummary>,
     pub groups: Vec<String>,
@@ -48,13 +48,13 @@ pub async fn me(
     let account = accounts::get(&state.db, session.account)
         .await?
         .ok_or_else(AppError::unauthorized)?;
-    let tier = tether_db::tiers::account_tier(&state.db, session.account)
+    let access = tether_db::states::account_state(&state.db, session.account)
         .await?
-        .unwrap_or(Tier::Guest);
+        .ok_or_else(AppError::unauthorized)?;
     Ok(Json(Me {
         account_id: account.id.0,
         is_owner: account.is_owner,
-        tier: tier.as_str(),
+        state: access.name,
         characters: account
             .characters
             .iter()
@@ -83,7 +83,7 @@ pub struct SetMain {
 
 /// `POST /api/me/main`: make one of your characters the main.
 #[utoipa::path(post, path = "/api/me/main", tag = "account", security(("session" = [])), request_body = SetMain,
-    responses((status = 204, description = "Main changed; tier re-evaluated"),
+    responses((status = 204, description = "Main changed; state re-evaluated"),
               (status = 404, description = "Not one of your characters")))]
 pub async fn set_main(
     State(state): State<AppState>,
@@ -96,8 +96,8 @@ pub async fn set_main(
             character_id = body.character_id,
             "main changed"
         );
-        // The tier follows the main; affiliations were fetched at login.
-        crate::tiers::evaluate_account(&state.db, session.account).await?;
+        // The state follows the main; affiliations were fetched at login.
+        crate::states::evaluate_account(&state.db, session.account).await?;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::not_found("That character isn't on your account."))

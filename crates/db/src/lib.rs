@@ -15,7 +15,7 @@ pub mod plugins;
 pub mod secrets;
 pub mod settings;
 pub mod setup;
-pub mod tiers;
+pub mod states;
 pub mod tokens;
 
 use std::time::Duration;

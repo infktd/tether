@@ -1,10 +1,10 @@
-//! Keeping Discord in step with tiers and groups (F12): each linked member
-//! gets exactly the Tether-managed roles their tier and groups map to, and
+//! Keeping Discord in step with states and groups (F12): each linked member
+//! gets exactly the Tether-managed roles their state and groups map to, and
 //! the nickname template if one is set. Roles Tether doesn't manage are
 //! left alone, and leaving the server isn't tracked.
 //!
 //! Database triggers queue `discord.sync_member` whenever an account's
-//! tier, main, groups or main's corporation change, and `discord.sync_all`
+//! state, main, groups or main's corporation change, and `discord.sync_all`
 //! when a mapping is added or removed. A daily sync catches anything done
 //! by hand in Discord.
 
@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tether_core::crypto::EncryptionKey;
 use tether_core::nickname::{self, Parts};
-use tether_core::tiers::EntityKind;
+use tether_core::states::EntityKind;
 use tether_db::accounts::AccountId;
 use tether_db::discord as db;
 use tether_db::{PgPool, settings};

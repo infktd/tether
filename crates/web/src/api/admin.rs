@@ -1,4 +1,4 @@
-//! Admin API: groups, permissions, audit log. Every change is audited in
+//! Admin API: groups, permissions, states, audit log. Every change is audited in
 //! the same transaction.
 
 use axum::Json;
@@ -7,17 +7,18 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS};
-use tether_core::tiers::Tier;
+use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_STATES};
+use tether_core::states::StateId;
 use tether_db::audit::{self, Actor};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
-use tether_db::tiers as tier_db;
+use tether_db::states as state_db;
 
 use crate::AppState;
 use crate::admin::{self, MembershipChange};
 use crate::auth::CurrentSession;
 use crate::error::AppError;
+use crate::state_admin::{self, Change};
 
 // ---- groups ---------------------------------------------------------------
 
@@ -199,7 +200,7 @@ pub struct GrantOut {
     pub id: i64,
     pub permission: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tier: Option<&'static str>,
+    pub state_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<i64>,
 }
@@ -222,14 +223,14 @@ pub async fn list_permissions(
         grants: grants
             .into_iter()
             .map(|g| {
-                let (tier, group_id) = match g.grantee {
-                    Grantee::Tier(t) => (Some(t.as_str()), None),
+                let (state_id, group_id) = match g.grantee {
+                    Grantee::State(s) => (Some(s.0), None),
                     Grantee::Group(group) => (None, Some(group.0)),
                 };
                 GrantOut {
                     id: g.id,
                     permission: g.permission,
-                    tier,
+                    state_id,
                     group_id,
                 }
             })
@@ -240,11 +241,11 @@ pub async fn list_permissions(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct GrantIn {
     pub permission: String,
-    pub tier: Option<String>,
+    pub state_id: Option<i64>,
     pub group_id: Option<i64>,
 }
 
-/// `POST /api/admin/permissions/grants`: grant to a tier or a group.
+/// `POST /api/admin/permissions/grants`: grant to a state or a group.
 #[utoipa::path(post, path = "/api/admin/permissions/grants", tag = "admin", security(("session" = [])), request_body = GrantIn,
     responses((status = 201, body = Created), (status = 400), (status = 403), (status = 404), (status = 409)))]
 pub async fn grant(
@@ -253,7 +254,7 @@ pub async fn grant(
     Json(body): Json<GrantIn>,
 ) -> Result<(StatusCode, Json<Created>), AppError> {
     session.require(&state, ADMIN_PERMISSIONS).await?;
-    let grantee = admin::grantee(body.tier.as_deref(), body.group_id)?;
+    let grantee = admin::grantee(body.state_id, body.group_id)?;
     let id = admin::grant(&state, session.account, &body.permission, grantee).await?;
     Ok((StatusCode::CREATED, Json(Created { id })))
 }
@@ -318,76 +319,226 @@ pub async fn audit_log(
     ))
 }
 
-// ---- tier rules ------------------------------------------------------------
+// ---- states ---------------------------------------------------------------
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct TierRuleOut {
+pub struct StateOut {
+    pub id: i64,
+    pub name: String,
+    /// `member`, `blue` or `guest` for the built-in states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<&'static str>,
+    /// Higher wins; Guest is 0.
+    pub priority: i32,
+    /// Accounts in the state now.
+    pub accounts: i64,
+    pub covers: Vec<CoveredOut>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CoveredOut {
     pub entity_id: i64,
+    /// `alliance`, `corporation` or `character`.
     pub kind: &'static str,
-    pub tier: &'static str,
     pub name: String,
 }
 
-/// `GET /api/admin/tiers`
-#[utoipa::path(get, path = "/api/admin/tiers", tag = "admin", security(("session" = [])),
-    responses((status = 200, body = Vec<TierRuleOut>), (status = 403)))]
-pub async fn list_tier_rules(
+/// `GET /api/admin/states`: highest priority first.
+#[utoipa::path(get, path = "/api/admin/states", tag = "admin", security(("session" = [])),
+    responses((status = 200, body = Vec<StateOut>), (status = 403)))]
+pub async fn list_states(
     State(state): State<AppState>,
     session: CurrentSession,
-) -> Result<Json<Vec<TierRuleOut>>, AppError> {
-    session.require(&state, ADMIN_TIERS).await?;
-    let rules = tier_db::list_rules(&state.db).await?;
+) -> Result<Json<Vec<StateOut>>, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let states = state_db::list(&state.db).await?;
+    let covered = state_db::covered(&state.db).await?;
+    let counts = state_db::counts(&state.db).await?;
     Ok(Json(
-        rules
+        states
             .into_iter()
-            .map(|r| TierRuleOut {
-                entity_id: r.entity_id,
-                kind: r.kind.as_str(),
-                tier: r.tier.as_str(),
-                name: r.name,
+            .map(|s| StateOut {
+                id: s.id.0,
+                builtin: s.builtin.map(tether_core::states::Builtin::as_str),
+                priority: s.priority,
+                accounts: counts.get(&s.id).copied().unwrap_or(0),
+                covers: covered
+                    .iter()
+                    .filter(|c| c.state == s.id)
+                    .map(|c| CoveredOut {
+                        entity_id: c.entity_id,
+                        kind: c.kind.as_str(),
+                        name: c.name.clone(),
+                    })
+                    .collect(),
+                name: s.name,
             })
             .collect(),
     ))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct TierRuleIn {
-    pub entity_id: i64,
-    pub tier: String,
+pub struct StateNameIn {
+    pub name: String,
 }
 
-/// `POST /api/admin/tiers`: make an alliance or corporation Member or
-/// Allied. Its name and kind come from ESI, not the client.
-#[utoipa::path(post, path = "/api/admin/tiers", tag = "admin", security(("session" = [])), request_body = TierRuleIn,
-    responses((status = 204), (status = 400), (status = 403), (status = 404, description = "ESI doesn't know the id"), (status = 502, description = "ESI unavailable")))]
-pub async fn set_tier_rule(
+/// `POST /api/admin/states`: a new state, just above Guest.
+#[utoipa::path(post, path = "/api/admin/states", tag = "admin", security(("session" = [])), request_body = StateNameIn,
+    responses((status = 201, body = Created), (status = 400), (status = 403), (status = 409, description = "Name taken")))]
+pub async fn create_state(
     State(state): State<AppState>,
     session: CurrentSession,
-    Json(body): Json<TierRuleIn>,
-) -> Result<StatusCode, AppError> {
-    session.require(&state, ADMIN_TIERS).await?;
-    let tier = Tier::parse(&body.tier)
-        .ok_or_else(|| AppError::bad_request("tier must be member or allied."))?;
-    admin::apply_tier_rule(
-        &state,
+    Json(body): Json<StateNameIn>,
+) -> Result<(StatusCode, Json<Created>), AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::Create { name: body.name };
+    let id = state_admin::apply(
+        &state.db,
+        &state.esi,
         Actor::Account(session.account),
-        body.entity_id,
-        tier,
+        &change,
+    )
+    .await?
+    .ok_or_else(|| AppError::internal("no id for a new state"))?;
+    Ok((StatusCode::CREATED, Json(Created { id: id.0 })))
+}
+
+/// `PATCH /api/admin/states/{id}`: rename a state an admin made.
+#[utoipa::path(patch, path = "/api/admin/states/{id}", tag = "admin", security(("session" = [])), request_body = StateNameIn,
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404), (status = 409)))]
+pub async fn rename_state(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Json(body): Json<StateNameIn>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::Rename {
+        state: StateId(id),
+        name: body.name,
+    };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `DELETE /api/admin/tiers/{entity_id}`
-#[utoipa::path(delete, path = "/api/admin/tiers/{entity_id}", tag = "admin", security(("session" = [])),
-    params(("entity_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
-pub async fn remove_tier_rule(
+/// `DELETE /api/admin/states/{id}`: delete a state an admin made; its
+/// accounts are re-evaluated.
+#[utoipa::path(delete, path = "/api/admin/states/{id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+pub async fn delete_state(
     State(state): State<AppState>,
     session: CurrentSession,
-    Path(entity_id): Path<i64>,
+    Path(id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
-    session.require(&state, ADMIN_TIERS).await?;
-    admin::remove_tier_rule(&state, session.account, entity_id).await?;
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::Delete { state: StateId(id) };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MoveIn {
+    /// `up` (higher priority) or `down`.
+    pub direction: String,
+    /// The state expected to be passed; refused with 409 if the order
+    /// changed.
+    pub past: Option<i64>,
+}
+
+/// `POST /api/admin/states/{id}/move`: swap with the state above or below.
+/// Changing who is in a state needs every permission granted to it.
+#[utoipa::path(post, path = "/api/admin/states/{id}/move", tag = "admin", security(("session" = [])), request_body = MoveIn,
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+pub async fn move_state(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Json(body): Json<MoveIn>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let up = match body.direction.as_str() {
+        "up" => true,
+        "down" => false,
+        _ => return Err(AppError::bad_request("direction must be up or down.")),
+    };
+    let change = Change::Move {
+        state: StateId(id),
+        up,
+        past: body.past.map(StateId),
+    };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CoverIn {
+    pub entity_id: i64,
+}
+
+/// `POST /api/admin/states/{id}/covers`: add an alliance, corporation or
+/// character. Its name and kind come from ESI, not the client.
+#[utoipa::path(post, path = "/api/admin/states/{id}/covers", tag = "admin", security(("session" = [])), request_body = CoverIn,
+    params(("id" = i64, Path)),
+    responses((status = 204), (status = 400), (status = 403), (status = 404, description = "No such state, or ESI doesn't know the id"), (status = 409), (status = 502, description = "ESI unavailable")))]
+pub async fn add_cover(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Json(body): Json<CoverIn>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::Add {
+        state: StateId(id),
+        entity_id: body.entity_id,
+    };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/admin/states/{id}/covers/{entity_id}`
+#[utoipa::path(delete, path = "/api/admin/states/{id}/covers/{entity_id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("entity_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
+pub async fn remove_cover(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path((id, entity_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::Remove {
+        state: StateId(id),
+        entity_id,
+    };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -400,6 +551,7 @@ pub struct ResolveIn {
 pub struct ResolveOut {
     pub alliances: Vec<EntityOut>,
     pub corporations: Vec<EntityOut>,
+    pub characters: Vec<EntityOut>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -408,16 +560,16 @@ pub struct EntityOut {
     pub name: String,
 }
 
-/// `POST /api/admin/tiers/resolve`: exact alliance and corporation names to
-/// ids, via ESI.
-#[utoipa::path(post, path = "/api/admin/tiers/resolve", tag = "admin", security(("session" = [])), request_body = ResolveIn,
+/// `POST /api/admin/states/resolve`: exact alliance, corporation and
+/// character names to ids, via ESI.
+#[utoipa::path(post, path = "/api/admin/states/resolve", tag = "admin", security(("session" = [])), request_body = ResolveIn,
     responses((status = 200, body = ResolveOut), (status = 400), (status = 403), (status = 502)))]
 pub async fn resolve_names(
     State(state): State<AppState>,
     session: CurrentSession,
     Json(body): Json<ResolveIn>,
 ) -> Result<Json<ResolveOut>, AppError> {
-    session.require(&state, ADMIN_TIERS).await?;
+    session.require(&state, ADMIN_STATES).await?;
     let names: Vec<String> = body
         .names
         .iter()
@@ -443,5 +595,6 @@ pub async fn resolve_names(
     Ok(Json(ResolveOut {
         alliances: out(resolved.alliances),
         corporations: out(resolved.corporations),
+        characters: out(resolved.characters),
     }))
 }

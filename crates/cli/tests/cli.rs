@@ -3,7 +3,7 @@
 use serde_json::json;
 use sqlx::PgPool;
 use tether_cli::doctor::{self, Status};
-use tether_cli::{Command, JobsCommand, TierArg, TiersCommand, UsersCommand, run};
+use tether_cli::{Command, JobsCommand, StatesCommand, UsersCommand, run};
 use tether_core::Secret;
 use tether_core::crypto::EncryptionKey;
 use tether_db::accounts::{self, AccountId};
@@ -134,56 +134,46 @@ async fn users_lists_and_shows_accounts(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn tiers_set_uses_esi_names_and_is_audited_as_cli(db: PgPool) {
+async fn states_add_uses_esi_names_and_is_audited_as_cli(db: PgPool) {
     let (_esi_server, esi) = mock_esi().await;
+    let add = |state: &str, entity_id| Command::States {
+        command: Some(StatesCommand::Add {
+            state: state.to_owned(),
+            entity_id,
+        }),
+    };
 
-    let out = cli(
-        &db,
-        &esi,
-        Command::Tiers {
-            command: Some(TiersCommand::Set {
-                entity_id: 159826257,
-                tier: TierArg::Member,
-            }),
-        },
-    )
-    .await
-    .unwrap();
+    let out = cli(&db, &esi, add("member", 159826257)).await.unwrap();
     assert!(
-        out.contains("Otherworld Empire (alliance) is now member"),
+        out.contains("Member now covers Otherworld Empire (alliance)"),
         "{out}"
     );
-    let listed = cli(&db, &esi, Command::Tiers { command: None })
+    let listed = cli(&db, &esi, Command::States { command: None })
         .await
         .unwrap();
-    assert!(listed.contains("member  alliance"), "{listed}");
+    assert!(listed.contains("Member  (0 account(s))"), "{listed}");
+    assert!(
+        listed.contains("alliance        159826257  Otherworld Empire"),
+        "{listed}"
+    );
 
     let queued: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.jobs WHERE kind = 'tiers.evaluate_all'")
+        sqlx::query_scalar("SELECT count(*) FROM core.jobs WHERE kind = 'states.evaluate_all'")
             .fetch_one(&db)
             .await
             .unwrap();
     assert_eq!(queued, 1);
 
-    // A character id is not an alliance or corporation.
-    let not_org = cli(
-        &db,
-        &esi,
-        Command::Tiers {
-            command: Some(TiersCommand::Set {
-                entity_id: 5,
-                tier: TierArg::Member,
-            }),
-        },
-    )
-    .await;
-    assert!(not_org.is_err());
+    // Guest lists nobody, and unknown states are refused.
+    assert!(cli(&db, &esi, add("Guest", 159826257)).await.is_err());
+    assert!(cli(&db, &esi, add("Admirals", 159826257)).await.is_err());
 
     cli(
         &db,
         &esi,
-        Command::Tiers {
-            command: Some(TiersCommand::Remove {
+        Command::States {
+            command: Some(StatesCommand::Remove {
+                state: "Member".to_owned(),
                 entity_id: 159826257,
             }),
         },
@@ -193,8 +183,8 @@ async fn tiers_set_uses_esi_names_and_is_audited_as_cli(db: PgPool) {
     assert_eq!(
         audit_actors(&db).await,
         [
-            ("tier.rule.set".into(), Some("cli".into())),
-            ("tier.rule.remove".into(), Some("cli".into()))
+            ("state.add".into(), Some("cli".into())),
+            ("state.remove".into(), Some("cli".into()))
         ]
     );
 }
@@ -202,7 +192,7 @@ async fn tiers_set_uses_esi_names_and_is_audited_as_cli(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn jobs_lists_and_retries_dead_jobs(db: PgPool) {
     let (_esi_server, esi) = mock_esi().await;
-    let dead = tether_jobs::enqueue(&db, NewJob::new("tiers.refresh_account", json!({})))
+    let dead = tether_jobs::enqueue(&db, NewJob::new("states.refresh_account", json!({})))
         .await
         .unwrap();
     sqlx::query(

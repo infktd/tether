@@ -12,7 +12,7 @@
 //! Pages are read-only, so tests that write or queue go through `submit`,
 //! which runs the same probe.
 
-use tether_plugin_sdk::discord::{self, Mention, Tier};
+use tether_plugin_sdk::discord::{self, Mention};
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity;
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
@@ -122,13 +122,9 @@ fn probe(request: Request) -> Result<Page, PageError> {
         "viewer" => format!("{:?}", identity::viewer()),
         "consented" => format!("{:?}", esi::consented()),
         "sources" => format!("{:?}", esi::data_sources()),
-        // send?channel=&text=&tier=member
+        // send?channel=&text=&state=Member
         "send" => {
-            let mention = match arg("tier").as_deref() {
-                Some("member") => Mention::Tier(Tier::Member),
-                Some("allied") => Mention::Tier(Tier::Allied),
-                _ => Mention::None,
-            };
+            let mention = arg("state").map_or(Mention::None, Mention::State);
             let channel = arg("channel")
                 .or_else(|| discord::channels().first().map(|c| c.id.clone()))
                 .unwrap_or_default();

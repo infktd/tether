@@ -5,8 +5,7 @@ mod common;
 use common::*;
 use serde_json::json;
 use sqlx::PgPool;
-use tether_core::tiers::{EntityKind, Tier};
-use tether_db::tiers::{TierRule, set_rule};
+use tether_core::states::{Builtin, EntityKind};
 use tether_jobs::{NewJob, Outcome, Registry, WorkerConfig, run_once};
 use tether_web::sync::{AFFILIATION_SYNC_JOB, affiliation_sync};
 use wiremock::matchers::{method, path};
@@ -16,13 +15,7 @@ const CHRIBBA: &str = "196379789:Chribba";
 const OTHERWORLD: i64 = 159826257;
 
 async fn member_rule(db: &PgPool) {
-    let rule = TierRule {
-        entity_id: OTHERWORLD,
-        kind: EntityKind::Alliance,
-        tier: Tier::Member,
-        name: "Otherworld Empire".into(),
-    };
-    set_rule(db, &rule).await.unwrap();
+    cover(db, Builtin::Member, EntityKind::Alliance, OTHERWORLD).await;
 }
 
 /// Like ESI: 404 for the whole batch if any id is unknown; Chribba's
@@ -68,25 +61,25 @@ async fn a_member_who_leaves_the_alliance_drops_to_guest_within_one_sync(db: PgP
     member_rule(&db).await;
     let h = harness(db, true).await;
     let token = log_in_as(&h, CHRIBBA, None).await;
-    assert_eq!(me(&h, &token).await["tier"], "member");
+    assert_eq!(me(&h, &token).await["state"], "Member");
 
     // Chribba leaves the alliance; nobody touches Tether.
     strict_esi(&h, None).await;
     assert!(matches!(run_sync_job(&h).await, Outcome::Succeeded(_)));
 
-    assert_eq!(me(&h, &token).await["tier"], "guest");
+    assert_eq!(me(&h, &token).await["state"], "Guest");
     let change: serde_json::Value = sqlx::query_scalar(
-        "SELECT details FROM core.audit_log WHERE action = 'tier.change' ORDER BY id DESC LIMIT 1",
+        "SELECT details FROM core.audit_log WHERE action = 'state.change' ORDER BY id DESC LIMIT 1",
     )
     .fetch_one(&h.db)
     .await
     .unwrap();
-    assert_eq!(change, json!({"from": "member", "to": "guest"}));
+    assert_eq!(change, json!({"from": "Member", "to": "Guest"}));
     let last = tether_db::settings::get(&h.db, tether_web::sync::LAST_RUN_SETTING)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(last["tier_changes"], 1);
+    assert_eq!(last["state_changes"], 1);
     assert!(last["at"].is_string());
 }
 
@@ -105,8 +98,8 @@ async fn an_invalid_id_is_isolated_and_skipped(db: PgPool) {
     assert_eq!(summary.characters, 4);
     assert_eq!(summary.skipped, [1, 2, 3]);
     assert_eq!(
-        me(&h, &token).await["tier"],
-        "guest",
+        me(&h, &token).await["state"],
+        "Guest",
         "Chribba was still updated"
     );
 }
@@ -124,7 +117,7 @@ async fn an_esi_outage_retries_and_changes_nothing(db: PgPool) {
         .await;
 
     assert!(matches!(run_sync_job(&h).await, Outcome::Retrying(_)));
-    assert_eq!(me(&h, &token).await["tier"], "member");
+    assert_eq!(me(&h, &token).await["state"], "Member");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

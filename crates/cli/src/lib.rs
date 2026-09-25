@@ -9,4 +9,4 @@
 mod commands;
 pub mod doctor;
 
-pub use commands::{Command, JobsCommand, StateArg, TierArg, TiersCommand, UsersCommand, run};
+pub use commands::{Command, JobsCommand, StateArg, StatesCommand, UsersCommand, run};
