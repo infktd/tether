@@ -42,7 +42,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Sign In with EVE SSO | `publicData` only; main character only | same, no scopes at login | done |
 | Email step | asks for and verifies an email | none | skip: no email, ever (PRD non-goal) |
 | Characters, Add Character | alts join the account through SSO | same | done |
-| Change Main | switch the main; state re-evaluated | same; picks from linked characters (no SSO round trip) | done; rename |
+| Change Main | switch the main; state re-evaluated | picks from linked characters | partial: valid token required (see Behaviour) |
 | Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | partial: add to the daily token check |
 | States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all but Factions and Public; Guest covers everyone, which is what Public is for | partial: add Factions |
 | State changes | re-evaluated on affiliation updates; "State changed to: X" notification | re-evaluated; audited | partial: needs Notifications |
@@ -63,7 +63,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Themes, Custom CSS | | dark theme; accent colour setting designed but not built | partial: build the accent setting; no custom CSS (plugins never ship CSS) |
 | Analytics | opt-out telemetry to Google Analytics | none | skip: no telemetry (N5) |
 | Services framework | per-service access permission; access removed when the permission goes | Discord for any state but Guest | partial: access by permission |
-| Discord | Link Discord Server, roles mirror groups, nickname sync, removed on losing access | same, plus state roles and fleet pings | done |
+| Discord | Link Discord Server, roles mirror groups, nickname sync, kicked on losing access | explicit role mapping, state roles, nickname sync, fleet pings; not kicked | partial: see Behaviour |
 | Name Formatter | one format per service per state; AA's field list | one template, three fields | partial |
 | Mumble, TeamSpeak 3, Openfire/Jabber, phpBB3, SMF, IPS4, XenForo, Discourse | | none | skip for v1: plugin candidates on request |
 | Periodic tasks: affiliation update, token cleanup | | hourly affiliation sync, daily token check | done |
@@ -95,6 +95,74 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Blacklist ("Pilot Log", Blacklist state) | a high-priority state can already act as a blacklist | notes: after v1 |
 | Corp Tools, CorpStats 2.0 | overlap with Member Audit and Corporation Stats | skip |
 
+## Behaviour
+
+Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.1) on 2026-09-25, rule by rule against Tether's code. Where AA's docs and code disagree, Tether follows the docs (what AA intends). Decisions from Jay are marked **(decided)**.
+
+**Login, characters and ownership**
+
+- **Only the main signs in.** Signing in with an alt is refused: "Unable to authenticate as the selected character. Please log in with the main character associated with this account." The token isn't stored. Alts join only through **Add Character**; a plain login while signed in switches to (or refuses) that character's account, never links it. *Tether today: any linked character signs in, and a plain login while signed in adds an alt.*
+- **A character linked to another account moves** to the account that just added it with a fresh SSO login; the move is audited and the other account re-evaluated. **(decided)** *Tether today: refused.*
+- **Ownership follows the owner hash.** A changed owner hash (the character was sold) is caught at login, on every token refresh (the refreshed token's `owner` is compared), and by an ownership check every 4 hours covering every token, scopes or not. Every change of owner is kept as an **ownership record**; a returning owner (same hash) is re-attached to their old account. *Tether today: caught only at login.*
+- **Losing the main clears it.** When the main is sold or loses its last valid token, the account has no main: Guest, services off, and only the Dashboard and Change Main work until the owner picks one. An alt that loses its last valid token leaves the account. Nothing is promoted silently. *Tether today: the oldest alt becomes main, or the account is deleted; a revoked token only flags compliance.*
+- **Change Main** only to a character with a valid token.
+- **Deactivate account** (admin, audited; not the owner): Guest, sessions ended, login refused, services removed; reactivate undoes it. **(decided)** *Tether today: absent.*
+- **Sessions** last 14 days from sign-in (Django's default), rotated at sign-in. *Tether today: 30 days.*
+- **Names** refresh with the affiliation sync, so nicknames follow renames. *Tether today: at login only.*
+
+**States**
+
+- Defaults Member 100, Blue 50, Guest 0 (priorities are editable numbers; the page keeps the up and down buttons). **Member and Blue can be renamed and deleted; only Guest is protected** (fixed name, always last, can't be deleted). **(decided)** Plugins and scopes follow the built-in role, not the name: deleting Member drops plugin scope requirements and plugins' Member characters; deleting Blue leaves Moon Mining's old-moon list with no audience. State names at most 32 characters. *Tether today: 2/1/0, all three locked, 40 characters.*
+- A state change removes the account from groups whose allowed states exclude it, re-checks services, and notifies ("State changed to: {state}" / "Your user's state is now: {state}", info). Deleting a state moves its accounts to their next state, notified the same way.
+
+**Groups** (rules the Groups parity task implements)
+
+1. Flags: Internal, Hidden, Open, Public, Restricted, and allowed states (empty: all). New groups default to Internal and Hidden, as in AA. Existing groups migrate: Assigned becomes Internal; Open becomes Open and not Hidden; Request to join becomes not Open, not Hidden. The Compliance Group is Internal.
+2. Joinable: not Internal, and the account's state allowed. The Groups page lists joinable groups that aren't Hidden, where the account holds `request_groups` or the group is Public. Hidden groups join through their direct link.
+3. Join, in order: not joinable (refused), already a member, no `request_groups` and not Public (refused), Open (added, logged Join/Accept by themselves), a pending request (refused), else a join request (approvers notified if the setting is on).
+4. Leave, in order: Internal (refused), not a member, Open or auto-leave on (removed, logged Leave/Accept), a pending request (refused), else a leave request. Auto-leave is a setting, off by default. *Tether today: leaving is immediate, even from admin-assigned groups.*
+5. Retract: join requests only; not logged.
+6. Accepting a join re-checks joinability against the current state. The four decisions (join or leave, accept or reject) are logged, delete the request and notify the requester: "Group Application Accepted" / "Your application to {group} has been accepted." (success), "Group Application Rejected" / "Your application to {group} has been rejected." (danger), "Group Leave Request Accepted" / "Your request to leave {group} has been accepted." (success), "Group Leave Request Rejected" / "Your request to leave {group} has been rejected." (danger).
+7. Removing a member (non-Internal groups) is logged as Removed, without a notification.
+8. On a state change, and when a group's allowed states are saved, accounts whose state isn't allowed are removed (Public groups too).
+9. **Group Management** covers non-Internal groups: holders of `group_management` all of them, **Group Leaders** (directly, or through a **Group Leader Group**) only theirs. They process requests, view and remove members, and read the group's Audit Log; they can't change settings or add members directly. The menu shows the pending count.
+10. Request notifications ("Group Management: Join request for {group}" / "{user} wants to join {group}.", info; and Leave) go to the group's leaders and leader groups only, behind a setting that's off by default.
+11. **Restricted**: only the owner changes the flag or the membership (leaders included, which is stricter than AA's code and what its docs intend).
+12. **Reserved group names**: matched ignoring case, with a required reason; groups can't take them; Discord leaves roles with those names alone.
+13. The per-group **Audit Log**: date, requestor, current main, corporation, type (Join, Leave, Removed), action (Accept, Reject), actor, kept with name snapshots.
+14. `request_groups` ("Can request non-public groups") gates listing and joining non-Public groups and is granted to Member by default (AA's docs).
+15. Tether's own guards stay: adding members needs the group's grants; sensitive permissions never go to Guest or Open groups, re-checked when flags change.
+
+**Compliance** (Member Audit's behaviour)
+
+- **Compliance Groups**: admins mark Internal groups as compliance groups, each limited to its allowed states, as in Member Audit (several allowed, e.g. one per state). Replaces the single fixed Compliant group. Accounts are added and removed as compliance changes, and notified.
+- Tether is deliberately stricter than Member Audit: a revoked token breaks compliance (Member Audit only asks to re-register).
+
+**Notifications** (rules the Notifications task implements)
+
+- Levels danger, warning, info, success; title at most 254 characters; message defaults to the title. At most 50 per account: the oldest (read or not) go first. Only the recipient sees them; opening one marks it read; delete one, mark all read, delete all read; the unread count updates live.
+- Sent for: state changes; the group decisions and (opt-in) requests above; compliance gained or lost; Discord access removed ("Discord Account Disabled", warning); a character lost to a sale ("Character {name} biomassed" is AA's for deletions); a Corporation Stats source that stopped working (to its owner). Not for member removals, open or auto join and leave, or retracts.
+
+**Services and Discord**
+
+- **Losing access kicks.** When an account loses Discord access (state, permission, deactivation, a lost main, or its deletion), the bot removes the member from the server and unlinks them, and they're notified. The bot needs Kick Members. Unlinking by the user also leaves the server. *Tether today: mapped roles are stripped; the member stays in the server and stays linked.*
+- Access is by a permission ("Can access the Discord service", granted to Member and Blue by default), re-checked on state, permission and group changes.
+- **Roles: explicit mapping stays** (AA mirrors groups and states by name and creates roles; a same-named group can then hand out a privileged role). **(decided)** A setting adds AA's behaviour of removing every unmapped role except Discord-managed roles and reserved names. **(decided)**
+- **Name Formatter**: one format per state; AA's fields (`character_name`, `character_id`, `corp_ticker`, `corp_name`, `corp_id`, `alliance_ticker`, `alliance_name`, `alliance_id`, `alliance_or_corp_name`, `alliance_or_corp_ticker`, `username`) with format specs such as `{character_name:.20}`; default `{character_name}`; 32 characters.
+- The stored Discord username refreshes with the daily sync.
+
+**Corporation Stats**
+
+- Mains (accounts whose main is in the corporation, with their characters), Members (registered characters in it), Unregistered. View permissions per corporation, alliance or state (either grants access), plus the owner. **Update Now**, checking the viewer may see that corporation (AA doesn't).
+- A source that stops working (token, left the corporation) notifies its owner.
+- Kept from Tether: an admin approves each source, several sources per corporation as fallbacks, only covered corporations.
+
+**Fleet Pings** (aa-fleetpings)
+
+- Fields: ping target, pre-ping, channel, fleet type, FC, fleet name, formup location, formup time (or now), comms, doctrine (with link), SRP (with link), additional information, and copy-paste text as well as posting.
+- Restrictions: each channel, target, fleet type and doctrine can be limited to groups or states, **checked on the server** (aa-fleetpings only filters the form); a setting turns off @here and @everyone.
+- Kept from Tether: the bot posts (no webhooks), mentions in typed text are defused, pings are rate-limited and audited.
+
 ## Deliberately different
 
 - No email, no telemetry, no CDNs; purpose-built admin pages instead of the Django admin.
@@ -102,6 +170,11 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 - Compliance, Corporation Stats and the Compliance Group are core, not apps.
 - Plugins never see tokens; data access is checked and logged per call.
 - Discord only for v1; other services on request, as plugins.
+- One token per character, holding every scope granted (AA keeps one per scope set); a failed token is kept as revoked and audited, not deleted, while its effect on the account matches AA's.
+- Discord: explicit role mapping (above); OAuth state checked; the bot has only the permissions it needs, never Administrator; the member's Discord token is revoked after linking; members who leave the server stay linked (PRD).
+- Corporation Stats sources need an admin's approval, and only covered corporations are read.
+- Compliance is stricter than Member Audit: revoked tokens break it.
+- Evaluations run on the job queue, not inline, so a burst of changes can't stall requests.
 
 ## Proposed PRD tasks
 
