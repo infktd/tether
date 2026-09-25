@@ -79,8 +79,9 @@ Every requirement below is in v1; the phase column sets build order.
 | F18 | Plugin update checks against GitHub releases; one-click upgrade with pre-migration snapshot and one-step rollback; updates must be signed by the pinned key | 2 |
 | F19 | Personal access tokens with explicit scopes and expiry, for bots and scripts | 2 |
 | F20 | Plugin: Member Audit, with characters, skills, assets, wallets and combined multibox views | 3 |
-| F21 | Plugin: Moon Tracker, the first plugin built. Extraction timers from data-source characters; Discord ping to Members at each pop; fresh moons visible to Members only, then on the old-moon list for Blue after a configurable window (default 4 hours); viewer watermark on fresh-moon pages; per-pilot mining totals | 3 |
+| F21 | Plugin: Moon Mining (AA's name; was Moon Tracker), the first plugin built. Extraction timers from owner (data-source) characters; Discord ping to Members at each pop; fresh moons visible to Members only, then on the old-moon list for Blue after a configurable window (default 4 hours); viewer watermark on fresh-moon pages; per-pilot mining totals. Plus an extraction planner for characters with the in-game Station Manager role: a chosen pop cadence (such as one moon a day at a set EVE time) turned into the duration to set at each Athanor, accounting for auto-fracture, flagging gaps, overlaps and idle drills (ESI can't set extractions, so it only advises) | 3 |
 | F22 | Plugin: Fleet Ops, per the existing Fleet Ops PRD | 3 |
+| F23 | Alliance Auth parity: every admin and audit feature of AA core and the AA apps alliances use for administration, under AA's names, per `docs/AA_PARITY.md` (which lists what's done, missing and deliberately skipped) | 2–3 |
 
 ## Non-functional requirements
 
@@ -217,6 +218,20 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 - [x] ESI, identity and Discord host interfaces: data-source characters designated by an admin, per-user scope consent on the profile page (revocable), admin approval and user consent checked on every call, plugins never see a token, every access audited (F16, N8, N10). Per-plugin consent is interim: the compliance task below replaces it
 - [x] States, Alliance Auth style (F4): tiers become states (Member, Blue and Guest by default; admins create more), each with a priority and manual lists of corporations, alliances and characters, audited; "Allied" becomes "Blue" throughout; the main's highest-priority match wins, re-evaluated on every sync; permission grants, Discord role mappings and the plugin identity interface use states
 - [x] Scope compliance (F11, F16, N8), Alliance Auth style: required scopes per non-Guest state (Member: every installed plugin's user scopes, admin additions; others admin-set); every character on the account registered with them, main and alts; a prompt after login to register each character; non-compliant accounts keep their state but are flagged for officers and leave the Tether-managed Compliant group; the profile shows granted scopes per character and which plugins use them; plugin user-scope ESI calls require a Member character registered with the scope, replacing per-plugin consent; Corp Stats, Alliance Auth style: a character, offered by its owner and approved by an admin, lets Tether read its corporation's member list daily, and officers see which members of covered corporations never registered
+- [ ] AA names (F23): the renames in `docs/AA_PARITY.md` across UI, docs and code (Profile → Dashboard, Group Management, Fleet Pings, Corporation Stats, Compliance Report and Compliance Group, Register Character, Change Main, Name Formatter fields; plugins are "Apps" in the UI, "plugin" in the SDK and code); permission names aligned with AA's, with grants migrated
+- [ ] Groups, AA parity (F5, F23): Internal, Hidden (direct join link), Open, Public and Restricted flags; allowed states, removed on a state change; Group Leaders and Group Leader Groups; leave requests with an auto-leave setting (off by default); the users' Groups page (Available Groups); Group Management with Group Requests, Group Membership and a per-group Audit Log; reserved group names; a `request_groups` permission
+- [ ] Notifications (F23): in-app, unread count in the top bar (live over SSE), mark all read, delete read, at most 50 per account; for state changes, group requests and decisions, compliance changes and revoked tokens
+- [ ] Token Management (F23): every stored token with its scopes, delete and refresh; the character ownership check (owner hash) on the daily token run
+- [ ] Services and Name Formatter (F12, F23): a Services page for users; Discord access by permission (granted to Member and Blue by default); one name format per state with AA's fields (`{character_name}`, `{corp_ticker}`, `{alliance_ticker}` and the rest)
+- [ ] Moon Mining plugin (F21), brought forward from milestone 3 at Jay's request, with the Station Manager extraction planner
+- [ ] Member Audit plugin (F20), brought forward from milestone 3 at Jay's request, under AA's page names
+- [ ] Auto Groups (F23): automatic corporation and alliance groups for chosen states (prefix, full name or ticker, space replacement)
+- [ ] Corporation Stats, AA parity (F11, F23): its own page with Mains, Members and Unregistered tabs, search, Update Now, and view permissions per corporation, alliance or state
+- [ ] Permissions Audit (F23): every permission with counts of states, groups and accounts holding it, and who
+- [ ] Dashboard (F14, F23): admin panels on the Dashboard (version, task queue, ESI status) and widgets plugins can add
+- [ ] States cover factions (F4, F23), as AA's Member Factions
+- [ ] Fleet Pings fields (F13, F23): fleet type, formup location, comms and doctrine, as aa-fleetpings
+- [ ] The accent colour setting from DESIGN.md
 - [ ] Plugin HTTP capability: exact HTTPS hosts declared in the manifest and approved by the admin at install (again on upgrade if they change); no redirects outside them; per-plugin rate limits and response size caps; every call audited; named plugin secrets (such as an API key) entered by the admin, stored encrypted and injected by the host into requests to the declared host, never visible to the plugin, which can't set its own Authorization or cookie headers; `doctor` lists the approved hosts
 - [ ] Install from a GitHub repo URL; daily plugin update checks; one-click upgrade after a schema snapshot, one-step rollback; updates must be signed by the pinned key (F15, F18)
 - [ ] Personal access tokens with explicit scopes and expiry, stored hashed, managed on the profile page (F19)
@@ -245,7 +260,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
-- [ ] Which three AA plugins to port first, confirmed with NMU leadership, before milestone 3
+- [x] Which AA apps to port first: Member Audit and Moon Mining; NMU uses no others for now (Fleet Activity Tracking, timers, SRP, HR Applications and Structures stay off the plan until asked). Decided 2026-09-25
 - [ ] Licenses of those AA plugins, checked before porting any code
 - [ ] Re-read CCP's current developer license for data retention and sharing rules, before NMU goes live
 - [x] Plugin signing: minisign, publisher key pinned on first install, rotation endorsed by the old key, admin re-pin with confirmation
