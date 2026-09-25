@@ -24,11 +24,17 @@ HTTP 200
 body contains "Log in with EVE Online"
 body contains "href=\"/auth/login\""
 
-# Signed out: the profile sends you to log in.
-GET {{base}}/profile
+# Signed out: the Dashboard sends you to log in.
+GET {{base}}/dashboard
 HTTP 303
 [Asserts]
 header "Location" == "/login"
+
+# The old address moved to AA's name.
+GET {{base}}/profile
+HTTP 308
+[Asserts]
+header "Location" == "/dashboard"
 
 POST {{base}}/profile/main
 Origin: {{base}}

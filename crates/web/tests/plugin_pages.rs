@@ -79,23 +79,23 @@ async fn only_those_allowed_learn_a_page_exists(db: PgPool) {
     assert_eq!(nothing.status, StatusCode::NOT_FOUND);
     assert_eq!(denied.body, nothing.body);
     assert!(
-        !page(&h, "/profile", &pilot).await.body.contains(uri),
+        !page(&h, "/dashboard", &pilot).await.body.contains(uri),
         "no sidebar link"
     );
 
     grant_view(&h.db).await;
     assert_eq!(page(&h, uri, &pilot).await.status, StatusCode::OK);
     assert!(
-        page(&h, "/profile", &pilot).await.body.contains(uri),
+        page(&h, "/dashboard", &pilot).await.body.contains(uri),
         "sidebar link"
     );
 
     // A page no [[pages]] rule covers is for admins only.
     let secret = "/plugins/nmu.pages/admin/secret";
     assert_eq!(page(&h, secret, &pilot).await.status, StatusCode::NOT_FOUND);
-    assert!(!page(&h, "/profile", &pilot).await.body.contains(secret));
+    assert!(!page(&h, "/dashboard", &pilot).await.body.contains(secret));
     assert_eq!(page(&h, secret, &owner).await.status, StatusCode::OK);
-    assert!(page(&h, "/profile", &owner).await.body.contains(secret));
+    assert!(page(&h, "/dashboard", &owner).await.body.contains(secret));
 
     // Posting is checked the same way.
     let res = send(
@@ -162,7 +162,7 @@ async fn the_host_draws_what_the_plugin_describes(db: PgPool) {
             "{path}: {}",
             res.body
         );
-        assert!(res.body.contains("be shown. The plugin"), "{path}");
+        assert!(res.body.contains("be shown. The app"), "{path}");
         assert!(!res.body.contains("on fire"), "{path}");
     }
     let logged: Vec<String> = sqlx::query_scalar(

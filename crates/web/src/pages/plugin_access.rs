@@ -76,7 +76,7 @@ fn plugin(state: &AppState, id: &str) -> Result<String, PageError> {
         .ok()
         .and_then(|()| state.plugins.running(id))
         .map(|r| r.manifest.plugin.id.clone())
-        .ok_or_else(|| AppError::not_found("No such plugin is running.").into())
+        .ok_or_else(|| AppError::not_found("No such app is running.").into())
 }
 
 /// `POST /profile/plugins/{id}/offer`: off to EVE SSO to link a character
@@ -99,7 +99,7 @@ pub async fn withdraw(
     Path((id, character)): Path<(String, i64)>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
-    tether_plugins::manifest::check_id(&id).map_err(|_| AppError::not_found("No such plugin."))?;
+    tether_plugins::manifest::check_id(&id).map_err(|_| AppError::not_found("No such app."))?;
     plugin_consent::withdraw_offer(&state, session.account, &id, character).await?;
-    Ok(Redirect::to("/profile").into_response())
+    Ok(Redirect::to("/dashboard").into_response())
 }

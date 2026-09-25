@@ -114,8 +114,10 @@ Upgrades snapshot the plugin's schema first, so a failed upgrade rolls back to t
 **Consent, three layers:**
 
 1. Admin approves the plugin's declared capabilities at install.
-2. Each user consents to the plugin's ESI scopes on their profile page and can revoke at any time.
+2. Members consent by registering their characters with the Member state's required scopes, which include every installed plugin's user scopes (Alliance Auth style; see docs/AA_PARITY.md). Corporation data comes only from owner characters an admin approved.
 3. The host checks both on every call. Plugins never see a token.
+
+In the UI plugins are called apps, as in AA; the SDK and code keep "plugin".
 
 **AI-friendly SDK:** WIT files are the machine-readable contract. The plugin template ships an `AGENTS.md` describing the SDK, capabilities and patterns, plus complete example plugins. `platform plugin dev` runs against mock ESI with hot reload. Errors are actionable: a call outside declared scopes names the exact manifest entry to add.
 
@@ -172,7 +174,7 @@ Server-rendered HTML from Rust. No JS framework, no npm, no separate frontend bu
 
 Built into the host, not a plugin. REST only (twilight-http): no gateway connection. One bot serves the core and every plugin. Members join the server through OAuth linking, which adds them with their roles; after that, only ESI affiliation drives role changes, and leaving the Discord server isn't tracked.
 
-- Account linking via OAuth from the profile page.
+- Account linking via OAuth from the Dashboard.
 - Tier and group to role mappings, applied automatically as membership changes.
 - Optional nickname template, such as `[TICKER] Main Name`.
 - Fleet ping broadcasts with channel and role targeting; plugins can send through the same path if declared.

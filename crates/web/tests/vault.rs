@@ -148,7 +148,7 @@ async fn revoked_tokens_are_marked_audited_shown_and_fixed_by_logging_in(db: PgP
         [("token.revoked".into(), Some("character:90000001".into()))]
     );
 
-    let profile = send(&h.app, get("/profile", &[(SESSION, &session)])).await;
+    let profile = send(&h.app, get("/dashboard", &[(SESSION, &session)])).await;
     assert!(
         profile.body.contains("register this character again"),
         "{}",

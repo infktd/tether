@@ -31,16 +31,16 @@ pub async fn start_offer(
     let running = state
         .plugins
         .running(plugin)
-        .ok_or_else(|| AppError::not_found("No such plugin is running."))?;
+        .ok_or_else(|| AppError::not_found("No such app is running."))?;
     let wanted = &running.manifest.capabilities.esi.data_source;
     if wanted.is_empty() {
-        return Err(AppError::bad_request("That plugin uses no data sources."));
+        return Err(AppError::bad_request("That app uses no data sources."));
     }
     let scopes = crate::compliance::ask_scopes(&state.db, account, wanted.iter().cloned()).await?;
     crate::auth::start_login(
         state,
         jar,
-        "/profile",
+        "/dashboard",
         Purpose::DataSource(plugin.to_owned()),
         &scopes,
         Some(account),
@@ -60,7 +60,7 @@ pub async fn finish(
     let running = state
         .plugins
         .running(plugin)
-        .ok_or_else(|| AppError::not_found("That plugin isn't running any more."))?;
+        .ok_or_else(|| AppError::not_found("That app isn't running any more."))?;
     let needed = &running.manifest.capabilities.esi.data_source;
     let missing: Vec<&String> = needed
         .iter()

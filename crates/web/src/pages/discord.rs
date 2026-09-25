@@ -326,7 +326,7 @@ pub async fn unlink(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     discord::unlink(&state, session.account).await?;
-    Ok(Redirect::to("/profile").into_response())
+    Ok(Redirect::to("/dashboard").into_response())
 }
 
 /// `GET /discord/callback`: Discord sends the member back here.
@@ -339,7 +339,7 @@ pub async fn callback(
     let account = session.map(|s| s.account);
     let (jar, result) = discord::finish_link(&state, account, jar, query).await;
     match result {
-        Ok(_) => (jar, Redirect::to("/profile")).into_response(),
+        Ok(_) => (jar, Redirect::to("/dashboard")).into_response(),
         Err(err) => (jar, error_page(err.status(), err.message())).into_response(),
     }
 }

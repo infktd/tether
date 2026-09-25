@@ -1,12 +1,12 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
-{% block title %}Plugins{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Plugins</span>{% endblock %}
+{% block title %}Apps{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Apps</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>
-    <h1 class="page-title">Plugins</h1>
-    <p class="text-muted-foreground mt-1">Add features without a restart. Each plugin runs sandboxed and gets only what you approve.</p>
+    <h1 class="page-title">Apps</h1>
+    <p class="text-muted-foreground mt-1">Add features without a restart. Each app runs sandboxed and gets only what you approve.</p>
   </div>
   {% include "admin_error.html" %}
 
@@ -14,7 +14,7 @@
   <section class="card data-card">
     <header><h2>Waiting for approval</h2><p>Uploads nobody approves are dropped after {{ upload_hours }} hours.</p></header>
     <table class="table">
-      <thead><tr><th scope="col">Plugin</th><th scope="col">Uploaded</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">App</th><th scope="col">Uploaded</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for u in uploads %}
         <tr>
@@ -36,10 +36,10 @@
   <section class="card data-card">
     <header><h2>Installed <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2></header>
     {% if plugins.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No plugins yet. Upload one below.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet. Upload one below.</p>
     {% else %}
     <table class="table">
-      <thead><tr><th scope="col">Plugin</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Installed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Installed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for p in plugins %}
         <tr>
@@ -56,7 +56,7 @@
   </section>
 
   <form class="card" method="post" action="/admin/plugins" enctype="multipart/form-data" hx-boost="false">
-    <header><h2>Upload a plugin</h2><p>The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig). Nothing is installed until you approve it on the next page.</p></header>
+    <header><h2>Upload an app</h2><p>The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig). Nothing is installed until you approve it on the next page.</p></header>
     <section class="grid gap-4 max-w-md">
       <div class="grid gap-2">
         <label class="label" for="package">Package</label>
@@ -72,9 +72,9 @@
 
   {% if !pins.is_empty() %}
   <section class="card data-card">
-    <header><h2>Pinned keys</h2><p>Every version of a plugin must be signed with its pinned publisher key. Pins stay after uninstalling.</p></header>
+    <header><h2>Pinned keys</h2><p>Every version of an app must be signed with its pinned publisher key. Pins stay after uninstalling.</p></header>
     <table class="table">
-      <thead><tr><th scope="col">Plugin</th><th scope="col">Key</th><th scope="col">Pinned</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">App</th><th scope="col">Key</th><th scope="col">Pinned</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for k in pins %}
         <tr>

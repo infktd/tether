@@ -106,7 +106,7 @@ async fn a_dead_main_token_clears_the_main_until_its_owner_returns(db: PgPool) {
     let after = me(&h, &token).await;
     assert!(after["main"].is_null(), "{after}");
     assert_eq!(after["state"], "Guest");
-    let dashboard = page(&h, "/profile", &token).await.body;
+    let dashboard = page(&h, "/dashboard", &token).await.body;
     assert!(
         dashboard.contains("Your account has no main character"),
         "{dashboard}"
@@ -435,7 +435,7 @@ async fn an_account_without_a_main_still_opens_its_dashboard_and_loses_group_acc
         serde_json::json!([]),
         "groups pause without a main"
     );
-    let dashboard = page(&h, "/profile", &seller).await;
+    let dashboard = page(&h, "/dashboard", &seller).await;
     assert_eq!(dashboard.status, StatusCode::OK, "{}", dashboard.body);
     assert!(
         dashboard

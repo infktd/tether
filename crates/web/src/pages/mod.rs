@@ -188,7 +188,7 @@ pub async fn home(
     session: Option<CurrentSession>,
 ) -> Result<Redirect, PageError> {
     if session.is_some() {
-        return Ok(Redirect::to("/profile"));
+        return Ok(Redirect::to("/dashboard"));
     }
     if !accounts::owner_exists(&state.db).await? {
         return Ok(Redirect::to("/setup"));
@@ -208,7 +208,7 @@ pub async fn login(
     session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
     if session.is_some() {
-        return Ok(Redirect::to("/profile").into_response());
+        return Ok(Redirect::to("/dashboard").into_response());
     }
     let setup_complete = accounts::owner_exists(&state.db).await?;
     Ok(render(StatusCode::OK, &LoginPage { setup_complete }))
@@ -272,7 +272,7 @@ async fn annotate(
                         .map(|p| p.name.clone()),
                 );
                 if scope == tether_core::scopes::CORP_MEMBERSHIP {
-                    users.push("Corp Stats".to_owned());
+                    users.push("Corporation Stats".to_owned());
                 }
                 ScopeLine {
                     scope: scope.clone(),
@@ -401,7 +401,12 @@ pub(crate) async fn load(
     })
 }
 
-/// `GET /profile`
+/// `GET /profile`: the page is the Dashboard now, as in AA.
+pub async fn to_dashboard() -> Redirect {
+    Redirect::permanent("/dashboard")
+}
+
+/// `GET /dashboard`: AA's Dashboard (characters, state, groups).
 pub async fn profile(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -452,7 +457,7 @@ pub async fn make_main(
         crate::states::evaluate_account(&state.db, session.account).await?;
     }
     if !is_htmx(&headers) {
-        return Ok(Redirect::to("/profile").into_response());
+        return Ok(Redirect::to("/dashboard").into_response());
     }
     let mut loaded = load(&state, &session, "profile").await?;
     annotate(&state, session.account, &mut loaded.characters).await?;

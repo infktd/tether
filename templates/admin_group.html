@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}{{ group.name }}{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/groups">Group Management</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="flex items-end justify-between gap-4">

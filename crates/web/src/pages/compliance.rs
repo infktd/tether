@@ -168,7 +168,7 @@ pub async fn withdraw(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     compliance::withdraw_corp_source(&state, session.account, character).await?;
-    Ok(Redirect::to("/profile").into_response())
+    Ok(Redirect::to("/dashboard").into_response())
 }
 
 // ---- the officers' page ------------------------------------------------------

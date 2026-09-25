@@ -38,7 +38,7 @@ fn time(at: chrono::DateTime<chrono::Utc>) -> String {
 fn plugin_id(id: &str) -> Result<&str, AppError> {
     manifest::check_id(id)
         .map(|()| id)
-        .map_err(|_| AppError::not_found("No plugin with that id."))
+        .map_err(|_| AppError::not_found("No app with that id."))
 }
 
 /// One thing a plugin asks for, in plain words.
@@ -67,7 +67,7 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
             "ESI access to every Member's characters",
             format!(
                 "{}. Member will require these of every character: Members who haven't \
-                 granted them are flagged as not compliant (and leave the Compliant group) \
+                 granted them are flagged as not compliant (and leave the Compliance Group) \
                  until they register again.",
                 c.esi.user.join(", ")
             ),
@@ -400,7 +400,7 @@ fn trust_text(trust: &Trust) -> (&'static str, String) {
         ),
         Trust::Pinned => (
             "Signed with the pinned key",
-            "This is the key earlier versions of this plugin were signed with.".to_owned(),
+            "This is the key earlier versions of this app were signed with.".to_owned(),
         ),
         Trust::Rotated { from } => (
             "Key rotation",
@@ -574,7 +574,7 @@ async fn plugin_page(
 ) -> Result<Response, PageError> {
     let installed = db::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::not_found("No plugin with that id is installed."))?;
+        .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;
     // Stored packages were checked at install; read it for what it declares.
     let package = package::read(&installed.package)
         .map_err(AppError::internal)?
@@ -797,7 +797,7 @@ async fn key_page(
 ) -> Result<Response, PageError> {
     let pin = plugin_keys::pin(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::not_found("No key is pinned for that plugin."))?;
+        .ok_or_else(|| AppError::not_found("No key is pinned for that app."))?;
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         code,

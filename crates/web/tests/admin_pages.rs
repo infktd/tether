@@ -95,7 +95,7 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
 
-    let owner_nav = page(&h, "/profile", &owner).await.body;
+    let owner_nav = page(&h, "/dashboard", &owner).await.body;
     for link in [
         "/admin/groups",
         "/admin/permissions",
@@ -107,7 +107,7 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
             "owner sees {link}"
         );
     }
-    let pilot_nav = page(&h, "/profile", &pilot).await.body;
+    let pilot_nav = page(&h, "/dashboard", &pilot).await.body;
     assert!(
         !pilot_nav.contains("Admin</div>"),
         "no Admin section for a plain pilot"
@@ -131,7 +131,7 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
         ),
     )
     .await;
-    let pilot_nav = page(&h, "/profile", &pilot).await.body;
+    let pilot_nav = page(&h, "/dashboard", &pilot).await.body;
     assert!(pilot_nav.contains(r#"href="/admin/states""#));
     assert!(!pilot_nav.contains(r#"href="/admin/groups""#));
     assert_eq!(

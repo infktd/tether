@@ -14,21 +14,21 @@
     <nav class="flex-1 px-3 py-5 flex flex-col gap-6" aria-label="Main">
       <div class="flex flex-col gap-1">
         <div class="nav-heading">Account</div>
-        <a href="/profile" class="nav-item"{% if shell.active == "profile" %} aria-current="page"{% endif %}>
-          {% call icons::icon("user") %}{% endcall %} Profile
+        <a href="/dashboard" class="nav-item"{% if shell.active == "profile" %} aria-current="page"{% endif %}>
+          {% call icons::icon("user") %}{% endcall %} Dashboard
         </a>
       </div>
       {% if shell.nav.pings %}
       <div class="flex flex-col gap-1">
         <div class="nav-heading">Fleet</div>
         <a href="/pings" class="nav-item"{% if shell.active == "pings" %} aria-current="page"{% endif %}>
-          {% call icons::icon("megaphone") %}{% endcall %} Pings
+          {% call icons::icon("megaphone") %}{% endcall %} Fleet Pings
         </a>
       </div>
       {% endif %}
       {% if !shell.plugin_nav.is_empty() %}
       <div class="flex flex-col gap-1">
-        <div class="nav-heading">Plugins</div>
+        <div class="nav-heading">Apps</div>
         {% for link in shell.plugin_nav %}
         <a href="{{ link.href }}" class="nav-item"{% if shell.active_href == link.href %} aria-current="page"{% endif %}>
           {% call icons::icon("package") %}{% endcall %} {{ link.label }}
@@ -46,12 +46,12 @@
         {% endif %}
         {% if shell.nav.plugins %}
         <a href="/admin/plugins" class="nav-item"{% if shell.active == "plugins" %} aria-current="page"{% endif %}>
-          {% call icons::icon("package") %}{% endcall %} Plugins
+          {% call icons::icon("package") %}{% endcall %} Apps
         </a>
         {% endif %}
         {% if shell.nav.groups %}
         <a href="/admin/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
-          {% call icons::icon("users") %}{% endcall %} Groups
+          {% call icons::icon("users") %}{% endcall %} Group Management
         </a>
         {% endif %}
         {% if shell.nav.permissions %}
@@ -71,7 +71,7 @@
         {% endif %}
         {% if shell.nav.compliance %}
         <a href="/compliance" class="nav-item"{% if shell.active == "compliance" %} aria-current="page"{% endif %}>
-          {% call icons::icon("check") %}{% endcall %} Compliance
+          {% call icons::icon("check") %}{% endcall %} Compliance Report
         </a>
         {% endif %}
         {% if shell.nav.audit %}
@@ -110,7 +110,7 @@
       <div class="alert" data-variant="destructive" role="status">
         <section class="flex flex-wrap items-center justify-between gap-3">
           <span>Your account has no main character: it was sold, or EVE access to it ended. You're Guest until you choose one.</span>
-          <a class="btn" data-variant="primary" data-size="sm" href="/profile#characters">Change Main</a>
+          <a class="btn" data-variant="primary" data-size="sm" href="/dashboard#characters">Change Main</a>
         </section>
       </div>
       {% endif %}
@@ -118,7 +118,7 @@
       <div class="alert" role="status">
         <section class="flex flex-wrap items-center justify-between gap-3">
           <span>Not every character on your account is registered with the access <strong class="text-foreground">{{ state_name }}</strong> needs. Some features wait until they are.</span>
-          <a class="btn" data-variant="primary" data-size="sm" href="/register">Register characters</a>
+          <a class="btn" data-variant="primary" data-size="sm" href="/register">Register Character</a>
         </section>
       </div>
       {% endif %}

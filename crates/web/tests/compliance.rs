@@ -3,7 +3,7 @@
 //! Scope compliance (F11), Alliance Auth style: a state's required scopes
 //! on every character; accounts that fall short keep their state but are
 //! flagged and leave the Compliant group; the checklist, the officers'
-//! page, and Corp Stats.
+//! page, and Corporation Stats.
 
 mod common;
 
@@ -153,8 +153,8 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     assert!(states.contains(SKILLS), "listed for the EVE application");
 
     // The pilot sees a banner and a checklist; officers see the account.
-    let profile = page(&h, "/profile", &owner).await.body;
-    assert!(profile.contains("Register characters"), "{profile}");
+    let profile = page(&h, "/dashboard", &owner).await.body;
+    assert!(profile.contains("Register Character"), "{profile}");
     assert!(profile.contains("Needs registering"), "{profile}");
     let checklist = page(&h, "/register", &owner).await.body;
     assert!(checklist.contains("Register Chribba") && checklist.contains("Register The Mittani"));
@@ -178,10 +178,10 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
             .contains("Everyone is compliant.")
     );
     assert!(
-        !page(&h, "/profile", &owner)
+        !page(&h, "/dashboard", &owner)
             .await
             .body
-            .contains("Register characters")
+            .contains("Register Character")
     );
 
     // Both compliance changes and the scope change were audited; the state
@@ -233,7 +233,7 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         "{asked:?}"
     );
     assert!(
-        page(&h, "/profile", &owner)
+        page(&h, "/dashboard", &owner)
             .await
             .body
             .contains("waiting for an admin")
@@ -279,7 +279,7 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         ),
     )
     .await;
-    assert_eq!(withdrawn.location(), "/profile");
+    assert_eq!(withdrawn.location(), "/dashboard");
     tether_web::compliance::corp_stats(&h.db, &h.esi, &h.vault)
         .await
         .unwrap();

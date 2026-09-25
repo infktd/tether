@@ -40,7 +40,7 @@ const TAB: &str = "_tab";
 /// The host's own form field: which form was posted.
 const FORM: &str = "_form";
 
-const FAILED: &str = "This page couldn't be shown. The plugin's admins can see why in its log.";
+const FAILED: &str = "This page couldn't be shown. The app's admins can see why in its log.";
 const MISSING: &str = "There's nothing at this address.";
 
 fn missing() -> PageError {

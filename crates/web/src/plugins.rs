@@ -36,7 +36,7 @@ use tether_plugins::storage::Storage;
 use crate::error::AppError;
 
 const CHANGED_MEANWHILE: &str =
-    "This plugin's publisher key changed while the package was being checked. Upload it again.";
+    "This app's publisher key changed while the package was being checked. Upload it again.";
 
 /// Uploads waiting for approval, across all plugins.
 pub const MAX_PENDING_UPLOADS: i64 = 10;
@@ -114,7 +114,7 @@ pub async fn repin_key(
 ) -> Result<(), AppError> {
     if confirmation.trim() != plugin_id {
         return Err(AppError::bad_request(
-            "Type the plugin's id exactly to confirm replacing its key.",
+            "Type the app's id exactly to confirm replacing its key.",
         ));
     }
     let new_key = new_key.trim();
@@ -125,7 +125,7 @@ pub async fn repin_key(
     }
     let mut tx = db.begin().await?;
     match plugin_keys::get_locked(&mut tx, plugin_id).await? {
-        None => return Err(AppError::not_found("No key is pinned for that plugin.")),
+        None => return Err(AppError::not_found("No key is pinned for that app.")),
         Some(current) if current != expected_old => {
             return Err(AppError::bad_request(
                 "The pinned key changed since you looked. Check it again.",
@@ -751,7 +751,7 @@ async fn check_upload(
         .map_err(|e| {
             fail(AppError::new(
                 axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                format!("The plugin's component can't be loaded: {e}"),
+                format!("The app's component can't be loaded: {e}"),
             ))
         })?;
     Ok((id, version, trust))
@@ -832,7 +832,7 @@ async fn approve_now(
     .await?;
     if !installed {
         return Err(AppError::bad_request(
-            "A plugin with this id is already installed.",
+            "An app with this id is already installed.",
         ));
     }
     let declared: Vec<(String, String)> = manifest
@@ -850,7 +850,7 @@ async fn approve_now(
     let storage = if manifest.capabilities.storage {
         if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
             return Err(AppError::bad_request(
-                "Too many plugins have database storage already. Uninstall one first.",
+                "Too many apps have database storage already. Uninstall one first.",
             ));
         }
         Some(create_storage(state, &mut tx, &id).await?)
@@ -961,7 +961,7 @@ async fn set_enabled_now(
     let _lifecycle = plugins.lifecycle.lock().await;
     let mut tx = state.db.begin().await?;
     if !db::exists(&mut *tx, id).await? {
-        return Err(AppError::not_found("No plugin with that id is installed."));
+        return Err(AppError::not_found("No app with that id is installed."));
     }
     if !enabled {
         // Switched back on when it next loads.
@@ -1003,7 +1003,7 @@ pub async fn uninstall(
 ) -> Result<(), AppError> {
     if confirmation.trim() != id {
         return Err(AppError::bad_request(
-            "Type the plugin's id exactly to confirm uninstalling it.",
+            "Type the app's id exactly to confirm uninstalling it.",
         ));
     }
     let (state, id) = (state.clone(), id.to_owned());
@@ -1018,7 +1018,7 @@ async fn uninstall_now(
     let plugins = &state.plugins;
     let _lifecycle = plugins.lifecycle.lock().await;
     if !db::exists(&state.db, id).await? {
-        return Err(AppError::not_found("No plugin with that id is installed."));
+        return Err(AppError::not_found("No app with that id is installed."));
     }
     // Stopped first: its pool must be closed before its role goes.
     plugins.deactivate(id).await;
@@ -1044,7 +1044,7 @@ async fn uninstall_now(
     crate::states::enqueue_evaluate_all(&mut *tx).await?;
     let version = db::uninstall(&mut *tx, id)
         .await?
-        .ok_or_else(|| AppError::not_found("No plugin with that id is installed."))?;
+        .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),

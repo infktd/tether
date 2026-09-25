@@ -56,7 +56,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/openapi.json", get(openapi::spec))
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
-        .route("/profile", get(pages::profile))
+        .route("/dashboard", get(pages::profile))
+        // The old name (before AA's): kept so bookmarks still work.
+        .route("/profile", get(pages::to_dashboard))
         .route("/profile/main", post(pages::make_main))
         .route("/setup", get(pages::setup::page))
         .route("/setup/unlock", post(pages::setup::unlock))

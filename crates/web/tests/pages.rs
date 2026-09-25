@@ -53,7 +53,7 @@ async fn home_sends_visitors_where_they_belong(db: PgPool) {
         send(&h.app, get("/", &[(SESSION, &owner)]))
             .await
             .location(),
-        "/profile"
+        "/dashboard"
     );
 }
 
@@ -71,7 +71,7 @@ async fn login_page(db: PgPool) {
         send(&h.app, get("/login", &[(SESSION, &token)]))
             .await
             .location(),
-        "/profile"
+        "/dashboard"
     );
 }
 
@@ -79,17 +79,17 @@ async fn login_page(db: PgPool) {
 async fn profile_shows_characters_state_and_permissions(db: PgPool) {
     let h = harness(db, true).await;
     assert_eq!(
-        send(&h.app, get("/profile", &[])).await.location(),
+        send(&h.app, get("/dashboard", &[])).await.location(),
         "/login"
     );
 
     let token = log_in_owner(&h, "196379789:Chribba").await;
     let token = log_in_as(&h, "443630591:The Mittani", Some(&token)).await;
-    let res = send(&h.app, get("/profile", &[(SESSION, &token)])).await;
+    let res = send(&h.app, get("/dashboard", &[(SESSION, &token)])).await;
 
     assert_eq!(res.status, StatusCode::OK);
     let html = &res.body;
-    assert!(html.contains("<h1 class=\"page-title\">Profile</h1>"));
+    assert!(html.contains("<h1 class=\"page-title\">Dashboard</h1>"));
     assert!(html.contains("https://images.evetech.net/characters/196379789/portrait?size=64"));
     assert!(html.contains("The Mittani"));
     assert!(html.contains(r#"data-state="guest""#));
@@ -139,7 +139,7 @@ async fn make_main_returns_the_characters_fragment(db: PgPool) {
         ),
     )
     .await;
-    assert_eq!(plain.location(), "/profile");
+    assert_eq!(plain.location(), "/dashboard");
 
     // A foreign character is refused in the fragment.
     let foreign = send(

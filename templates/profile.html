@@ -1,11 +1,11 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
-{% block title %}Profile{% endblock %}
-{% block breadcrumb %}<span class="text-foreground">Profile</span>{% endblock %}
+{% block title %}Dashboard{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Dashboard</span>{% endblock %}
 {% block content %}
 <div class="flex items-end justify-between gap-4">
   <div>
-    <h1 class="page-title">Profile</h1>
+    <h1 class="page-title">Dashboard</h1>
     <p class="text-muted-foreground mt-1">Your characters, access state and groups.</p>
   </div>
   <form method="post" action="/register/start" hx-boost="false">
@@ -60,7 +60,7 @@
 {% endif %}
 
 <section class="card">
-  <header><h2>Corporation member list</h2><p>Share your corporation's member list so officers can see who hasn't registered (Corp Stats). Any member can share it; an admin approves it before it's used.</p></header>
+  <header><h2>Corporation Stats</h2><p>Share your corporation's member list so officers can see who hasn't registered. Any member can share it; an admin approves it before it's used.</p></header>
   <section class="grid gap-3 text-sm">
     {% for c in corp_sources %}
     <div class="flex items-center justify-between gap-3">
@@ -78,7 +78,7 @@
 
 {% for p in plugin_access %}
 <section class="card">
-  <header><h2>{{ p.name }}: corporation data</h2><p>This plugin reads corporation data through a character with the right in-game roles, offered by its owner and approved by an admin. It never sees your login tokens.</p></header>
+  <header><h2>{{ p.name }}: corporation data</h2><p>This app reads corporation data through a character with the right in-game roles, offered by its owner and approved by an admin. It never sees your login tokens.</p></header>
   <section class="grid gap-3 text-sm">
     <div class="flex flex-wrap gap-2">{% for s in p.source_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
     {% for c in p.offered %}

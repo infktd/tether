@@ -40,7 +40,7 @@ async fn login_redirects_to_sso_with_a_bound_browser_cookie(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn full_login_creates_a_session(db: PgPool) {
     let h = harness(db, true).await;
-    let (state, browser) = start_login(&h, "/profile").await;
+    let (state, browser) = start_login(&h, "/dashboard").await;
 
     let res = send(
         &h.app,
@@ -52,7 +52,7 @@ async fn full_login_creates_a_session(db: PgPool) {
     .await;
 
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), "/profile");
+    assert_eq!(res.location(), "/dashboard");
     let cookie = res.set_cookie(SESSION).unwrap();
     for attr in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"] {
         assert!(cookie.contains(attr), "{cookie} lacks {attr}");

@@ -39,7 +39,7 @@
           {% else %}
           <form method="post" action="/profile/main" hx-post="/profile/main" hx-target="#characters" hx-swap="outerHTML">
             <input type="hidden" name="character_id" value="{{ c.id }}">
-            <button type="submit" class="btn" data-variant="outline" data-size="sm">Make main</button>
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Change Main</button>
           </form>
           {% endif %}
         </td>

@@ -370,7 +370,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
     let group_id = group.rsplit('/').next().unwrap();
     map(&h, &owner, BLUE_ROLE, &format!("group:{group_id}")).await;
 
-    let profile = page(&h, "/profile", &pilot).await;
+    let profile = page(&h, "/dashboard", &pilot).await;
     assert!(profile.body.contains("Link Discord"), "{}", profile.body);
 
     mount_member_oauth(&h.discord_server).await;
@@ -389,10 +389,10 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
     let (state, browser) = start_link(&h, &pilot).await;
     let res = callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), "/profile");
+    assert_eq!(res.location(), "/dashboard");
     assert!(res.set_cookie(LINK).unwrap().contains("Max-Age=0"));
 
-    let profile = page(&h, "/profile", &pilot).await;
+    let profile = page(&h, "/dashboard", &pilot).await;
     assert!(profile.body.contains("Linked as"), "{}", profile.body);
     assert!(profile.body.contains("Unpercieved"));
     let audit: serde_json::Value =
@@ -440,7 +440,7 @@ async fn a_member_already_in_the_server_gets_the_roles_added(db: PgPool) {
 
     let (state, browser) = start_link(&h, &pilot).await;
     let res = callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-    assert_eq!(res.location(), "/profile", "{}", res.body);
+    assert_eq!(res.location(), "/dashboard", "{}", res.body);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -532,9 +532,9 @@ async fn unlinking_queues_taking_the_roles_away(db: PgPool) {
     callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
 
     let res = send(&h.app, form("/profile/discord/unlink", "", &pilot)).await;
-    assert_eq!(res.location(), "/profile");
+    assert_eq!(res.location(), "/dashboard");
     assert!(
-        page(&h, "/profile", &pilot)
+        page(&h, "/dashboard", &pilot)
             .await
             .body
             .contains("Link Discord")
@@ -623,7 +623,7 @@ async fn deleting_an_account_queues_taking_its_roles_away(db: PgPool) {
 async fn the_profile_has_no_discord_card_until_it_is_set_up(db: PgPool) {
     let h = harness(db, true).await;
     let (_, pilot) = owner_and_pilot(&h).await;
-    let profile = page(&h, "/profile", &pilot).await;
+    let profile = page(&h, "/dashboard", &pilot).await;
     assert!(!profile.body.contains("Link Discord"));
     let link = send(&h.app, form("/profile/discord/link", "", &pilot)).await;
     assert_eq!(link.status, StatusCode::SERVICE_UNAVAILABLE);
@@ -636,7 +636,7 @@ async fn guests_cannot_join_the_server(db: PgPool) {
     let (owner, pilot) = owner_and_pilot(&h).await;
     send(&h.app, form("/admin/discord", SETTINGS, &owner)).await;
 
-    let profile = page(&h, "/profile", &pilot).await;
+    let profile = page(&h, "/dashboard", &pilot).await;
     assert!(
         profile
             .body
@@ -742,7 +742,7 @@ async fn a_role_that_became_too_powerful_is_not_handed_out(db: PgPool) {
         .await;
     let (state, browser) = start_link(&h, &pilot).await;
     let res = callback(&h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-    assert_eq!(res.location(), "/profile", "{}", res.body);
+    assert_eq!(res.location(), "/dashboard", "{}", res.body);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -858,7 +858,7 @@ async fn linked_pilot(h: &Harness) -> (String, String, i64) {
         .await;
     let (state, browser) = start_link(h, &pilot).await;
     let res = callback(h, &state, &[(SESSION, &pilot), (LINK, &browser)]).await;
-    assert_eq!(res.location(), "/profile", "{}", res.body);
+    assert_eq!(res.location(), "/dashboard", "{}", res.body);
     let account = me(h, &pilot).await["account_id"].as_i64().unwrap();
     (owner, pilot, account)
 }
@@ -1354,7 +1354,7 @@ async fn fleet_pings_need_the_permission(db: PgPool) {
         StatusCode::FORBIDDEN
     );
     assert!(
-        !page(&h, "/profile", &pilot)
+        !page(&h, "/dashboard", &pilot)
             .await
             .body
             .contains(r#"href="/pings""#)

@@ -1,6 +1,6 @@
 {#- What a plugin is and asks for: the approval screen and the plugin's page. -#}
 <section class="card">
-  <header><h2>What it asks for</h2><p>What the plugin can do beyond showing its own pages. Nothing else is possible for it.</p></header>
+  <header><h2>What it asks for</h2><p>What the app can do beyond showing its own pages. Nothing else is possible for it.</p></header>
   <section>
     <dl class="grid gap-4 text-sm">
       {% for c in about.capabilities %}
@@ -33,7 +33,7 @@
   <header><h2>Package</h2></header>
   <section>
     <dl class="grid gap-4 text-sm">
-      <div class="grid gap-1"><dt class="font-medium">Plugin id</dt><dd class="num">{{ about.id }}</dd></div>
+      <div class="grid gap-1"><dt class="font-medium">App id</dt><dd class="num">{{ about.id }}</dd></div>
       <div class="grid gap-1"><dt class="font-medium">Version</dt><dd class="num">{{ about.version }}</dd></div>
       {% if let Some(repo) = about.repository %}<div class="grid gap-1"><dt class="font-medium">Source</dt><dd class="num break-all">{{ repo }}</dd></div>{% endif %}
       <div class="grid gap-1"><dt class="font-medium">Publisher key</dt><dd class="num break-all">{{ about.key }}</dd></div>

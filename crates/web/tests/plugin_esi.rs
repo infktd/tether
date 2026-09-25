@@ -254,7 +254,7 @@ async fn a_plain_login_keeps_the_scopes_a_character_registered(db: PgPool) {
     let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
     assert!(out.starts_with("ok"), "{out}");
     // The profile shows what was granted and what uses it.
-    let profile = page(&h, "/profile", &owner).await.body;
+    let profile = page(&h, "/dashboard", &owner).await.body;
     assert!(profile.contains("Read skills and attributes"), "{profile}");
     assert!(
         profile.contains("Member requirement, ESI probe"),
@@ -278,7 +278,7 @@ async fn data_sources_are_offered_then_approved(db: PgPool) {
     .await;
     assert!(asked.contains(&MINING.to_owned()), "{asked:?}");
     assert!(
-        page(&h, "/profile", &owner)
+        page(&h, "/dashboard", &owner)
             .await
             .body
             .contains("waiting for an admin")

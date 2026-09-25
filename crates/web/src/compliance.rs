@@ -239,7 +239,7 @@ pub async fn start_corp_offer(
     crate::auth::start_login(
         state,
         jar,
-        "/profile",
+        "/dashboard",
         Purpose::CorpSource,
         &scopes,
         Some(account),

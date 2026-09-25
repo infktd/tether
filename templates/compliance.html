@@ -1,12 +1,12 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
-{% block title %}Compliance{% endblock %}
-{% block breadcrumb %}<span class="text-foreground">Compliance</span>{% endblock %}
+{% block title %}Compliance Report{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Compliance Report</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>
-    <h1 class="page-title">Compliance</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">Accounts whose characters aren't all registered with their state's scopes. They keep their state, as in Alliance Auth, but aren't in the Compliant group, so anything you grant that group waits until they register. Corp Stats compares each corporation's member list with the characters registered here.</p>
+    <h1 class="page-title">Compliance Report</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Accounts whose characters aren't all registered with their state's scopes. They keep their state, as in Alliance Auth, but aren't in the Compliance Group, so anything you grant that group waits until they register. Corporation Stats compares each corporation's member list with the characters registered here.</p>
   </div>
   {% include "admin_error.html" %}
 
@@ -61,7 +61,7 @@
 
   <section class="flex flex-col gap-4" aria-labelledby="corp-stats">
     <div>
-      <h2 id="corp-stats" class="text-[15px] font-semibold">Corp Stats</h2>
+      <h2 id="corp-stats" class="text-[15px] font-semibold">Corporation Stats</h2>
       <p class="text-sm text-muted-foreground">Member lists refresh daily. Any member can share their corporation's list from their profile; an admin approves it below.</p>
     </div>
     {% for c in corporations %}
