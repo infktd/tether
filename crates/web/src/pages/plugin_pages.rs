@@ -19,6 +19,7 @@ use tether_plugins::host::{
     FieldKind, Page, PageError as PluginPageError, RenderError, Request, Section, Submission,
     SubmitResult, Tone, Value,
 };
+use tether_plugins::services::{Character, Tier, Viewer};
 use tether_plugins::{manifest, page as page_rules};
 
 use super::{PageError, Shell, load, render};
@@ -333,6 +334,8 @@ struct PluginPage {
 struct Opened {
     shell: Shell,
     running: Running,
+    /// Who is looking, for `identity.current`.
+    viewer: Viewer,
     path: String,
     query: Vec<(String, String)>,
     tab: usize,
@@ -361,6 +364,7 @@ async fn open(
     if !perms.contains(&needed) {
         return Err(missing());
     }
+    let viewer = viewer(state, &session, &running, &perms).await?;
     let raw = raw_query.unwrap_or("");
     if raw.len() > MAX_QUERY_BYTES {
         return Err(AppError::bad_request("That address is too long.").into());
@@ -396,12 +400,60 @@ async fn open(
         Opened {
             shell,
             running,
+            viewer,
             path: path.to_owned(),
             query,
             tab,
             href,
         },
     ))
+}
+
+/// The account as the plugin sees it: its characters (main first), tier,
+/// and which of this plugin's own permissions it holds.
+async fn viewer(
+    state: &AppState,
+    session: &CurrentSession,
+    running: &Running,
+    perms: &std::collections::BTreeSet<String>,
+) -> Result<Viewer, AppError> {
+    let plugin = &running.manifest.plugin.id;
+    let characters: Vec<Character> =
+        tether_db::plugin_esi::account_characters(&state.db, session.account)
+            .await?
+            .into_iter()
+            .map(|c| Character {
+                id: c.id,
+                name: c.name,
+                corporation_id: c.corporation_id.unwrap_or(0),
+                alliance_id: c.alliance_id,
+            })
+            .collect();
+    let main = characters
+        .first()
+        .cloned()
+        .ok_or_else(AppError::unauthorized)?;
+    let tier = match tether_db::tiers::account_tier(&state.db, session.account).await? {
+        Some(tether_core::tiers::Tier::Member) => Tier::Member,
+        Some(tether_core::tiers::Tier::Allied) => Tier::Allied,
+        _ => Tier::Guest,
+    };
+    let prefix = format!("plugin.{plugin}.");
+    Ok(Viewer {
+        account_id: session.account.0,
+        main,
+        characters,
+        tier,
+        // Only names this plugin declares: ids can nest (nmu.esi and
+        // nmu.esi.extra), so a prefix alone could leak another plugin's.
+        permissions: running
+            .manifest
+            .permissions
+            .keys()
+            .filter(|name| perms.contains(&format!("{prefix}{name}")))
+            .cloned()
+            .collect(),
+    })
 }
 
 /// Records a failure in the plugin's log (for admins) and answers users
@@ -444,7 +496,12 @@ async fn render_page(state: &AppState, opened: &Opened) -> Result<Page, PageErro
     match state
         .plugins
         .host()
-        .render(&opened.running.plugin, request, &Default::default())
+        .render_as(
+            &opened.running.plugin,
+            request,
+            Some(opened.viewer.clone()),
+            &Default::default(),
+        )
         .await
     {
         Ok(rendered) => {
@@ -626,7 +683,12 @@ async fn post(
     let submitted = state
         .plugins
         .host()
-        .submit(&opened.running.plugin, submission, &Default::default())
+        .submit_as(
+            &opened.running.plugin,
+            submission,
+            Some(opened.viewer.clone()),
+            &Default::default(),
+        )
         .await;
     match submitted {
         Ok(submitted) => {

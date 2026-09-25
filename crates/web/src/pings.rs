@@ -236,7 +236,7 @@ pub async fn channels_for(
 
 /// Breaks @everyone and @here typed into text with a zero-width space:
 /// `allowed_mentions` can't allow @here but not @everyone.
-fn defuse(text: &str) -> String {
+pub(crate) fn defuse(text: &str) -> String {
     text.replace("@everyone", "@\u{200B}everyone")
         .replace("@here", "@\u{200B}here")
 }

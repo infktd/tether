@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.channel_id, d.name FROM core.plugin_channels c\n        JOIN core.discord_ping_channels d ON d.channel_id = c.channel_id\n        WHERE c.plugin_id = $1 AND d.guild_id = $2 ORDER BY d.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_channels",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.discord_ping_channels",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "63eb778e1fe18265fbcfb9de66eeb24f3f05ea08faa99b337276a9f1c4c0faf9"
+}

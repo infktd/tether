@@ -10,6 +10,7 @@ use wasmtime::component::{HasData, Linker};
 
 use crate::jobs;
 use crate::page::{self, PageProblem};
+use crate::services;
 use crate::storage::Storage;
 use crate::{CallError, PluginLimits, Runtime, RuntimeError, Sandbox};
 use tether::plugin::storage::{Error as StorageError, Rows, Statement, Value as StorageValue};
@@ -51,8 +52,12 @@ pub struct CallState {
     /// `None` where no queue is wired up (tests of pages alone).
     jobs: Option<jobs::Queue>,
     job_calls: usize,
-    /// Page renders may not queue or cancel jobs.
+    /// Page renders may not queue or cancel jobs, or send to Discord.
     jobs_refused: bool,
+    services: Option<services::Shared>,
+    viewer: Option<services::Viewer>,
+    esi_calls: usize,
+    discord_sends: usize,
 }
 
 impl CallState {
@@ -65,9 +70,106 @@ impl CallState {
             jobs,
             job_calls: 0,
             jobs_refused: false,
+            services: None,
+            viewer: None,
+            esi_calls: 0,
+            discord_sends: 0,
         }
     }
 
+    fn esi(&mut self) -> Result<services::Shared, services::EsiError> {
+        self.esi_calls += 1;
+        let max = if self.jobs_refused {
+            services::MAX_ESI_CALLS_PAGE
+        } else {
+            services::MAX_ESI_CALLS
+        };
+        if self.esi_calls > max {
+            return Err(services::EsiError::Invalid(format!(
+                "more than {max} ESI calls in one call"
+            )));
+        }
+        self.services.clone().ok_or(services::EsiError::Unavailable)
+    }
+}
+
+impl tether::plugin::identity::Host for CallState {
+    async fn current(&mut self) -> Option<services::Viewer> {
+        self.viewer.clone()
+    }
+}
+
+impl tether::plugin::esi::Host for CallState {
+    async fn get(
+        &mut self,
+        endpoint: String,
+        subject: services::Subject,
+        params: Vec<(String, String)>,
+        page: Option<u32>,
+    ) -> Result<services::EsiResponse, services::EsiError> {
+        let services = self.esi()?;
+        services
+            .esi_get(self.plugin.clone(), endpoint, subject, params, page)
+            .await
+    }
+
+    async fn consented(&mut self) -> Vec<services::Consent> {
+        match self.esi() {
+            Ok(services) => services.esi_consented(self.plugin.clone()).await,
+            Err(_) => Vec::new(),
+        }
+    }
+
+    async fn data_sources(&mut self) -> Vec<services::Character> {
+        match self.esi() {
+            Ok(services) => services.esi_data_sources(self.plugin.clone()).await,
+            Err(_) => Vec::new(),
+        }
+    }
+
+    async fn names(&mut self, ids: Vec<i64>) -> Result<Vec<services::Named>, services::EsiError> {
+        if ids.len() > 1000 {
+            return Err(services::EsiError::Invalid("at most 1,000 ids".to_owned()));
+        }
+        let services = self.esi()?;
+        services.esi_names(self.plugin.clone(), ids).await
+    }
+}
+
+impl tether::plugin::discord::Host for CallState {
+    async fn channels(&mut self) -> Vec<services::Channel> {
+        match &self.services {
+            Some(services) => services.discord_channels(self.plugin.clone()).await,
+            None => Vec::new(),
+        }
+    }
+
+    async fn send(
+        &mut self,
+        channel: String,
+        text: String,
+        mention: services::Mention,
+    ) -> Result<(), services::DiscordError> {
+        if self.jobs_refused {
+            return Err(services::DiscordError::NotAllowed(
+                "pages can't send messages: do that in submit or a job".to_owned(),
+            ));
+        }
+        self.discord_sends += 1;
+        if self.discord_sends > services::MAX_DISCORD_SENDS {
+            return Err(services::DiscordError::RateLimited);
+        }
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::DiscordError::Unavailable)?;
+        services
+            .discord_send(self.plugin.clone(), channel, text, mention)
+            .await
+    }
+}
+
+impl CallState {
     /// The queue, if this call may use it once more.
     fn queue(&mut self) -> Result<jobs::Queue, jobs::Error> {
         if self.jobs_refused {
@@ -276,6 +378,7 @@ pub struct Host {
     runtime: Arc<Runtime>,
     linker: Linker<Sandbox<CallState>>,
     jobs: Option<jobs::Queue>,
+    services: Option<services::Shared>,
 }
 
 impl std::fmt::Debug for Host {
@@ -293,6 +396,7 @@ impl Host {
             runtime,
             linker,
             jobs: None,
+            services: None,
         })
     }
 
@@ -302,12 +406,20 @@ impl Host {
         self
     }
 
+    /// Tether's side of ESI, identity and Discord.
+    pub fn with_services(mut self, services: services::Shared) -> Self {
+        self.services = Some(services);
+        self
+    }
+
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
     }
 
     fn call_state(&self, plugin: &LoadedPlugin) -> CallState {
-        CallState::new(&plugin.id, plugin.storage.clone(), self.jobs.clone())
+        let mut state = CallState::new(&plugin.id, plugin.storage.clone(), self.jobs.clone());
+        state.services = self.services.clone();
+        state
     }
 
     /// For page renders, which run on GETs anyone can be linked into:
@@ -319,6 +431,7 @@ impl Host {
             None,
         );
         state.jobs_refused = true;
+        state.services = self.services.clone();
         state
     }
 
@@ -353,7 +466,20 @@ impl Host {
         request: Request,
         limits: &PluginLimits,
     ) -> Result<Rendered, RenderError> {
-        let store = self.runtime.store(self.render_state(plugin), limits);
+        self.render_as(plugin, request, None, limits).await
+    }
+
+    /// Renders a page for `viewer` (what `identity.current` answers).
+    pub async fn render_as(
+        &self,
+        plugin: &LoadedPlugin,
+        request: Request,
+        viewer: Option<services::Viewer>,
+        limits: &PluginLimits,
+    ) -> Result<Rendered, RenderError> {
+        let mut state = self.render_state(plugin);
+        state.viewer = viewer;
+        let store = self.runtime.store(state, limits);
         let (answer, logs) = self
             .runtime
             .run(&plugin.id, store, limits, async |store| {
@@ -389,7 +515,20 @@ impl Host {
         submission: Submission,
         limits: &PluginLimits,
     ) -> Result<Submitted, RenderError> {
-        let store = self.runtime.store(self.call_state(plugin), limits);
+        self.submit_as(plugin, submission, None, limits).await
+    }
+
+    /// Handles a form posted by `viewer`.
+    pub async fn submit_as(
+        &self,
+        plugin: &LoadedPlugin,
+        submission: Submission,
+        viewer: Option<services::Viewer>,
+        limits: &PluginLimits,
+    ) -> Result<Submitted, RenderError> {
+        let mut state = self.call_state(plugin);
+        state.viewer = viewer;
+        let store = self.runtime.store(state, limits);
         let (answer, logs) = self
             .runtime
             .run(&plugin.id, store, limits, async |store| {

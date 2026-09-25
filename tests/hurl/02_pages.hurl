@@ -365,3 +365,54 @@ _form: note
 HTTP 303
 [Asserts]
 header "Location" == "/login"
+
+# Plugin ESI access and data sources need a session (admins: admin.plugins).
+POST {{base}}/profile/plugins/nmu.hello/consent
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/profile/plugins/nmu.hello/consent/1/revoke
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/profile/plugins/nmu.hello/offer
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/profile/plugins/nmu.hello/offer/1/withdraw
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/sources/1/approve
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/sources/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/channels
+Origin: {{base}}
+[Form]
+channel_id: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/channels/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"

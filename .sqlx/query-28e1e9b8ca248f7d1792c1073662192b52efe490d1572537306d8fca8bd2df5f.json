@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_data_sources (plugin_id, character_id, offered_by)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (plugin_id, character_id) DO UPDATE SET offered_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "28e1e9b8ca248f7d1792c1073662192b52efe490d1572537306d8fca8bd2df5f"
+}

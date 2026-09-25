@@ -249,6 +249,29 @@ impl Outbound {
         &self.allow
     }
 
+    /// A bare `reqwest::Client` held to the same rules (allow-listed DNS,
+    /// no redirects, no proxy), for a library that must be handed one:
+    /// eve-esi-client's typed calls with a token of the caller's, sent as
+    /// a default header. Mark any secret header sensitive.
+    pub fn library_client(
+        allow: Allowlist,
+        user_agent: &str,
+        timeout: Duration,
+        headers: reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Client, OutboundError> {
+        let allow = Arc::new(allow);
+        reqwest::Client::builder()
+            .user_agent(user_agent)
+            .timeout(timeout)
+            .no_proxy()
+            .referer(false)
+            .dns_resolver(Arc::new(AllowResolver(allow)))
+            .redirect(reqwest::redirect::Policy::none())
+            .default_headers(headers)
+            .build()
+            .map_err(|err| OutboundError::Build(err.without_url().to_string()))
+    }
+
     /// A request, if `url` is allowed.
     pub fn request(&self, method: Method, url: &str) -> Result<Request, OutboundError> {
         let url = self.allow.check(url)?;

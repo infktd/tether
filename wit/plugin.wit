@@ -263,6 +263,141 @@ interface storage {
     transaction: func(statements: list<statement>) -> result<list<u64>, error>;
 }
 
+/// Who is looking. Only while drawing a page or handling a form; jobs
+/// have no viewer.
+interface identity {
+    enum tier {
+        member,
+        allied,
+        guest,
+    }
+
+    record character {
+        id: s64,
+        name: string,
+        corporation-id: s64,
+        alliance-id: option<s64>,
+    }
+
+    record viewer {
+        /// Stable for the account; not a character id.
+        account-id: s64,
+        main: character,
+        /// All of the account's characters, the main included.
+        characters: list<character>,
+        tier: tier,
+        /// Which of this plugin's own permissions they hold (the names in
+        /// `[permissions]`, without the `plugin.<id>.` prefix).
+        permissions: list<string>,
+    }
+
+    /// The viewer, or none (in a job).
+    current: func() -> option<viewer>;
+}
+
+/// ESI, through the host: plugins name an endpoint and whose token to use,
+/// never a URL, and never see a token. Every call is checked against what
+/// the admin approved (`capabilities.esi`) and what the character's owner
+/// agreed to, and logged.
+interface esi {
+    use identity.{character};
+
+    variant subject {
+        /// A character that consented to this plugin's user scopes.
+        character(s64),
+        /// A data-source character an admin approved: its corporation's
+        /// data, for corporation endpoints.
+        data-source(s64),
+    }
+
+    record response {
+        /// The endpoint's JSON.
+        body: string,
+        /// For paged endpoints; 1 otherwise.
+        pages: u32,
+    }
+
+    variant error {
+        /// Not an endpoint Tether offers plugins, or its scope isn't one
+        /// this plugin was approved for, or the wrong kind of subject.
+        not-allowed(string),
+        /// The character hasn't consented to this plugin (or withdrew).
+        not-consented,
+        /// Not an approved data source of this plugin.
+        not-a-data-source,
+        /// The character's token is gone or revoked: they need to log in
+        /// again.
+        token,
+        /// ESI answered with this HTTP status.
+        status(u16),
+        /// A parameter is wrong; why.
+        invalid(string),
+        /// The response is bigger than a call may return.
+        too-large,
+        /// ESI or Tether couldn't be reached.
+        unavailable,
+    }
+
+    record consent {
+        character: character,
+        /// The user scopes it granted this plugin.
+        scopes: list<string>,
+    }
+
+    record named {
+        id: s64,
+        name: string,
+        /// ESI's category: character, corporation, alliance,
+        /// solar_system, station, inventory_type, ...
+        category: string,
+    }
+
+    /// Calls a catalogue endpoint (see AGENTS.md) as `subject`. `params`
+    /// are the endpoint's extra ids; `page` is for paged endpoints.
+    get: func(endpoint: string, subject: subject, params: list<tuple<string, string>>, page: option<u32>) -> result<response, error>;
+    /// Characters that consented to this plugin's user scopes.
+    consented: func() -> list<consent>;
+    /// This plugin's approved data-source characters.
+    data-sources: func() -> list<character>;
+    /// Names for ids (public ESI; at most 1,000).
+    names: func(ids: list<s64>) -> result<list<named>, error>;
+}
+
+/// Discord messages, for plugins approved for `send_message`, to channels
+/// an admin assigned. Mentions are only Tether-managed tier roles: never
+/// @everyone, @here or people.
+interface discord {
+    use identity.{tier};
+
+    record channel {
+        /// Discord's id, as text.
+        id: string,
+        name: string,
+    }
+
+    variant mention {
+        none,
+        /// The Discord role mapped to this tier.
+        tier(tier),
+    }
+
+    variant error {
+        /// Not an assigned channel, not approved, or not now (pages can't
+        /// send).
+        not-allowed(string),
+        /// The text breaks a limit; which.
+        invalid(string),
+        /// Sent too many lately; try later.
+        rate-limited,
+        unavailable,
+    }
+
+    /// The channels an admin assigned this plugin.
+    channels: func() -> list<channel>;
+    /// Posts `text` (at most 1,500 characters) to an assigned channel.
+    send: func(channel: string, text: string, mention: mention) -> result<_, error>;
+}
+
 /// Background work on Tether's job queue: the schedules declared in
 /// `plugin.toml`, and one-off jobs a plugin queues itself. Either way the
 /// host calls the plugin's `run-job` export.
@@ -320,6 +455,9 @@ world plugin {
     import log;
     import storage;
     import jobs;
+    import identity;
+    import esi;
+    import discord;
     use jobs.{job, job-error};
     use page.{page, request, page-error, submission, submit-result};
 

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT s AS \"s!\" FROM core.character_tokens t\n        JOIN core.characters c ON c.id = t.character_id, unnest(t.scopes) AS s\n        WHERE c.account_id = $1 AND t.state <> 'revoked'\n        ORDER BY 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "s!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "63a7c6037f3d41aad841c611972213bc63aa99ff4074c6551e22abb951c0968a"
+}

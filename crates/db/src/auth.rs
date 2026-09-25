@@ -14,12 +14,48 @@ pub struct NewLoginAttempt<'a> {
     pub pkce_verifier: &'a Secret<String>,
     pub return_to: &'a str,
     pub ttl: Duration,
+    /// What it's for, and the scopes it asked SSO for.
+    pub purpose: Purpose,
+    pub scopes: &'a [String],
+    /// The signed-in account that started it (consent and offer logins).
+    pub started_by: Option<AccountId>,
+}
+
+/// Why a login was started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Purpose {
+    Login,
+    /// Granting a plugin its user scopes.
+    Consent(String),
+    /// Offering a character as a plugin's data source.
+    DataSource(String),
+}
+
+impl Purpose {
+    fn columns(&self) -> (&'static str, Option<&str>) {
+        match self {
+            Self::Login => ("login", None),
+            Self::Consent(plugin) => ("consent", Some(plugin)),
+            Self::DataSource(plugin) => ("data_source", Some(plugin)),
+        }
+    }
+
+    fn from_columns(purpose: &str, plugin: Option<String>) -> Self {
+        match (purpose, plugin) {
+            ("consent", Some(plugin)) => Self::Consent(plugin),
+            ("data_source", Some(plugin)) => Self::DataSource(plugin),
+            _ => Self::Login,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct LoginAttempt {
     pub pkce_verifier: Secret<String>,
     pub return_to: String,
+    pub purpose: Purpose,
+    pub scopes: Vec<String>,
+    pub started_by: Option<AccountId>,
 }
 
 pub async fn insert_login_attempt(
@@ -32,14 +68,20 @@ pub async fn insert_login_attempt(
         .await?;
     sqlx::query!(
         r#"
-        INSERT INTO core.login_attempts (state, browser_hash, pkce_verifier, return_to, expires_at)
-        VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5))
+        INSERT INTO core.login_attempts
+            (state, browser_hash, pkce_verifier, return_to, expires_at, purpose, plugin_id, scopes,
+             started_by)
+        VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6, $7, $8, $9)
         "#,
         attempt.state,
         attempt.browser_hash,
         attempt.pkce_verifier.expose(),
         attempt.return_to,
         attempt.ttl.as_secs_f64(),
+        attempt.purpose.columns().0,
+        attempt.purpose.columns().1,
+        attempt.scopes,
+        attempt.started_by.map(|a| a.0),
     )
     .execute(pool)
     .await?;
@@ -57,7 +99,7 @@ pub async fn take_login_attempt(
         r#"
         DELETE FROM core.login_attempts
         WHERE state = $1 AND browser_hash = $2 AND expires_at > now()
-        RETURNING pkce_verifier, return_to
+        RETURNING pkce_verifier, return_to, purpose, plugin_id, scopes, started_by
         "#,
         state,
         browser_hash,
@@ -67,6 +109,9 @@ pub async fn take_login_attempt(
     Ok(row.map(|r| LoginAttempt {
         pkce_verifier: Secret::new(r.pkce_verifier),
         return_to: r.return_to,
+        purpose: Purpose::from_columns(&r.purpose, r.plugin_id),
+        scopes: r.scopes,
+        started_by: r.started_by.map(AccountId),
     }))
 }
 

@@ -59,6 +59,54 @@
 </section>
 {% endif %}
 
+{% for p in plugin_access %}
+<section class="card">
+  <header><h2>{{ p.name }}</h2><p>This plugin can read EVE data only with your say-so, and never sees your login tokens.</p></header>
+  <section class="grid gap-4 text-sm">
+    {% if !p.user_scopes.is_empty() %}
+    <div class="grid gap-2">
+      <div class="font-medium">Reads, for characters you choose</div>
+      <div class="flex flex-wrap gap-2">{% for s in p.user_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
+      {% if p.consented.is_empty() %}
+      <p class="text-muted-foreground">None of your characters have agreed yet.</p>
+      {% else %}
+      <ul class="grid gap-2">
+        {% for c in p.consented %}
+        <li class="flex items-center justify-between gap-3">
+          <span>{{ c.name }}</span>
+          <form method="post" action="/profile/plugins/{{ p.id }}/consent/{{ c.id }}/revoke" hx-boost="true" hx-confirm="Stop {{ p.name }} reading {{ c.name }}'s data?">
+            <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Revoke</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <form method="post" action="/profile/plugins/{{ p.id }}/consent" hx-boost="false">
+        <button type="submit" class="btn" data-variant="outline" data-size="sm">Allow a character</button>
+      </form>
+    </div>
+    {% endif %}
+    {% if !p.source_scopes.is_empty() %}
+    <div class="grid gap-2">
+      <div class="font-medium">Corporation data, through a character with the right roles</div>
+      <div class="flex flex-wrap gap-2">{% for s in p.source_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
+      {% for c in p.offered %}
+      <div class="flex items-center justify-between gap-3">
+        <span>{{ c.name }} {% if c.approved %}<span class="badge" data-variant="secondary">in use</span>{% else %}<span class="badge" data-variant="outline">waiting for an admin</span>{% endif %}</span>
+        <form method="post" action="/profile/plugins/{{ p.id }}/offer/{{ c.id }}/withdraw" hx-boost="true">
+          <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button>
+        </form>
+      </div>
+      {% endfor %}
+      <form method="post" action="/profile/plugins/{{ p.id }}/offer" hx-boost="false">
+        <button type="submit" class="btn" data-variant="outline" data-size="sm">Offer a character</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+</section>
+{% endfor %}
+
 {% if !permissions.is_empty() %}
 <section class="card">
   <header><h2>Permissions</h2></header>

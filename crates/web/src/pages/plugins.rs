@@ -472,6 +472,28 @@ pub async fn discard(
 
 // ---- one plugin -------------------------------------------------------------
 
+pub struct SourceView {
+    pub character_id: i64,
+    pub name: String,
+    pub offered_by: String,
+    pub when: String,
+    /// approved, moved (approved for another corporation) or waiting.
+    pub state: &'static str,
+    pub corporation: String,
+}
+
+pub struct ChannelView {
+    pub id: i64,
+    pub name: String,
+}
+
+pub struct AccessView {
+    pub at: String,
+    pub character: String,
+    pub endpoint: String,
+    pub outcome: String,
+}
+
 pub struct ScheduleView {
     pub name: String,
     pub every: String,
@@ -519,6 +541,12 @@ fn job_view(j: tether_db::plugin_jobs::JobRow) -> JobView {
 #[template(path = "admin_plugin.html")]
 struct PluginPage {
     shell: Shell,
+    sources: Vec<SourceView>,
+    channels: Vec<ChannelView>,
+    free_channels: Vec<ChannelView>,
+    uses_discord: bool,
+    esi_scopes: Vec<String>,
+    access: Vec<AccessView>,
     schedules: Vec<ScheduleView>,
     active_jobs: i64,
     upcoming: Vec<JobView>,
@@ -571,6 +599,61 @@ async fn plugin_page(
             message: l.message,
         })
         .collect();
+    let sources = tether_db::plugin_esi::data_sources(&state.db, id)
+        .await?
+        .into_iter()
+        .map(|d| {
+            let state = if d.in_use() {
+                "approved"
+            } else if d.approved {
+                "moved"
+            } else {
+                "waiting"
+            };
+            SourceView {
+                character_id: d.character.id,
+                corporation: d
+                    .character
+                    .corporation_id
+                    .map_or_else(|| "unknown".to_owned(), |c| c.to_string()),
+                name: d.character.name,
+                offered_by: d.offered_by.unwrap_or_else(|| "Someone".to_owned()),
+                when: time(d.offered_at),
+                state,
+            }
+        })
+        .collect();
+    let (channels, free_channels) = match crate::discord::config(state).await {
+        Ok(config) => {
+            let guild = i64::try_from(config.guild_id).map_err(AppError::internal)?;
+            let assigned = tether_db::plugin_esi::channels(&state.db, id, guild).await?;
+            let all = tether_db::pings::channels(&state.db, guild).await?;
+            let free = all
+                .into_iter()
+                .filter(|c| !assigned.iter().any(|(id, _)| *id == c.channel_id))
+                .map(|c| ChannelView {
+                    id: c.channel_id,
+                    name: c.name,
+                })
+                .collect();
+            let assigned = assigned
+                .into_iter()
+                .map(|(id, name)| ChannelView { id, name })
+                .collect();
+            (assigned, free)
+        }
+        Err(_) => (Vec::new(), Vec::new()),
+    };
+    let access = tether_db::plugin_esi::access_log(&state.db, id, 30)
+        .await?
+        .into_iter()
+        .map(|a| AccessView {
+            at: a.at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            character: a.character.unwrap_or_default(),
+            endpoint: a.endpoint,
+            outcome: a.outcome,
+        })
+        .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         code,
@@ -581,6 +664,25 @@ async fn plugin_page(
             upcoming: upcoming.into_iter().map(job_view).collect(),
             dead: dead.into_iter().map(job_view).collect(),
             logs,
+            sources,
+            channels,
+            free_channels,
+            uses_discord: package
+                .manifest
+                .capabilities
+                .discord
+                .iter()
+                .any(|a| a == "send_message"),
+            esi_scopes: package
+                .manifest
+                .capabilities
+                .esi
+                .user
+                .iter()
+                .chain(&package.manifest.capabilities.esi.data_source)
+                .cloned()
+                .collect(),
+            access,
             about: About::new(&package),
             enabled: installed.enabled,
             status: label,
@@ -749,5 +851,75 @@ pub async fn repin(
         Ok(()) => Ok(Redirect::to(&format!("/admin/plugin-keys/{id}")).into_response()),
         // Keep what they typed; the key is public.
         Err(err) => key_page(&state, shell, id, form.new_key, Some(err)).await,
+    }
+}
+
+// ---- data sources and channels ---------------------------------------------
+
+/// `POST /admin/plugins/{id}/sources/{character}/approve`
+pub async fn approve_source(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, character)): Path<(String, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    match crate::plugin_consent::approve_source(&state, session.account, id, character).await {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+/// `POST /admin/plugins/{id}/sources/{character}/remove`
+pub async fn remove_source(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, character)): Path<(String, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    match crate::plugin_consent::remove_source_as_admin(&state, session.account, id, character)
+        .await
+    {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChannelForm {
+    channel_id: String,
+}
+
+/// `POST /admin/plugins/{id}/channels`
+pub async fn assign_channel(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<String>,
+    Form(form): Form<ChannelForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    let Ok(channel) = form.channel_id.trim().parse::<i64>() else {
+        let err = AppError::bad_request("Choose a channel.");
+        return plugin_page(&state, shell, id, Some(err)).await;
+    };
+    match crate::plugin_consent::set_channel(&state, session.account, id, channel, true).await {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+/// `POST /admin/plugins/{id}/channels/{channel}/remove`
+pub async fn remove_channel(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, channel)): Path<(String, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    match crate::plugin_consent::set_channel(&state, session.account, id, channel, false).await {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
     }
 }

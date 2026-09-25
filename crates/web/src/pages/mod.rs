@@ -6,6 +6,7 @@ pub mod assets;
 pub mod discord;
 pub mod headers;
 pub mod pings;
+pub mod plugin_access;
 pub mod plugin_pages;
 pub mod plugins;
 pub mod setup;
@@ -229,6 +230,7 @@ struct ProfilePage {
     groups: Vec<String>,
     permissions: Vec<String>,
     discord: Option<discord::DiscordCard>,
+    plugin_access: Vec<plugin_access::PluginAccess>,
     error: Option<String>,
 }
 
@@ -340,6 +342,7 @@ pub async fn profile(
             groups,
             permissions,
             discord: discord::card(&state, session.account).await?,
+            plugin_access: plugin_access::for_profile(&state, &session).await?,
             error: None,
         },
     ))

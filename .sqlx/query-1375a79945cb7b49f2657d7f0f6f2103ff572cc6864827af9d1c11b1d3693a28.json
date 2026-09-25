@@ -1,0 +1,89 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.login_attempts\n        WHERE state = $1 AND browser_hash = $2 AND expires_at > now()\n        RETURNING pkce_verifier, return_to, purpose, plugin_id, scopes, started_by\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pkce_verifier",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "pkce_verifier"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "return_to",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "return_to"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "purpose",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "purpose"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "plugin_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scopes",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "scopes"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "started_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "started_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "1375a79945cb7b49f2657d7f0f6f2103ff572cc6864827af9d1c11b1d3693a28"
+}

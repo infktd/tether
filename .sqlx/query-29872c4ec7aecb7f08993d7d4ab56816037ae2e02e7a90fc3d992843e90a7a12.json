@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.plugin_data_sources d\n        SET approved_by = $3, approved_at = now(), corporation_id = c.corporation_id\n        FROM core.characters c\n        WHERE d.plugin_id = $1 AND d.character_id = $2 AND c.id = d.character_id\n          AND c.corporation_id IS NOT NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "29872c4ec7aecb7f08993d7d4ab56816037ae2e02e7a90fc3d992843e90a7a12"
+}

@@ -62,24 +62,24 @@ Every requirement below is in v1; the phase column sets build order.
 | F1 | Log in with EVE SSO; no passwords or email anywhere | 0 |
 | F2 | One account holds many characters; add alts by logging in with them; change main | 0 |
 | F3 | First login on a fresh install becomes the owner account | 0 |
-| F4 | Access tiers (Member, Allied, Guest) derived from the main's corp and alliance | 0 |
+| F4 | Access states, Alliance Auth style: Member, Blue and Guest by default, and more that admins create, each with a priority. Each lists the corporations, alliances and individual characters it applies to, set by admins and audited (Blue is a manual list, not standings). An account's state comes from its main: the highest-priority match wins; no match is Guest. Guest is identity-only | 0 (states: 2) |
 | F5 | Groups: open, request-to-join, admin-assigned | 0 |
-| F6 | Permissions assigned to tiers and groups only; every change audit-logged | 0 |
-| F7 | Admin CLI: users, tiers, jobs, trigger sync, `doctor` | 0 |
+| F6 | Permissions assigned to states and groups only; every change audit-logged | 0 |
+| F7 | Admin CLI: users, states, jobs, trigger sync, `doctor` | 0 |
 | F8 | First-run web wizard: ESI app credentials, alliance selection, callback URL check. The first step requires the setup token from `.env` (also printed to the logs at startup as a fallback); once an owner exists the wizard is disabled permanently and the token is ignored | 0 |
 | F9 | Encrypted token vault with automatic refresh and revocation handling | 1 |
 | F10 | ESI scheduler honoring cache expiry, ETags, error and rate limits, with a shared cache | 1 |
-| F11 | Affiliation sync re-evaluates every account's tier on a schedule | 1 |
-| F12 | Discord account linking, tier and group role sync, nickname template | 1 |
+| F11 | Affiliation sync re-evaluates every account's state on a schedule, compliance included: each non-Guest state requires scopes (Member: core scopes, every installed plugin's user scopes, and admin additions; Blue and others: set by admins), on every character of the account, main and alts. Missing or revoked tokens make the account non-compliant: it drops to Guest until fixed, and officers see it flagged. After login, eligible users are prompted to register each character with the required scopes | 1 (compliance: 2) |
+| F12 | Discord account linking, state and group role sync, nickname template | 1 |
 | F13 | Fleet ping broadcasts to Discord channels with role targeting | 1 |
 | F14 | Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates | 1 |
 | F15 | Plugin install from a GitHub repo URL or an uploaded .zip package: fetch the latest release or read the upload, verify its signature (publisher key pinned on first install), show capabilities, admin approves, migrate, activate | 2 |
-| F16 | Two kinds of plugin ESI scopes: data-source scopes linked once by admin-designated characters (such as a Station Manager for corp mining data), and per-user scopes with consent visible and revocable on the profile page. Users who only view data grant no scopes | 2 |
+| F16 | Two kinds of plugin ESI scopes: data-source scopes linked once by characters their owners offer and an admin approves (such as a Station Manager for corp mining data), and user scopes, which join the Member state's required scopes (F11): registering characters with the state's scopes is the consent. The profile shows each character's granted scopes and which plugins use them; there is no per-plugin opt-out. Guests grant no scopes | 2 |
 | F17 | Plugins get a private database schema, background jobs, schedules, and pages described declaratively and rendered by the host with the shared components | 2 |
 | F18 | Plugin update checks against GitHub releases; one-click upgrade with pre-migration snapshot and one-step rollback; updates must be signed by the pinned key | 2 |
 | F19 | Personal access tokens with explicit scopes and expiry, for bots and scripts | 2 |
 | F20 | Plugin: Member Audit, with characters, skills, assets, wallets and combined multibox views | 3 |
-| F21 | Plugin: Moon Tracker, the first plugin built. Extraction timers from data-source characters; Discord ping to Members at each pop; fresh moons visible to Members only, then on the old-moon list for Allied after a configurable window (default 4 hours); viewer watermark on fresh-moon pages; per-pilot mining totals | 3 |
+| F21 | Plugin: Moon Tracker, the first plugin built. Extraction timers from data-source characters; Discord ping to Members at each pop; fresh moons visible to Members only, then on the old-moon list for Blue after a configurable window (default 4 hours); viewer watermark on fresh-moon pages; per-pilot mining totals | 3 |
 | F22 | Plugin: Fleet Ops, per the existing Fleet Ops PRD | 3 |
 
 ## Non-functional requirements
@@ -95,7 +95,7 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 | N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only; no other CA). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
 | N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (milestone 2, with the snapshots) |
-| N8 | Security | Plugins never receive tokens; the host checks admin approval and user consent on every ESI call |
+| N8 | Security | Plugins never receive tokens; on every ESI call the host checks the plugin's approved scopes and either the character's account compliance (user scopes) or an admin-approved data source |
 | N9 | Security | Each plugin's database role is limited to its own schema, with a statement timeout |
 | N10 | Security | Every admin action and every plugin data access is written to the audit log |
 | N11 | Performance | Host under 300 MB RAM idle; whole stack comfortable on 1 OCPU and 6 GB for 500 characters |
@@ -214,7 +214,9 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 - [x] Plugin storage (N9): a schema and a login role per plugin (generated credentials, stored encrypted) that can only touch that schema: `search_path` locked to it, no privileges on core, other plugins' schemas or `public`, no CREATEROLE, CREATEDB or BYPASSRLS; CONNECTION LIMIT, `statement_timeout`, `lock_timeout` and `idle_in_transaction_session_timeout` on the role; a small pool per plugin in the host; parameterised SQL through the host API with caps on rows and bytes returned; plugin migrations; tests proving a plugin role can't read core tables or another plugin's schema
 - [x] Plugin jobs, declared schedules and logs (shown in the admin panel), on the core job queue. Schedules are fixed intervals (`every = "30m"`), not cron. Plugins can also queue one-off jobs with a `run_at` timestamp (e.g. a Moon Tracker ping at a chunk's exact arrival), under a plugin-chosen key so re-queueing replaces rather than duplicates, and cancellable by that key (extractions get rescheduled or cancelled); capped per plugin in count and in how far ahead (at least 90 days, beyond EVE's 56-day extractions); a job that comes due late (after downtime or a restart) still runs and is told its scheduled time
 - [x] Plugin permissions (`plugin.<id>.<name>`, granted like core ones), declarative pages rendered by the host's templates (links always emitted as absolute `/plugins/<id>/<path>`; the incoming request path checked like a link path, and the query string capped before it reaches the plugin; plugin error text never shown to users), navigation entries, and forms that call back into the plugin through htmx
-- [ ] ESI, identity and Discord host interfaces: data-source characters designated by an admin, per-user scope consent on the profile page (revocable), admin approval and user consent checked on every call, plugins never see a token, every access audited (F16, N8, N10)
+- [x] ESI, identity and Discord host interfaces: data-source characters designated by an admin, per-user scope consent on the profile page (revocable), admin approval and user consent checked on every call, plugins never see a token, every access audited (F16, N8, N10). Per-plugin consent is interim: the compliance task below replaces it
+- [ ] States, Alliance Auth style (F4): tiers become states (Member, Blue and Guest by default; admins create more), each with a priority and manual lists of corporations, alliances and characters, audited; "Allied" becomes "Blue" throughout; the main's highest-priority match wins, re-evaluated on every sync; permission grants, Discord role mappings and the plugin identity interface use states
+- [ ] Scope compliance (F11, F16, N8): required scopes per non-Guest state (Member: core scopes, every installed plugin's user scopes, admin additions; others admin-set); every character on the account registered with them, main and alts; a prompt after login to register each character; non-compliant accounts drop to Guest until fixed and are flagged for officers; the profile shows granted scopes per character and which plugins use them; plugin user-scope ESI calls require a compliant account and the scope on the character's token, replacing per-plugin consent
 - [ ] Plugin HTTP capability: exact HTTPS hosts declared in the manifest and approved by the admin at install (again on upgrade if they change); no redirects outside them; per-plugin rate limits and response size caps; every call audited; named plugin secrets (such as an API key) entered by the admin, stored encrypted and injected by the host into requests to the declared host, never visible to the plugin, which can't set its own Authorization or cookie headers; `doctor` lists the approved hosts
 - [ ] Install from a GitHub repo URL; daily plugin update checks; one-click upgrade after a schema snapshot, one-step rollback; updates must be signed by the pinned key (F15, F18)
 - [ ] Personal access tokens with explicit scopes and expiry, stored hashed, managed on the profile page (F19)
@@ -238,7 +240,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] Project name, before the first public repo
 - [ ] License: AGPL or MIT/Apache, before the first public repo
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
-- [ ] Whether Guests may join the Discord server through Tether: deferred at the milestone 1 review. Only Member and Allied pilots can link; Guests (recruits, visitors) usually have the server's invite link before they ever reach Tether
+- [ ] Whether Guests may join the Discord server through Tether: deferred at the milestone 1 review. Only Member and Blue pilots can link; Guests (recruits, visitors) usually have the server's invite link before they ever reach Tether
 - [x] Plugin database access: raw SQL in the plugin's own schema, through a per-plugin login role Postgres confines to it (details in milestone 2)
 - [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts

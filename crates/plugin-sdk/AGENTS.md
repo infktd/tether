@@ -324,6 +324,66 @@ fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
 - Field names and form ids are lowercase letters, digits and `_`, starting with a letter. Up to 30 fields per form, 100 options per select, 10,000 characters per text field; a post is at most 64 KiB.
 - Return `SubmitResult::Redirect(path)` to go to another of your pages (a link path), or `SubmitResult::Page(page)` to show a page there and then, for example the form again with a note about what to fix.
 
+## Who's looking
+
+`identity::viewer()` says who is looking at a page or posting a form: their account id, main, all their characters (with corporation and alliance), tier, and which of your plugin's permissions they hold (`viewer.can("manage")`). Jobs have no viewer.
+
+## ESI
+
+Plugins never see a token or build an ESI URL. You name an endpoint and whose token to use; the host checks, on every call, that:
+
+- the endpoint is one Tether offers plugins (below) and its scope is declared in your `plugin.toml` and was approved;
+- for a **user** scope (`capabilities.esi.user`): the character's owner agreed on their profile page (and hasn't withdrawn);
+- for a **data-source** scope (`capabilities.esi.data_source`): the character was offered as your data source by its owner and approved by an admin. Corporation endpoints read that character's corporation.
+
+```rust
+use tether_plugin_sdk::esi::{self, Subject};
+
+// Corporation data, through each approved data source (e.g. a Station Manager).
+for source in esi::data_sources() {
+    for body in esi::get_all("corporation-mining-extractions", Subject::DataSource(source.id), &[])? {
+        let extractions: Vec<serde_json::Value> = serde_json::from_str(&body)?;
+    }
+}
+// A user's own data, for each character that agreed.
+for consent in esi::consented() {
+    let skills = esi::get("character-skills", Subject::Character(consent.character.id), &[], None)?;
+}
+let names = esi::names(&[40161234, 30000142])?;
+```
+
+| Endpoint | Scope | Subject | Paged | Params |
+| --- | --- | --- | --- | --- |
+| `corporation-mining-extractions` | `esi-industry.read_corporation_mining.v1` | data source | yes | |
+| `corporation-mining-observers` | `esi-industry.read_corporation_mining.v1` | data source | yes | |
+| `corporation-mining-observer` | `esi-industry.read_corporation_mining.v1` | data source | yes | `observer_id` |
+| `corporation-structures` | `esi-corporations.read_structures.v1` | data source | yes | |
+| `character-skills` | `esi-skills.read_skills.v1` | character | no | |
+| `character-assets` | `esi-assets.read_assets.v1` | character | yes | |
+| `character-wallet` | `esi-wallet.read_character_wallet.v1` | character | no | |
+| `character-wallet-journal` | `esi-wallet.read_character_wallet.v1` | character | yes | |
+| `character-clones` | `esi-clones.read_clones.v1` | character | no | |
+| `character-implants` | `esi-clones.read_implants.v1` | character | no | |
+| `character-location` | `esi-location.read_location.v1` | character | no | |
+
+- The body is ESI's JSON, at most 4 MiB; `pages` says how many pages a paged endpoint has. At most 100 ESI calls per page render, submit or job run.
+- Errors: `NotAllowed` (endpoint or scope), `NotConsented`, `NotADataSource`, `Token` (the character must log in again), `Status(code)` from ESI, `Invalid`, `TooLarge`, `Unavailable`. Plan for `NotConsented` and `Token`: people withdraw.
+- Corporation endpoints also need the character to hold the in-game role CCP requires (Station Manager for extractions and structures, Accountant for observers); without it ESI answers 403.
+- Every call is recorded in your plugin's access log, which admins see. An admin must also enable your scopes on Tether's EVE application.
+
+## Discord
+
+With `discord = ["send_message"]`, a plugin can post to the channels an admin assigned it (`discord::channels()`):
+
+```rust
+use tether_plugin_sdk::discord::{self, Mention, Tier};
+let channel = discord::channels().first().map(|c| c.id.clone());
+discord::send(&channel.unwrap(), "Moon popped at 1DQ1-A I", Mention::Tier(Tier::Member))?;
+```
+
+- Mentions are only the Discord role Tether maps to a tier; typed `@everyone` and `@here` are defused, and nobody else can be pinged.
+- From `submit` and jobs only, not pages. At most 1,500 characters, 5 messages per call and 20 a minute per plugin.
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
@@ -352,9 +412,10 @@ API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0
 - `log`: write to the plugin's log;
 - pages: `render`, and forms: `submit`;
 - `storage`: SQL in the plugin's own schema (see Storage);
-- `jobs`: schedules and one-off jobs (see Jobs).
+- `jobs`: schedules and one-off jobs (see Jobs);
+- `identity`, `esi` and `discord` (see above).
 
-Coming during milestone 2, in this order: ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
+Coming during milestone 2: outbound HTTP to hosts an admin approved.
 
 ## Checklist before publishing
 

@@ -39,10 +39,25 @@ pub async fn login(
     jar: CookieJar,
     Query(query): Query<LoginQuery>,
 ) -> Result<Response, AppError> {
-    let config = sso_config(&state).await?;
-    let pending = state.sso.begin(&config).map_err(AppError::internal)?;
-    let browser = new_token().map_err(AppError::internal)?;
     let return_to = safe_return_to(query.return_to.as_deref());
+    start_login(&state, jar, &return_to, db::Purpose::Login, &[], None).await
+}
+
+/// Sends the browser to EVE SSO asking for `scopes`, remembering why.
+pub(crate) async fn start_login(
+    state: &AppState,
+    jar: CookieJar,
+    return_to: &str,
+    purpose: db::Purpose,
+    scopes: &[String],
+    started_by: Option<AccountId>,
+) -> Result<Response, AppError> {
+    let config = sso_config(state).await?;
+    let pending = state
+        .sso
+        .begin(&config, scopes)
+        .map_err(AppError::internal)?;
+    let browser = new_token().map_err(AppError::internal)?;
 
     db::insert_login_attempt(
         &state.db,
@@ -50,8 +65,11 @@ pub async fn login(
             state: &pending.state,
             browser_hash: &hash_token(browser.expose()),
             pkce_verifier: &pending.pkce_verifier,
-            return_to: &return_to,
+            return_to,
             ttl: LOGIN_TTL,
+            purpose,
+            scopes,
+            started_by,
         },
     )
     .await?;
@@ -179,6 +197,12 @@ pub async fn callback(
         .await
     {
         return Err(AppError::internal(err));
+    }
+    // Granting a plugin access, or offering a data source: only for the
+    // account that started it, still signed in here, with the character
+    // on that account (otherwise it was just a login).
+    if attempt.started_by.is_some() && current == attempt.started_by && current == Some(account) {
+        crate::plugin_consent::finish(&state, account, &identity, &attempt.purpose).await?;
     }
 
     let mut jar = jar;

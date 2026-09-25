@@ -20,7 +20,9 @@ pub mod maintenance;
 pub mod openapi;
 pub mod pages;
 pub mod pings;
+pub mod plugin_consent;
 pub mod plugin_jobs;
+pub mod plugin_services;
 pub mod plugins;
 mod ratelimit;
 pub mod setup;
@@ -165,11 +167,43 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route("/admin/plugins/{id}", get(pages::plugins::plugin))
+        .route(
+            "/admin/plugins/{id}/sources/{character}/approve",
+            post(pages::plugins::approve_source),
+        )
+        .route(
+            "/admin/plugins/{id}/sources/{character}/remove",
+            post(pages::plugins::remove_source),
+        )
+        .route(
+            "/admin/plugins/{id}/channels",
+            post(pages::plugins::assign_channel),
+        )
+        .route(
+            "/admin/plugins/{id}/channels/{channel}/remove",
+            post(pages::plugins::remove_channel),
+        )
         .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
         .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))
         .route(
             "/admin/plugins/{id}/uninstall",
             post(pages::plugins::uninstall),
+        )
+        .route(
+            "/profile/plugins/{id}/consent",
+            post(pages::plugin_access::consent),
+        )
+        .route(
+            "/profile/plugins/{id}/consent/{character}/revoke",
+            post(pages::plugin_access::revoke),
+        )
+        .route(
+            "/profile/plugins/{id}/offer",
+            post(pages::plugin_access::offer),
+        )
+        .route(
+            "/profile/plugins/{id}/offer/{character}/withdraw",
+            post(pages::plugin_access::withdraw),
         )
         .route("/profile/discord/link", post(pages::discord::link))
         .route("/profile/discord/unlink", post(pages::discord::unlink))
@@ -299,31 +333,39 @@ mod tests {
         let key =
             tether_core::crypto::EncryptionKey::from_hex(&tether_core::Secret::new("0".repeat(64)))
                 .unwrap();
+        let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
+            db.clone(),
+            key.clone(),
+            sso.clone(),
+            "https://tether.test/auth/callback".into(),
+        ));
+        let discord = std::sync::Arc::new(
+            tether_discord::Discord::new(
+                tether_discord::Endpoints::local("127.0.0.1:9"),
+                local_net(),
+            )
+            .unwrap(),
+        );
+        let esi = tether_esi::Esi::new("tether tests", Some("http://127.0.0.1:9")).unwrap();
         let plugins = crate::plugins::Plugins::new(
             tether_plugins::host::Host::new(std::sync::Arc::new(
                 tether_plugins::Runtime::new().unwrap(),
             ))
             .unwrap(),
-            key.clone(),
-            db.clone(),
+            crate::plugin_services::Deps {
+                db: db.clone(),
+                esi: esi.clone(),
+                vault: vault.clone(),
+                discord: discord.clone(),
+                key: key.clone(),
+            },
         );
         AppState {
-            vault: std::sync::Arc::new(tether_esi::vault::TokenVault::new(
-                db.clone(),
-                key.clone(),
-                sso.clone(),
-                "https://tether.test/auth/callback".into(),
-            )),
+            vault,
             key: key.clone(),
-            discord: std::sync::Arc::new(
-                tether_discord::Discord::new(
-                    tether_discord::Endpoints::local("127.0.0.1:9"),
-                    local_net(),
-                )
-                .unwrap(),
-            ),
+            discord,
             db,
-            esi: tether_esi::Esi::new("tether tests", Some("http://127.0.0.1:9")).unwrap(),
+            esi,
             sso,
             site: std::sync::Arc::new(Site::new("https://tether.test")),
             setup_token: std::sync::Arc::new(tether_core::Secret::new("t".repeat(32))),

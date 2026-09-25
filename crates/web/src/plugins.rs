@@ -204,14 +204,21 @@ impl std::fmt::Debug for Plugins {
 }
 
 impl Plugins {
-    /// `db` is where plugins' jobs are queued.
-    pub fn new(host: Host, key: EncryptionKey, db: PgPool) -> Arc<Self> {
-        Arc::new(Self {
-            host: host.with_jobs(crate::plugin_jobs::PluginQueue::new(db)),
-            key,
-            slots: RwLock::default(),
-            lifecycle: tokio::sync::Mutex::new(()),
-            uploads: tokio::sync::Semaphore::new(1),
+    /// `deps` are what plugins reach through the host: the job queue (in
+    /// `deps.db`), ESI and Discord.
+    pub fn new(host: Host, deps: crate::plugin_services::Deps) -> Arc<Self> {
+        Arc::new_cyclic(|plugins| {
+            let services =
+                crate::plugin_services::PluginServices::new(deps.clone(), plugins.clone());
+            Self {
+                host: host
+                    .with_jobs(crate::plugin_jobs::PluginQueue::new(deps.db.clone()))
+                    .with_services(services),
+                key: deps.key.clone(),
+                slots: RwLock::default(),
+                lifecycle: tokio::sync::Mutex::new(()),
+                uploads: tokio::sync::Semaphore::new(1),
+            }
         })
     }
 
@@ -252,6 +259,20 @@ impl Plugins {
             Some(Slot::Running(running)) => Some(running.clone()),
             _ => None,
         }
+    }
+
+    /// Every running plugin, by name.
+    pub fn all_running(&self) -> Vec<Running> {
+        let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());
+        let mut running: Vec<Running> = slots
+            .values()
+            .filter_map(|slot| match slot {
+                Slot::Running(running) => Some(running.clone()),
+                Slot::Failed(_) => None,
+            })
+            .collect();
+        running.sort_by(|a, b| a.manifest.plugin.name.cmp(&b.manifest.plugin.name));
+        running
     }
 
     /// Every running plugin's sidebar entries, by plugin name.

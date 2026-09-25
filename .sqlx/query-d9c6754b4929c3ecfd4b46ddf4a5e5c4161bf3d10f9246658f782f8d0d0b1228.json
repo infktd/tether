@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,\n               d.approved_at IS NOT NULL AS \"approved!\", o.name AS \"offered_by?\",\n               d.corporation_id AS approved_corporation\n        FROM core.plugin_data_sources d\n        JOIN core.characters c ON c.id = d.character_id\n        LEFT JOIN core.accounts a ON a.id = d.offered_by\n        LEFT JOIN core.characters o ON o.id = a.main_character_id\n        WHERE d.plugin_id = $1 ORDER BY c.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "alliance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "alliance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "offered_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_data_sources",
+            "name": "offered_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "approved!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "offered_by?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "approved_corporation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_data_sources",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      null,
+      false,
+      true
+    ]
+  },
+  "hash": "d9c6754b4929c3ecfd4b46ddf4a5e5c4161bf3d10f9246658f782f8d0d0b1228"
+}

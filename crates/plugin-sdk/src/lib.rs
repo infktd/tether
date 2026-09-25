@@ -125,6 +125,97 @@ pub mod log {
     }
 }
 
+/// Who is looking at a page or posting a form (none in jobs).
+pub mod identity {
+    pub use crate::bindings::tether::plugin::identity::{Character, Tier, Viewer};
+
+    /// The viewer, or `None` in a job.
+    pub fn viewer() -> Option<Viewer> {
+        crate::bindings::tether::plugin::identity::current()
+    }
+
+    impl Viewer {
+        /// Whether they hold one of this plugin's permissions (its name in
+        /// `[permissions]`).
+        pub fn can(&self, permission: &str) -> bool {
+            self.permissions.iter().any(|p| p == permission)
+        }
+    }
+}
+
+/// ESI through the host: name an endpoint (see AGENTS.md) and whose token
+/// to use. The host checks approval and consent, and never shows you a
+/// token.
+///
+/// ```ignore
+/// use tether_plugin_sdk::esi::{self, Subject};
+///
+/// for source in esi::data_sources() {
+///     let page = esi::get("corporation-mining-extractions", Subject::DataSource(source.id), &[], None)?;
+///     let extractions: serde_json::Value = serde_json::from_str(&page.body)?;
+/// }
+/// ```
+pub mod esi {
+    pub use crate::bindings::tether::plugin::esi::{Consent, Error, Named, Response, Subject};
+    pub use crate::bindings::tether::plugin::identity::Character;
+
+    /// Calls a catalogue endpoint as `subject`. `params` are the endpoint's
+    /// extra ids (e.g. `observer_id`); `page` is for paged endpoints.
+    pub fn get(
+        endpoint: &str,
+        subject: Subject,
+        params: &[(String, String)],
+        page: Option<u32>,
+    ) -> Result<Response, Error> {
+        crate::bindings::tether::plugin::esi::get(endpoint, subject, params, page)
+    }
+
+    /// Every page of a paged endpoint, concatenated (for JSON arrays).
+    pub fn get_all(
+        endpoint: &str,
+        subject: Subject,
+        params: &[(String, String)],
+    ) -> Result<Vec<String>, Error> {
+        let first = get(endpoint, subject, params, Some(1))?;
+        let mut bodies = vec![first.body];
+        for page in 2..=first.pages {
+            bodies.push(get(endpoint, subject, params, Some(page))?.body);
+        }
+        Ok(bodies)
+    }
+
+    /// Characters that consented to this plugin's user scopes.
+    pub fn consented() -> Vec<Consent> {
+        crate::bindings::tether::plugin::esi::consented()
+    }
+
+    /// This plugin's approved data-source characters.
+    pub fn data_sources() -> Vec<Character> {
+        crate::bindings::tether::plugin::esi::data_sources()
+    }
+
+    /// Names for ids (public ESI; at most 1,000).
+    pub fn names(ids: &[i64]) -> Result<Vec<Named>, Error> {
+        crate::bindings::tether::plugin::esi::names(ids)
+    }
+}
+
+/// Discord messages to channels an admin assigned this plugin.
+pub mod discord {
+    pub use crate::bindings::tether::plugin::discord::{Channel, Error, Mention};
+    pub use crate::bindings::tether::plugin::identity::Tier;
+
+    pub fn channels() -> Vec<Channel> {
+        crate::bindings::tether::plugin::discord::channels()
+    }
+
+    /// Posts to an assigned channel (at most 1,500 characters), pinging
+    /// nobody or the Discord role mapped to a tier. Not from pages.
+    pub fn send(channel: &str, text: &str, mention: Mention) -> Result<(), Error> {
+        crate::bindings::tether::plugin::discord::send(channel, text, mention)
+    }
+}
+
 /// Background work: the schedules declared in `plugin.toml`
 /// (`[[capabilities.schedules]]`) and one-off jobs queued here. Either way
 /// the host calls [`Plugin::run_job`].

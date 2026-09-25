@@ -93,6 +93,9 @@ pub struct Esi {
     client: Client,
     budget: Arc<Budget>,
     bulk: Arc<Semaphore>,
+    /// For clients carrying a character's token (plugin calls).
+    user_agent: String,
+    allow: tether_net::Allowlist,
 }
 
 impl Esi {
@@ -106,10 +109,16 @@ impl Esi {
         let client = builder
             .build()
             .map_err(|err| EsiError::Config(err.to_string()))?;
+        let allow = match base_url {
+            Some(url) => tether_net::Allowlist::production().with_url(url),
+            None => tether_net::Allowlist::production(),
+        };
         Ok(Self {
             client,
             budget: Arc::default(),
             bulk: Arc::new(Semaphore::new(BULK_CONCURRENCY)),
+            user_agent: user_agent.to_owned(),
+            allow,
         })
     }
 
@@ -117,8 +126,35 @@ impl Esi {
         self.budget.snapshot()
     }
 
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub(crate) fn user_agent(&self) -> &str {
+        &self.user_agent
+    }
+
+    pub(crate) fn allowlist(&self) -> &tether_net::Allowlist {
+        &self.allow
+    }
+
     /// Runs one request: gates bulk work, then records what ESI said.
     async fn call<T, E, F>(&self, priority: Priority, request: F) -> Result<T, EsiError>
+    where
+        E: std::fmt::Debug,
+        F: Future<Output = Result<ResponseValue<T>, eve_esi_client::Error<E>>>,
+    {
+        self.call_full(priority, request)
+            .await
+            .map(ResponseValue::into_inner)
+    }
+
+    /// [`Esi::call`], keeping the response's headers (`X-Pages`).
+    pub(crate) async fn call_full<T, E, F>(
+        &self,
+        priority: Priority,
+        request: F,
+    ) -> Result<ResponseValue<T>, EsiError>
     where
         E: std::fmt::Debug,
         F: Future<Output = Result<ResponseValue<T>, eve_esi_client::Error<E>>>,
@@ -144,7 +180,7 @@ impl Esi {
         match request.await {
             Ok(response) => {
                 self.budget.observe(response.status(), response.headers());
-                Ok(response.into_inner())
+                Ok(response)
             }
             Err(err) => {
                 match &err {

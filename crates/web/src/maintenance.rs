@@ -26,6 +26,12 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
     let plugin_uploads =
         tether_db::plugins::prune_uploads(db, crate::plugins::UPLOAD_HOURS).await?;
     let plugin_logs = tether_db::plugin_jobs::prune_logs(db, crate::plugin_jobs::KEEP_LOGS).await?;
+    let plugin_access = tether_db::plugin_esi::prune_access_log(
+        db,
+        crate::plugin_services::ACCESS_LOG_DAYS,
+        crate::plugin_services::ACCESS_LOG_KEEP,
+    )
+    .await?;
     let plugin_jobs =
         tether_db::plugin_jobs::prune_finished(db, crate::plugin_jobs::KEEP_FINISHED_HOURS).await?;
     let jobs = tether_jobs::schedule::prune_succeeded(db, KEEP_SUCCEEDED).await?;
@@ -36,6 +42,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         discord_links,
         plugin_uploads,
         plugin_logs,
+        plugin_access,
         plugin_jobs,
         jobs,
         "pruned"

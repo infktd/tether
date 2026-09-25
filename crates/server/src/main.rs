@@ -158,6 +158,19 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         tether_discord::Endpoints::discord(),
         outbound(&plain_agent())?,
     )?);
+    let verifier = tether_esi::jwt::JwtVerifier::new(
+        outbound(&user_agent(&config.public_url()))?,
+        tether_esi::jwt::CCP_JWKS_URL,
+    )?;
+    let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
+        std::sync::Arc::new(tether_esi::sso::EveSso::new(verifier));
+    let site = tether_web::Site::new(config.public_url());
+    let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
+        db.clone(),
+        key.clone(),
+        sso.clone(),
+        site.sso_callback_url(),
+    ));
     // Plugins load in the background: the site serves while they compile,
     // and one that fails is shown to admins instead of stopping startup.
     let plugins = tether_web::plugins::Plugins::new(
@@ -165,8 +178,13 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             tether_plugins::Runtime::new().context("starting the plugin runtime")?,
         ))
         .context("starting the plugin host")?,
-        key.clone(),
-        db.clone(),
+        tether_web::plugin_services::Deps {
+            db: db.clone(),
+            esi: esi.clone(),
+            vault: vault.clone(),
+            discord: discord.clone(),
+            key: key.clone(),
+        },
     );
     {
         let (plugins, db) = (plugins.clone(), db.clone());
@@ -246,19 +264,6 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         );
     }
 
-    let verifier = tether_esi::jwt::JwtVerifier::new(
-        outbound(&user_agent(&config.public_url()))?,
-        tether_esi::jwt::CCP_JWKS_URL,
-    )?;
-    let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
-        std::sync::Arc::new(tether_esi::sso::EveSso::new(verifier));
-    let site = tether_web::Site::new(config.public_url());
-    let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
-        db.clone(),
-        key.clone(),
-        sso.clone(),
-        site.sso_callback_url(),
-    ));
     let state = tether_web::AppState {
         vault,
         key,

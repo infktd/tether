@@ -40,8 +40,12 @@ pub struct FakeSso {
     /// Owner hash per character id; default `owner-<id>`. Change one to
     /// simulate the character moving to another EVE account.
     pub owner_hashes: Mutex<HashMap<i64, String>>,
-    /// Scopes every login grants.
+    /// Scopes every login grants, besides those it asked for.
     pub granted_scopes: Mutex<Vec<String>>,
+    /// Scopes each login asked for, by PKCE verifier.
+    pub requested: Mutex<HashMap<String, Vec<String>>>,
+    /// What the latest login asked for.
+    pub last_requested: Mutex<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +69,8 @@ impl Default for FakeSso {
             refresh_tokens_seen: Mutex::default(),
             owner_hashes: Mutex::default(),
             granted_scopes: Mutex::default(),
+            requested: Mutex::default(),
+            last_requested: Mutex::default(),
         }
     }
 }
@@ -80,11 +86,16 @@ impl FakeSso {
 }
 
 impl Sso for FakeSso {
-    fn begin(&self, config: &SsoConfig) -> Result<PendingLogin, SsoError> {
+    fn begin(&self, config: &SsoConfig, scopes: &[String]) -> Result<PendingLogin, SsoError> {
         let mut issued = self.issued.lock().unwrap();
         let state = format!("state-{}", issued.len());
         let verifier = format!("verifier-{}", issued.len());
         issued.insert(state.clone(), verifier.clone());
+        self.requested
+            .lock()
+            .unwrap()
+            .insert(verifier.clone(), scopes.to_vec());
+        *self.last_requested.lock().unwrap() = scopes.to_vec();
         Ok(PendingLogin {
             authorize_url: format!(
                 "https://login.test/authorize?client_id={}&redirect_uri={}&state={state}",
@@ -104,7 +115,7 @@ impl Sso for FakeSso {
         Box::pin(async move {
             let verifier = pkce_verifier.expose().clone();
             let known = self.issued.lock().unwrap().values().any(|v| *v == verifier);
-            self.seen_verifiers.lock().unwrap().push(verifier);
+            self.seen_verifiers.lock().unwrap().push(verifier.clone());
             if !known {
                 return Err(SsoError::Exchange("unknown PKCE verifier".into()));
             }
@@ -120,7 +131,18 @@ impl Sso for FakeSso {
                         .get(&id.parse::<i64>().unwrap())
                         .cloned()
                         .unwrap_or_else(|| format!("owner-{id}")),
-                    scopes: self.granted_scopes.lock().unwrap().clone(),
+                    // What the login asked for, plus anything a test adds.
+                    scopes: {
+                        let mut scopes = self
+                            .requested
+                            .lock()
+                            .unwrap()
+                            .get(&verifier)
+                            .cloned()
+                            .unwrap_or_default();
+                        scopes.extend(self.granted_scopes.lock().unwrap().iter().cloned());
+                        scopes
+                    },
                     tokens: self.tokens(
                         format!("access-{id}-login"),
                         Some(format!("refresh-{id}-1")),
@@ -294,8 +316,13 @@ pub async fn harness_full(
     );
     let plugins = tether_web::plugins::Plugins::new(
         tether_plugins::host::Host::new(Arc::new(tether_plugins::Runtime::new().unwrap())).unwrap(),
-        test_key(),
-        db.clone(),
+        tether_web::plugin_services::Deps {
+            db: db.clone(),
+            esi: esi.clone(),
+            vault: vault.clone(),
+            discord: discord.clone(),
+            key: test_key(),
+        },
     );
     let app = router(AppState {
         key: test_key(),
@@ -626,5 +653,64 @@ pub async fn run_probe(
     match &page.sections[0] {
         Section::Text(text) => text.clone(),
         other => panic!("{other:?}"),
+    }
+}
+
+// ---- Discord, set up for plugins ------------------------------------------------
+
+pub const DISCORD_GUILD: &str = "222222222222222222";
+pub const DISCORD_PING_CHANNEL: &str = "600000000000000001";
+pub const DISCORD_MEMBER_ROLE: &str = "500000000000000003";
+
+fn discord_fixture(name: &str) -> serde_json::Value {
+    let path = format!(
+        "{}/../../tests/fixtures/discord/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Discord set up (bot, server, one ping channel, the Member role mapped)
+/// by `owner`, with the mock bot answering what that takes.
+pub async fn discord_ready(h: &Harness, owner: &str) {
+    let ok = |name: &str| ResponseTemplate::new(200).set_body_json(discord_fixture(name));
+    Mock::given(method("GET"))
+        .and(path("/api/v10/users/@me"))
+        .respond_with(ok("bot_user"))
+        .mount(&h.discord_server)
+        .await;
+    for (route, name) in [
+        (format!("/api/v10/guilds/{DISCORD_GUILD}"), "guild"),
+        (format!("/api/v10/guilds/{DISCORD_GUILD}/roles"), "roles"),
+        (
+            format!("/api/v10/guilds/{DISCORD_GUILD}/members/111111111111111111"),
+            "bot_member",
+        ),
+        (
+            format!("/api/v10/guilds/{DISCORD_GUILD}/channels"),
+            "channels",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ok(name))
+            .mount(&h.discord_server)
+            .await;
+    }
+    let settings = "application_id=111111111111111111&guild_id=222222222222222222\
+                    &client_secret=client-secret-value&bot_token=bot-token-value";
+    for (uri, body) in [
+        ("/admin/discord", settings.to_owned()),
+        (
+            "/admin/discord/channels",
+            format!("channel_id={DISCORD_PING_CHANNEL}"),
+        ),
+        (
+            "/admin/discord/mappings",
+            format!("role_id={DISCORD_MEMBER_ROLE}&grantee=tier%3Amember"),
+        ),
+    ] {
+        let res = send(&h.app, form(uri, &body, owner)).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{uri}: {}", res.body);
     }
 }

@@ -22,6 +22,76 @@
   {% include "admin_error.html" %}
   {% if let Some(why) = failure %}<div class="alert" data-variant="destructive" role="alert"><section><strong>It couldn't be loaded.</strong> <span class="break-words">{{ why }}</span></section></div>{% endif %}
 
+  {% if !esi_scopes.is_empty() %}
+  <section class="card">
+    <header><h2>ESI access</h2><p>Enable these scopes on Tether's EVE application (developers.eveonline.com) so people can grant them.</p></header>
+    <section class="flex flex-wrap gap-2">{% for s in esi_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</section>
+  </section>
+  {% endif %}
+
+  {% if !about.capabilities.is_empty() && !sources.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Data sources</h2><p>Characters offered for their corporation's data. Only approved ones are used, and only while they stay in the corporation they were approved for. Approve only characters with the in-game role ESI needs (Station Manager or Accountant): data another source of the same corporation fetched recently can be served without ESI checking the role again.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Offered</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for d in sources %}
+        <tr>
+          <td class="font-medium">{{ d.name }}</td>
+          <td class="num">{{ d.corporation }}</td>
+          <td><div class="text-sm">{{ d.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ d.when }} EVE</div></td>
+          <td>{% if d.state == "approved" %}<span class="badge" data-variant="secondary">approved</span>{% else if d.state == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting</span>{% endif %}</td>
+          <td class="text-right">
+            <div class="inline-flex gap-2">
+              {% if d.state != "approved" %}<form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>{% endif %}
+              <form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/remove"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  {% if uses_discord %}
+  <section class="card data-card">
+    <header><h2>Discord channels</h2><p>Where this plugin may post. It can ping only the roles mapped to tiers, never @everyone or @here.</p></header>
+    {% if channels.is_empty() %}<p class="px-5 pb-5 text-sm text-muted-foreground">None yet: it can't post.</p>{% else %}
+    <table class="table">
+      <tbody>
+        {% for c in channels %}
+        <tr><td class="num">#{{ c.name }}</td><td class="text-right"><form method="post" action="/admin/plugins/{{ about.id }}/channels/{{ c.id }}/remove"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if !free_channels.is_empty() %}
+    <form method="post" action="/admin/plugins/{{ about.id }}/channels" class="flex items-end gap-3 px-5 pb-5">
+      <div class="grid gap-2">
+        <label class="label" for="channel_id">Add a ping channel</label>
+        <select class="select input" id="channel_id" name="channel_id">{% for c in free_channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}</select>
+      </div>
+      <button type="submit" class="btn" data-variant="outline">Add</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if !access.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Recent data access</h2><p>Every ESI call and Discord post, kept 90 days; EVE time.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">When</th><th scope="col">Character</th><th scope="col">Endpoint</th><th scope="col">Outcome</th></tr></thead>
+      <tbody>
+        {% for a in access %}
+        <tr><td class="num whitespace-nowrap">{{ a.at }}</td><td>{{ a.character }}</td><td class="num">{{ a.endpoint }}</td><td>{{ a.outcome }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   {% if !schedules.is_empty() %}
   <section class="card data-card">
     <header><h2>Schedules</h2><p>Declared in the plugin; they run while it's enabled.</p></header>

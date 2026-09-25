@@ -400,8 +400,13 @@ async fn startup_loads_enabled_plugins_and_checks_them(db: PgPool) {
                 tether_plugins::Runtime::new().unwrap(),
             ))
             .unwrap(),
-            test_key(),
-            h.db.clone(),
+            tether_web::plugin_services::Deps {
+                db: h.db.clone(),
+                esi: h.esi.clone(),
+                vault: h.vault.clone(),
+                discord: h.discord.clone(),
+                key: test_key(),
+            },
         )
     };
     let restarted = fresh();

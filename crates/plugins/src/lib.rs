@@ -36,6 +36,7 @@ pub mod jobs;
 pub mod manifest;
 pub mod package;
 pub mod page;
+pub mod services;
 pub mod storage;
 #[cfg(feature = "testing")]
 pub mod testing;

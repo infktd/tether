@@ -1,7 +1,8 @@
 //! EVE SSO login (OAuth2 authorization code with PKCE).
 //!
-//! No scopes are requested yet; the tokens a login returns go to the
-//! token vault (`crate::vault`).
+//! A plain login asks for no scopes; granting a plugin ESI access asks for
+//! the scopes it needs. The tokens a login returns go to the token vault
+//! (`crate::vault`).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -72,7 +73,8 @@ pub type RefreshFuture<'a> = Pin<Box<dyn Future<Output = Result<SsoTokens, SsoEr
 /// overriding the SSO URLs, test `EveSso` itself against wiremock instead of
 /// only testing the web flow with a fake.
 pub trait Sso: Send + Sync {
-    fn begin(&self, config: &SsoConfig) -> Result<PendingLogin, SsoError>;
+    /// Starts a login asking for `scopes` (none for a plain login).
+    fn begin(&self, config: &SsoConfig, scopes: &[String]) -> Result<PendingLogin, SsoError>;
 
     fn finish<'a>(
         &'a self,
@@ -116,8 +118,8 @@ impl EveSso {
 }
 
 impl Sso for EveSso {
-    fn begin(&self, config: &SsoConfig) -> Result<PendingLogin, SsoError> {
-        let pending = Self::client(config)?.authorize(std::iter::empty::<&str>());
+    fn begin(&self, config: &SsoConfig, scopes: &[String]) -> Result<PendingLogin, SsoError> {
+        let pending = Self::client(config)?.authorize(scopes.iter().cloned());
         Ok(PendingLogin {
             authorize_url: pending.url,
             state: pending.csrf_state.secret().clone(),

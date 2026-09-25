@@ -77,13 +77,24 @@ impl TokenVault {
     }
 
     /// Stores the tokens from a login. `scopes` are what the character
-    /// granted.
+    /// granted. A login that grants less than the stored token already has
+    /// (a plain login, after granting plugins scopes) keeps the stored
+    /// token, so consents don't silently stop working.
     pub async fn store(
         &self,
         character_id: i64,
         tokens: &SsoTokens,
         scopes: &[String],
     ) -> Result<(), VaultError> {
+        if let Some(stored) = tokens::get(&self.db, character_id).await?
+            && stored.state != TokenState::Revoked
+            && scopes.iter().all(|s| stored.scopes.contains(s))
+            && stored.scopes.len() > scopes.len()
+        {
+            // Its access token has the fewer scopes: don't cache it either.
+            self.forget(character_id);
+            return Ok(());
+        }
         if let Some(refresh) = &tokens.refresh_token {
             let sealed = self.key.seal(refresh, &context(character_id))?;
             tokens::upsert(&self.db, character_id, &sealed, scopes).await?;
