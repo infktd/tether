@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 pub use crate::host::tether::plugin::discord::{Channel, Error as DiscordError, Mention};
 pub use crate::host::tether::plugin::esi::{
-    Consent, Error as EsiError, Named, Response as EsiResponse, Subject,
+    Error as EsiError, Named, Response as EsiResponse, Subject,
 };
 pub use crate::host::tether::plugin::identity::{Builtin, Character, State, Viewer};
 
@@ -33,7 +33,7 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         params: Vec<(String, String)>,
         page: Option<u32>,
     ) -> Fut<Result<EsiResponse, EsiError>>;
-    fn esi_consented(&self, plugin: String) -> Fut<Vec<Consent>>;
+    fn esi_characters(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_data_sources(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_names(&self, plugin: String, ids: Vec<i64>) -> Fut<Result<Vec<Named>, EsiError>>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;

@@ -81,7 +81,7 @@ discord = ["send_message"]
 http = ["janice.e-351.com"]         # exact HTTPS hostnames, at most 10
 
 [capabilities.esi]
-user = ["esi-wallet.read_character_wallet.v1"]              # each user consents on their profile
+user = ["esi-wallet.read_character_wallet.v1"]              # Member requires these of every character
 data_source = ["esi-industry.read_corporation_mining.v1"]  # characters an admin designates
 
 [[capabilities.schedules]]
@@ -333,7 +333,7 @@ fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
 Plugins never see a token or build an ESI URL. You name an endpoint and whose token to use; the host checks, on every call, that:
 
 - the endpoint is one Tether offers plugins (below) and its scope is declared in your `plugin.toml` and was approved;
-- for a **user** scope (`capabilities.esi.user`): the character's owner agreed on their profile page (and hasn't withdrawn);
+- for a **user** scope (`capabilities.esi.user`): the character is a Member's and its token carries the scope. Installing your plugin makes Member require your user scopes, so Members register every character with them (those who haven't are flagged for officers): there's no per-plugin opt-in or opt-out. Only scopes a character endpoint below uses are accepted. Keep the list short; each scope asks every member for more;
 - for a **data-source** scope (`capabilities.esi.data_source`): the character was offered as your data source by its owner and approved by an admin. Corporation endpoints read that character's corporation.
 
 ```rust
@@ -345,9 +345,9 @@ for source in esi::data_sources() {
         let extractions: Vec<serde_json::Value> = serde_json::from_str(&body)?;
     }
 }
-// A user's own data, for each character that agreed.
-for consent in esi::consented() {
-    let skills = esi::get("character-skills", Subject::Character(consent.character.id), &[], None)?;
+// Members' own data: every Member character registered with your scopes.
+for character in esi::characters() {
+    let skills = esi::get("character-skills", Subject::Character(character.id), &[], None)?;
 }
 let names = esi::names(&[40161234, 30000142])?;
 ```
@@ -366,8 +366,8 @@ let names = esi::names(&[40161234, 30000142])?;
 | `character-implants` | `esi-clones.read_implants.v1` | character | no | |
 | `character-location` | `esi-location.read_location.v1` | character | no | |
 
-- The body is ESI's JSON, at most 4 MiB; `pages` says how many pages a paged endpoint has. At most 100 ESI calls per page render, submit or job run.
-- Errors: `NotAllowed` (endpoint or scope), `NotConsented`, `NotADataSource`, `Token` (the character must log in again), `Status(code)` from ESI, `Invalid`, `TooLarge`, `Unavailable`. Plan for `NotConsented` and `Token`: people withdraw.
+- The body is ESI's JSON, at most 4 MiB; `pages` says how many pages a paged endpoint has. At most 100 ESI calls per submit or job run, 20 per page render.
+- Errors: `NotAllowed` (endpoint or scope), `NotRegistered` (not a Member's character, or its token lacks the scope), `NotADataSource`, `Token` (the character must log in again), `Status(code)` from ESI, `Invalid`, `TooLarge`, `Unavailable`. Plan for `NotRegistered` and `Token`: people leave, and revoke tokens.
 - Corporation endpoints also need the character to hold the in-game role CCP requires (Station Manager for extractions and structures, Accountant for observers); without it ESI answers 403.
 - Every call is recorded in your plugin's access log, which admins see. An admin must also enable your scopes on Tether's EVE application.
 

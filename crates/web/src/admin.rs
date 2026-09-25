@@ -59,11 +59,22 @@ pub async fn create_group(
     Ok(id)
 }
 
+/// Refusal for editing a group Tether manages.
+pub fn managed_group() -> AppError {
+    AppError::bad_request(
+        "Tether manages this group's members itself (everyone compliant in a state other than \
+         Guest). Grant it permissions or Discord roles instead.",
+    )
+}
+
 pub async fn delete_group(state: &AppState, actor: AccountId, id: i64) -> Result<(), AppError> {
     let mut tx = state.db.begin().await?;
     let group = groups::get(&mut *tx, GroupId(id))
         .await?
         .ok_or_else(|| AppError::not_found("No such group."))?;
+    if groups::is_managed(&mut *tx, group.id).await? {
+        return Err(managed_group());
+    }
     groups::delete(&mut *tx, group.id).await?;
     audit::record(
         &mut *tx,
@@ -109,6 +120,9 @@ pub async fn change_membership(
     groups::get(&mut *tx, group)
         .await?
         .ok_or_else(|| AppError::not_found("No such group."))?;
+    if groups::is_managed(&mut *tx, group).await? {
+        return Err(managed_group());
+    }
     let changed = match change {
         MembershipChange::Remove => groups::remove_member(&mut *tx, group, account).await?,
         MembershipChange::Deny => {

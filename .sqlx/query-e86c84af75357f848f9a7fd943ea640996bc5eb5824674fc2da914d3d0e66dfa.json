@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.corp_members (corporation_id, character_id)\n        SELECT $1, unnest($2::bigint[]) ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e86c84af75357f848f9a7fd943ea640996bc5eb5824674fc2da914d3d0e66dfa"
+}

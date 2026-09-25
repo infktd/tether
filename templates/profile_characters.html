@@ -4,7 +4,7 @@
   {% if let Some(error) = error %}<div class="alert mx-5" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}
   <table class="table">
     <thead>
-      <tr><th scope="col">Character</th><th scope="col">Character ID</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr>
+      <tr><th scope="col">Character</th><th scope="col">EVE access</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr>
     </thead>
     <tbody>
       {% for c in characters %}
@@ -16,11 +16,23 @@
             <div>
               <div class="font-medium">{{ c.name }}</div>
               <div class="text-xs text-muted-foreground">{% if c.is_main %}Main character{% else %}Alt{% endif %}</div>
-              {% if c.needs_login %}<a href="/auth/login?return_to=/profile" class="text-xs text-destructive underline underline-offset-4">EVE revoked access: log in with this character again</a>{% endif %}
+              {% if c.needs_login %}<a href="/register" class="text-xs text-destructive underline underline-offset-4">EVE revoked access: register this character again</a>{% endif %}
             </div>
           </div>
         </td>
-        <td class="num text-foreground-soft">{{ c.id }}</td>
+        <td>
+          {% if c.status == "registered" %}<span class="badge" data-variant="secondary">Registered</span>{% else if c.status == "missing" %}<a href="/register" class="badge" data-variant="destructive">Needs registering</a>{% endif %}
+          {% if c.scopes.is_empty() %}
+          <span class="text-sm text-muted-foreground">Identity only</span>
+          {% else %}
+          <details class="mt-1">
+            <summary class="text-sm cursor-pointer"><span class="num">{{ c.scopes.len() }}</span> {% if c.scopes.len() == 1 %}scope{% else %}scopes{% endif %} granted</summary>
+            <ul class="mt-2 grid gap-1 text-xs" role="list">
+              {% for s in c.scopes %}<li><span class="text-foreground">{{ s.description }}</span> <span class="text-muted-foreground">· {{ s.used_by }}</span></li>{% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+        </td>
         <td class="text-right">
           {% if c.is_main %}
           <span class="badge" data-variant="outline">{% call icons::icon("check") %}{% endcall %} Main</span>

@@ -733,6 +733,86 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ]
       }
     },
+    "/api/admin/states/{id}/scopes": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/{id}/scopes`: require a character scope of every\ncharacter in the state. Accounts that lack it become Guest until they\nregister again.",
+        "operationId": "add_scope",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/scopes/{scope}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/states/{id}/scopes/{scope}`",
+        "operationId": "remove_scope",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/groups": {
       "get": {
         "tags": [
@@ -1542,6 +1622,17 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "ScopeIn": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string"
+          }
+        }
+      },
       "SetMain": {
         "type": "object",
         "required": [
@@ -1643,13 +1734,22 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "name",
           "priority",
           "accounts",
-          "covers"
+          "covers",
+          "required_scopes",
+          "added_scopes"
         ],
         "properties": {
           "accounts": {
             "type": "integer",
             "format": "int64",
             "description": "Accounts in the state now."
+          },
+          "added_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The scopes an admin added (a subset of `required_scopes`)."
           },
           "builtin": {
             "type": [
@@ -1675,6 +1775,13 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "type": "integer",
             "format": "int32",
             "description": "Higher wins; Guest is 0."
+          },
+          "required_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Scopes every character must grant: for Member, the installed\nplugins' user scopes too."
           }
         }
       },

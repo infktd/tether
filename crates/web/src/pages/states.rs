@@ -54,6 +54,27 @@ pub struct Card {
     pub can_down: bool,
     /// What the state means, in terms of pilots.
     pub about: String,
+    /// Required because installed plugins read them (Member only).
+    pub plugin_scopes: Vec<ScopeChip>,
+    /// Required because an admin added them.
+    pub admin_scopes: Vec<ScopeChip>,
+    /// Character scopes an admin could still add.
+    pub scope_options: Vec<ScopeChip>,
+}
+
+pub struct ScopeChip {
+    pub scope: String,
+    pub description: String,
+    /// Which plugins need it (plugin scopes only).
+    pub by: String,
+}
+
+fn chip(scope: &str, by: String) -> ScopeChip {
+    ScopeChip {
+        scope: scope.to_owned(),
+        description: tether_core::scopes::describe(scope).to_owned(),
+        by,
+    }
 }
 
 #[derive(Template)]
@@ -61,6 +82,9 @@ pub struct Card {
 struct StatesPage {
     shell: Shell,
     cards: Vec<Card>,
+    /// Every scope Tether may ask for: all must be enabled on the EVE
+    /// application.
+    application_scopes: Vec<String>,
     error: Option<String>,
 }
 
@@ -72,12 +96,43 @@ async fn states_page(
     let states = db::list(&state.db).await?;
     let covered = db::covered(&state.db).await?;
     let counts = db::counts(&state.db).await?;
+    let admin_scopes = tether_db::compliance::all_admin_scopes(&state.db).await?;
+    let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
+    let mut plugin_scopes: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for p in &plugins {
+        for scope in &p.scopes {
+            plugin_scopes
+                .entry(scope.as_str())
+                .or_default()
+                .push(p.name.as_str());
+        }
+    }
+    let mut application_scopes: std::collections::BTreeSet<String> = admin_scopes
+        .iter()
+        .map(|(_, scope)| scope.clone())
+        .chain(plugin_scopes.keys().map(|s| (*s).to_owned()))
+        .chain(tether_core::scopes::CORE.iter().map(|s| (*s).to_owned()))
+        .collect();
+    application_scopes.insert(tether_core::scopes::CORP_MEMBERSHIP.to_owned());
+    for running in state.plugins.all_running() {
+        application_scopes.extend(
+            running
+                .manifest
+                .capabilities
+                .esi
+                .data_source
+                .iter()
+                .cloned(),
+        );
+    }
     // Guest is last; the one above it can't move down past it.
     let movable = states.iter().filter(|s| !s.is_guest()).count();
-    let cards = states
-        .iter()
-        .enumerate()
-        .map(|(i, s)| Card {
+    let cards =
+        states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                Card {
             id: s.id.0,
             name: s.name.clone(),
             style: s.style(),
@@ -107,14 +162,39 @@ async fn states_page(
                     .to_owned(),
                 None => format!("Pilots whose main is covered here are {}.", s.name),
             },
-        })
-        .collect();
+            plugin_scopes: if s.builtin == Some(Builtin::Member) {
+                plugin_scopes
+                    .iter()
+                    .map(|(scope, by)| chip(scope, by.join(", ")))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            admin_scopes: admin_scopes
+                .iter()
+                .filter(|(id, _)| *id == s.id)
+                .map(|(_, scope)| chip(scope, String::new()))
+                .collect(),
+            scope_options: tether_core::scopes::ALL
+                .iter()
+                .filter(|info| info.kind == tether_core::scopes::ScopeKind::Character)
+                .filter(|info| !tether_core::scopes::is_write(info.scope))
+                .filter(|info| !admin_scopes.iter().any(|(id, sc)| *id == s.id && sc == info.scope))
+                .filter(|info| {
+                    s.builtin != Some(Builtin::Member) || !plugin_scopes.contains_key(info.scope)
+                })
+                .map(|info| chip(info.scope, String::new()))
+                .collect(),
+        }
+            })
+            .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         status,
         &StatesPage {
             shell,
             cards,
+            application_scopes: application_scopes.into_iter().collect(),
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -388,4 +468,44 @@ pub async fn search(
             results,
         },
     ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScopeForm {
+    scope: String,
+    confirm: Option<String>,
+}
+
+/// `POST /admin/states/{id}/scopes`: require a scope. Everyone in the state
+/// who lacks it becomes Guest until they register again, so it asks first.
+pub async fn add_scope(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<ScopeForm>,
+) -> Result<Response, PageError> {
+    let action = format!("/admin/states/{id}/scopes");
+    let fields = vec![("scope", form.scope.clone())];
+    let add = Change::AddScope {
+        state: StateId(id),
+        scope: form.scope,
+    };
+    let confirmed = is_confirmed(form.confirm.as_deref());
+    change(&state, session, add, confirmed, action, fields).await
+}
+
+/// `POST /admin/states/{id}/scopes/remove`
+pub async fn remove_scope(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<ScopeForm>,
+) -> Result<Response, PageError> {
+    let action = format!("/admin/states/{id}/scopes/remove");
+    let fields = vec![("scope", form.scope.clone())];
+    let remove = Change::RemoveScope {
+        state: StateId(id),
+        scope: form.scope,
+    };
+    change(&state, session, remove, true, action, fields).await
 }

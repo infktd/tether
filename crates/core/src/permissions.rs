@@ -9,6 +9,7 @@ pub const ADMIN_DISCORD: &str = "admin.discord";
 pub const ADMIN_SYSTEM: &str = "admin.system";
 pub const ADMIN_PLUGINS: &str = "admin.plugins";
 pub const FLEET_PING: &str = "fleet.ping";
+pub const COMPLIANCE_VIEW: &str = "compliance.view";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
@@ -41,6 +42,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         FLEET_PING,
         "Send fleet pings to Discord, including @everyone",
     ),
+    (
+        COMPLIANCE_VIEW,
+        "See which accounts aren't compliant, what each character is missing (naming their alts), and which corporation members never registered",
+    ),
 ];
 
 pub fn is_known(permission: &str) -> bool {
@@ -50,7 +55,7 @@ pub fn is_known(permission: &str) -> bool {
 /// Permissions that must never reach people anyone can become (Guest, or
 /// an Open group): admin powers, and pinging the whole server.
 pub fn is_sensitive(permission: &str) -> bool {
-    permission.starts_with("admin.") || permission == FLEET_PING
+    permission.starts_with("admin.") || permission == FLEET_PING || permission == COMPLIANCE_VIEW
 }
 
 /// How accounts get into a group.

@@ -69,6 +69,9 @@ pub async fn join(
         .ok_or_else(|| AppError::not_found("No such group."))?;
     let target = format!("group:{id}");
     let mut tx = state.db.begin().await?;
+    if groups::is_managed(&mut *tx, group.id).await? {
+        return Err(crate::admin::managed_group());
+    }
     let out = match group.join_policy {
         JoinPolicy::Open => {
             if groups::add_member(&mut *tx, group.id, session.account).await? {
@@ -124,6 +127,9 @@ pub async fn leave(
     let group = GroupId(id);
     let target = format!("group:{id}");
     let mut tx = state.db.begin().await?;
+    if groups::is_managed(&mut *tx, group).await? {
+        return Err(crate::admin::managed_group());
+    }
     if groups::remove_member(&mut *tx, group, session.account).await? {
         audit::record(
             &mut *tx,

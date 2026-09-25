@@ -215,9 +215,11 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_web::states::register_jobs(&mut registry, db.clone(), esi.clone());
     tether_web::maintenance::register_jobs(&mut registry, db.clone());
     tether_web::sync::register_jobs(&mut registry, db.clone(), esi.clone());
+    tether_web::compliance::register_jobs(&mut registry, db.clone(), esi.clone(), vault.clone());
     let schedules = tether_web::maintenance::schedules()
         .into_iter()
         .chain(tether_web::sync::schedules())
+        .chain(tether_web::compliance::schedules())
         .chain(tether_web::discord_sync::schedules())
         .chain(tether_web::updates::schedules());
     for spec in schedules {

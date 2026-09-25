@@ -39,6 +39,8 @@ use crate::{api, setup};
         api::admin::move_state,
         api::admin::add_cover,
         api::admin::remove_cover,
+        api::admin::add_scope,
+        api::admin::remove_scope,
         api::admin::resolve_names,
         setup::status,
         setup::unlock,

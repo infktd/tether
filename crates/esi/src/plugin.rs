@@ -196,6 +196,26 @@ impl Esi {
         ))
     }
 
+    /// A corporation's member list (character ids), read with a member's
+    /// token carrying `esi-corporations.read_corporation_membership.v1`
+    /// (Corp Stats). No in-game role is needed.
+    pub async fn corporation_members(
+        &self,
+        token: &Secret<String>,
+        corporation_id: i64,
+    ) -> Result<Vec<i64>, EsiError> {
+        let client = self.with_token(token)?;
+        let request = client
+            .get_corporations_corporation_id_members()
+            .corporation_id(corporation_id)
+            .send();
+        Ok(self
+            .call_full(Priority::Bulk, request)
+            .await?
+            .into_inner()
+            .0)
+    }
+
     /// Calls a catalogue endpoint for `target` with that character's
     /// token. `params` are the endpoint's extra ids, checked here; `page`
     /// is for paged endpoints.

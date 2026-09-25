@@ -365,6 +365,14 @@ impl Plugins {
             .load(&installed.id, package.component, storage)
             .await
             .map_err(|e| e.to_string())?;
+        // Installs from before scope compliance didn't record the user
+        // scopes Member requires; catch them up.
+        crate::compliance::sync_plugin_scopes(db, &installed.id, &manifest.capabilities.esi.user)
+            .await
+            .map_err(|e| {
+                tracing::error!(plugin = installed.id, error = %e, "recording plugin scopes");
+                "its scopes couldn't be recorded".to_owned()
+            })?;
         // Its schedules run only while it does.
         plugin_jobs::sync_schedules(db, &installed.id, &schedules)
             .await
@@ -607,6 +615,21 @@ fn package_error(err: PackageError) -> AppError {
 
 /// What a package can't ask for.
 fn unsupported(package: &Package) -> Option<&'static str> {
+    // Member requires a plugin's user scopes of every character: only ones
+    // a catalogue character endpoint can use.
+    if package
+        .manifest
+        .capabilities
+        .esi
+        .user
+        .iter()
+        .any(|s| !crate::compliance::is_catalogue_character_scope(s))
+    {
+        return Some(
+            "Its user scopes (capabilities.esi.user) must be ones a character endpoint Tether \
+             offers plugins uses; see the SDK's AGENTS.md.",
+        );
+    }
     if !package.manifest.capabilities.storage && !package.migrations.is_empty() {
         return Some(
             "This package has database migrations but doesn't ask for storage \
@@ -818,6 +841,12 @@ async fn approve_now(
         .map(|(name, description)| (format!("plugin.{id}.{name}"), description.clone()))
         .collect();
     tether_db::permissions::add_plugin_permissions(&mut tx, &id, &declared).await?;
+    // Member now requires its user scopes (F11, F16).
+    if tether_db::compliance::set_plugin_scopes(&mut *tx, &id, &manifest.capabilities.esi.user)
+        .await?
+    {
+        crate::states::enqueue_evaluate_all(&mut *tx).await?;
+    }
     let storage = if manifest.capabilities.storage {
         if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
             return Err(AppError::bad_request(
@@ -1011,6 +1040,8 @@ async fn uninstall_now(
     }
     plugin_jobs::remove(&mut tx, id).await?;
     let grants = tether_db::permissions::remove_plugin_grants(&mut tx, id).await?;
+    // Member stops requiring its user scopes.
+    crate::states::enqueue_evaluate_all(&mut *tx).await?;
     let version = db::uninstall(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No plugin with that id is installed."))?;

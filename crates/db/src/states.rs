@@ -155,6 +155,22 @@ pub async fn granted_to<'e>(
     .await
 }
 
+/// The permissions granted to groups Tether manages (the Compliant group).
+pub async fn granted_to_managed_groups<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT DISTINCT g.permission AS "permission!"
+        FROM core.permission_grants g
+        JOIN core.groups gr ON gr.id = g.group_id
+        WHERE gr.managed IS NOT NULL
+        "#
+    )
+    .fetch_all(executor)
+    .await
+}
+
 /// How many states there are.
 pub async fn count<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar!(r#"SELECT count(*) AS "count!" FROM core.states"#)
@@ -469,31 +485,34 @@ pub async fn main<'e>(
     Ok(row.and_then(|r| main_from(Some(r.id), r.corporation_id, r.alliance_id)))
 }
 
-/// Records the account's state and returns the previous one.
+/// Records the account's state and whether it's compliant; returns the
+/// previous `(state, compliant)`.
 pub async fn set_account_state<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
     state: StateId,
-) -> Result<Option<StateId>, sqlx::Error> {
-    let previous = sqlx::query_scalar!(
+    compliant: bool,
+) -> Result<Option<(StateId, bool)>, sqlx::Error> {
+    let previous = sqlx::query!(
         r#"
         UPDATE core.accounts new
-        SET state_id = $2, state_evaluated_at = now()
+        SET state_id = $2, compliant = $3, state_evaluated_at = now()
         FROM core.accounts old
         WHERE new.id = $1 AND old.id = new.id
-        RETURNING old.state_id
+        RETURNING old.state_id, old.compliant
         "#,
         account.0,
         state.0,
+        compliant,
     )
     .fetch_optional(executor)
     .await?;
-    Ok(previous.map(StateId))
+    Ok(previous.map(|r| (StateId(r.state_id), r.compliant)))
 }
 
 /// The account's current state.
-pub async fn account_state(
-    pool: &PgPool,
+pub async fn account_state<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
 ) -> Result<Option<State>, sqlx::Error> {
     let row = sqlx::query!(
@@ -504,7 +523,7 @@ pub async fn account_state(
         "#,
         account.0
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority)))
 }

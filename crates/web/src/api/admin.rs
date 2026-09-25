@@ -333,6 +333,11 @@ pub struct StateOut {
     /// Accounts in the state now.
     pub accounts: i64,
     pub covers: Vec<CoveredOut>,
+    /// Scopes every character must grant: for Member, the installed
+    /// plugins' user scopes too.
+    pub required_scopes: Vec<String>,
+    /// The scopes an admin added (a subset of `required_scopes`).
+    pub added_scopes: Vec<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -354,10 +359,27 @@ pub async fn list_states(
     let states = state_db::list(&state.db).await?;
     let covered = state_db::covered(&state.db).await?;
     let counts = state_db::counts(&state.db).await?;
+    let added = tether_db::compliance::all_admin_scopes(&state.db).await?;
+    let mut required = std::collections::HashMap::new();
+    {
+        let mut conn = state.db.acquire().await?;
+        for s in &states {
+            required.insert(s.id, crate::compliance::required_in(&mut conn, s).await?);
+        }
+    }
     Ok(Json(
         states
             .into_iter()
             .map(|s| StateOut {
+                required_scopes: required
+                    .get(&s.id)
+                    .map(|r| r.iter().cloned().collect())
+                    .unwrap_or_default(),
+                added_scopes: added
+                    .iter()
+                    .filter(|(id, _)| *id == s.id)
+                    .map(|(_, scope)| scope.clone())
+                    .collect(),
                 id: s.id.0,
                 builtin: s.builtin.map(tether_core::states::Builtin::as_str),
                 priority: s.priority,
@@ -531,6 +553,60 @@ pub async fn remove_cover(
     let change = Change::Remove {
         state: StateId(id),
         entity_id,
+    };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ScopeIn {
+    pub scope: String,
+}
+
+/// `POST /api/admin/states/{id}/scopes`: require a character scope of every
+/// character in the state. Accounts that lack it become Guest until they
+/// register again.
+#[utoipa::path(post, path = "/api/admin/states/{id}/scopes", tag = "admin", security(("session" = [])), request_body = ScopeIn,
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404), (status = 409)))]
+pub async fn add_scope(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Json(body): Json<ScopeIn>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::AddScope {
+        state: StateId(id),
+        scope: body.scope,
+    };
+    state_admin::apply(
+        &state.db,
+        &state.esi,
+        Actor::Account(session.account),
+        &change,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/admin/states/{id}/scopes/{scope}`
+#[utoipa::path(delete, path = "/api/admin/states/{id}/scopes/{scope}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("scope" = String, Path)), responses((status = 204), (status = 403), (status = 404)))]
+pub async fn remove_scope(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path((id, scope)): Path<(i64, String)>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_STATES).await?;
+    let change = Change::RemoveScope {
+        state: StateId(id),
+        scope,
     };
     state_admin::apply(
         &state.db,

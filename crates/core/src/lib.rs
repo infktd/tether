@@ -3,6 +3,7 @@
 pub mod crypto;
 pub mod nickname;
 pub mod permissions;
+pub mod scopes;
 pub mod scram;
 mod secret;
 pub mod states;

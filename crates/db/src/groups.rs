@@ -57,6 +57,21 @@ pub async fn delete<'e>(
     Ok(result.rows_affected() == 1)
 }
 
+/// Whether Tether manages the group's members itself (the Compliant group):
+/// nobody adds, removes, joins, leaves or deletes it by hand.
+pub async fn is_managed<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    group: GroupId,
+) -> Result<bool, sqlx::Error> {
+    let managed = sqlx::query_scalar!(
+        r#"SELECT managed IS NOT NULL AS "managed!" FROM core.groups WHERE id = $1"#,
+        group.0
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(managed.unwrap_or(false))
+}
+
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,

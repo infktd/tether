@@ -40,6 +40,8 @@ const API_ROUTES: &[(&str, &str)] = &[
     ("post", "/api/admin/states/{id}/move"),
     ("post", "/api/admin/states/{id}/covers"),
     ("delete", "/api/admin/states/{id}/covers/{entity_id}"),
+    ("post", "/api/admin/states/{id}/scopes"),
+    ("delete", "/api/admin/states/{id}/scopes/{scope}"),
     ("post", "/api/admin/states/resolve"),
     ("get", "/api/setup"),
     ("post", "/api/setup/unlock"),

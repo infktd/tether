@@ -150,7 +150,7 @@ async fn revoked_tokens_are_marked_audited_shown_and_fixed_by_logging_in(db: PgP
 
     let profile = send(&h.app, get("/profile", &[(SESSION, &session)])).await;
     assert!(
-        profile.body.contains("log in with this character again"),
+        profile.body.contains("register this character again"),
         "{}",
         profile.body
     );

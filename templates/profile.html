@@ -8,9 +8,9 @@
     <h1 class="page-title">Profile</h1>
     <p class="text-muted-foreground mt-1">Your characters, access state and groups.</p>
   </div>
-  <a href="/auth/login?return_to=/profile" class="btn" data-variant="outline">
-    {% call icons::icon("plus") %}{% endcall %} Add character
-  </a>
+  <form method="post" action="/register/start" hx-boost="false">
+    <button type="submit" class="btn" data-variant="outline">{% call icons::icon("plus") %}{% endcall %} Add character</button>
+  </form>
 </div>
 
 <section class="grid grid-cols-4 gap-4" aria-label="Summary">
@@ -59,50 +59,39 @@
 </section>
 {% endif %}
 
+<section class="card">
+  <header><h2>Corporation member list</h2><p>Share your corporation's member list so officers can see who hasn't registered (Corp Stats). Any member can share it; an admin approves it before it's used.</p></header>
+  <section class="grid gap-3 text-sm">
+    {% for c in corp_sources %}
+    <div class="flex items-center justify-between gap-3">
+      <span>{{ c.name }} {% if c.status == "approved" %}<span class="badge" data-variant="secondary">in use</span>{% else if c.status == "moved" %}<span class="badge" data-variant="outline">changed corporation: waiting for an admin</span>{% else %}<span class="badge" data-variant="outline">waiting for an admin</span>{% endif %}</span>
+      <form method="post" action="/profile/corp-stats/{{ c.character_id }}/withdraw" hx-boost="true">
+        <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Stop sharing</button>
+      </form>
+    </div>
+    {% endfor %}
+    <form method="post" action="/profile/corp-stats/offer" hx-boost="false">
+      <button type="submit" class="btn" data-variant="outline" data-size="sm">Share a member list</button>
+    </form>
+  </section>
+</section>
+
 {% for p in plugin_access %}
 <section class="card">
-  <header><h2>{{ p.name }}</h2><p>This plugin can read EVE data only with your say-so, and never sees your login tokens.</p></header>
-  <section class="grid gap-4 text-sm">
-    {% if !p.user_scopes.is_empty() %}
-    <div class="grid gap-2">
-      <div class="font-medium">Reads, for characters you choose</div>
-      <div class="flex flex-wrap gap-2">{% for s in p.user_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
-      {% if p.consented.is_empty() %}
-      <p class="text-muted-foreground">None of your characters have agreed yet.</p>
-      {% else %}
-      <ul class="grid gap-2">
-        {% for c in p.consented %}
-        <li class="flex items-center justify-between gap-3">
-          <span>{{ c.name }}</span>
-          <form method="post" action="/profile/plugins/{{ p.id }}/consent/{{ c.id }}/revoke" hx-boost="true" hx-confirm="Stop {{ p.name }} reading {{ c.name }}'s data?">
-            <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Revoke</button>
-          </form>
-        </li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-      <form method="post" action="/profile/plugins/{{ p.id }}/consent" hx-boost="false">
-        <button type="submit" class="btn" data-variant="outline" data-size="sm">Allow a character</button>
+  <header><h2>{{ p.name }}: corporation data</h2><p>This plugin reads corporation data through a character with the right in-game roles, offered by its owner and approved by an admin. It never sees your login tokens.</p></header>
+  <section class="grid gap-3 text-sm">
+    <div class="flex flex-wrap gap-2">{% for s in p.source_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
+    {% for c in p.offered %}
+    <div class="flex items-center justify-between gap-3">
+      <span>{{ c.name }} {% if c.approved %}<span class="badge" data-variant="secondary">in use</span>{% else %}<span class="badge" data-variant="outline">waiting for an admin</span>{% endif %}</span>
+      <form method="post" action="/profile/plugins/{{ p.id }}/offer/{{ c.id }}/withdraw" hx-boost="true">
+        <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button>
       </form>
     </div>
-    {% endif %}
-    {% if !p.source_scopes.is_empty() %}
-    <div class="grid gap-2">
-      <div class="font-medium">Corporation data, through a character with the right roles</div>
-      <div class="flex flex-wrap gap-2">{% for s in p.source_scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
-      {% for c in p.offered %}
-      <div class="flex items-center justify-between gap-3">
-        <span>{{ c.name }} {% if c.approved %}<span class="badge" data-variant="secondary">in use</span>{% else %}<span class="badge" data-variant="outline">waiting for an admin</span>{% endif %}</span>
-        <form method="post" action="/profile/plugins/{{ p.id }}/offer/{{ c.id }}/withdraw" hx-boost="true">
-          <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button>
-        </form>
-      </div>
-      {% endfor %}
-      <form method="post" action="/profile/plugins/{{ p.id }}/offer" hx-boost="false">
-        <button type="submit" class="btn" data-variant="outline" data-size="sm">Offer a character</button>
-      </form>
-    </div>
-    {% endif %}
+    {% endfor %}
+    <form method="post" action="/profile/plugins/{{ p.id }}/offer" hx-boost="false">
+      <button type="submit" class="btn" data-variant="outline" data-size="sm">Offer a character</button>
+    </form>
   </section>
 </section>
 {% endfor %}

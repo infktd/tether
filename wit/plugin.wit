@@ -305,13 +305,14 @@ interface identity {
 
 /// ESI, through the host: plugins name an endpoint and whose token to use,
 /// never a URL, and never see a token. Every call is checked against what
-/// the admin approved (`capabilities.esi`) and what the character's owner
-/// agreed to, and logged.
+/// the admin approved (`capabilities.esi`) and the character's standing
+/// (a Member's, registered with the scope), and logged.
 interface esi {
     use identity.{character};
 
     variant subject {
-        /// A character that consented to this plugin's user scopes.
+        /// A Member's character whose token carries the endpoint's scope:
+        /// see `characters`.
         character(s64),
         /// A data-source character an admin approved: its corporation's
         /// data, for corporation endpoints.
@@ -329,8 +330,8 @@ interface esi {
         /// Not an endpoint Tether offers plugins, or its scope isn't one
         /// this plugin was approved for, or the wrong kind of subject.
         not-allowed(string),
-        /// The character hasn't consented to this plugin (or withdrew).
-        not-consented,
+        /// Not a Member's character, or its token lacks the scope.
+        not-registered,
         /// Not an approved data source of this plugin.
         not-a-data-source,
         /// The character's token is gone or revoked: they need to log in
@@ -346,12 +347,6 @@ interface esi {
         unavailable,
     }
 
-    record consent {
-        character: character,
-        /// The user scopes it granted this plugin.
-        scopes: list<string>,
-    }
-
     record named {
         id: s64,
         name: string,
@@ -363,8 +358,9 @@ interface esi {
     /// Calls a catalogue endpoint (see AGENTS.md) as `subject`. `params`
     /// are the endpoint's extra ids; `page` is for paged endpoints.
     get: func(endpoint: string, subject: subject, params: list<tuple<string, string>>, page: option<u32>) -> result<response, error>;
-    /// Characters that consented to this plugin's user scopes.
-    consented: func() -> list<consent>;
+    /// Members' characters whose tokens carry every one of this plugin's
+    /// user scopes.
+    characters: func() -> list<character>;
     /// This plugin's approved data-source characters.
     data-sources: func() -> list<character>;
     /// Names for ids (public ESI; at most 1,000).

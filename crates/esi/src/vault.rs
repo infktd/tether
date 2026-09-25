@@ -103,6 +103,13 @@ impl TokenVault {
         Ok(())
     }
 
+    /// Confirms the stored token still works by refreshing it now, whatever
+    /// is cached (the daily token check).
+    pub async fn verify(&self, character_id: i64) -> Result<(), VaultError> {
+        self.forget(character_id);
+        self.access_token(character_id, &[]).await.map(|_| ())
+    }
+
     /// A valid access token carrying `required` scopes, refreshing if needed.
     pub async fn access_token(
         &self,

@@ -1,8 +1,9 @@
-//! Granting plugins ESI access (F16): users consent to a plugin's user
-//! scopes for their characters, and offer characters as a plugin's data
-//! source, which an admin approves. Both go through an EVE SSO login that
-//! asks for the plugin's scopes, plus those the account already granted
-//! (so a new grant never drops an old one). Every change is audited.
+//! Plugin data sources (F16): users offer characters as a plugin's data
+//! source, which an admin approves, through an EVE SSO login that asks for
+//! the plugin's data-source scopes plus those the account already granted
+//! (so a new grant never drops an old one). User scopes need no step here:
+//! Member requires them (see `compliance`). Also the Discord channels a
+//! plugin may post to. Every change is audited.
 
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
@@ -20,50 +21,6 @@ fn target(plugin: &str) -> String {
     format!("plugin:{plugin}")
 }
 
-/// The scopes to ask SSO for: the plugin's, and every scope the account's
-/// tokens already carry.
-async fn scopes_for(
-    state: &AppState,
-    account: AccountId,
-    plugin_scopes: &[String],
-) -> Result<Vec<String>, AppError> {
-    let mut scopes = db::account_token_scopes(&state.db, account).await?;
-    for scope in plugin_scopes {
-        if !scopes.contains(scope) {
-            scopes.push(scope.clone());
-        }
-    }
-    scopes.sort();
-    Ok(scopes)
-}
-
-/// Starts the login that grants `plugin` its user scopes.
-pub async fn start_consent(
-    state: &AppState,
-    jar: CookieJar,
-    account: AccountId,
-    plugin: &str,
-) -> Result<Response, AppError> {
-    let running = state
-        .plugins
-        .running(plugin)
-        .ok_or_else(|| AppError::not_found("No such plugin is running."))?;
-    let wanted = &running.manifest.capabilities.esi.user;
-    if wanted.is_empty() {
-        return Err(AppError::bad_request("That plugin asks for no ESI access."));
-    }
-    let scopes = scopes_for(state, account, wanted).await?;
-    crate::auth::start_login(
-        state,
-        jar,
-        "/profile",
-        Purpose::Consent(plugin.to_owned()),
-        &scopes,
-        Some(account),
-    )
-    .await
-}
-
 /// Starts the login that offers a character as `plugin`'s data source.
 pub async fn start_offer(
     state: &AppState,
@@ -79,7 +36,7 @@ pub async fn start_offer(
     if wanted.is_empty() {
         return Err(AppError::bad_request("That plugin uses no data sources."));
     }
-    let scopes = scopes_for(state, account, wanted).await?;
+    let scopes = crate::compliance::ask_scopes(&state.db, account, wanted.iter().cloned()).await?;
     crate::auth::start_login(
         state,
         jar,
@@ -91,26 +48,20 @@ pub async fn start_offer(
     .await
 }
 
-/// After a consent or offer login, in the callback: records it, if the
-/// character is on the signed-in account and SSO granted every scope the
-/// plugin needs.
+/// After an offer login, in the callback: records it, if the character
+/// is on the signed-in account and SSO granted every scope the plugin
+/// needs.
 pub async fn finish(
     state: &AppState,
     account: AccountId,
     identity: &SsoIdentity,
-    purpose: &Purpose,
+    plugin: &str,
 ) -> Result<(), AppError> {
-    let (plugin, consent) = match purpose {
-        Purpose::Login => return Ok(()),
-        Purpose::Consent(plugin) => (plugin, true),
-        Purpose::DataSource(plugin) => (plugin, false),
-    };
     let running = state
         .plugins
         .running(plugin)
         .ok_or_else(|| AppError::not_found("That plugin isn't running any more."))?;
-    let esi = &running.manifest.capabilities.esi;
-    let needed = if consent { &esi.user } else { &esi.data_source };
+    let needed = &running.manifest.capabilities.esi.data_source;
     let missing: Vec<&String> = needed
         .iter()
         .filter(|s| !identity.scopes.contains(s))
@@ -133,19 +84,11 @@ pub async fn finish(
         ));
     }
     let mut tx = state.db.begin().await?;
-    if consent {
-        db::grant_consent(&mut *tx, plugin, identity.character_id, needed).await?;
-    } else {
-        db::offer_data_source(&mut *tx, plugin, identity.character_id, account).await?;
-    }
+    db::offer_data_source(&mut *tx, plugin, identity.character_id, account).await?;
     audit::record(
         &mut *tx,
         Actor::Account(account),
-        if consent {
-            "plugin.consent_granted"
-        } else {
-            "plugin.data_source_offered"
-        },
+        "plugin.data_source_offered",
         Some(&target(plugin)),
         json!({ "character_id": identity.character_id, "scopes": needed }),
     )
@@ -160,30 +103,6 @@ async fn own(state: &AppState, account: AccountId, character: i64) -> Result<(),
         Some(owner) if owner == account => Ok(()),
         _ => Err(AppError::not_found("That character isn't on your account.")),
     }
-}
-
-/// Withdraws a character's consent to a plugin.
-pub async fn revoke_consent(
-    state: &AppState,
-    account: AccountId,
-    plugin: &str,
-    character: i64,
-) -> Result<(), AppError> {
-    own(state, account, character).await?;
-    let mut tx = state.db.begin().await?;
-    if !db::revoke_consent(&mut *tx, plugin, character).await? {
-        return Err(AppError::not_found("There's no such consent."));
-    }
-    audit::record(
-        &mut *tx,
-        Actor::Account(account),
-        "plugin.consent_revoked",
-        Some(&target(plugin)),
-        json!({ "character_id": character }),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(())
 }
 
 /// The owner withdraws a character from being a data source.

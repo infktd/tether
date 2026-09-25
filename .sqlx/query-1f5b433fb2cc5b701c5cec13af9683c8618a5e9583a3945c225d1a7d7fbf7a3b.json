@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id, m.id AS main_id, m.name AS main_name,\n               a.state_id, a.state_evaluated_at\n        FROM core.accounts a\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE NOT a.compliant\n        ORDER BY m.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "main_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "main_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "state_evaluated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "state_evaluated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "1f5b433fb2cc5b701c5cec13af9683c8618a5e9583a3945c225d1a7d7fbf7a3b"
+}

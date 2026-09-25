@@ -1,0 +1,98 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.character_id, c.name AS character_name, c.corporation_id AS current,\n               m.name AS \"offered_by?\", s.offered_at, s.approved_at, s.corporation_id\n        FROM core.corp_sources s\n        JOIN core.characters c ON c.id = s.character_id\n        LEFT JOIN core.accounts a ON a.id = s.offered_by\n        LEFT JOIN core.characters m ON m.id = a.main_character_id\n        ORDER BY s.approved_at IS NOT NULL, c.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "character_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_sources",
+            "name": "character_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "character_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "current",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "offered_by?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "offered_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.corp_sources",
+            "name": "offered_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "approved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.corp_sources",
+            "name": "approved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_sources",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "84277c6ccfdc222bf00dea9a8a7b8c5db76094b219e43d4dc26dde2e82fe1fc2"
+}

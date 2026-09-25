@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"found!\"\n        FROM core.accounts a\n        JOIN core.characters c ON c.id = a.main_character_id\n        JOIN core.states s ON s.id = a.state_id\n        WHERE c.corporation_id = $1 AND s.builtin IS DISTINCT FROM 'guest'\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "found!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "20f01c843e91252d844644c2bb9001d040ae7442b141b0bbdee906d5435643dc"
+}

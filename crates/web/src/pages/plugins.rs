@@ -64,8 +64,13 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
     }
     if !c.esi.user.is_empty() {
         add(
-            "ESI access from each user who consents",
-            c.esi.user.join(", "),
+            "ESI access to every Member's characters",
+            format!(
+                "{}. Member will require these of every character: Members who haven't \
+                 granted them are flagged as not compliant (and leave the Compliant group) \
+                 until they register again.",
+                c.esi.user.join(", ")
+            ),
         );
     }
     if !c.esi.data_source.is_empty() {

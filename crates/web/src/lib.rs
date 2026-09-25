@@ -10,6 +10,7 @@ compile_error!("the dev-docs feature must never be enabled in release builds");
 pub mod admin;
 mod api;
 pub mod auth;
+pub mod compliance;
 mod csrf;
 #[cfg(feature = "dev-login")]
 mod dev_login;
@@ -194,13 +195,26 @@ pub fn router(state: AppState) -> Router {
             "/admin/plugins/{id}/uninstall",
             post(pages::plugins::uninstall),
         )
+        .route("/register", get(pages::compliance::register))
+        .route("/register/start", post(pages::compliance::start))
+        .route("/profile/corp-stats/offer", post(pages::compliance::offer))
         .route(
-            "/profile/plugins/{id}/consent",
-            post(pages::plugin_access::consent),
+            "/profile/corp-stats/{character}/withdraw",
+            post(pages::compliance::withdraw),
+        )
+        .route("/compliance", get(pages::compliance::page))
+        .route(
+            "/compliance/sources/{character}/approve",
+            post(pages::compliance::approve_source),
         )
         .route(
-            "/profile/plugins/{id}/consent/{character}/revoke",
-            post(pages::plugin_access::revoke),
+            "/compliance/sources/{character}/remove",
+            post(pages::compliance::remove_source),
+        )
+        .route("/admin/states/{id}/scopes", post(pages::states::add_scope))
+        .route(
+            "/admin/states/{id}/scopes/remove",
+            post(pages::states::remove_scope),
         )
         .route(
             "/profile/plugins/{id}/offer",
@@ -265,6 +279,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/admin/states/{id}/covers/{entity_id}",
             delete(api::admin::remove_cover),
+        )
+        .route("/api/admin/states/{id}/scopes", post(api::admin::add_scope))
+        .route(
+            "/api/admin/states/{id}/scopes/{scope}",
+            delete(api::admin::remove_scope),
         )
         .route("/api/admin/states/resolve", post(api::admin::resolve_names))
         .route("/api/setup", get(setup::status))

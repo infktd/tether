@@ -87,7 +87,7 @@ pub async fn login(
         .ok_or_else(|| AppError::internal("fixture character linked to another account"))?;
     let forced = Builtin::parse(fixture.state).unwrap_or(Builtin::Guest);
     let forced = state_db::builtin(&state.db, forced).await?;
-    state_db::set_account_state(&state.db, account, forced.id).await?;
+    state_db::set_account_state(&state.db, account, forced.id, true).await?;
 
     if let Some(old) = jar.get(SESSION_COOKIE) {
         db::delete_session(&state.db, &hash_token(old.value())).await?;

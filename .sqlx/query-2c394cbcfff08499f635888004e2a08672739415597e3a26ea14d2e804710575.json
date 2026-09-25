@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"ok!\"\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE c.id = $1 AND s.builtin = 'member'\n          AND t.state = 'valid' AND $2 = ANY(t.scopes)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2c394cbcfff08499f635888004e2a08672739415597e3a26ea14d2e804710575"
+}

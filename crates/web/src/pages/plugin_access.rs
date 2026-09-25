@@ -1,6 +1,6 @@
-//! The profile page's plugin section: which plugins may read what with
-//! your characters (consent to user scopes, revocable), and which of your
-//! characters you've offered as a plugin's data source.
+//! The profile page's plugin section: which of your characters you've
+//! offered as a plugin's data source. (User scopes need nothing here:
+//! registering your characters for your state covers them.)
 
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -23,13 +23,11 @@ pub struct CharacterRef {
 pub struct PluginAccess {
     pub id: String,
     pub name: String,
-    pub user_scopes: Vec<String>,
-    pub consented: Vec<CharacterRef>,
     pub source_scopes: Vec<String>,
     pub offered: Vec<CharacterRef>,
 }
 
-/// Running plugins that use ESI, with this account's consents and offers.
+/// Running plugins with data sources, and this account's offers.
 pub async fn for_profile(
     state: &AppState,
     session: &CurrentSession,
@@ -44,45 +42,27 @@ pub async fn for_profile(
             .find(|c| c.id == id)
             .map(|c| c.name.clone())
     };
-    let consents = plugin_esi::account_consents(&state.db, session.account).await?;
     let mut out = Vec::new();
     for running in state.plugins.all_running() {
         let esi = &running.manifest.capabilities.esi;
-        if esi.user.is_empty() && esi.data_source.is_empty() {
+        if esi.data_source.is_empty() {
             continue;
         }
         let id = running.manifest.plugin.id.clone();
-        let consented = consents
-            .iter()
-            .filter(|(plugin, _)| *plugin == id)
-            .filter_map(|(_, character)| {
+        let offered = plugin_esi::data_sources(&state.db, &id)
+            .await?
+            .into_iter()
+            .filter_map(|d| {
                 Some(CharacterRef {
-                    id: *character,
-                    name: name_of(*character)?,
-                    approved: true,
+                    name: name_of(d.character.id)?,
+                    id: d.character.id,
+                    approved: d.in_use(),
                 })
             })
             .collect();
-        let offered = if esi.data_source.is_empty() {
-            Vec::new()
-        } else {
-            plugin_esi::data_sources(&state.db, &id)
-                .await?
-                .into_iter()
-                .filter_map(|d| {
-                    Some(CharacterRef {
-                        name: name_of(d.character.id)?,
-                        id: d.character.id,
-                        approved: d.approved,
-                    })
-                })
-                .collect()
-        };
         out.push(PluginAccess {
             name: running.manifest.plugin.name.clone(),
-            user_scopes: esi.user.clone(),
             source_scopes: esi.data_source.clone(),
-            consented,
             offered,
             id,
         });
@@ -97,30 +77,6 @@ fn plugin(state: &AppState, id: &str) -> Result<String, PageError> {
         .and_then(|()| state.plugins.running(id))
         .map(|r| r.manifest.plugin.id.clone())
         .ok_or_else(|| AppError::not_found("No such plugin is running.").into())
-}
-
-/// `POST /profile/plugins/{id}/consent`: off to EVE SSO for its scopes.
-pub async fn consent(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    jar: CookieJar,
-    Path(id): Path<String>,
-) -> Result<Response, PageError> {
-    let session = session.ok_or_else(AppError::unauthorized)?;
-    let id = plugin(&state, &id)?;
-    Ok(plugin_consent::start_consent(&state, jar, session.account, &id).await?)
-}
-
-/// `POST /profile/plugins/{id}/consent/{character}/revoke`
-pub async fn revoke(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path((id, character)): Path<(String, i64)>,
-) -> Result<Response, PageError> {
-    let session = session.ok_or_else(AppError::unauthorized)?;
-    tether_plugins::manifest::check_id(&id).map_err(|_| AppError::not_found("No such plugin."))?;
-    plugin_consent::revoke_consent(&state, session.account, &id, character).await?;
-    Ok(Redirect::to("/profile").into_response())
 }
 
 /// `POST /profile/plugins/{id}/offer`: off to EVE SSO to link a character

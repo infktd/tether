@@ -113,9 +113,9 @@ impl tether::plugin::esi::Host for CallState {
             .await
     }
 
-    async fn consented(&mut self) -> Vec<services::Consent> {
+    async fn characters(&mut self) -> Vec<services::Character> {
         match self.esi() {
-            Ok(services) => services.esi_consented(self.plugin.clone()).await,
+            Ok(services) => services.esi_characters(self.plugin.clone()).await,
             Err(_) => Vec::new(),
         }
     }

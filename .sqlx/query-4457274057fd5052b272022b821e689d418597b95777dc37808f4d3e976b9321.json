@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT a.id FROM core.accounts a\n        JOIN core.characters c ON c.account_id = a.id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE a.compliant AND t.state = 'revoked'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4457274057fd5052b272022b821e689d418597b95777dc37808f4d3e976b9321"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE core.accounts new\n        SET state_id = $2, state_evaluated_at = now()\n        FROM core.accounts old\n        WHERE new.id = $1 AND old.id = new.id\n        RETURNING old.state_id\n        ",
+  "query": "SELECT state_id FROM core.accounts WHERE id = $1 AND NOT compliant",
   "describe": {
     "columns": [
       {
@@ -17,7 +17,6 @@
     ],
     "parameters": {
       "Left": [
-        "Int8",
         "Int8"
       ]
     },
@@ -25,5 +24,5 @@
       false
     ]
   },
-  "hash": "aa0ac23b5b78624a25537312e1ce1461d7f2bd40bdd99f834c44bf46cf4b05d8"
+  "hash": "02d0c11ac14f89df7d742fe0282eb6a2f890d6107d031f35e86ae3cd5a5c5bc0"
 }

@@ -1,6 +1,6 @@
-//! Plugin ESI access (F16): users' consents, data-source characters, the
-//! access log, and the Discord channels a plugin may post to. Callers
-//! audit consent and data-source changes.
+//! Plugin ESI access (F16): the characters plugins may use, data-source
+//! characters, the access log, and the Discord channels a plugin may post
+//! to. Callers audit data-source changes.
 
 use chrono::{DateTime, Utc};
 
@@ -34,114 +34,6 @@ pub async fn account_characters(
     )
     .fetch_all(pool)
     .await
-}
-
-// ---- consents -----------------------------------------------------------------
-
-/// Records (or refreshes) a character's consent to a plugin's scopes.
-pub async fn grant_consent<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    plugin_id: &str,
-    character_id: i64,
-    scopes: &[String],
-) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        r#"
-        INSERT INTO core.plugin_consents (plugin_id, character_id, scopes)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (plugin_id, character_id)
-        DO UPDATE SET scopes = EXCLUDED.scopes, granted_at = now()
-        "#,
-        plugin_id,
-        character_id,
-        scopes,
-    )
-    .execute(executor)
-    .await?;
-    Ok(())
-}
-
-/// Withdraws a consent; whether there was one.
-pub async fn revoke_consent<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    plugin_id: &str,
-    character_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query!(
-        "DELETE FROM core.plugin_consents WHERE plugin_id = $1 AND character_id = $2",
-        plugin_id,
-        character_id
-    )
-    .execute(executor)
-    .await?;
-    Ok(done.rows_affected() == 1)
-}
-
-/// The scopes a character granted a plugin, if it did.
-pub async fn consent<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    plugin_id: &str,
-    character_id: i64,
-) -> Result<Option<Vec<String>>, sqlx::Error> {
-    sqlx::query_scalar!(
-        "SELECT scopes FROM core.plugin_consents WHERE plugin_id = $1 AND character_id = $2",
-        plugin_id,
-        character_id
-    )
-    .fetch_optional(executor)
-    .await
-}
-
-/// Characters that consented to a plugin, with their scopes.
-pub async fn consents(
-    pool: &PgPool,
-    plugin_id: &str,
-) -> Result<Vec<(CharacterRow, Vec<String>)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT c.id, c.name, c.corporation_id, c.alliance_id, p.scopes
-        FROM core.plugin_consents p JOIN core.characters c ON c.id = p.character_id
-        WHERE p.plugin_id = $1 ORDER BY c.name
-        "#,
-        plugin_id
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            (
-                CharacterRow {
-                    id: r.id,
-                    name: r.name,
-                    corporation_id: r.corporation_id,
-                    alliance_id: r.alliance_id,
-                },
-                r.scopes,
-            )
-        })
-        .collect())
-}
-
-/// An account's consents: `(plugin id, character id)`.
-pub async fn account_consents(
-    pool: &PgPool,
-    account: AccountId,
-) -> Result<Vec<(String, i64)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT p.plugin_id, p.character_id
-        FROM core.plugin_consents p JOIN core.characters c ON c.id = p.character_id
-        WHERE c.account_id = $1
-        "#,
-        account.0
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| (r.plugin_id, r.character_id))
-        .collect())
 }
 
 /// Every scope the account's characters' tokens hold, so a new grant can

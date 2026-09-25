@@ -95,6 +95,15 @@ DELETE {{base}}/api/admin/states/1/covers/1
 Origin: {{base}}
 HTTP 401
 
+POST {{base}}/api/admin/states/1/scopes
+Origin: {{base}}
+{"scope": "esi-skills.read_skills.v1"}
+HTTP 401
+
+DELETE {{base}}/api/admin/states/1/scopes/esi-skills.read_skills.v1
+Origin: {{base}}
+HTTP 401
+
 POST {{base}}/api/admin/states/resolve
 Origin: {{base}}
 {"names": ["Goonswarm Federation"]}

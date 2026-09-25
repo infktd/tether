@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT l.corporation_id, n.name AS \"corporation_name?\", l.fetched_at, l.members,\n               (SELECT count(*) FROM core.corp_members m\n                JOIN core.characters c ON c.id = m.character_id\n                WHERE m.corporation_id = l.corporation_id) AS \"registered!\"\n        FROM core.corp_member_lists l\n        LEFT JOIN core.entity_names n ON n.id = l.corporation_id\n        ORDER BY n.name NULLS LAST, l.corporation_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_member_lists",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "corporation_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "fetched_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.corp_member_lists",
+            "name": "fetched_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "members",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.corp_member_lists",
+            "name": "members"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "registered!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "f7bd5e21cbc22b35b7615443abfdbcfca9d568abf72ed5c6034cc1ab7f80913b"
+}

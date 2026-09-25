@@ -282,7 +282,7 @@ mod tests {
         let pilot = account(&pool, 2).await;
         let member = states::builtin(&pool, Builtin::Member).await.unwrap().id;
         let blue = states::builtin(&pool, Builtin::Blue).await.unwrap().id;
-        states::set_account_state(&pool, pilot, member)
+        states::set_account_state(&pool, pilot, member, true)
             .await
             .unwrap();
         let officers = groups::create(&pool, "Officers", "", JoinPolicy::Assigned)

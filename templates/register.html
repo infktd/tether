@@ -1,0 +1,78 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Register characters{% endblock %}
+{% block breadcrumb %}<a href="/profile">Profile</a>&nbsp;/&nbsp;<span class="text-foreground">Register characters</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title">Register your characters</h1>
+    {% if let Some(target) = target %}
+    {% if done %}
+    <p class="text-muted-foreground mt-1">You're all set: every character is registered for <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>.</p>
+    {% else if flagged %}
+    <p class="text-muted-foreground mt-1 max-w-3xl">You're <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>, which needs every character on your account, main and alts, to grant the access below. Some features (and anything your admins tie to compliance) wait until they all do.</p>
+    {% else %}
+    <p class="text-muted-foreground mt-1 max-w-3xl"><span class="state-badge" data-state="{{ target_style }}">{{ target }}</span> needs every character on your account to grant the access below.</p>
+    {% endif %}
+    {% else %}
+    <p class="text-muted-foreground mt-1 max-w-3xl">You're Guest, which needs nothing from your characters. If your alliance or corporation is covered by a state, your main's affiliation decides it; ask an admin if that looks wrong.</p>
+    {% endif %}
+  </div>
+
+  {% if !required.is_empty() %}
+  <section class="card">
+    <header><h2>What registering grants</h2><p>Tether keeps the token encrypted and never shows it to anyone, plugins included. You can revoke it on EVE's site at any time; your account is then flagged as not compliant again.</p></header>
+    <ul class="grid gap-2 text-sm" role="list">
+      {% for s in required %}
+      <li class="flex items-start gap-2">{% call icons::icon("check") %}{% endcall %}<span>{{ s.description }} <span class="text-xs text-muted-foreground num">{{ s.scope }}</span></span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section class="card data-card">
+    <header><h2>Your characters</h2><p>Each button takes you to EVE's login page: pick the character named in that row there.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for c in characters %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = c.name.as_str() %}{% let avatar_id = c.id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <div>
+                <div class="font-medium">{{ c.name }}</div>
+                <div class="text-xs text-muted-foreground">{% if c.is_main %}Main character{% else %}Alt{% endif %}</div>
+              </div>
+            </div>
+          </td>
+          <td>
+            {% if let Some(problem) = c.problem %}
+            <span class="badge" data-variant="destructive">{{ problem }}</span>
+            {% else if required.is_empty() %}
+            <span class="text-sm text-muted-foreground">Nothing needed</span>
+            {% else %}
+            <span class="badge" data-variant="secondary">{% call icons::icon("check") %}{% endcall %} Registered</span>
+            {% endif %}
+          </td>
+          <td class="text-right">
+            {% if c.problem.is_some() %}
+            <form method="post" action="/register/start">
+              <button type="submit" class="btn" data-variant="primary" data-size="sm">Register {{ c.name }}</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <footer class="gap-3">
+      <form method="post" action="/register/start">
+        <button type="submit" class="btn" data-variant="outline">{% call icons::icon("plus") %}{% endcall %} Add another character</button>
+      </form>
+      <a class="btn" data-variant="ghost" href="/profile">Back to profile</a>
+    </footer>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.corp_member_lists (corporation_id, fetched_at, members)\n        VALUES ($1, now(), $2)\n        ON CONFLICT (corporation_id) DO UPDATE SET fetched_at = now(), members = EXCLUDED.members\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a582dd3481817e5b9e3e8a19ae53c8c5321bba53ecf27b794751e7c09727491"
+}

@@ -80,6 +80,7 @@ pub async fn index(
         (ADMIN_STATES, "/admin/states"),
         (tether_core::permissions::ADMIN_DISCORD, "/admin/discord"),
         (tether_core::permissions::ADMIN_AUDIT, "/admin/audit"),
+        (tether_core::permissions::COMPLIANCE_VIEW, "/compliance"),
     ] {
         if perms.contains(permission) {
             return Ok(Redirect::to(page));

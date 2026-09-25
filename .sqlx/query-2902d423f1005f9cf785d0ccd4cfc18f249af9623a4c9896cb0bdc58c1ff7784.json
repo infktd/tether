@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.state_scopes WHERE state_id = $1 AND scope = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2902d423f1005f9cf785d0ccd4cfc18f249af9623a4c9896cb0bdc58c1ff7784"
+}

@@ -17,7 +17,7 @@ pub struct NewLoginAttempt<'a> {
     /// What it's for, and the scopes it asked SSO for.
     pub purpose: Purpose,
     pub scopes: &'a [String],
-    /// The signed-in account that started it (consent and offer logins).
+    /// The signed-in account that started it (registering, offers).
     pub started_by: Option<AccountId>,
 }
 
@@ -25,25 +25,29 @@ pub struct NewLoginAttempt<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Purpose {
     Login,
-    /// Granting a plugin its user scopes.
-    Consent(String),
+    /// Registering a character with its state's required scopes.
+    Register,
     /// Offering a character as a plugin's data source.
     DataSource(String),
+    /// Offering a character's corporation member list (Corp Stats).
+    CorpSource,
 }
 
 impl Purpose {
     fn columns(&self) -> (&'static str, Option<&str>) {
         match self {
             Self::Login => ("login", None),
-            Self::Consent(plugin) => ("consent", Some(plugin)),
+            Self::Register => ("register", None),
             Self::DataSource(plugin) => ("data_source", Some(plugin)),
+            Self::CorpSource => ("corp_source", None),
         }
     }
 
     fn from_columns(purpose: &str, plugin: Option<String>) -> Self {
         match (purpose, plugin) {
-            ("consent", Some(plugin)) => Self::Consent(plugin),
+            ("register", _) => Self::Register,
             ("data_source", Some(plugin)) => Self::DataSource(plugin),
+            ("corp_source", _) => Self::CorpSource,
             _ => Self::Login,
         }
     }

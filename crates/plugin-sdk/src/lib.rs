@@ -154,7 +154,7 @@ pub mod identity {
 }
 
 /// ESI through the host: name an endpoint (see AGENTS.md) and whose token
-/// to use. The host checks approval and consent, and never shows you a
+/// to use. The host checks approval and compliance, and never shows you a
 /// token.
 ///
 /// ```ignore
@@ -166,7 +166,7 @@ pub mod identity {
 /// }
 /// ```
 pub mod esi {
-    pub use crate::bindings::tether::plugin::esi::{Consent, Error, Named, Response, Subject};
+    pub use crate::bindings::tether::plugin::esi::{Error, Named, Response, Subject};
     pub use crate::bindings::tether::plugin::identity::Character;
 
     /// Calls a catalogue endpoint as `subject`. `params` are the endpoint's
@@ -194,9 +194,10 @@ pub mod esi {
         Ok(bodies)
     }
 
-    /// Characters that consented to this plugin's user scopes.
-    pub fn consented() -> Vec<Consent> {
-        crate::bindings::tether::plugin::esi::consented()
+    /// Characters you can call user-scope endpoints as: Members'
+    /// characters registered with all of this plugin's user scopes.
+    pub fn characters() -> Vec<Character> {
+        crate::bindings::tether::plugin::esi::characters()
     }
 
     /// This plugin's approved data-source characters.

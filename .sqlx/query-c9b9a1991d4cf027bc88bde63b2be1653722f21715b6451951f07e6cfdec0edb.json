@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.accounts new\n        SET state_id = $2, compliant = $3, state_evaluated_at = now()\n        FROM core.accounts old\n        WHERE new.id = $1 AND old.id = new.id\n        RETURNING old.state_id, old.compliant\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "compliant",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "compliant"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c9b9a1991d4cf027bc88bde63b2be1653722f21715b6451951f07e6cfdec0edb"
+}

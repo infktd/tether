@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.plugins SET user_scopes = $2\n        WHERE id = $1 AND user_scopes IS DISTINCT FROM $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4bc15d65040aa9b632e5b1d1651111cab670a5ed9bfb0f4b14f5f27e45a610d7"
+}

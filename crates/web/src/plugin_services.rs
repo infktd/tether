@@ -6,8 +6,8 @@
 //! - its scope is one the admin approved for this plugin, of the right
 //!   kind (user scopes for character endpoints, data-source scopes for
 //!   corporation ones);
-//! - the subject is a character that consented to this plugin (user), or
-//!   an approved data source (corporation);
+//! - the subject is a Member's character registered with the scope (user;
+//!   F11), or an approved data source (corporation);
 //! - its token carries the scope.
 //!
 //! The host fills in the ids; the plugin only names the endpoint and the
@@ -25,8 +25,7 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Channel, Character, Consent, DiscordError, EsiError, EsiResponse, Fut, Mention, Named,
-    Services, Subject,
+    Channel, Character, DiscordError, EsiError, EsiResponse, Fut, Mention, Named, Services, Subject,
 };
 
 use crate::plugins::Plugins;
@@ -146,7 +145,7 @@ fn outcome(result: &Result<EsiResponse, EsiError>) -> String {
     match result {
         Ok(_) => "ok".to_owned(),
         Err(EsiError::NotAllowed(_)) => "not allowed".to_owned(),
-        Err(EsiError::NotConsented) => "not consented".to_owned(),
+        Err(EsiError::NotRegistered) => "not registered".to_owned(),
         Err(EsiError::NotADataSource) => "not a data source".to_owned(),
         Err(EsiError::Token) => "no usable token".to_owned(),
         Err(EsiError::Status(status)) => format!("ESI {status}"),
@@ -185,12 +184,12 @@ async fn esi_get(
                     endpoint.name, endpoint.scope
                 )));
             }
-            let consented = db::consent(&deps.db, plugin, id)
-                .await
-                .map_err(unavailable)?
-                .is_some_and(|scopes| scopes.iter().any(|s| s == endpoint.scope));
-            if !consented {
-                return Err(EsiError::NotConsented);
+            let registered =
+                tether_db::compliance::character_may_serve(&deps.db, id, endpoint.scope)
+                    .await
+                    .map_err(unavailable)?;
+            if !registered {
+                return Err(EsiError::NotRegistered);
             }
             Target {
                 character_id: id,
@@ -215,7 +214,7 @@ async fn esi_get(
         }
         (About::Character, _) => {
             return Err(EsiError::NotAllowed(format!(
-                "{} is about a character: use a consenting character",
+                "{} is about a character: use one of esi::characters()",
                 endpoint.name
             )));
         }
@@ -404,19 +403,21 @@ impl Services for PluginServices {
         })
     }
 
-    fn esi_consented(&self, plugin: String) -> Fut<Vec<Consent>> {
+    fn esi_characters(&self, plugin: String) -> Fut<Vec<Character>> {
         let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
         Box::pin(async move {
-            match db::consents(&db, &plugin).await {
-                Ok(rows) => rows
-                    .into_iter()
-                    .map(|(row, scopes)| Consent {
-                        character: character(row),
-                        scopes,
-                    })
-                    .collect(),
+            let Some(running) = plugins.upgrade().and_then(|p| p.running(&plugin)) else {
+                return Vec::new();
+            };
+            let scopes = &running.manifest.capabilities.esi.user;
+            if scopes.is_empty() {
+                return Vec::new();
+            }
+            match tether_db::compliance::serving_characters(&db, scopes).await {
+                Ok(rows) => rows.into_iter().map(character).collect(),
                 Err(err) => {
-                    tracing::error!(plugin, error = %err, "plugin consents");
+                    tracing::error!(plugin, error = %err, "plugin characters");
                     Vec::new()
                 }
             }

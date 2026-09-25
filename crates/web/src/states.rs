@@ -94,8 +94,17 @@ pub(crate) async fn evaluate_in(
     from: Option<&str>,
 ) -> Result<Evaluated, sqlx::Error> {
     let main = db::main(&mut *tx, account).await?;
+    // The state comes from the main's affiliation alone, as in Alliance
+    // Auth. Compliance (F11) is a flag on top: every character registered
+    // with the state's scopes.
     let state = rules.evaluate(main);
-    let previous = db::set_account_state(&mut *tx, account, state).await?;
+    let compliant = state == rules.guest()
+        || crate::compliance::problems(&mut *tx, account, state)
+            .await?
+            .is_empty();
+    let before = db::set_account_state(&mut *tx, account, state, compliant).await?;
+    let previous = before.map(|(state, _)| state);
+    let target = Some(&format!("account:{}", account.0));
     if from.is_some() || (previous.is_some() && previous != Some(state)) {
         let from = match (from, previous) {
             (Some(name), _) => Some(name.to_owned()),
@@ -108,10 +117,39 @@ pub(crate) async fn evaluate_in(
             &mut *tx,
             Actor::System,
             "state.change",
-            Some(&format!("account:{}", account.0)),
+            target.map(String::as_str),
             serde_json::json!({ "from": from, "to": to }),
         )
         .await?;
+    }
+    if before.is_some_and(|(_, was)| was != compliant) {
+        tracing::info!(account = account.0, compliant, "compliance changed");
+        audit::record(
+            &mut *tx,
+            Actor::System,
+            "compliance.change",
+            target.map(String::as_str),
+            serde_json::json!({ "compliant": compliant }),
+        )
+        .await?;
+    }
+    // The Compliant group: compliant accounts in a state other than Guest.
+    if let Some(group) = tether_db::compliance::managed_group(&mut *tx, "compliant").await? {
+        let member = compliant && state != rules.guest();
+        if tether_db::compliance::set_group_member(&mut *tx, group, account, member).await? {
+            audit::record(
+                &mut *tx,
+                Actor::System,
+                if member {
+                    "group.member.add"
+                } else {
+                    "group.member.remove"
+                },
+                Some(&format!("group:{}", group.0)),
+                serde_json::json!({ "account_id": account.0, "reason": "compliance" }),
+            )
+            .await?;
+        }
     }
     Ok(Evaluated { state, previous })
 }

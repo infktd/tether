@@ -69,6 +69,11 @@
           {% call icons::icon("message") %}{% endcall %} Discord
         </a>
         {% endif %}
+        {% if shell.nav.compliance %}
+        <a href="/compliance" class="nav-item"{% if shell.active == "compliance" %} aria-current="page"{% endif %}>
+          {% call icons::icon("check") %}{% endcall %} Compliance
+        </a>
+        {% endif %}
         {% if shell.nav.audit %}
         <a href="/admin/audit" class="nav-item"{% if shell.active == "audit" %} aria-current="page"{% endif %}>
           {% call icons::icon("scroll") %}{% endcall %} Audit log
@@ -101,6 +106,14 @@
       {% block breadcrumb %}{% endblock %}
     </header>
     <main class="px-8 py-7 flex flex-col gap-6 w-full max-w-[1440px]">
+      {% if let Some(state_name) = shell.not_compliant %}
+      <div class="alert" role="status">
+        <section class="flex flex-wrap items-center justify-between gap-3">
+          <span>Not every character on your account is registered with the access <strong class="text-foreground">{{ state_name }}</strong> needs. Some features wait until they are.</span>
+          <a class="btn" data-variant="primary" data-size="sm" href="/register">Register characters</a>
+        </section>
+      </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

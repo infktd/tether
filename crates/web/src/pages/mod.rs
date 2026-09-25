@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod assets;
+pub mod compliance;
 pub mod discord;
 pub mod headers;
 pub mod pings;
@@ -138,6 +139,9 @@ pub struct Shell {
     pub plugin_nav: Vec<PluginNavLink>,
     /// The plugin page being shown, to mark its sidebar link.
     pub active_href: String,
+    /// The account's state when not every character is registered with
+    /// its scopes: shown as a banner until they are (F11).
+    pub not_compliant: Option<String>,
 }
 
 pub struct PluginNavLink {
@@ -155,6 +159,8 @@ pub struct AdminNav {
     pub plugins: bool,
     pub audit: bool,
     pub setup: bool,
+    /// Officers: who isn't compliant, and Corp Stats.
+    pub compliance: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
 }
@@ -169,6 +175,7 @@ impl AdminNav {
             || self.plugins
             || self.audit
             || self.setup
+            || self.compliance
     }
 }
 
@@ -210,6 +217,73 @@ pub struct CharacterRow {
     pub is_main: bool,
     /// SSO revoked the character's token; logging in with it again fixes it.
     pub needs_login: bool,
+    /// `registered` or `missing` when the state requires scopes; empty
+    /// otherwise. Filled on the profile page only.
+    pub status: &'static str,
+    /// The scopes its token carries, and what uses each.
+    pub scopes: Vec<ScopeLine>,
+}
+
+pub struct ScopeLine {
+    pub scope: String,
+    pub description: String,
+    /// "Member requirement, Moon Tracker", or "Not used".
+    pub used_by: String,
+}
+
+/// Fills in each character's scopes and whether it meets the state's
+/// requirements (F16: the profile shows what was granted and why).
+async fn annotate(
+    state: &AppState,
+    account: tether_db::accounts::AccountId,
+    rows: &mut [CharacterRow],
+) -> Result<(), AppError> {
+    let registration = crate::compliance::registration(&state.db, account).await?;
+    let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
+    let target = registration.target.as_ref().map(|t| t.name.clone());
+    for row in rows.iter_mut() {
+        let Some(status) = registration.characters.iter().find(|c| c.id == row.id) else {
+            continue;
+        };
+        if !registration.required.is_empty() {
+            row.status = if status.problem.is_none() {
+                "registered"
+            } else {
+                "missing"
+            };
+        }
+        row.scopes = status
+            .scopes
+            .iter()
+            .map(|scope| {
+                let mut users: Vec<String> = Vec::new();
+                if registration.required.contains(scope)
+                    && let Some(target) = &target
+                {
+                    users.push(format!("{target} requirement"));
+                }
+                users.extend(
+                    plugins
+                        .iter()
+                        .filter(|p| p.scopes.contains(scope))
+                        .map(|p| p.name.clone()),
+                );
+                if scope == tether_core::scopes::CORP_MEMBERSHIP {
+                    users.push("Corp Stats".to_owned());
+                }
+                ScopeLine {
+                    scope: scope.clone(),
+                    description: tether_core::scopes::describe(scope).to_owned(),
+                    used_by: if users.is_empty() {
+                        "Not used".to_owned()
+                    } else {
+                        users.join(", ")
+                    },
+                }
+            })
+            .collect();
+    }
+    Ok(())
 }
 
 #[derive(Template)]
@@ -224,6 +298,7 @@ struct ProfilePage {
     permissions: Vec<String>,
     discord: Option<discord::DiscordCard>,
     plugin_access: Vec<plugin_access::PluginAccess>,
+    corp_sources: Vec<compliance::OwnSource>,
     error: Option<String>,
 }
 
@@ -262,6 +337,7 @@ pub(crate) async fn load(
         system: perms.contains(tether_core::permissions::ADMIN_SYSTEM),
         plugins: perms.contains(tether_core::permissions::ADMIN_PLUGINS),
         audit: perms.contains(tether_core::permissions::ADMIN_AUDIT),
+        compliance: perms.contains(tether_core::permissions::COMPLIANCE_VIEW),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };
@@ -289,8 +365,15 @@ pub(crate) async fn load(
             name: c.name.clone(),
             is_main: c.id == account.main.id,
             needs_login: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Revoked),
+            status: "",
+            scopes: Vec::new(),
         })
         .collect();
+    let not_compliant =
+        match tether_db::compliance::not_compliant_state(&state.db, session.account).await? {
+            Some(id) => state_db::get(&state.db, id).await?.map(|s| s.name),
+            None => None,
+        };
     Ok(Loaded {
         shell: Shell {
             user: ShellUser {
@@ -303,6 +386,7 @@ pub(crate) async fn load(
             nav,
             plugin_nav,
             active_href: String::new(),
+            not_compliant,
         },
         state: access,
         is_owner: account.is_owner,
@@ -318,7 +402,8 @@ pub async fn profile(
     let Some(session) = session else {
         return Ok(Redirect::to("/login").into_response());
     };
-    let loaded = load(&state, &session, "profile").await?;
+    let mut loaded = load(&state, &session, "profile").await?;
+    annotate(&state, session.account, &mut loaded.characters).await?;
     let groups = groups::names_for(&state.db, session.account).await?;
     let permissions = permissions::effective(&state.db, session.account)
         .await?
@@ -336,6 +421,7 @@ pub async fn profile(
             permissions,
             discord: discord::card(&state, session.account).await?,
             plugin_access: plugin_access::for_profile(&state, &session).await?,
+            corp_sources: compliance::own_sources(&state, session.account).await?,
             error: None,
         },
     ))
@@ -361,7 +447,8 @@ pub async fn make_main(
     if !is_htmx(&headers) {
         return Ok(Redirect::to("/profile").into_response());
     }
-    let loaded = load(&state, &session, "profile").await?;
+    let mut loaded = load(&state, &session, "profile").await?;
+    annotate(&state, session.account, &mut loaded.characters).await?;
     Ok(render(
         StatusCode::OK,
         &CharactersFragment {

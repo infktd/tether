@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.character_tokens SET checked_at = now() WHERE character_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "574e27c0c4cb0f1b13b4fe3c9ddaacae63797f9702996fbd80c04d8497a8d77e"
+}

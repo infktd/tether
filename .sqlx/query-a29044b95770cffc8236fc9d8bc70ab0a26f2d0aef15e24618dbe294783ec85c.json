@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id, p.scopes\n        FROM core.plugin_consents p JOIN core.characters c ON c.id = p.character_id\n        WHERE p.plugin_id = $1 ORDER BY c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE s.builtin = 'member'\n          AND t.state = 'valid' AND t.scopes @> $1\n        ORDER BY c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -46,31 +46,19 @@
             "name": "alliance_id"
           }
         }
-      },
-      {
-        "ordinal": 4,
-        "name": "scopes",
-        "type_info": "TextArray",
-        "origin": {
-          "Table": {
-            "table": "core.plugin_consents",
-            "name": "scopes"
-          }
-        }
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "TextArray"
       ]
     },
     "nullable": [
       false,
       false,
       true,
-      true,
-      false
+      true
     ]
   },
-  "hash": "a85d7f1d050fb24549cf945e670775a742f524697d5cc10a30afdc7bc518f50a"
+  "hash": "a29044b95770cffc8236fc9d8bc70ab0a26f2d0aef15e24618dbe294783ec85c"
 }

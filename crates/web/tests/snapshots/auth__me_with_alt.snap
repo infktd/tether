@@ -30,6 +30,7 @@ expression: "me(&h, &after_alt).await"
     "admin.plugins",
     "admin.states",
     "admin.system",
+    "compliance.view",
     "fleet.ping"
   ],
   "state": "Guest"

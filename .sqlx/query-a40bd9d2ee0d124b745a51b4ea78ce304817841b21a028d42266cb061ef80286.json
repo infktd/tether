@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.corp_sources s\n        SET approved_by = $2, approved_at = now(), corporation_id = c.corporation_id\n        FROM core.characters c\n        WHERE s.character_id = $1 AND c.id = s.character_id AND c.corporation_id IS NOT NULL\n        RETURNING s.corporation_id AS \"corporation_id!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_sources",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a40bd9d2ee0d124b745a51b4ea78ce304817841b21a028d42266cb061ef80286"
+}

@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id, c.name, c.id = a.main_character_id AS \"is_main!\",\n               t.state AS \"state?\", t.scopes AS \"scopes?\"\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE c.account_id = $1\n        ORDER BY 3 DESC, c.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "is_main!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "state?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.character_tokens",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scopes?",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.character_tokens",
+            "name": "scopes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "5c167bf397e30248141d1e21f077f7e7cd35c7c00a1da60e4d6fba313f1b2f48"
+}

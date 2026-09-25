@@ -406,15 +406,60 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-# Plugin ESI access and data sources need a session (admins: admin.plugins).
-POST {{base}}/profile/plugins/nmu.hello/consent
+# Registering characters, Corp Stats and data sources need a session
+# (approving: admin.states or admin.plugins).
+GET {{base}}/register
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/register/start
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/plugins/nmu.hello/consent/1/revoke
+POST {{base}}/profile/corp-stats/offer
 Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/profile/corp-stats/1/withdraw
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/compliance
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/compliance/sources/1/approve
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/compliance/sources/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/1/scopes
+Origin: {{base}}
+[Form]
+scope: esi-skills.read_skills.v1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/1/scopes/remove
+Origin: {{base}}
+[Form]
+scope: esi-skills.read_skills.v1
 HTTP 303
 [Asserts]
 header "Location" == "/login"

@@ -48,6 +48,15 @@ pub enum Change {
         state: StateId,
         entity_id: i64,
     },
+    /// Require a scope on every character of the state's accounts.
+    AddScope {
+        state: StateId,
+        scope: String,
+    },
+    RemoveScope {
+        state: StateId,
+        scope: String,
+    },
 }
 
 /// Accounts moving between two states.
@@ -134,6 +143,28 @@ fn check_covers(s: &State) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Only character scopes from ESI's list, and never for Guest: a
+/// corporation scope needs in-game roles most members don't have.
+fn check_scope(s: &State, scope: &str) -> Result<(), AppError> {
+    if s.is_guest() {
+        return Err(AppError::bad_request(
+            "Guest is identity only: it requires no scopes.",
+        ));
+    }
+    if tether_core::scopes::is_write(scope) {
+        return Err(AppError::bad_request(
+            "That scope acts as the character (mail, contacts, fleets...): Tether never requires it.",
+        ));
+    }
+    match tether_core::scopes::info(scope) {
+        Some(info) if info.kind == tether_core::scopes::ScopeKind::Character => Ok(()),
+        Some(_) => Err(AppError::bad_request(
+            "That's a corporation scope: it needs in-game roles most members don't have.",
+        )),
+        None => Err(AppError::bad_request("That isn't an ESI scope.")),
+    }
+}
+
 /// The neighbour a state would swap with, if it can move that way.
 fn neighbour(states: &[State], id: StateId, up: bool) -> Result<&State, AppError> {
     let at = states
@@ -175,9 +206,11 @@ fn pinned_neighbour(
 fn affected(states: &[State], change: &Change) -> Result<Vec<StateId>, AppError> {
     Ok(match change {
         Change::Create { .. } | Change::Rename { .. } => Vec::new(),
-        Change::Delete { state } | Change::Add { state, .. } | Change::Remove { state, .. } => {
-            vec![*state]
-        }
+        Change::Delete { state }
+        | Change::Add { state, .. }
+        | Change::Remove { state, .. }
+        | Change::AddScope { state, .. }
+        | Change::RemoveScope { state, .. } => vec![*state],
         Change::Move { state, up, past } => {
             vec![*state, pinned_neighbour(states, *state, *up, *past)?.id]
         }
@@ -201,7 +234,12 @@ async fn check_reach(
     if targets.is_empty() {
         return Ok(());
     }
-    let granted = db::granted_to(&mut *tx, &targets).await?;
+    let mut granted = db::granted_to(&mut *tx, &targets).await?;
+    // Who is in a state (and what it requires) also decides who is in the
+    // Compliant group, so its grants count too.
+    granted.extend(db::granted_to_managed_groups(&mut *tx).await?);
+    granted.sort();
+    granted.dedup();
     if granted.is_empty() {
         return Ok(());
     }
@@ -291,11 +329,33 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
             after.remove(s.id, c.kind, c.entity_id);
             format!("Remove {} from {}", c.name, s.name)
         }
+        Change::AddScope { state: id, scope } => {
+            let s = find(&states, *id)?;
+            check_scope(s, scope)?;
+            format!("Require {scope} for {}", s.name)
+        }
+        Change::RemoveScope { state: id, scope } => {
+            let s = find(&states, *id)?;
+            format!("Stop requiring {scope} for {}", s.name)
+        }
     };
     let mains = db::all_mains(db).await?;
+    let mut moved = moves(&mains, &states, &before, &after);
+    // A new requirement flags everyone who lacks it (and takes them out of
+    // the Compliant group) until they register again.
+    if let Change::AddScope { state: id, scope } = change {
+        let short = tether_db::compliance::accounts_lacking(db, *id, scope).await?;
+        if short > 0 {
+            moved.push(Move {
+                from: format!("{}: compliant", find(&states, *id)?.name),
+                to: "Not compliant (keeps its state)".to_owned(),
+                accounts: usize::try_from(short).unwrap_or(usize::MAX),
+            });
+        }
+    }
     Ok(Preview {
         summary,
-        moves: moves(&mains, &states, &before, &after),
+        moves: moved,
     })
 }
 
@@ -457,6 +517,39 @@ pub async fn apply(
                 "state.remove",
                 *id,
                 json!({ "state": s.name, "entity_id": entity_id, "kind": kind.as_str(), "name": name }),
+            )
+        }
+        Change::AddScope { state: id, scope } => {
+            let s = find(&states, *id)?;
+            check_scope(s, scope)?;
+            let by = match actor {
+                Actor::Account(account) => Some(account),
+                _ => None,
+            };
+            if !tether_db::compliance::add_scope(&mut *tx, *id, scope, by).await? {
+                return Err(AppError::new(
+                    axum::http::StatusCode::CONFLICT,
+                    format!("{} already requires {scope}.", s.name),
+                ));
+            }
+            (
+                "state.scope_add",
+                *id,
+                json!({ "state": s.name, "scope": scope }),
+            )
+        }
+        Change::RemoveScope { state: id, scope } => {
+            let s = find(&states, *id)?;
+            if !tether_db::compliance::remove_scope(&mut *tx, *id, scope).await? {
+                return Err(AppError::new(
+                    axum::http::StatusCode::NOT_FOUND,
+                    format!("{} doesn't require {scope}.", s.name),
+                ));
+            }
+            (
+                "state.scope_remove",
+                *id,
+                json!({ "state": s.name, "scope": scope }),
             )
         }
     };

@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod audit;
 pub mod auth;
+pub mod compliance;
 pub mod discord;
 pub mod groups;
 pub mod permissions;

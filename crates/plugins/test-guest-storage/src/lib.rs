@@ -120,7 +120,7 @@ fn probe(request: Request) -> Result<Page, PageError> {
             }
         }
         "viewer" => format!("{:?}", identity::viewer()),
-        "consented" => format!("{:?}", esi::consented()),
+        "characters" => format!("{:?}", esi::characters()),
         "sources" => format!("{:?}", esi::data_sources()),
         // send?channel=&text=&state=Member
         "send" => {

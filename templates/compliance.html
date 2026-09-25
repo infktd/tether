@@ -1,0 +1,136 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Compliance{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Compliance</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Compliance</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Accounts whose characters aren't all registered with their state's scopes. They keep their state, as in Alliance Auth, but aren't in the Compliant group, so anything you grant that group waits until they register. Corp Stats compares each corporation's member list with the characters registered here.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  <section class="grid grid-cols-3 gap-4" aria-label="Summary">
+    <div class="card stat">
+      <div class="stat-label">Not compliant</div>
+      <div class="stat-value num">{{ not_compliant.len() }}</div>
+      <div class="stat-caption">Accounts with characters to register</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Never registered</div>
+      <div class="stat-value num">{{ unregistered_total }}</div>
+      <div class="stat-caption">Members of corporations with a member list</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">No member list</div>
+      <div class="stat-value num">{{ uncovered.len() }}</div>
+      <div class="stat-caption">Corporations nobody has shared yet</div>
+    </div>
+  </section>
+
+  <section class="card data-card">
+    <header><h2>Not compliant</h2><p>They see a checklist of what to register when they log in.</p></header>
+    {% if not_compliant.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Everyone is compliant.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Pilot</th><th scope="col">State</th><th scope="col">What's missing</th><th scope="col">Since</th></tr></thead>
+      <tbody>
+        {% for a in not_compliant %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = a.main_name.as_str() %}{% let avatar_id = a.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ a.main_name }}</span>
+            </div>
+          </td>
+          <td><span class="state-badge" data-state="{{ a.state_style }}">{{ a.state }}</span></td>
+          <td>
+            <ul class="grid gap-1 text-sm" role="list">
+              {% for s in a.shortfalls %}<li><span class="font-medium">{{ s.name }}</span>{% if s.is_main %} <span class="text-xs text-muted-foreground">(main)</span>{% endif %}: {{ s.problem }}</li>{% endfor %}
+            </ul>
+          </td>
+          <td class="num text-foreground-soft">{{ a.since }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="flex flex-col gap-4" aria-labelledby="corp-stats">
+    <div>
+      <h2 id="corp-stats" class="text-[15px] font-semibold">Corp Stats</h2>
+      <p class="text-sm text-muted-foreground">Member lists refresh daily. Any member can share their corporation's list from their profile; an admin approves it below.</p>
+    </div>
+    {% for c in corporations %}
+    <section class="card">
+      <header class="flex items-start justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <img src="https://images.evetech.net/corporations/{{ c.id }}/logo?size=64" alt="" width="32" height="32" class="avatar-img size-8">
+          <div>
+            <h3 class="font-semibold">{{ c.name }}</h3>
+            <p class="text-xs text-muted-foreground">Fetched {{ c.fetched }}</p>
+          </div>
+        </div>
+        <div class="text-sm text-right"><span class="num text-foreground">{{ c.registered }}</span> of <span class="num">{{ c.members }}</span> registered <span class="text-muted-foreground num">({{ c.coverage }}%)</span></div>
+      </header>
+      <section>
+        {% if c.unregistered.is_empty() %}
+        <p class="text-sm text-muted-foreground">Every member is registered.</p>
+        {% else %}
+        <details>
+          <summary class="text-sm cursor-pointer">{{ c.unregistered.len() }} never registered</summary>
+          <ul class="mt-3 flex flex-wrap gap-2" role="list">
+            {% for m in c.unregistered %}
+            <li class="entity-chip pr-2"><img src="https://images.evetech.net/characters/{{ m.id }}/portrait?size=64" alt="" width="20" height="20"><span>{{ m.name }}</span></li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+      </section>
+    </section>
+    {% endfor %}
+    {% if !uncovered.is_empty() %}
+    <section class="card">
+      <header><h2>No member list yet</h2><p>Corporations with pilots here but no shared member list: ask a member of each to share it from their profile.</p></header>
+      <ul class="flex flex-wrap gap-2" role="list">
+        {% for c in uncovered %}
+        <li class="entity-chip pr-2"><img src="https://images.evetech.net/corporations/{{ c.id }}/logo?size=64" alt="" width="20" height="20"><span>{{ c.name }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </section>
+
+  <section class="card data-card">
+    <header><h2>Member list sources</h2><p>Characters whose owners shared their corporation's member list. A source is used only while it stays in the corporation it was approved for.</p></header>
+    {% if sources.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Nobody has shared a member list yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Shared by</th><th scope="col">Status</th>{% if can_manage %}<th scope="col" class="text-right"><span class="sr-only">Actions</span></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for s in sources %}
+        <tr>
+          <td class="font-medium">{{ s.name }}</td>
+          <td>{{ s.corporation }}</td>
+          <td>{{ s.offered_by }}</td>
+          <td>{% if s.status == "approved" %}<span class="badge" data-variant="secondary">in use</span>{% else if s.status == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting</span>{% endif %}</td>
+          {% if can_manage %}
+          <td class="text-right">
+            <div class="flex justify-end gap-2">
+              {% if s.status != "approved" %}<form method="post" action="/compliance/sources/{{ s.character_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>{% endif %}
+              <form method="post" action="/compliance/sources/{{ s.character_id }}/remove" hx-confirm="Stop using {{ s.name }}'s member list?"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -101,10 +101,14 @@ pub async fn callback(
     };
     if let Some(error) = query.error {
         tracing::info!(error, "SSO login cancelled or refused");
-        return Err(AppError::new(
-            StatusCode::BAD_REQUEST,
-            "Login was cancelled.",
-        ));
+        // Asking for a scope Tether's EVE application doesn't allow.
+        let message = if error == "invalid_scope" {
+            "EVE refused a scope Tether asked for. An admin needs to enable every required \
+             scope on Tether's EVE application (developers.eveonline.com)."
+        } else {
+            "Login was cancelled."
+        };
+        return Err(AppError::new(StatusCode::BAD_REQUEST, message));
     }
     let (Some(code), Some(oauth_state)) = (query.code, query.state) else {
         return Err(expired());
@@ -198,11 +202,19 @@ pub async fn callback(
     {
         return Err(AppError::internal(err));
     }
-    // Granting a plugin access, or offering a data source: only for the
-    // account that started it, still signed in here, with the character
-    // on that account (otherwise it was just a login).
+    // Offering a data source or a Corp Stats list: only for the account
+    // that started it, still signed in here, with the character on that
+    // account (otherwise it was just a login).
     if attempt.started_by.is_some() && current == attempt.started_by && current == Some(account) {
-        crate::plugin_consent::finish(&state, account, &identity, &attempt.purpose).await?;
+        match &attempt.purpose {
+            db::Purpose::DataSource(plugin) => {
+                crate::plugin_consent::finish(&state, account, &identity, plugin).await?;
+            }
+            db::Purpose::CorpSource => {
+                crate::compliance::finish_corp_offer(&state, account, &identity).await?;
+            }
+            db::Purpose::Login | db::Purpose::Register => {}
+        }
     }
 
     let mut jar = jar;
@@ -234,6 +246,9 @@ pub async fn callback(
     {
         tracing::warn!(account = account.0, error = %err, "state refresh at login failed; queued a retry");
         states::enqueue_refresh(&state.db, account).await?;
+        // Compliance needs no ESI: a character just added without scopes
+        // counts at once.
+        states::evaluate_account(&state.db, account).await?;
     }
 
     // Rotate: drop any session this browser already had, then issue a new
@@ -245,7 +260,17 @@ pub async fn callback(
     db::create_session(&state.db, &hash_token(token.expose()), account, SESSION_TTL).await?;
 
     let jar = jar.add(cookie(SESSION_COOKIE, &token, SESSION_TTL)?);
-    Ok((jar, Redirect::to(&attempt.return_to)).into_response())
+    // Not every character registered with the state's scopes yet: show
+    // what to do (F11).
+    let return_to = if tether_db::compliance::not_compliant_state(&state.db, account)
+        .await?
+        .is_some()
+    {
+        "/register"
+    } else {
+        attempt.return_to.as_str()
+    };
+    Ok((jar, Redirect::to(return_to)).into_response())
 }
 
 /// `POST /auth/logout`.

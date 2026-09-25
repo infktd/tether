@@ -149,6 +149,7 @@ EVE SSO is the only login. No email.
 - One account holds many characters; the first linked is the main and can be changed. Alts are added by logging in with them while signed in.
 - The first account to log in on a fresh install becomes the owner.
 - States, Alliance Auth style: **Member**, **Blue** and **Guest** built in, plus any admins create, each with a priority and a list of alliances, corporations and characters. An account's state is the highest-priority state whose list matches its main; no match is Guest. Re-evaluated on every affiliation sync via ESI's bulk affiliation endpoint, and whenever the states change.
+- Scope compliance: each state other than Guest requires scopes (Member: installed plugins' user scopes plus admin additions) on every character of the account. As in Alliance Auth, an account that falls short keeps its state but is flagged for officers and left out of the Tether-managed Compliant group until every character is registered; a daily token check notices revoked tokens. Plugins' user-scope calls need a Member character registered with the scope. Corp Stats reads approved corporations' member lists daily to show members who never registered.
 - Groups add access on top of states: open, request-to-join, admin-assigned.
 - Permissions come from the core and from plugin manifests, and are assigned to states or groups only. Every change is audit-logged.
 - Personal access tokens with explicit scopes and expiry, for bots and scripts.
