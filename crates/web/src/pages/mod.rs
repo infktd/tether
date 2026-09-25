@@ -15,6 +15,7 @@ pub mod plugins;
 pub mod setup;
 pub mod states;
 pub mod system;
+pub mod tokens;
 
 use askama::Template;
 use axum::Form;

@@ -144,3 +144,71 @@ pub async fn states_for_account(
         .map(|r| (r.character_id, state(&r.state)))
         .collect())
 }
+
+/// One of an account's tokens, for Token Management.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountToken {
+    pub character_id: i64,
+    pub character_name: String,
+    pub is_main: bool,
+    pub scopes: Vec<String>,
+    pub revoked: bool,
+    pub revoked_reason: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_refreshed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// The account's characters' tokens, main first.
+pub async fn for_account(
+    pool: &PgPool,
+    account: AccountId,
+) -> Result<Vec<AccountToken>, sqlx::Error> {
+    sqlx::query_as!(
+        AccountToken,
+        r#"
+        SELECT t.character_id, c.name AS character_name,
+               COALESCE(a.main_character_id = c.id, false) AS "is_main!",
+               t.scopes, t.state = 'revoked' AS "revoked!", t.revoked_reason,
+               t.created_at, t.last_refreshed_at
+        FROM core.character_tokens t
+        JOIN core.characters c ON c.id = t.character_id
+        JOIN core.accounts a ON a.id = c.account_id
+        WHERE c.account_id = $1
+        ORDER BY 3 DESC, c.name
+        "#,
+        account.0,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Deletes one of the account's tokens (Token Management): the secret is
+/// wiped and it counts as revoked (`deleted`), so the character follows
+/// the dead-token rules (it leaves the account a day later unless its
+/// owner logs in with it again). A proven sale keeps its reason, so the
+/// sale still goes through at once. False if there was nothing left to
+/// delete, or the character isn't the account's.
+pub async fn wipe<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    character_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE core.character_tokens
+        SET refresh_token = ''::bytea, scopes = '{}', state = 'revoked',
+            revoked_at = COALESCE(revoked_at, now()),
+            revoked_reason = CASE WHEN revoked_reason = 'owner hash changed'
+                                  THEN revoked_reason ELSE 'deleted' END,
+            updated_at = now()
+        WHERE character_id = $1
+          AND character_id IN (SELECT id FROM core.characters WHERE account_id = $2)
+          AND (state = 'valid' OR length(refresh_token) > 0)
+        "#,
+        character_id,
+        account.0,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}

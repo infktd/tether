@@ -37,6 +37,8 @@ pub struct Limits {
     pub plugin_submits: RateLimiter<(i64, String)>,
     /// Plugin page views, per account and plugin: each runs the plugin.
     pub plugin_pages: RateLimiter<(i64, String)>,
+    /// Token Management refreshes, per account: each calls EVE SSO.
+    pub token_refresh: RateLimiter<i64>,
 }
 
 impl Default for Limits {
@@ -45,6 +47,7 @@ impl Default for Limits {
             setup_unlock: RateLimiter::new(5, std::time::Duration::from_secs(60)),
             plugin_submits: RateLimiter::new(30, std::time::Duration::from_secs(60)),
             plugin_pages: RateLimiter::new(120, std::time::Duration::from_secs(60)),
+            token_refresh: RateLimiter::new(10, std::time::Duration::from_secs(60)),
         }
     }
 }

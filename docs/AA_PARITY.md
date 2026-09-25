@@ -22,7 +22,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Internal, Hidden, Open, Public, Restricted; Requestable | same | done |
 | Group Leaders, Group Leader Groups | same | done |
 | Permissions; Permissions Audit | Permissions | Add **Permissions Audit** |
-| Token Management | scopes shown per character on the profile | Build **Token Management** |
+| Token Management | **Token Management** | done |
 | Notifications | same | done |
 | Services, Services Management; "Can access the Discord service" | Discord (admin), Discord card on the profile | **Services** page for users; access by permission (see Services) |
 | Name format config, `{character_name}`, `{corp_ticker}` ... | nickname template: `{name}`, `{corp}`, `{alliance}` | AA's **Name Formatter** fields, one format per state |
@@ -56,7 +56,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Permissions on users, groups, states | | states and groups only (never users, F6) | done, deliberately stricter |
 | Staff can't change permissions; superuser can | | `admin.permissions`; owner holds everything | done |
 | Notifications | in-app, unread count, mark all read, delete read, max per user | same; the count is live | done |
-| Token Management | list tokens and scopes, delete, refresh | scopes per character on the profile | partial |
+| Token Management | list tokens and scopes, delete, refresh | same; a refresh runs the ownership check, and a deleted token follows the dead-token rules (the character leaves a day later unless logged in again) | done |
 | Dashboard | Characters and Membership widgets; admin panels: Software Version, Task Queue, ESI status, Announcements; apps add widgets | Profile; admin System page (ESI health, job queue, error budget, updates) | partial: rename, admin panels, plugin widgets |
 | Admin site | Django admin for every model | purpose-built admin pages, API and CLI | done, deliberately different |
 | Menu (reorder, hide, folders, custom links) | | fixed sidebar | missing (after v1) |

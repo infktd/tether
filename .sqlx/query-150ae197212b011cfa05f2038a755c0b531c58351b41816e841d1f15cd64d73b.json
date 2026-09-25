@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.character_tokens\n        SET refresh_token = ''::bytea, scopes = '{}', state = 'revoked',\n            revoked_at = COALESCE(revoked_at, now()),\n            revoked_reason = CASE WHEN revoked_reason = 'owner hash changed'\n                                  THEN revoked_reason ELSE 'deleted' END,\n            updated_at = now()\n        WHERE character_id = $1\n          AND character_id IN (SELECT id FROM core.characters WHERE account_id = $2)\n          AND (state = 'valid' OR length(refresh_token) > 0)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "150ae197212b011cfa05f2038a755c0b531c58351b41816e841d1f15cd64d73b"
+}

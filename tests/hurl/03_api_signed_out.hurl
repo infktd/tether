@@ -208,3 +208,14 @@ HTTP 503
 
 GET {{base}}/auth/callback
 HTTP 400
+
+GET {{base}}/api/tokens
+HTTP 401
+
+POST {{base}}/api/tokens/1/refresh
+Origin: {{base}}
+HTTP 401
+
+DELETE {{base}}/api/tokens/1
+Origin: {{base}}
+HTTP 401

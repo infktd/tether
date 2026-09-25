@@ -34,6 +34,7 @@ mod state;
 pub mod state_admin;
 pub mod states;
 pub mod sync;
+pub mod tokens;
 pub mod updates;
 
 use axum::extract::{DefaultBodyLimit, State};
@@ -70,6 +71,12 @@ pub fn router(state: AppState) -> Router {
         .route("/setup/alliance/search", post(pages::setup::search))
         .route("/static/{*path}", get(pages::assets::serve))
         .route("/admin", get(pages::admin::index))
+        .route("/tokens", get(pages::tokens::index))
+        .route(
+            "/tokens/{character_id}/refresh",
+            post(pages::tokens::refresh),
+        )
+        .route("/tokens/{character_id}/delete", post(pages::tokens::delete))
         .route("/notifications", get(pages::notifications::index))
         .route(
             "/notifications/read-all",
@@ -297,6 +304,12 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/api/me", get(api::me))
         .route("/api/me/main", post(api::set_main))
+        .route("/api/tokens", get(api::tokens::list))
+        .route(
+            "/api/tokens/{character_id}/refresh",
+            post(api::tokens::refresh),
+        )
+        .route("/api/tokens/{character_id}", delete(api::tokens::delete))
         .route("/api/notifications", get(api::notifications::list))
         .route("/api/notifications/unread", get(api::notifications::unread))
         .route(

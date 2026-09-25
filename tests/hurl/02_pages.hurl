@@ -115,6 +115,23 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/tokens
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/tokens/1/refresh
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/tokens/1/delete
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/notifications
 HTTP 303
 [Asserts]

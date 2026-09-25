@@ -1796,6 +1796,103 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         }
       }
     },
+    "/api/tokens": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`GET /api/tokens`",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TokenOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/tokens/{character_id}": {
+      "delete": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`DELETE /api/tokens/{character_id}`",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "character_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/tokens/{character_id}/refresh": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`POST /api/tokens/{character_id}/refresh`: refresh now, with the\nownership check.",
+        "operationId": "refresh",
+        "parameters": [
+          {
+            "name": "character_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshOut"
+                }
+              }
+            }
+          },
+          "404": {},
+          "502": {
+            "description": "EVE SSO didn't answer"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -2386,6 +2483,18 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "RefreshOut": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "type": "string",
+            "description": "`valid`, `revoked` (log in with it again) or `sold` (it left the\naccount)."
+          }
+        }
+      },
       "RequestOut": {
         "type": "object",
         "required": [
@@ -2689,6 +2798,50 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "TokenOut": {
+        "type": "object",
+        "required": [
+          "character_id",
+          "character_name",
+          "is_main",
+          "scopes",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "character_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "is_main": {
+            "type": "boolean"
+          },
+          "last_refreshed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "`valid`, `revoked` or `deleted`."
           }
         }
       },

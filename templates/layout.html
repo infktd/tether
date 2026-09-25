@@ -18,6 +18,9 @@
         <a href="/dashboard" class="nav-item"{% if shell.active == "profile" %} aria-current="page"{% endif %}>
           {% call icons::icon("user") %}{% endcall %} Dashboard
         </a>
+        <a href="/tokens" class="nav-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>
+          {% call icons::icon("lock") %}{% endcall %} Token Management
+        </a>
         <a href="/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
           {% call icons::icon("users") %}{% endcall %} Groups
         </a>

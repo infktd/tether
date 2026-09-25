@@ -4,6 +4,7 @@ pub mod admin;
 pub mod group_management;
 pub mod groups;
 pub mod notifications;
+pub mod tokens;
 
 use axum::Json;
 use axum::extract::State;

@@ -1,0 +1,61 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Token Management{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Token Management</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Token Management</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">The EVE access Tether holds for each of your characters, and what it may read with it. Tokens are stored encrypted and never shown. Deleting one deletes Tether's copy (to end it at EVE too, revoke Tether on CCP's third-party applications page); the character leaves your account a day later unless you log in with it again.</p>
+  </div>
+  {% include "admin_error.html" %}
+  {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
+
+  <section class="card data-card">
+    {% if rows.is_empty() %}
+    <p class="px-5 py-5 text-sm text-muted-foreground">No tokens.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">Scopes</th><th scope="col">State</th><th scope="col">Refreshed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for t in rows %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = t.name.as_str() %}{% let avatar_id = t.character_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <div>
+                <div class="font-medium">{{ t.name }}</div>
+                <div class="text-xs text-muted-foreground">{% if t.is_main %}Main · {% endif %}since <span class="num">{{ t.created }}</span></div>
+              </div>
+            </div>
+          </td>
+          <td>
+            {% if t.scopes.is_empty() %}<span class="text-sm text-muted-foreground">Login only</span>
+            {% else %}
+            <details>
+              <summary class="text-sm cursor-pointer"><span class="num">{{ t.scopes.len() }}</span> {% if t.scopes.len() == 1 %}scope{% else %}scopes{% endif %}</summary>
+              <ul class="mt-2 grid gap-1 text-sm" role="list">
+                {% for s in t.scopes %}<li title="{{ s.scope }}">{{ s.description }}</li>{% endfor %}
+              </ul>
+            </details>
+            {% endif %}
+          </td>
+          <td>{% if t.deleted %}<span class="state-badge" data-state="guest">Deleted</span>{% else if t.revoked %}<span class="notification-level" data-level="danger">Not working</span>{% else %}<span class="notification-level" data-level="success">Working</span>{% endif %}</td>
+          <td class="num text-muted-foreground">{{ t.refreshed }}</td>
+          <td class="text-right">
+            <div class="inline-flex gap-2">
+              {% if !t.deleted %}
+              <form method="post" action="/tokens/{{ t.character_id }}/refresh"><button type="submit" class="btn" data-variant="outline" data-size="sm">Refresh</button></form>
+              <form method="post" action="/tokens/{{ t.character_id }}/delete" hx-confirm="Delete the token for {{ t.name }}? Tether deletes its copy, and the character leaves your account in a day unless you log in with it again.{% if t.is_main %} It's your main.{% endif %}"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Delete</button></form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

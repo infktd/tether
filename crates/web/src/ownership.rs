@@ -138,7 +138,7 @@ async fn sweep_sold(db: &PgPool) -> Result<usize, JobError> {
 /// `force` (an admin, having looked: `tether ownership sweep --force`).
 pub async fn sweep_dead(db: &PgPool, force: bool) -> Result<usize, JobError> {
     let now = chrono::Utc::now();
-    let past_grace: Vec<i64> = db::revoked_characters(db)
+    let past_grace: Vec<(i64, Option<String>)> = db::revoked_characters(db)
         .await
         .map_err(JobError::retry)?
         .into_iter()
@@ -146,25 +146,31 @@ pub async fn sweep_dead(db: &PgPool, force: bool) -> Result<usize, JobError> {
             reason.as_deref() != Some("owner hash changed")
                 && at.is_some_and(|at| now - at > chrono::Duration::days(1))
         })
-        .map(|(id, _, _)| id)
+        .map(|(id, reason, _)| (id, reason))
         .collect();
+    // Tokens their owners deleted (Token Management) say nothing about
+    // SSO: they go, and don't count toward the breaker.
+    let suspicious = past_grace
+        .iter()
+        .filter(|(_, reason)| reason.as_deref() != Some("deleted"))
+        .count();
     let total = db::token_count(db).await.map_err(JobError::retry)?;
-    if !force && past_grace.len() > BREAKER_MIN.max(total / 10) {
+    if !force && suspicious > BREAKER_MIN.max(total / 10) {
         tracing::error!(
-            dead = past_grace.len(),
+            dead = suspicious,
             total,
             "a tenth or more of all tokens are revoked: suspecting SSO or the app, not the \
              characters; nobody loses a character for a dead token until an admin checks \
              (`tether ownership sweep --force`)"
         );
-        trip(db, past_grace.len(), total).await?;
+        trip(db, suspicious, total).await?;
         return Ok(0);
     }
     tether_db::settings::delete(db, BREAKER_SETTING)
         .await
         .map_err(JobError::retry)?;
     let mut lost = 0;
-    for character_id in past_grace {
+    for (character_id, _) in past_grace {
         if let Some(gone) = accounts::lose_ownership(db, character_id, LossCause::Token)
             .await
             .map_err(JobError::retry)?

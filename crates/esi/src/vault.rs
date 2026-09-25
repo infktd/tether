@@ -246,7 +246,8 @@ impl TokenVault {
         );
     }
 
-    fn forget(&self, character_id: i64) {
+    /// Drops any cached access token for the character.
+    pub fn forget(&self, character_id: i64) {
         let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
         cache.remove(&character_id);
     }
