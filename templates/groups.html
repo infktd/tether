@@ -1,0 +1,81 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Groups{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Groups</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Groups</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Groups add access on top of your state. Open groups take you in at once; for the rest, the group's leaders decide.</p>
+  </div>
+  {% include "admin_error.html" %}
+  {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
+
+  <section class="card data-card" aria-labelledby="mine">
+    <header><h2 id="mine">Your groups</h2></header>
+    {% if mine.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">You're not in any groups yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for g in mine %}
+        <tr>
+          <td>
+            <div class="font-medium">{{ g.name }}</div>
+            {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
+          </td>
+          <td><span class="badge" data-variant="outline">{{ g.label }}</span></td>
+          <td class="text-right">
+            {% if g.internal %}
+            <span class="text-xs text-muted-foreground">Admins manage this group</span>
+            {% else if g.pending == "leave" %}
+            <span class="badge" data-variant="outline">Leave requested</span>
+            {% else %}
+            <form method="post" action="/groups/{{ g.id }}/leave" hx-confirm="Leave {{ g.name }}?">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Leave</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="card data-card" aria-labelledby="available">
+    <header><h2 id="available">Available groups</h2></header>
+    {% if available.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No groups are open to you right now.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for g in available %}
+        <tr>
+          <td>
+            <div class="font-medium">{{ g.name }}</div>
+            {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
+          </td>
+          <td><span class="badge" data-variant="outline">{{ g.label }}</span></td>
+          <td class="text-right">
+            {% if g.pending == "join" %}
+            <form method="post" action="/groups/{{ g.id }}/retract" class="inline-flex items-center gap-2">
+              <span class="badge" data-variant="outline">Requested</span>
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Withdraw</button>
+            </form>
+            {% else %}
+            <form method="post" action="/groups/{{ g.id }}/join">
+              <button type="submit" class="btn" data-variant="outline" data-size="sm">{% if g.label == "Open" %}Join{% else %}Request{% endif %}</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

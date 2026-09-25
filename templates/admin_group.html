@@ -1,13 +1,13 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}{{ group.name }}{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/groups">Group Management</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="flex items-end justify-between gap-4">
     <div>
-      <h1 class="page-title">{{ group.name }}</h1>
-      <p class="text-muted-foreground mt-1">{% if group.description.is_empty() %}{{ group.policy_label }}{% else %}{{ group.description }} · {{ group.policy_label }}{% endif %}</p>
+      <h1 class="page-title flex items-center gap-2">{{ group.name }} <span class="badge" data-variant="outline">{{ group.label }}</span>{% if group.compliance %} <span class="badge" data-variant="outline">Compliance</span>{% endif %}</h1>
+      {% if !group.description.is_empty() %}<p class="text-muted-foreground mt-1">{{ group.description }}</p>{% endif %}
     </div>
     <form method="post" action="/admin/groups/{{ group.id }}/delete" hx-confirm="Delete the group {{ group.name }}? Its members lose what it granted.">
       <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete group</button>
@@ -15,33 +15,77 @@
   </div>
   {% include "admin_error.html" %}
 
-  {% if !requests.is_empty() %}
-  <section class="card data-card">
-    <header><h2>Requests to join</h2></header>
-    <table class="table">
-      <thead><tr><th scope="col">Pilot</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>
-        {% for r in requests %}
-        <tr>
-          <td>
-            <div class="flex items-center gap-3">
-              {% let avatar_name = r.main_name.as_str() %}{% let avatar_id = r.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
-              {% include "avatar.html" %}
-              <span class="font-medium">{{ r.main_name }}</span>
-            </div>
-          </td>
-          <td class="text-right">
-            <div class="inline-flex gap-2">
-              <form method="post" action="/admin/groups/{{ group.id }}/requests/{{ r.account_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>
-              <form method="post" action="/admin/groups/{{ group.id }}/requests/{{ r.account_id }}/deny"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Deny</button></form>
-            </div>
-          </td>
-        </tr>
+  <form class="card" method="post" action="/admin/groups/{{ group.id }}/settings">
+    <header><h2>Settings</h2><p>Members whose state you untick leave the group when you save.</p></header>
+    <section class="grid gap-5">
+      <div class="grid gap-2 max-w-2xl">
+        <label class="label" for="description">Description</label>
+        <textarea class="textarea" id="description" name="description" maxlength="512" rows="2">{{ group.description }}</textarea>
+      </div>
+      {% include "admin_group_flags.html" %}
+      <fieldset class="grid gap-2">
+        <legend class="label mb-1">States</legend>
+        <p class="text-sm text-muted-foreground">Only these states may be in the group. None ticked: every state.</p>
+        <div class="flex flex-wrap gap-4">
+          {% for s in states %}
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="states" value="{{ s.id }}"{% if s.checked %} checked{% endif %}> {{ s.name }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="compliance" value="on"{% if group.compliance %} checked{% endif %}> <span><span class="font-medium">Compliance group</span> · Tether keeps its members: every compliant pilot in its states (never Guest). Internal groups only.</span></label>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Save settings</button></footer>
+  </form>
+
+  <section class="card">
+    <header><h2>Group Leaders</h2><p>Leaders accept and reject requests, and remove members, in Group Management. They lead only groups that aren't Internal.</p></header>
+    <section class="flex flex-col gap-4">
+      {% if !leaders.is_empty() || !leader_groups.is_empty() %}
+      <ul class="flex flex-wrap gap-2" role="list">
+        {% for l in leaders %}
+        <li class="entity-chip">
+          {% let avatar_name = l.name.as_str() %}{% let avatar_id = l.main_id %}{% let avatar_size = 20 %}{% let avatar_class = "size-5" %}
+          {% include "avatar.html" %}
+          <span class="font-medium">{{ l.name }}</span>
+          <form method="post" action="/admin/groups/{{ group.id }}/leaders/{{ l.account_id }}/remove">
+            <button type="submit" class="btn" data-variant="ghost" data-size="icon-sm" aria-label="Stop {{ l.name }} leading {{ group.name }}">{% call icons::icon("x") %}{% endcall %}</button>
+          </form>
+        </li>
         {% endfor %}
-      </tbody>
-    </table>
+        {% for g in leader_groups %}
+        <li class="entity-chip pl-2">
+          {% call icons::icon("users") %}{% endcall %}
+          <span class="font-medium">{{ g.name }}</span>
+          <span class="text-xs text-muted-foreground">group</span>
+          <form method="post" action="/admin/groups/{{ group.id }}/leader-groups/{{ g.id }}/remove">
+            <button type="submit" class="btn" data-variant="ghost" data-size="icon-sm" aria-label="Stop {{ g.name }} leading {{ group.name }}">{% call icons::icon("x") %}{% endcall %}</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <div class="flex flex-wrap gap-6">
+        <form method="post" action="/admin/groups/{{ group.id }}/leaders" class="flex items-end gap-2">
+          <div class="grid gap-2">
+            <label class="label" for="leader">Leader: character name</label>
+            <input class="input" id="leader" name="character" required>
+          </div>
+          <button type="submit" class="btn" data-variant="outline">Add leader</button>
+        </form>
+        {% if !other_groups.is_empty() %}
+        <form method="post" action="/admin/groups/{{ group.id }}/leader-groups" class="flex items-end gap-2">
+          <div class="grid gap-2">
+            <label class="label" for="leader-group">Leader group: its members lead</label>
+            <select class="select input" id="leader-group" name="group_id" required>
+              {% for g in other_groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="btn" data-variant="outline">Add leader group</button>
+        </form>
+        {% endif %}
+      </div>
+    </section>
   </section>
-  {% endif %}
 
   <section class="card data-card">
     <header><h2>Members <span class="num text-muted-foreground font-normal">{{ members.len() }}</span></h2></header>
@@ -62,9 +106,11 @@
           </td>
           <td><span class="state-badge" data-state="{{ m.state_style }}">{{ m.state }}</span></td>
           <td class="text-right">
+            {% if !group.compliance %}
             <form method="post" action="/admin/groups/{{ group.id }}/members/{{ m.account_id }}/remove" hx-confirm="Remove {{ m.main_name }} from {{ group.name }}?">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -73,6 +119,7 @@
     {% endif %}
   </section>
 
+  {% if !group.compliance %}
   <form class="card" method="post" action="/admin/groups/{{ group.id }}/members">
     <header><h2>Add a member</h2><p>Any of their characters' exact names works; the whole account joins.</p></header>
     <section class="grid gap-2 max-w-md">
@@ -81,5 +128,6 @@
     </section>
     <footer><button type="submit" class="btn" data-variant="primary">Add member</button></footer>
   </form>
+  {% endif %}
 </div>
 {% endblock %}

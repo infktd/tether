@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{% block title %}Group Membership{% endblock %}
+{% block breadcrumb %}<a href="/group-management">Group Management</a>&nbsp;/&nbsp;<span class="text-foreground">Group Membership</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Group Management</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">The groups you lead: their members, direct join links and Audit Logs.</p>
+  </div>
+  {% let tab = "membership" %}{% include "group_management_tabs.html" %}
+  <section class="card data-card">
+    <table class="table">
+      <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col">Members</th><th scope="col">Pending</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for g in groups %}
+        <tr>
+          <td>
+            <div class="font-medium">{{ g.name }}</div>
+            {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
+          </td>
+          <td><span class="badge" data-variant="outline">{{ g.label }}</span></td>
+          <td class="num">{{ g.members }}</td>
+          <td class="num">{% if g.pending > 0 %}<span class="text-highlight">{{ g.pending }}</span>{% else %}0{% endif %}</td>
+          <td class="text-right">
+            <div class="inline-flex gap-2">
+              <a href="/group-management/{{ g.id }}" class="btn" data-variant="outline" data-size="sm">View Members</a>
+              <a href="/group-management/{{ g.id }}/audit" class="btn" data-variant="outline" data-size="sm">Audit Log</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

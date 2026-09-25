@@ -8,14 +8,15 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_STATES, JoinPolicy};
-use tether_db::accounts;
+use tether_core::groups::Flags;
+use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_STATES};
+use tether_db::accounts::{self, AccountId};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
 
 use super::{PageError, Shell, load, render};
 use crate::AppState;
-use crate::admin::{self, MembershipChange};
+use crate::admin;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
 
@@ -30,14 +31,6 @@ pub(crate) async fn guard(
     session.require(state, permission).await?;
     let loaded = load(state, &session, active).await?;
     Ok((session, loaded.shell))
-}
-
-fn policy_label(policy: JoinPolicy) -> &'static str {
-    match policy {
-        JoinPolicy::Open => "Open",
-        JoinPolicy::Request => "Request to join",
-        JoinPolicy::Assigned => "Assigned by admins",
-    }
 }
 
 /// A state in a `<select>`.
@@ -91,14 +84,84 @@ pub async fn index(
 
 // ---- groups ----------------------------------------------------------------
 
+/// A form's fields as pairs, so checkboxes that repeat a name (the allowed
+/// states) all arrive.
+type Fields = Vec<(String, String)>;
+
+fn field<'a>(fields: &'a Fields, name: &str) -> &'a str {
+    fields
+        .iter()
+        .find(|(k, _)| k == name)
+        .map_or("", |(_, v)| v.as_str())
+}
+
+fn checked(fields: &Fields, name: &str) -> bool {
+    fields.iter().any(|(k, _)| k == name)
+}
+
+fn flags_from(fields: &Fields) -> Flags {
+    Flags {
+        internal: checked(fields, "internal"),
+        hidden: checked(fields, "hidden"),
+        open: checked(fields, "open"),
+        public: checked(fields, "public"),
+        restricted: checked(fields, "restricted"),
+    }
+}
+
 pub struct GroupRow {
     pub id: i64,
     pub name: String,
     pub description: String,
-    pub policy: &'static str,
-    pub policy_label: &'static str,
+    pub label: &'static str,
+    pub hidden: bool,
+    pub public: bool,
+    pub restricted: bool,
+    pub compliance: bool,
     pub members: i64,
     pub pending: i64,
+}
+
+fn group_row(g: groups::GroupSummary) -> GroupRow {
+    GroupRow {
+        id: g.group.id.0,
+        label: g.group.flags.label(),
+        hidden: g.group.flags.hidden,
+        public: g.group.flags.public,
+        restricted: g.group.flags.restricted,
+        compliance: g.group.compliance,
+        name: g.group.name,
+        description: g.group.description,
+        members: g.members,
+        pending: g.pending,
+    }
+}
+
+pub struct ReservedRow {
+    pub name: String,
+    pub reason: String,
+}
+
+/// What the new-group form had, to show it again after an error.
+pub struct NewGroupForm {
+    pub name: String,
+    pub description: String,
+    pub flags: Flags,
+}
+
+impl Default for NewGroupForm {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            // AA's defaults.
+            flags: Flags {
+                internal: true,
+                hidden: true,
+                ..Flags::default()
+            },
+        }
+    }
 }
 
 #[derive(Template)]
@@ -106,18 +169,10 @@ pub struct GroupRow {
 struct GroupsPage {
     shell: Shell,
     groups: Vec<GroupRow>,
+    reserved: Vec<ReservedRow>,
+    options: crate::groups::Options,
     error: Option<String>,
     form: NewGroupForm,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct NewGroupForm {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    join_policy: String,
 }
 
 async fn groups_page(
@@ -129,20 +184,22 @@ async fn groups_page(
     let groups = groups::summaries(&state.db)
         .await?
         .into_iter()
-        .map(|g| GroupRow {
-            id: g.group.id.0,
-            name: g.group.name,
-            description: g.group.description,
-            policy: g.group.join_policy.as_str(),
-            policy_label: policy_label(g.group.join_policy),
-            members: g.members,
-            pending: g.pending,
+        .map(group_row)
+        .collect();
+    let reserved = groups::reserved(&state.db)
+        .await?
+        .into_iter()
+        .map(|r| ReservedRow {
+            name: r.name,
+            reason: r.reason,
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let page = GroupsPage {
         shell,
         groups,
+        reserved,
+        options: crate::groups::options(&state.db).await?,
         error: error.map(|e| e.message().to_owned()),
         form,
     };
@@ -154,7 +211,7 @@ pub async fn groups(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
-    let (_, shell) = guard(&state, session, ADMIN_GROUPS, "groups").await?;
+    let (_, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     groups_page(&state, shell, NewGroupForm::default(), None).await
 }
 
@@ -162,20 +219,75 @@ pub async fn groups(
 pub async fn create_group(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Form(form): Form<NewGroupForm>,
+    Form(fields): Form<Fields>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "groups").await?;
-    match admin::create_group(
-        &state,
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let form = NewGroupForm {
+        name: field(&fields, "name").to_owned(),
+        description: field(&fields, "description").to_owned(),
+        flags: flags_from(&fields),
+    };
+    match crate::groups::create(
+        &state.db,
         session.account,
         &form.name,
         &form.description,
-        &form.join_policy,
+        form.flags,
     )
     .await
     {
         Ok(id) => Ok(Redirect::to(&format!("/admin/groups/{}", id.0)).into_response()),
         Err(err) => groups_page(&state, shell, form, Some(err)).await,
+    }
+}
+
+/// `POST /admin/groups/settings`: auto-leave and request notifications.
+pub async fn group_options(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(fields): Form<Fields>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let options = crate::groups::Options {
+        auto_leave: checked(&fields, "auto_leave"),
+        notify_requests: checked(&fields, "notify_requests"),
+    };
+    match crate::groups::set_options(&state.db, session.account, options).await {
+        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReserveForm {
+    name: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// `POST /admin/groups/reserved`
+pub async fn reserve(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<ReserveForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    match crate::groups::reserve(&state.db, session.account, &form.name, &form.reason).await {
+        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
+    }
+}
+
+/// `POST /admin/groups/reserved/remove`
+pub async fn unreserve(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<ReserveForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    match crate::groups::unreserve(&state.db, session.account, &form.name).await {
+        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
     }
 }
 
@@ -187,10 +299,16 @@ pub struct MemberRow {
     pub state_style: String,
 }
 
-pub struct RequestRow {
+pub struct LeaderRow {
     pub account_id: i64,
     pub main_id: i64,
-    pub main_name: String,
+    pub name: String,
+}
+
+pub struct StateChoice {
+    pub id: i64,
+    pub name: String,
+    pub checked: bool,
 }
 
 #[derive(Template)]
@@ -198,8 +316,12 @@ pub struct RequestRow {
 struct GroupPage {
     shell: Shell,
     group: GroupRow,
+    flags: Flags,
+    states: Vec<StateChoice>,
+    leaders: Vec<LeaderRow>,
+    leader_groups: Vec<GroupOption>,
+    other_groups: Vec<GroupOption>,
     members: Vec<MemberRow>,
-    requests: Vec<RequestRow>,
     error: Option<String>,
 }
 
@@ -209,11 +331,40 @@ async fn group_page(
     id: i64,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
-    let group = groups::summaries(&state.db)
+    let all = groups::summaries(&state.db).await?;
+    let found = all
+        .iter()
+        .find(|g| g.group.id.0 == id)
+        .cloned()
+        .ok_or_else(|| AppError::not_found("No such group."))?;
+    let allowed = groups::allowed_states(&state.db, GroupId(id)).await?;
+    let states = tether_db::states::list(&state.db)
         .await?
         .into_iter()
-        .find(|g| g.group.id.0 == id)
-        .ok_or_else(|| AppError::not_found("No such group."))?;
+        .map(|s| StateChoice {
+            checked: allowed.contains(&s.id),
+            id: s.id.0,
+            name: s.name,
+        })
+        .collect();
+    let leading = groups::leader_groups(&state.db, GroupId(id)).await?;
+    let (leader_groups, other_groups): (Vec<_>, Vec<_>) = all
+        .iter()
+        .filter(|g| g.group.id.0 != id)
+        .map(|g| GroupOption {
+            id: g.group.id.0,
+            name: g.group.name.clone(),
+        })
+        .partition(|g| leading.contains(&GroupId(g.id)));
+    let leaders = groups::leaders(&state.db, GroupId(id))
+        .await?
+        .into_iter()
+        .map(|(account, main_id, name)| LeaderRow {
+            account_id: account.0,
+            main_id,
+            name,
+        })
+        .collect();
     let members = groups::members(&state.db, GroupId(id))
         .await?
         .into_iter()
@@ -225,29 +376,16 @@ async fn group_page(
             state_style: m.state_style,
         })
         .collect();
-    let requests = groups::requests(&state.db, GroupId(id))
-        .await?
-        .into_iter()
-        .map(|r| RequestRow {
-            account_id: r.account_id,
-            main_id: r.main_id,
-            main_name: r.main_name,
-        })
-        .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let page = GroupPage {
         shell,
-        group: GroupRow {
-            id: group.group.id.0,
-            name: group.group.name,
-            description: group.group.description,
-            policy: group.group.join_policy.as_str(),
-            policy_label: policy_label(group.group.join_policy),
-            members: group.members,
-            pending: group.pending,
-        },
+        flags: found.group.flags,
+        group: group_row(found),
+        states,
+        leaders,
+        leader_groups,
+        other_groups,
         members,
-        requests,
         error: error.map(|e| e.message().to_owned()),
     };
     Ok(render(status, &page))
@@ -259,8 +397,55 @@ pub async fn group(
     session: Option<CurrentSession>,
     Path(id): Path<i64>,
 ) -> Result<Response, PageError> {
-    let (_, shell) = guard(&state, session, ADMIN_GROUPS, "groups").await?;
+    let (_, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     group_page(&state, shell, id, None).await
+}
+
+/// Runs a change to one group and shows its page again.
+async fn on_group(
+    state: &AppState,
+    shell: Shell,
+    id: i64,
+    result: Result<(), AppError>,
+) -> Result<Response, PageError> {
+    match result {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/groups/{id}")).into_response()),
+        Err(err) => group_page(state, shell, id, Some(err)).await,
+    }
+}
+
+/// `POST /admin/groups/{id}/settings`
+pub async fn group_settings(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(fields): Form<Fields>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let states = fields
+        .iter()
+        .filter(|(k, _)| k == "states")
+        .map(|(_, v)| v.parse().map(tether_core::states::StateId))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::bad_request("Choose states from the list."));
+    let result = match states {
+        Ok(states) => {
+            crate::groups::update(
+                &state.db,
+                session.account,
+                GroupId(id),
+                crate::groups::Settings {
+                    description: field(&fields, "description").to_owned(),
+                    flags: flags_from(&fields),
+                    compliance: checked(&fields, "compliance"),
+                    states,
+                },
+            )
+            .await
+        }
+        Err(err) => Err(err),
+    };
+    on_group(&state, shell, id, result).await
 }
 
 /// `POST /admin/groups/{id}/delete`
@@ -269,16 +454,22 @@ pub async fn delete_group(
     session: Option<CurrentSession>,
     Path(id): Path<i64>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "groups").await?;
-    match admin::delete_group(&state, session.account, id).await {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    match crate::groups::delete(&state.db, session.account, GroupId(id)).await {
         Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
         Err(err) => group_page(&state, shell, id, Some(err)).await,
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AddMemberForm {
+pub struct CharacterForm {
     character: String,
+}
+
+async fn find_account(state: &AppState, character: &str) -> Result<AccountId, AppError> {
+    accounts::find(&state.db, character)
+        .await?
+        .ok_or_else(|| AppError::not_found("No account has a character with that name."))
 }
 
 /// `POST /admin/groups/{id}/members`: by character name or id.
@@ -286,42 +477,16 @@ pub async fn add_member(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Path(id): Path<i64>,
-    Form(form): Form<AddMemberForm>,
+    Form(form): Form<CharacterForm>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "groups").await?;
-    let result = match accounts::find(&state.db, &form.character).await? {
-        Some(account) => {
-            admin::change_membership(
-                &state,
-                session.account,
-                id,
-                account.0,
-                MembershipChange::Add,
-            )
-            .await
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = match find_account(&state, &form.character).await {
+        Ok(account) => {
+            crate::groups::add_member(&state.db, session.account, GroupId(id), account).await
         }
-        None => Err(AppError::not_found(
-            "No account has a character with that name.",
-        )),
+        Err(err) => Err(err),
     };
-    match result {
-        Ok(()) => Ok(Redirect::to(&format!("/admin/groups/{id}")).into_response()),
-        Err(err) => group_page(&state, shell, id, Some(err)).await,
-    }
-}
-
-async fn membership(
-    state: AppState,
-    session: Option<CurrentSession>,
-    id: i64,
-    account_id: i64,
-    change: MembershipChange,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "groups").await?;
-    match admin::change_membership(&state, session.account, id, account_id, change).await {
-        Ok(()) => Ok(Redirect::to(&format!("/admin/groups/{id}")).into_response()),
-        Err(err) => group_page(&state, shell, id, Some(err)).await,
-    }
+    on_group(&state, shell, id, result).await
 }
 
 /// `POST /admin/groups/{id}/members/{account_id}/remove`
@@ -330,25 +495,92 @@ pub async fn remove_member(
     session: Option<CurrentSession>,
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<Response, PageError> {
-    membership(state, session, id, account_id, MembershipChange::Remove).await
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = crate::groups::remove_member(
+        &state.db,
+        session.account,
+        GroupId(id),
+        AccountId(account_id),
+    )
+    .await;
+    on_group(&state, shell, id, result).await
 }
 
-/// `POST /admin/groups/{id}/requests/{account_id}/approve`
-pub async fn approve(
+/// `POST /admin/groups/{id}/leaders`: by character name or id.
+pub async fn add_leader(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<CharacterForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = match find_account(&state, &form.character).await {
+        Ok(account) => {
+            crate::groups::set_leader(&state.db, session.account, GroupId(id), account, true).await
+        }
+        Err(err) => Err(err),
+    };
+    on_group(&state, shell, id, result).await
+}
+
+/// `POST /admin/groups/{id}/leaders/{account_id}/remove`
+pub async fn remove_leader(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<Response, PageError> {
-    membership(state, session, id, account_id, MembershipChange::Approve).await
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = crate::groups::set_leader(
+        &state.db,
+        session.account,
+        GroupId(id),
+        AccountId(account_id),
+        false,
+    )
+    .await;
+    on_group(&state, shell, id, result).await
 }
 
-/// `POST /admin/groups/{id}/requests/{account_id}/deny`
-pub async fn deny(
+#[derive(Debug, Deserialize)]
+pub struct LeaderGroupForm {
+    group_id: i64,
+}
+
+/// `POST /admin/groups/{id}/leader-groups`
+pub async fn add_leader_group(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Path((id, account_id)): Path<(i64, i64)>,
+    Path(id): Path<i64>,
+    Form(form): Form<LeaderGroupForm>,
 ) -> Result<Response, PageError> {
-    membership(state, session, id, account_id, MembershipChange::Deny).await
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = crate::groups::set_leader_group(
+        &state.db,
+        session.account,
+        GroupId(id),
+        GroupId(form.group_id),
+        true,
+    )
+    .await;
+    on_group(&state, shell, id, result).await
+}
+
+/// `POST /admin/groups/{id}/leader-groups/{leader_group_id}/remove`
+pub async fn remove_leader_group(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, leader_group_id)): Path<(i64, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = crate::groups::set_leader_group(
+        &state.db,
+        session.account,
+        GroupId(id),
+        GroupId(leader_group_id),
+        false,
+    )
+    .await;
+    on_group(&state, shell, id, result).await
 }
 
 // ---- permissions -----------------------------------------------------------

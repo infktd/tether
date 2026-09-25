@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block breadcrumb %}<a href="/group-management">Group Management</a>&nbsp;/&nbsp;<a href="/group-management/membership">Group Membership</a>&nbsp;/&nbsp;<span class="text-foreground">{{ name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title flex items-center gap-2">{{ name }} <span class="badge" data-variant="outline">{{ label }}</span></h1>
+      {% if restricted %}<p class="text-muted-foreground mt-1">Restricted: only the owner removes members.</p>{% endif %}
+    </div>
+    <a href="/group-management/{{ id }}/audit" class="btn" data-variant="outline">Audit Log</a>
+  </div>
+  {% include "admin_error.html" %}
+
+  <section class="card">
+    <header><h2>Direct join link</h2><p>Anyone whose state may join can use it, even while the group is Hidden.</p></header>
+    <section class="max-w-xl">
+      <label class="sr-only" for="join-link">Direct join link</label>
+      <input class="input num" id="join-link" value="{{ join_link }}" readonly>
+    </section>
+  </section>
+
+  <section class="card data-card">
+    <header><h2>Members <span class="num text-muted-foreground font-normal">{{ members.len() }}</span></h2></header>
+    {% if members.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No members yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Pilot</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = m.main_name.as_str() %}{% let avatar_id = m.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ m.main_name }}</span>
+            </div>
+          </td>
+          <td><span class="state-badge" data-state="{{ m.state_style }}">{{ m.state }}</span></td>
+          <td class="text-right">
+            <form method="post" action="/group-management/{{ id }}/members/{{ m.account_id }}/remove" hx-confirm="Remove {{ m.main_name }} from {{ name }}?">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

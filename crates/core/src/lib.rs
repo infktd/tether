@@ -1,6 +1,7 @@
 //! Domain types and rules: accounts, characters, states, groups, permissions.
 
 pub mod crypto;
+pub mod groups;
 pub mod nickname;
 pub mod permissions;
 pub mod scopes;

@@ -1,28 +1,28 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id FROM core.groups WHERE managed = $1",
+  "query": "SELECT group_id FROM core.group_leader_groups WHERE leader_group_id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
+        "name": "group_id",
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "core.groups",
-            "name": "id"
+            "table": "core.group_leader_groups",
+            "name": "group_id"
           }
         }
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "8c59fe27c82811ab1688a9d71ce07f4c69b2dbc9a5b7c6d52fb234056c37cf97"
+  "hash": "0bf6927b6591e4beed87e18fa32da2d752146017484af5edf6536020c9a3f89b"
 }

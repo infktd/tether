@@ -306,17 +306,6 @@ pub async fn not_compliant_state<'e>(
     Ok(id.map(StateId))
 }
 
-/// A group Tether manages (`compliant`).
-pub async fn managed_group<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    which: &str,
-) -> Result<Option<crate::groups::GroupId>, sqlx::Error> {
-    let id = sqlx::query_scalar!("SELECT id FROM core.groups WHERE managed = $1", which)
-        .fetch_optional(executor)
-        .await?;
-    Ok(id.map(crate::groups::GroupId))
-}
-
 /// Puts the account in the group or takes it out; true if that changed.
 pub async fn set_group_member(
     tx: &mut sqlx::PgConnection,

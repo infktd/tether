@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT leave FROM core.group_requests WHERE group_id = $1 AND account_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "leave",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "leave"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "94626e2698e4111ae8f44e64c743a8fb63cb621e4b3c70d5b7fd6989400dbee2"
+}

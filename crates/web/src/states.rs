@@ -141,9 +141,24 @@ pub(crate) async fn evaluate_in(
         )
         .await?;
     }
-    // The Compliant group: compliant accounts in a state other than Guest.
-    if let Some(group) = tether_db::compliance::managed_group(&mut *tx, "compliant").await? {
-        let member = compliant && state != rules.guest();
+    // Groups whose allowed states exclude the state lose the account (AA).
+    for group in tether_db::groups::groups_not_allowing(&mut *tx, account, state).await? {
+        tether_db::groups::remove_member(&mut *tx, group, account).await?;
+        audit::record(
+            &mut *tx,
+            Actor::System,
+            "group.member.remove",
+            Some(&format!("group:{}", group.0)),
+            serde_json::json!({ "account_id": account.0, "reason": "state not allowed" }),
+        )
+        .await?;
+    }
+    // Compliance groups (Member Audit's): the compliant accounts of their
+    // allowed states, never Guest.
+    for (group, allowed) in tether_db::groups::compliance_groups(&mut *tx).await? {
+        let member = compliant
+            && state != rules.guest()
+            && tether_core::groups::state_allowed(&allowed, state);
         if tether_db::compliance::set_group_member(&mut *tx, group, account, member).await? {
             audit::record(
                 &mut *tx,

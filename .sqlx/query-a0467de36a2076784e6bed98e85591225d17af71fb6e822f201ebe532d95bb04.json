@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT compliance FROM core.groups WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "compliance",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.groups",
+            "name": "compliance"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a0467de36a2076784e6bed98e85591225d17af71fb6e822f201ebe532d95bb04"
+}

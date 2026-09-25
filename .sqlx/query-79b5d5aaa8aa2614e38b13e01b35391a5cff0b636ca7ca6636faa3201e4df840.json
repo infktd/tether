@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.group_request_log\n            (group_id, group_name, request_type, action, requestor_account_id, requestor_main,\n             requestor_corporation_id, actor_account_id, actor_name)\n        SELECT g.id, g.name, $2, $3, $4,\n               (SELECT c.name FROM core.accounts a\n                JOIN core.characters c ON c.id = a.main_character_id WHERE a.id = $4),\n               (SELECT c.corporation_id FROM core.accounts a\n                JOIN core.characters c ON c.id = a.main_character_id WHERE a.id = $4),\n               $5,\n               (SELECT c.name FROM core.accounts a\n                JOIN core.characters c ON c.id = a.main_character_id WHERE a.id = $5)\n        FROM core.groups g WHERE g.id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "79b5d5aaa8aa2614e38b13e01b35391a5cff0b636ca7ca6636faa3201e4df840"
+}

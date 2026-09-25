@@ -5,6 +5,7 @@ pub mod admin;
 pub mod assets;
 pub mod compliance;
 pub mod discord;
+pub mod groups;
 pub mod headers;
 pub mod pings;
 pub mod plugin_access;
@@ -21,7 +22,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use tether_core::states::State as AccessState;
-use tether_db::{accounts, groups, permissions, states as state_db};
+use tether_db::{accounts, permissions, states as state_db};
 
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -145,6 +146,8 @@ pub struct Shell {
     /// The account lost its main (sold, or its token gone): Guest until
     /// the owner picks one (AA).
     pub no_main: bool,
+    /// Pending requests, when the account may open Group Management.
+    pub group_management: Option<i64>,
 }
 
 pub struct PluginNavLink {
@@ -344,6 +347,12 @@ pub(crate) async fn load(
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };
+    let managed = crate::groups::managed_by(&state.db, session.account).await?;
+    let group_management = if managed.is_empty() {
+        None
+    } else {
+        Some(tether_db::groups::pending_count(&state.db, &managed).await?)
+    };
     let plugin_nav = state
         .plugins
         .navigation()
@@ -394,6 +403,7 @@ pub(crate) async fn load(
             active_href: String::new(),
             not_compliant,
             no_main: account.main.is_none(),
+            group_management,
         },
         state: access,
         is_owner: account.is_owner,
@@ -416,7 +426,7 @@ pub async fn profile(
     };
     let mut loaded = load(&state, &session, "profile").await?;
     annotate(&state, session.account, &mut loaded.characters).await?;
-    let groups = groups::names_for(&state.db, session.account).await?;
+    let groups = tether_db::groups::names_for(&state.db, session.account).await?;
     let permissions = permissions::effective(&state.db, session.account)
         .await?
         .into_iter()

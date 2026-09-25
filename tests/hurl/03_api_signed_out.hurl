@@ -20,9 +20,39 @@ POST {{base}}/api/groups/1/leave
 Origin: {{base}}
 HTTP 401
 
+POST {{base}}/api/groups/1/retract
+Origin: {{base}}
+HTTP 401
+
+GET {{base}}/api/group-management/requests
+HTTP 401
+
+POST {{base}}/api/group-management/groups/1/requests/1/accept
+Origin: {{base}}
+HTTP 401
+
+POST {{base}}/api/group-management/groups/1/requests/1/reject
+Origin: {{base}}
+HTTP 401
+
+GET {{base}}/api/group-management/groups/1/members
+HTTP 401
+
+DELETE {{base}}/api/group-management/groups/1/members/1
+Origin: {{base}}
+HTTP 401
+
+GET {{base}}/api/group-management/groups/1/audit-log
+HTTP 401
+
 POST {{base}}/api/admin/groups
 Origin: {{base}}
-{"name": "Officers", "join_policy": "assigned"}
+{"name": "Officers"}
+HTTP 401
+
+PUT {{base}}/api/admin/groups/1
+Origin: {{base}}
+{"internal": true, "hidden": true, "open": false, "public": false, "restricted": false}
 HTTP 401
 
 DELETE {{base}}/api/admin/groups/1
@@ -38,14 +68,31 @@ DELETE {{base}}/api/admin/groups/1/members/1
 Origin: {{base}}
 HTTP 401
 
-GET {{base}}/api/admin/groups/1/requests
-HTTP 401
-
-POST {{base}}/api/admin/groups/1/requests/1/approve
+PUT {{base}}/api/admin/groups/1/leaders/1
 Origin: {{base}}
 HTTP 401
 
-POST {{base}}/api/admin/groups/1/requests/1/deny
+DELETE {{base}}/api/admin/groups/1/leaders/1
+Origin: {{base}}
+HTTP 401
+
+PUT {{base}}/api/admin/groups/1/leader-groups/2
+Origin: {{base}}
+HTTP 401
+
+DELETE {{base}}/api/admin/groups/1/leader-groups/2
+Origin: {{base}}
+HTTP 401
+
+GET {{base}}/api/admin/reserved-group-names
+HTTP 401
+
+POST {{base}}/api/admin/reserved-group-names
+Origin: {{base}}
+{"name": "directors", "reason": "CEO only"}
+HTTP 401
+
+DELETE {{base}}/api/admin/reserved-group-names/directors
 Origin: {{base}}
 HTTP 401
 

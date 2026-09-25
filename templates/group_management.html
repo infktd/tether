@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{% macro request_table(title, rows, empty) %}
+  <section class="card data-card">
+    <header><h2>{{ title }} <span class="num text-muted-foreground font-normal">{{ rows.len() }}</span></h2></header>
+    {% if rows.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">{{ empty }}</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Pilot</th><th scope="col">Group</th><th scope="col">Requested</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = r.main_name.as_str() %}{% let avatar_id = r.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ r.main_name }}</span>
+            </div>
+          </td>
+          <td>{{ r.group_name }}</td>
+          <td class="num text-muted-foreground">{{ r.requested_at }}</td>
+          <td class="text-right">
+            <div class="inline-flex gap-2">
+              <form method="post" action="/group-management/{{ r.group_id }}/requests/{{ r.account_id }}/accept"><button type="submit" class="btn" data-variant="outline" data-size="sm">Accept</button></form>
+              <form method="post" action="/group-management/{{ r.group_id }}/requests/{{ r.account_id }}/reject"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Reject</button></form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+{% endmacro %}
+{% block title %}Group Management{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Group Management</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Group Management</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Requests for the groups you lead. Accepting a join checks the pilot's state can still be in the group.</p>
+  </div>
+  {% let tab = "requests" %}{% include "group_management_tabs.html" %}
+  {% include "admin_error.html" %}
+
+  {% call request_table("Join requests", joins, "No one is waiting to join.") %}{% endcall %}
+  {% call request_table("Leave requests", leaves, "No one is waiting to leave.") %}{% endcall %}
+</div>
+{% endblock %}

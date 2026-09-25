@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT m.role_id AS \"role_id!\",\n               bool_and(COALESCE(m.state_id = core.guest_state(), false)\n                        OR COALESCE(g.open AND NOT g.internal, false)) AS \"open_only!\"\n        FROM core.discord_role_mappings m\n        JOIN core.accounts a ON a.id = $1\n        LEFT JOIN core.groups g ON g.id = m.group_id\n        WHERE a.active\n          AND (m.state_id = a.state_id\n               -- Groups count only while the account has a main.\n               OR (a.main_character_id IS NOT NULL\n                   AND m.group_id IN (SELECT group_id FROM core.group_members WHERE account_id = $1)))\n        GROUP BY m.role_id\n        ORDER BY 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "open_only!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "383f77fe7ef6a7d474e4d2dac9a65e3882a5a32cef25fad3ff8f2e97748ffe74"
+}

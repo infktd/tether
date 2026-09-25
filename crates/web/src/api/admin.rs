@@ -7,27 +7,48 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tether_core::groups::Flags;
 use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_STATES};
 use tether_core::states::StateId;
+use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
-use tether_db::groups::{self, GroupId};
+use tether_db::groups::GroupId;
 use tether_db::permissions::{self, Grantee};
 use tether_db::states as state_db;
 
 use crate::AppState;
-use crate::admin::{self, MembershipChange};
+use crate::admin;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
+use crate::groups;
 use crate::state_admin::{self, Change};
 
 // ---- groups ---------------------------------------------------------------
+
+fn yes() -> bool {
+    true
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct NewGroup {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub join_policy: String,
+    /// Only admins change its members (default, as AA's).
+    #[serde(default = "yes")]
+    pub internal: bool,
+    /// Not listed; joinable through its direct link (default).
+    #[serde(default = "yes")]
+    pub hidden: bool,
+    /// Join and leave without approval.
+    #[serde(default)]
+    pub open: bool,
+    /// Joinable without `request_groups`.
+    #[serde(default)]
+    pub public: bool,
+    /// Only the owner changes its members or this flag.
+    #[serde(default)]
+    pub restricted: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -44,15 +65,71 @@ pub async fn create_group(
     Json(body): Json<NewGroup>,
 ) -> Result<(StatusCode, Json<Created>), AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    let id = admin::create_group(
-        &state,
+    let flags = Flags {
+        internal: body.internal,
+        hidden: body.hidden,
+        open: body.open,
+        public: body.public,
+        restricted: body.restricted,
+    };
+    let id = groups::create(
+        &state.db,
         session.account,
         &body.name,
         &body.description,
-        &body.join_policy,
+        flags,
     )
     .await?;
     Ok((StatusCode::CREATED, Json(Created { id: id.0 })))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct GroupSettings {
+    #[serde(default)]
+    pub description: String,
+    pub internal: bool,
+    pub hidden: bool,
+    pub open: bool,
+    pub public: bool,
+    pub restricted: bool,
+    /// A compliance group (Internal only): Tether keeps its members.
+    #[serde(default)]
+    pub compliance: bool,
+    /// Only these states may be in it; empty for every state.
+    #[serde(default)]
+    pub states: Vec<i64>,
+}
+
+/// `PUT /api/admin/groups/{id}`: every setting at once. Members whose
+/// state is no longer allowed leave.
+#[utoipa::path(put, path = "/api/admin/groups/{id}", tag = "admin", security(("session" = [])), request_body = GroupSettings,
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+pub async fn update_group(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Json(body): Json<GroupSettings>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_GROUPS).await?;
+    groups::update(
+        &state.db,
+        session.account,
+        GroupId(id),
+        groups::Settings {
+            description: body.description,
+            flags: Flags {
+                internal: body.internal,
+                hidden: body.hidden,
+                open: body.open,
+                public: body.public,
+                restricted: body.restricted,
+            },
+            compliance: body.compliance,
+            states: body.states.into_iter().map(StateId).collect(),
+        },
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /api/admin/groups/{id}`
@@ -64,7 +141,7 @@ pub async fn delete_group(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    admin::delete_group(&state, session.account, id).await?;
+    groups::delete(&state.db, session.account, GroupId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -75,7 +152,7 @@ pub struct MemberIn {
 
 /// `POST /api/admin/groups/{id}/members`
 #[utoipa::path(post, path = "/api/admin/groups/{id}/members", tag = "admin", security(("session" = [])), request_body = MemberIn,
-    params(("id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
+    params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404)))]
 pub async fn add_member(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -83,12 +160,11 @@ pub async fn add_member(
     Json(body): Json<MemberIn>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    admin::change_membership(
-        &state,
+    groups::add_member(
+        &state.db,
         session.account,
-        id,
-        body.account_id,
-        MembershipChange::Add,
+        GroupId(id),
+        AccountId(body.account_id),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -103,82 +179,149 @@ pub async fn remove_member(
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    admin::change_membership(
-        &state,
+    groups::remove_member(
+        &state.db,
         session.account,
-        id,
-        account_id,
-        MembershipChange::Remove,
+        GroupId(id),
+        AccountId(account_id),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `POST /api/admin/groups/{id}/requests/{account_id}/approve`
-#[utoipa::path(post, path = "/api/admin/groups/{id}/requests/{account_id}/approve", tag = "admin", security(("session" = [])),
-    params(("id" = i64, Path), ("account_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
-pub async fn approve_request(
+/// `PUT /api/admin/groups/{id}/leaders/{account_id}`: make them a Group
+/// Leader.
+#[utoipa::path(put, path = "/api/admin/groups/{id}/leaders/{account_id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("account_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404), (status = 409)))]
+pub async fn add_leader(
     State(state): State<AppState>,
     session: CurrentSession,
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    admin::change_membership(
-        &state,
+    groups::set_leader(
+        &state.db,
         session.account,
-        id,
-        account_id,
-        MembershipChange::Approve,
+        GroupId(id),
+        AccountId(account_id),
+        true,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `POST /api/admin/groups/{id}/requests/{account_id}/deny`
-#[utoipa::path(post, path = "/api/admin/groups/{id}/requests/{account_id}/deny", tag = "admin", security(("session" = [])),
+/// `DELETE /api/admin/groups/{id}/leaders/{account_id}`
+#[utoipa::path(delete, path = "/api/admin/groups/{id}/leaders/{account_id}", tag = "admin", security(("session" = [])),
     params(("id" = i64, Path), ("account_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
-pub async fn deny_request(
+pub async fn remove_leader(
     State(state): State<AppState>,
     session: CurrentSession,
     Path((id, account_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    admin::change_membership(
-        &state,
+    groups::set_leader(
+        &state.db,
         session.account,
-        id,
-        account_id,
-        MembershipChange::Deny,
+        GroupId(id),
+        AccountId(account_id),
+        false,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct RequestOut {
-    pub account_id: i64,
-    pub main_name: String,
-}
-
-/// `GET /api/admin/groups/{id}/requests`
-#[utoipa::path(get, path = "/api/admin/groups/{id}/requests", tag = "admin", security(("session" = [])),
-    params(("id" = i64, Path)), responses((status = 200, body = Vec<RequestOut>), (status = 403)))]
-pub async fn list_requests(
+/// `PUT /api/admin/groups/{id}/leader-groups/{leader_group_id}`: members
+/// of the other group lead this one.
+#[utoipa::path(put, path = "/api/admin/groups/{id}/leader-groups/{leader_group_id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("leader_group_id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404), (status = 409)))]
+pub async fn add_leader_group(
     State(state): State<AppState>,
     session: CurrentSession,
-    Path(id): Path<i64>,
-) -> Result<Json<Vec<RequestOut>>, AppError> {
+    Path((id, leader_group_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_GROUPS).await?;
-    let requests = groups::requests(&state.db, GroupId(id)).await?;
+    groups::set_leader_group(
+        &state.db,
+        session.account,
+        GroupId(id),
+        GroupId(leader_group_id),
+        true,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/admin/groups/{id}/leader-groups/{leader_group_id}`
+#[utoipa::path(delete, path = "/api/admin/groups/{id}/leader-groups/{leader_group_id}", tag = "admin", security(("session" = [])),
+    params(("id" = i64, Path), ("leader_group_id" = i64, Path)), responses((status = 204), (status = 403), (status = 404)))]
+pub async fn remove_leader_group(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path((id, leader_group_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_GROUPS).await?;
+    groups::set_leader_group(
+        &state.db,
+        session.account,
+        GroupId(id),
+        GroupId(leader_group_id),
+        false,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ReservedName {
+    pub name: String,
+    pub reason: String,
+}
+
+/// `GET /api/admin/reserved-group-names`
+#[utoipa::path(get, path = "/api/admin/reserved-group-names", tag = "admin", security(("session" = [])),
+    responses((status = 200, body = Vec<ReservedName>), (status = 403)))]
+pub async fn reserved_names(
+    State(state): State<AppState>,
+    session: CurrentSession,
+) -> Result<Json<Vec<ReservedName>>, AppError> {
+    session.require(&state, ADMIN_GROUPS).await?;
     Ok(Json(
-        requests
+        tether_db::groups::reserved(&state.db)
+            .await?
             .into_iter()
-            .map(|r| RequestOut {
-                account_id: r.account_id,
-                main_name: r.main_name,
+            .map(|r| ReservedName {
+                name: r.name,
+                reason: r.reason,
             })
             .collect(),
     ))
+}
+
+/// `POST /api/admin/reserved-group-names`: groups can't take the name
+/// (ignoring case).
+#[utoipa::path(post, path = "/api/admin/reserved-group-names", tag = "admin", security(("session" = [])), request_body = ReservedName,
+    responses((status = 204), (status = 400), (status = 403), (status = 409)))]
+pub async fn reserve_name(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Json(body): Json<ReservedName>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_GROUPS).await?;
+    groups::reserve(&state.db, session.account, &body.name, &body.reason).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/admin/reserved-group-names/{name}`
+#[utoipa::path(delete, path = "/api/admin/reserved-group-names/{name}", tag = "admin", security(("session" = [])),
+    params(("name" = String, Path)), responses((status = 204), (status = 403), (status = 404)))]
+pub async fn unreserve_name(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(name): Path<String>,
+) -> Result<StatusCode, AppError> {
+    session.require(&state, ADMIN_GROUPS).await?;
+    groups::unreserve(&state.db, session.account, &name).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---- permissions ----------------------------------------------------------

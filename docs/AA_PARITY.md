@@ -17,10 +17,10 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Dashboard (the landing page: Characters, Membership) | Profile | Rename to **Dashboard** |
 | Characters, Add Character, Change Main, Main Character | Characters, Add character, Make main, Main character | **Change Main** for "Make main"; drop the "Alt" label (AA just lists Characters) |
 | State; Member, Blue, Guest | same | none |
-| Groups → Available Groups (users) | none: joining only through the API | Build **Groups** (Available Groups) |
-| Group Management → Group Requests, Group Membership, Audit Log | Admin → Groups | Rename to **Group Management**, with those tabs |
-| Internal, Hidden, Open, Public, Restricted; Requestable | Assigned, Open, Request to join | Use AA's flags (see Groups) |
-| Group Leaders, Group Leader Groups | none | Build |
+| Groups → Available Groups (users) | **Groups** page and direct join links | done |
+| Group Management → Group Requests, Group Membership, Audit Log | **Group Management** (leaders and `group_management`); group settings under Admin → Groups | done |
+| Internal, Hidden, Open, Public, Restricted; Requestable | same | done |
+| Group Leaders, Group Leader Groups | same | done |
 | Permissions; Permissions Audit | Permissions | Add **Permissions Audit** |
 | Token Management | scopes shown per character on the profile | Build **Token Management** |
 | Notifications | none | Build |
@@ -46,13 +46,13 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | partial: add to the daily token check |
 | States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all but Factions and Public; Guest covers everyone, which is what Public is for | partial: add Factions |
 | State changes | re-evaluated on affiliation updates; "State changed to: X" notification | re-evaluated; audited | partial: needs Notifications |
-| Groups: Internal, Hidden (direct join link), Open, Public, Restricted, States (only these states may join; removed on state change), Description | | Assigned ≈ Internal; Open; Request to join ≈ Requestable | partial |
-| Group Leaders, Group Leader Groups | non-admins process one group's requests | none | missing |
-| Leave requests, `GROUPMANAGEMENT_AUTO_LEAVE` | leaving non-open groups needs approval unless auto-leave is on | leaving is immediate | missing (setting, default off as in AA) |
-| Group Management: Group Requests (Join/Leave, Accept/Reject), Group Membership (View Members, Audit Members, Copy Direct Join Link) | | admin group page: members, requests | partial |
-| Group Audit Log (RequestLog) | per group: requestor, character, corporation, type, action, actor | global audit log | partial: per-group view |
-| Reserved group names | names groups can't use; matching Discord roles left alone | Discord roles Tether doesn't map are left alone | partial |
-| `request_groups` permission | who may request non-public groups (usually via Member) | anyone signed in | missing |
+| Groups: Internal, Hidden (direct join link), Open, Public, Restricted, States (only these states may join; removed on state change), Description | | same | done |
+| Group Leaders, Group Leader Groups | non-admins process one group's requests | same; accepting also needs the group's permissions | done, stricter |
+| Leave requests, `GROUPMANAGEMENT_AUTO_LEAVE` | leaving non-open groups needs approval unless auto-leave is on | same (setting off by default) | done |
+| Group Management: Group Requests (Join/Leave, Accept/Reject), Group Membership (View Members, Audit Members, Copy Direct Join Link) | | same | done |
+| Group Audit Log (RequestLog) | per group: requestor, character, corporation, type, action, actor | same, plus the global audit log | done |
+| Reserved group names | names groups can't use; matching Discord roles left alone | names groups can't use; Discord side with Services (the strip-unmapped option) | partial: Discord with Services |
+| `request_groups` permission | who may request non-public groups (usually via Member) | same, granted to Member | done |
 | Permissions on users, groups, states | | states and groups only (never users, F6) | done, deliberately stricter |
 | Staff can't change permissions; superuser can | | `admin.permissions`; owner holds everything | done |
 | Notifications | in-app, unread count, mark all read, delete read, max per user | none | missing |
@@ -121,18 +121,18 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 1. Flags: Internal, Hidden, Open, Public, Restricted, and allowed states (empty: all). New groups default to Internal and Hidden, as in AA. Existing groups migrate: Assigned becomes Internal; Open becomes Open and not Hidden; Request to join becomes not Open, not Hidden. The Compliance Group is Internal.
 2. Joinable: not Internal, and the account's state allowed. The Groups page lists joinable groups that aren't Hidden, where the account holds `request_groups` or the group is Public. Hidden groups join through their direct link.
 3. Join, in order: not joinable (refused), already a member, no `request_groups` and not Public (refused), Open (added, logged Join/Accept by themselves), a pending request (refused), else a join request (approvers notified if the setting is on).
-4. Leave, in order: Internal (refused), not a member, Open or auto-leave on (removed, logged Leave/Accept), a pending request (refused), else a leave request. Auto-leave is a setting, off by default. *Tether today: leaving is immediate, even from admin-assigned groups.*
+4. Leave, in order: Internal (refused), not a member, Open or auto-leave on (removed, logged Leave/Accept), a pending request (refused), else a leave request. Auto-leave is a setting, off by default.
 5. Retract: join requests only; not logged.
 6. Accepting a join re-checks joinability against the current state. The four decisions (join or leave, accept or reject) are logged, delete the request and notify the requester: "Group Application Accepted" / "Your application to {group} has been accepted." (success), "Group Application Rejected" / "Your application to {group} has been rejected." (danger), "Group Leave Request Accepted" / "Your request to leave {group} has been accepted." (success), "Group Leave Request Rejected" / "Your request to leave {group} has been rejected." (danger).
 7. Removing a member (non-Internal groups) is logged as Removed, without a notification.
 8. On a state change, and when a group's allowed states are saved, accounts whose state isn't allowed are removed (Public groups too).
 9. **Group Management** covers non-Internal groups: holders of `group_management` all of them, **Group Leaders** (directly, or through a **Group Leader Group**) only theirs. They process requests, view and remove members, and read the group's Audit Log; they can't change settings or add members directly. The menu shows the pending count.
 10. Request notifications ("Group Management: Join request for {group}" / "{user} wants to join {group}.", info; and Leave) go to the group's leaders and leader groups only, behind a setting that's off by default.
-11. **Restricted**: only the owner changes the flag or the membership (leaders included, which is stricter than AA's code and what its docs intend).
+11. **Restricted**: only the owner changes the group's settings (the flag included), its leaders or its membership (leaders included, which is stricter than AA's code and what its docs intend). Joining an Open Restricted group is a request the owner accepts.
 12. **Reserved group names**: matched ignoring case, with a required reason; groups can't take them; Discord leaves roles with those names alone.
 13. The per-group **Audit Log**: date, requestor, current main, corporation, type (Join, Leave, Removed), action (Accept, Reject), actor, kept with name snapshots.
 14. `request_groups` ("Can request non-public groups") gates listing and joining non-Public groups and is granted to Member by default (AA's docs).
-15. Tether's own guards stay: adding members needs the group's grants; sensitive permissions never go to Guest or Open groups, re-checked when flags change.
+15. Tether's own guards stay: adding members, accepting requests, appointing leaders, opening a group and making it a compliance group all need the group's grants (and those of the groups it leads); sensitive permissions never go to Guest or Open groups, re-checked when flags change. Stricter than AA: an Open or compliance group can't be a Group Leader Group, and a leader counts only while active, with a main, and not Guest. Hidden only takes a group off the list; it isn't access control.
 
 **Compliance** (Member Audit's behaviour)
 

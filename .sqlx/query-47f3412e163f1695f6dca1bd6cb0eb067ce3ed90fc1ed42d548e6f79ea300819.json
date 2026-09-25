@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.group_leader_groups WHERE group_id = $1 AND leader_group_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "47f3412e163f1695f6dca1bd6cb0eb067ce3ed90fc1ed42d548e6f79ea300819"
+}

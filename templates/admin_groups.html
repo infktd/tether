@@ -1,11 +1,12 @@
 {% extends "layout.html" %}
-{% block title %}Group Management{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Group Management</span>{% endblock %}
+{%- import "icons.html" as icons -%}
+{% block title %}Groups{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Groups</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>
-    <h1 class="page-title">Group Management</h1>
-    <p class="text-muted-foreground mt-1">Groups add access on top of states. Grant them permissions on the Permissions page.</p>
+    <h1 class="page-title">Groups</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Groups add access on top of states. Grant them permissions on the Permissions page; their leaders handle requests in Group Management.</p>
   </div>
   {% include "admin_error.html" %}
 
@@ -16,7 +17,7 @@
     {% else %}
     <table class="table">
       <thead>
-        <tr><th scope="col">Group</th><th scope="col">Joining</th><th scope="col">Members</th><th scope="col">Pending</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr>
+        <tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col">Members</th><th scope="col">Pending</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr>
       </thead>
       <tbody>
         {% for g in groups %}
@@ -25,7 +26,15 @@
             <div class="font-medium">{{ g.name }}</div>
             {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
           </td>
-          <td><span class="badge" data-variant="outline">{{ g.policy_label }}</span></td>
+          <td>
+            <div class="flex flex-wrap gap-1">
+              <span class="badge" data-variant="outline">{{ g.label }}</span>
+              {% if g.compliance %}<span class="badge" data-variant="outline">Compliance</span>{% endif %}
+              {% if g.hidden && g.label != "Internal" %}<span class="badge" data-variant="outline">Hidden</span>{% endif %}
+              {% if g.public && g.label != "Internal" %}<span class="badge" data-variant="outline">Public</span>{% endif %}
+              {% if g.restricted %}<span class="badge" data-variant="outline">Restricted</span>{% endif %}
+            </div>
+          </td>
           <td class="num">{{ g.members }}</td>
           <td class="num">{% if g.pending > 0 %}<span class="text-highlight">{{ g.pending }}</span>{% else %}0{% endif %}</td>
           <td class="text-right"><a href="/admin/groups/{{ g.id }}" class="btn" data-variant="outline" data-size="sm">Manage</a></td>
@@ -37,26 +46,61 @@
   </section>
 
   <form class="card" method="post" action="/admin/groups">
-    <header><h2>New group</h2></header>
-    <section class="grid grid-cols-3 gap-4">
-      <div class="grid gap-2">
-        <label class="label" for="name">Name</label>
-        <input class="input" id="name" name="name" value="{{ form.name }}" maxlength="100" required>
+    <header><h2>New group</h2><p>New groups start Internal and Hidden, as in Alliance Auth: untick Internal to let pilots find and request it.</p></header>
+    <section class="grid gap-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="grid gap-2">
+          <label class="label" for="name">Name</label>
+          <input class="input" id="name" name="name" value="{{ form.name }}" maxlength="100" required>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="description">Description</label>
+          <input class="input" id="description" name="description" value="{{ form.description }}" maxlength="512">
+        </div>
       </div>
-      <div class="grid gap-2">
-        <label class="label" for="description">Description</label>
-        <input class="input" id="description" name="description" value="{{ form.description }}" maxlength="500">
-      </div>
-      <div class="grid gap-2">
-        <label class="label" for="join_policy">Joining</label>
-        <select class="select input" id="join_policy" name="join_policy">
-          <option value="assigned"{% if form.join_policy == "assigned" %} selected{% endif %}>Assigned by admins</option>
-          <option value="request"{% if form.join_policy == "request" %} selected{% endif %}>Request to join</option>
-          <option value="open"{% if form.join_policy == "open" %} selected{% endif %}>Open</option>
-        </select>
-      </div>
+      {% let flags = form.flags %}{% include "admin_group_flags.html" %}
     </section>
     <footer><button type="submit" class="btn" data-variant="primary">Create group</button></footer>
   </form>
+
+  <form class="card" method="post" action="/admin/groups/settings">
+    <header><h2>Group Management settings</h2></header>
+    <section class="grid gap-3">
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="auto_leave" value="on"{% if options.auto_leave %} checked{% endif %}> <span><span class="font-medium">Leave without approval</span> · pilots leave any group at once, instead of asking its leaders.</span></label>
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="notify_requests" value="on"{% if options.notify_requests %} checked{% endif %}> <span><span class="font-medium">Notify leaders of requests</span> · a group's leaders get a notification for each join or leave request.</span></label>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
+  <section class="card">
+    <header><h2>Reserved names</h2><p>No group can take these names (ignoring case).</p></header>
+    <section class="flex flex-col gap-4">
+      {% if !reserved.is_empty() %}
+      <ul class="flex flex-wrap gap-2" role="list">
+        {% for r in reserved %}
+        <li class="entity-chip pl-2">
+          <span class="font-medium">{{ r.name }}</span>
+          <span class="text-xs text-muted-foreground">{{ r.reason }}</span>
+          <form method="post" action="/admin/groups/reserved/remove">
+            <input type="hidden" name="name" value="{{ r.name }}">
+            <button type="submit" class="btn" data-variant="ghost" data-size="icon-sm" aria-label="Stop reserving {{ r.name }}">{% call icons::icon("x") %}{% endcall %}</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <form method="post" action="/admin/groups/reserved" class="flex items-end gap-2 max-w-2xl">
+        <div class="grid gap-2 grow">
+          <label class="label" for="reserve-name">Name</label>
+          <input class="input" id="reserve-name" name="name" maxlength="100" required>
+        </div>
+        <div class="grid gap-2 grow">
+          <label class="label" for="reserve-reason">Reason</label>
+          <input class="input" id="reserve-reason" name="reason" maxlength="200" required>
+        </div>
+        <button type="submit" class="btn" data-variant="outline">Reserve</button>
+      </form>
+    </section>
+  </section>
 </div>
 {% endblock %}

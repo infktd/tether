@@ -302,7 +302,11 @@ async fn deactivation_leaves_groups_and_cant_be_undone_from_a_fresh_account(db: 
         &h.db,
         "Officers",
         "",
-        tether_core::permissions::JoinPolicy::Assigned,
+        tether_core::groups::Flags {
+            internal: true,
+            hidden: true,
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -353,7 +357,11 @@ async fn admin_users_cant_deactivate_someone_holding_more(db: PgPool) {
         &h.db,
         "Helpers",
         "",
-        tether_core::permissions::JoinPolicy::Assigned,
+        tether_core::groups::Flags {
+            internal: true,
+            hidden: true,
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -367,7 +375,11 @@ async fn admin_users_cant_deactivate_someone_holding_more(db: PgPool) {
         &h.db,
         "Auditors",
         "",
-        tether_core::permissions::JoinPolicy::Assigned,
+        tether_core::groups::Flags {
+            internal: true,
+            hidden: true,
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -404,7 +416,11 @@ async fn an_account_without_a_main_still_opens_its_dashboard_and_loses_group_acc
         &h.db,
         "Auditors",
         "",
-        tether_core::permissions::JoinPolicy::Assigned,
+        tether_core::groups::Flags {
+            internal: true,
+            hidden: true,
+            ..Default::default()
+        },
     )
     .await
     .unwrap();

@@ -17,6 +17,7 @@ mod dev_login;
 pub mod discord;
 pub mod discord_sync;
 mod error;
+pub mod groups;
 pub mod maintenance;
 pub mod openapi;
 pub mod ownership;
@@ -36,7 +37,7 @@ pub mod updates;
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Router, middleware};
 
 pub use state::{AppState, Limits, Site};
@@ -68,11 +69,45 @@ pub fn router(state: AppState) -> Router {
         .route("/setup/alliance/search", post(pages::setup::search))
         .route("/static/{*path}", get(pages::assets::serve))
         .route("/admin", get(pages::admin::index))
+        .route("/groups", get(pages::groups::index))
+        .route("/groups/{id}", get(pages::groups::direct))
+        .route("/groups/{id}/join", post(pages::groups::join))
+        .route("/groups/{id}/leave", post(pages::groups::leave))
+        .route("/groups/{id}/retract", post(pages::groups::retract))
+        .route("/group-management", get(pages::groups::requests))
+        .route(
+            "/group-management/membership",
+            get(pages::groups::membership),
+        )
+        .route("/group-management/{id}", get(pages::groups::members))
+        .route("/group-management/{id}/audit", get(pages::groups::audit))
+        .route(
+            "/group-management/{id}/requests/{account_id}/accept",
+            post(pages::groups::accept),
+        )
+        .route(
+            "/group-management/{id}/requests/{account_id}/reject",
+            post(pages::groups::reject),
+        )
+        .route(
+            "/group-management/{id}/members/{account_id}/remove",
+            post(pages::groups::remove),
+        )
         .route(
             "/admin/groups",
             get(pages::admin::groups).post(pages::admin::create_group),
         )
+        .route("/admin/groups/settings", post(pages::admin::group_options))
+        .route("/admin/groups/reserved", post(pages::admin::reserve))
+        .route(
+            "/admin/groups/reserved/remove",
+            post(pages::admin::unreserve),
+        )
         .route("/admin/groups/{id}", get(pages::admin::group))
+        .route(
+            "/admin/groups/{id}/settings",
+            post(pages::admin::group_settings),
+        )
         .route(
             "/admin/groups/{id}/delete",
             post(pages::admin::delete_group),
@@ -82,13 +117,18 @@ pub fn router(state: AppState) -> Router {
             "/admin/groups/{id}/members/{account_id}/remove",
             post(pages::admin::remove_member),
         )
+        .route("/admin/groups/{id}/leaders", post(pages::admin::add_leader))
         .route(
-            "/admin/groups/{id}/requests/{account_id}/approve",
-            post(pages::admin::approve),
+            "/admin/groups/{id}/leaders/{account_id}/remove",
+            post(pages::admin::remove_leader),
         )
         .route(
-            "/admin/groups/{id}/requests/{account_id}/deny",
-            post(pages::admin::deny),
+            "/admin/groups/{id}/leader-groups",
+            post(pages::admin::add_leader_group),
+        )
+        .route(
+            "/admin/groups/{id}/leader-groups/{leader_group_id}/remove",
+            post(pages::admin::remove_leader_group),
         )
         .route("/admin/permissions", get(pages::admin::permissions))
         .route("/admin/permissions/grant", post(pages::admin::grant))
@@ -244,8 +284,36 @@ pub fn router(state: AppState) -> Router {
         .route("/api/groups", get(api::groups::list))
         .route("/api/groups/{id}/join", post(api::groups::join))
         .route("/api/groups/{id}/leave", post(api::groups::leave))
+        .route("/api/groups/{id}/retract", post(api::groups::retract))
+        .route(
+            "/api/group-management/requests",
+            get(api::group_management::requests),
+        )
+        .route(
+            "/api/group-management/groups/{id}/requests/{account_id}/accept",
+            post(api::group_management::accept),
+        )
+        .route(
+            "/api/group-management/groups/{id}/requests/{account_id}/reject",
+            post(api::group_management::reject),
+        )
+        .route(
+            "/api/group-management/groups/{id}/members",
+            get(api::group_management::members),
+        )
+        .route(
+            "/api/group-management/groups/{id}/members/{account_id}",
+            delete(api::group_management::remove_member),
+        )
+        .route(
+            "/api/group-management/groups/{id}/audit-log",
+            get(api::group_management::audit_log),
+        )
         .route("/api/admin/groups", post(api::admin::create_group))
-        .route("/api/admin/groups/{id}", delete(api::admin::delete_group))
+        .route(
+            "/api/admin/groups/{id}",
+            put(api::admin::update_group).delete(api::admin::delete_group),
+        )
         .route(
             "/api/admin/groups/{id}/members",
             post(api::admin::add_member),
@@ -255,16 +323,20 @@ pub fn router(state: AppState) -> Router {
             delete(api::admin::remove_member),
         )
         .route(
-            "/api/admin/groups/{id}/requests",
-            get(api::admin::list_requests),
+            "/api/admin/groups/{id}/leaders/{account_id}",
+            put(api::admin::add_leader).delete(api::admin::remove_leader),
         )
         .route(
-            "/api/admin/groups/{id}/requests/{account_id}/approve",
-            post(api::admin::approve_request),
+            "/api/admin/groups/{id}/leader-groups/{leader_group_id}",
+            put(api::admin::add_leader_group).delete(api::admin::remove_leader_group),
         )
         .route(
-            "/api/admin/groups/{id}/requests/{account_id}/deny",
-            post(api::admin::deny_request),
+            "/api/admin/reserved-group-names",
+            get(api::admin::reserved_names).post(api::admin::reserve_name),
+        )
+        .route(
+            "/api/admin/reserved-group-names/{name}",
+            delete(api::admin::unreserve_name),
         )
         .route("/api/admin/permissions", get(api::admin::list_permissions))
         .route("/api/admin/permissions/grants", post(api::admin::grant))

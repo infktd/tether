@@ -288,7 +288,7 @@ async fn check_reach(
     let mut granted = db::granted_to(&mut *tx, &targets).await?;
     // Who is in a state (and what it requires) also decides who is in the
     // Compliant group, so its grants count too.
-    granted.extend(db::granted_to_managed_groups(&mut *tx).await?);
+    granted.extend(db::granted_to_compliance_groups(&mut *tx).await?);
     granted.sort();
     granted.dedup();
     if granted.is_empty() {

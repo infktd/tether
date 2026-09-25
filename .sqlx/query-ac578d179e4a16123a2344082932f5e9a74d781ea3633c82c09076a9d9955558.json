@@ -1,17 +1,18 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT managed IS NOT NULL AS \"managed!\" FROM core.groups WHERE id = $1",
+  "query": "SELECT true AS \"found!\" FROM core.group_members WHERE group_id = $1 AND account_id = $2",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "managed!",
+        "name": "found!",
         "type_info": "Bool",
         "origin": "Expression"
       }
     ],
     "parameters": {
       "Left": [
+        "Int8",
         "Int8"
       ]
     },
@@ -19,5 +20,5 @@
       null
     ]
   },
-  "hash": "65ef7198b4a3bae726226212acc73c28b31fccd639c6a158df45aed8b7fe6868"
+  "hash": "ac578d179e4a16123a2344082932f5e9a74d781ea3633c82c09076a9d9955558"
 }

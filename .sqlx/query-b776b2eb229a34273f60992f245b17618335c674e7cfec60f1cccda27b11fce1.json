@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.reserved_group_names (name, reason, created_by)\n        VALUES (lower(trim($1)), $2, $3) ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b776b2eb229a34273f60992f245b17618335c674e7cfec60f1cccda27b11fce1"
+}

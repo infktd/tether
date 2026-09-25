@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT DISTINCT g.permission AS \"permission!\"\n        FROM core.permission_grants g\n        JOIN core.groups gr ON gr.id = g.group_id\n        WHERE gr.managed IS NOT NULL\n        ",
+  "query": "\n        SELECT DISTINCT g.permission AS \"permission!\"\n        FROM core.permission_grants g\n        JOIN core.groups gr ON gr.id = g.group_id\n        WHERE gr.compliance\n        ",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "64ebdc9d6d01817012f596558e568fd42942693a6bfae061ef1ff035c3cd42da"
+  "hash": "064c55c9010c77d7eb034d86d3147a35ffe7f341a65cd9d78addcf4d323eef7b"
 }

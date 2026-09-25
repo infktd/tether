@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.group_id, g.name AS group_name, r.account_id,\n               COALESCE(c.id, 0) AS \"main_id!\", COALESCE(c.name, '(no main)') AS \"main_name!\",\n               r.leave, r.requested_at\n        FROM core.group_requests r\n        JOIN core.groups g ON g.id = r.group_id\n        JOIN core.accounts a ON a.id = r.account_id\n        LEFT JOIN core.characters c ON c.id = a.main_character_id\n        WHERE r.group_id = ANY($1)\n        ORDER BY r.requested_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "group_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "group_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.groups",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "main_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "main_name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "leave",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "leave"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "requested_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "requested_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "6bfba504ef78b7fad6587fc2262cbfd4b361e4cc0da2c54655433aa441f51988"
+}

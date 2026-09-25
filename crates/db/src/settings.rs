@@ -17,6 +17,24 @@ pub const DISCORD_GUILD_ID: &str = "discord.guild_id";
 /// nicknames alone.
 pub const DISCORD_NICKNAME_TEMPLATE: &str = "discord.nickname_template";
 
+/// AA's `GROUPMANAGEMENT_AUTO_LEAVE`: `true` lets members leave
+/// requestable groups without approval. Off unless set.
+pub const GROUPS_AUTO_LEAVE: &str = "groups.auto_leave";
+/// AA's `GROUPMANAGEMENT_REQUESTS_NOTIFICATION`: `true` tells a group's
+/// leaders about new requests. Off unless set.
+pub const GROUPS_NOTIFY_REQUESTS: &str = "groups.notify_requests";
+
+/// A boolean setting; unset (or not a boolean) is `false`.
+pub async fn get_bool<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    key: &str,
+) -> Result<bool, sqlx::Error> {
+    Ok(get(executor, key)
+        .await?
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
+
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     key: &str,

@@ -11,13 +11,23 @@ pub const ADMIN_PLUGINS: &str = "admin.plugins";
 pub const FLEET_PING: &str = "fleet.ping";
 pub const COMPLIANCE_VIEW: &str = "compliance.view";
 pub const ADMIN_USERS: &str = "admin.users";
+/// AA's `group_management`: process every non-internal group's requests,
+/// see and remove its members, read its audit log.
+pub const GROUP_MANAGEMENT: &str = "group_management";
+/// AA's `request_groups`: see and ask to join groups that aren't Public.
+pub const REQUEST_GROUPS: &str = "request_groups";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     (
         ADMIN_GROUPS,
-        "Create and delete groups, manage members and join requests",
+        "Create, change and delete groups (flags, allowed states, leaders), and add members directly",
     ),
+    (
+        GROUP_MANAGEMENT,
+        "Group Management: accept and reject requests, see and remove members, and read the audit log of every group that isn't Internal",
+    ),
+    (REQUEST_GROUPS, "Can request non-public groups"),
     (
         ADMIN_PERMISSIONS,
         "Grant and revoke permissions (effectively full admin: holders can grant themselves anything)",
@@ -58,39 +68,13 @@ pub fn is_known(permission: &str) -> bool {
 }
 
 /// Permissions that must never reach people anyone can become (Guest, or
-/// an Open group): admin powers, and pinging the whole server.
+/// a group anyone can join): admin powers, managing groups, and pinging the
+/// whole server.
 pub fn is_sensitive(permission: &str) -> bool {
-    permission.starts_with("admin.") || permission == FLEET_PING || permission == COMPLIANCE_VIEW
-}
-
-/// How accounts get into a group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JoinPolicy {
-    /// Anyone signed in can join and leave.
-    Open,
-    /// Members ask; an admin approves or denies.
-    Request,
-    /// Only admins add and remove members.
-    Assigned,
-}
-
-impl JoinPolicy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Request => "request",
-            Self::Assigned => "assigned",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "open" => Some(Self::Open),
-            "request" => Some(Self::Request),
-            "assigned" => Some(Self::Assigned),
-            _ => None,
-        }
-    }
+    permission.starts_with("admin.")
+        || permission == FLEET_PING
+        || permission == COMPLIANCE_VIEW
+        || permission == GROUP_MANAGEMENT
 }
 
 #[cfg(test)]
@@ -101,13 +85,5 @@ mod tests {
     fn known_permissions() {
         assert!(is_known(ADMIN_GROUPS));
         assert!(!is_known("admin.everything"));
-    }
-
-    #[test]
-    fn join_policy_round_trips() {
-        for p in [JoinPolicy::Open, JoinPolicy::Request, JoinPolicy::Assigned] {
-            assert_eq!(JoinPolicy::parse(p.as_str()), Some(p));
-        }
-        assert_eq!(JoinPolicy::parse("closed"), None);
     }
 }

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH cleared AS (\n            DELETE FROM core.group_requests WHERE group_id = $1 AND account_id = $2\n        )\n        DELETE FROM core.group_members WHERE group_id = $1 AND account_id = $2\n        RETURNING true AS \"removed!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b07cb0212338a9497e7e41668c033fb9d09ec2eff9ab8a8928e86854cb53de16"
+}

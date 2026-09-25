@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.group_requests WHERE group_id = $1 AND account_id = $2 RETURNING leave",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "leave",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.group_requests",
+            "name": "leave"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "64839e8efff649e7e44c14b413c8b53f0f974415a0a51c0da4275234f3cbdfbd"
+}

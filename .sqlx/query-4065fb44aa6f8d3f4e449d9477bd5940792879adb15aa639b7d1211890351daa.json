@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id FROM core.accounts a\n        WHERE a.active AND a.main_character_id IS NOT NULL\n          AND a.state_id <> core.guest_state()\n          AND (\n            a.id IN (SELECT account_id FROM core.group_leaders WHERE group_id = $1)\n            OR a.id IN (\n                SELECT m.account_id FROM core.group_leader_groups lg\n                JOIN core.group_members m ON m.group_id = lg.leader_group_id\n                WHERE lg.group_id = $1\n            )\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4065fb44aa6f8d3f4e449d9477bd5940792879adb15aa639b7d1211890351daa"
+}

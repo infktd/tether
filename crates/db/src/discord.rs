@@ -249,7 +249,7 @@ pub async fn roles_for<'e>(
         r#"
         SELECT m.role_id AS "role_id!",
                bool_and(COALESCE(m.state_id = core.guest_state(), false)
-                        OR COALESCE(g.join_policy = 'open', false)) AS "open_only!"
+                        OR COALESCE(g.open AND NOT g.internal, false)) AS "open_only!"
         FROM core.discord_role_mappings m
         JOIN core.accounts a ON a.id = $1
         LEFT JOIN core.groups g ON g.id = m.group_id

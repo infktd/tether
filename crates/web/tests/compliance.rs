@@ -7,7 +7,8 @@
 
 mod common;
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{Request, StatusCode, header};
 use common::*;
 use sqlx::PgPool;
 use tether_core::states::{Builtin, EntityKind};
@@ -309,7 +310,7 @@ async fn tether_manages_the_compliant_group(db: PgPool) {
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
-    let group: i64 = sqlx::query_scalar("SELECT id FROM core.groups WHERE managed = 'compliant'")
+    let group: i64 = sqlx::query_scalar("SELECT id FROM core.groups WHERE compliance")
         .fetch_one(&h.db)
         .await
         .unwrap();
@@ -356,7 +357,11 @@ async fn admin_states_is_not_a_way_into_the_compliant_group(db: PgPool) {
         &h.db,
         "Wranglers",
         "",
-        tether_core::permissions::JoinPolicy::Assigned,
+        tether_core::groups::Flags {
+            internal: true,
+            hidden: true,
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -370,11 +375,10 @@ async fn admin_states_is_not_a_way_into_the_compliant_group(db: PgPool) {
     grant(&h.db, "admin.states", Grantee::Group(wranglers))
         .await
         .unwrap();
-    let compliant: i64 =
-        sqlx::query_scalar("SELECT id FROM core.groups WHERE managed = 'compliant'")
-            .fetch_one(&h.db)
-            .await
-            .unwrap();
+    let compliant: i64 = sqlx::query_scalar("SELECT id FROM core.groups WHERE compliance")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
     grant(&h.db, "admin.audit", Grantee::Group(GroupId(compliant)))
         .await
         .unwrap();
@@ -414,4 +418,52 @@ async fn admin_states_is_not_a_way_into_the_compliant_group(db: PgPool) {
         "{added:?}"
     );
     let _ = StateId(BLUE_STATE);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn admins_designate_compliance_groups_per_state(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    let res = send(
+        &h.app,
+        post_json("/api/admin/groups", &owner, r#"{"name":"Blue Compliant"}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let id: serde_json::Value = serde_json::from_str(&res.body).unwrap();
+    let id = id["id"].as_i64().unwrap();
+
+    let body = format!(
+        r#"{{"internal":true,"hidden":true,"open":false,"public":false,"restricted":false,"compliance":true,"states":[{BLUE_STATE}]}}"#
+    );
+    let res = send(
+        &h.app,
+        Request::put(format!("/api/admin/groups/{id}"))
+            .header(header::ORIGIN, SITE)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, format!("{SESSION}={owner}"))
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    run_jobs(&h).await;
+
+    let groups = |token: String| {
+        let h = &h;
+        async move { me(h, &token).await["groups"].clone() }
+    };
+    // The Blue pilot is in it (and in Compliant, which takes every state
+    // but Guest); the Member owner only in Compliant.
+    assert_eq!(
+        groups(blue.clone()).await,
+        serde_json::json!(["Blue Compliant", "Compliant"])
+    );
+    assert_eq!(
+        groups(owner.clone()).await,
+        serde_json::json!(["Compliant"])
+    );
 }

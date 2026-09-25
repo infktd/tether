@@ -1,0 +1,8 @@
+<fieldset class="grid gap-3">
+  <legend class="label mb-1">Settings</legend>
+  <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="internal" value="on"{% if flags.internal %} checked{% endif %}> <span><span class="font-medium">Internal</span> · pilots can't see, join or leave it; only admins change its members. Overrides the rest.</span></label>
+  <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="hidden" value="on"{% if flags.hidden %} checked{% endif %}> <span><span class="font-medium">Hidden</span> · not listed on the Groups page; pilots join through its direct link.</span></label>
+  <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="open" value="on"{% if flags.open %} checked{% endif %}> <span><span class="font-medium">Open</span> · pilots join and leave at once, without approval.</span></label>
+  <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="public" value="on"{% if flags.public %} checked{% endif %}> <span><span class="font-medium">Public</span> · pilots who can't request groups may still join.</span></label>
+  <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="restricted" value="on"{% if flags.restricted %} checked{% endif %}> <span><span class="font-medium">Restricted</span> · only the owner changes its members or this setting.</span></label>
+</fieldset>

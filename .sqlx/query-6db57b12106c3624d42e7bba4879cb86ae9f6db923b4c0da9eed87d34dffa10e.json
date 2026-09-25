@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.group_states (group_id, state_id)\n        SELECT $1, unnest($2::bigint[]) ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6db57b12106c3624d42e7bba4879cb86ae9f6db923b4c0da9eed87d34dffa10e"
+}

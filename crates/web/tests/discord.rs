@@ -355,7 +355,7 @@ async fn linking_adds_the_member_to_the_server_with_their_roles(db: PgPool) {
         &h.app,
         form(
             "/admin/groups",
-            "name=Miners&description=&join_policy=assigned",
+            "name=Miners&description=&internal=on&hidden=on",
             &owner,
         ),
     )
@@ -676,11 +676,7 @@ async fn moderation_roles_never_go_to_guest_or_open_groups(db: PgPool) {
     const FC: &str = "500000000000000006";
     let open = send(
         &h.app,
-        form(
-            "/admin/groups",
-            "name=Anyone&description=&join_policy=open",
-            &owner,
-        ),
+        form("/admin/groups", "name=Anyone&description=&open=on", &owner),
     )
     .await
     .location()
@@ -934,7 +930,7 @@ async fn changes_to_a_linked_member_queue_one_sync(db: PgPool) {
         &h.app,
         form(
             "/admin/groups",
-            "name=Miners&description=&join_policy=assigned",
+            "name=Miners&description=&internal=on&hidden=on",
             &owner,
         ),
     )

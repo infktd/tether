@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT r.account_id, COALESCE(c.id, 0) AS \"main_id!\",\n               COALESCE(c.name, '(no main)') AS \"main_name!\"\n        FROM core.group_requests r\n        JOIN core.accounts a ON a.id = r.account_id\n        LEFT JOIN core.characters c ON c.id = a.main_character_id\n        WHERE r.group_id = $1\n        ORDER BY r.requested_at\n        ",
+  "query": "\n        SELECT l.account_id, COALESCE(c.id, 0) AS \"main_id!\",\n               COALESCE(c.name, '(no main)') AS \"name!\"\n        FROM core.group_leaders l\n        JOIN core.accounts a ON a.id = l.account_id\n        LEFT JOIN core.characters c ON c.id = a.main_character_id\n        WHERE l.group_id = $1\n        ORDER BY 3\n        ",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "core.group_requests",
+            "table": "core.group_leaders",
             "name": "account_id"
           }
         }
@@ -22,7 +22,7 @@
       },
       {
         "ordinal": 2,
-        "name": "main_name!",
+        "name": "name!",
         "type_info": "Text",
         "origin": "Expression"
       }
@@ -38,5 +38,5 @@
       null
     ]
   },
-  "hash": "dd3cdc819019cad5646fbbb3d22c559591f6c2977d2223f3559049fcc22a5818"
+  "hash": "957fd886e0b1f9646e0e2b16629c4eb0faba0c2603f311188299fc47c2dbcaee"
 }

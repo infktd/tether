@@ -157,8 +157,9 @@ pub async fn granted_to<'e>(
     .await
 }
 
-/// The permissions granted to groups Tether manages (the Compliant group).
-pub async fn granted_to_managed_groups<'e>(
+/// The permissions granted to compliance groups (Tether keeps their
+/// members).
+pub async fn granted_to_compliance_groups<'e>(
     executor: impl sqlx::PgExecutor<'e>,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
@@ -166,7 +167,7 @@ pub async fn granted_to_managed_groups<'e>(
         SELECT DISTINCT g.permission AS "permission!"
         FROM core.permission_grants g
         JOIN core.groups gr ON gr.id = g.group_id
-        WHERE gr.managed IS NOT NULL
+        WHERE gr.compliance
         "#
     )
     .fetch_all(executor)

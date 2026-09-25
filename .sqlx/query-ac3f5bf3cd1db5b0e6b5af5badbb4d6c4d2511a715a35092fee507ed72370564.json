@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.reserved_group_names WHERE name = lower(trim($1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ac3f5bf3cd1db5b0e6b5af5badbb4d6c4d2511a715a35092fee507ed72370564"
+}

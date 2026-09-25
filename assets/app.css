@@ -160,6 +160,17 @@
     @apply bg-accent text-foreground;
   }
 
+  /* Page tabs (DESIGN.md): a segmented control of links. */
+  .tab-nav {
+    @apply inline-flex w-fit items-center gap-1 rounded-md bg-muted p-1;
+  }
+  .tab-nav > a {
+    @apply inline-flex h-8 items-center gap-2 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground;
+  }
+  .tab-nav > a[aria-current="page"] {
+    @apply bg-background text-foreground;
+  }
+
   /* Stat cards: label 13px muted, value 26px mono, caption 12px muted. */
   .stat {
     @apply flex flex-col gap-1 p-5;

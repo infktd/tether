@@ -1,5 +1,7 @@
 //! Accounts and their characters.
 
+use tether_core::states::StateId;
+
 use crate::PgPool;
 
 /// Serializes sign-ins so owner bootstrap and alt linking can't race.
@@ -586,6 +588,37 @@ pub async fn owner_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
     .fetch_one(pool)
     .await?;
     Ok(exists)
+}
+
+/// What group rules look at: whether the account is the owner, is
+/// active, and has a main, and its state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Standing {
+    pub is_owner: bool,
+    pub active: bool,
+    pub has_main: bool,
+    pub state: StateId,
+}
+
+pub async fn standing<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<Option<Standing>, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        SELECT is_owner, active, main_character_id IS NOT NULL AS "has_main!", state_id
+        FROM core.accounts WHERE id = $1
+        "#,
+        account.0
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| Standing {
+        is_owner: r.is_owner,
+        active: r.active,
+        has_main: r.has_main,
+        state: StateId(r.state_id),
+    }))
 }
 
 pub async fn all_ids(pool: &PgPool) -> Result<Vec<AccountId>, sqlx::Error> {

@@ -1,0 +1,4 @@
+<nav class="tab-nav" aria-label="Group Management">
+  <a href="/group-management"{% if tab == "requests" %} aria-current="page"{% endif %}>Group Requests{% if let Some(n) = shell.group_management %}{% if *n > 0 %} <span class="num text-highlight">{{ n }}</span>{% endif %}{% endif %}</a>
+  <a href="/group-management/membership"{% if tab == "membership" %} aria-current="page"{% endif %}>Group Membership</a>
+</nav>

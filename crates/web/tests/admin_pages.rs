@@ -39,12 +39,19 @@ fn assert_no_external_urls(html: &str) {
     }
 }
 
-async fn create_group(h: &Harness, owner: &str, name: &str, policy: &str) -> String {
+/// `kind`: `internal` (admins only), `request` (leaders approve) or
+/// `open`.
+async fn create_group(h: &Harness, owner: &str, name: &str, kind: &str) -> String {
+    let flags = match kind {
+        "internal" => "&internal=on&hidden=on",
+        "open" => "&open=on",
+        _ => "",
+    };
     let res = send(
         &h.app,
         form(
             "/admin/groups",
-            &format!("name={name}&description=&join_policy={policy}"),
+            &format!("name={name}&description={flags}"),
             owner,
         ),
     )
@@ -82,11 +89,7 @@ async fn admin_pages_need_a_session_and_the_permission(db: PgPool) {
         );
     }
     // Forms refuse too.
-    let res = send(
-        &h.app,
-        form("/admin/groups", "name=X&join_policy=open", &pilot),
-    )
-    .await;
+    let res = send(&h.app, form("/admin/groups", "name=X&open=on", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
 }
 
@@ -115,7 +118,7 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
 
     // Grant states to an assigned group the pilot is in: only that
     // link appears.
-    let group = create_group(&h, &owner, "State Wranglers", "assigned").await;
+    let group = create_group(&h, &owner, "State Wranglers", "internal").await;
     let group_id = group.rsplit('/').next().unwrap().to_owned();
     send(
         &h.app,
@@ -149,15 +152,15 @@ async fn groups_are_created_filled_and_deleted_from_the_pages(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
 
-    let group = create_group(&h, &owner, "Officers", "assigned").await;
+    let group = create_group(&h, &owner, "Officers", "internal").await;
     let list = page(&h, "/admin/groups", &owner).await;
     assert!(list.body.contains("Officers"));
-    assert!(list.body.contains("Assigned by admins"));
+    assert!(list.body.contains("Internal"));
     assert_no_external_urls(&list.body);
 
     let dup = send(
         &h.app,
-        form("/admin/groups", "name=Officers&join_policy=open", &owner),
+        form("/admin/groups", "name=Officers&open=on", &owner),
     )
     .await;
     assert_eq!(dup.status, StatusCode::CONFLICT);
@@ -217,53 +220,113 @@ async fn groups_are_created_filled_and_deleted_from_the_pages(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn requests_are_approved_and_denied_from_the_group_page(db: PgPool) {
+async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
+    // Both pilots are Members, who may request groups.
+    cover(
+        &db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Character,
+        443630591,
+    )
+    .await;
+    cover(
+        &db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Character,
+        1887431749,
+    )
+    .await;
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
     let other = log_in_as(&h, "1887431749:gigX", None).await;
     let group = create_group(&h, &owner, "Capitals", "request").await;
     let id = group.rsplit('/').next().unwrap();
-    for token in [&pilot, &other] {
-        send(
-            &h.app,
-            post_json(&format!("/api/groups/{id}/join"), token, ""),
-        )
-        .await;
-    }
-    let detail = page(&h, &group, &owner).await;
-    assert!(detail.body.contains("Requests to join"));
+
+    // The Groups page lists it; requesting goes through the page's form.
+    let listed = page(&h, "/groups", &pilot).await;
+    assert_eq!(listed.status, StatusCode::OK);
+    assert!(listed.body.contains("Capitals"), "{}", listed.body);
+    let asked = send(&h.app, form(&format!("/groups/{id}/join"), "", &pilot)).await;
+    assert!(asked.body.contains("Request sent"), "{}", asked.body);
+    send(&h.app, form(&format!("/groups/{id}/join"), "", &other)).await;
+
+    // Pilots without groups to manage can't open Group Management.
+    assert_eq!(
+        page(&h, "/group-management", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let requests = page(&h, "/group-management", &owner).await;
+    assert!(requests.body.contains("The Mittani"), "{}", requests.body);
+    assert!(requests.body.contains("gigX"));
+    assert_no_external_urls(&requests.body);
 
     let pilot_account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
     let other_account = me(&h, &other).await["account_id"].as_i64().unwrap();
-    send(
+    let accepted = send(
         &h.app,
         form(
-            &format!("{group}/requests/{pilot_account}/approve"),
+            &format!("/group-management/{id}/requests/{pilot_account}/accept"),
             "",
             &owner,
         ),
     )
     .await;
+    assert_eq!(accepted.location(), "/group-management");
     send(
         &h.app,
         form(
-            &format!("{group}/requests/{other_account}/deny"),
+            &format!("/group-management/{id}/requests/{other_account}/reject"),
             "",
             &owner,
         ),
     )
     .await;
 
+    // Members are also in the Compliant group (a compliance group).
     assert_eq!(
         me(&h, &pilot).await["groups"],
-        serde_json::json!(["Capitals"])
+        serde_json::json!(["Capitals", "Compliant"])
     );
-    assert_eq!(me(&h, &other).await["groups"], serde_json::json!([]));
+    assert_eq!(
+        me(&h, &other).await["groups"],
+        serde_json::json!(["Compliant"])
+    );
     assert!(
-        !page(&h, &group, &owner)
+        !page(&h, "/group-management", &owner)
             .await
             .body
-            .contains("Requests to join")
+            .contains("gigX")
+    );
+
+    // Group Membership, the members page and the Audit Log.
+    let membership = page(&h, "/group-management/membership", &owner).await;
+    assert!(membership.body.contains("Capitals"));
+    let members = page(&h, &format!("/group-management/{id}"), &owner).await;
+    assert!(members.body.contains("The Mittani"));
+    assert!(members.body.contains(&format!("{SITE}/groups/{id}")));
+    let log = page(&h, &format!("/group-management/{id}/audit"), &owner).await;
+    assert!(
+        log.body.contains("Accept") && log.body.contains("Reject"),
+        "{}",
+        log.body
+    );
+
+    // Removing through Group Management is logged as Removed.
+    let removed = send(
+        &h.app,
+        form(
+            &format!("/group-management/{id}/members/{pilot_account}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(removed.status, StatusCode::SEE_OTHER);
+    let log = page(&h, &format!("/group-management/{id}/audit"), &owner).await;
+    assert!(log.body.contains("Removed"));
+    assert_eq!(
+        me(&h, &pilot).await["groups"],
+        serde_json::json!(["Compliant"])
     );
 }
 
@@ -271,7 +334,7 @@ async fn requests_are_approved_and_denied_from_the_group_page(db: PgPool) {
 async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
-    let group = create_group(&h, &owner, "Officers", "assigned").await;
+    let group = create_group(&h, &owner, "Officers", "internal").await;
     let group_id = group.rsplit('/').next().unwrap().to_owned();
     send(
         &h.app,
@@ -362,10 +425,13 @@ async fn admin_permissions_never_go_to_guest_or_open_groups(db: PgPool) {
     assert_eq!(open_grant.status, StatusCode::BAD_REQUEST);
     assert!(open_grant.body.contains("anyone can join it"));
 
-    let grants: i64 = sqlx::query_scalar("SELECT count(*) FROM core.permission_grants")
-        .fetch_one(&h.db)
-        .await
-        .unwrap();
+    // Only the default: request_groups for Member.
+    let grants: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.permission_grants WHERE permission <> 'request_groups'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
     assert_eq!(grants, 0);
 }
 
@@ -375,7 +441,7 @@ async fn group_managers_cannot_add_anyone_to_a_group_with_more_power_than_theirs
     let (owner, pilot) = owner_and_pilot(&h).await;
     let pilot_account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
     // The pilot manages groups...
-    let officers = create_group(&h, &owner, "Officers", "assigned").await;
+    let officers = create_group(&h, &owner, "Officers", "internal").await;
     let officers_id = officers.rsplit('/').next().unwrap().to_owned();
     send(
         &h.app,
@@ -396,7 +462,7 @@ async fn group_managers_cannot_add_anyone_to_a_group_with_more_power_than_theirs
     )
     .await;
     // ...but a group grants admin.permissions, which the pilot doesn't have.
-    let admins = create_group(&h, &owner, "Admins", "assigned").await;
+    let admins = create_group(&h, &owner, "Admins", "internal").await;
     let admins_id = admins.rsplit('/').next().unwrap().to_owned();
     send(
         &h.app,
@@ -407,7 +473,7 @@ async fn group_managers_cannot_add_anyone_to_a_group_with_more_power_than_theirs
         ),
     )
     .await;
-    let plain = create_group(&h, &owner, "Miners", "assigned").await;
+    let plain = create_group(&h, &owner, "Miners", "internal").await;
 
     let escalate = send(
         &h.app,
@@ -448,18 +514,18 @@ async fn group_managers_cannot_add_anyone_to_a_group_with_more_power_than_theirs
 async fn group_descriptions_are_capped(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _) = owner_and_pilot(&h).await;
-    let long = "x".repeat(501);
+    let long = "x".repeat(513);
     let res = send(
         &h.app,
         form(
             "/admin/groups",
-            &format!("name=Big&description={long}&join_policy=open"),
+            &format!("name=Big&description={long}&open=on"),
             &owner,
         ),
     )
     .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(res.body.contains("at most 500 characters"));
+    assert!(res.body.contains("at most 512 characters"));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

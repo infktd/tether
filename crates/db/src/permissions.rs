@@ -253,7 +253,7 @@ fn to_grant(id: i64, permission: String, state: Option<i64>, group: Option<i64>)
 mod tests {
     use super::*;
     use crate::{accounts, groups, states};
-    use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, JoinPolicy};
+    use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, REQUEST_GROUPS};
     use tether_core::states::Builtin;
 
     /// Character 1 claims ownership; others are ordinary accounts.
@@ -297,9 +297,18 @@ mod tests {
         states::set_account_state(&pool, pilot, member, true)
             .await
             .unwrap();
-        let officers = groups::create(&pool, "Officers", "", JoinPolicy::Assigned)
-            .await
-            .unwrap();
+        let officers = groups::create(
+            &pool,
+            "Officers",
+            "",
+            tether_core::groups::Flags {
+                internal: true,
+                hidden: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         grant(&pool, ADMIN_AUDIT, Grantee::State(member))
             .await
             .unwrap();
@@ -312,15 +321,16 @@ mod tests {
             .unwrap();
 
         let before: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
-        assert_eq!(before, vec![ADMIN_AUDIT]);
+        // Member also has request_groups by default (AA).
+        assert_eq!(before, vec![ADMIN_AUDIT, REQUEST_GROUPS]);
 
         groups::add_member(&pool, officers, pilot).await.unwrap();
         let with_group: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
-        assert_eq!(with_group, vec![ADMIN_AUDIT, ADMIN_GROUPS]);
+        assert_eq!(with_group, vec![ADMIN_AUDIT, ADMIN_GROUPS, REQUEST_GROUPS]);
 
         revoke(&pool, group_grant).await.unwrap();
         let after: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
-        assert_eq!(after, vec![ADMIN_AUDIT]);
+        assert_eq!(after, vec![ADMIN_AUDIT, REQUEST_GROUPS]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -338,6 +348,7 @@ mod tests {
             .unwrap();
         assert!(first.is_some());
         assert!(again.is_none());
-        assert_eq!(list(&pool).await.unwrap().len(), 1);
+        // Beside the default request_groups grant.
+        assert_eq!(list(&pool).await.unwrap().len(), 2);
     }
 }

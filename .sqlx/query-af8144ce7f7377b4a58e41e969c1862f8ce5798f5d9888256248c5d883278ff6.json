@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO core.groups (name, description, join_policy) VALUES ($1, $2, $3) RETURNING id",
+  "query": "SELECT id FROM core.groups WHERE NOT internal ORDER BY name",
   "describe": {
     "columns": [
       {
@@ -16,15 +16,11 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Text",
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false
     ]
   },
-  "hash": "0dd58315fa06d10bc05d34f57c38ab4e4c07bb42f4b6747441824dd627e6ea22"
+  "hash": "af8144ce7f7377b4a58e41e969c1862f8ce5798f5d9888256248c5d883278ff6"
 }

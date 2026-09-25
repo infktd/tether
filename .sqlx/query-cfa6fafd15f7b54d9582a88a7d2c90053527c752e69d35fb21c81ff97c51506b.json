@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT m.group_id FROM core.group_members m\n        JOIN core.groups g ON g.id = m.group_id\n        WHERE m.account_id = $1 AND NOT g.compliance\n          AND EXISTS (SELECT 1 FROM core.group_states s WHERE s.group_id = m.group_id)\n          AND NOT EXISTS (\n            SELECT 1 FROM core.group_states s WHERE s.group_id = m.group_id AND s.state_id = $2\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_members",
+            "name": "group_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cfa6fafd15f7b54d9582a88a7d2c90053527c752e69d35fb21c81ff97c51506b"
+}

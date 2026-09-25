@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT is_owner, active, main_character_id IS NOT NULL AS \"has_main!\", state_id\n        FROM core.accounts WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "is_owner",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "is_owner"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "active",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "active"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "has_main!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "state_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "f14d00b06094ef18c32cebe377bc85f19eb213f03910039ef03c94b05a261e88"
+}

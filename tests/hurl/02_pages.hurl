@@ -115,6 +115,134 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/groups
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/groups/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/group-management
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/group-management/membership
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/group-management/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/group-management/1/audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/groups/1/join
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/groups/1/leave
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/groups/1/retract
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/group-management/1/requests/1/accept
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/group-management/1/requests/1/reject
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/group-management/1/members/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/settings
+Origin: {{base}}
+[Form]
+auto_leave: on
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/reserved
+Origin: {{base}}
+[Form]
+name: directors
+reason: CEO only
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/reserved/remove
+Origin: {{base}}
+[Form]
+name: directors
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/settings
+Origin: {{base}}
+[Form]
+description: Officers
+internal: on
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/leaders
+Origin: {{base}}
+[Form]
+character: Chribba
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/leaders/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/leader-groups
+Origin: {{base}}
+[Form]
+group_id: 2
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/leader-groups/2/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/permissions
 HTTP 303
 [Asserts]
@@ -129,7 +257,7 @@ POST {{base}}/admin/groups
 Origin: {{base}}
 [Form]
 name: Officers
-join_policy: assigned
+internal: on
 HTTP 303
 [Asserts]
 header "Location" == "/login"

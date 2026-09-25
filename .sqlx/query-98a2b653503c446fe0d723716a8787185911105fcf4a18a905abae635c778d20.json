@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.groups\n        SET description = $2, internal = $3, hidden = $4, open = $5, public = $6,\n            restricted = $7, compliance = $8\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "98a2b653503c446fe0d723716a8787185911105fcf4a18a905abae635c778d20"
+}

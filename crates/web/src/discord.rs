@@ -17,7 +17,6 @@ use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use serde_json::json;
 use tether_core::crypto::EncryptionKey;
-use tether_core::permissions::JoinPolicy;
 use tether_core::{Secret, hash_token, new_token};
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
@@ -248,10 +247,11 @@ pub async fn add_mapping(
             .ok_or_else(|| AppError::not_found("No such state."))?
             .is_guest(),
         Grantee::Group(group) => {
+            groups::lock(&mut tx, group, false).await?;
             let group = groups::get(&mut *tx, group)
                 .await?
                 .ok_or_else(|| AppError::not_found("No such group."))?;
-            group.join_policy == JoinPolicy::Open
+            group.flags.anyone_can_join()
         }
     };
     if role.privileged && open {

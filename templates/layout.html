@@ -17,6 +17,14 @@
         <a href="/dashboard" class="nav-item"{% if shell.active == "profile" %} aria-current="page"{% endif %}>
           {% call icons::icon("user") %}{% endcall %} Dashboard
         </a>
+        <a href="/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
+          {% call icons::icon("users") %}{% endcall %} Groups
+        </a>
+        {% if let Some(pending) = shell.group_management %}
+        <a href="/group-management" class="nav-item"{% if shell.active == "group_management" %} aria-current="page"{% endif %}>
+          {% call icons::icon("users") %}{% endcall %} Group Management{% if *pending > 0 %} <span class="ml-auto num text-xs text-highlight" aria-label="{{ pending }} pending">{{ pending }}</span>{% endif %}
+        </a>
+        {% endif %}
       </div>
       {% if shell.nav.pings %}
       <div class="flex flex-col gap-1">
@@ -50,8 +58,8 @@
         </a>
         {% endif %}
         {% if shell.nav.groups %}
-        <a href="/admin/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
-          {% call icons::icon("users") %}{% endcall %} Group Management
+        <a href="/admin/groups" class="nav-item"{% if shell.active == "admin_groups" %} aria-current="page"{% endif %}>
+          {% call icons::icon("users") %}{% endcall %} Groups
         </a>
         {% endif %}
         {% if shell.nav.permissions %}

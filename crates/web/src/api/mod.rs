@@ -1,6 +1,7 @@
 //! JSON API.
 
 pub mod admin;
+pub mod group_management;
 pub mod groups;
 
 use axum::Json;

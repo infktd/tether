@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT state_id FROM core.group_states WHERE group_id = $1 ORDER BY state_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_states",
+            "name": "state_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7ae5fe64322fa896fc7c55d110b5588f1a21afdd5de887266a8b9d901aa66b52"
+}

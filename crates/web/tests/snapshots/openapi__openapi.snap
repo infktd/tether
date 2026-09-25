@@ -171,6 +171,45 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
       }
     },
     "/api/admin/groups/{id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PUT /api/admin/groups/{id}`: every setting at once. Members whose\nstate is no longer allowed leave.",
+        "operationId": "update_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "admin"
@@ -180,6 +219,161 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "parameters": [
           {
             "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}/leader-groups/{leader_group_id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PUT /api/admin/groups/{id}/leader-groups/{leader_group_id}`: members\nof the other group lead this one.",
+        "operationId": "add_leader_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "leader_group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/groups/{id}/leader-groups/{leader_group_id}`",
+        "operationId": "remove_leader_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "leader_group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}/leaders/{account_id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PUT /api/admin/groups/{id}/leaders/{account_id}`: make them a Group\nLeader.",
+        "operationId": "add_leader",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/groups/{id}/leaders/{account_id}`",
+        "operationId": "remove_leader",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -230,6 +424,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         },
         "responses": {
           "204": {},
+          "400": {},
           "403": {},
           "404": {}
         },
@@ -247,124 +442,6 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ],
         "summary": "`DELETE /api/admin/groups/{id}/members/{account_id}`",
         "operationId": "remove_member",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "204": {},
-          "403": {},
-          "404": {}
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/api/admin/groups/{id}/requests": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "`GET /api/admin/groups/{id}/requests`",
-        "operationId": "list_requests",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/RequestOut"
-                  }
-                }
-              }
-            }
-          },
-          "403": {}
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/api/admin/groups/{id}/requests/{account_id}/approve": {
-      "post": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "`POST /api/admin/groups/{id}/requests/{account_id}/approve`",
-        "operationId": "approve_request",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "204": {},
-          "403": {},
-          "404": {}
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/api/admin/groups/{id}/requests/{account_id}/deny": {
-      "post": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "`POST /api/admin/groups/{id}/requests/{account_id}/deny`",
-        "operationId": "deny_request",
         "parameters": [
           {
             "name": "id",
@@ -477,6 +554,92 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "schema": {
               "type": "integer",
               "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/reserved-group-names": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /api/admin/reserved-group-names`",
+        "operationId": "reserved_names",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReservedName"
+                  }
+                }
+              }
+            }
+          },
+          "403": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/reserved-group-names`: groups can't take the name\n(ignoring case).",
+        "operationId": "reserve_name",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservedName"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/reserved-group-names/{name}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/reserved-group-names/{name}`",
+        "operationId": "unreserve_name",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -875,12 +1038,239 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ]
       }
     },
+    "/api/group-management/groups/{id}/audit-log": {
+      "get": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`GET /api/group-management/groups/{id}/audit-log`: the latest 200.",
+        "operationId": "audit_log",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LogOut"
+                  }
+                }
+              }
+            }
+          },
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/members": {
+      "get": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`GET /api/group-management/groups/{id}/members`",
+        "operationId": "members",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemberOut"
+                  }
+                }
+              }
+            }
+          },
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/members/{account_id}": {
+      "delete": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`DELETE /api/group-management/groups/{id}/members/{account_id}`:\nlogged as Removed.",
+        "operationId": "remove_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/requests/{account_id}/accept": {
+      "post": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`POST /api/group-management/groups/{id}/requests/{account_id}/accept`",
+        "operationId": "accept",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "Their state can't be in the group now"
+          },
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/requests/{account_id}/reject": {
+      "post": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`POST /api/group-management/groups/{id}/requests/{account_id}/reject`",
+        "operationId": "reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/requests": {
+      "get": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`GET /api/group-management/requests`: pending requests for the groups\nyou manage, oldest first.",
+        "operationId": "requests",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RequestOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/groups": {
       "get": {
         "tags": [
           "groups"
         ],
-        "summary": "`GET /api/groups`",
+        "summary": "`GET /api/groups`: the groups you're in or have asked about, and the\nones you may join.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -924,30 +1314,33 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ],
         "responses": {
           "200": {
-            "description": "Joined an open group",
+            "description": "Joined an Open group",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JoinOut"
+                  "$ref": "#/components/schemas/StatusOut"
                 }
               }
             }
           },
           "202": {
-            "description": "Request sent for approval",
+            "description": "Request sent to the group's leaders",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JoinOut"
+                  "$ref": "#/components/schemas/StatusOut"
                 }
               }
             }
           },
           "403": {
-            "description": "Members are assigned by admins"
+            "description": "Your state can't join, or you can't request groups"
           },
           "404": {
             "description": "No such group"
+          },
+          "409": {
+            "description": "Already a member, or a request is pending"
           }
         },
         "security": [
@@ -962,7 +1355,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "groups"
         ],
-        "summary": "`POST /api/groups/{id}/leave`: leave, or withdraw a pending request.",
+        "summary": "`POST /api/groups/{id}/leave`",
         "operationId": "leave",
         "parameters": [
           {
@@ -977,8 +1370,71 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         ],
         "responses": {
+          "200": {
+            "description": "Left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Leave request sent to the group's leaders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only admins change this group's members"
+          },
+          "404": {
+            "description": "Not a member"
+          },
+          "409": {
+            "description": "A request is pending"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/groups/{id}/retract": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "`POST /api/groups/{id}/retract`: withdraw a join request.",
+        "operationId": "retract",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
           "204": {
-            "description": "Left, or withdrew a pending request"
+            "description": "Withdrawn"
+          },
+          "400": {
+            "description": "Leave requests can't be withdrawn"
+          },
+          "404": {
+            "description": "No request"
           }
         },
         "security": [
@@ -1456,16 +1912,12 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "id",
           "name",
           "description",
-          "join_policy",
-          "is_member",
-          "has_requested"
+          "kind",
+          "is_member"
         ],
         "properties": {
           "description": {
             "type": "string"
-          },
-          "has_requested": {
-            "type": "boolean"
           },
           "id": {
             "type": "integer",
@@ -1474,23 +1926,101 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "is_member": {
             "type": "boolean"
           },
-          "join_policy": {
-            "type": "string"
+          "kind": {
+            "type": "string",
+            "description": "`open` (in or out at once), `requestable` (leaders approve) or\n`internal` (admins only; listed only when you're in it)."
           },
           "name": {
             "type": "string"
+          },
+          "pending": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A pending request: `join` or `leave`."
           }
         }
       },
-      "JoinOut": {
+      "GroupSettings": {
         "type": "object",
         "required": [
-          "status"
+          "internal",
+          "hidden",
+          "open",
+          "public",
+          "restricted"
         ],
         "properties": {
-          "status": {
+          "compliance": {
+            "type": "boolean",
+            "description": "A compliance group (Internal only): Tether keeps its members."
+          },
+          "description": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "restricted": {
+            "type": "boolean"
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Only these states may be in it; empty for every state."
+          }
+        }
+      },
+      "LogOut": {
+        "type": "object",
+        "required": [
+          "at",
+          "request_type",
+          "action"
+        ],
+        "properties": {
+          "action": {
             "type": "string",
-            "description": "`member` (joined an open group) or `requested` (awaiting approval)."
+            "description": "`accept` or `reject`."
+          },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "request_type": {
+            "type": "string",
+            "description": "`join`, `leave` or `removed`."
+          },
+          "requestor_corporation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestor_main": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1559,6 +2089,26 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "MemberOut": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "main_name",
+          "state"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "main_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
       "MoveIn": {
         "type": "object",
         "required": [
@@ -1582,18 +2132,34 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
       "NewGroup": {
         "type": "object",
         "required": [
-          "name",
-          "join_policy"
+          "name"
         ],
         "properties": {
           "description": {
             "type": "string"
           },
-          "join_policy": {
-            "type": "string"
+          "hidden": {
+            "type": "boolean",
+            "description": "Not listed; joinable through its direct link (default)."
+          },
+          "internal": {
+            "type": "boolean",
+            "description": "Only admins change its members (default, as AA's)."
           },
           "name": {
             "type": "string"
+          },
+          "open": {
+            "type": "boolean",
+            "description": "Join and leave without approval."
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Joinable without `request_groups`."
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "Only the owner changes its members or this flag."
           }
         }
       },
@@ -1636,15 +2202,49 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
       "RequestOut": {
         "type": "object",
         "required": [
+          "group_id",
+          "group_name",
           "account_id",
-          "main_name"
+          "main_name",
+          "leave",
+          "requested_at"
         ],
         "properties": {
           "account_id": {
             "type": "integer",
             "format": "int64"
           },
+          "group_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "group_name": {
+            "type": "string"
+          },
+          "leave": {
+            "type": "boolean",
+            "description": "True for a request to leave."
+          },
           "main_name": {
+            "type": "string"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReservedName": {
+        "type": "object",
+        "required": [
+          "name",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
             "type": "string"
           }
         }
@@ -1873,6 +2473,18 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "StatusOut": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`member` or `left` (done at once), or `requested` (awaiting the\ngroup's leaders)."
+          }
+        }
+      },
       "Suggestion": {
         "type": "object",
         "required": [
@@ -1926,6 +2538,10 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
     {
       "name": "groups",
       "description": "Joining and leaving groups"
+    },
+    {
+      "name": "group management",
+      "description": "Requests, members and the Audit Log of the groups you manage"
     },
     {
       "name": "admin",

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT m.account_id FROM core.group_members m\n        JOIN core.accounts a ON a.id = m.account_id\n        WHERE m.group_id = $1\n          AND EXISTS (SELECT 1 FROM core.group_states s WHERE s.group_id = $1)\n          AND NOT EXISTS (\n            SELECT 1 FROM core.group_states s WHERE s.group_id = $1 AND s.state_id = a.state_id\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.group_members",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "231bcaad3165b322a556f3291a88694af2e1041cb103ad3642aa4a84f3e11e4e"
+}
