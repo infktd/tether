@@ -104,6 +104,10 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/states/{id}/rename", post(pages::states::rename))
         .route("/admin/states/{id}/delete", post(pages::states::delete))
         .route("/admin/states/{id}/move", post(pages::states::move_state))
+        .route(
+            "/admin/states/{id}/priority",
+            post(pages::states::set_priority),
+        )
         .route("/admin/states/{id}/covers", post(pages::states::add))
         .route(
             "/admin/states/{id}/covers/{entity_id}/remove",

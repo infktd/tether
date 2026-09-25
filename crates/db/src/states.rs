@@ -57,17 +57,19 @@ pub async fn by_name<'e>(
     Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority)))
 }
 
+/// A built-in state. Member and Blue can be deleted (as in AA), so they
+/// may be gone; Guest never is.
 pub async fn builtin<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     which: Builtin,
-) -> Result<State, sqlx::Error> {
+) -> Result<Option<State>, sqlx::Error> {
     let r = sqlx::query!(
         "SELECT id, name, builtin, priority FROM core.states WHERE builtin = $1",
         which.as_str()
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
-    Ok(state(r.id, r.name, r.builtin, r.priority))
+    Ok(r.map(|r| state(r.id, r.name, r.builtin, r.priority)))
 }
 
 /// An alliance, corporation or character a state covers.
@@ -194,12 +196,25 @@ pub async fn create(
     if taken.is_some() {
         return Ok(None);
     }
-    sqlx::query!("UPDATE core.states SET priority = priority + 1 WHERE priority > 0")
-        .execute(&mut *tx)
+    // Halfway between Guest and the lowest state; only when there's no
+    // room left (the lowest is 1) does everything move up one.
+    let lowest = sqlx::query_scalar!("SELECT min(priority) FROM core.states WHERE priority > 0")
+        .fetch_one(&mut *tx)
         .await?;
+    let priority = match lowest {
+        None => 100,
+        Some(l) if l > 1 => l / 2,
+        Some(_) => {
+            sqlx::query!("UPDATE core.states SET priority = priority + 1 WHERE priority > 0")
+                .execute(&mut *tx)
+                .await?;
+            1
+        }
+    };
     let id = sqlx::query_scalar!(
-        "INSERT INTO core.states (name, priority) VALUES ($1, 1) RETURNING id",
-        name
+        "INSERT INTO core.states (name, priority) VALUES ($1, $2) RETURNING id",
+        name,
+        priority
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -222,7 +237,7 @@ pub async fn rename(
     let Some(current) = get(&mut *tx, id).await? else {
         return Ok(Renamed::NotFound);
     };
-    if current.builtin.is_some() {
+    if current.is_guest() {
         return Ok(Renamed::Builtin);
     }
     let taken = sqlx::query_scalar!(
@@ -256,7 +271,7 @@ pub enum Deleted {
     Builtin,
 }
 
-/// Deletes a state an admin made, with its grants and role mappings
+/// Deletes a state (any but Guest), with its grants and role mappings
 /// (returned for the audit log). Its accounts become Guest; the caller
 /// re-evaluates them in the same transaction.
 pub async fn delete(tx: &mut sqlx::PgConnection, id: StateId) -> Result<Deleted, sqlx::Error> {
@@ -264,7 +279,7 @@ pub async fn delete(tx: &mut sqlx::PgConnection, id: StateId) -> Result<Deleted,
     let Some(current) = get(&mut *tx, id).await? else {
         return Ok(Deleted::NotFound);
     };
-    if current.builtin.is_some() {
+    if current.is_guest() {
         return Ok(Deleted::Builtin);
     }
     let accounts = sqlx::query_scalar!(
@@ -296,6 +311,51 @@ pub async fn delete(tx: &mut sqlx::PgConnection, id: StateId) -> Result<Deleted,
             .into_iter()
             .map(|r| (r.role_id, r.role_name))
             .collect(),
+    })
+}
+
+pub enum Reprioritized {
+    Done {
+        from: i32,
+    },
+    NotFound,
+    Guest,
+    /// Another state has it.
+    Taken,
+}
+
+/// Sets a state's priority (any positive number no other state has).
+pub async fn set_priority(
+    tx: &mut sqlx::PgConnection,
+    id: StateId,
+    priority: i32,
+) -> Result<Reprioritized, sqlx::Error> {
+    lock(&mut *tx).await?;
+    let Some(current) = get(&mut *tx, id).await? else {
+        return Ok(Reprioritized::NotFound);
+    };
+    if current.is_guest() {
+        return Ok(Reprioritized::Guest);
+    }
+    let taken = sqlx::query_scalar!(
+        r#"SELECT true AS "taken!" FROM core.states WHERE priority = $1 AND id <> $2"#,
+        priority,
+        id.0
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if taken.is_some() {
+        return Ok(Reprioritized::Taken);
+    }
+    sqlx::query!(
+        "UPDATE core.states SET priority = $2 WHERE id = $1",
+        id.0,
+        priority
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(Reprioritized::Done {
+        from: current.priority,
     })
 }
 

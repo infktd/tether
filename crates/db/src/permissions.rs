@@ -284,8 +284,16 @@ mod tests {
     async fn grants_come_from_state_and_groups(pool: PgPool) {
         account(&pool, 1).await; // owner
         let pilot = account(&pool, 2).await;
-        let member = states::builtin(&pool, Builtin::Member).await.unwrap().id;
-        let blue = states::builtin(&pool, Builtin::Blue).await.unwrap().id;
+        let member = states::builtin(&pool, Builtin::Member)
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        let blue = states::builtin(&pool, Builtin::Blue)
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
         states::set_account_state(&pool, pilot, member, true)
             .await
             .unwrap();
@@ -317,7 +325,11 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn duplicate_grants_are_ignored(pool: PgPool) {
-        let member = states::builtin(&pool, Builtin::Member).await.unwrap().id;
+        let member = states::builtin(&pool, Builtin::Member)
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
         let first = grant(&pool, ADMIN_AUDIT, Grantee::State(member))
             .await
             .unwrap();

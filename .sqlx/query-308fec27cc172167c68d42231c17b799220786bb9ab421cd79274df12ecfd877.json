@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO core.states (name, priority) VALUES ($1, 1) RETURNING id",
+  "query": "INSERT INTO core.states (name, priority) VALUES ($1, $2) RETURNING id",
   "describe": {
     "columns": [
       {
@@ -17,12 +17,13 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Int4"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "22225d73983ce386b2dc762bbe910226d786c2b854ca60cfd69328049ed341b3"
+  "hash": "308fec27cc172167c68d42231c17b799220786bb9ab421cd79274df12ecfd877"
 }

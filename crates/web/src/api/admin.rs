@@ -460,27 +460,44 @@ pub async fn create_state(
     Ok((StatusCode::CREATED, Json(Created { id: id.0 })))
 }
 
-/// `PATCH /api/admin/states/{id}`: rename a state an admin made.
-#[utoipa::path(patch, path = "/api/admin/states/{id}", tag = "admin", security(("session" = [])), request_body = StateNameIn,
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct StatePatch {
+    pub name: Option<String>,
+    /// Higher wins; 1 or more, and no other state's (Guest is 0).
+    pub priority: Option<i32>,
+}
+
+/// `PATCH /api/admin/states/{id}`: rename a state, or set its priority
+/// (one per request).
+/// Every state but Guest can be renamed, as in AA.
+#[utoipa::path(patch, path = "/api/admin/states/{id}", tag = "admin", security(("session" = [])), request_body = StatePatch,
     params(("id" = i64, Path)), responses((status = 204), (status = 400), (status = 403), (status = 404), (status = 409)))]
 pub async fn rename_state(
     State(state): State<AppState>,
     session: CurrentSession,
     Path(id): Path<i64>,
-    Json(body): Json<StateNameIn>,
+    Json(body): Json<StatePatch>,
 ) -> Result<StatusCode, AppError> {
     session.require(&state, ADMIN_STATES).await?;
-    let change = Change::Rename {
-        state: StateId(id),
-        name: body.name,
-    };
-    state_admin::apply(
-        &state.db,
-        &state.esi,
-        Actor::Account(session.account),
-        &change,
-    )
-    .await?;
+    // One change per request, so a failure never leaves half of one done.
+    if body.name.is_some() == body.priority.is_some() {
+        return Err(AppError::bad_request("Send either a name or a priority."));
+    }
+    let actor = Actor::Account(session.account);
+    if let Some(name) = body.name {
+        let change = Change::Rename {
+            state: StateId(id),
+            name,
+        };
+        state_admin::apply(&state.db, &state.esi, actor, &change).await?;
+    }
+    if let Some(priority) = body.priority {
+        let change = Change::SetPriority {
+            state: StateId(id),
+            priority,
+        };
+        state_admin::apply(&state.db, &state.esi, actor, &change).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

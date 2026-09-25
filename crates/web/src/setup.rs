@@ -87,11 +87,15 @@ pub async fn load_status(
         .await?
         .is_some();
     let owner_exists = accounts::owner_exists(&state.db).await?;
+    // Member can be deleted (as in AA): then there's nothing to set up.
     let member = state_db::builtin(&state.db, Builtin::Member).await?;
-    let has_member_rule = state_db::covered(&state.db)
-        .await?
-        .iter()
-        .any(|c| c.state == member.id);
+    let has_member_rule = match member {
+        Some(member) => state_db::covered(&state.db)
+            .await?
+            .iter()
+            .any(|c| c.state == member.id),
+        None => true,
+    };
     let setup_state = match (sso_configured, owner_exists, has_member_rule) {
         (false, false, _) => SetupState::NeedsSso,
         (true, false, _) => SetupState::NeedsOwner,

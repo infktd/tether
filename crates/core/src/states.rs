@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, HashSet};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StateId(pub i64);
 
-/// The states every instance has. They can't be renamed or deleted.
+/// The states every instance starts with. As in AA, Member and Blue can
+/// be renamed and deleted; Guest can't.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Builtin {
     Member,
@@ -55,8 +56,8 @@ impl State {
     }
 }
 
-/// Longest state name.
-pub const MAX_NAME: usize = 40;
+/// Longest state name (AA's limit).
+pub const MAX_NAME: usize = 32;
 
 /// Checks a state name an admin typed; returns it trimmed.
 pub fn check_name(name: &str) -> Result<&str, &'static str> {
@@ -65,7 +66,7 @@ pub fn check_name(name: &str) -> Result<&str, &'static str> {
         return Err("Give the state a name.");
     }
     if name.chars().count() > MAX_NAME {
-        return Err("State names are at most 40 characters.");
+        return Err("State names are at most 32 characters.");
     }
     if name.chars().any(char::is_control) {
         return Err("State names can't contain control characters.");
@@ -358,7 +359,7 @@ mod tests {
     fn names_are_checked() {
         assert_eq!(check_name("  Trial  "), Ok("Trial"));
         assert!(check_name(" ").is_err());
-        assert!(check_name(&"x".repeat(41)).is_err());
+        assert!(check_name(&"x".repeat(33)).is_err());
         assert!(check_name("a\nb").is_err());
     }
 }

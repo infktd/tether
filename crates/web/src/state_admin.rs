@@ -18,6 +18,8 @@ use crate::error::AppError;
 
 /// Most entities one state can list; far more than any real alliance needs.
 pub const MAX_COVERED: usize = 500;
+/// Highest priority a state can have.
+pub const MAX_PRIORITY: i32 = 1_000_000;
 /// Most states, Member, Blue and Guest included.
 pub const MAX_STATES: i64 = 50;
 
@@ -47,6 +49,11 @@ pub enum Change {
     Remove {
         state: StateId,
         entity_id: i64,
+    },
+    /// Set a state's priority (higher wins), as AA's editable number.
+    SetPriority {
+        state: StateId,
+        priority: i32,
     },
     /// Require a scope on every character of the state's accounts.
     AddScope {
@@ -124,10 +131,11 @@ fn find(states: &[State], id: StateId) -> Result<&State, AppError> {
         .ok_or_else(|| AppError::not_found("No such state."))
 }
 
+/// As AA: every state can be renamed or deleted, except Guest.
 fn check_editable(s: &State, what: &str) -> Result<(), AppError> {
-    if s.builtin.is_some() {
+    if s.is_guest() {
         return Err(AppError::bad_request(format!(
-            "{} is built in: it can't be {what}.",
+            "{} is everyone no other state covers: it can't be {what}.",
             s.name
         )));
     }
@@ -163,6 +171,33 @@ fn check_scope(s: &State, scope: &str) -> Result<(), AppError> {
         )),
         None => Err(AppError::bad_request("That isn't an ESI scope.")),
     }
+}
+
+fn check_priority(s: &State, priority: i32, states: &[State]) -> Result<(), AppError> {
+    if s.is_guest() {
+        return Err(AppError::bad_request(
+            "Guest is always 0, below every state.",
+        ));
+    }
+    if !(1..=MAX_PRIORITY).contains(&priority) {
+        return Err(AppError::bad_request(
+            "Priorities are 1 to 1,000,000 (Guest is 0).",
+        ));
+    }
+    if states
+        .iter()
+        .any(|o| o.id != s.id && o.priority == priority)
+    {
+        return Err(priority_taken());
+    }
+    Ok(())
+}
+
+fn priority_taken() -> AppError {
+    AppError::new(
+        axum::http::StatusCode::CONFLICT,
+        "Another state has that priority: each needs its own.",
+    )
 }
 
 /// The neighbour a state would swap with, if it can move that way.
@@ -213,6 +248,22 @@ fn affected(states: &[State], change: &Change) -> Result<Vec<StateId>, AppError>
         | Change::RemoveScope { state, .. } => vec![*state],
         Change::Move { state, up, past } => {
             vec![*state, pinned_neighbour(states, *state, *up, *past)?.id]
+        }
+        // It changes who is in it and in every state it passes.
+        Change::SetPriority { state, priority } => {
+            let s = find(states, *state)?;
+            let (low, high) = if *priority > s.priority {
+                (s.priority, *priority)
+            } else {
+                (*priority, s.priority)
+            };
+            states
+                .iter()
+                .filter(|o| {
+                    o.id == *state || (!o.is_guest() && o.priority >= low && o.priority <= high)
+                })
+                .map(|o| o.id)
+                .collect()
         }
     })
 }
@@ -305,6 +356,15 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
                 if *up { "above" } else { "below" },
                 other.name
             )
+        }
+        Change::SetPriority {
+            state: id,
+            priority,
+        } => {
+            let s = find(&states, *id)?;
+            check_priority(s, *priority, &states)?;
+            after.set_priority(s.id, *priority);
+            format!("Set {}'s priority to {priority}", s.name)
         }
         Change::Add {
             state: id,
@@ -421,7 +481,9 @@ pub async fn apply(
                     ("state.rename", *id, json!({ "from": from, "to": name }))
                 }
                 db::Renamed::NotFound => return Err(AppError::not_found("No such state.")),
-                db::Renamed::Builtin => return Err(AppError::bad_request("It's built in.")),
+                db::Renamed::Builtin => {
+                    return Err(AppError::bad_request("Guest can't be renamed."));
+                }
                 db::Renamed::Taken => return Err(taken()),
             }
         }
@@ -455,7 +517,9 @@ pub async fn apply(
                     )
                 }
                 db::Deleted::NotFound => return Err(AppError::not_found("No such state.")),
-                db::Deleted::Builtin => return Err(AppError::bad_request("It's built in.")),
+                db::Deleted::Builtin => {
+                    return Err(AppError::bad_request("Guest can't be deleted."));
+                }
             }
         }
         Change::Move {
@@ -478,6 +542,27 @@ pub async fn apply(
                     "past": other.name,
                 }),
             )
+        }
+        Change::SetPriority {
+            state: id,
+            priority,
+        } => {
+            let s = find(&states, *id)?;
+            check_priority(s, *priority, &states)?;
+            match db::set_priority(&mut tx, *id, *priority).await? {
+                db::Reprioritized::Done { from } => (
+                    "state.priority",
+                    *id,
+                    json!({ "name": s.name, "from": from, "to": priority }),
+                ),
+                db::Reprioritized::NotFound => {
+                    return Err(AppError::not_found("No such state."));
+                }
+                db::Reprioritized::Guest => {
+                    return Err(AppError::bad_request("Guest is always 0."));
+                }
+                db::Reprioritized::Taken => return Err(priority_taken()),
+            }
         }
         Change::Add { state: id, .. } => {
             let s = find(&states, *id)?;

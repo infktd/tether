@@ -609,26 +609,54 @@ async fn states_are_created_ordered_renamed_and_deleted(db: PgPool) {
     )
     .await;
     assert_eq!(renamed.location(), "/admin/states");
+    // As AA: Member and Blue can be renamed (and deleted); Guest can't.
     let builtin = send(
         &h.app,
         form(
             &format!("/admin/states/{MEMBER_STATE}/rename"),
-            "name=Pilots",
+            "name=Alliance",
             &owner,
         ),
     )
     .await;
-    assert_eq!(builtin.status, StatusCode::BAD_REQUEST);
-    let builtin = send(
+    assert_eq!(builtin.location(), "/admin/states");
+    for (uri, body) in [
+        (
+            format!("/admin/states/{GUEST_STATE}/rename"),
+            "name=Visitors",
+        ),
+        (format!("/admin/states/{GUEST_STATE}/delete"), "confirm=1"),
+        (
+            format!("/admin/states/{GUEST_STATE}/priority"),
+            "priority=5&confirm=1",
+        ),
+    ] {
+        let res = send(&h.app, form(&uri, body, &owner)).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{uri}");
+    }
+    // Priorities are AA's numbers: Member 100, Blue 50; each unique.
+    let taken = send(
         &h.app,
         form(
-            &format!("/admin/states/{MEMBER_STATE}/delete"),
-            "confirm=1",
+            &format!("/admin/states/{trial}/priority"),
+            "priority=100&confirm=1",
             &owner,
         ),
     )
     .await;
-    assert_eq!(builtin.status, StatusCode::BAD_REQUEST);
+    assert_eq!(taken.status, StatusCode::CONFLICT);
+    let raised = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{trial}/priority"),
+            "priority=150&confirm=1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(raised.location(), "/admin/states");
+    let body = page(&h, "/admin/states", &owner).await.body;
+    assert!(body.find(">Recruits</span>").unwrap() < body.find(">Alliance</span>").unwrap());
 
     let deleted = send(
         &h.app,
@@ -651,6 +679,13 @@ async fn states_are_created_ordered_renamed_and_deleted(db: PgPool) {
     .unwrap();
     assert_eq!(
         actions,
-        ["state.create", "state.move", "state.rename", "state.delete"]
+        [
+            "state.create",
+            "state.move",
+            "state.rename",
+            "state.rename",
+            "state.priority",
+            "state.delete"
+        ]
     );
 }

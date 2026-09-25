@@ -173,6 +173,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/states/4/priority
+Origin: {{base}}
+[Form]
+priority: 10
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/states/4/rename
 Origin: {{base}}
 [Form]

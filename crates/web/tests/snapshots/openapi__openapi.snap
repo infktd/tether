@@ -631,7 +631,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "admin"
         ],
-        "summary": "`PATCH /api/admin/states/{id}`: rename a state an admin made.",
+        "summary": "`PATCH /api/admin/states/{id}`: rename a state, or set its priority\n(one per request).\nEvery state but Guest can be renamed, as in AA.",
         "operationId": "rename_state",
         "parameters": [
           {
@@ -648,7 +648,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StateNameIn"
+                "$ref": "#/components/schemas/StatePatch"
               }
             }
           },
@@ -1851,6 +1851,25 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
               "type": "string"
             },
             "description": "Scopes every character must grant: for Member, the installed\nplugins' user scopes too."
+          }
+        }
+      },
+      "StatePatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Higher wins; 1 or more, and no other state's (Guest is 0)."
           }
         }
       },

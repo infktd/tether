@@ -342,8 +342,8 @@ async fn states_api_is_admin_only_validated_and_re_evaluates_everyone(db: PgPool
             .body(Body::empty())
             .unwrap()
     };
-    let builtin = send(&h.app, delete(format!("/api/admin/states/{MEMBER_STATE}"))).await;
-    assert_eq!(builtin.status, StatusCode::BAD_REQUEST);
+    let guest = send(&h.app, delete(format!("/api/admin/states/{GUEST_STATE}"))).await;
+    assert_eq!(guest.status, StatusCode::BAD_REQUEST);
     let removed = send(&h.app, delete(format!("/api/admin/states/{directors}"))).await;
     assert_eq!(removed.status, StatusCode::NO_CONTENT);
     let remove = send(&h.app, delete(format!("{covers}/159826257"))).await;

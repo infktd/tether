@@ -16,7 +16,7 @@
       <div>
         <h2 id="state-{{ c.id }}" class="flex items-center gap-2">
           <span class="state-badge" data-state="{{ c.style }}">{{ c.name }}</span>
-          {% if c.builtin %}<span class="text-muted-foreground" title="Built in: can't be renamed or deleted">{% call icons::icon("lock") %}{% endcall %}<span class="sr-only">Built in</span></span>{% endif %}
+          {% if c.guest %}<span class="text-muted-foreground" title="Everyone else: can't be renamed or deleted">{% call icons::icon("lock") %}{% endcall %}<span class="sr-only">Can't be renamed or deleted</span></span>{% endif %}
         </h2>
         <p>{{ c.about }}</p>
       </div>
@@ -95,16 +95,25 @@
       <div id="search-{{ c.id }}" aria-live="polite"></div>
       {% endif %}
     </section>
-    {% if !c.builtin %}
+    {% if !c.guest %}
     <footer class="flex flex-wrap items-end justify-between gap-4 border-t pt-4">
-      <form method="post" action="/admin/states/{{ c.id }}/rename" class="flex items-end gap-2">
-        <div class="grid gap-2">
-          <label class="label" for="rename-{{ c.id }}">Name</label>
-          <input class="input" id="rename-{{ c.id }}" name="name" value="{{ c.name }}" required maxlength="40">
-        </div>
-        <button type="submit" class="btn" data-variant="outline">Rename</button>
-      </form>
-      <form method="post" action="/admin/states/{{ c.id }}/delete" hx-confirm="Delete {{ c.name }}? Its {{ c.accounts }} account(s) move to the next state that covers them, and its permissions and Discord roles are removed.">
+      <div class="flex flex-wrap items-end gap-4">
+        <form method="post" action="/admin/states/{{ c.id }}/rename" class="flex items-end gap-2">
+          <div class="grid gap-2">
+            <label class="label" for="rename-{{ c.id }}">Name</label>
+            <input class="input" id="rename-{{ c.id }}" name="name" value="{{ c.name }}" required maxlength="32">
+          </div>
+          <button type="submit" class="btn" data-variant="outline">Rename</button>
+        </form>
+        <form method="post" action="/admin/states/{{ c.id }}/priority" class="flex items-end gap-2">
+          <div class="grid gap-2">
+            <label class="label" for="priority-{{ c.id }}">Priority</label>
+            <input class="input num w-24" id="priority-{{ c.id }}" name="priority" type="number" min="1" max="1000000" value="{{ c.priority }}" required>
+          </div>
+          <button type="submit" class="btn" data-variant="outline">Set</button>
+        </form>
+      </div>
+      <form method="post" action="/admin/states/{{ c.id }}/delete" hx-confirm="Delete {{ c.name }}? Its {{ c.accounts }} account(s) move to the next state that covers them, and its permissions and Discord roles are removed.{% if c.builtin %} It's built in: apps and required scopes that rely on it stop applying.{% endif %}">
         <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete</button>
       </form>
     </footer>
@@ -124,7 +133,7 @@
     <section class="flex items-end gap-2 max-w-xl">
       <div class="grid gap-2 grow">
         <label class="label" for="new-state">Name</label>
-        <input class="input" id="new-state" name="name" placeholder="Trial" required maxlength="40">
+        <input class="input" id="new-state" name="name" placeholder="Trial" required maxlength="32">
       </div>
       <button type="submit" class="btn" data-variant="primary">{% call icons::icon("plus") %}{% endcall %} Add state</button>
     </section>

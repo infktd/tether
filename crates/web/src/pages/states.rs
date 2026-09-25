@@ -47,6 +47,7 @@ pub struct Card {
     pub name: String,
     pub style: &'static str,
     pub builtin: bool,
+    pub priority: i32,
     pub guest: bool,
     pub accounts: i64,
     pub covers: Vec<Chip>,
@@ -137,6 +138,7 @@ async fn states_page(
             name: s.name.clone(),
             style: s.style(),
             builtin: s.builtin.is_some(),
+            priority: s.priority,
             guest: s.is_guest(),
             accounts: counts.get(&s.id).copied().unwrap_or(0),
             covers: covered
@@ -508,4 +510,27 @@ pub async fn remove_scope(
         scope: form.scope,
     };
     change(&state, session, remove, true, action, fields).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PriorityForm {
+    priority: i32,
+    confirm: Option<String>,
+}
+
+/// `POST /admin/states/{id}/priority`: AA's editable priority number.
+pub async fn set_priority(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<PriorityForm>,
+) -> Result<Response, PageError> {
+    let action = format!("/admin/states/{id}/priority");
+    let fields = vec![("priority", form.priority.to_string())];
+    let update = Change::SetPriority {
+        state: StateId(id),
+        priority: form.priority,
+    };
+    let confirmed = is_confirmed(form.confirm.as_deref());
+    change(&state, session, update, confirmed, action, fields).await
 }

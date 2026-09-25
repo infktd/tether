@@ -113,7 +113,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 
 **States**
 
-- Defaults Member 100, Blue 50, Guest 0 (priorities are editable numbers; the page keeps the up and down buttons). **Member and Blue can be renamed and deleted; only Guest is protected** (fixed name, always last, can't be deleted). **(decided)** Plugins and scopes follow the built-in role, not the name: deleting Member drops plugin scope requirements and plugins' Member characters; deleting Blue leaves Moon Mining's old-moon list with no audience. State names at most 32 characters. *Tether today: 2/1/0, all three locked, 40 characters.*
+- Defaults Member 100, Blue 50, Guest 0 (priorities are editable numbers; the page keeps the up and down buttons). **Member and Blue can be renamed and deleted; only Guest is protected** (fixed name, always last, can't be deleted). **(decided)** Plugins and scopes follow the built-in role, not the name: deleting Member drops plugin scope requirements and plugins' Member characters; deleting Blue leaves Moon Mining's old-moon list with no audience. State names at most 32 characters.
 - A state change removes the account from groups whose allowed states exclude it, re-checks services, and notifies ("State changed to: {state}" / "Your user's state is now: {state}", info). Deleting a state moves its accounts to their next state, notified the same way.
 
 **Groups** (rules the Groups parity task implements)

@@ -39,7 +39,10 @@ pub async fn cover(
     kind: tether_core::states::EntityKind,
     entity_id: i64,
 ) {
-    let target = tether_db::states::builtin(db, state).await.unwrap();
+    let target = tether_db::states::builtin(db, state)
+        .await
+        .unwrap()
+        .unwrap();
     tether_db::states::add_entity(
         db,
         target.id,

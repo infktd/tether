@@ -559,18 +559,28 @@ pub async fn setup(db: &PgPool, public_url: &str) -> Check {
     let covered = tether_db::states::covered(db).await.unwrap_or_default();
     let member = tether_db::states::builtin(db, tether_core::states::Builtin::Member)
         .await
-        .ok();
-    if member.is_some_and(|m| covered.iter().any(|c| c.state == m.id)) {
-        Check::ok(
+        .ok()
+        .flatten();
+    match member {
+        None => Check::ok(
+            NAME,
+            format!(
+                "owner exists; the Member state was deleted; states cover {} entities",
+                covered.len()
+            ),
+        ),
+        Some(m) if covered.iter().any(|c| c.state == m.id) => Check::ok(
             NAME,
             format!("owner exists, states cover {} entities", covered.len()),
-        )
-    } else {
-        Check::warn(
+        ),
+        Some(m) => Check::warn(
             NAME,
-            "Member covers nobody yet, so everyone is Guest",
-            "Choose your alliance in the setup wizard, on Admin → States, or with `tether states add Member <id>`.",
-        )
+            format!("{} covers nobody yet, so everyone is Guest", m.name),
+            format!(
+                "Choose your alliance in the setup wizard, on Admin → States, or with `tether states add \"{}\" <id>`.",
+                m.name
+            ),
+        ),
     }
 }
 

@@ -289,7 +289,9 @@ pub async fn choose_alliance(
 ) -> Result<Response, PageError> {
     session.require(&state, ADMIN_STATES).await?;
     let result = async {
-        let member = tether_db::states::builtin(&state.db, Builtin::Member).await?;
+        let member = tether_db::states::builtin(&state.db, Builtin::Member)
+            .await?
+            .ok_or_else(|| AppError::not_found("The Member state was deleted."))?;
         let change = Change::Add {
             state: member.id,
             entity_id: form.entity_id,
