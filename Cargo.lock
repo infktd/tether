@@ -3908,6 +3908,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "chrono",
+ "futures-core",
  "getrandom 0.4.3",
  "insta",
  "reqwest",

@@ -6,6 +6,7 @@ pub mod auth;
 pub mod compliance;
 pub mod discord;
 pub mod groups;
+pub mod notifications;
 pub mod permissions;
 pub mod pings;
 pub mod plugin_esi;

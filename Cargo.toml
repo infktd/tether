@@ -31,6 +31,9 @@ tether-plugin-sdk = { path = "crates/plugin-sdk" }
 anyhow = "1"
 askama = "0.16"
 axum = "0.8"
+# The Stream trait axum's server-sent events take (already in the tree
+# through axum, sqlx and reqwest).
+futures-core = "0.3"
 axum-extra = { version = "0.12", features = ["cookie"] }
 chacha20poly1305 = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }

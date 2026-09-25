@@ -389,6 +389,7 @@ pub async fn harness_full(
         setup_token: Arc::new(Secret::new(SETUP_TOKEN.to_owned())),
         limits: Arc::default(),
         plugins: plugins.clone(),
+        notices: tether_web::notifications::Notices::start(db.clone()),
     });
     Harness {
         app,

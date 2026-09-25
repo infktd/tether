@@ -162,7 +162,7 @@ Server-rendered HTML from Rust. No JS framework, no npm, no separate frontend bu
 
 - **askama** templates, compiled into the binary and type-checked at build time.
 - **Basecoat** supplies the shadcn-style components as plain CSS classes (`btn`, `card`, `input`, `table`, `tabs`). Its CSS is vendored into `assets/vendor/` and themed with the tokens from `DESIGN.md`.
-- **htmx** handles interactivity without writing JavaScript: partial page swaps for tabs, filters, sorting, pagination and forms; server-sent events for live countdowns, pop alerts and job status.
+- **htmx** handles interactivity without writing JavaScript: partial page swaps for tabs, filters, sorting, pagination and forms; server-sent events for live countdowns, pop alerts and job status. Server-sent events come from axum's `Sse`; the one bundled script, `assets/notifications.js`, keeps the top bar's unread count live from `/notifications/stream`, fed by Postgres `LISTEN tether_notifications` (a trigger on `core.notifications`), so notifications from jobs and the CLI arrive too.
 - **Tailwind's standalone CLI** (a single binary) builds the CSS. No Node or npm anywhere.
 - Fonts (Geist, Geist Mono), icons and htmx are bundled and served by the host. The browser's only external requests are to CCP's image server.
 - Navigation is built from core routes plus plugin manifests, filtered by the viewer's permissions.

@@ -45,6 +45,11 @@ pub async fn after_lost(db: &PgPool, lost: &Lost) -> Result<(), sqlx::Error> {
         "character left its account"
     );
     crate::states::evaluate_account(db, lost.from).await?;
+    // After the re-evaluation, and never in its way: a failed notice is
+    // only logged.
+    if let Err(err) = crate::notifications::character_lost(db, lost).await {
+        tracing::warn!(error = %err, character_id = lost.character_id, "notifying a lost character");
+    }
     Ok(())
 }
 

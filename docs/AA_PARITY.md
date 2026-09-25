@@ -23,7 +23,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Group Leaders, Group Leader Groups | same | done |
 | Permissions; Permissions Audit | Permissions | Add **Permissions Audit** |
 | Token Management | scopes shown per character on the profile | Build **Token Management** |
-| Notifications | none | Build |
+| Notifications | same | done |
 | Services, Services Management; "Can access the Discord service" | Discord (admin), Discord card on the profile | **Services** page for users; access by permission (see Services) |
 | Name format config, `{character_name}`, `{corp_ticker}` ... | nickname template: `{name}`, `{corp}`, `{alliance}` | AA's **Name Formatter** fields, one format per state |
 | Corporation Stats: Mains, Members, Unregistered, Update Now | Corp Stats, inside Compliance | Own page **Corporation Stats**, AA's tabs |
@@ -45,7 +45,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Change Main | switch the main; state re-evaluated | picks from linked characters | partial: valid token required (see Behaviour) |
 | Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | partial: add to the daily token check |
 | States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all but Factions and Public; Guest covers everyone, which is what Public is for | partial: add Factions |
-| State changes | re-evaluated on affiliation updates; "State changed to: X" notification | re-evaluated; audited | partial: needs Notifications |
+| State changes | re-evaluated on affiliation updates; "State changed to: X" notification | same, and audited | done |
 | Groups: Internal, Hidden (direct join link), Open, Public, Restricted, States (only these states may join; removed on state change), Description | | same | done |
 | Group Leaders, Group Leader Groups | non-admins process one group's requests | same; accepting also needs the group's permissions | done, stricter |
 | Leave requests, `GROUPMANAGEMENT_AUTO_LEAVE` | leaving non-open groups needs approval unless auto-leave is on | same (setting off by default) | done |
@@ -55,7 +55,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | `request_groups` permission | who may request non-public groups (usually via Member) | same, granted to Member | done |
 | Permissions on users, groups, states | | states and groups only (never users, F6) | done, deliberately stricter |
 | Staff can't change permissions; superuser can | | `admin.permissions`; owner holds everything | done |
-| Notifications | in-app, unread count, mark all read, delete read, max per user | none | missing |
+| Notifications | in-app, unread count, mark all read, delete read, max per user | same; the count is live | done |
 | Token Management | list tokens and scopes, delete, refresh | scopes per character on the profile | partial |
 | Dashboard | Characters and Membership widgets; admin panels: Software Version, Task Queue, ESI status, Announcements; apps add widgets | Profile; admin System page (ESI health, job queue, error budget, updates) | partial: rename, admin panels, plugin widgets |
 | Admin site | Django admin for every model | purpose-built admin pages, API and CLI | done, deliberately different |

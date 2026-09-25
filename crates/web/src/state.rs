@@ -25,6 +25,8 @@ pub struct AppState {
     pub limits: Arc<Limits>,
     /// Plugins running in this process.
     pub plugins: Arc<crate::plugins::Plugins>,
+    /// Unread-count changes, for the live bell.
+    pub notices: crate::notifications::Notices,
 }
 
 /// Rate limits for endpoints worth guessing at.

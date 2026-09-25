@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.failing_since < now() - interval '20 hours' AS \"long_enough?\",\n               s.failure_notified, c.account_id\n        FROM core.corp_sources s JOIN core.characters c ON c.id = s.character_id\n        WHERE s.character_id = $1\n        FOR UPDATE OF s\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "long_enough?",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "failure_notified",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.corp_sources",
+            "name": "failure_notified"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "9eb57c93dec5849e884ff1fb9d4fd44df0c0c1c80635e2285330cd17ac518612"
+}

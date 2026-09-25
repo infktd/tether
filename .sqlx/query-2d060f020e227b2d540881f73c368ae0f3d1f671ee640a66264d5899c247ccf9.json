@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.corp_sources SET failing_since = NULL, failure_notified = false WHERE character_id = $1 AND failing_since IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2d060f020e227b2d540881f73c368ae0f3d1f671ee640a66264d5899c247ccf9"
+}

@@ -370,6 +370,10 @@ pub async fn approve_corp_source(
 /// approved sources, and names members who never registered.
 pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<usize, JobError> {
     let sources = db::corp_sources(db).await.map_err(JobError::retry)?;
+    let names: BTreeMap<i64, String> = sources
+        .iter()
+        .map(|s| (s.character_id, s.character_name.clone()))
+        .collect();
     let mut by_corporation: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
     for source in sources.iter().filter(|s| s.in_use()) {
         if let Some(corporation) = source.approved_corporation {
@@ -396,6 +400,7 @@ pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<us
                 Ok(token) => token,
                 Err(err) => {
                     tracing::warn!(character, error = %err, "Corp Stats source token");
+                    source_failed(db, *character, &names).await;
                     continue;
                 }
             };
@@ -403,11 +408,15 @@ pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<us
                 Ok(members) => members,
                 Err(err) => {
                     tracing::warn!(corporation, character, error = %err, "Corp Stats member list");
+                    source_failed(db, *character, &names).await;
                     continue;
                 }
             };
             let mut tx = db.begin().await.map_err(JobError::retry)?;
             db::store_members(&mut tx, *corporation, &members)
+                .await
+                .map_err(JobError::retry)?;
+            db::source_ok(&mut *tx, *character)
                 .await
                 .map_err(JobError::retry)?;
             tx.commit().await.map_err(JobError::retry)?;
@@ -430,6 +439,23 @@ pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<us
     db::prune_member_lists(db).await.map_err(JobError::retry)?;
     tracing::info!(corporations = fetched, "Corp Stats refreshed");
     Ok(fetched)
+}
+
+/// Records a failing source and tells its owner once it has failed for a
+/// day. Errors are logged: one source mustn't stop the others.
+async fn source_failed(db: &PgPool, character: i64, names: &BTreeMap<i64, String>) {
+    let result = async {
+        let mut tx = db.begin().await?;
+        if let Some(account) = db::source_failed(&mut tx, character).await? {
+            let name = names.get(&character).map_or("a character", String::as_str);
+            crate::notifications::corp_source_failed(&mut tx, account, name).await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    if let Err(err) = result {
+        tracing::warn!(character, error = %err, "recording a failing Corp Stats source");
+    }
 }
 
 pub fn register_jobs(

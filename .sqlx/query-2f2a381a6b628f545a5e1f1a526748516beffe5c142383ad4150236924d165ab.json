@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.notifications\n        WHERE account_id = $1 AND id NOT IN (\n            SELECT id FROM core.notifications WHERE account_id = $1\n            ORDER BY id DESC LIMIT $2\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2f2a381a6b628f545a5e1f1a526748516beffe5c142383ad4150236924d165ab"
+}

@@ -268,7 +268,9 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         );
     }
 
+    let notices = tether_web::notifications::Notices::start(db.clone());
     let state = tether_web::AppState {
+        notices: notices.clone(),
         vault,
         key,
         discord,
@@ -283,7 +285,11 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let app =
         tether_web::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Live streams would hold HTTP open for up to an hour.
+            notices.stop();
+        })
         .await
         .context("serving HTTP")?;
 

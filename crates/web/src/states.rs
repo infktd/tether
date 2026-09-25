@@ -129,6 +129,9 @@ pub(crate) async fn evaluate_in(
             serde_json::json!({ "from": from, "to": to }),
         )
         .await?;
+        if let Some(to) = &to {
+            crate::notifications::state_changed(&mut *tx, account, to).await?;
+        }
     }
     if before.is_some_and(|(_, was)| was != compliant) {
         tracing::info!(account = account.0, compliant, "compliance changed");
@@ -140,6 +143,9 @@ pub(crate) async fn evaluate_in(
             serde_json::json!({ "compliant": compliant }),
         )
         .await?;
+        if let Some(name) = db::get(&mut *tx, state).await?.map(|s| s.name) {
+            crate::notifications::compliance_changed(&mut *tx, account, compliant, &name).await?;
+        }
     }
     // Groups whose allowed states exclude the state lose the account (AA).
     for group in tether_db::groups::groups_not_allowing(&mut *tx, account, state).await? {

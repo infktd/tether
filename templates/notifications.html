@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Notifications{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Notifications</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title">Notifications</h1>
+      <p class="text-muted-foreground mt-1">Your latest 50. Opening one marks it read.</p>
+    </div>
+    <div class="flex gap-2">
+      <form method="post" action="/notifications/read-all"><button type="submit" class="btn" data-variant="outline"{% if shell.unread == 0 %} disabled{% endif %}>{% call icons::icon("check") %}{% endcall %} Mark all read</button></form>
+      <form method="post" action="/notifications/delete-read" hx-confirm="Delete every read notification?"><button type="submit" class="btn btn-destructive-outline" data-variant="outline"{% if !any_read %} disabled{% endif %}>{% call icons::icon("trash") %}{% endcall %} Delete all read</button></form>
+    </div>
+  </div>
+
+  <section class="card data-card">
+    {% if rows.is_empty() %}
+    <p class="px-5 py-5 text-sm text-muted-foreground">No notifications.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Notification</th><th scope="col">Level</th><th scope="col">Date</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for n in rows %}
+        <tr>
+          <td>
+            <a href="/notifications/{{ n.id }}" class="{% if n.read %}text-foreground-soft{% else %}font-medium text-foreground{% endif %}">{% if !n.read %}<span class="sr-only">Unread: </span>{% endif %}{{ n.title }}</a>
+          </td>
+          <td><span class="notification-level" data-level="{{ n.level }}">{{ n.level }}</span></td>
+          <td class="num text-muted-foreground">{{ n.at }}</td>
+          <td class="text-right">
+            <form method="post" action="/notifications/{{ n.id }}/delete">
+              <button type="submit" class="btn" data-variant="ghost" data-size="icon-sm" aria-label="Delete {{ n.title }}">{% call icons::icon("trash") %}{% endcall %}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

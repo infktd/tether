@@ -9,6 +9,31 @@ Origin: {{base}}
 {"character_id": 1}
 HTTP 401
 
+GET {{base}}/api/notifications
+HTTP 401
+
+GET {{base}}/api/notifications/unread
+HTTP 401
+
+POST {{base}}/api/notifications/1/open
+Origin: {{base}}
+HTTP 401
+
+DELETE {{base}}/api/notifications/1
+Origin: {{base}}
+HTTP 401
+
+POST {{base}}/api/notifications/read-all
+Origin: {{base}}
+HTTP 401
+
+POST {{base}}/api/notifications/delete-read
+Origin: {{base}}
+HTTP 401
+
+GET {{base}}/notifications/stream
+HTTP 401
+
 GET {{base}}/api/groups
 HTTP 401
 

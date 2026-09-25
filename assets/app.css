@@ -171,6 +171,29 @@
     @apply bg-background text-foreground;
   }
 
+  /* The unread count on the top bar's bell. */
+  .notification-count {
+    @apply absolute -right-1 -top-1 min-w-4 rounded-full bg-highlight px-1 text-center text-[10px] font-medium leading-4 text-background;
+  }
+
+  /* A notification's level (DESIGN.md): a status badge, dot and word. */
+  .notification-level {
+    @apply inline-flex items-center gap-2 rounded-sm px-2 py-0.5 text-xs font-medium capitalize align-middle border border-faint text-foreground-soft;
+  }
+  .notification-level::before {
+    content: "";
+    @apply size-1.5 rounded-full bg-current;
+  }
+  .notification-level[data-level="danger"] {
+    @apply border-0 bg-destructive-soft text-destructive;
+  }
+  .notification-level[data-level="warning"] {
+    @apply border-0 bg-highlight-soft text-highlight;
+  }
+  .notification-level[data-level="success"] {
+    @apply border-0 bg-info-soft text-info-foreground;
+  }
+
   /* Stat cards: label 13px muted, value 26px mono, caption 12px muted. */
   .stat {
     @apply flex flex-col gap-1 p-5;

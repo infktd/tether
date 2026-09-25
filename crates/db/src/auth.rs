@@ -151,6 +151,21 @@ pub async fn create_session(
 /// Looks up a live session of an active account, noting when it was last
 /// used (at most once per `touch_every`, to avoid a write per request).
 /// Sessions aren't extended: they end `ttl` after sign-in.
+/// Whether the session still stands (not expired, logged out or on a
+/// deactivated account), without touching it.
+pub async fn session_valid(pool: &PgPool, token_hash: &[u8]) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        r#"
+        SELECT true AS "ok!" FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id
+        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active
+        "#,
+        token_hash
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
+}
+
 pub async fn find_session(
     pool: &PgPool,
     token_hash: &[u8],

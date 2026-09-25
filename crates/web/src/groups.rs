@@ -178,6 +178,8 @@ pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joi
         }
         Join::Requested => {
             groups::add_request(&mut *tx, group.id, account, false).await?;
+            crate::notifications::group_request(&mut tx, group.id, &group.name, account, false)
+                .await?;
             audit::record(
                 &mut *tx,
                 Actor::Account(account),
@@ -250,6 +252,8 @@ pub async fn leave(db: &PgPool, account: AccountId, group: GroupId) -> Result<Le
         }
         Leave::Requested => {
             groups::add_request(&mut *tx, group.id, account, true).await?;
+            crate::notifications::group_request(&mut tx, group.id, &group.name, account, true)
+                .await?;
             audit::record(
                 &mut *tx,
                 Actor::Account(account),
@@ -448,6 +452,7 @@ pub async fn decide(
     };
     let accepted = decision == Decision::Accept;
     groups::log(&mut *tx, group.id, kind, accepted, requester, Some(actor)).await?;
+    crate::notifications::group_decision(&mut tx, requester, &group.name, leave, accepted).await?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),

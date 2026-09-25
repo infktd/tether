@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.corp_sources\n        SET failing_since = COALESCE(failing_since, now()),\n            failure_notified = failure_notified OR $2\n        WHERE character_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ab4d6bcdbcf44e25f898596d4d87b2e831ecb91bab9d3a85b7bd4a6e3e856793"
+}

@@ -1504,6 +1504,159 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         ]
       }
     },
+    "/api/notifications": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`GET /api/notifications`: your latest 50, newest first.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/delete-read": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`POST /api/notifications/delete-read`",
+        "operationId": "delete_read",
+        "responses": {
+          "204": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/read-all": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`POST /api/notifications/read-all`",
+        "operationId": "read_all",
+        "responses": {
+          "204": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/unread": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`GET /api/notifications/unread`",
+        "operationId": "unread",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/{id}": {
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`DELETE /api/notifications/{id}`",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/{id}/open": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`POST /api/notifications/{id}/open`: returns it and marks it read.",
+        "operationId": "open",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationOut"
+                }
+              }
+            }
+          },
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/setup": {
       "get": {
         "tags": [
@@ -2163,6 +2316,40 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           }
         }
       },
+      "NotificationOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "level",
+          "title",
+          "message",
+          "created_at",
+          "read"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "level": {
+            "type": "string",
+            "description": "`danger`, `warning`, `info` or `success`."
+          },
+          "message": {
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "PermissionInfo": {
         "type": "object",
         "required": [
@@ -2515,6 +2702,18 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "type": "string"
           }
         }
+      },
+      "UnreadOut": {
+        "type": "object",
+        "required": [
+          "unread"
+        ],
+        "properties": {
+          "unread": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -2534,6 +2733,10 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
     {
       "name": "account",
       "description": "The signed-in account"
+    },
+    {
+      "name": "notifications",
+      "description": "Your notifications"
     },
     {
       "name": "groups",

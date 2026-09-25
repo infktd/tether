@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.notifications WHERE account_id = $1 AND read_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b48b99aca3734dab28c84c622e9bcf0b724e1e9023bd235254093e252c121bf7"
+}

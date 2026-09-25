@@ -1,0 +1,19 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}{{ n.title }}{% endblock %}
+{% block breadcrumb %}<a href="/notifications">Notifications</a>&nbsp;/&nbsp;<span class="text-foreground">{{ n.title }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6 max-w-3xl" hx-boost="true">
+  <section class="card">
+    <header>
+      <h2 class="flex items-center gap-2"><span class="notification-level" data-level="{{ n.level }}">{{ n.level }}</span> {{ n.title }}</h2>
+      <p class="num">{{ n.at }}</p>
+    </header>
+    <section><p class="text-sm">{{ n.message }}</p></section>
+    <footer class="flex gap-2">
+      <a href="/notifications" class="btn" data-variant="outline">All notifications</a>
+      <form method="post" action="/notifications/{{ n.id }}/delete"><button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete</button></form>
+    </footer>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"ok!\" FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id\n        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "661d40ff9a87eb863aca9744e185416c58c274f7871bb3e98399688493a8aac2"
+}

@@ -1,0 +1,7 @@
+{#- The top bar's link to Notifications with the unread count. The server
+    sends it again over SSE (/notifications/stream) whenever the count
+    moves. -#}
+<a href="/notifications" id="notification-bell" class="btn relative" data-variant="ghost" data-size="icon" aria-label="Notifications{% if shell.unread > 0 %}, {{ shell.unread }} unread{% endif %}" title="Notifications">
+  {% call icons::icon("bell") %}{% endcall %}
+  {% if shell.unread > 0 %}<span class="notification-count num" aria-hidden="true">{% if shell.unread > 99 %}99+{% else %}{{ shell.unread }}{% endif %}</span>{% endif %}
+</a>

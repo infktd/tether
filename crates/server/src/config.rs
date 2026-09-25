@@ -18,6 +18,8 @@ pub struct ServeConfig {
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
     pub database_url: Secret<String>,
 
+    /// The core pool's size. The notifications listener holds one more
+    /// connection of its own, and plugins have their own pools.
     #[arg(long, env = "DATABASE_MAX_CONNECTIONS", default_value_t = 10)]
     pub database_max_connections: u32,
 

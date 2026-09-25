@@ -115,6 +115,39 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/notifications
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/notifications/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/notifications/1/delete
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/notifications/read-all
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/notifications/delete-read
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/static/notifications.js
+HTTP 200
+[Asserts]
+header "Content-Type" contains "javascript"
+
 GET {{base}}/groups
 HTTP 303
 [Asserts]

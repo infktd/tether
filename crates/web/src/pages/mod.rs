@@ -7,6 +7,7 @@ pub mod compliance;
 pub mod discord;
 pub mod groups;
 pub mod headers;
+pub mod notifications;
 pub mod pings;
 pub mod plugin_access;
 pub mod plugin_pages;
@@ -148,6 +149,8 @@ pub struct Shell {
     pub no_main: bool,
     /// Pending requests, when the account may open Group Management.
     pub group_management: Option<i64>,
+    /// Unread notifications, for the top bar.
+    pub unread: i64,
 }
 
 pub struct PluginNavLink {
@@ -404,6 +407,7 @@ pub(crate) async fn load(
             not_compliant,
             no_main: account.main.is_none(),
             group_management,
+            unread: tether_db::notifications::unread(&state.db, session.account).await?,
         },
         state: access,
         is_owner: account.is_owner,

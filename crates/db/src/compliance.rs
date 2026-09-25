@@ -461,6 +461,58 @@ pub async fn remove_corp_source<'e>(
     Ok(result.rows_affected() == 1)
 }
 
+/// Marks a Corporation Stats source as failing. Returns the account that
+/// holds it once it has failed for most of a day (the job is daily, so on
+/// the second failed run), the first time only; else `None`.
+pub async fn source_failed(
+    tx: &mut sqlx::PgConnection,
+    character_id: i64,
+) -> Result<Option<AccountId>, sqlx::Error> {
+    let Some(row) = sqlx::query!(
+        r#"
+        SELECT s.failing_since < now() - interval '20 hours' AS "long_enough?",
+               s.failure_notified, c.account_id
+        FROM core.corp_sources s JOIN core.characters c ON c.id = s.character_id
+        WHERE s.character_id = $1
+        FOR UPDATE OF s
+        "#,
+        character_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let tell = row.long_enough == Some(true) && !row.failure_notified;
+    sqlx::query!(
+        r#"
+        UPDATE core.corp_sources
+        SET failing_since = COALESCE(failing_since, now()),
+            failure_notified = failure_notified OR $2
+        WHERE character_id = $1
+        "#,
+        character_id,
+        tell,
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(tell.then_some(AccountId(row.account_id)))
+}
+
+/// Clears a source's failure once it works again.
+pub async fn source_ok<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    character_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE core.corp_sources SET failing_since = NULL, failure_notified = false WHERE character_id = $1 AND failing_since IS NOT NULL",
+        character_id
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 pub async fn corp_sources(pool: &PgPool) -> Result<Vec<CorpSource>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
@@ -663,4 +715,42 @@ pub async fn corporations_without_lists(
         .into_iter()
         .map(|r| (r.corporation_id, r.name))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounts;
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn a_failing_source_is_reported_once_after_a_day(pool: PgPool) {
+        let login = accounts::Login {
+            character_id: 7,
+            character_name: "Director",
+            owner_hash: "h",
+        };
+        let account = accounts::sign_in(&pool, login, false)
+            .await
+            .unwrap()
+            .outcome
+            .account()
+            .unwrap();
+        sqlx::query("INSERT INTO core.corp_sources (character_id, offered_by) VALUES (7, $1)")
+            .bind(account.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        // The first failure only starts the clock.
+        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), None);
+        sqlx::query("UPDATE core.corp_sources SET failing_since = now() - interval '1 day'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), Some(account));
+        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), None);
+        // Working again resets it.
+        source_ok(&pool, 7).await.unwrap();
+        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), None);
+    }
 }

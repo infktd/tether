@@ -62,6 +62,9 @@ pub struct Lost {
     /// the owner, so first-run setup reopens for the holder of the setup
     /// token (otherwise nobody could ever administer the instance again).
     pub owner_lost: bool,
+    /// `sold` (another owner hash), `moved` (someone else signed in with
+    /// it) or `token` (its token died).
+    pub reason: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,7 +394,7 @@ async fn lock(tx: &mut sqlx::PgTransaction<'_>) -> Result<(), sqlx::Error> {
 async fn lose(
     tx: &mut sqlx::PgTransaction<'_>,
     character_id: i64,
-    reason: &str,
+    reason: &'static str,
 ) -> Result<Option<Lost>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
@@ -450,6 +453,7 @@ async fn lose(
         from: AccountId(row.account_id),
         was_main,
         owner_lost,
+        reason,
     }))
 }
 
@@ -588,6 +592,23 @@ pub async fn owner_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
     .fetch_one(pool)
     .await?;
     Ok(exists)
+}
+
+/// The account's main character's name, if it has a main.
+pub async fn main_name<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT c.name FROM core.accounts a
+        JOIN core.characters c ON c.id = a.main_character_id
+        WHERE a.id = $1
+        "#,
+        account.0
+    )
+    .fetch_optional(executor)
+    .await
 }
 
 /// What group rules look at: whether the account is the owner, is
@@ -872,6 +893,7 @@ mod tests {
                 from: b,
                 was_main: true,
                 owner_lost: false,
+                reason: "moved",
             })
         );
         let b = get(&pool, b).await.unwrap().unwrap();

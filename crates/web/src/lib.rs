@@ -19,6 +19,7 @@ pub mod discord_sync;
 mod error;
 pub mod groups;
 pub mod maintenance;
+pub mod notifications;
 pub mod openapi;
 pub mod ownership;
 pub mod pages;
@@ -69,6 +70,21 @@ pub fn router(state: AppState) -> Router {
         .route("/setup/alliance/search", post(pages::setup::search))
         .route("/static/{*path}", get(pages::assets::serve))
         .route("/admin", get(pages::admin::index))
+        .route("/notifications", get(pages::notifications::index))
+        .route(
+            "/notifications/read-all",
+            post(pages::notifications::read_all),
+        )
+        .route(
+            "/notifications/delete-read",
+            post(pages::notifications::delete_read),
+        )
+        .route("/notifications/stream", get(pages::notifications::stream))
+        .route("/notifications/{id}", get(pages::notifications::show))
+        .route(
+            "/notifications/{id}/delete",
+            post(pages::notifications::delete),
+        )
         .route("/groups", get(pages::groups::index))
         .route("/groups/{id}", get(pages::groups::direct))
         .route("/groups/{id}/join", post(pages::groups::join))
@@ -281,6 +297,24 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/api/me", get(api::me))
         .route("/api/me/main", post(api::set_main))
+        .route("/api/notifications", get(api::notifications::list))
+        .route("/api/notifications/unread", get(api::notifications::unread))
+        .route(
+            "/api/notifications/read-all",
+            post(api::notifications::read_all),
+        )
+        .route(
+            "/api/notifications/delete-read",
+            post(api::notifications::delete_read),
+        )
+        .route(
+            "/api/notifications/{id}/open",
+            post(api::notifications::open),
+        )
+        .route(
+            "/api/notifications/{id}",
+            delete(api::notifications::delete),
+        )
         .route("/api/groups", get(api::groups::list))
         .route("/api/groups/{id}/join", post(api::groups::join))
         .route("/api/groups/{id}/leave", post(api::groups::leave))
@@ -488,6 +522,7 @@ mod tests {
             setup_token: std::sync::Arc::new(tether_core::Secret::new("t".repeat(32))),
             limits: std::sync::Arc::default(),
             plugins,
+            notices: crate::notifications::Notices::idle(),
         }
     }
 
