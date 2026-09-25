@@ -579,3 +579,52 @@ pub async fn install_package(h: &Harness, token: &str, package: &[u8], signature
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     res.location().to_owned()
 }
+
+/// Runs the storage probe guest (`tether-plugins-test-guest-storage`) and
+/// returns what it reports. Through `submit` (writes and jobs allowed) or,
+/// with `as_page`, a page render (read-only).
+pub async fn run_probe(
+    h: &Harness,
+    id: &str,
+    path: &str,
+    query: Vec<(String, String)>,
+    as_page: bool,
+) -> String {
+    use tether_plugins::host::{Request as PageRequest, Section, Submission, SubmitResult};
+    let plugin = h.plugins.get(id).expect("the plugin is running");
+    let request = PageRequest {
+        path: path.to_owned(),
+        query,
+    };
+    let page = if as_page {
+        h.plugins
+            .host()
+            .render(&plugin, request, &Default::default())
+            .await
+            .unwrap()
+            .page
+    } else {
+        let submitted = h
+            .plugins
+            .host()
+            .submit(
+                &plugin,
+                Submission {
+                    request,
+                    form: "probe".to_owned(),
+                    values: Vec::new(),
+                },
+                &Default::default(),
+            )
+            .await
+            .unwrap();
+        match submitted.result {
+            SubmitResult::Page(page) => page,
+            SubmitResult::Redirect(to) => panic!("redirect to {to}"),
+        }
+    };
+    match &page.sections[0] {
+        Section::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    }
+}

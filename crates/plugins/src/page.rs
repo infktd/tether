@@ -4,6 +4,9 @@
 //! rejects pages that are malformed, oversized, or carry links that could
 //! point outside the plugin.
 
+use std::collections::BTreeSet;
+
+use crate::host::{FieldKind, Form};
 use crate::host::{Page, Section, Value};
 
 pub const MAX_SECTIONS: usize = 40;
@@ -31,9 +34,17 @@ fn problem(text: impl Into<String>) -> PageProblem {
     PageProblem(text.into())
 }
 
+/// Fields per form.
+pub const MAX_FIELDS_PER_FORM: usize = 30;
+/// Longest text a text field or textarea may take.
+pub const MAX_FIELD_LENGTH: u32 = 10_000;
+/// Options in a select.
+pub const MAX_OPTIONS: usize = 100;
+
 struct Budget {
     bytes: usize,
     values: usize,
+    form_ids: BTreeSet<String>,
 }
 
 impl Budget {
@@ -74,6 +85,7 @@ pub fn check(page: &Page) -> Result<(), PageProblem> {
     let mut budget = Budget {
         bytes: 0,
         values: 0,
+        form_ids: BTreeSet::new(),
     };
     if page.title.trim().is_empty() {
         return Err(problem("the page title is empty"));
@@ -175,8 +187,229 @@ fn check_section(section: &Section, budget: &mut Budget) -> Result<(), PageProbl
             }
         }
         Section::Text(text) => budget.text("a paragraph", text)?,
+        Section::Form(form) => check_form(form, budget)?,
     }
     Ok(())
+}
+
+/// Form ids and field names: `[a-z0-9_]`, 1 to 40, starting with a letter
+/// (the host's own form fields start with `_`).
+fn check_form_name(what: &str, name: &str) -> Result<(), PageProblem> {
+    let fine = (1..=40).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if fine {
+        Ok(())
+    } else {
+        Err(problem(format!(
+            "{what} {:?} isn't 1 to 40 lowercase letters, digits and _, starting with a letter",
+            printable_prefix(name)
+        )))
+    }
+}
+
+fn check_form(form: &Form, budget: &mut Budget) -> Result<(), PageProblem> {
+    check_form_name("a form id", &form.id)?;
+    if !budget.form_ids.insert(form.id.clone()) {
+        return Err(problem(format!("two forms are called {:?}", form.id)));
+    }
+    if let Some(title) = &form.title {
+        budget.text("a form title", title)?;
+    }
+    if let Some(description) = &form.description {
+        budget.text("a form description", description)?;
+    }
+    budget.text("a submit label", &form.submit_label)?;
+    if form.fields.is_empty() || form.fields.len() > MAX_FIELDS_PER_FORM {
+        return Err(problem(format!(
+            "a form has {} fields; between 1 and {MAX_FIELDS_PER_FORM} are allowed",
+            form.fields.len()
+        )));
+    }
+    let mut names = BTreeSet::new();
+    for field in &form.fields {
+        check_form_name("a field name", &field.name)?;
+        if !names.insert(field.name.as_str()) {
+            return Err(problem(format!("two fields are called {:?}", field.name)));
+        }
+        budget.value()?;
+        budget.text("a field label", &field.label)?;
+        if let Some(help) = &field.help {
+            budget.text("a field's help", help)?;
+        }
+        match &field.kind {
+            FieldKind::Text(input) | FieldKind::Textarea(input) => {
+                if !(1..=MAX_FIELD_LENGTH).contains(&input.max_length) {
+                    return Err(problem(format!(
+                        "field {:?} has a max length outside 1 to {MAX_FIELD_LENGTH}",
+                        field.name
+                    )));
+                }
+                if let Some(value) = &input.value {
+                    budget.bytes(value.len())?;
+                }
+                if let Some(placeholder) = &input.placeholder {
+                    budget.text("a placeholder", placeholder)?;
+                }
+            }
+            FieldKind::Number(input) => {
+                let finite = |n: Option<f64>| n.is_none_or(f64::is_finite);
+                if !finite(input.value) || !finite(input.min) || !finite(input.max) {
+                    return Err(problem(format!(
+                        "field {:?} has a number that isn't finite",
+                        field.name
+                    )));
+                }
+                if let (Some(min), Some(max)) = (input.min, input.max)
+                    && min > max
+                {
+                    return Err(problem(format!("field {:?} has min above max", field.name)));
+                }
+            }
+            FieldKind::Select(input) => {
+                if input.options.is_empty() || input.options.len() > MAX_OPTIONS {
+                    return Err(problem(format!(
+                        "field {:?} has {} options; between 1 and {MAX_OPTIONS} are allowed",
+                        field.name,
+                        input.options.len()
+                    )));
+                }
+                let mut values = BTreeSet::new();
+                for choice in &input.options {
+                    budget.value()?;
+                    budget.text("an option", &choice.label)?;
+                    budget.text("an option value", &choice.value)?;
+                    if !values.insert(choice.value.as_str()) {
+                        return Err(problem(format!(
+                            "field {:?} has two options with the same value",
+                            field.name
+                        )));
+                    }
+                }
+                if let Some(value) = &input.value
+                    && !values.contains(value.as_str())
+                {
+                    return Err(problem(format!(
+                        "field {:?} starts on a value that isn't one of its options",
+                        field.name
+                    )));
+                }
+            }
+            FieldKind::Checkbox(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// The form called `id` on a page, in its sections or tabs.
+pub fn find_form<'p>(page: &'p Page, id: &str) -> Option<&'p Form> {
+    page.sections
+        .iter()
+        .chain(page.tabs.iter().flat_map(|t| t.sections.iter()))
+        .find_map(|section| match section {
+            Section::Form(form) if form.id == id => Some(form),
+            _ => None,
+        })
+}
+
+/// Checks posted values against a form's fields: every field known, none
+/// twice, required ones filled, texts within their length, numbers in
+/// range, selects one of their options. Returns one value per field, in
+/// the form's order (checkboxes `true`/`false`, empty optional fields
+/// empty). The error is for the person who posted it.
+pub fn check_submission(
+    form: &Form,
+    posted: &[(String, String)],
+) -> Result<Vec<(String, String)>, String> {
+    let mut seen = BTreeSet::new();
+    for (name, _) in posted {
+        if !form.fields.iter().any(|f| &f.name == name) {
+            return Err("The form has a field it didn't ask for.".to_owned());
+        }
+        if !seen.insert(name.as_str()) {
+            return Err("The form has a field twice.".to_owned());
+        }
+    }
+    let mut values = Vec::with_capacity(form.fields.len());
+    for field in &form.fields {
+        let raw = posted
+            .iter()
+            .find(|(name, _)| name == &field.name)
+            .map(|(_, value)| value.as_str());
+        let label = &field.label;
+        let value = match &field.kind {
+            FieldKind::Checkbox(_) => match raw {
+                None | Some("") if field.required => {
+                    return Err(format!("{label} must be ticked."));
+                }
+                None | Some("") => "false".to_owned(),
+                Some("on" | "true") => "true".to_owned(),
+                Some(_) => return Err(format!("{label}: tick it or leave it.")),
+            },
+            FieldKind::Text(input) | FieldKind::Textarea(input) => {
+                let value = raw.unwrap_or("");
+                if field.required && value.trim().is_empty() {
+                    return Err(format!("{label} is required."));
+                }
+                if value.chars().count() > input.max_length as usize {
+                    return Err(format!(
+                        "{label} is longer than {} characters.",
+                        input.max_length
+                    ));
+                }
+                value.to_owned()
+            }
+            FieldKind::Number(input) => {
+                let value = raw.unwrap_or("").trim();
+                if value.is_empty() {
+                    if field.required {
+                        return Err(format!("{label} is required."));
+                    }
+                    String::new()
+                } else {
+                    let n: f64 = value
+                        .parse()
+                        .ok()
+                        .filter(|n: &f64| n.is_finite())
+                        .ok_or_else(|| format!("{label} must be a number."))?;
+                    if input.integer && n.fract() != 0.0 {
+                        return Err(format!("{label} must be a whole number."));
+                    }
+                    if input.min.is_some_and(|min| n < min) || input.max.is_some_and(|max| n > max)
+                    {
+                        return Err(format!("{label} is out of range."));
+                    }
+                    // One spelling, whatever was typed (`1e2`, `+3`, `3.0`),
+                    // so the plugin reads what was checked.
+                    if input.integer {
+                        if n.abs() > 9_007_199_254_740_992.0 {
+                            return Err(format!("{label} is out of range."));
+                        }
+                        (n as i64).to_string()
+                    } else {
+                        n.to_string()
+                    }
+                }
+            }
+            FieldKind::Select(input) => {
+                let value = raw.unwrap_or("");
+                if value.is_empty() {
+                    if field.required {
+                        return Err(format!("{label} is required."));
+                    }
+                    String::new()
+                } else if input.options.iter().any(|c| c.value == value) {
+                    value.to_owned()
+                } else {
+                    return Err(format!("{label}: choose one of the options."));
+                }
+            }
+        };
+        values.push((field.name.clone(), value));
+    }
+    Ok(values)
 }
 
 fn check_value(value: &Value, budget: &mut Budget) -> Result<(), PageProblem> {

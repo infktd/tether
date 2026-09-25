@@ -131,13 +131,39 @@ minisign -S -s old.key -m rotation.txt      # writes rotation.txt.minisig
 
 Keep the rotation files in later packages or drop them; either works once installs have moved to the new key. If you lose your key, admins have to re-pin it by hand, so keep a backup.
 
+## Who sees what
+
+A plugin's pages live at `/plugins/<id>/<path>`, for signed-in users only. `plugin.toml` says who may open which:
+
+```toml
+[permissions]
+view = "See the mining ledger"
+manage = "Change ledger settings"
+
+[[pages]]              # the longest matching path wins
+path = ""              # every page...
+permission = "view"
+[[pages]]
+path = "settings"      # ...except settings/...
+permission = "manage"
+
+[[navigation]]         # sidebar links, shown to whoever may open them
+label = "Mining"
+path = ""
+```
+
+- Permissions are granted like Tether's own, to tiers and groups, as `plugin.<id>.<name>`.
+- A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
+- Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
+- Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.
+
 ## Pages
 
 `render` gets a `Request` (the path below the plugin's pages, and the query string) and returns a `Page` or a `PageError`.
 
 - `PageError::NotFound` and `PageError::Forbidden` show the usual pages; `PageError::Failed(text)` shows a generic error to the user, and `text` to admins in the plugin's log.
 - A page has a title, an optional one-line description, sections, and optional tabs (each with its own sections).
-- Sections: a row of stats (`stats`, at most 8), a `table`, a `card` of label/value fields, or a paragraph of `text`.
+- Sections: a row of stats (`stats`, at most 8), a `table`, a `card` of label/value fields, a paragraph of `text`, or a `form`.
 - Values are typed so the host formats them consistently: `Value::Text`, `Value::Number` (counts, IDs), `isk(amount)` (abbreviated in tables), `time(rfc3339)` (EVE time), `badge(label, tone)`, and `link(label, path)` to another page of the same plugin.
 - Use `Tone::Accent` for the single most important thing on a screen, and nothing else.
 
@@ -216,7 +242,7 @@ Setting these yourself (`SET`, `set_config`, `ALTER ROLE`) doesn't lift them: th
 Work that shouldn't wait for a page view, such as syncing from ESI or a ping at a set time, runs as a job. There are two kinds, and both arrive at `run_job`:
 
 - **Schedules**, declared in `plugin.toml` (`[[capabilities.schedules]]`, `every = "30m"`, from 5 minutes to 7 days). They run while the plugin is enabled.
-- **One-off jobs**, queued from a page or another job with `jobs::enqueue`. Give one a key to be able to move or cancel it: queuing under the same key replaces the queued job, and `jobs::cancel(key)` removes it.
+- **One-off jobs**, queued from a form submission or another job with `jobs::enqueue`. Give one a key to be able to move or cancel it: queuing under the same key replaces the queued job, and `jobs::cancel(key)` removes it.
 
 ```rust
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
@@ -261,7 +287,42 @@ impl Plugin for Moons {
 | Payload | JSON, at most 64 KiB |
 | Name | lowercase letters, digits and `_`, at most 40 |
 | Key | ASCII letters, digits and `. _ : -`, at most 100 |
-| `enqueue` and `cancel` calls | 100 per page render or job run |
+| `enqueue` and `cancel` calls | 100 per form submission or job run (pages can't queue) |
+
+## Forms
+
+A form is part of a page. When someone posts it, the host checks the values against the form as your page draws it right then, and only then calls your `submit`:
+
+```rust
+use tether_plugin_sdk::{Field, Form, Page, PageError, Plugin, Request, SubmitResult, Submission};
+
+fn render(request: Request) -> Result<Page, PageError> {
+    Ok(Page::new("Settings").form(
+        Form::new("threshold", "Save")
+            .field(Field::number("isk", "Ping above (ISK)").range(Some(0.0), None, true).required())
+            .field(Field::select("ore", "Ore", vec![("ubiquitous".into(), "Ubiquitous".into()), ("r64".into(), "R64".into())]))
+            .field(Field::checkbox("enabled", "Pings on", true)),
+    ))
+}
+
+fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
+    // Checked and written one way by the host: a whole number here.
+    let isk: i64 = submission
+        .value("isk")
+        .parse()
+        .map_err(|_| PageError::Failed("isk wasn't a number".into()))?;
+    let on = submission.checked("enabled");
+    // ... store it ...
+    Ok(SubmitResult::Redirect("".into())) // or SubmitResult::Page(...) to show something
+}
+```
+
+- Pages are read-only: `render` runs on plain page views, which a link on another site can trigger, so storage refuses writes there and `jobs::enqueue`/`cancel` fail. Change things in `submit` (checked for coming from Tether's own pages) or in jobs.
+- Build a form's limits and options from what you've stored, never from the request: the host checks a post against the form your page draws for that same request.
+- The host refuses, before `submit` is called: unknown fields, a field twice, missing required fields, text over its `max_length`, numbers that aren't numbers, out of range or (for `integer`) not whole, and select values that aren't one of the options. You get one value per field in the form's order: checkboxes as `true`/`false` (a required one must be ticked), empty optional fields as `""`, numbers written plainly (`100`, not `1e2`; whole numbers for `integer`).
+- Posting needs the page's permission, comes from Tether's own pages only, and is limited to 30 a minute per person per plugin. No file uploads.
+- Field names and form ids are lowercase letters, digits and `_`, starting with a letter. Up to 30 fields per form, 100 options per select, 10,000 characters per text field; a post is at most 64 KiB.
+- Return `SubmitResult::Redirect(path)` to go to another of your pages (a link path), or `SubmitResult::Page(page)` to show a page there and then, for example the form again with a note about what to fix.
 
 ## Logging
 
@@ -289,11 +350,11 @@ Hitting a limit ends that call only; the next call starts clean. Admins see whic
 API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0.0`) is unstable until Tether's milestone 3 ends. After that, nothing in 1.x changes: new things arrive as new types, functions or interfaces, so a plugin built against an earlier 1.x keeps loading. Today it has:
 
 - `log`: write to the plugin's log;
-- pages: `render`;
+- pages: `render`, and forms: `submit`;
 - `storage`: SQL in the plugin's own schema (see Storage);
 - `jobs`: schedules and one-off jobs (see Jobs).
 
-Coming during milestone 2, in this order: permissions and forms, ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
+Coming during milestone 2, in this order: ESI data (within approved and consented scopes), identity, Discord messages, and outbound HTTP to hosts an admin approved.
 
 ## Checklist before publishing
 

@@ -95,9 +95,10 @@ pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<Str
     match owner {
         None => return Ok(BTreeSet::new()),
         Some(true) => {
-            return Ok(CORE_PERMISSIONS
-                .iter()
-                .map(|(name, _)| (*name).to_owned())
+            return Ok(available(pool)
+                .await?
+                .into_iter()
+                .map(|(name, _)| name)
                 .collect());
         }
         Some(false) => {}
@@ -115,6 +116,98 @@ pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<Str
     .fetch_all(pool)
     .await?;
     Ok(permissions.into_iter().collect())
+}
+
+/// Every permission that can be granted: core's, then installed plugins',
+/// with their descriptions.
+pub async fn available(pool: &PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let mut all: Vec<(String, String)> = CORE_PERMISSIONS
+        .iter()
+        .map(|(name, description)| ((*name).to_owned(), (*description).to_owned()))
+        .collect();
+    let plugins = sqlx::query!(
+        "SELECT permission, description FROM core.plugin_permissions ORDER BY permission"
+    )
+    .fetch_all(pool)
+    .await?;
+    all.extend(plugins.into_iter().map(|r| (r.permission, r.description)));
+    Ok(all)
+}
+
+/// Whether a permission exists: core's, or an installed plugin's. A
+/// plugin's is locked (shared) until the transaction ends, so an uninstall
+/// can't remove it between this check and a grant.
+pub async fn is_known<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    permission: &str,
+) -> Result<bool, sqlx::Error> {
+    if tether_core::permissions::is_known(permission) {
+        return Ok(true);
+    }
+    let found = sqlx::query_scalar!(
+        r#"SELECT true AS "found!" FROM core.plugin_permissions WHERE permission = $1 FOR SHARE"#,
+        permission
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// Records a plugin's permissions, in its install's transaction. Any
+/// grant of these names left from before (it shouldn't exist) is removed
+/// first: a new install starts with nobody holding them.
+pub async fn add_plugin_permissions(
+    tx: &mut sqlx::PgConnection,
+    plugin_id: &str,
+    permissions: &[(String, String)],
+) -> Result<(), sqlx::Error> {
+    let names: Vec<String> = permissions.iter().map(|(name, _)| name.clone()).collect();
+    sqlx::query!(
+        "DELETE FROM core.permission_grants WHERE permission = ANY($1)",
+        &names
+    )
+    .execute(&mut *tx)
+    .await?;
+    for (permission, description) in permissions {
+        sqlx::query!(
+            "INSERT INTO core.plugin_permissions (plugin_id, permission, description) VALUES ($1, $2, $3)",
+            plugin_id,
+            permission,
+            description,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Removes every grant of a plugin's permissions (its permissions go with
+/// the plugin's row), after locking them so no grant can slip in. Returns
+/// what was removed, for the audit log.
+pub async fn remove_plugin_grants(
+    tx: &mut sqlx::PgConnection,
+    plugin_id: &str,
+) -> Result<Vec<Grant>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT permission FROM core.plugin_permissions WHERE plugin_id = $1 FOR UPDATE",
+        plugin_id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let rows = sqlx::query!(
+        r#"
+        DELETE FROM core.permission_grants
+        WHERE permission IN (SELECT permission FROM core.plugin_permissions WHERE plugin_id = $1)
+        RETURNING id, permission, tier, group_id
+        "#,
+        plugin_id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| to_grant(r.id, r.permission, r.tier, r.group_id))
+        .collect())
 }
 
 pub(crate) fn split(grantee: Grantee) -> (Option<&'static str>, Option<i64>) {

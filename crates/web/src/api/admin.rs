@@ -7,9 +7,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tether_core::permissions::{
-    ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, CORE_PERMISSIONS,
-};
+use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS};
 use tether_core::tiers::Tier;
 use tether_db::audit::{self, Actor};
 use tether_db::groups::{self, GroupId};
@@ -192,8 +190,8 @@ pub struct PermissionsOut {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PermissionInfo {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -216,8 +214,9 @@ pub async fn list_permissions(
     session.require(&state, ADMIN_PERMISSIONS).await?;
     let grants = permissions::list(&state.db).await?;
     Ok(Json(PermissionsOut {
-        available: CORE_PERMISSIONS
-            .iter()
+        available: permissions::available(&state.db)
+            .await?
+            .into_iter()
             .map(|(name, description)| PermissionInfo { name, description })
             .collect(),
         grants: grants

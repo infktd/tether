@@ -22,7 +22,10 @@ wasmtime::component::bindgen!({
 });
 
 pub use tether::plugin::log::Level;
-pub use tether::plugin::page::{Badge, Card, Column, Link, Section, Stat, Tab, Table, Tone, Value};
+pub use tether::plugin::page::{
+    Badge, Card, Choice, Column, Field, FieldKind, Form, Link, NumberInput, Section, SelectInput,
+    Stat, Tab, Table, TextInput, Tone, Value,
+};
 // `Page`, `PageError` and `Request` are generated at this module's root:
 // the world `use`s them.
 
@@ -48,6 +51,8 @@ pub struct CallState {
     /// `None` where no queue is wired up (tests of pages alone).
     jobs: Option<jobs::Queue>,
     job_calls: usize,
+    /// Page renders may not queue or cancel jobs.
+    jobs_refused: bool,
 }
 
 impl CallState {
@@ -59,11 +64,17 @@ impl CallState {
             storage,
             jobs,
             job_calls: 0,
+            jobs_refused: false,
         }
     }
 
     /// The queue, if this call may use it once more.
     fn queue(&mut self) -> Result<jobs::Queue, jobs::Error> {
+        if self.jobs_refused {
+            return Err(jobs::Error::Invalid(
+                "pages can't queue or cancel jobs: do that in submit or a job".to_owned(),
+            ));
+        }
         self.job_calls += 1;
         if self.job_calls > jobs::MAX_CALLS {
             return Err(jobs::Error::Invalid(format!(
@@ -227,6 +238,13 @@ impl LoadedPlugin {
     }
 }
 
+/// What a submission led to, plus what the plugin logged.
+#[derive(Debug)]
+pub struct Submitted {
+    pub result: SubmitResult,
+    pub logs: Vec<LogRecord>,
+}
+
 /// How a job went, plus what the plugin logged while running it.
 #[derive(Debug)]
 pub struct JobRun {
@@ -292,6 +310,18 @@ impl Host {
         CallState::new(&plugin.id, plugin.storage.clone(), self.jobs.clone())
     }
 
+    /// For page renders, which run on GETs anyone can be linked into:
+    /// storage is read-only and jobs can't be queued or cancelled.
+    fn render_state(&self, plugin: &LoadedPlugin) -> CallState {
+        let mut state = CallState::new(
+            &plugin.id,
+            plugin.storage.as_ref().map(Storage::read_only),
+            None,
+        );
+        state.jobs_refused = true;
+        state
+    }
+
     /// Compiles, vets and links a plugin. A plugin importing anything the
     /// host doesn't provide (another API version, the filesystem) fails
     /// here, naming the import. `storage` is its database access, for
@@ -323,7 +353,7 @@ impl Host {
         request: Request,
         limits: &PluginLimits,
     ) -> Result<Rendered, RenderError> {
-        let store = self.runtime.store(self.call_state(plugin), limits);
+        let store = self.runtime.store(self.render_state(plugin), limits);
         let (answer, logs) = self
             .runtime
             .run(&plugin.id, store, limits, async |store| {
@@ -349,6 +379,37 @@ impl Host {
         })?;
         page::check(&page)?;
         Ok(Rendered { page, logs })
+    }
+
+    /// Hands a checked form submission to the plugin. A page it answers
+    /// with is checked like any other.
+    pub async fn submit(
+        &self,
+        plugin: &LoadedPlugin,
+        submission: Submission,
+        limits: &PluginLimits,
+    ) -> Result<Submitted, RenderError> {
+        let store = self.runtime.store(self.call_state(plugin), limits);
+        let (answer, logs) = self
+            .runtime
+            .run(&plugin.id, store, limits, async |store| {
+                let instance = plugin.pre.instantiate_async(&mut *store).await?;
+                let answer = instance.call_submit(&mut *store, &submission).await?;
+                let state = &mut store.data_mut().data;
+                Ok((answer, std::mem::take(&mut state.logs)))
+            })
+            .await?;
+        let result = answer.map_err(|err| {
+            RenderError::Plugin(match err {
+                PageError::Failed(text) => PageError::Failed(printable(&text, MAX_LOG_TEXT)),
+                other => other,
+            })
+        })?;
+        match &result {
+            SubmitResult::Page(page) => page::check(page)?,
+            SubmitResult::Redirect(path) => page::check_link_path(path)?,
+        }
+        Ok(Submitted { result, logs })
     }
 
     /// Runs one of the plugin's jobs.

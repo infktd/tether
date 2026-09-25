@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.plugin_permissions (plugin_id, permission, description) VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "60927260c1175c6ad4eb109fa4e625988e19d3a1624c4ca563b91e4900cac0ea"
+}

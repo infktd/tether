@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.permission_grants WHERE permission = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8a3e1689713fa334ed9cff20402a768a3af28a75ea41ff4c905e782a667434c9"
+}

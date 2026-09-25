@@ -31,6 +31,50 @@ pub struct Manifest {
     /// ledger"`. Granted like core ones, as `plugin.<id>.<name>`.
     #[serde(default)]
     pub permissions: BTreeMap<String, String>,
+    /// Who may open which pages: a path prefix and the permission it needs.
+    /// A page no rule covers is for admins only (`admin.plugins`).
+    #[serde(default)]
+    pub pages: Vec<PageRule>,
+    /// Sidebar entries, shown to whoever may open their page.
+    #[serde(default)]
+    pub navigation: Vec<NavEntry>,
+}
+
+/// `[[pages]]`: pages under `path` (a page path; `""` for all) need
+/// `permission`, one of `[permissions]`. The longest matching path wins.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageRule {
+    pub path: String,
+    pub permission: String,
+}
+
+/// `[[navigation]]`: a sidebar link to one of the plugin's pages.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NavEntry {
+    pub label: String,
+    /// A page path; `""` for the plugin's main page.
+    pub path: String,
+}
+
+impl Manifest {
+    /// The permission (full name, `plugin.<id>.<name>`) a page needs, or
+    /// `None` if no rule covers it: admins only.
+    pub fn page_permission(&self, path: &str) -> Option<String> {
+        let covers = |rule: &PageRule| {
+            rule.path.is_empty()
+                || path == rule.path
+                || path
+                    .strip_prefix(rule.path.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        self.pages
+            .iter()
+            .filter(|rule| covers(rule))
+            .max_by_key(|rule| rule.path.len())
+            .map(|rule| format!("plugin.{}.{}", self.plugin.id, rule.permission))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -235,6 +279,29 @@ impl Manifest {
             check_name("a permission name", name)?;
             check_text("a permission description", description, 120, true)?;
         }
+        if self.pages.len() > 20 {
+            return Err(bad("more than 20 [[pages]] rules"));
+        }
+        let mut paths = std::collections::BTreeSet::new();
+        for rule in &self.pages {
+            check_page_path("[[pages]] path", &rule.path)?;
+            if !self.permissions.contains_key(&rule.permission) {
+                return Err(bad(format!(
+                    "[[pages]] {:?} needs permission {:?}, which [permissions] doesn't declare",
+                    rule.path, rule.permission
+                )));
+            }
+            if !paths.insert(rule.path.as_str()) {
+                return Err(bad(format!("[[pages]] path {:?} appears twice", rule.path)));
+            }
+        }
+        if self.navigation.len() > 10 {
+            return Err(bad("more than 10 [[navigation]] entries"));
+        }
+        for entry in &self.navigation {
+            check_text("a navigation label", &entry.label, 40, true)?;
+            check_page_path("[[navigation]] path", &entry.path)?;
+        }
         Ok(())
     }
 }
@@ -279,6 +346,15 @@ pub fn check_key(key: &str) -> Result<(), ManifestError> {
         return Err(bad("publisher.key isn't a minisign public key"));
     }
     Ok(())
+}
+
+/// A page path as plugins write them: what link paths allow.
+fn check_page_path(what: &str, path: &str) -> Result<(), ManifestError> {
+    crate::page::check_link_path(path).map_err(|_| {
+        bad(format!(
+            "{what} {path:?} isn't a page path (like \"moons/old\")"
+        ))
+    })
 }
 
 /// Names of permissions, schedules and secrets: `view`, `sync_mining`.
@@ -639,6 +715,41 @@ manage = "Manage the mining ledger"
                 .0
                 .contains("minisign")
         );
+    }
+
+    #[test]
+    fn page_rules_pick_the_longest_prefix() {
+        let m = Manifest::parse(&manifest(
+            "[permissions]\nview = \"See\"\nmanage = \"Manage\"\n\n\
+             [[pages]]\npath = \"\"\npermission = \"view\"\n\n\
+             [[pages]]\npath = \"admin\"\npermission = \"manage\"\n\n\
+             [[navigation]]\nlabel = \"Moons\"\npath = \"\"\n",
+        ))
+        .unwrap();
+        let view = Some("plugin.nmu.mining-ledger.view".to_owned());
+        let manage = Some("plugin.nmu.mining-ledger.manage".to_owned());
+        assert_eq!(m.page_permission(""), view);
+        assert_eq!(m.page_permission("moons/1"), view);
+        assert_eq!(m.page_permission("admin"), manage);
+        assert_eq!(m.page_permission("admin/keys"), manage);
+        // A prefix is whole segments only.
+        assert_eq!(m.page_permission("administrator"), view);
+
+        let admins_only = Manifest::parse(&manifest(
+            "[permissions]\nmanage = \"Manage\"\n\n[[pages]]\npath = \"admin\"\npermission = \"manage\"\n",
+        ))
+        .unwrap();
+        assert_eq!(admins_only.page_permission(""), None);
+        assert_eq!(admins_only.page_permission("other"), None);
+
+        for bad in [
+            "[[pages]]\npath = \"\"\npermission = \"undeclared\"\n",
+            "[permissions]\nview = \"x\"\n[[pages]]\npath = \"/abs\"\npermission = \"view\"\n",
+            "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
+            "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",
+        ] {
+            assert!(Manifest::parse(&manifest(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]

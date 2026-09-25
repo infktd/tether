@@ -6,6 +6,8 @@
 //! and has no rights on core, `public` or other plugins' schemas. The host
 //! adds what a role can't express:
 //!
+//! - page renders get read-only transactions: only `submit` and jobs can
+//!   write;
 //! - every call is one transaction, and before every statement the host
 //!   sets the timeouts, memory and `search_path` itself, for the session:
 //!   whatever a plugin `SET`s, `set_config`s or `ALTER ROLE`s (a role may
@@ -77,6 +79,8 @@ pub struct Storage {
     /// `"plugin_<id>"`, quoted, for `search_path`.
     search_path: String,
     pool: PgPool,
+    /// For page renders: Postgres refuses writes in these transactions.
+    read_only: bool,
 }
 
 impl std::fmt::Debug for Storage {
@@ -243,6 +247,17 @@ impl Storage {
             plugin: plugin.to_owned(),
             search_path: format!("\"{schema}\""),
             pool,
+            read_only: false,
+        }
+    }
+
+    /// The same storage, read-only: what page renders get, so a page view
+    /// (a GET, which anyone can be linked into) can't change anything.
+    /// Changes belong in `submit` and jobs.
+    pub fn read_only(&self) -> Self {
+        Self {
+            read_only: true,
+            ..self.clone()
         }
     }
 
@@ -287,10 +302,22 @@ impl Storage {
     /// resolve to a stand-in of its own.
     async fn reset(&self, tx: &mut sqlx::PgConnection) -> Result<(), Error> {
         let mut query = sqlx::QueryBuilder::<Postgres>::new("SELECT ");
+        // Read-only: this transaction, and any the plugin starts after
+        // ending it. (A connection is reset when it goes back to the pool,
+        // so read-write calls start read-write.)
+        let read_only: &[(&str, &str)] = if self.read_only {
+            &[
+                ("transaction_read_only", "on"),
+                ("default_transaction_read_only", "on"),
+            ]
+        } else {
+            &[]
+        };
         let settings = SESSION_SETTINGS
             .iter()
             .copied()
-            .chain([("search_path", self.search_path.as_str())]);
+            .chain([("search_path", self.search_path.as_str())])
+            .chain(read_only.iter().copied());
         let mut separated = query.separated(", ");
         for (name, value) in settings {
             separated.push("pg_catalog.set_config(");

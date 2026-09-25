@@ -6,6 +6,7 @@ pub mod assets;
 pub mod discord;
 pub mod headers;
 pub mod pings;
+pub mod plugin_pages;
 pub mod plugins;
 pub mod setup;
 pub mod system;
@@ -139,6 +140,15 @@ pub struct Shell {
     pub active: &'static str,
     /// Admin links the sidebar may show.
     pub nav: AdminNav,
+    /// Plugin pages this account may open, from the plugins' manifests.
+    pub plugin_nav: Vec<PluginNavLink>,
+    /// The plugin page being shown, to mark its sidebar link.
+    pub active_href: String,
+}
+
+pub struct PluginNavLink {
+    pub label: String,
+    pub href: String,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -260,6 +270,22 @@ pub(crate) async fn load(
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };
+    let plugin_nav = state
+        .plugins
+        .navigation()
+        .into_iter()
+        .filter(|item| {
+            let needed = item
+                .permission
+                .as_deref()
+                .unwrap_or(tether_core::permissions::ADMIN_PLUGINS);
+            perms.contains(needed)
+        })
+        .map(|item| PluginNavLink {
+            label: item.label,
+            href: item.href,
+        })
+        .collect();
     let characters = account
         .characters
         .iter()
@@ -280,6 +306,8 @@ pub(crate) async fn load(
             },
             active,
             nav,
+            plugin_nav,
+            active_href: String::new(),
         },
         tier,
         is_owner: account.is_owner,

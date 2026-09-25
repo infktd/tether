@@ -31,12 +31,18 @@ pub struct AppState {
 #[derive(Debug)]
 pub struct Limits {
     pub setup_unlock: RateLimiter,
+    /// Plugin form posts, per account and plugin.
+    pub plugin_submits: RateLimiter<(i64, String)>,
+    /// Plugin page views, per account and plugin: each runs the plugin.
+    pub plugin_pages: RateLimiter<(i64, String)>,
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Self {
             setup_unlock: RateLimiter::new(5, std::time::Duration::from_secs(60)),
+            plugin_submits: RateLimiter::new(30, std::time::Duration::from_secs(60)),
+            plugin_pages: RateLimiter::new(120, std::time::Duration::from_secs(60)),
         }
     }
 }

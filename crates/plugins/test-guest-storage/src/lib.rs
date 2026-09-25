@@ -8,10 +8,13 @@
 //! Jobs too: `enqueue?name=&key=&payload=&at=` and `cancel?key=`. Each job
 //! run is recorded in a `runs` table (when the package's migration made
 //! one); a job named `fail` asks to be retried, `boom` gives up.
+//!
+//! Pages are read-only, so tests that write or queue go through `submit`,
+//! which runs the same probe.
 
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value};
-use tether_plugin_sdk::{Page, PageError, Plugin, Request, log};
+use tether_plugin_sdk::{Page, PageError, Plugin, Request, Submission, SubmitResult, log};
 
 struct Probe;
 
@@ -37,70 +40,80 @@ fn shown(text: String) -> String {
     text.chars().take(1900).collect()
 }
 
-impl Plugin for Probe {
-    fn render(request: Request) -> Result<Page, PageError> {
-        let sql: Vec<&str> = request
+fn probe(request: Request) -> Result<Page, PageError> {
+    let sql: Vec<&str> = request
+        .query
+        .iter()
+        .filter(|(k, _)| k == "sql")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    let params: Vec<Value> = request
+        .query
+        .iter()
+        .filter(|(k, _)| k == "p")
+        .map(|(_, v)| param(v))
+        .collect();
+    let first = sql.first().copied().unwrap_or("");
+    let arg = |name: &str| {
+        request
             .query
             .iter()
-            .filter(|(k, _)| k == "sql")
-            .map(|(_, v)| v.as_str())
-            .collect();
-        let params: Vec<Value> = request
-            .query
-            .iter()
-            .filter(|(k, _)| k == "p")
-            .map(|(_, v)| param(v))
-            .collect();
-        let first = sql.first().copied().unwrap_or("");
-        let arg = |name: &str| {
-            request
-                .query
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+    };
+    let outcome = match request.path.as_str() {
+        "query" => match storage::query(first, &params) {
+            Ok(rows) => format!("ok rows={} {:?}", rows.rows.len(), rows),
+            Err(e) => format!("err {e:?}"),
+        },
+        "execute" => match storage::execute(first, &params) {
+            Ok(n) => format!("ok changed={n}"),
+            Err(e) => format!("err {e:?}"),
+        },
+        "transaction" => {
+            let statements: Vec<Statement> = sql
                 .iter()
-                .find(|(k, _)| k == name)
-                .map(|(_, v)| v.clone())
-        };
-        let outcome = match request.path.as_str() {
-            "query" => match storage::query(first, &params) {
-                Ok(rows) => format!("ok rows={} {:?}", rows.rows.len(), rows),
+                .map(|s| Statement::new(*s, params.clone()))
+                .collect();
+            match storage::transaction(&statements) {
+                Ok(counts) => format!("ok changed={counts:?}"),
                 Err(e) => format!("err {e:?}"),
-            },
-            "execute" => match storage::execute(first, &params) {
-                Ok(n) => format!("ok changed={n}"),
-                Err(e) => format!("err {e:?}"),
-            },
-            "transaction" => {
-                let statements: Vec<Statement> = sql
-                    .iter()
-                    .map(|s| Statement::new(*s, params.clone()))
-                    .collect();
-                match storage::transaction(&statements) {
-                    Ok(counts) => format!("ok changed={counts:?}"),
-                    Err(e) => format!("err {e:?}"),
-                }
             }
-            "enqueue" => {
-                let mut job = NewJob::new(arg("name").unwrap_or_default());
-                if let Some(key) = arg("key") {
-                    job = job.key(key);
-                }
-                if let Some(payload) = arg("payload") {
-                    job = job.payload(payload);
-                }
-                if let Some(at) = arg("at") {
-                    job = job.at(at);
-                }
-                match jobs::enqueue(job) {
-                    Ok(()) => "ok".to_owned(),
-                    Err(e) => format!("err {e:?}"),
-                }
+        }
+        "enqueue" => {
+            let mut job = NewJob::new(arg("name").unwrap_or_default());
+            if let Some(key) = arg("key") {
+                job = job.key(key);
             }
-            "cancel" => match jobs::cancel(&arg("key").unwrap_or_default()) {
-                Ok(found) => format!("ok {found}"),
+            if let Some(payload) = arg("payload") {
+                job = job.payload(payload);
+            }
+            if let Some(at) = arg("at") {
+                job = job.at(at);
+            }
+            match jobs::enqueue(job) {
+                Ok(()) => "ok".to_owned(),
                 Err(e) => format!("err {e:?}"),
-            },
-            _ => return Err(PageError::NotFound),
-        };
-        Ok(Page::new("Probe").text(shown(outcome)))
+            }
+        }
+        "cancel" => match jobs::cancel(&arg("key").unwrap_or_default()) {
+            Ok(found) => format!("ok {found}"),
+            Err(e) => format!("err {e:?}"),
+        },
+        _ => return Err(PageError::NotFound),
+    };
+    Ok(Page::new("Probe").text(shown(outcome)))
+}
+
+impl Plugin for Probe {
+    /// Pages are read-only: writes and job calls fail here.
+    fn render(request: Request) -> Result<Page, PageError> {
+        probe(request)
+    }
+
+    /// The same, from a form post, where writes and jobs are allowed.
+    fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
+        probe(submission.request).map(SubmitResult::Page)
     }
 
     fn run_job(job: Job) -> Result<(), JobError> {

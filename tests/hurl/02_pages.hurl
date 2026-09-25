@@ -338,3 +338,30 @@ confirmation: nmu.hello
 HTTP 303
 [Asserts]
 header "Location" == "/login"
+
+# Plugin pages need a session (then their permission).
+GET {{base}}/plugins/nmu.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/nmu.hello/some/page
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/plugins/nmu.hello
+Origin: {{base}}
+[Form]
+_form: note
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/plugins/nmu.hello/some/page
+Origin: {{base}}
+[Form]
+_form: note
+HTTP 303
+[Asserts]
+header "Location" == "/login"

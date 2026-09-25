@@ -160,8 +160,26 @@ pub enum Status {
 }
 
 enum Slot {
-    Running(LoadedPlugin),
+    Running(Running),
     Failed(String),
+}
+
+/// A running plugin and the manifest it was approved with.
+#[derive(Clone)]
+pub struct Running {
+    pub plugin: LoadedPlugin,
+    pub manifest: Arc<tether_plugins::manifest::Manifest>,
+}
+
+/// A sidebar link to a running plugin's page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavItem {
+    pub plugin_id: String,
+    pub label: String,
+    /// `/plugins/<id>/<path>`.
+    pub href: String,
+    /// What opening it needs: a plugin permission, or `None` for admins.
+    pub permission: Option<String>,
 }
 
 /// The plugins running in this process.
@@ -224,11 +242,41 @@ impl Plugins {
 
     /// The running plugin, to call.
     pub fn get(&self, id: &str) -> Option<LoadedPlugin> {
+        self.running(id).map(|r| r.plugin)
+    }
+
+    /// The running plugin with its manifest.
+    pub fn running(&self, id: &str) -> Option<Running> {
         let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());
         match slots.get(id) {
-            Some(Slot::Running(plugin)) => Some(plugin.clone()),
+            Some(Slot::Running(running)) => Some(running.clone()),
             _ => None,
         }
+    }
+
+    /// Every running plugin's sidebar entries, by plugin name.
+    pub fn navigation(&self) -> Vec<NavItem> {
+        let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());
+        let mut running: Vec<&Running> = slots
+            .values()
+            .filter_map(|slot| match slot {
+                Slot::Running(running) => Some(running),
+                Slot::Failed(_) => None,
+            })
+            .collect();
+        running.sort_by(|a, b| a.manifest.plugin.name.cmp(&b.manifest.plugin.name));
+        running
+            .into_iter()
+            .flat_map(|r| {
+                let id = r.manifest.plugin.id.clone();
+                r.manifest.navigation.iter().map(move |entry| NavItem {
+                    href: page_href(&id, &entry.path),
+                    permission: r.manifest.page_permission(&entry.path),
+                    label: entry.label.clone(),
+                    plugin_id: id.clone(),
+                })
+            })
+            .collect()
     }
 
     /// Loads an installed plugin from its stored package, but only the
@@ -237,13 +285,13 @@ impl Plugins {
     /// old key stops loading.
     async fn activate(&self, db: &PgPool, installed: &db::Installed) {
         let slot = match self.load(db, installed).await {
-            Ok(plugin) => {
+            Ok(running) => {
                 tracing::info!(
                     plugin = installed.id,
                     version = installed.version,
                     "plugin loaded"
                 );
-                Slot::Running(plugin)
+                Slot::Running(running)
             }
             Err(why) => {
                 tracing::error!(plugin = installed.id, error = %why, "plugin failed to load");
@@ -253,7 +301,7 @@ impl Plugins {
         self.slots().insert(installed.id.clone(), slot);
     }
 
-    async fn load(&self, db: &PgPool, installed: &db::Installed) -> Result<LoadedPlugin, String> {
+    async fn load(&self, db: &PgPool, installed: &db::Installed) -> Result<Running, String> {
         if sha256(&installed.package) != installed.package_sha256 {
             return Err("the stored package isn't the one that was approved".to_owned());
         }
@@ -290,6 +338,7 @@ impl Plugins {
             }
         };
         let schedules = crate::plugin_jobs::declared(&package.manifest);
+        let manifest = Arc::new(package.manifest);
         let loaded = self
             .host
             .load(&installed.id, package.component, storage)
@@ -302,7 +351,10 @@ impl Plugins {
                 tracing::error!(plugin = installed.id, error = %e, "syncing plugin schedules");
                 "its schedules couldn't be set up".to_owned()
             })?;
-        Ok(loaded)
+        Ok(Running {
+            plugin: loaded,
+            manifest,
+        })
     }
 
     /// The plugin's pool, connected as its role, once its pending
@@ -357,8 +409,8 @@ impl Plugins {
     async fn deactivate(&self, id: &str) {
         let removed = self.slots().remove(id);
         if let Some(slot) = removed {
-            if let Slot::Running(plugin) = slot
-                && let Some(storage) = plugin.storage()
+            if let Slot::Running(running) = slot
+                && let Some(storage) = running.plugin.storage()
             {
                 storage.pool().close().await;
             }
@@ -376,6 +428,16 @@ impl Plugins {
             }
         }
         Ok(())
+    }
+}
+
+/// Where a plugin page lives: `/plugins/<id>` or `/plugins/<id>/<path>`.
+/// `path` is a checked link path, `id` a checked plugin id.
+pub fn page_href(id: &str, path: &str) -> String {
+    if path.is_empty() {
+        format!("/plugins/{id}")
+    } else {
+        format!("/plugins/{id}/{path}")
     }
 }
 
@@ -729,6 +791,12 @@ async fn approve_now(
             "A plugin with this id is already installed.",
         ));
     }
+    let declared: Vec<(String, String)> = manifest
+        .permissions
+        .iter()
+        .map(|(name, description)| (format!("plugin.{id}.{name}"), description.clone()))
+        .collect();
+    tether_db::permissions::add_plugin_permissions(&mut tx, &id, &declared).await?;
     let storage = if manifest.capabilities.storage {
         if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
             return Err(AppError::bad_request(
@@ -921,6 +989,7 @@ async fn uninstall_now(
         secrets::delete(&mut *tx, &password_secret(id)).await?;
     }
     plugin_jobs::remove(&mut tx, id).await?;
+    let grants = tether_db::permissions::remove_plugin_grants(&mut tx, id).await?;
     let version = db::uninstall(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No plugin with that id is installed."))?;
@@ -929,7 +998,21 @@ async fn uninstall_now(
         Actor::Account(actor),
         "plugin.uninstalled",
         Some(&target(id)),
-        json!({ "version": version, "data_deleted": storage.is_some() }),
+        json!({
+            "version": version,
+            "data_deleted": storage.is_some(),
+            "grants_removed": grants
+                .iter()
+                .map(|g| match g.grantee {
+                    tether_db::permissions::Grantee::Tier(tier) => {
+                        json!({ "permission": g.permission, "tier": tier.as_str() })
+                    }
+                    tether_db::permissions::Grantee::Group(group) => {
+                        json!({ "permission": g.permission, "group_id": group.0 })
+                    }
+                })
+                .collect::<Vec<_>>(),
+        }),
     )
     .await?;
     tx.commit().await?;

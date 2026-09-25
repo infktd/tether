@@ -150,6 +150,20 @@ pub fn router(state: AppState) -> Router {
             "/admin/plugin-keys/{id}",
             get(pages::plugins::key).post(pages::plugins::repin),
         )
+        .route(
+            "/plugins/{id}",
+            get(pages::plugin_pages::main_page).merge(
+                post(pages::plugin_pages::post_main)
+                    .layer(DefaultBodyLimit::max(pages::plugin_pages::MAX_FORM_BYTES)),
+            ),
+        )
+        .route(
+            "/plugins/{id}/{*path}",
+            get(pages::plugin_pages::sub_page).merge(
+                post(pages::plugin_pages::post_sub)
+                    .layer(DefaultBodyLimit::max(pages::plugin_pages::MAX_FORM_BYTES)),
+            ),
+        )
         .route("/admin/plugins/{id}", get(pages::plugins::plugin))
         .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
         .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))

@@ -12,8 +12,6 @@ use std::sync::OnceLock;
 use axum::http::StatusCode;
 use common::*;
 use sqlx::{Connection, PgConnection, PgPool};
-use tether_plugins::host::Request as PageRequest;
-use tether_plugins::host::Section;
 use tether_plugins::testing::{self, Key};
 use tether_web::plugins::Status;
 
@@ -75,31 +73,24 @@ async fn uninstall(h: &Harness, owner: &str, id: &str) {
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 }
 
-/// Runs the probe: `path` is query, execute or transaction.
-async fn probe(h: &Harness, id: &str, path: &str, sql: &[&str], params: &[&str]) -> String {
-    let plugin = h.plugins.get(id).expect("the plugin is running");
+fn probe_query(sql: &[&str], params: &[&str]) -> Vec<(String, String)> {
     let mut query: Vec<(String, String)> = sql
         .iter()
         .map(|s| ("sql".to_owned(), (*s).to_owned()))
         .collect();
     query.extend(params.iter().map(|p| ("p".to_owned(), (*p).to_owned())));
-    let rendered = h
-        .plugins
-        .host()
-        .render(
-            &plugin,
-            PageRequest {
-                path: path.to_owned(),
-                query,
-            },
-            &Default::default(),
-        )
-        .await
-        .unwrap();
-    match &rendered.page.sections[0] {
-        Section::Text(text) => text.clone(),
-        other => panic!("{other:?}"),
-    }
+    query
+}
+
+/// Runs the probe (through `submit`, where writes are allowed): `path` is
+/// query, execute or transaction.
+async fn probe(h: &Harness, id: &str, path: &str, sql: &[&str], params: &[&str]) -> String {
+    run_probe(h, id, path, probe_query(sql, params), false).await
+}
+
+/// The same from a page render, which is read-only.
+async fn probe_page(h: &Harness, id: &str, path: &str, sql: &[&str]) -> String {
+    run_probe(h, id, path, probe_query(sql, &[]), true).await
 }
 
 async fn names(db: &PgPool, id: &str) -> tether_db::plugin_storage::Names {
@@ -587,4 +578,59 @@ async fn uninstalling_deletes_the_schema_and_role(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(audit["data_deleted"], true);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn page_renders_are_read_only(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(
+        &h,
+        &owner,
+        "nmu.notes",
+        &[("migrations/0001_notes.sql", NOTES)],
+    )
+    .await;
+    // A page (a GET anyone can be linked into) can read but not write,
+    // whatever it tries.
+    for sql in [
+        "INSERT INTO notes (body) VALUES ('from a page')",
+        "SET transaction_read_only = off",
+    ] {
+        let out = probe_page(&h, "nmu.notes", "execute", &[sql]).await;
+        assert!(out.starts_with("err Error::Database"), "{sql}: {out}");
+    }
+    let out = probe_page(
+        &h,
+        "nmu.notes",
+        "transaction",
+        &["COMMIT", "INSERT INTO notes (body) VALUES ('after commit')"],
+    )
+    .await;
+    assert!(out.starts_with("err"), "{out}");
+    let read = probe_page(&h, "nmu.notes", "query", &["SELECT count(*) FROM notes"]).await;
+    assert!(read.contains("Integer(0)"), "{read}");
+    // The same statement from submit writes.
+    let out = probe(
+        &h,
+        "nmu.notes",
+        "execute",
+        &["INSERT INTO notes (body) VALUES ('from submit')"],
+        &[],
+    )
+    .await;
+    assert_eq!(out, "ok changed=1");
+    // And the connection goes back read-write for the next caller.
+    let again = probe_page(&h, "nmu.notes", "query", &["SELECT count(*) FROM notes"]).await;
+    assert!(again.contains("Integer(1)"), "{again}");
+    let out = probe(
+        &h,
+        "nmu.notes",
+        "execute",
+        &["INSERT INTO notes (body) VALUES ('again')"],
+        &[],
+    )
+    .await;
+    assert_eq!(out, "ok changed=1");
+    uninstall(&h, &owner, "nmu.notes").await;
 }

@@ -8,9 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use tether_core::permissions::{
-    ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, CORE_PERMISSIONS, JoinPolicy,
-};
+use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_TIERS, JoinPolicy};
 use tether_core::tiers::{EntityKind, Tier};
 use tether_db::audit::Actor;
 use tether_db::groups::{self, GroupId};
@@ -347,8 +345,8 @@ pub struct GrantBadge {
 }
 
 pub struct PermissionRow {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub grants: Vec<GrantBadge>,
 }
 
@@ -379,14 +377,13 @@ async fn permissions_page(
             .find(|g| g.group.id == id)
             .map_or_else(|| format!("group {}", id.0), |g| g.group.name.clone())
     };
-    let rows = CORE_PERMISSIONS
-        .iter()
+    let rows = permissions::available(&state.db)
+        .await?
+        .into_iter()
         .map(|(name, description)| PermissionRow {
-            name,
-            description,
             grants: grants
                 .iter()
-                .filter(|g| g.permission == *name)
+                .filter(|g| g.permission == name)
                 .map(|g| match g.grantee {
                     Grantee::Tier(t) => GrantBadge {
                         id: g.id,
@@ -400,6 +397,8 @@ async fn permissions_page(
                     },
                 })
                 .collect(),
+            name,
+            description,
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);

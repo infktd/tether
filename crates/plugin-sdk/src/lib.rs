@@ -47,6 +47,14 @@ pub trait Plugin {
     /// Renders one of the plugin's pages.
     fn render(request: Request) -> Result<Page, PageError>;
 
+    /// Handles a posted form (see [`Form`]). The host has already checked
+    /// the values against the form's fields. Plugins without forms can
+    /// leave this out.
+    fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
+        let _ = submission;
+        Err(PageError::NotFound)
+    }
+
     /// Runs a scheduled or queued job (see [`jobs`]). Plugins without jobs
     /// can leave this out.
     fn run_job(job: jobs::Job) -> Result<(), jobs::JobError> {
@@ -72,6 +80,12 @@ macro_rules! export {
                     <$plugin as $crate::Plugin>::render(request)
                 }
 
+                fn submit(
+                    submission: $crate::Submission,
+                ) -> ::core::result::Result<$crate::SubmitResult, $crate::PageError> {
+                    <$plugin as $crate::Plugin>::submit(submission)
+                }
+
                 fn run_job(
                     job: $crate::jobs::Job,
                 ) -> ::core::result::Result<(), $crate::jobs::JobError> {
@@ -84,9 +98,10 @@ macro_rules! export {
     };
 }
 pub use bindings::tether::plugin::page::{
-    Badge, Card, Column, Link, Section, Stat, Tab, Table, Tone, Value,
+    Badge, Card, Choice, Column, Field, FieldKind, Form, Link, NumberInput, Section, SelectInput,
+    Stat, Tab, Table, TextInput, Tone, Value,
 };
-pub use bindings::{Page, PageError, Request};
+pub use bindings::{Page, PageError, Request, Submission, SubmitResult};
 
 /// Logs into the plugin's log in the admin panel. Keep messages short:
 /// the host keeps the first 100 per call, 1 KiB each.
@@ -351,11 +366,162 @@ impl Page {
         self.section(Section::Text(text.into()))
     }
 
+    pub fn form(self, form: Form) -> Self {
+        self.section(Section::Form(form))
+    }
+
     pub fn tab(mut self, label: impl Into<String>, sections: Vec<Section>) -> Self {
         self.tabs.push(Tab {
             label: label.into(),
             sections,
         });
+        self
+    }
+}
+
+impl Submission {
+    /// A posted value by field name ("" for empty optional fields).
+    pub fn value(&self, name: &str) -> &str {
+        self.values
+            .iter()
+            .find(|(n, _)| n == name)
+            .map_or("", |(_, v)| v.as_str())
+    }
+
+    /// A checkbox.
+    pub fn checked(&self, name: &str) -> bool {
+        self.value(name) == "true"
+    }
+}
+
+impl Form {
+    pub fn new(id: impl Into<String>, submit_label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: None,
+            description: None,
+            fields: Vec::new(),
+            submit_label: submit_label.into(),
+        }
+    }
+
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn description(mut self, text: impl Into<String>) -> Self {
+        self.description = Some(text.into());
+        self
+    }
+
+    pub fn field(mut self, field: Field) -> Self {
+        self.fields.push(field);
+        self
+    }
+}
+
+impl Field {
+    fn new(name: impl Into<String>, label: impl Into<String>, kind: FieldKind) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            help: None,
+            required: false,
+            kind,
+        }
+    }
+
+    /// A one-line text input of at most `max_length` characters.
+    pub fn text(name: impl Into<String>, label: impl Into<String>, max_length: u32) -> Self {
+        Self::new(
+            name,
+            label,
+            FieldKind::Text(TextInput {
+                value: None,
+                max_length,
+                placeholder: None,
+            }),
+        )
+    }
+
+    pub fn textarea(name: impl Into<String>, label: impl Into<String>, max_length: u32) -> Self {
+        Self::new(
+            name,
+            label,
+            FieldKind::Textarea(TextInput {
+                value: None,
+                max_length,
+                placeholder: None,
+            }),
+        )
+    }
+
+    pub fn number(name: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(
+            name,
+            label,
+            FieldKind::Number(NumberInput {
+                value: None,
+                min: None,
+                max: None,
+                integer: false,
+            }),
+        )
+    }
+
+    /// `options` as `(value, label)` pairs.
+    pub fn select(
+        name: impl Into<String>,
+        label: impl Into<String>,
+        options: Vec<(String, String)>,
+    ) -> Self {
+        Self::new(
+            name,
+            label,
+            FieldKind::Select(SelectInput {
+                options: options
+                    .into_iter()
+                    .map(|(value, label)| Choice { value, label })
+                    .collect(),
+                value: None,
+            }),
+        )
+    }
+
+    pub fn checkbox(name: impl Into<String>, label: impl Into<String>, checked: bool) -> Self {
+        Self::new(name, label, FieldKind::Checkbox(checked))
+    }
+
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    pub fn help(mut self, text: impl Into<String>) -> Self {
+        self.help = Some(text.into());
+        self
+    }
+
+    /// The starting value: text, a number as text, or a select's value.
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        match &mut self.kind {
+            FieldKind::Text(input) | FieldKind::Textarea(input) => input.value = Some(value),
+            FieldKind::Number(input) => input.value = value.parse().ok(),
+            FieldKind::Select(input) => input.value = Some(value),
+            FieldKind::Checkbox(checked) => *checked = value == "true",
+        }
+        self
+    }
+
+    /// Limits for a number field.
+    pub fn range(mut self, min: Option<f64>, max: Option<f64>, integer: bool) -> Self {
+        if let FieldKind::Number(input) = &mut self.kind {
+            input.min = min;
+            input.max = max;
+            input.integer = integer;
+        }
         self
     }
 }

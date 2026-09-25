@@ -12,7 +12,6 @@ use axum::http::StatusCode;
 use common::*;
 use sqlx::PgPool;
 use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
-use tether_plugins::host::{Request as PageRequest, Section};
 use tether_plugins::testing::{self, Key};
 
 const ID: &str = "nmu.jobs";
@@ -57,27 +56,11 @@ async fn install(h: &Harness, owner: &str, schedules: &str) {
 }
 
 async fn probe(h: &Harness, path: &str, query: &[(&str, &str)]) -> String {
-    let plugin = h.plugins.get(ID).expect("running");
-    let rendered = h
-        .plugins
-        .host()
-        .render(
-            &plugin,
-            PageRequest {
-                path: path.to_owned(),
-                query: query
-                    .iter()
-                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                    .collect(),
-            },
-            &Default::default(),
-        )
-        .await
-        .unwrap();
-    match &rendered.page.sections[0] {
-        Section::Text(text) => text.clone(),
-        other => panic!("{other:?}"),
-    }
+    let query = query
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    run_probe(h, ID, path, query, false).await
 }
 
 fn registry(h: &Harness) -> Registry {
@@ -464,4 +447,19 @@ async fn declared_schedules_follow_the_plugin(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn pages_cant_queue_or_cancel_jobs(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner, "").await;
+    let query = vec![("name".to_owned(), "ping".to_owned())];
+    let out = run_probe(&h, ID, "enqueue", query, true).await;
+    assert!(out.contains("pages can't queue"), "{out}");
+    let query = vec![("key".to_owned(), "k".to_owned())];
+    let out = run_probe(&h, ID, "cancel", query, true).await;
+    assert!(out.contains("pages can't queue"), "{out}");
+    assert!(queued(&h.db).await.is_empty());
+    uninstall(&h, &owner).await;
 }

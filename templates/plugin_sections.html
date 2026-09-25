@@ -1,0 +1,86 @@
+{#- A plugin page's sections, drawn with the host's components. -#}
+{% macro value(v) -%}
+{%- if let Some(href) = v.href -%}<a class="underline underline-offset-4" href="{{ href }}">{{ v.text }}</a>
+{%- else if let Some(variant) = v.badge -%}<span class="badge"{% if !variant.is_empty() %} data-variant="{{ variant }}"{% endif %}>{{ v.text }}</span>
+{%- else if let Some(title) = v.title -%}<span title="{{ title }}">{{ v.text }}</span>
+{%- else -%}{{ v.text }}{%- endif -%}
+{%- endmacro %}
+
+{% macro sections(list) %}
+{% for s in list %}
+{% match s %}
+{% when SectionView::Stats(stats) %}
+<section class="grid grid-cols-4 gap-4">
+  {% for stat in stats %}
+  <div class="card stat">
+    <div class="stat-label">{{ stat.label }}</div>
+    <div class="stat-value num">{% call value(stat.value) %}{% endcall %}</div>
+    {% if let Some(caption) = stat.caption %}<div class="stat-caption">{{ caption }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% when SectionView::Table(table) %}
+<section class="card data-card">
+  {% if let Some(title) = table.title %}<header><h2>{{ title }}</h2></header>{% endif %}
+  {% if table.rows.is_empty() %}
+  <p class="px-5 py-5 text-sm text-muted-foreground">{% if let Some(empty) = table.empty %}{{ empty }}{% else %}Nothing here yet.{% endif %}</p>
+  {% else %}
+  <table class="table">
+    <thead><tr>{% for c in table.columns %}<th scope="col"{% if c.numeric %} class="text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in table.rows %}
+      <tr>{% for v in row %}<td{% if table.columns[loop.index0].numeric %} class="num text-right"{% endif %}>{% call value(v) %}{% endcall %}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% when SectionView::Card(card) %}
+<section class="card">
+  <header><h2>{{ card.title }}</h2>{% if let Some(d) = card.description %}<p>{{ d }}</p>{% endif %}</header>
+  <section>
+    <dl class="grid gap-4 text-sm">
+      {% for (label, v) in card.fields %}
+      <div class="grid gap-1"><dt class="font-medium">{{ label }}</dt><dd class="break-words">{% call value(v) %}{% endcall %}</dd></div>
+      {% endfor %}
+    </dl>
+  </section>
+</section>
+{% when SectionView::Text(text) %}
+<p class="text-sm leading-relaxed whitespace-pre-line">{{ text }}</p>
+{% when SectionView::Form(form) %}
+<form class="card" method="post" action="{{ form.action }}">
+  <input type="hidden" name="_form" value="{{ form.id }}">
+  {% if form.title.is_some() || form.description.is_some() %}
+  <header>{% if let Some(t) = form.title %}<h2>{{ t }}</h2>{% endif %}{% if let Some(d) = form.description %}<p>{{ d }}</p>{% endif %}</header>
+  {% endif %}
+  <section class="grid gap-4 max-w-xl">
+    {% for f in form.fields %}
+    {% let field_id = format!("{}-{}", form.id, f.name) %}
+    <div class="grid gap-2">
+      {% if f.kind == "checkbox" %}
+      <label class="label gap-2"><input type="checkbox" class="input" id="{{ field_id }}" name="{{ f.name }}" value="on"{% if f.checked %} checked{% endif %}{% if f.required %} required{% endif %}> {{ f.label }}</label>
+      {% else %}
+      <label class="label" for="{{ field_id }}">{{ f.label }}{% if !f.required %} <span class="text-muted-foreground font-normal">(optional)</span>{% endif %}</label>
+      {% if f.kind == "textarea" %}
+      <textarea class="textarea input" id="{{ field_id }}" name="{{ f.name }}" maxlength="{{ f.max_length }}" rows="4"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>{{ f.value }}</textarea>
+      {% else if f.kind == "select" %}
+      <select class="select input" id="{{ field_id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}>
+        {% if !f.required %}<option value="">—</option>{% endif %}
+        {% for o in f.options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      {% else if f.kind == "number" %}
+      <input class="input num" type="number" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" step="{{ f.step }}"{% if !f.min.is_empty() %} min="{{ f.min }}"{% endif %}{% if !f.max.is_empty() %} max="{{ f.max }}"{% endif %}{% if f.required %} required{% endif %}>
+      {% else %}
+      <input class="input" type="text" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" maxlength="{{ f.max_length }}"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>
+      {% endif %}
+      {% endif %}
+      {% if let Some(help) = f.help %}<p class="text-xs text-muted-foreground">{{ help }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  <footer><button type="submit" class="btn" data-variant="primary">{{ form.submit_label }}</button></footer>
+</form>
+{% endmatch %}
+{% endfor %}
+{% endmacro %}

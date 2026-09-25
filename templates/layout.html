@@ -26,6 +26,16 @@
         </a>
       </div>
       {% endif %}
+      {% if !shell.plugin_nav.is_empty() %}
+      <div class="flex flex-col gap-1">
+        <div class="nav-heading">Plugins</div>
+        {% for link in shell.plugin_nav %}
+        <a href="{{ link.href }}" class="nav-item"{% if shell.active_href == link.href %} aria-current="page"{% endif %}>
+          {% call icons::icon("package") %}{% endcall %} {{ link.label }}
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% if shell.nav.any() %}
       <div class="flex flex-col gap-1">
         <div class="nav-heading">Admin</div>

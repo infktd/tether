@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{%- import "plugin_sections.html" as plugin -%}
+{% block title %}{{ title }}{% endblock %}
+{% block breadcrumb %}{{ plugin_name }}&nbsp;/&nbsp;<span class="text-foreground">{{ title }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6 relative" hx-boost="true">
+  <div>
+    <h1 class="page-title">{{ title }}</h1>
+    {% if let Some(d) = description %}<p class="text-muted-foreground mt-1">{{ d }}</p>{% endif %}
+  </div>
+  {% include "admin_error.html" %}
+  {% call plugin::sections(sections) %}{% endcall %}
+  {% if !tabs.is_empty() %}
+  <nav class="tabs-list inline-flex self-start gap-1 rounded-lg bg-muted p-1" aria-label="Tabs">
+    {% for t in tabs %}
+    <a href="{{ t.href }}" class="px-3 py-1.5 text-sm rounded-md{% if t.current %} bg-background text-foreground font-medium{% else %} text-muted-foreground{% endif %}"{% if t.current %} aria-current="page"{% endif %}>{{ t.label }}</a>
+    {% endfor %}
+  </nav>
+  {% call plugin::sections(tab_sections) %}{% endcall %}
+  {% endif %}
+  <p class="self-end text-[11px] font-mono text-faint select-none" aria-hidden="true">{{ watermark }}</p>
+</div>
+{% endblock %}

@@ -4,7 +4,7 @@
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
-use tether_core::permissions::{JoinPolicy, is_known};
+use tether_core::permissions::JoinPolicy;
 use tether_core::tiers::Tier;
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
@@ -181,12 +181,14 @@ pub async fn grant(
     permission: &str,
     grantee: Grantee,
 ) -> Result<i64, AppError> {
-    if !is_known(permission) {
+    let mut tx = state.db.begin().await?;
+    // In the grant's transaction: a plugin's permission stays locked until
+    // the grant is in, so a racing uninstall can't leave it behind.
+    if !permissions::is_known(&mut *tx, permission).await? {
         return Err(AppError::bad_request(format!(
             "Unknown permission {permission:?}."
         )));
     }
-    let mut tx = state.db.begin().await?;
     // Anyone who logs in with EVE is Guest, and anyone signed in can join an
     // Open group: admin rights there would be admin rights for strangers.
     let sensitive = tether_core::permissions::is_sensitive(permission);

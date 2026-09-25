@@ -1,4 +1,5 @@
-//! A small in-memory sliding-window rate limiter, keyed by client IP.
+//! A small in-memory sliding-window rate limiter, keyed by client IP (or
+//! anything else hashable).
 //!
 //! In-memory is enough: there is one host process, and limits only need to
 //! slow down guessing, not survive restarts.
@@ -12,13 +13,13 @@ use axum::extract::ConnectInfo;
 use axum::http::request::Parts;
 
 #[derive(Debug)]
-pub struct RateLimiter {
+pub struct RateLimiter<K = IpAddr> {
     limit: usize,
     window: Duration,
-    hits: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
+    hits: Mutex<HashMap<K, VecDeque<Instant>>>,
 }
 
-impl RateLimiter {
+impl<K: std::hash::Hash + Eq> RateLimiter<K> {
     pub fn new(limit: usize, window: Duration) -> Self {
         Self {
             limit,
@@ -29,7 +30,7 @@ impl RateLimiter {
 
     /// Records an attempt. `Err(retry_after)` when over the limit; rejected
     /// attempts are not counted.
-    pub fn check(&self, key: IpAddr, now: Instant) -> Result<(), Duration> {
+    pub fn check(&self, key: K, now: Instant) -> Result<(), Duration> {
         let mut hits = self
             .hits
             .lock()

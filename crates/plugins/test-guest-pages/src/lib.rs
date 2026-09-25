@@ -1,6 +1,22 @@
 //! A plugin whose pages misbehave on request, for the host's page checks.
 
-use tether_plugin_sdk::{Column, Page, PageError, Plugin, Request, Table, link, log};
+use tether_plugin_sdk::{
+    Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission, SubmitResult,
+    Table, Tone, badge, isk, link, log, time,
+};
+
+fn note_form() -> Form {
+    Form::new("note", "Save")
+        .title("A note")
+        .field(Field::text("body", "Note", 20).required())
+        .field(Field::number("count", "Count").range(Some(1.0), Some(10.0), true))
+        .field(Field::select(
+            "kind",
+            "Kind",
+            vec![("ore".into(), "Ore".into()), ("ice".into(), "Ice".into())],
+        ))
+        .field(Field::checkbox("go", "Go elsewhere afterwards", false))
+}
 
 struct Pages;
 
@@ -52,8 +68,36 @@ impl Plugin for Pages {
                 Ok(page)
             }
             "long-failure" => Err(PageError::Failed(format!("\u{202E}{}", "e".repeat(10_000)))),
+            "values" => Ok(Page::new("Values")
+                .stats(vec![Stat::new("Ore", isk(1_240_000_000.0))])
+                .card(
+                    Card::new("Moon")
+                        .field("Chunk", time("2026-09-24T18:00:00Z"))
+                        .field("State", badge("Ready", Tone::Accent))
+                        .field("More", link("Old moons", "moons/old")),
+                )
+                .tab(
+                    "First",
+                    vec![tether_plugin_sdk::Section::Text("first tab".into())],
+                )
+                .tab(
+                    "Second",
+                    vec![tether_plugin_sdk::Section::Text("second tab".into())],
+                )),
+            "form" => Ok(Page::new("Form").form(note_form())),
+            "admin/secret" => Ok(Page::new("Secret")),
             _ => Err(PageError::NotFound),
         }
+    }
+
+    fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
+        log::info(format!("submitted {}", submission.form));
+        if submission.checked("go") {
+            return Ok(SubmitResult::Redirect("values".into()));
+        }
+        Ok(SubmitResult::Page(
+            Page::new("Saved").text(format!("got {:?}", submission.values)),
+        ))
     }
 }
 
