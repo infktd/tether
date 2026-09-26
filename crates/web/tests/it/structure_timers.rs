@@ -33,7 +33,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-async fn install(h: &Harness, owner: &str) {
+pub(crate) async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_structure_timers.sql");
@@ -47,7 +47,7 @@ async fn install(h: &Harness, owner: &str) {
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
 
-async fn grant(h: &Harness, owner: &str, permission: &str, state: i64) {
+pub(crate) async fn grant(h: &Harness, owner: &str, permission: &str, state: i64) {
     let res = send(
         &h.app,
         form(

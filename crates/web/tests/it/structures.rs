@@ -42,12 +42,17 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_structures.sql");
+    let first = plugin_file("migrations/0001_structures.sql");
+    let second = plugin_file("migrations/0002_timers_corporation_only.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_structures.sql", migration.as_bytes()),
+        ("migrations/0001_structures.sql", first.as_bytes()),
+        (
+            "migrations/0002_timers_corporation_only.sql",
+            second.as_bytes(),
+        ),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -635,4 +640,133 @@ async fn an_owner_without_the_role_is_left_alone(db: PgPool) {
             .await
             .unwrap();
     assert_eq!(owners, 1);
+}
+
+// ---- Structure Timers: the timers Structures publishes ---------------------------
+
+#[derive(Debug, sqlx::FromRow)]
+struct Shared {
+    key: String,
+    title: String,
+    system: String,
+    details: String,
+    objective: String,
+    corporation_id: Option<i64>,
+}
+
+async fn shared_timers(h: &Harness) -> Vec<Shared> {
+    sqlx::query_as(
+        "SELECT key, title, system, details, objective, corporation_id FROM core.shared_timers \
+         WHERE plugin_id = $1 ORDER BY key",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn structures_feed_structure_timers(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    cover(&db, Builtin::Member, EntityKind::Corporation, GIGX_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    crate::structure_timers::install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    // The Keep lost its shields: an armor timer in a day.
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([notification(
+            1002,
+            "StructureLostShields",
+            times.shields,
+            &shields_text()
+        )])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(&h, &owner).await;
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+
+    // Published: one armor timer, friendly, for everyone (the default).
+    let shared = shared_timers(&h).await;
+    assert_eq!(shared.len(), 1, "{shared:?}");
+    assert_eq!(shared[0].key, format!("{KEEP}:armor"));
+    assert_eq!(shared[0].title, "Jita - Keep: armor timer");
+    assert_eq!(shared[0].system, "Jita");
+    assert!(
+        shared[0]
+            .details
+            .starts_with("Astrahus of Otherworld Enterprises"),
+        "{shared:?}"
+    );
+    assert_eq!(shared[0].objective, "friendly");
+    assert_eq!(shared[0].corporation_id, None);
+
+    // Structure Timers shows it, marked automatic, with no Edit link.
+    crate::structure_timers::grant(&h, &owner, "timer_view", MEMBER_STATE).await;
+    let gigx = log_in_as(&h, "1887431749:gigX", None).await;
+    let timers_url = "/plugins/tether.structure-timers";
+    let seen = page(&h, timers_url, &gigx).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    for text in [
+        "<td>Jita - Keep: armor timer</td>",
+        "<td>Jita</td>",
+        ">Automatic</span>",
+        "<td>Structures</td>",
+        ">Friendly</span>",
+    ] {
+        assert!(seen.body.contains(text), "{text}: {}", seen.body);
+    }
+    let managed = page(&h, timers_url, &owner).await;
+    assert!(
+        managed.body.contains("Jita - Keep: armor timer"),
+        "{}",
+        managed.body
+    );
+    assert!(!managed.body.contains("timer/0"), "{}", managed.body);
+
+    // Corporation-only (aa-structures' STRUCTURES_TIMERS_ARE_CORP_RESTRICTED):
+    // published again at once, and seen by the owning corporation alone.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings.body.contains("Timers are corporation-only"),
+        "{}",
+        settings.body
+    );
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            "_form=settings&attack_channel=&fuel_channel=&state_channel=&moon_channel=\
+             &fuel_thresholds=72&timers_corporation_only=on",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    let shared = shared_timers(&h).await;
+    assert_eq!(shared.len(), 1, "{shared:?}");
+    assert_eq!(shared[0].corporation_id, Some(CHRIBBA_CORP));
+    let seen = page(&h, timers_url, &gigx).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert!(!seen.body.contains("Jita - Keep"), "{}", seen.body);
+    let managed = page(&h, timers_url, &owner).await;
+    assert!(
+        managed.body.contains("Jita - Keep: armor timer"),
+        "{}",
+        managed.body
+    );
+    assert!(
+        managed.body.contains(">Automatic · Corporation</span>"),
+        "{}",
+        managed.body
+    );
 }

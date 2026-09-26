@@ -11,8 +11,10 @@
 //!   services, power, anchoring, moon drills) go to the Discord channels a
 //!   manager picks, once each; Tether adds its own low-fuel alerts at
 //!   chosen thresholds.
-//! - Timers from notifications and structures' states are listed here.
-//!   Structure Timers can't be fed: plugins never see each other's data.
+//! - Timers from notifications and structures' states are listed here and
+//!   published for Structure Timers after every sync (friendly, and
+//!   corporation-only if a manager says so, as aa-structures'
+//!   STRUCTURES_TIMERS_ARE_CORP_RESTRICTED).
 //! - ESI is read gently: notifications at most every 10 minutes and
 //!   structures every hour (their cache times), and an owner ESI answers
 //!   403 for (a lost role) is left alone for an hour, doubling to a day.
@@ -51,6 +53,10 @@ const SHORT_ROWS: i64 = 100;
 /// Low-fuel thresholds: hours, at most this many.
 const MAX_THRESHOLDS: usize = 5;
 const MAX_THRESHOLD_HOURS: i64 = 2160;
+/// Timers published for Structure Timers (the host's limit).
+const MAX_PUBLISHED: i64 = 500;
+/// The one-off job that publishes timers at once (after a settings change).
+const PUBLISH_JOB: &str = "publish_timers";
 
 struct Structures;
 
@@ -84,6 +90,7 @@ impl Plugin for Structures {
         match job.name.as_str() {
             "sync" => sync(),
             "relay" => relay(),
+            PUBLISH_JOB => publish_timers(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -167,6 +174,8 @@ struct Settings {
     /// Largest first.
     thresholds: Vec<i64>,
     mention: bool,
+    /// Published timers are seen only by the owning corporation.
+    timers_corporation_only: bool,
 }
 
 impl Settings {
@@ -197,7 +206,8 @@ fn parse_thresholds(text: &str) -> Option<Vec<i64>> {
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
-        "SELECT attack_channel, fuel_channel, state_channel, moon_channel, fuel_thresholds, mention_members \
+        "SELECT attack_channel, fuel_channel, state_channel, moon_channel, fuel_thresholds, mention_members, \
+                timers_corporation_only \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -220,6 +230,10 @@ fn settings() -> Result<Settings, storage::Error> {
             .unwrap_or_else(|| vec![72, 24, 6]),
         mention: row
             .and_then(|r| r.get(5))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
+        timers_corporation_only: row
+            .and_then(|r| r.get(6))
             .and_then(Db::as_bool)
             .unwrap_or(false),
     })
@@ -380,8 +394,18 @@ fn record(owner: i64, read: Read, outcome: &Outcome) -> Result<(), JobError> {
 }
 
 /// Every 10 minutes: owners, then each corporation's notifications and
-/// (hourly) structures, names, messages, timers and low-fuel alerts.
+/// (hourly) structures, names, messages, timers and low-fuel alerts. The
+/// timers are published for Structure Timers whatever happened before (a
+/// step failing, or owners gone), so what it shows follows at once.
 fn sync() -> Result<(), JobError> {
+    let synced = sync_steps();
+    let published = publish_timers();
+    synced?;
+    published?;
+    queue_relay(None)
+}
+
+fn sync_steps() -> Result<(), JobError> {
     let corporations = sync_owners()?;
     if corporations.is_empty() {
         log::info("no structure owners yet: approve a data source");
@@ -440,7 +464,7 @@ fn sync() -> Result<(), JobError> {
         &[],
     )
     .map_err(|e| retry("expiring sent messages", e))?;
-    queue_relay(None)
+    Ok(())
 }
 
 /// The owners table follows the host's approved data sources; a
@@ -924,6 +948,72 @@ fn fuel_alerts() -> Result<(), JobError> {
     Ok(())
 }
 
+/// A structure's name or a name ESI gave, made fit for a shared timer: one
+/// line, at most `max` characters.
+fn one_line(text: &str, max: usize) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(max)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+/// Publishes the current timers for Structure Timers (aa-structures feeds
+/// the timerboard): the latest of each kind per structure, up to a day
+/// past, at most [`MAX_PUBLISHED`], soonest first. Each is friendly (our
+/// structures), and corporation-only when the setting says so. Trouble
+/// reading or publishing is retried.
+fn publish_timers() -> Result<(), JobError> {
+    let settings = settings().map_err(|e| retry("publishing timers: reading settings", e))?;
+    let rows = storage::query(
+        &format!(
+            "SELECT * FROM ( \
+                 SELECT DISTINCT ON (t.structure_id, t.kind) t.structure_id, t.kind, t.at, s.name, \
+                     coalesce(tn.name, '') AS type_name, coalesce(y.name, sn.name, '') AS system, \
+                     coalesce(o.name, '') AS owner, s.corporation_id \
+                 FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
+                 LEFT JOIN names tn ON tn.id = s.type_id \
+                 LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
+                 LEFT JOIN names o ON o.id = s.corporation_id \
+                 WHERE t.at > now() - interval '1 day' \
+                 ORDER BY t.structure_id, t.kind, t.at DESC) latest \
+             ORDER BY 3, 1, 2 LIMIT {MAX_PUBLISHED}"
+        ),
+        &[],
+    )
+    .map_err(|e| retry("publishing timers: reading them", e))?;
+    let timers: Vec<tether_plugin_sdk::timers::Timer> = rows
+        .rows
+        .iter()
+        .filter_map(|r| {
+            let (structure, kind, at) = (int(r, 0), text(r, 1).to_lowercase(), when(r, 2)?);
+            let name = one_line(&text(r, 3), 150);
+            let (type_name, owner) = (one_line(&text(r, 4), 100), one_line(&text(r, 6), 100));
+            let mut details = match (type_name.is_empty(), owner.is_empty()) {
+                (false, false) => format!("{type_name} of {owner}"),
+                (false, true) => type_name,
+                (true, false) => format!("A structure of {owner}"),
+                (true, true) => String::new(),
+            };
+            if !details.is_empty() {
+                details.push_str(". ");
+            }
+            details.push_str("From the structure's state or its notifications.");
+            Some(tether_plugin_sdk::timers::Timer {
+                key: format!("{structure}:{kind}"),
+                title: format!("{name}: {kind} timer"),
+                at: rfc3339(at),
+                system: one_line(&text(r, 5), 100),
+                details,
+                objective: "friendly".to_owned(),
+                corporation_id: settings.timers_corporation_only.then(|| int(r, 7)),
+            })
+        })
+        .collect();
+    tether_plugin_sdk::timers::publish(&timers).map_err(|e| retry("publishing timers", e))
+}
+
 /// Queues the relay when messages are waiting.
 fn queue_relay(at: Option<DateTime<Utc>>) -> Result<(), JobError> {
     let waiting = storage::query(
@@ -1356,8 +1446,8 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
             vec![
                 Section::Table(timer_table),
                 Section::Text(
-                    "From structures' states and their notifications. Structure Timers doesn't \
-                     get these: apps can't share data."
+                    "From structures' states and their notifications. Structure Timers shows \
+                     them too, as automatic timers (corporation-only if the settings say so)."
                         .to_owned(),
                 ),
             ],
@@ -1467,7 +1557,19 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             "mention_members",
             "Mention Members on attacks (the Discord role mapped to Member)",
             settings.mention,
-        ));
+        ))
+        .field(
+            Field::checkbox(
+                "timers_corporation_only",
+                "Timers are corporation-only",
+                settings.timers_corporation_only,
+            )
+            .help(
+                "The timers Structures gives Structure Timers are seen only by pilots whose \
+                 main is in the structure's corporation. Off: everyone who may see Structure \
+                 Timers sees them.",
+            ),
+        );
     let owner_rows = owners.rows.iter().map(|r| {
         let backing_off = when(r, 6).filter(|t| *t > now);
         let status = match (&backing_off, r.get(5).and_then(Db::as_text)) {
@@ -1562,7 +1664,8 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     };
     storage::execute(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
-         moon_channel = $4, fuel_thresholds = $5, mention_members = $6 WHERE id = 1",
+         moon_channel = $4, fuel_thresholds = $5, mention_members = $6, \
+         timers_corporation_only = $7 WHERE id = 1",
         &[
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
@@ -1570,11 +1673,16 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             channel("moon_channel").into(),
             thresholds.as_str().into(),
             submission.checked("mention_members").into(),
+            submission.checked("timers_corporation_only").into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
+    // Published again at once, so corporation-only takes effect now.
+    jobs::enqueue(NewJob::new(PUBLISH_JOB).key(PUBLISH_JOB))
+        .map_err(|e| failed("queuing the timers", e))?;
     log::info(format!(
-        "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, alerts at {thresholds}h, mention {}",
+        "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, alerts at {thresholds}h, mention {}, \
+         timers corporation-only {}",
         viewer.main.name,
         viewer.main.id,
         channel("attack_channel"),
@@ -1582,6 +1690,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         channel("state_channel"),
         channel("moon_channel"),
         submission.checked("mention_members"),
+        submission.checked("timers_corporation_only"),
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }

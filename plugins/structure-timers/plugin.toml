@@ -13,6 +13,9 @@ key = "PUBLISHER_KEY"
 
 [capabilities]
 storage = true
+# Timers other apps publish (Structures' own structures), shown read-only
+# as automatic timers, as aa-structures feeds the timerboard.
+timers = "read"
 
 # AA's permission names. Grant Member timer_view; FCs and directors
 # timer_management too.

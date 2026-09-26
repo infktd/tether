@@ -6,6 +6,9 @@
 //!   clones and implants, location and ship.
 //! - **Character Finder** (officers): every member character.
 //! - **Skill Sets**: named skill lists (a doctrine), with who can fly them.
+//! - **Secure Groups filters** (aa-securegroups' Member Audit filters): a
+//!   skill at a level, a skill set, an item in the assets; an hourly job
+//!   reports each synced character's answer.
 //!
 //! Data comes from every Member character registered with the plugin's
 //! user scopes (installing it makes Member require them, as AA's Member
@@ -16,7 +19,7 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::Deserialize;
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
-use tether_plugin_sdk::jobs::{Job, JobError};
+use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
@@ -39,6 +42,13 @@ const MAX_SETS: i64 = 30;
 const MAX_SKILLS_PER_SET: usize = 50;
 /// A queue ending sooner than this is flagged.
 const QUEUE_WARNING: Duration = Duration::hours(24);
+/// Filter settings reported per run: the host takes at most 50 reports in
+/// one call; more wait for a follow-up run.
+const REPORTS_PER_RUN: usize = 50;
+/// The follow-up run's job, and its key (queuing again replaces it).
+const MORE_REPORTS: &str = "report_filters_more";
+/// Rows read at once (the host returns at most 5,000).
+const PAGE_ROWS: usize = 5000;
 
 struct MemberAudit;
 
@@ -74,6 +84,15 @@ impl Plugin for MemberAudit {
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
             "sync" => sync(),
+            "report_filters" => report_filters(0),
+            MORE_REPORTS => {
+                let from = serde_json::from_str::<serde_json::Value>(&job.payload)
+                    .ok()
+                    .and_then(|p| p.get("from").and_then(serde_json::Value::as_u64))
+                    .and_then(|n| usize::try_from(n).ok())
+                    .unwrap_or(0);
+                report_filters(from)
+            }
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -166,13 +185,23 @@ fn call(
         .map_err(|e| Stop::Character(format!("{endpoint}: {e:?}")))
 }
 
-fn all_pages(budget: &mut Budget, endpoint: &str, character: i64) -> Result<Vec<String>, Stop> {
+/// Pages read of a paged endpoint, at most.
+const MAX_PAGES: u32 = 20;
+
+/// Every page's body, and whether that was all of them (more than
+/// [`MAX_PAGES`] aren't read).
+fn all_pages(
+    budget: &mut Budget,
+    endpoint: &str,
+    character: i64,
+) -> Result<(Vec<String>, bool), Stop> {
     let first = call(budget, endpoint, character, Some(1))?;
+    let complete = first.pages <= MAX_PAGES;
     let mut bodies = vec![first.body];
-    for page in 2..=first.pages.min(20) {
+    for page in 2..=first.pages.min(MAX_PAGES) {
         bodies.push(call(budget, endpoint, character, Some(page))?.body);
     }
-    Ok(bodies)
+    Ok((bodies, complete))
 }
 
 fn concat(bodies: &[String]) -> String {
@@ -342,7 +371,7 @@ fn sync_character(budget: &mut Budget, id: i64, ids: &mut Vec<i64>) -> Result<()
             })
         })
         .collect();
-    let assets = all_pages(budget, "character-assets", id)?;
+    let (assets, mut assets_whole) = all_pages(budget, "character-assets", id)?;
 
     ids.push(location.solar_system_id);
     ids.extend(location.station_id);
@@ -370,8 +399,11 @@ fn sync_character(budget: &mut Budget, id: i64, ids: &mut Vec<i64>) -> Result<()
     let id_param: Db = id.into();
     store(&[
         Statement::new(
+            // The skills are whole once this commits; the assets only
+            // once every page is stored (below).
             "UPDATE characters SET synced_at = now(), total_sp = $2, unallocated_sp = $3, wallet = $4, \
-             system_id = $5, location_id = $6, ship_type_id = $7, ship_name = $8 WHERE character_id = $1",
+             system_id = $5, location_id = $6, ship_type_id = $7, ship_name = $8, \
+             skills_at = now(), assets_at = NULL WHERE character_id = $1",
             vec![
                 id_param.clone(),
                 skills.total_sp.into(),
@@ -461,6 +493,8 @@ fn sync_character(budget: &mut Budget, id: i64, ids: &mut Vec<i64>) -> Result<()
                     .filter(|a| a["location_type"] != "item")
                     .filter_map(|a| a["location_id"].as_i64()),
             );
+        } else {
+            assets_whole = false;
         }
         store(&[Statement::new(
             "INSERT INTO assets (character_id, item_id, type_id, quantity, location_id, location_flag) \
@@ -473,6 +507,17 @@ fn sync_character(budget: &mut Budget, id: i64, ids: &mut Vec<i64>) -> Result<()
                 id_param.clone(),
             ],
         )])?;
+    }
+    if assets_whole {
+        store(&[Statement::new(
+            "UPDATE characters SET assets_at = now() WHERE character_id = $1",
+            vec![id_param],
+        )])?;
+    } else {
+        log::warn(format!(
+            "character {id}: assets only in part (more than {MAX_PAGES} pages, or a page ESI \
+             garbled): the asset filter leaves it out"
+        ));
     }
     Ok(())
 }
@@ -522,6 +567,197 @@ fn learn_names(budget: &mut Budget, ids: &[i64]) -> Result<(), JobError> {
         .map_err(|e| retry("storing names", e))?;
     }
     Ok(())
+}
+
+// ---- Secure Groups filters ---------------------------------------------------
+
+/// Hourly: each filter setting smart groups use, answered for every
+/// synced character (1 or 0; a reversed filter needs every character
+/// reported). At most [`REPORTS_PER_RUN`] settings a run, from `from` in
+/// a stable order; the rest go to a follow-up run.
+fn report_filters(from: usize) -> Result<(), JobError> {
+    let mut wanted = tether_plugin_sdk::filters::wanted();
+    wanted.sort_by(|a, b| (&a.name, &a.config).cmp(&(&b.name, &b.config)));
+    for setting in wanted.iter().skip(from).take(REPORTS_PER_RUN) {
+        let Some(values) = filter_values(&setting.name, &setting.config)? else {
+            continue;
+        };
+        match tether_plugin_sdk::filters::report(&setting.name, &setting.config, &values) {
+            Ok(()) => {}
+            // No group uses it any more (changed since `wanted`): skip it.
+            Err(tether_plugin_sdk::filters::Error::Invalid(why)) => {
+                log::warn(format!("a {} filter wasn't reported: {why}", setting.name));
+            }
+            Err(err) => return Err(retry("reporting a filter", err)),
+        }
+    }
+    let next = from.saturating_add(REPORTS_PER_RUN);
+    if wanted.len() > next {
+        jobs::enqueue(
+            NewJob::new(MORE_REPORTS)
+                .key(MORE_REPORTS)
+                .payload(serde_json::json!({ "from": next }).to_string()),
+        )
+        .map_err(|e| retry("queuing more filter reports", e))?;
+    }
+    Ok(())
+}
+
+/// One setting's values, or `None` for a setting that isn't reported now
+/// (a level out of range, say, or names still being learned): the host
+/// then leaves groups using it alone rather than judge on missing data.
+fn filter_values(name: &str, config: &str) -> Result<Option<Vec<(i64, i64)>>, JobError> {
+    let config: serde_json::Value = serde_json::from_str(config).unwrap_or_default();
+    let field = |key: &str| {
+        config
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
+    // Whether the character `c` passes, with its parameters after `$1`,
+    // and which characters have the data to say (a first sync that failed,
+    // or assets read only in part, mustn't read as "has none": a reversed
+    // filter would then let the account in).
+    let (condition, params, whole): (&str, Vec<Db>, &str) = match name {
+        "skill" => {
+            let level = config
+                .get("level")
+                .and_then(serde_json::Value::as_i64)
+                .filter(|l| (1..=5).contains(l));
+            let (Some(skill), Some(level)) = (field("skill"), level) else {
+                log::warn(format!(
+                    "ignoring a skill filter setting (it needs a skill and a level from 1 to 5): {config}"
+                ));
+                return Ok(None);
+            };
+            let Some(ids) = type_ids(skill, Stored::Skills)? else {
+                return Ok(None);
+            };
+            (
+                "EXISTS (SELECT 1 FROM skills s WHERE s.character_id = c.character_id \
+                   AND s.skill_id = ANY(string_to_array($2, ',')::bigint[]) AND s.trained_level >= $3)",
+                vec![id_list(&ids).into(), level.into()],
+                "c.skills_at IS NOT NULL",
+            )
+        }
+        "skill_set" => {
+            let Some(set) = field("skill_set") else {
+                log::warn(format!("ignoring a skill set filter setting: {config}"));
+                return Ok(None);
+            };
+            let found = storage::query("SELECT id FROM skill_sets WHERE name = $1", &[set.into()])
+                .map_err(|e| retry("reading skill sets", e))?;
+            // A set that's gone (deleted, renamed, mistyped) isn't
+            // answered: groups using it wait rather than let everyone
+            // through a reversed filter.
+            let Some(id) = found.rows.first().map(|r| int(r, 0)) else {
+                log::warn(format!(
+                    "skill set filter: there's no skill set named {set:?}, so that filter isn't \
+                     answered (its groups wait)"
+                ));
+                return Ok(None);
+            };
+            // As the Skill Sets page: every skill of the set at its level.
+            (
+                "EXISTS (SELECT 1 FROM skill_sets ss WHERE ss.id = $2) AND NOT EXISTS ( \
+                   SELECT 1 FROM skill_set_skills k WHERE k.set_id = $2 AND NOT EXISTS ( \
+                     SELECT 1 FROM skills s WHERE s.character_id = c.character_id \
+                       AND s.skill_id = k.skill_id AND s.active_level >= k.level))",
+                vec![id.into()],
+                "c.skills_at IS NOT NULL",
+            )
+        }
+        "asset" => {
+            let Some(item) = field("item") else {
+                log::warn(format!("ignoring an asset filter setting: {config}"));
+                return Ok(None);
+            };
+            let Some(ids) = type_ids(item, Stored::Assets)? else {
+                return Ok(None);
+            };
+            (
+                "EXISTS (SELECT 1 FROM assets a WHERE a.character_id = c.character_id \
+                   AND a.type_id = ANY(string_to_array($2, ',')::bigint[]))",
+                vec![id_list(&ids).into()],
+                "c.assets_at IS NOT NULL",
+            )
+        }
+        other => {
+            log::warn(format!("no filter {other}"));
+            return Ok(None);
+        }
+    };
+    // Every character with the data, page by page.
+    let sql = format!(
+        "SELECT c.character_id, CASE WHEN {condition} THEN 1 ELSE 0 END FROM characters c \
+         WHERE {whole} AND c.character_id > $1 \
+         ORDER BY c.character_id LIMIT {PAGE_ROWS}"
+    );
+    let mut values = Vec::new();
+    let mut after = 0i64;
+    loop {
+        let mut p: Vec<Db> = vec![after.into()];
+        p.extend(params.iter().cloned());
+        let rows = storage::query(&sql, &p).map_err(|e| retry("answering a filter", e))?;
+        values.extend(rows.rows.iter().map(|r| (int(r, 0), int(r, 1))));
+        match rows.rows.last() {
+            Some(last) if rows.rows.len() >= PAGE_ROWS => after = int(last, 0),
+            _ => break,
+        }
+    }
+    Ok(Some(values))
+}
+
+/// Where a filter's type ids are stored.
+#[derive(Clone, Copy)]
+enum Stored {
+    Skills,
+    Assets,
+}
+
+/// The type ids named `name` (whole, case aside). An unknown name is
+/// nobody's (every character 0), unless some stored ids have no name
+/// yet: it may be one of them, so `None` (not reported) until they do.
+fn type_ids(name: &str, stored: Stored) -> Result<Option<Vec<i64>>, JobError> {
+    let rows = storage::query(
+        "SELECT id FROM names WHERE lower(name) = lower($1) AND category = 'inventory_type' LIMIT 20",
+        &[name.into()],
+    )
+    .map_err(|e| retry("reading names", e))?;
+    let ids: Vec<i64> = rows.rows.iter().map(|r| int(r, 0)).collect();
+    if !ids.is_empty() {
+        return Ok(Some(ids));
+    }
+    // Fixed SQL per kind, never data.
+    let (what, unnamed) = match stored {
+        Stored::Skills => (
+            "a skill",
+            "SELECT 1 FROM skills s WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = s.skill_id) LIMIT 1",
+        ),
+        Stored::Assets => (
+            "an item",
+            "SELECT 1 FROM assets a WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = a.type_id) LIMIT 1",
+        ),
+    };
+    let pending = storage::query(unnamed, &[]).map_err(|e| retry("reading names", e))?;
+    if pending.rows.is_empty() {
+        log::warn(format!(
+            "no member character has {what} named {name:?}, so nobody passes that filter"
+        ));
+        Ok(Some(Vec::new()))
+    } else {
+        log::warn(format!(
+            "no member character has {what} named {name:?} yet, but some names are still being \
+             learned: that filter isn't answered until they are"
+        ));
+        Ok(None)
+    }
+}
+
+/// Ids as a comma list, for `string_to_array($n, ',')::bigint[]`.
+fn id_list(ids: &[i64]) -> String {
+    ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
 }
 
 // ---- pages -----------------------------------------------------------------
@@ -966,7 +1202,7 @@ fn skill_sets_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageErro
         page = page.form(
             Form::new("add_set", "Add skill set")
                 .title("New skill set")
-                .description("One skill per line with its level, as `Caldari Battleship 4`. Only skills some member has trained are known.")
+                .description("One skill per line with its level, as `Caldari Battleship 4`. Only skills some member has trained are known. Secure Groups with a skill set filter follow its changes: changing or deleting a set changes who is in them.")
                 .field(Field::text("name", "Name", 100).required())
                 .field(Field::textarea("skills", "Skills", 5000).required()),
         );

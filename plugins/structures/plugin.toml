@@ -14,6 +14,9 @@ key = "PUBLISHER_KEY"
 [capabilities]
 storage = true
 discord = ["send_message"]
+# Structures' timers go to Structure Timers, as aa-structures feeds the
+# timerboard.
+timers = "publish"
 
 [capabilities.esi]
 # Through each approved data-source character (AA's structure owner): its

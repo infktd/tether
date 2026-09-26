@@ -31,6 +31,11 @@ user = [
 name = "sync"
 every = "15m"
 
+# Reports each character's answers to the Secure Groups filters below.
+[[capabilities.schedules]]
+name = "report_filters"
+every = "1h"
+
 # Grant Member basic; officers (recruiters, auditors) finder too.
 [permissions]
 basic = "Use Member Audit for your own characters"
@@ -52,3 +57,40 @@ permission = "finder"
 [[navigation]]
 label = "Member Audit"
 path = ""
+
+# aa-securegroups' Member Audit filters. Each character passes or not;
+# one passing character is enough for its account.
+[[filters]]
+name = "skill"
+label = "Has a skill trained to a level"
+combine = "any"
+
+[[filters.fields]]
+name = "skill"
+label = "Skill (its exact name)"
+kind = "text"
+
+[[filters.fields]]
+name = "level"
+label = "Level (1 to 5)"
+kind = "number"
+
+[[filters]]
+name = "skill_set"
+label = "Can use a skill set"
+combine = "any"
+
+[[filters.fields]]
+name = "skill_set"
+label = "Skill set (its name in Member Audit)"
+kind = "text"
+
+[[filters]]
+name = "asset"
+label = "Has an item in their assets"
+combine = "any"
+
+[[filters.fields]]
+name = "item"
+label = "Item (its exact name, e.g. a ship)"
+kind = "text"

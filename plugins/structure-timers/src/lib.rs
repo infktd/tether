@@ -9,6 +9,10 @@
 //! - A corporation-only timer is seen, and edited, only by pilots whose
 //!   main is in the corporation of the creator's main (as AA; stricter
 //!   than AA, which lets any manager edit it by its address).
+//! - Automatic timers: those other apps publish (Structures' own
+//!   structures, as aa-structures feeds the timerboard), listed with the
+//!   rest, marked with the app's name, and changed only there. The host
+//!   passes on a corporation-only one only to that corporation.
 
 mod when;
 
@@ -175,6 +179,8 @@ struct Timer {
     /// Who last edited it, and when ("" if nobody has).
     editor: String,
     updated_at: Option<DateTime<Utc>>,
+    /// An automatic timer: the app that published it (read-only here).
+    source: Option<String>,
 }
 
 const TIMER_COLUMNS: &str = "id, details, system, planet_moon, structure, timer_type, objective, \
@@ -198,7 +204,60 @@ fn timer(row: &[Db]) -> Option<Timer> {
         corporation_id: int(row, 12),
         editor: text(row, 13),
         updated_at: when(row, 14),
+        source: None,
     })
+}
+
+/// "friendly" as AA writes it: "Friendly".
+fn objective_name(objective: &str) -> String {
+    OBJECTIVES
+        .iter()
+        .find(|o| o.eq_ignore_ascii_case(objective))
+        .map_or_else(|| "Neutral".to_owned(), |o| (*o).to_owned())
+}
+
+/// Timers other apps publish, as the host gives them to this viewer
+/// (corporation-only ones only to that corporation). If they can't be
+/// read, a note says so and the page shows the rest.
+fn automatic() -> (Vec<Timer>, Option<String>) {
+    match tether_plugin_sdk::timers::published() {
+        Ok(shared) => (
+            shared
+                .into_iter()
+                .filter_map(|s| {
+                    let eve_time = DateTime::parse_from_rfc3339(&s.timer.at)
+                        .ok()?
+                        .with_timezone(&Utc);
+                    Some(Timer {
+                        id: 0,
+                        details: s.timer.details,
+                        system: s.timer.system,
+                        planet_moon: String::new(),
+                        structure: s.timer.title,
+                        timer_type: String::new(),
+                        objective: objective_name(&s.timer.objective),
+                        eve_time,
+                        important: false,
+                        corp_timer: s.timer.corporation_id.is_some(),
+                        creator: s.source.clone(),
+                        created_at: None,
+                        corporation_id: s.timer.corporation_id.unwrap_or_default(),
+                        editor: String::new(),
+                        updated_at: None,
+                        source: Some(s.source),
+                    })
+                })
+                .collect(),
+            None,
+        ),
+        Err(err) => {
+            log::warn(format!("automatic timers couldn't be read: {err:?}"));
+            (
+                Vec::new(),
+                Some("Automatic timers from other apps couldn't be read just now.".to_owned()),
+            )
+        }
+    }
 }
 
 fn timers(filter: &str, order: &str, limit: i64, viewer: &Viewer) -> Result<Vec<Timer>, PageError> {
@@ -222,9 +281,12 @@ fn objective_badge(objective: &str) -> Value {
     badge(objective, tone).into()
 }
 
-/// Important and corporation-only, in one cell.
+/// Automatic, important and corporation-only, in one cell.
 fn flags(t: &Timer) -> Value {
     let mut labels = Vec::new();
+    if t.source.is_some() {
+        labels.push("Automatic");
+    }
     if t.important {
         labels.push("Important");
     }
@@ -273,7 +335,11 @@ fn timer_table(list: &[Timer], now: DateTime<Utc>, manage: bool, empty: &str) ->
             t.creator.clone().into(),
         ];
         if manage {
-            row.push(link("Edit", format!("timer/{}", t.id)).into());
+            // Automatic timers are changed in the app that made them.
+            row.push(match t.source {
+                Some(_) => "".into(),
+                None => link("Edit", format!("timer/{}", t.id)).into(),
+            });
         }
         table = table.row(row);
     }
@@ -283,8 +349,18 @@ fn timer_table(list: &[Timer], now: DateTime<Utc>, manage: bool, empty: &str) ->
 fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     let now = Utc::now();
     let manage = viewer.can("timer_management");
-    let upcoming = timers("eve_time >= now()", "eve_time, id", UPCOMING_ROWS, viewer)?;
-    let past = timers("eve_time < now()", "eve_time DESC, id", PAST_ROWS, viewer)?;
+    let mut upcoming = timers("eve_time >= now()", "eve_time, id", UPCOMING_ROWS, viewer)?;
+    let mut past = timers("eve_time < now()", "eve_time DESC, id", PAST_ROWS, viewer)?;
+    // With the automatic ones, in the same order and within the same caps.
+    let (shared, problem) = automatic();
+    let (shared_upcoming, shared_past): (Vec<Timer>, Vec<Timer>) =
+        shared.into_iter().partition(|t| t.eve_time >= now);
+    upcoming.extend(shared_upcoming);
+    upcoming.sort_by_key(|t| t.eve_time);
+    upcoming.truncate(usize::try_from(UPCOMING_ROWS).unwrap_or(usize::MAX));
+    past.extend(shared_past);
+    past.sort_by_key(|t| std::cmp::Reverse(t.eve_time));
+    past.truncate(usize::try_from(PAST_ROWS).unwrap_or(usize::MAX));
     let next = upcoming.first().map_or_else(
         || Value::from("None"),
         |t| badge(when::countdown(now, t.eve_time), Tone::Accent).into(),
@@ -294,7 +370,10 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
         next_stat = next_stat.caption(format!("{}, {}", t.structure, t.system));
     }
     let mut page = Page::new("Structure Timers")
-        .description("Structure timers in EVE time. Corporation timers are seen only by the creator's corporation.")
+        .description(
+            "Structure timers in EVE time. Corporation timers are seen only by the creator's \
+             corporation. Automatic timers come from other apps, such as Structures, and change there.",
+        )
         .stats(vec![
             next_stat,
             Stat::new("Upcoming", count(upcoming.len())),
@@ -309,6 +388,9 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
             )
             .caption("upcoming, your corporation's only"),
         ]);
+    if let Some(problem) = problem {
+        page = page.text(problem);
+    }
     if manage {
         page = page.card(Card::new("Timers").field("New timer", link("Create Timer", "add")));
     }
