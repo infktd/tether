@@ -328,7 +328,8 @@ async fn list_page(
                 variant,
                 included: bundled_app.is_some(),
                 is_installed: true,
-                description: bundled_app.and_then(|a| a.package.manifest.plugin.description.clone()),
+                description: bundled_app
+                    .and_then(|a| a.package.manifest.plugin.description.clone()),
                 review: bundled_app
                     .filter(|_| update.is_some())
                     .map(|_| format!("/admin/plugin-bundled/{}", p.id)),
