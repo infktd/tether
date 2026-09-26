@@ -331,6 +331,16 @@ impl Esi {
         Ok(self.call(priority, request).await?.ticker)
     }
 
+    /// A character's birthday (public).
+    pub async fn character_birthday(
+        &self,
+        id: i64,
+        priority: Priority,
+    ) -> Result<chrono::DateTime<chrono::Utc>, EsiError> {
+        let request = self.client.get_characters_detail().character_id(id).send();
+        Ok(self.call(priority, request).await?.birthday)
+    }
+
     /// Players online, from `GET /status`: the cheapest proof ESI answers.
     pub async fn players_online(&self) -> Result<i64, EsiError> {
         let request = self.client.get_status().send();

@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+chrono.workspace = true
 eve-esi-client.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true

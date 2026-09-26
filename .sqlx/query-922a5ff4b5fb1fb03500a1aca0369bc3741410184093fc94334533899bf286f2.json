@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT auto_join, grace_days, notify FROM core.smart_groups WHERE group_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "auto_join",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "auto_join"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "grace_days",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "grace_days"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "notify",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "notify"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "922a5ff4b5fb1fb03500a1aca0369bc3741410184093fc94334533899bf286f2"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.smart_grace g WHERE g.group_id = $1\n          AND NOT EXISTS (SELECT 1 FROM core.group_members m\n                          WHERE m.group_id = g.group_id AND m.account_id = g.account_id)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bf383702eec7487feec06eecb5aedaee237fcbc477cb60894bf9ede999174627"
+}

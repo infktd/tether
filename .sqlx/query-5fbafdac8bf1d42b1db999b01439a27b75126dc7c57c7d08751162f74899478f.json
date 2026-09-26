@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.smart_groups WHERE group_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5fbafdac8bf1d42b1db999b01439a27b75126dc7c57c7d08751162f74899478f"
+}

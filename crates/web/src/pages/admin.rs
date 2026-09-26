@@ -327,7 +327,17 @@ struct GroupPage {
     leader_groups: Vec<GroupOption>,
     other_groups: Vec<GroupOption>,
     members: Vec<MemberRow>,
+    /// Secure Groups: its settings and filters, if it's a smart group.
+    smart: Option<SmartView>,
     error: Option<String>,
+}
+
+pub struct SmartView {
+    pub auto_join: bool,
+    pub grace_days: i32,
+    pub notify: bool,
+    /// `(id, what it asks)`.
+    pub filters: Vec<(i64, String)>,
 }
 
 async fn group_page(
@@ -381,9 +391,32 @@ async fn group_page(
             state_style: m.state_style,
         })
         .collect();
+    let smart = match tether_db::smart_groups::settings(&state.db, GroupId(id)).await? {
+        Some(s) => {
+            let (rules, broken) = tether_db::smart_groups::rules(&state.db, GroupId(id)).await?;
+            let mut conn = state.db.acquire().await?;
+            let names = crate::smart_groups::Names::load(&mut conn, &rules, false).await?;
+            let mut filters: Vec<(i64, String)> =
+                rules.iter().map(|r| (r.id, names.describe(r))).collect();
+            // Kept out of sweeps until deleted: shown so they can be.
+            filters.extend(
+                broken
+                    .into_iter()
+                    .map(|id| (id, "a filter that no longer reads (delete it)".to_owned())),
+            );
+            Some(SmartView {
+                auto_join: s.auto_join,
+                grace_days: s.grace_days,
+                notify: s.notify,
+                filters,
+            })
+        }
+        None => None,
+    };
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let page = GroupPage {
         shell,
+        smart,
         flags: found.group.flags,
         group: group_row(found),
         states,
@@ -417,6 +450,184 @@ async fn on_group(
         Ok(()) => Ok(Redirect::to(&format!("/admin/groups/{id}")).into_response()),
         Err(err) => group_page(state, shell, id, Some(err)).await,
     }
+}
+
+/// `POST /admin/groups/{id}/smart`: make it a smart group (Secure
+/// Groups), change its settings, or (`smart` unticked) make it ordinary.
+pub async fn smart_settings(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(fields): Form<Fields>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = match field(&fields, "grace_days").trim().parse::<i32>() {
+        _ if !checked(&fields, "smart") => {
+            crate::smart_groups::set_settings(&state.db, session.account, GroupId(id), None).await
+        }
+        Ok(grace_days) => {
+            crate::smart_groups::set_settings(
+                &state.db,
+                session.account,
+                GroupId(id),
+                Some(tether_db::smart_groups::Settings {
+                    auto_join: checked(&fields, "auto_join"),
+                    grace_days,
+                    notify: checked(&fields, "notify"),
+                }),
+            )
+            .await
+        }
+        Err(_) => Err(AppError::bad_request("A grace period is 0 to 60 days.")),
+    };
+    on_group(&state, shell, id, result).await
+}
+
+/// Ids from a comma-separated list of corporation and alliance names or
+/// ids, each resolved through ESI (never trusted as typed).
+async fn entities(state: &AppState, text: &str) -> Result<Vec<i64>, AppError> {
+    let parts: Vec<&str> = text
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() || parts.len() > 20 {
+        return Err(AppError::bad_request(
+            "Name 1 to 20 corporations or alliances, separated by commas.",
+        ));
+    }
+    let mut ids = Vec::new();
+    for part in parts {
+        let is_org = |kind: Option<tether_core::states::EntityKind>| {
+            matches!(
+                kind,
+                Some(
+                    tether_core::states::EntityKind::Corporation
+                        | tether_core::states::EntityKind::Alliance
+                )
+            )
+        };
+        if let Ok(id) = part.parse::<i64>() {
+            let named = tether_esi::names::resolve(
+                &state.db,
+                &state.esi,
+                &[id],
+                tether_esi::Priority::Interactive,
+            )
+            .await
+            .map_err(crate::admin::names_unavailable)?;
+            match named.get(&id) {
+                Some(n) if is_org(n.kind()) => ids.push(id),
+                _ => {
+                    return Err(AppError::bad_request(format!(
+                        "{id} isn't a corporation or alliance EVE knows."
+                    )));
+                }
+            }
+        } else {
+            let resolved = state
+                .esi
+                .resolve_names(&[part.to_owned()], tether_esi::Priority::Interactive)
+                .await
+                .map_err(crate::admin::esi_unavailable)?;
+            let found: Vec<i64> = resolved
+                .corporations
+                .iter()
+                .chain(resolved.alliances.iter())
+                .map(|e| e.id)
+                .collect();
+            if found.is_empty() {
+                return Err(AppError::bad_request(format!(
+                    "No corporation or alliance is named exactly {part}."
+                )));
+            }
+            // Keep the names for describing the filter later.
+            tether_esi::names::resolve(
+                &state.db,
+                &state.esi,
+                &found,
+                tether_esi::Priority::Interactive,
+            )
+            .await
+            .map_err(crate::admin::names_unavailable)?;
+            ids.extend(found);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// `POST /admin/groups/{id}/smart/filters`: one filter; `kind` says which,
+/// `reversed` flips it.
+pub async fn smart_filter(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(fields): Form<Fields>,
+) -> Result<Response, PageError> {
+    use tether_core::smart::Filter;
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let ids = |name: &str| -> Result<Vec<i64>, AppError> {
+        let list: Vec<i64> = fields
+            .iter()
+            .filter(|(k, _)| k == name)
+            .map(|(_, v)| v.parse())
+            .collect::<Result<_, _>>()
+            .map_err(|_| AppError::bad_request("Choose from the list."))?;
+        if list.is_empty() {
+            return Err(AppError::bad_request("Choose at least one."));
+        }
+        Ok(list)
+    };
+    let filter = match field(&fields, "kind") {
+        "state" => ids("states").map(|states| Filter::State { states }),
+        "main_affiliation" => entities(&state, field(&fields, "entities"))
+            .await
+            .map(|entities| Filter::MainAffiliation { entities }),
+        "any_affiliation" => entities(&state, field(&fields, "entities"))
+            .await
+            .map(|entities| Filter::AnyAffiliation { entities }),
+        "character_age" => field(&fields, "days")
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|d| (1..=36_500).contains(d))
+            .map(|days| Filter::CharacterAge { days })
+            .ok_or_else(|| AppError::bad_request("Give an age in days.")),
+        "groups" => ids("groups").map(|groups| Filter::Groups {
+            groups,
+            all: field(&fields, "match") == "all",
+        }),
+        "compliant" => Ok(Filter::Compliant {}),
+        _ => Err(AppError::bad_request("Choose a filter.")),
+    };
+    let result = match filter {
+        Ok(filter) => {
+            crate::smart_groups::add_filter(
+                &state.db,
+                session.account,
+                GroupId(id),
+                filter,
+                checked(&fields, "reversed"),
+            )
+            .await
+        }
+        Err(err) => Err(err),
+    };
+    on_group(&state, shell, id, result).await
+}
+
+/// `POST /admin/groups/{id}/smart/filters/{filter}/delete`
+pub async fn smart_filter_delete(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, filter)): Path<(i64, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result =
+        crate::smart_groups::delete_filter(&state.db, session.account, GroupId(id), filter).await;
+    on_group(&state, shell, id, result).await
 }
 
 /// `POST /admin/groups/{id}/settings`

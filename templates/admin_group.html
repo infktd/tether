@@ -87,6 +87,65 @@
     </section>
   </section>
 
+  <section class="card">
+    <header><h2>Secure Group</h2><p>Tether keeps a smart group's members by its filters: every filter must pass (a reversed one must fail). Auto groups add everyone who passes; others take requests only from those who pass. Members who stop passing leave, after the grace period if there is one.</p></header>
+    <section class="flex flex-col gap-5">
+      <form method="post" action="/admin/groups/{{ group.id }}/smart" class="flex flex-wrap items-end gap-4">
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="smart" value="on"{% if smart.is_some() %} checked{% endif %}> Smart group</label>
+        {% if let Some(sm) = smart %}
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="auto_join" value="on"{% if sm.auto_join %} checked{% endif %}> Add everyone who passes</label>
+        <div class="grid gap-1.5"><label class="label" for="grace">Grace period (days)</label><input class="input w-24" type="number" id="grace" name="grace_days" min="0" max="60" value="{{ sm.grace_days }}"></div>
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="notify" value="on"{% if sm.notify %} checked{% endif %}> Notify members</label>
+        {% else %}
+        <input type="hidden" name="grace_days" value="0"><input type="hidden" name="notify" value="on">
+        {% endif %}
+        <button type="submit" class="btn" data-variant="outline">Save</button>
+      </form>
+      {% if let Some(sm) = smart %}
+      <div class="grid gap-2">
+        <div class="label">Filters</div>
+        {% if sm.filters.is_empty() %}<p class="text-sm text-muted-foreground">None yet: nobody is added until there's at least one.</p>{% endif %}
+        <ul class="flex flex-wrap gap-2">
+          {% for (fid, text) in sm.filters %}
+          <li><form method="post" action="/admin/groups/{{ group.id }}/smart/filters/{{ fid }}/delete" class="grant-chip"><span>{{ text }}</span><button type="submit" aria-label="Remove filter {{ text }}" title="Remove">×</button></form></li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div class="grid gap-3 lg:grid-cols-2">
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
+          <input type="hidden" name="kind" value="state"><div class="label">State is</div>
+          <div class="flex flex-wrap gap-3">{% for s in states %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="states" value="{{ s.id }}"> {{ s.name }}</label>{% endfor %}</div>
+          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+        </form>
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
+          <div class="flex gap-3 text-sm"><label class="label gap-1 font-normal"><input type="radio" class="input" name="kind" value="main_affiliation" checked> Main in</label><label class="label gap-1 font-normal"><input type="radio" class="input" name="kind" value="any_affiliation"> Any character in</label></div>
+          <input class="input" name="entities" maxlength="1000" placeholder="Corporations or alliances: exact names or ids, comma-separated" required>
+          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+        </form>
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
+          <input type="hidden" name="kind" value="groups">
+          <div class="flex gap-3 text-sm"><span class="label">In</span><label class="label gap-1 font-normal"><input type="radio" class="input" name="match" value="any" checked> any</label><label class="label gap-1 font-normal"><input type="radio" class="input" name="match" value="all"> all</label><span class="label">of</span></div>
+          <div class="flex flex-wrap gap-3">{% for g in leader_groups %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="groups" value="{{ g.id }}"> {{ g.name }}</label>{% endfor %}{% for g in other_groups %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="groups" value="{{ g.id }}"> {{ g.name }}</label>{% endfor %}</div>
+          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+        </form>
+        <div class="grid gap-3">
+          <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="kind" value="character_age">
+            <div class="grid gap-1.5"><label class="label" for="age-days">Main at least (days old)</label><input class="input w-28" type="number" id="age-days" name="days" min="1" max="36500" required></div>
+            <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label>
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button>
+          </form>
+          <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 flex items-center justify-between gap-2">
+            <input type="hidden" name="kind" value="compliant"><span class="label">Compliant</span>
+            <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label>
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+    </section>
+  </section>
+
   <section class="card data-card">
     <header><h2>Members <span class="num text-muted-foreground font-normal">{{ members.len() }}</span></h2></header>
     {% if members.is_empty() %}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO core.smart_groups (group_id, auto_join, grace_days, notify)\n                VALUES ($1, $2, $3, $4)\n                ON CONFLICT (group_id) DO UPDATE\n                SET auto_join = $2, grace_days = $3, notify = $4\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b93db974731c1f88ba83d0446113cbe3a6354a3977c6f0261a07291bed87c5c3"
+}

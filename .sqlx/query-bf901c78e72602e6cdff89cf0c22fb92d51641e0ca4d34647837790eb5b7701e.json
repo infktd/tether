@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT core.guest_state() AS \"g!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "g!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bf901c78e72602e6cdff89cf0c22fb92d51641e0ca4d34647837790eb5b7701e"
+}

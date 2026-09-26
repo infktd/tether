@@ -34,6 +34,7 @@ pub mod plugin_services;
 pub mod plugins;
 mod ratelimit;
 pub mod setup;
+pub mod smart_groups;
 mod state;
 pub mod state_admin;
 pub mod states;
@@ -276,6 +277,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/blacklist/notes/{id}/delete",
             post(pages::blacklist::delete_note),
+        )
+        .route(
+            "/admin/groups/{id}/smart",
+            post(pages::admin::smart_settings),
+        )
+        .route(
+            "/admin/groups/{id}/smart/filters",
+            post(pages::admin::smart_filter),
+        )
+        .route(
+            "/admin/groups/{id}/smart/filters/{filter}/delete",
+            post(pages::admin::smart_filter_delete),
         )
         .route("/admin/menu", get(pages::menu::index))
         .route("/admin/menu/sections", post(pages::menu::add_section))

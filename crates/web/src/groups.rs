@@ -45,7 +45,10 @@ async fn load_locked(
     load(tx, group).await
 }
 
-async fn standing(tx: &mut sqlx::PgConnection, account: AccountId) -> Result<Standing, AppError> {
+pub(crate) async fn standing(
+    tx: &mut sqlx::PgConnection,
+    account: AccountId,
+) -> Result<Standing, AppError> {
     accounts::standing(&mut *tx, account)
         .await?
         .ok_or_else(|| AppError::not_found("No such account."))
@@ -67,7 +70,7 @@ pub fn auto_group() -> AppError {
     )
 }
 
-fn owner_only() -> AppError {
+pub(crate) fn owner_only() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
         "This group is Restricted: only the owner changes its members or that setting.",
@@ -179,6 +182,7 @@ pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joi
             ));
         }
         Join::Added => {
+            crate::smart_groups::check(&mut tx, group.id, account).await?;
             groups::add_member(&mut *tx, group.id, account).await?;
             groups::log(
                 &mut *tx,
@@ -200,6 +204,7 @@ pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joi
             Joined::Added
         }
         Join::Requested => {
+            crate::smart_groups::check(&mut tx, group.id, account).await?;
             groups::add_request(&mut *tx, group.id, account, false).await?;
             crate::notifications::group_request(&mut tx, group.id, &group.name, account, false)
                 .await?;
@@ -460,6 +465,7 @@ pub async fn decide(
             groups::remove_member(&mut *tx, group.id, requester).await?;
         } else {
             refuse_blacklisted(&mut tx, requester).await?;
+            crate::smart_groups::check(&mut tx, group.id, requester).await?;
             let them = standing(&mut tx, requester).await?;
             let allowed = groups::allowed_states(&mut *tx, group.id).await?;
             if !them.active || !them.has_main || !rules::joinable(group.flags, &allowed, them.state)
@@ -664,6 +670,16 @@ pub async fn update(
     if (old.flags.restricted || new.flags.restricted) && !owner {
         return Err(owner_only());
     }
+    if new.compliance
+        && tether_db::smart_groups::settings(&mut *tx, group)
+            .await?
+            .is_some()
+    {
+        return Err(AppError::bad_request(
+            "This is a smart group: Tether keeps its members by its filters. Make it ordinary \
+             first.",
+        ));
+    }
     if new.compliance && !new.flags.internal {
         return Err(AppError::bad_request(
             "A compliance group must be Internal: Tether keeps its members.",
@@ -780,6 +796,7 @@ pub async fn add_member(
     let mut tx = db.begin().await?;
     let found = load_locked(&mut tx, group, false).await?;
     refuse_blacklisted(&mut tx, account).await?;
+    crate::smart_groups::check(&mut tx, group, account).await?;
     if found.compliance {
         return Err(managed_group());
     }
@@ -908,6 +925,9 @@ pub async fn set_leader_group(
         if leading.flags.anyone_can_join()
             || leading.compliance
             || tether_db::autogroups::is_auto(&mut *tx, leading.id).await?
+            || tether_db::smart_groups::settings(&mut *tx, leading.id)
+                .await?
+                .is_some_and(|s| s.auto_join)
         {
             return Err(AppError::bad_request(
                 "An Open group or a compliance group can't lead others: anyone could get in.",

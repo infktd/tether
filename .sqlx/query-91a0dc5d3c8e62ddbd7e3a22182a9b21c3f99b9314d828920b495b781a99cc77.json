@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.characters SET birthday_checked_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "91a0dc5d3c8e62ddbd7e3a22182a9b21c3f99b9314d828920b495b781a99cc77"
+}

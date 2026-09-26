@@ -7,6 +7,7 @@ pub mod permissions;
 pub mod scopes;
 pub mod scram;
 mod secret;
+pub mod smart;
 pub mod states;
 mod token;
 

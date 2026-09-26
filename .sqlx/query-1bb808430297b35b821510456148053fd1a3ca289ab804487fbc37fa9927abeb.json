@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id FROM core.accounts a JOIN core.characters c ON c.id = a.main_character_id\n        WHERE a.active AND c.birthday IS NULL\n        ORDER BY c.birthday_checked_at NULLS FIRST, c.id LIMIT $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1bb808430297b35b821510456148053fd1a3ca289ab804487fbc37fa9927abeb"
+}

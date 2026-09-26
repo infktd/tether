@@ -3792,6 +3792,8 @@ version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.4.3",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.21",
 ]
@@ -3832,6 +3834,7 @@ dependencies = [
 name = "tether-esi"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "eve-esi-client",
  "jsonwebtoken",
  "oauth2",

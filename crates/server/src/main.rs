@@ -218,12 +218,14 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_web::compliance::register_jobs(&mut registry, db.clone(), esi.clone(), vault.clone());
     tether_web::ownership::register_jobs(&mut registry, db.clone(), vault.clone());
     tether_web::autogroups::register_jobs(&mut registry, db.clone(), esi.clone());
+    tether_web::smart_groups::register_jobs(&mut registry, db.clone(), esi.clone());
     let schedules = tether_web::maintenance::schedules()
         .into_iter()
         .chain(tether_web::sync::schedules())
         .chain(tether_web::compliance::schedules())
         .chain(tether_web::ownership::schedules())
         .chain(tether_web::autogroups::schedules())
+        .chain(tether_web::smart_groups::schedules())
         .chain(tether_web::discord_sync::schedules())
         .chain(tether_web::updates::schedules());
     for spec in schedules {

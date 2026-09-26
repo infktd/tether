@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.smart_groups SET swept_at = now() WHERE group_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "02a909877766ee2f987fcbe9962802f6ab24c28c9b0e18bcf48d6afff8ae187e"
+}

@@ -8,7 +8,7 @@ use crate::PgPool;
 /// Sign-ins are rare enough that a global lock costs nothing.
 const SIGN_IN_LOCK: i64 = 0x7465_7468_6572_0001;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AccountId(pub i64);
 
 /// What a sign-in (a verified SSO login with no account to link to)

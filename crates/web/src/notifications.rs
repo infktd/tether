@@ -105,6 +105,62 @@ pub async fn group_decision(
     notify(tx, account, level, title, Some(&message)).await
 }
 
+/// Secure Groups: added because the account passes a group's filters.
+pub async fn smart_added(
+    tx: &mut sqlx::PgConnection,
+    account: AccountId,
+    group: &str,
+) -> Result<(), sqlx::Error> {
+    notify(
+        tx,
+        account,
+        Level::Success,
+        &format!("Added to {group}"),
+        Some(&format!(
+            "You meet {group}'s requirements, so you're in it now."
+        )),
+    )
+    .await
+}
+
+/// Secure Groups: no longer passing; removed at once or after a grace
+/// period.
+pub async fn smart_failing(
+    tx: &mut sqlx::PgConnection,
+    account: AccountId,
+    group: &str,
+    failing: &str,
+    removed_on: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    match removed_on {
+        Some(date) => {
+            notify(
+                tx,
+                account,
+                Level::Warning,
+                &format!("Leaving {group} on {date}"),
+                Some(&format!(
+                    "You no longer meet {group}'s requirements ({failing}). Meet them again \
+                     before {date} (EVE time) to stay."
+                )),
+            )
+            .await
+        }
+        None => {
+            notify(
+                tx,
+                account,
+                Level::Danger,
+                &format!("Removed from {group}"),
+                Some(&format!(
+                    "You no longer meet {group}'s requirements ({failing})."
+                )),
+            )
+            .await
+        }
+    }
+}
+
 /// A new join or leave request, to the group's leaders, when the setting
 /// is on (AA's `GROUPMANAGEMENT_REQUESTS_NOTIFICATION`, off by default).
 pub async fn group_request(

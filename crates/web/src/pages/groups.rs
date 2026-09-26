@@ -30,6 +30,8 @@ pub struct GroupCard {
     pub is_member: bool,
     /// `join`, `leave`, or empty.
     pub pending: &'static str,
+    /// A smart group's filters (Secure Groups), as its requirements.
+    pub requirements: Vec<String>,
 }
 
 fn card(a: groups::Available) -> GroupCard {
@@ -45,7 +47,32 @@ fn card(a: groups::Available) -> GroupCard {
             Some(false) => "join",
             None => "",
         },
+        requirements: Vec::new(),
     }
+}
+
+/// Fills in smart groups' requirements (Internal groups unnamed).
+async fn requirements(db: &tether_db::PgPool, cards: &mut [GroupCard]) -> Result<(), AppError> {
+    let mut smart = Vec::new();
+    for card in cards.iter_mut() {
+        if tether_db::smart_groups::settings(db, GroupId(card.id))
+            .await?
+            .is_some()
+        {
+            let (rules, _) = tether_db::smart_groups::rules(db, GroupId(card.id)).await?;
+            smart.push((card, rules));
+        }
+    }
+    if smart.is_empty() {
+        return Ok(());
+    }
+    let all: Vec<_> = smart.iter().flat_map(|(_, r)| r.iter().cloned()).collect();
+    let mut conn = db.acquire().await?;
+    let names = crate::smart_groups::Names::load(&mut conn, &all, true).await?;
+    for (card, rules) in smart {
+        card.requirements = rules.iter().map(|r| names.describe(r)).collect();
+    }
+    Ok(())
 }
 
 #[derive(Template)]
@@ -65,11 +92,13 @@ async fn groups_page(
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let loaded = load(state, session, "groups").await?;
-    let (mine, available) = groups::available(&state.db, session.account)
+    let (mut mine, mut available): (Vec<_>, Vec<_>) = groups::available(&state.db, session.account)
         .await?
         .into_iter()
         .map(card)
         .partition(|g| g.is_member);
+    requirements(&state.db, &mut mine).await?;
+    requirements(&state.db, &mut available).await?;
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         status,

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.smart_filters WHERE id = $1 AND group_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c0c6f5da78b8fad2554d6c43126847902f349e4e2c9517e50f38d99b0d0c2eb4"
+}

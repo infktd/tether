@@ -24,6 +24,7 @@ pub mod plugins;
 pub mod secrets;
 pub mod settings;
 pub mod setup;
+pub mod smart_groups;
 pub mod states;
 pub mod tokens;
 pub mod users;

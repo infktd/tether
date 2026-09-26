@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.group_members (group_id, account_id)\n        SELECT $1, a.id FROM core.accounts a\n        WHERE a.id = $2 AND a.active AND a.main_character_id IS NOT NULL\n          AND NOT core.blacklisted(a.id)\n        ON CONFLICT DO NOTHING\n        RETURNING true AS \"added!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "added!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1ce3e0e5e9c6585b3d9cb2e0fb0bb0e01f32229f87e01aa8d572ae66d0af0b34"
+}

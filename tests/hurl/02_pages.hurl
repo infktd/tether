@@ -493,6 +493,24 @@ POST {{base}}/dashboard/access-tokens/1/revoke
 Origin: {{base}}
 HTTP 401
 
+POST {{base}}/admin/groups/1/smart
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/smart/filters
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/smart/filters/1/delete
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/dashboard/system
 HTTP 303
 [Asserts]

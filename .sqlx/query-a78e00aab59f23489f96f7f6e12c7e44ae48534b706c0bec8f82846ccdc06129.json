@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.jobs (kind, payload, max_attempts)\n        SELECT $1, '{}', 5\n        WHERE NOT EXISTS (SELECT 1 FROM core.jobs WHERE kind = $1 AND state = 'queued')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a78e00aab59f23489f96f7f6e12c7e44ae48534b706c0bec8f82846ccdc06129"
+}

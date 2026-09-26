@@ -31,6 +31,7 @@ mod plugin_keys;
 mod plugin_pages;
 mod plugins;
 mod setup;
+mod smart_groups;
 mod states;
 mod storage;
 mod structure_timers;
