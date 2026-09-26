@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.esi_cache c\n        USING (\n            SELECT url, principal FROM core.esi_cache\n            ORDER BY stored_at DESC\n            OFFSET $1\n        ) extra\n        WHERE c.url = extra.url AND c.principal = extra.principal\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d612ed488531f234f2d8c831195a8969b8ca3e485018ee129d0b6c20c67909e0"
+}

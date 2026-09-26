@@ -32,7 +32,7 @@
 
   {% if !about.capabilities.is_empty() && !sources.is_empty() %}
   <section class="card data-card">
-    <header><h2>Data sources</h2><p>Characters offered for their corporation's data. Only approved ones are used, and only while they stay in the corporation they were approved for. Approve only characters with the in-game role ESI needs (Station Manager or Accountant): data another source of the same corporation fetched recently can be served without ESI checking the role again.</p></header>
+    <header><h2>Data sources</h2><p>Characters offered for their corporation's data. Only approved ones are used, and only while they stay in the corporation they were approved for. Approve only characters with the in-game role ESI needs (Station Manager or Accountant): Tether asks ESI with that character's token every time, and ESI checks the role (it can take up to an hour to notice a change).</p></header>
     <table class="table">
       <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Offered</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>

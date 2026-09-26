@@ -114,8 +114,25 @@ pub struct Esi {
 
 impl Esi {
     /// `user_agent` identifies this instance to CCP. `base_url` overrides
-    /// ESI's address (tests point it at a mock server).
+    /// ESI's address (tests point it at a mock server). Responses are
+    /// cached in memory, for this process only.
     pub fn new(user_agent: &str, base_url: Option<&str>) -> Result<Self, EsiError> {
+        Self::with_cache(
+            user_agent,
+            base_url,
+            Arc::new(eve_esi_client::MemoryCache::new()),
+        )
+    }
+
+    /// [`Esi::new`], caching responses in `cache`: the server passes
+    /// [`crate::cache::PgCache`], shared by every worker and kept across
+    /// restarts. Only this client's own (unauthenticated) requests use it;
+    /// calls carrying a character's token never do.
+    pub fn with_cache(
+        user_agent: &str,
+        base_url: Option<&str>,
+        cache: Arc<dyn eve_esi_client::EsiCache>,
+    ) -> Result<Self, EsiError> {
         let allow = match base_url {
             Some(url) => tether_net::Allowlist::production().with_url(url),
             None => tether_net::Allowlist::production(),
@@ -132,7 +149,10 @@ impl Esi {
             reqwest::header::HeaderMap::new(),
         )
         .map_err(|e| EsiError::Config(e.to_string()))?;
-        let mut builder = Client::builder().user_agent(user_agent).http_client(http);
+        let mut builder = Client::builder()
+            .user_agent(user_agent)
+            .http_client(http)
+            .cache(cache);
         if let Some(url) = base_url {
             builder = builder.base_url(url);
         }

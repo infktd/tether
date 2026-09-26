@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.esi_cache\n        WHERE coalesce(expires_at, stored_at) < now() - make_interval(secs => $1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "be194542ea6b09e2460e5db17189916dac220df7340e4995ae4e7a982422375c"
+}

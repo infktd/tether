@@ -238,7 +238,13 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tracing::info!("database migrations applied");
     snapshots.mark_running(&tether_snapshots::Kind::Core).await;
 
-    let esi = tether_esi::Esi::new(&user_agent(&config.public_url()), None)?;
+    // ESI's responses are cached in Postgres: shared by every worker, and
+    // a restart doesn't re-request what is still fresh.
+    let esi = tether_esi::Esi::with_cache(
+        &user_agent(&config.public_url()),
+        None,
+        std::sync::Arc::new(tether_esi::cache::PgCache::new(db.clone())),
+    )?;
 
     let discord = std::sync::Arc::new(tether_discord::Discord::new(
         tether_discord::Endpoints::discord(),

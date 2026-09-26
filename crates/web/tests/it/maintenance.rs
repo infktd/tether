@@ -49,3 +49,23 @@ async fn the_prune_schedule_is_declared_hourly(db: PgPool) {
     .unwrap();
     assert_eq!(every, 3600);
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn prune_drops_long_expired_esi_cache_entries(db: PgPool) {
+    sqlx::query(
+        "INSERT INTO core.esi_cache (url, status, header_names, header_values, body, expires_at)
+         VALUES ('https://esi.test/old', 200, '{}', '{}', '\\x7b7d', now() - interval '2 days'),
+                ('https://esi.test/new', 200, '{}', '{}', '\\x7b7d', now() + interval '1 hour')",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    tether_web::maintenance::prune(&db).await.unwrap();
+
+    let left: Vec<String> = sqlx::query_scalar("SELECT url FROM core.esi_cache")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(left, ["https://esi.test/new"]);
+}

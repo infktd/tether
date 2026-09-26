@@ -8,6 +8,7 @@ pub mod blacklist;
 pub mod compliance;
 pub mod corpstats;
 pub mod discord;
+pub mod esi_cache;
 pub mod groups;
 pub mod menu;
 pub mod notifications;

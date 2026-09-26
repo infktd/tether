@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.esi_cache WHERE url = $1 AND principal = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "19c02d2d31369262c116768fac796ab9a5b7349d69f564846ed7cef479dae6e9"
+}

@@ -1,7 +1,7 @@
 //! Housekeeping on a schedule: expired sessions, login attempts, setup
 //! sessions and Discord link attempts, plugin uploads nobody approved, old
-//! plugin log lines, plugin data access and HTTP logs, and succeeded jobs
-//! older than a week.
+//! plugin log lines, plugin data access and HTTP logs, succeeded jobs older
+//! than a week, and cached ESI responses long expired or over the cap.
 
 use std::time::Duration;
 
@@ -43,6 +43,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         tether_db::plugin_jobs::prune_finished(db, crate::plugin_jobs::KEEP_FINISHED_HOURS).await?;
     let jobs = tether_jobs::schedule::prune_succeeded(db, KEEP_SUCCEEDED).await?;
     let access_tokens = tether_db::personal_tokens::prune(db).await?;
+    let esi_cache = tether_esi::cache::prune(db).await?;
     tracing::info!(
         sessions = expired.sessions,
         login_attempts = expired.login_attempts,
@@ -56,6 +57,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         plugin_jobs,
         jobs,
         access_tokens,
+        esi_cache,
         "pruned"
     );
     Ok(())

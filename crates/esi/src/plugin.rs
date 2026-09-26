@@ -4,32 +4,24 @@
 //! read without any token ([`About::Public`]).
 //!
 //! Public endpoints take ids the plugin gives (a killmail's id and hash):
-//! they read nobody's data, so there is no token and nothing cached per
-//! character to leak. Every plugin may call them; the subject a plugin
-//! passes isn't used.
+//! they read nobody's data, so there is no token to misuse. Every plugin
+//! may call them; the subject a plugin passes isn't used.
 //!
 //! The host fills in the character and corporation ids itself. A plugin
-//! names an endpoint and whose token to use; it never builds a URL. That
-//! matters beyond tidiness: eve-esi-client caches by URL alone, not by
-//! token, so a plugin that could choose ids could read another
-//! character's cached data without ESI ever seeing the request.
+//! names an endpoint and whose token to use; it never builds a URL.
 //!
-//! Calls go through the shared client's rate limits, error-limit backoff
-//! and cache (with a client that carries the character's token), and feed
-//! the error budget. Responses reach the plugin as JSON.
-//!
-//! One limit of the shared cache: corporation endpoints are cached by URL
-//! across data sources, so while one source keeps an entry fresh, another
-//! source of the same corporation reads it without ESI checking its roles.
-//! Admins approve data sources knowing that (the approval page says so).
+//! Calls share the main client's rate limits and error-limit backoff, and
+//! feed the error budget, but never its cache: calls with a character's
+//! token go to ESI every time (ESI's own cache still answers repeats
+//! cheaply), so ESI checks that character's scopes and roles on every
+//! request and nothing a token fetched is stored. Public endpoints skip
+//! the cache too (see `uncached`). Responses reach the plugin as JSON.
 //!
 //! `fleet-members` checks that the data-source character is the fleet boss
 //! from `/characters/{id}/fleet`, as of ESI's cached answer (a few
-//! seconds). Its members, `/fleets/{fleet_id}/members`, may then come from
-//! the shared cache, filled for the boss a moment before: "boss" means boss
-//! as of that cached answer, so a character that just passed boss can read
-//! the members once more. It makes two ESI requests, and costs a plugin
-//! two of its per-call ESI budget.
+//! seconds), then reads `/fleets/{fleet_id}/members` with the same token.
+//! It makes two ESI requests, and costs a plugin two of its per-call ESI
+//! budget.
 
 use std::time::Duration;
 
@@ -479,7 +471,11 @@ fn item_ids(params: &[(String, String)]) -> Result<Vec<i64>, EsiError> {
 
 impl Esi {
     /// The shared client, sending `token` with every request: same rate
-    /// limits, error-limit backoff and cache.
+    /// limits and error-limit backoff, but no cache. The token rides as a
+    /// default header, which eve-esi-client can't see when it keys its
+    /// cache, so a cached copy would be keyed by URL alone: another
+    /// character's request could be answered with it, and it would land
+    /// in Postgres unmarked. Every token-bearing call asks ESI.
     fn with_token(&self, token: &Secret<String>) -> Result<Client, EsiError> {
         let mut headers = HeaderMap::new();
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", token.expose()))
@@ -506,7 +502,7 @@ impl Esi {
         Ok(Client::new_with_client(
             shared.baseurl(),
             http,
-            shared.inner().clone(),
+            shared.inner().without_cache(),
         ))
     }
 
