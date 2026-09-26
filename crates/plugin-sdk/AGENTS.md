@@ -364,6 +364,8 @@ let names = esi::names(&[40161234, 30000142])?;
 | `corporation-structures` | `esi-corporations.read_structures.v1` | data source | yes | |
 | `corporation-roles` | `esi-corporations.read_corporation_membership.v1` | data source | no | |
 | `universe-moon` | `esi-industry.read_corporation_mining.v1` | data source | no | `moon_id` |
+| `corporation-structure-notifications` | `esi-characters.read_notifications.v1` | data source | no | |
+| `universe-system` | `esi-corporations.read_structures.v1` | data source | no | `system_id` |
 | `fleet-members` | `esi-fleets.read_fleet.v1` | data source | no | |
 | `character-skills` | `esi-skills.read_skills.v1` | character | no | |
 | `character-skillqueue` | `esi-skills.read_skillqueue.v1` | character | no | |
@@ -377,7 +379,8 @@ let names = esi::names(&[40161234, 30000142])?;
 
 - The body is ESI's JSON, at most 4 MiB; `pages` says how many pages a paged endpoint has. At most 100 ESI calls per submit or job run, 20 per page render.
 - Errors: `NotAllowed` (endpoint or scope), `NotRegistered` (not a Member's character, or its token lacks the scope), `NotADataSource`, `Token` (the character must log in again), `Status(code)` from ESI, `Invalid`, `TooLarge`, `Unavailable`. Plan for `NotRegistered` and `Token`: people leave, and revoke tokens.
-- Corporation endpoints also need the character to hold the in-game role CCP requires (Station Manager for extractions and structures, Accountant for observers, Director or Personnel Manager for roles); without it ESI answers 403. `universe-moon` is public data, read through a data source only because `names` doesn't cover moons.
+- Corporation endpoints also need the character to hold the in-game role CCP requires (Station Manager for extractions and structures, Accountant for observers, Director or Personnel Manager for roles); without it ESI answers 403. `universe-moon` and `universe-system` are public data, read through a data source only because `names` doesn't cover moons or say which region a system is in; `universe-system` answers the system's `name`, `security_status`, `constellation_id` and `region_id`; it makes two ESI requests (system, then constellation) but counts as one call against the per-run limit.
+- `corporation-structure-notifications` is the data-source character's own notifications, only those about its corporation's structures and moon drills (`StructureUnderAttack`, `StructureLostShields`, `StructureLostArmor`, `StructureDestroyed`, `StructureFuelAlert`, `StructureServicesOffline`, `StructureWentLowPower`, `StructureWentHighPower`, `StructureOnline`, `StructureAnchoring`, `StructureUnanchoring` and the `Moonmining...` extraction ones), each with only `notification_id`, `type`, `timestamp` and `text` (EVE's YAML). Types are read as text, so one CCP adds later doesn't break the read. ESI caches them for 10 minutes.
 - `fleet-members` reads the fleet the data-source character is in, found by the host from that character's own token (a plugin never names a fleet): `{"in_fleet": false, "boss": false}` when it isn't in one, `{"in_fleet": true, "boss": false}` when it isn't the fleet boss, else `{"in_fleet": true, "boss": true, "fleet_id", "members": [{"character_id", "ship_type_id", "solar_system_id", "join_time"}]}`. FCs opt in by offering their character as the app's data source (an admin approves it once), as aa-afat asks only FCs for the scope.
 - Every call is recorded in your plugin's access log, which admins see. An admin must also enable your scopes on Tether's EVE application.
 

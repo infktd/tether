@@ -13,6 +13,7 @@ members = [
     "plugins/fleet-activity-tracking",
     "plugins/structure-timers",
     "plugins/hr-applications",
+    "plugins/structures",
 ]
 
 [workspace.package]

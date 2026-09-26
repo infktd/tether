@@ -19,7 +19,7 @@
 
 use std::time::Duration;
 
-use eve_esi_client::{Client, ClientInfo};
+use eve_esi_client::{Client, ClientInfo, ResponseValue};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use tether_core::Secret;
 
@@ -98,6 +98,27 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["moon_id"],
     },
     Endpoint {
+        // The data-source character's own notifications, trimmed to those
+        // about its corporation's structures and moon drills
+        // (`STRUCTURE_NOTIFICATIONS`): never mail, wars, contracts, kills
+        // or anything else personal. Structures relays them to Discord.
+        name: "corporation-structure-notifications",
+        scope: "esi-characters.read_notifications.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // A solar system's name, security and region (public data, read
+        // with the data source's token like `universe-moon`: /universe/names
+        // doesn't say which region a system is in).
+        name: "universe-system",
+        scope: "esi-corporations.read_structures.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &["system_id"],
+    },
+    Endpoint {
         // The fleet the data-source character runs (aa-afat's ESI fleet
         // tracking): the host finds the fleet from the character's own
         // token and answers only when it is the fleet boss, so a plugin
@@ -172,6 +193,41 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
 ];
+
+/// The notification types `corporation-structure-notifications` passes
+/// on: Upwell structures' attacks, reinforcements, fuel, services, power
+/// and anchoring, and moon drills. Everything else a character receives
+/// stays with the host.
+pub const STRUCTURE_NOTIFICATIONS: &[&str] = &[
+    "StructureUnderAttack",
+    "StructureLostShields",
+    "StructureLostArmor",
+    "StructureDestroyed",
+    "StructureFuelAlert",
+    "StructureServicesOffline",
+    "StructureWentLowPower",
+    "StructureWentHighPower",
+    "StructureOnline",
+    "StructureAnchoring",
+    "StructureUnanchoring",
+    "MoonminingExtractionStarted",
+    "MoonminingExtractionFinished",
+    "MoonminingAutomaticFracture",
+    "MoonminingLaserFired",
+    "MoonminingExtractionCancelled",
+];
+
+/// A character notification, read loosely (see
+/// `corporation-structure-notifications`).
+#[derive(serde::Deserialize)]
+struct Notification {
+    notification_id: i64,
+    #[serde(rename = "type")]
+    kind: String,
+    timestamp: String,
+    #[serde(default)]
+    text: Option<String>,
+}
 
 pub fn endpoint(name: &str) -> Option<&'static Endpoint> {
     ENDPOINTS.iter().find(|e| e.name == name)
@@ -352,6 +408,98 @@ impl Esi {
                 })
             }
             "universe-moon" => get!(client.get_universe_moons_moon_id().moon_id(id("moon_id")?)),
+            "corporation-structure-notifications" => {
+                let request = client
+                    .get_characters_character_id_notifications()
+                    .character_id(character)
+                    .send();
+                // `type` is read as text: a type CCP adds after this client
+                // was generated fails the typed read (and with it every
+                // notification), so the body is read again loosely.
+                let request = async move {
+                    match request.await {
+                        Ok(response) => {
+                            let (status, headers) = (response.status(), response.headers().clone());
+                            let items = response
+                                .into_inner()
+                                .iter()
+                                .map(|n| Notification {
+                                    notification_id: n.notification_id,
+                                    kind: n.type_.to_string(),
+                                    timestamp: n.timestamp.to_rfc3339(),
+                                    text: n.text.clone(),
+                                })
+                                .collect::<Vec<_>>();
+                            Ok(ResponseValue::new(items, status, headers))
+                        }
+                        Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
+                            match serde_json::from_slice::<Vec<Notification>>(&bytes) {
+                                Ok(items) => Ok(ResponseValue::new(
+                                    items,
+                                    reqwest::StatusCode::OK,
+                                    HeaderMap::new(),
+                                )),
+                                Err(_) => {
+                                    Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err))
+                                }
+                            }
+                        }
+                        Err(other) => Err(other),
+                    }
+                };
+                let response = self.call_full(priority, request).await?;
+                // Only structure notifications, and only what's needed of
+                // them (not the sender or whether it was read).
+                let notifications: Vec<serde_json::Value> = response
+                    .into_inner()
+                    .into_iter()
+                    .filter(|n| STRUCTURE_NOTIFICATIONS.contains(&n.kind.as_str()))
+                    .map(|n| {
+                        serde_json::json!({
+                            "notification_id": n.notification_id,
+                            "type": n.kind,
+                            "timestamp": n.timestamp,
+                            "text": n.text,
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    body: serde_json::Value::Array(notifications),
+                    pages: 1,
+                })
+            }
+            "universe-system" => {
+                let system = self
+                    .call_full(
+                        priority,
+                        client
+                            .get_universe_systems_system_id()
+                            .system_id(id("system_id")?)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                let constellation = self
+                    .call_full(
+                        priority,
+                        client
+                            .get_universe_constellations_constellation_id()
+                            .constellation_id(system.constellation_id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: serde_json::json!({
+                        "system_id": system.system_id,
+                        "name": system.name,
+                        "security_status": system.security_status,
+                        "constellation_id": system.constellation_id,
+                        "region_id": constellation.region_id,
+                    }),
+                    pages: 1,
+                })
+            }
             "fleet-members" => {
                 let fleet = match self
                     .call_full(
@@ -457,6 +605,32 @@ impl Esi {
                     .character_id(character)
             ),
             other => Err(EsiError::InvalidInput(format!("no endpoint {other}"))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eve_esi_client::types::CharactersCharacterIdNotificationsGetItemType as Kind;
+
+    #[test]
+    fn structure_notifications_are_esi_types() {
+        for name in STRUCTURE_NOTIFICATIONS {
+            let kind: Kind = name.parse().unwrap();
+            // The filter compares the type's text: it must round-trip.
+            assert_eq!(kind.to_string(), *name);
+        }
+    }
+
+    #[test]
+    fn endpoint_names_are_unique() {
+        for (i, e) in ENDPOINTS.iter().enumerate() {
+            assert!(
+                ENDPOINTS[i + 1..].iter().all(|o| o.name != e.name),
+                "{}",
+                e.name
+            );
         }
     }
 }
