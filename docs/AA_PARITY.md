@@ -90,7 +90,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Structures (fuel, notifications to Discord, timers) | none | planned: first-party plugin (PRD), Jay's call for the NMU release |
 | Fleet Pings | Pings: channel, target, message | partial: add fleet type, formup, comms, doctrine |
 | Secure Groups (Smart Groups, filters, grace) | the Compliance Group is one fixed filter | planned: core, with app-provided filters (PRD) |
-| AA SRP, AFAT | none | not planned: NMU doesn't use them |
+| AA SRP, AFAT | none | SRP: planned plugin; AFAT's additions (alliance stats, fleet types, expiring links, ESI-tracked fleets) fold into the Fleet Activity Tracking plugin (PRD) |
 | AA-Discordbot | none | skip: Tether's Discord is REST only |
 | Blacklist ("Pilot Log", Blacklist state) | a high-priority state can already act as a blacklist | planned: core Blacklist and Pilot Log (PRD) |
 | Corp Tools, CorpStats 2.0 | overlap with Member Audit and Corporation Stats | skip |
