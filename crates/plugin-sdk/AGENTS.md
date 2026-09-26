@@ -59,7 +59,7 @@ cargo build --target wasm32-wasip2 --release
 
 No other tooling is needed: `wasm32-wasip2` produces a component directly. Forgetting `export!` only fails when linking the `.wasm`, so always build for `wasm32-wasip2` (and run `cargo clippy --target wasm32-wasip2`), not just for your own machine.
 
-`examples/hello-plugin` in the repository is a complete example with every kind of section.
+`examples/hello-plugin` in the repository is a complete example with every kind of section and value: a profile, entities, countdowns, progress bars, row actions, text to copy, page links and a live page.
 
 ## plugin.toml
 
@@ -156,6 +156,10 @@ permission = "view"
 [[pages]]
 path = "settings"      # ...except settings/...
 permission = "manage"
+[[pages]]
+path = "mail"          # mail/... needs view too,
+permission = "view"
+audit = true           # and every view of it is in Tether's audit log
 
 [[navigation]]         # sidebar links, shown to whoever may open them
 label = "Mining"
@@ -170,6 +174,7 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
 - Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.
 - A `[[navigation]]` link goes in its `section` of the sidebar: `account`, `fleet`, `industry`, `corporation`, `apps` or `admin`. Leave it out for `apps`; any other name gets the package refused. It's only where the link starts out: admins can move, rename or hide it on the Menu page, and a section with nothing in it isn't shown.
 - A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
+- `audit = true` on a rule writes every view of a page under it (opened, reloaded, shown on the Dashboard, or drawn for a form post) to Tether's audit log as `plugin.page_view`, with who, the path and the query, before your plugin is called. Use it for pages showing someone else's private data, such as their mail. A view that can't be recorded isn't shown.
 - Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
 - Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.
 
@@ -178,25 +183,60 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
 `render` gets a `Request` (the path below the plugin's pages, and the query string) and returns a `Page` or a `PageError`.
 
 - `PageError::NotFound` and `PageError::Forbidden` show the usual pages; `PageError::Failed(text)` shows a generic error to the user, and `text` to admins in the plugin's log.
-- A page has a title, an optional one-line description, sections, and optional tabs (each with its own sections).
-- Sections: a row of stats (`stats`, at most 8), a `table`, a `card` of label/value fields, a paragraph of `text`, or a `form`.
-- Values are typed so the host formats them consistently: `Value::Text`, `Value::Number` (counts, IDs), `isk(amount)` (abbreviated in tables), `time(rfc3339)` (EVE time), `badge(label, tone)`, and `link(label, path)` to another page of the same plugin.
+- A page has a title, an optional one-line description, links beside the title, sections, and optional tabs (each with its own sections).
+- Sections: a row of stats (`stats`, at most 8), a `table`, a `card` of label/value fields, a paragraph of `text`, a `form`, a `profile` (the top of a page about one character or corporation), or `code` (text to copy).
+- Values are typed so the host formats them consistently:
+  - `Value::Text`, `Value::Number` (counts, IDs), `isk(amount)` (abbreviated in tables), `time(rfc3339)` (EVE time), `badge(label, tone)`, and `link(label, path)` to another page of the same plugin (`.primary()` draws it as a button);
+  - entities: `character(id, name)`, `corporation(...)`, `alliance(...)`, `faction(...)` and `item_type(...)` (items and ships), drawn as the 20px portrait, logo or icon from CCP's image server and the name. Tether builds the image address from the kind and id; you never give a URL. An id of 0 or less gets initials;
+  - `countdown(rfc3339)`: the time left ("2d 4h 13m"), ticking in the browser, the EVE time on hover, "done" once it's passed;
+  - `progress(fraction)`: a thin bar, 0 to 1, with `.label(...)`; `.between(from, to)` (two RFC 3339 instants) makes it fill live, e.g. for a skill in training;
+  - `action(label, form)` and `actions(vec![...])` (at most 4 side by side): buttons that post, for row actions (see Forms).
 - Use `Tone::Accent` for the single most important thing on a screen, and nothing else.
+- Page links: `.link(label, path)` adds one of your pages beside the title (at most 8, sub-pages such as "Skill Sets · Character Finder · Reports"); the page shown is marked. `.button(label, path)` adds one as a primary button ("Create timer"). Put sub-page links here rather than in a card at the bottom.
+- Live pages: `.refresh(seconds)` (5 to 300; anything else is brought into that range) makes Tether reload the page's content in place at that interval, for as long as your render keeps asking: say "Syncing..." and fill in as a job stores data, then leave it out. Pages with a form never reload (someone may be typing). Each reload is a page view (the 120 a minute count).
 
 Builders keep this short:
 
 ```rust
-use tether_plugin_sdk::{Column, Stat, Table, Tone, badge, isk, time};
+use tether_plugin_sdk::{
+    CodeBlock, Column, Profile, Stat, Table, Tone, action, actions, badge, character, corporation,
+    alliance, countdown, isk, item_type, progress, time,
+};
 
-let table = Table::new(vec![Column::text("Moon"), Column::numeric("Value"), Column::numeric("Pops")])
+let table = Table::new(vec![Column::text("Moon"), Column::text("Owner"), Column::numeric("Value"), Column::numeric("Pops in"), Column::numeric("")])
     .title("Extractions")
     .empty("No extractions yet.")
-    .row(vec!["1DQ1-A I - Moon 1".into(), isk(1.24e9), time("2026-09-24T18:00:00Z")]);
+    .row(vec![
+        "1DQ1-A I - Moon 1".into(),
+        corporation(98_000_001, "Example Corp").into(),
+        isk(1.24e9),
+        countdown("2026-09-24T18:00:00Z"),
+        actions(vec![
+            action("Fracture", "moon").field("moon", "40161234"),
+            action("Cancel", "moon").field("moon", "40161234").field("cancel", "yes")
+                .tone(Tone::Danger)
+                .confirm("The extraction stops and its ore is lost."),
+        ]),
+    ]);
 
 Page::new("Moons")
     .description("Extractions from our structures")
+    .link("Moons", "")
+    .link("Reports", "reports")
+    .button("Plan extraction", "plan")
+    .profile(
+        Profile::new(character(90_000_001, "Example Pilot"))
+            .subtitle("Main of 3 characters")
+            .corporation(corporation(98_000_001, "Example Corp"))
+            .alliance(alliance(99_000_001, "Example Alliance"))
+            .badge(badge("Registered", Tone::Success))
+            .fact("Skill points", 48_210_332)
+            .fact("Ship", item_type(587, "Rifter"))
+            .fact("Training", progress(0.0).between("2026-09-24T18:00:00Z", "2026-09-25T02:00:00Z").label("Gunnery V")),
+    )
     .stats(vec![Stat::new("Ready", badge("3", Tone::Accent))])
     .table(table)
+    .code(CodeBlock::new("[Rifter, Example]\nDamage Control II\n").title("Doctrine fit").copy_label("Copy fit"))
 ```
 
 The host refuses a page (and logs why, for admins) if it breaks these rules:
@@ -209,12 +249,17 @@ The host refuses a page (and logs why, for admins) if it breaks these rules:
 | Stats in a row | 8 |
 | Table columns | 1 to 20; every row has exactly one value per column |
 | Table rows | 500 (paginate with links and the query string) |
-| Card fields | 40 |
+| Card fields, profile facts | 40 |
+| Page links (buttons included) | 8, each a link path |
+| Profile badges | 8 |
+| Actions | 4 in one `actions` value; each has a form id (not the id of a form on the page) and at most 10 hidden fields, names as for form fields |
+| Progress | fraction 0 to 1; `from` and `to` both or neither, real instants, `to` after `from` |
+| Code blocks | 16 KiB of text |
 | Values (stats, cells, card fields) on a page | 10,000 |
 | Any one piece of text | 2 KiB |
 | The whole page: all text, link paths and times, plus 16 bytes per value | 1 MiB |
 | ISK | a finite number |
-| Times | a real instant in RFC 3339, e.g. `2026-09-24T18:00:00Z`, at most 40 bytes |
+| Times and countdowns | a real instant in RFC 3339, e.g. `2026-09-24T18:00:00Z`, at most 40 bytes |
 | Link paths | at most 200 bytes of relative segments made of ASCII letters, digits, `-`, `_`, `.`: no leading or trailing `/`, no empty segments, no `.` or `..` segments, no scheme, query or fragment |
 
 ## Storage
@@ -339,6 +384,35 @@ fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
 - Posting needs the page's permission, comes from Tether's own pages only, and is limited to 30 a minute per person per plugin. No file uploads.
 - Field names and form ids are lowercase letters, digits and `_`, starting with a letter. Up to 30 fields per form, 100 options per select, 10,000 characters per text field; a post is at most 64 KiB.
 - Return `SubmitResult::Redirect(path)` to go to another of your pages (a link path), or `SubmitResult::Page(page)` to show a page there and then, for example the form again with a note about what to fix.
+
+### Row actions
+
+An action is a one-button form you put in a value, usually a table cell: Approve and Reject on a request, Close on a timer. Posting it calls your `submit` with `submission.form` set to the action's form and `submission.values` its hidden fields:
+
+```rust
+use tether_plugin_sdk::{Tone, action, actions};
+
+// In a row:
+actions(vec![
+    action("Approve", "decide").field("request", "42").field("verdict", "approve").tone(Tone::Accent),
+    action("Reject", "decide").field("request", "42").field("verdict", "reject")
+        .tone(Tone::Danger)
+        .confirm("The pilot is told their request was rejected."),
+])
+
+// In submit:
+match submission.form.as_str() {
+    "decide" => { let id = submission.value("request"); /* ... */ }
+    _ => {}
+}
+```
+
+- Before calling `submit`, Tether draws the page again for that person and checks it still has this very button: the same form and exactly the same fields and values. Anything else (another id, a value missing or added) is refused. So people can only post what you showed them, and hiding a button from someone is enough to keep them from using it. Still check permissions in `submit`, as for any form.
+- Posting needs the page's permission, comes from Tether's own pages only, and counts toward the 30 posts a minute, like forms.
+- `.tone(Tone::Danger)` for destructive actions, `Tone::Accent` for a region's one main action; others are outline buttons. `.confirm(sentence)` asks first, stating what will happen ("Its 4 members lose access"), never "Are you sure?".
+- An action's form id can't be the id of a form on the same page, and its hidden values can't hold line breaks or other control characters (browsers rewrite them, so they'd never post back as drawn).
+- The check is against the page as `render` draws it for that request, so an action works only if your normal render of that page (path and query) shows it: not one that appears only on a page `submit` returned.
+- Audited pages (`audit = true`) never reload themselves, whatever `refresh` says: each reload would be an audit entry.
 
 ## Who's looking
 

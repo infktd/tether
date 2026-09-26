@@ -48,9 +48,13 @@ async fn the_example_plugin_renders_its_pages() {
         .await
         .unwrap();
     assert_eq!(rendered.page.title, "Hello");
-    assert_eq!(rendered.page.sections.len(), 3);
-    assert!(matches!(rendered.page.sections[1], Section::Table(_)));
+    assert_eq!(rendered.page.sections.len(), 6);
+    assert!(matches!(rendered.page.sections[0], Section::Profile(_)));
+    assert!(matches!(rendered.page.sections[2], Section::Table(_)));
+    assert!(matches!(rendered.page.sections[4], Section::Code(_)));
     assert_eq!(rendered.page.tabs.len(), 1);
+    assert_eq!(rendered.page.links.len(), 4);
+    assert_eq!(rendered.page.refresh_seconds, None);
     assert_eq!(rendered.logs.len(), 1);
     assert!(rendered.logs[0].message.contains("rendering"));
 
@@ -76,6 +80,19 @@ async fn bad_pages_are_refused_before_anyone_draws_them() {
         matches!(&bad_link, RenderError::Invalid(p) if p.0.contains("isn't a path")),
         "{bad_link:?}"
     );
+    // The newer blocks are checked the same way.
+    assert!(render(&host, &pages, "blocks").await.is_ok());
+    for (path, why) in [
+        ("bad-page-link", "isn't a path"),
+        ("bad-progress", "isn't an RFC 3339 time"),
+        ("action-clash", "both a form and an action"),
+    ] {
+        let err = render(&host, &pages, path).await.unwrap_err();
+        assert!(
+            matches!(&err, RenderError::Invalid(p) if p.0.contains(why)),
+            "{path}: {err:?}"
+        );
+    }
     assert!(matches!(
         render(&host, &pages, "forbidden").await,
         Err(RenderError::Plugin(PageError::Forbidden))
