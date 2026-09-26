@@ -131,13 +131,45 @@ pub async fn prune_uploads(pool: &PgPool, hours: i32) -> Result<u64, sqlx::Error
     Ok(done.rows_affected())
 }
 
+/// Where an installed package came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// A package signed by its publisher (an upload, or from GitHub):
+    /// checked against the key pinned for its id.
+    Signed,
+    /// Built into Tether's image: as trusted as the binary, unsigned.
+    Bundled,
+}
+
+impl Origin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Signed => "signed",
+            Self::Bundled => "bundled",
+        }
+    }
+
+    /// The table's CHECK allows only these two.
+    fn parse(value: &str) -> Result<Self, sqlx::Error> {
+        match value {
+            "signed" => Ok(Self::Signed),
+            "bundled" => Ok(Self::Bundled),
+            other => Err(sqlx::Error::Decode(
+                format!("unknown plugin origin {other:?}").into(),
+            )),
+        }
+    }
+}
+
 /// An installed plugin, with its package.
 pub struct Installed {
     pub id: String,
     pub name: String,
     pub version: String,
     pub package: Vec<u8>,
-    pub signature: String,
+    /// `None` exactly when it's bundled (the table's CHECK).
+    pub signature: Option<String>,
+    pub origin: Origin,
     /// SHA-256 of the package the admin approved.
     pub package_sha256: Vec<u8>,
     pub enabled: bool,
@@ -173,7 +205,9 @@ pub struct NewPlugin<'a> {
     pub name: &'a str,
     pub version: &'a str,
     pub package: &'a [u8],
-    pub signature: &'a str,
+    /// `None` for a bundled package, and only for one.
+    pub signature: Option<&'a str>,
+    pub origin: Origin,
     pub package_sha256: &'a [u8],
     pub installed_by: AccountId,
 }
@@ -186,8 +220,8 @@ pub async fn install<'e>(
     let done = sqlx::query!(
         r#"
         INSERT INTO core.plugins
-            (id, name, version, package, signature, package_sha256, installed_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (id, name, version, package, signature, package_sha256, installed_by, origin)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO NOTHING
         "#,
         plugin.id,
@@ -197,27 +231,62 @@ pub async fn install<'e>(
         plugin.signature,
         plugin.package_sha256,
         plugin.installed_by.0,
+        plugin.origin.as_str(),
     )
     .execute(executor)
     .await?;
     Ok(done.rows_affected() == 1)
 }
 
+/// [`Installed`] as stored, with its origin as text.
+struct InstalledRow {
+    id: String,
+    name: String,
+    version: String,
+    package: Vec<u8>,
+    signature: Option<String>,
+    origin: String,
+    package_sha256: Vec<u8>,
+    enabled: bool,
+    installed_at: DateTime<Utc>,
+    previous_version: Option<String>,
+    upgraded_at: Option<DateTime<Utc>>,
+}
+
+impl InstalledRow {
+    fn into_installed(self) -> Result<Installed, sqlx::Error> {
+        Ok(Installed {
+            origin: Origin::parse(&self.origin)?,
+            id: self.id,
+            name: self.name,
+            version: self.version,
+            package: self.package,
+            signature: self.signature,
+            package_sha256: self.package_sha256,
+            enabled: self.enabled,
+            installed_at: self.installed_at,
+            previous_version: self.previous_version,
+            upgraded_at: self.upgraded_at,
+        })
+    }
+}
+
 pub async fn get<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     id: &str,
 ) -> Result<Option<Installed>, sqlx::Error> {
-    sqlx::query_as!(
-        Installed,
+    let row = sqlx::query_as!(
+        InstalledRow,
         r#"
-        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,
-               previous_version, upgraded_at
+        SELECT id, name, version, package, signature, origin, package_sha256, enabled,
+               installed_at, previous_version, upgraded_at
         FROM core.plugins WHERE id = $1
         "#,
         id
     )
     .fetch_optional(executor)
-    .await
+    .await?;
+    row.map(InstalledRow::into_installed).transpose()
 }
 
 /// [`get`], locking the row for the rest of the transaction.
@@ -225,24 +294,27 @@ pub async fn get_locked(
     tx: &mut sqlx::PgConnection,
     id: &str,
 ) -> Result<Option<Installed>, sqlx::Error> {
-    sqlx::query_as!(
-        Installed,
+    let row = sqlx::query_as!(
+        InstalledRow,
         r#"
-        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,
-               previous_version, upgraded_at
+        SELECT id, name, version, package, signature, origin, package_sha256, enabled,
+               installed_at, previous_version, upgraded_at
         FROM core.plugins WHERE id = $1 FOR UPDATE
         "#,
         id
     )
     .fetch_optional(tx)
-    .await
+    .await?;
+    row.map(InstalledRow::into_installed).transpose()
 }
 
 /// The package an upgrade replaced.
 pub struct Previous {
     pub version: String,
     pub package: Vec<u8>,
-    pub signature: String,
+    /// `None` exactly when it was bundled.
+    pub signature: Option<String>,
+    pub origin: Origin,
     pub package_sha256: Vec<u8>,
     pub upgraded_at: DateTime<Utc>,
 }
@@ -262,7 +334,7 @@ pub async fn previous<'e>(
 ) -> Result<Option<Previous>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT previous_version, previous_package, previous_signature,
+        SELECT previous_version, previous_package, previous_signature, previous_origin,
                previous_package_sha256, upgraded_at
         FROM core.plugins WHERE id = $1
         "#,
@@ -270,15 +342,25 @@ pub async fn previous<'e>(
     )
     .fetch_optional(executor)
     .await?;
-    // The table's CHECK keeps the five together.
-    Ok(row.and_then(|r| {
-        Some(Previous {
-            version: r.previous_version?,
-            package: r.previous_package?,
-            signature: r.previous_signature?,
-            package_sha256: r.previous_package_sha256?,
-            upgraded_at: r.upgraded_at?,
-        })
+    // The table's CHECKs keep the parts together, with a signature
+    // exactly when it was signed.
+    let Some(r) = row else { return Ok(None) };
+    let (Some(version), Some(package), Some(origin), Some(package_sha256), Some(upgraded_at)) = (
+        r.previous_version,
+        r.previous_package,
+        r.previous_origin,
+        r.previous_package_sha256,
+        r.upgraded_at,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(Previous {
+        version,
+        package,
+        signature: r.previous_signature,
+        origin: Origin::parse(&origin)?,
+        package_sha256,
+        upgraded_at,
     }))
 }
 
@@ -296,6 +378,7 @@ pub async fn upgrade(
             previous_version = version,
             previous_package = package,
             previous_signature = signature,
+            previous_origin = origin,
             previous_package_sha256 = package_sha256,
             upgraded_at = now(),
             upgraded_by = $7,
@@ -303,6 +386,7 @@ pub async fn upgrade(
             version = $3,
             package = $4,
             signature = $5,
+            origin = $8,
             package_sha256 = $6,
             updated_at = now()
         WHERE id = $1
@@ -314,6 +398,7 @@ pub async fn upgrade(
         plugin.signature,
         plugin.package_sha256,
         plugin.installed_by.0,
+        plugin.origin.as_str(),
     )
     .execute(tx)
     .await?;
@@ -336,10 +421,12 @@ pub async fn roll_back(
             version = previous_version,
             package = previous_package,
             signature = previous_signature,
+            origin = previous_origin,
             package_sha256 = previous_package_sha256,
             previous_version = NULL,
             previous_package = NULL,
             previous_signature = NULL,
+            previous_origin = NULL,
             previous_package_sha256 = NULL,
             upgraded_at = NULL,
             upgraded_by = NULL,
@@ -353,6 +440,17 @@ pub async fn roll_back(
     .execute(tx)
     .await?;
     Ok(done.rows_affected() == 1)
+}
+
+/// Where an installed plugin's package came from, if it's installed.
+pub async fn origin<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: &str,
+) -> Result<Option<Origin>, sqlx::Error> {
+    let origin = sqlx::query_scalar!("SELECT origin FROM core.plugins WHERE id = $1", id)
+        .fetch_optional(executor)
+        .await?;
+    origin.as_deref().map(Origin::parse).transpose()
 }
 
 pub async fn exists<'e>(

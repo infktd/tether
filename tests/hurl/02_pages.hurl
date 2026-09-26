@@ -796,6 +796,21 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# Apps that come with Tether (the image bundles them).
+GET {{base}}/admin/plugin-bundled/tether.moon-mining
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugin-bundled/tether.moon-mining/approve
+Origin: {{base}}
+[Form]
+package: 0000000000000000000000000000000000000000000000000000000000000000
+reviewed: none
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # Refused before the body is read.
 POST {{base}}/admin/plugins
 Origin: {{base}}

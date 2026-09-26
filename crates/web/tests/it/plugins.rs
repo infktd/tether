@@ -406,6 +406,7 @@ async fn startup_loads_enabled_plugins_and_checks_them(db: PgPool) {
                 public_url: SITE.to_owned(),
                 snapshots: None,
                 github: None,
+                bundled: std::sync::Arc::default(),
             },
         )
     };

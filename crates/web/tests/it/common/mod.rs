@@ -341,7 +341,16 @@ pub async fn harness_full(
     esi_server: MockServer,
     site: &str,
 ) -> Harness {
-    harness_parts(db, configured, esi_server, site, None, None).await
+    harness_parts(db, configured, esi_server, site, None, None, Arc::default()).await
+}
+
+/// With apps bundled into Tether (`packages`, unsigned).
+pub async fn harness_with_bundled(db: PgPool, packages: Vec<Vec<u8>>) -> Harness {
+    let esi_server = MockServer::start().await;
+    mount_affiliations(&esi_server).await;
+    mount_universe(&esi_server).await;
+    let bundled = tether_web::bundled::Bundled::from_packages(packages).unwrap();
+    harness_parts(db, true, esi_server, SITE, None, None, Arc::new(bundled)).await
 }
 
 /// With snapshots before plugin migrations, as the server runs.
@@ -352,7 +361,16 @@ pub async fn harness_with_snapshots(
     let esi_server = MockServer::start().await;
     mount_affiliations(&esi_server).await;
     mount_universe(&esi_server).await;
-    harness_parts(db, true, esi_server, SITE, Some(snapshots), None).await
+    harness_parts(
+        db,
+        true,
+        esi_server,
+        SITE,
+        Some(snapshots),
+        None,
+        Arc::default(),
+    )
+    .await
 }
 
 /// With apps from GitHub, served by `github` (a mock of its API and
@@ -377,7 +395,16 @@ pub async fn harness_with_github(db: PgPool, github: &MockServer) -> Harness {
     .unwrap();
     let github =
         tether_web::plugin_github::GitHub::new(api, downloads, &github.uri(), &github.uri());
-    harness_parts(db, true, esi_server, SITE, None, Some(Arc::new(github))).await
+    harness_parts(
+        db,
+        true,
+        esi_server,
+        SITE,
+        None,
+        Some(Arc::new(github)),
+        Arc::default(),
+    )
+    .await
 }
 
 async fn harness_parts(
@@ -387,6 +414,7 @@ async fn harness_parts(
     site: &str,
     snapshots: Option<Arc<tether_snapshots::Snapshots>>,
     github: Option<Arc<tether_web::plugin_github::GitHub>>,
+    bundled: Arc<tether_web::bundled::Bundled>,
 ) -> Harness {
     if configured {
         settings::set(&db, settings::SSO_CLIENT_ID, "client-123".into())
@@ -426,6 +454,7 @@ async fn harness_parts(
             public_url: site.to_owned(),
             snapshots,
             github,
+            bundled,
         },
     );
     let app = router(AppState {

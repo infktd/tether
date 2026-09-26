@@ -210,6 +210,19 @@
 
   {% include "admin_plugin_about.html" %}
 
+  {% if let Some(inc) = included %}
+  <section class="card">
+    <header><h2>Updates</h2><p>This app comes with Tether: newer versions arrive with newer versions of Tether, never from GitHub or a file. A newer version is installed only after you review it.</p></header>
+    <section class="grid gap-4">
+      <dl class="grid gap-4 text-sm">
+        <div class="grid gap-1"><dt class="font-medium">Included with this Tether</dt><dd class="text-muted-foreground"><span class="num">{{ inc.version }}</span>{% if inc.newer %} <span class="badge" data-variant="secondary">Newer than {{ about.version }}</span>{% endif %}</dd></div>
+      </dl>
+      {% if inc.newer %}
+      <div><a class="btn" data-variant="primary" href="/admin/plugin-bundled/{{ about.id }}">Review version <span class="num">{{ inc.version }}</span></a></div>
+      {% endif %}
+    </section>
+  </section>
+  {% else %}
   <section class="card">
     <header><h2>Updates</h2><p>{% if let Some(repo) = updates.source %}Newer versions are looked for in <a class="underline" href="https://github.com/{{ repo }}" rel="noreferrer noopener" target="_blank"><span class="num">{{ repo }}</span></a>{% if updates.checks_on %} once a day{% else %}, but update checks are off (Dashboard){% endif %}.{% else %}Name the GitHub repository this app is published in and Tether looks there for newer versions once a day while update checks are on.{% endif %} A newer version is installed only after you review it.</p></header>
     <section class="grid gap-4">
@@ -235,6 +248,7 @@
       </form>
     </section>
   </section>
+  {% endif %}
 
   {% if let Some(r) = rollback %}
   <form class="card" method="post" action="/admin/plugins/{{ about.id }}/rollback">

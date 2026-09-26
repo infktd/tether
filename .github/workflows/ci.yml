@@ -183,6 +183,13 @@ jobs:
           done
           docker compose -f deploy/docker-compose.yml logs
           exit 1
+      - name: Every first-party app comes with the image
+        run: |
+          expected=$(ls -d plugins/*/ | wc -l)
+          found=$(docker compose -f deploy/docker-compose.yml exec -T app \
+            sh -c 'ls /usr/share/tether/apps/*.zip | wc -l')
+          echo "bundled: $found of $expected"
+          test "$found" -eq "$expected"
       - name: Install Hurl (pinned, checksum-verified)
         run: |
           arch=$(dpkg --print-architecture)

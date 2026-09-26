@@ -73,7 +73,7 @@ description = "Moon mining for the corp"                  # optional, up to 300 
 repository = "https://github.com/example/mining-ledger"   # optional
 
 [publisher]
-key = "RWQ..."             # the second line of your minisign .pub file
+key = "RWQ..."             # the second line of your minisign .pub file; required (only the apps built into Tether's own image go without)
 
 [capabilities]             # all optional; ask only for what you use
 storage = true

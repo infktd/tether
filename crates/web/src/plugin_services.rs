@@ -63,6 +63,8 @@ pub struct Deps {
     pub snapshots: Option<Arc<tether_snapshots::Snapshots>>,
     /// Apps from GitHub. `None` (tests) turns it off.
     pub github: Option<Arc<crate::plugin_github::GitHub>>,
+    /// The apps bundled into this Tether's image.
+    pub bundled: Arc<crate::bundled::Bundled>,
 }
 
 impl std::fmt::Debug for Deps {

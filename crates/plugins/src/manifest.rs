@@ -24,7 +24,12 @@ fn bad(text: impl Into<String>) -> ManifestError {
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub plugin: Identity,
-    pub publisher: Publisher,
+    /// Who signs its packages. Every package installed from a file or
+    /// GitHub needs one ([`crate::package::Unverified::verify`] refuses
+    /// it otherwise); only the apps bundled into Tether's image leave it
+    /// out, as they aren't signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<Publisher>,
     #[serde(default)]
     pub capabilities: Capabilities,
     /// Permission name to description, e.g. `view = "View the mining
@@ -309,7 +314,9 @@ impl Manifest {
                 bad("plugin.repository must be https://github.com/<owner>/<repo>")
             })?;
         }
-        check_key(&self.publisher.key)?;
+        if let Some(publisher) = &self.publisher {
+            check_key(&publisher.key)?;
+        }
 
         let c = &self.capabilities;
         check_list("capabilities.esi.user", &c.esi.user, 50, check_scope)?;

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.plugins SET\n            name = $2,\n            version = previous_version,\n            package = previous_package,\n            signature = previous_signature,\n            origin = previous_origin,\n            package_sha256 = previous_package_sha256,\n            previous_version = NULL,\n            previous_package = NULL,\n            previous_signature = NULL,\n            previous_origin = NULL,\n            previous_package_sha256 = NULL,\n            upgraded_at = NULL,\n            upgraded_by = NULL,\n            updated_at = now()\n        WHERE id = $1 AND previous_package_sha256 = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58258359f28da8de468e98161302986bc825113a00ce0b4e5ad91c68841602c1"
+}

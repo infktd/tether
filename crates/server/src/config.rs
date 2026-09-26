@@ -54,6 +54,17 @@ pub struct ServeConfig {
     #[command(flatten)]
     pub snapshots: SnapshotConfig,
 
+    /// The apps that come with Tether: packages the app image builds into
+    /// this directory. A development build can point it at the output of
+    /// `scripts/bundle-apps.sh` (release builds refuse any other than the
+    /// default); a missing directory means none.
+    #[arg(
+        long,
+        env = "BUNDLED_APPS_DIR",
+        default_value = tether_web::bundled::DEFAULT_DIR
+    )]
+    pub bundled_apps_dir: PathBuf,
+
     /// Apply pending core migrations without a snapshot first. For local
     /// development without the Postgres 16 client tools; never needed in
     /// the app image.
@@ -99,6 +110,17 @@ impl ServeConfig {
     pub fn validate(&self) -> Result<(), String> {
         tether_core::crypto::EncryptionKey::from_hex(&self.encryption_key)
             .map_err(|err| err.to_string())?;
+        // Bundled apps are unsigned because they come from the image, as
+        // the binary does: a release build reads them from nowhere else.
+        if !cfg!(debug_assertions)
+            && self.bundled_apps_dir != std::path::Path::new(tether_web::bundled::DEFAULT_DIR)
+        {
+            return Err(format!(
+                "BUNDLED_APPS_DIR can only be changed in a development build; release builds \
+                 read the apps that come with Tether from {} in the image",
+                tether_web::bundled::DEFAULT_DIR
+            ));
+        }
         // Jobs may each hold a connection while they wait on Discord; the
         // web side needs some left.
         if self.job_workers.saturating_add(2) > self.database_max_connections as usize {

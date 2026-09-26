@@ -33,6 +33,28 @@
   </section>
   {% endif %}
 
+  {% if !bundled.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Included with Tether</h2><p>Apps that come with Tether itself. They need no signing: review what each asks for, then approve it. A newer version of Tether can bring newer versions of them, which you review the same way.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for b in bundled %}
+        <tr>
+          <td class="w-full whitespace-normal"><div class="font-medium">{{ b.name }}</div>{% if let Some(d) = b.description %}<div class="text-xs text-muted-foreground">{{ d }}</div>{% endif %}</td>
+          <td><span class="num">{{ b.version }}</span>{% if let Some(v) = b.installed %}{% if b.update %}<div class="text-xs text-muted-foreground">Installed: <span class="num">{{ v }}</span></div>{% endif %}{% endif %}</td>
+          <td class="text-right">
+            {% if b.installed.is_none() %}<a class="btn" data-variant="primary" data-size="sm" href="/admin/plugin-bundled/{{ b.id }}">Review and install</a>
+            {% else if b.update %}<a class="btn" data-variant="primary" data-size="sm" href="/admin/plugin-bundled/{{ b.id }}">Review update</a>
+            {% else %}<a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ b.id }}">Installed</a>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   {% if github %}
   <form class="card" method="post" action="/admin/plugin-github">
     <header><h2>Install from GitHub</h2><p>Tether reads the repository's releases and fetches the newest <span class="num">&lt;app id&gt;-&lt;version&gt;.zip</span> with its <span class="num">.minisig</span>, then checks it like an upload. Nothing is installed until you approve it on the next page. Its updates are looked for there once a day while update checks are on.</p></header>
@@ -43,7 +65,7 @@
       </div>
       <div class="grid gap-2">
         <label class="label" for="app">App id <span class="text-muted-foreground font-normal">(only if it publishes several)</span></label>
-        <input class="input" id="app" name="app" placeholder="nmu.moon-mining" autocomplete="off">
+        <input class="input" id="app" name="app" placeholder="acme.mining-ledger" autocomplete="off">
       </div>
     </section>
     <footer><button type="submit" class="btn" data-variant="primary">Fetch and check</button></footer>

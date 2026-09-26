@@ -8,14 +8,17 @@
   <div class="flex items-end justify-between gap-4">
     <div>
       <h1 class="page-title">{{ about.name }}</h1>
-      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}{% if let Some(u) = upgrade %}Version <span class="num">{{ u.from }}</span> to <span class="num">{{ about.version }}</span>{% else %}Version <span class="num">{{ about.version }}</span>{% endif %}, uploaded {{ uploaded }} EVE</p>
+      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}{% if let Some(u) = upgrade %}Version <span class="num">{{ u.from }}</span> to <span class="num">{{ about.version }}</span>{% else %}Version <span class="num">{{ about.version }}</span>{% endif %}{% if let Some(at) = uploaded %}, uploaded {{ at }} EVE{% else %}, included with Tether{% endif %}</p>
     </div>
     <div class="flex gap-2">
-      <form method="post" action="/admin/plugin-uploads/{{ upload_id }}/discard">
+      {% if let Some(action) = discard_action %}
+      <form method="post" action="{{ action }}">
         <button type="submit" class="btn" data-variant="outline">Discard</button>
       </form>
-      <form method="post" action="/admin/plugin-uploads/{{ upload_id }}/approve">
+      {% endif %}
+      <form method="post" action="{{ approve_action }}">
         <input type="hidden" name="reviewed" value="{{ base }}">
+        {% if let Some(sha) = bundled_sha256 %}<input type="hidden" name="package" value="{{ sha }}">{% endif %}
         <button type="submit" class="btn" data-variant="primary">{% if upgrade.is_some() %}Approve and upgrade{% else %}Approve and install{% endif %}</button>
       </form>
     </div>

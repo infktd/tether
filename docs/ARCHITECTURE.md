@@ -34,7 +34,9 @@ Plugins reach ESI, storage and Discord only through host functions, never direct
 
 Plugins are WebAssembly components installed at runtime from a GitHub repo URL or an uploaded .zip package, with no restart and no image rebuild. Each runs in its own Wasmtime instance and can only call host functions its manifest declares.
 
-First-party plugins (Alliance Auth's apps, starting with Moon Mining) live in `plugins/`, built and tested with the workspace and packaged like any other by `scripts/package-plugin.sh` (built, zipped, minisign-signed with the publisher's key). They get no powers a third-party plugin couldn't.
+First-party plugins (Alliance Auth's apps: Moon Mining, Member Audit, Fleet Activity Tracking, Structure Timers, HR Applications, Structures, Ship Replacement) live in `plugins/`, built and tested with the workspace. They come with every deployment (bundled apps, below), and can also be packaged and signed like any other by `scripts/package-plugin.sh` (built, zipped, minisign-signed with the publisher's key). They get no powers a third-party plugin couldn't.
+
+**Bundled apps** (`crates/web/src/bundled.rs`): the image build (`deploy/Dockerfile`) builds every crate in `plugins/` for wasm32-wasip2 and packages each with `scripts/bundle-apps.sh` into `/usr/share/tether/apps/` (`BUNDLED_APPS_DIR`; a development build can point it at the script's output). The package layout is the usual one, but without `[publisher]` and without a signature: a bundled package ships in the same image as the binary and is exactly as trusted, so it pins no key. The server reads the directory once at startup. The Apps page lists them under "Included with Tether"; each goes through the normal review (capabilities, permissions, HTTP hosts, secrets, scopes) and the admin approves it in one click, with the review's package hash sent back so a newer image in between can't swap what was approved. `core.plugins.origin` (and `previous_origin`, migration 0039) records `bundled` or `signed`; a CHECK allows a missing signature only for `bundled`. Loading a bundled row checks the stored package's SHA-256 against the approved one (as for any app) and skips the signature and pin. A bundled app's id is reserved, and so is any installed with bundled origin (even once an image stops bundling it: it pins no key): packages from a file or GitHub under it are refused at upload and again at approval, and its updates can't be pointed at a repository. Release builds refuse a `BUNDLED_APPS_DIR` other than the image's. A newer image carrying a newer version shows it as an update on the Apps page and the app's page; it goes through the same upgrade review and one-step rollback as any other upgrade.
 
 **Package contents** (a .zip, published as a release asset on the plugin's GitHub repo or uploaded directly):
 
@@ -43,7 +45,7 @@ First-party plugins (Alliance Auth's apps, starting with Moon Mining) live in `p
 - `migrations/`: SQL files for the plugin's own schema, `0001_<name>.sql` onward with no gaps
 - `ui/`: optional images (PNG, JPEG, WebP, GIF) referenced by the plugin's page descriptions
 - `rotation.txt` and `rotation.txt.minisig`: only when the publisher changed keys (below)
-- a detached minisign signature over the whole .zip, next to it (`<package>.zip.minisig`)
+- a detached minisign signature over the whole .zip, next to it (`<package>.zip.minisig`); only bundled apps go without
 
 Everything else in a package is refused, as are symlinks, encrypted entries, repeated names and archive comments.
 

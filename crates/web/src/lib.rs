@@ -18,6 +18,7 @@ pub mod auth;
 pub mod autogroups;
 pub mod backups;
 pub mod blacklist;
+pub mod bundled;
 pub mod compliance;
 mod csrf;
 #[cfg(feature = "dev-login")]
@@ -324,6 +325,14 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route("/admin/plugin-github", post(pages::plugins::install_github))
+        .route(
+            "/admin/plugin-bundled/{id}",
+            get(pages::plugins::review_bundled),
+        )
+        .route(
+            "/admin/plugin-bundled/{id}/approve",
+            post(pages::plugins::approve_bundled),
+        )
         .route("/admin/plugin-uploads/{id}", get(pages::plugins::review))
         .route(
             "/admin/plugin-uploads/{id}/approve",
@@ -657,6 +666,7 @@ mod tests {
                 public_url: "https://tether.test".to_owned(),
                 snapshots: None,
                 github: None,
+                bundled: std::sync::Arc::default(),
             },
         );
         AppState {

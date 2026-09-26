@@ -117,6 +117,8 @@ cargo fmt --all
 cargo clippy -p hello-plugin -p moon-mining -p member-audit -p fleet-activity-tracking -p structure-timers -p hr-applications -p structures -p ship-replacement -p tether-plugin-sdk --target wasm32-wasip2 -- -D warnings   # plus the tether-plugins-test-guest* crates
 cargo build -p hello-plugin --target wasm32-wasip2 --release   # the plugin tests build their guests themselves
 scripts/package-plugin.sh plugins/moon-mining ~/.minisign/tether.key   # first-party plugins (plugins/*) -> dist/<id>-<version>.zip + .minisig
+scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image bundles them (deploy/Dockerfile)
+BUNDLED_APPS_DIR=dist/apps cargo run -p tether-server --features dev   # offer them under "Included with Tether"
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
 deploy/install.sh localhost    # writes deploy/.env once, then starts the stack (bundled Caddy)
 deploy/install.sh --proxy none localhost   # or nginx/traefik: the admin's own proxy, no Caddy; app on 127.0.0.1:8080 (deploy/README.md)

@@ -8,7 +8,9 @@
 //!
 //! Lifecycle: an admin uploads a package; once its signature, the pinned
 //! key and its component all check out it waits for approval, showing
-//! everything it asks for. Approving checks it all again inside the
+//! everything it asks for. The apps bundled into Tether's image
+//! ([`crate::bundled`]) skip the upload: they're unsigned, as trusted as
+//! the binary, and approved from the Apps page after the same review. Approving checks it all again inside the
 //! install's transaction, records the key, installs and activates it, with
 //! no restart. Enabling, disabling and uninstalling load and unload it.
 //! [`Plugins`] holds what is running; lifecycle changes take its lock, so
@@ -217,6 +219,7 @@ pub struct Plugins {
     /// Installs and update checks from GitHub; `None` where it's not set
     /// up (most tests).
     github: Option<Arc<crate::plugin_github::GitHub>>,
+    bundled: Arc<crate::bundled::Bundled>,
 }
 
 impl std::fmt::Debug for Plugins {
@@ -250,6 +253,7 @@ impl Plugins {
                 uploads: tokio::sync::Semaphore::new(1),
                 http,
                 github: deps.github.clone(),
+                bundled: deps.bundled.clone(),
             }
         })
     }
@@ -263,6 +267,11 @@ impl Plugins {
 
     pub fn github(&self) -> Option<&crate::plugin_github::GitHub> {
         self.github.as_deref()
+    }
+
+    /// The apps bundled into this Tether's image.
+    pub fn bundled(&self) -> &crate::bundled::Bundled {
+        &self.bundled
     }
 
     /// Whether snapshots are taken before plugin migrations here.
@@ -372,8 +381,8 @@ impl Plugins {
 
     /// Loads an installed plugin from its stored package, but only the
     /// package that was approved (its hash, also in the audit log) signed
-    /// with the key pinned now. After a re-pin, a package signed with the
-    /// old key stops loading.
+    /// with the key pinned now, or bundled into Tether's image. After a
+    /// re-pin, a package signed with the old key stops loading.
     async fn activate(&self, db: &PgPool, installed: &db::Installed) {
         let slot = match self.load(db, installed).await {
             Ok(running) => {
@@ -420,24 +429,38 @@ impl Plugins {
             tracing::error!(plugin = installed.id, error = %e, "resetting a rollback's temp file cap");
             return Err("its database limits couldn't be checked".to_owned());
         }
-        let pinned = plugin_keys::get(db, &installed.id)
-            .await
-            .map_err(|e| {
-                tracing::error!(plugin = installed.id, error = %e, "reading a pinned key");
-                "its pinned key couldn't be read".to_owned()
-            })?
-            .ok_or("no publisher key is pinned for it")?;
-        let verified = package::read(&installed.package)
-            .and_then(|p| p.verify(&installed.signature, Some(&pinned)))
-            .map_err(|e| format!("the stored package doesn't check out: {e}"))?;
-        if *verified.trust() != Trust::Pinned {
-            return Err(
-                "the stored package isn't signed with the pinned key; install a version signed \
-                 with it"
-                    .to_owned(),
-            );
-        }
-        let package = verified.into_package();
+        let package = match installed.origin {
+            // Shipped in Tether's image, so as trusted as the binary: the
+            // package approved (its hash, checked above), with no
+            // signature or key.
+            db::Origin::Bundled => package::read(&installed.package)
+                .map_err(|e| format!("the stored package doesn't check out: {e}"))?
+                .into_bundled(),
+            db::Origin::Signed => {
+                let signature = installed
+                    .signature
+                    .as_deref()
+                    .ok_or("the stored package has no signature")?;
+                let pinned = plugin_keys::get(db, &installed.id)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(plugin = installed.id, error = %e, "reading a pinned key");
+                        "its pinned key couldn't be read".to_owned()
+                    })?
+                    .ok_or("no publisher key is pinned for it")?;
+                let verified = package::read(&installed.package)
+                    .and_then(|p| p.verify(signature, Some(&pinned)))
+                    .map_err(|e| format!("the stored package doesn't check out: {e}"))?;
+                if *verified.trust() != Trust::Pinned {
+                    return Err(
+                        "the stored package isn't signed with the pinned key; install a version \
+                         signed with it"
+                            .to_owned(),
+                    );
+                }
+                verified.into_package()
+            }
+        };
         if package.manifest.plugin.id != installed.id {
             return Err("the stored package is for another plugin".to_owned());
         }
@@ -772,6 +795,14 @@ fn unsupported(package: &Package) -> Option<&'static str> {
     None
 }
 
+/// A bundled app's id, in a package from anywhere else.
+fn reserved(id: &str) -> AppError {
+    AppError::bad_request(format!(
+        "{id} comes with Tether: it's installed and updated from \"Included with Tether\" on \
+         the Apps page, never from a file or GitHub."
+    ))
+}
+
 fn trust_label(trust: &Trust) -> &'static str {
     match trust {
         Trust::FirstInstall => "first_install",
@@ -884,6 +915,9 @@ async fn check_upload(
 ) -> Result<(String, String, &'static str), (Option<String>, AppError)> {
     let unverified = package::read(bytes).map_err(|e| (None, package_error(e)))?;
     let id = unverified.id().to_owned();
+    if state.plugins.bundled.reserves(&id) {
+        return Err((Some(id.clone()), reserved(&id)));
+    }
     if let Some((expected_id, expected_version)) = expected {
         let version = &unverified.package().manifest.plugin.version;
         if expected_id != id || expected_version != version {
@@ -902,6 +936,11 @@ async fn check_upload(
         return Err(fail(AppError::bad_request(TOO_MANY_UPLOADS)));
     }
     if let Some(installed) = db::get(&state.db, &id).await.map_err(db_err)? {
+        // Installed from Tether's image, even if this Tether doesn't
+        // bundle it any more: it pins no key, so nothing signed replaces it.
+        if installed.origin == db::Origin::Bundled {
+            return Err(fail(reserved(&id)));
+        }
         check_upgrade(&state.db, &installed.version, unverified.package())
             .await
             .map_err(fail)?;
@@ -962,8 +1001,37 @@ pub async fn pending(state: &crate::AppState, upload_id: i64) -> Result<Pending,
         .map_err(package_error)?;
     let trust = verified.trust().clone();
     let package = verified.into_package();
+    let now = compare(state, &package).await?;
+    let installed_source =
+        tether_db::plugin_sources::status(&state.db, &package.manifest.plugin.id)
+            .await?
+            .source;
+    Ok(Pending {
+        package,
+        trust,
+        upload,
+        installed_version: now.version,
+        installed: now.package,
+        base: now.base,
+        installed_source,
+        new_migrations: now.new_migrations,
+    })
+}
+
+/// What is installed under a package's id, for its review.
+struct Current {
+    version: Option<String>,
+    /// Unless it can't be read any more.
+    package: Option<Package>,
+    base: String,
+    /// How many of the package's migrations would be new.
+    new_migrations: usize,
+}
+
+async fn compare(state: &crate::AppState, package: &Package) -> Result<Current, AppError> {
+    let id = &package.manifest.plugin.id;
     // Stored packages were checked when approved; read for what it declares.
-    let current = db::get(&state.db, &package.manifest.plugin.id).await?;
+    let current = db::get(&state.db, id).await?;
     let installed = current.as_ref().and_then(|installed| {
         package::read(&installed.package)
             .inspect_err(|e| {
@@ -973,24 +1041,47 @@ pub async fn pending(state: &crate::AppState, upload_id: i64) -> Result<Pending,
             .map(|p| p.package().clone())
     });
     let new_migrations = if current.is_some() {
-        let applied = plugin_storage::applied(&state.db, &package.manifest.plugin.id).await?;
+        let applied = plugin_storage::applied(&state.db, id).await?;
         package.migrations.len().saturating_sub(applied.len())
     } else {
         0
     };
-    let installed_source =
-        tether_db::plugin_sources::status(&state.db, &package.manifest.plugin.id)
-            .await?
-            .source;
-    Ok(Pending {
-        package,
-        trust,
-        upload,
-        installed_version: current.as_ref().map(|c| c.version.clone()),
-        installed,
+    Ok(Current {
+        version: current.as_ref().map(|c| c.version.clone()),
+        package: installed,
         base: base(current.as_ref()),
-        installed_source,
         new_migrations,
+    })
+}
+
+/// A bundled app, for its review before installing or upgrading to it.
+pub struct BundledReview {
+    pub package: Package,
+    /// The bundled package's SHA-256 in hex, sent back on approval.
+    pub sha256: String,
+    /// For an upgrade: the installed version, and its package unless it
+    /// can't be read any more.
+    pub installed_version: Option<String>,
+    pub installed: Option<Package>,
+    /// What is installed now ([`base`]).
+    pub base: String,
+    pub new_migrations: usize,
+}
+
+pub async fn bundled_review(state: &crate::AppState, id: &str) -> Result<BundledReview, AppError> {
+    let app = state
+        .plugins
+        .bundled
+        .get(id)
+        .ok_or_else(|| AppError::not_found("No app with that id comes with Tether."))?;
+    let now = compare(state, &app.package).await?;
+    Ok(BundledReview {
+        package: app.package.clone(),
+        sha256: hex(&app.sha256),
+        installed_version: now.version,
+        installed: now.package,
+        base: now.base,
+        new_migrations: now.new_migrations,
     })
 }
 
@@ -1029,14 +1120,177 @@ async fn approve_now(
         .ok_or_else(|| AppError::not_found("No upload with that id is waiting."))?;
     let unverified = package::read(&upload.package).map_err(package_error)?;
     let id = unverified.id().to_owned();
+    // Uploaded before this Tether bundled the app, maybe.
+    if plugins.bundled.reserves(&id) {
+        return Err(reserved(&id));
+    }
     let pinned = plugin_keys::get_locked(&mut tx, &id).await?;
     let verified = unverified
         .verify(&upload.signature, pinned.as_deref())
         .map_err(package_error)?;
-    if let Some(why) = unsupported(verified.package()) {
+    let candidate = Candidate::Signed {
+        upload: &upload,
+        verified: &verified,
+    };
+    install_or_upgrade(state, actor, tx, &id, candidate, reviewed).await
+}
+
+/// Installs (or upgrades to) the bundled app `id` and starts it, if the
+/// bundled package is still the one reviewed (`sha256`, in hex: a newer
+/// image may have replaced it since) and what is installed is still
+/// `reviewed` ([`base`]). Returns the plugin id.
+pub async fn approve_bundled(
+    state: &crate::AppState,
+    actor: AccountId,
+    id: &str,
+    sha256: &str,
+    reviewed: String,
+) -> Result<String, AppError> {
+    let (state, id, sha256) = (state.clone(), id.to_owned(), sha256.to_owned());
+    detached(async move { approve_bundled_now(&state, actor, &id, &sha256, reviewed).await }).await
+}
+
+async fn approve_bundled_now(
+    state: &crate::AppState,
+    actor: AccountId,
+    id: &str,
+    sha256: &str,
+    reviewed: String,
+) -> Result<String, AppError> {
+    let plugins = &state.plugins;
+    let _lifecycle = plugins.lifecycle.lock().await;
+    let app = plugins
+        .bundled
+        .get(id)
+        .ok_or_else(|| AppError::not_found("No app with that id comes with Tether."))?;
+    if hex(&app.sha256) != sha256 {
+        return Err(AppError::bad_request(
+            "Tether was updated since this page was shown, with another version of this app. \
+             Look at it again before approving.",
+        ));
+    }
+    let tx = state.db.begin().await?;
+    install_or_upgrade(
+        state,
+        actor,
+        tx,
+        id,
+        Candidate::Bundled(app),
+        Some(reviewed),
+    )
+    .await
+}
+
+/// A package being installed, or upgraded to, and why it's trusted.
+#[derive(Clone, Copy)]
+enum Candidate<'a> {
+    /// An upload (a file, or from GitHub), signed and checked against the
+    /// key pinned for its id.
+    Signed {
+        upload: &'a db::Upload,
+        verified: &'a Verified,
+    },
+    /// Built into this Tether's image: as trusted as the binary.
+    Bundled(&'a crate::bundled::BundledApp),
+}
+
+impl Candidate<'_> {
+    fn package(&self) -> &Package {
+        match self {
+            Self::Signed { verified, .. } => verified.package(),
+            Self::Bundled(app) => &app.package,
+        }
+    }
+
+    /// The package as stored.
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Signed { upload, .. } => &upload.package,
+            Self::Bundled(app) => &app.bytes,
+        }
+    }
+
+    fn origin(&self) -> db::Origin {
+        match self {
+            Self::Signed { .. } => db::Origin::Signed,
+            Self::Bundled(_) => db::Origin::Bundled,
+        }
+    }
+
+    fn signature(&self) -> Option<&str> {
+        match self {
+            Self::Signed { upload, .. } => Some(&upload.signature),
+            Self::Bundled(_) => None,
+        }
+    }
+
+    /// The publisher key it's signed with.
+    fn key(&self) -> Option<&str> {
+        match self {
+            Self::Signed { verified, .. } => Some(verified.key()),
+            Self::Bundled(_) => None,
+        }
+    }
+
+    fn upload_id(&self) -> Option<i64> {
+        match self {
+            Self::Signed { upload, .. } => Some(upload.id),
+            Self::Bundled(_) => None,
+        }
+    }
+
+    /// The GitHub repository it was fetched from.
+    fn source(&self) -> Option<&str> {
+        match self {
+            Self::Signed { upload, .. } => upload.source.as_deref(),
+            Self::Bundled(_) => None,
+        }
+    }
+
+    /// Records the key it was trusted with; a bundled package pins none.
+    async fn record_trust(&self, tx: &mut PgConnection, actor: AccountId) -> Result<(), AppError> {
+        match self {
+            Self::Signed { verified, .. } => {
+                record_trust(tx, Actor::Account(actor), verified).await
+            }
+            Self::Bundled(_) => Ok(()),
+        }
+    }
+
+    fn new_plugin<'a>(
+        &'a self,
+        id: &'a str,
+        package_sha256: &'a [u8],
+        actor: AccountId,
+    ) -> db::NewPlugin<'a> {
+        let manifest = &self.package().manifest;
+        db::NewPlugin {
+            id,
+            name: &manifest.plugin.name,
+            version: &manifest.plugin.version,
+            package: self.bytes(),
+            signature: self.signature(),
+            origin: self.origin(),
+            package_sha256,
+            installed_by: actor,
+        }
+    }
+}
+
+/// The rest of an approval, in its transaction: installs the candidate,
+/// or upgrades the installed version to it.
+async fn install_or_upgrade(
+    state: &crate::AppState,
+    actor: AccountId,
+    mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
+    id: &str,
+    candidate: Candidate<'_>,
+    reviewed: Option<String>,
+) -> Result<String, AppError> {
+    if let Some(why) = unsupported(candidate.package()) {
         return Err(AppError::bad_request(why));
     }
-    let installed = db::get_locked(&mut tx, &id).await?;
+    let installed = db::get_locked(&mut tx, id).await?;
     if reviewed.is_some_and(|r| r != base(installed.as_ref())) {
         return Err(AppError::bad_request(
             "This app was installed, upgraded, rolled back or uninstalled since this page was \
@@ -1044,40 +1298,34 @@ async fn approve_now(
         ));
     }
     if let Some(installed) = installed {
-        return upgrade_now(state, actor, tx, upload, verified, installed).await;
+        // A bundled install pins no key: a signed package never replaces
+        // it, even once this Tether doesn't bundle its id any more.
+        if installed.origin == db::Origin::Bundled && candidate.origin() == db::Origin::Signed {
+            return Err(reserved(id));
+        }
+        return upgrade_now(state, actor, tx, candidate, installed).await;
     }
-    record_trust(&mut tx, Actor::Account(actor), &verified).await?;
-    let manifest = &verified.package().manifest;
-    let package_sha256 = sha256(&upload.package);
-    let installed = db::install(
-        &mut *tx,
-        &db::NewPlugin {
-            id: &id,
-            name: &manifest.plugin.name,
-            version: &manifest.plugin.version,
-            package: &upload.package,
-            signature: &upload.signature,
-            package_sha256: &package_sha256,
-            installed_by: actor,
-        },
-    )
-    .await?;
+    candidate.record_trust(&mut tx, actor).await?;
+    let manifest = &candidate.package().manifest;
+    let package_sha256 = sha256(candidate.bytes());
+    let installed =
+        db::install(&mut *tx, &candidate.new_plugin(id, &package_sha256, actor)).await?;
     if !installed {
         return Err(AppError::bad_request(
             "An app with this id is already installed.",
         ));
     }
     // Where its updates are looked for.
-    if let Some(source) = &upload.source {
-        tether_db::plugin_sources::set_source(&mut *tx, &id, Some(source)).await?;
+    if let Some(source) = candidate.source() {
+        tether_db::plugin_sources::set_source(&mut *tx, id, Some(source)).await?;
     }
-    let declared = declared_permissions(&id, manifest);
-    tether_db::permissions::add_plugin_permissions(&mut tx, &id, &declared).await?;
+    let declared = declared_permissions(id, manifest);
+    tether_db::permissions::add_plugin_permissions(&mut tx, id, &declared).await?;
     // Exactly the hosts and secrets shown on the review page; nothing else
     // is reachable at runtime.
-    crate::plugin_http::approve(&mut tx, &id, manifest, actor).await?;
+    crate::plugin_http::approve(&mut tx, id, manifest, actor).await?;
     // Member now requires its user scopes (F11, F16).
-    if tether_db::compliance::set_plugin_scopes(&mut *tx, &id, &manifest.capabilities.esi.user)
+    if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
         .await?
     {
         crate::states::enqueue_evaluate_all(&mut *tx).await?;
@@ -1088,7 +1336,7 @@ async fn approve_now(
                 "Too many apps have database storage already. Uninstall one first.",
             ));
         }
-        Some(create_storage(state, &mut tx, &id).await?)
+        Some(create_storage(state, &mut tx, id).await?)
     } else {
         None
     };
@@ -1096,12 +1344,13 @@ async fn approve_now(
         &mut *tx,
         Actor::Account(actor),
         "plugin.installed",
-        Some(&target(&id)),
+        Some(&target(id)),
         json!({
-            "upload": upload_id,
-            "source": upload.source,
+            "origin": candidate.origin().as_str(),
+            "upload": candidate.upload_id(),
+            "source": candidate.source(),
             "version": manifest.plugin.version,
-            "key": verified.key(),
+            "key": candidate.key(),
             "sha256": hex(&package_sha256),
             "capabilities": manifest.capabilities,
             "permissions": manifest.permissions,
@@ -1113,10 +1362,10 @@ async fn approve_now(
     .await?;
     tx.commit().await?;
 
-    if let Some(installed) = db::get(&state.db, &id).await? {
-        plugins.activate(&state.db, &installed).await;
+    if let Some(installed) = db::get(&state.db, id).await? {
+        state.plugins.activate(&state.db, &installed).await;
     }
-    Ok(id)
+    Ok(id.to_owned())
 }
 
 /// A plugin's permissions by their full names, with descriptions.
@@ -1186,38 +1435,41 @@ async fn upgrade_now(
     state: &crate::AppState,
     actor: AccountId,
     mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
-    upload: db::Upload,
-    verified: Verified,
+    candidate: Candidate<'_>,
     installed: db::Installed,
 ) -> Result<String, AppError> {
     let id = installed.id.clone();
-    let package = verified.package();
+    let package = candidate.package();
     let manifest = &package.manifest;
     // Checked at upload; again now the row is locked.
     check_upgrade(&state.db, &installed.version, package).await?;
-    record_trust(&mut tx, Actor::Account(actor), &verified).await?;
-    let package_sha256 = sha256(&upload.package);
-    let upgraded = db::upgrade(
-        &mut tx,
-        &db::NewPlugin {
-            id: &id,
-            name: &manifest.plugin.name,
-            version: &manifest.plugin.version,
-            package: &upload.package,
-            signature: &upload.signature,
-            package_sha256: &package_sha256,
-            installed_by: actor,
-        },
-    )
-    .await?;
+    candidate.record_trust(&mut tx, actor).await?;
+    let package_sha256 = sha256(candidate.bytes());
+    let upgraded = db::upgrade(&mut tx, &candidate.new_plugin(&id, &package_sha256, actor)).await?;
     // The row is locked (get_locked), so it's there.
     if !upgraded {
         return Err(AppError::not_found("No app with that id is installed."));
     }
-    // Fetched from a repository: its updates are looked for there now. An
-    // upload by hand keeps the repository it had.
-    if let Some(source) = &upload.source {
-        tether_db::plugin_sources::set_source(&mut *tx, &id, Some(source)).await?;
+    match (candidate.source(), candidate.origin()) {
+        // Fetched from a repository: its updates are looked for there now.
+        (Some(source), _) => {
+            tether_db::plugin_sources::set_source(&mut *tx, &id, Some(source)).await?;
+        }
+        // Its updates come with Tether's now.
+        (None, db::Origin::Bundled) => {
+            if tether_db::plugin_sources::set_source(&mut *tx, &id, None).await? {
+                audit::record(
+                    &mut *tx,
+                    Actor::Account(actor),
+                    "plugin.source_set",
+                    Some(&target(&id)),
+                    json!({ "source": null, "why": "bundled" }),
+                )
+                .await?;
+            }
+        }
+        // An upload by hand keeps the repository it had.
+        (None, db::Origin::Signed) => {}
     }
     let changed = apply_manifest(state, &mut tx, &id, manifest, actor).await?;
     audit::record(
@@ -1226,11 +1478,12 @@ async fn upgrade_now(
         "plugin.upgraded",
         Some(&target(&id)),
         json!({
-            "upload": upload.id,
-            "source": upload.source,
+            "origin": candidate.origin().as_str(),
+            "upload": candidate.upload_id(),
+            "source": candidate.source(),
             "from": installed.version,
             "to": manifest.plugin.version,
-            "key": verified.key(),
+            "key": candidate.key(),
             "sha256": hex(&package_sha256),
             "capabilities": manifest.capabilities,
             "permissions": manifest.permissions,
@@ -1328,11 +1581,11 @@ pub async fn rollback_plan(
 }
 
 /// The plan, and the earlier version when it can be put back: its package
-/// as stored, and the key it checked out against.
+/// as stored, and the key it checked out against (none when bundled).
 async fn plan_rollback(
     state: &crate::AppState,
     id: &str,
-) -> Result<Option<(RollbackPlan, Option<(db::Previous, String)>)>, AppError> {
+) -> Result<Option<(RollbackPlan, Option<(db::Previous, Option<String>)>)>, AppError> {
     let Some(installed) = db::get(&state.db, id).await? else {
         return Ok(None);
     };
@@ -1358,12 +1611,9 @@ async fn plan_rollback(
         Ok(Some((plan, None)))
     };
     // As loading does: only the package approved, signed with the key
-    // pinned now.
+    // pinned now (or bundled into Tether's image).
     let pinned = plugin_keys::get(&state.db, id).await?;
-    let Some(pinned) = pinned else {
-        return block(plan, "No publisher key is pinned for this app.".to_owned());
-    };
-    let old = match earlier_checked(id, &previous, &pinned) {
+    let old = match earlier_checked(id, &previous, pinned.as_deref()) {
         Ok(old) => old,
         Err(why) => return block(plan, why),
     };
@@ -1427,32 +1677,55 @@ async fn plan_rollback(
     Ok(Some((plan, Some((previous, pinned)))))
 }
 
-/// The earlier package, if it's the one approved, signed with `pinned`,
-/// and for this plugin; otherwise why not.
-fn earlier_checked(id: &str, previous: &db::Previous, pinned: &str) -> Result<Package, String> {
+/// The earlier package, if it's the one approved, for this plugin, and
+/// signed with `pinned` (the key pinned now) or bundled into Tether's
+/// image; otherwise why not.
+fn earlier_checked(
+    id: &str,
+    previous: &db::Previous,
+    pinned: Option<&str>,
+) -> Result<Package, String> {
     let version = &previous.version;
-    let verified = match package::read(&previous.package)
-        .and_then(|p| p.verify(&previous.signature, Some(pinned)))
-    {
-        Ok(verified) => verified,
-        Err(PackageError::KeyChanged { .. }) => {
-            return Err(format!(
-                "Version {version} is signed with a publisher key this app has moved on from, \
-                 so it can't be put back."
-            ));
-        }
-        Err(e) => return Err(format!("Version {version} doesn't check out: {e}.")),
-    };
-    if sha256(&previous.package) != previous.package_sha256
-        || *verified.trust() != Trust::Pinned
-        || verified.package().manifest.plugin.id != id
-    {
+    if sha256(&previous.package) != previous.package_sha256 {
         return Err(format!(
-            "Version {version} isn't signed with the key pinned for this app, so it can't be \
-             put back."
+            "Version {version} isn't the package that was approved, so it can't be put back."
         ));
     }
-    Ok(verified.into_package())
+    let package = match previous.origin {
+        db::Origin::Bundled => package::read(&previous.package)
+            .map_err(|e| format!("Version {version} doesn't check out: {e}."))?
+            .into_bundled(),
+        db::Origin::Signed => {
+            let (Some(pinned), Some(signature)) = (pinned, previous.signature.as_deref()) else {
+                return Err("No publisher key is pinned for this app.".to_owned());
+            };
+            let verified = match package::read(&previous.package)
+                .and_then(|p| p.verify(signature, Some(pinned)))
+            {
+                Ok(verified) => verified,
+                Err(PackageError::KeyChanged { .. }) => {
+                    return Err(format!(
+                        "Version {version} is signed with a publisher key this app has moved on \
+                         from, so it can't be put back."
+                    ));
+                }
+                Err(e) => return Err(format!("Version {version} doesn't check out: {e}.")),
+            };
+            if *verified.trust() != Trust::Pinned {
+                return Err(format!(
+                    "Version {version} isn't signed with the key pinned for this app, so it \
+                     can't be put back."
+                ));
+            }
+            verified.into_package()
+        }
+    };
+    if package.manifest.plugin.id != id {
+        return Err(format!(
+            "Version {version} is another app's package, so it can't be put back."
+        ));
+    }
+    Ok(package)
 }
 
 /// The newest snapshot of a plugin's data taken before migrations, with
@@ -1553,12 +1826,12 @@ async fn roll_back_now(
         // The pin may have moved since the plan (a re-pin doesn't take the
         // lifecycle lock): check the earlier package against it again.
         let pinned = plugin_keys::get_locked(&mut tx, id).await?;
-        if pinned.as_deref() != Some(key.as_str()) {
+        if previous.origin == db::Origin::Signed && pinned != key {
             return Err(AppError::bad_request(
                 "This app's pinned key changed while it was being rolled back. Look again.",
             ));
         }
-        let old = earlier_checked(id, &previous, &key).map_err(AppError::bad_request)?;
+        let old = earlier_checked(id, &previous, key.as_deref()).map_err(AppError::bad_request)?;
         if !db::roll_back(
             &mut tx,
             id,
@@ -1591,6 +1864,7 @@ async fn roll_back_now(
             json!({
                 "from": plan.from,
                 "to": plan.to,
+                "origin": previous.origin.as_str(),
                 "key": key,
                 "sha256": hex(&previous.package_sha256),
                 "capabilities": old.manifest.capabilities,

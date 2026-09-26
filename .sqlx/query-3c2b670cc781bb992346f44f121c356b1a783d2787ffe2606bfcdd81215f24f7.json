@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT previous_version, previous_package, previous_signature,\n               previous_package_sha256, upgraded_at\n        FROM core.plugins WHERE id = $1\n        ",
+  "query": "\n        SELECT previous_version, previous_package, previous_signature, previous_origin,\n               previous_package_sha256, upgraded_at\n        FROM core.plugins WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "previous_origin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_origin"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "previous_package_sha256",
         "type_info": "Bytea",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "upgraded_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -69,8 +80,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "ba430a561d864176a0a6271d878b4c2484bf613113afeeb0cf0be51f73473b05"
+  "hash": "3c2b670cc781bb992346f44f121c356b1a783d2787ffe2606bfcdd81215f24f7"
 }

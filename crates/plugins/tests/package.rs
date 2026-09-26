@@ -280,6 +280,25 @@ fn first_install_trusts_the_publisher_key() {
 }
 
 #[test]
+fn a_package_without_a_publisher_key_is_only_ever_bundled() {
+    let key = Key::new(1);
+    let manifest = "[plugin]\nid = \"tether.test\"\nname = \"Test plugin\"\nversion = \"1.0.0\"\n\
+                    host_api = \"1\"\n";
+    let bytes = zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", COMPONENT),
+    ]);
+    // Whatever signs it, it can't be verified.
+    assert_eq!(
+        verify(&bytes, &key.sign(&bytes), None).unwrap_err(),
+        PackageError::NoPublisherKey
+    );
+    let bundled = package::read(&bytes).unwrap().into_bundled();
+    assert_eq!(bundled.manifest.plugin.id, "tether.test");
+    assert!(bundled.manifest.publisher.is_none());
+}
+
+#[test]
 fn signatures_must_match_the_package_and_its_key() {
     let key = Key::new(1);
     let bytes = plugin_zip(&key, &[]);

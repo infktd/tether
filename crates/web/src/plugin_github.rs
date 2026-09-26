@@ -440,9 +440,15 @@ pub async fn set_source(
             )
         })?)
     };
+    let bundled_here = state.plugins.bundled().reserves(plugin_id);
     let mut tx = state.db.begin().await?;
-    if !tether_db::plugins::exists(&mut *tx, plugin_id).await? {
+    let Some(origin) = tether_db::plugins::origin(&mut *tx, plugin_id).await? else {
         return Err(AppError::not_found("No app with that id is installed."));
+    };
+    if repo.is_some() && (bundled_here || origin == tether_db::plugins::Origin::Bundled) {
+        return Err(AppError::bad_request(
+            "This app comes with Tether: its updates come with Tether's, not from GitHub.",
+        ));
     }
     let source = repo.as_ref().map(Repo::as_str);
     if plugin_sources::set_source(&mut *tx, plugin_id, source).await? {

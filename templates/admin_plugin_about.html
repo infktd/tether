@@ -36,7 +36,7 @@
       <div class="grid gap-1"><dt class="font-medium">App id</dt><dd class="num">{{ about.id }}</dd></div>
       <div class="grid gap-1"><dt class="font-medium">Version</dt><dd class="num">{{ about.version }}</dd></div>
       {% if let Some(repo) = about.repository %}<div class="grid gap-1"><dt class="font-medium">Source</dt><dd class="num break-all">{{ repo }}</dd></div>{% endif %}
-      <div class="grid gap-1"><dt class="font-medium">Publisher key</dt><dd class="num break-all">{{ about.key }}</dd></div>
+      {% if let Some(key) = about.key %}<div class="grid gap-1"><dt class="font-medium">Publisher key</dt><dd class="num break-all">{{ key }}</dd></div>{% else %}<div class="grid gap-1"><dt class="font-medium">Publisher</dt><dd class="text-muted-foreground">Included with Tether: it ships in Tether's own image, so it isn't signed.</dd></div>{% endif %}
       <div class="grid gap-1"><dt class="font-medium">Contents</dt><dd class="text-muted-foreground"><span class="num">{{ about.migrations }}</span> database migrations, <span class="num">{{ about.assets }}</span> images</dd></div>
     </dl>
   </section>

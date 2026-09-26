@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,\n               previous_version, upgraded_at\n        FROM core.plugins WHERE id = $1\n        ",
+  "query": "\n        SELECT id, name, version, package, signature, origin, package_sha256, enabled,\n               installed_at, previous_version, upgraded_at\n        FROM core.plugins WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,17 @@
       },
       {
         "ordinal": 5,
+        "name": "origin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "origin"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "package_sha256",
         "type_info": "Bytea",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "installed_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "previous_version",
         "type_info": "Text",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "upgraded_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -124,6 +135,7 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       false,
@@ -132,5 +144,5 @@
       true
     ]
   },
-  "hash": "67676e661173de986c69605a034596e2fd794dfcd4e8c149358b633ae4031ce7"
+  "hash": "345485f601decd53f7d16b1eef320c85a9968af1ef045ecb69d89f981bef2ad1"
 }

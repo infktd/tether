@@ -270,6 +270,9 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             public_url: config.public_url(),
             snapshots: Some(snapshots.clone()),
             github: Some(github.clone()),
+            bundled: std::sync::Arc::new(tether_web::bundled::Bundled::read_dir(
+                &config.bundled_apps_dir,
+            )),
         },
     );
     {

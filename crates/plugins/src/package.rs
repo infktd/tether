@@ -11,6 +11,10 @@
 //! later packages must be signed by the pinned key, or by a new key the
 //! pinned one endorsed in a rotation statement shipped in the package.
 //! Anything else needs an admin to re-pin the key by hand.
+//!
+//! The one exception is [`Unverified::into_bundled`]: the first-party
+//! apps built into Tether's own image are exactly as trusted as the
+//! binary, so they carry no signature and pin no key.
 
 use std::io::{Cursor, Read};
 
@@ -55,6 +59,9 @@ pub enum PackageError {
     KeyChanged { pinned: String, new: String },
     #[error("the key rotation statement isn't valid: {0}")]
     Rotation(String),
+    /// Only the apps bundled into Tether's image go without.
+    #[error("plugin.toml has no [publisher] key, which a signed package needs")]
+    NoPublisherKey,
 }
 
 fn entry(name: &str, problem: impl Into<String>) -> PackageError {
@@ -301,7 +308,14 @@ impl Unverified<'_> {
     /// first install).
     pub fn verify(self, signature: &str, pinned: Option<&str>) -> Result<Verified, PackageError> {
         let package = self.package;
-        let key = package.manifest.publisher.key.as_str();
+        let key = package
+            .manifest
+            .publisher
+            .as_ref()
+            .ok_or(PackageError::NoPublisherKey)?
+            .key
+            .clone();
+        let key = key.as_str();
         check_signature(key, self.bytes, signature).map_err(PackageError::Signature)?;
 
         let trust = match pinned {
@@ -330,7 +344,19 @@ impl Unverified<'_> {
                 }
             }
         };
-        Ok(Verified { package, trust })
+        Ok(Verified {
+            key: key.to_owned(),
+            package,
+            trust,
+        })
+    }
+
+    /// The package as one bundled into Tether's own image: trusted as the
+    /// binary is, with no signature and no key. Only for packages read
+    /// from the image's bundled apps directory, never from an upload or a
+    /// download.
+    pub fn into_bundled(self) -> Package {
+        self.package
     }
 }
 
@@ -510,6 +536,7 @@ pub enum Trust {
 pub struct Verified {
     package: Package,
     trust: Trust,
+    key: String,
 }
 
 impl Verified {
@@ -523,7 +550,7 @@ impl Verified {
 
     /// The publisher key that signed it (and is pinned once installed).
     pub fn key(&self) -> &str {
-        &self.package.manifest.publisher.key
+        &self.key
     }
 
     pub fn into_package(self) -> Package {

@@ -157,7 +157,9 @@ pub struct About {
     pub version: String,
     pub description: Option<String>,
     pub repository: Option<String>,
-    pub key: String,
+    /// The publisher key it's signed with; `None` for an app bundled into
+    /// Tether, which isn't signed.
+    pub key: Option<String>,
     pub storage: bool,
     pub migrations: usize,
     pub assets: usize,
@@ -166,7 +168,7 @@ pub struct About {
 }
 
 impl About {
-    fn new(package: &Package) -> Self {
+    fn new(package: &Package, bundled: bool) -> Self {
         let m = &package.manifest;
         Self {
             id: m.plugin.id.clone(),
@@ -174,7 +176,11 @@ impl About {
             version: m.plugin.version.clone(),
             description: m.plugin.description.clone(),
             repository: m.plugin.repository.clone(),
-            key: m.publisher.key.clone(),
+            key: if bundled {
+                None
+            } else {
+                m.publisher.as_ref().map(|p| p.key.clone())
+            },
             storage: m.capabilities.storage,
             migrations: package.migrations.len(),
             assets: package.assets.len(),
@@ -193,8 +199,21 @@ pub struct PluginRow {
     pub status: &'static str,
     pub variant: &'static str,
     pub installed: String,
-    /// A newer version its repository publishes.
+    /// A newer version its repository publishes, or that comes with this
+    /// Tether.
     pub update: Option<String>,
+}
+
+/// An app that comes with Tether, and whether it's installed.
+pub struct BundledRow {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    /// The version installed, if any.
+    pub installed: Option<String>,
+    /// This Tether's version is newer than the one installed.
+    pub update: bool,
 }
 
 pub struct UploadRow {
@@ -216,6 +235,7 @@ pub struct PinRow {
 #[template(path = "admin_plugins.html")]
 struct PluginsPage {
     shell: Shell,
+    bundled: Vec<BundledRow>,
     plugins: Vec<PluginRow>,
     uploads: Vec<UploadRow>,
     pins: Vec<PinRow>,
@@ -258,19 +278,42 @@ async fn list_page(
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let latest = tether_db::plugin_sources::latest(&state.db).await?;
-    let plugins = db::list(&state.db)
-        .await?
+    let installed = db::list(&state.db).await?;
+    let included = state.plugins.bundled();
+    let bundled = included
+        .all()
+        .into_iter()
+        .map(|app| {
+            let plugin = &app.package.manifest.plugin;
+            let current = installed.iter().find(|p| p.id == plugin.id);
+            BundledRow {
+                id: plugin.id.clone(),
+                name: plugin.name.clone(),
+                version: plugin.version.clone(),
+                description: plugin.description.clone(),
+                installed: current.map(|p| p.version.clone()),
+                update: current.is_some_and(|p| newer(&plugin.version, &p.version)),
+            }
+        })
+        .collect();
+    let plugins = installed
         .into_iter()
         .map(|p| {
             let (status, variant) = status_label(&state.plugins.status(&p.id), p.enabled);
+            // A bundled app's updates come with Tether, never from GitHub.
+            let update = match included.get(&p.id) {
+                Some(app) => Some(app.package.manifest.plugin.version.clone())
+                    .filter(|v| newer(v, &p.version)),
+                None => latest
+                    .iter()
+                    .find(|(id, v)| *id == p.id && newer(v, &p.version))
+                    .map(|(_, v)| v.clone()),
+            };
             PluginRow {
                 status,
                 variant,
                 installed: time(p.installed_at),
-                update: latest
-                    .iter()
-                    .find(|(id, v)| *id == p.id && newer(v, &p.version))
-                    .map(|(_, v)| v.clone()),
+                update,
                 id: p.id,
                 name: p.name,
                 version: p.version,
@@ -303,6 +346,7 @@ async fn list_page(
         code,
         &PluginsPage {
             shell,
+            bundled,
             plugins,
             uploads,
             pins,
@@ -425,11 +469,18 @@ pub async fn upload(
 #[template(path = "admin_plugin_review.html")]
 struct ReviewPage {
     shell: Shell,
-    upload_id: i64,
+    /// Where the form approving it posts.
+    approve_action: String,
+    /// Where discarding an upload posts (a bundled app has nothing to
+    /// discard).
+    discard_action: Option<String>,
+    /// A bundled package's SHA-256, sent back on approval.
+    bundled_sha256: Option<String>,
     about: About,
     trust_title: &'static str,
     trust_detail: String,
-    uploaded: String,
+    /// When it was uploaded (not for a bundled app).
+    uploaded: Option<String>,
     /// What is installed now, sent back on approval.
     base: String,
     /// The GitHub repository it was fetched from.
@@ -559,11 +610,13 @@ async fn review_page(
         code,
         &ReviewPage {
             shell,
-            upload_id,
-            about: About::new(&pending.package),
+            approve_action: format!("/admin/plugin-uploads/{upload_id}/approve"),
+            discard_action: Some(format!("/admin/plugin-uploads/{upload_id}/discard")),
+            bundled_sha256: None,
+            about: About::new(&pending.package, false),
             trust_title,
             trust_detail,
-            uploaded: time(pending.upload.uploaded_at),
+            uploaded: Some(time(pending.upload.uploaded_at)),
             base: pending.base,
             source_was: match (&pending.upload.source, &pending.installed_source) {
                 (Some(new), Some(old)) if new != old => Some(old.clone()),
@@ -608,6 +661,90 @@ pub async fn approve(
             list_page(&state, shell, Some(err)).await
         }
         Err(err) => review_page(&state, shell, upload_id, Some(err)).await,
+    }
+}
+
+async fn bundled_review_page(
+    state: &AppState,
+    shell: Shell,
+    id: &str,
+    error: Option<AppError>,
+) -> Result<Response, PageError> {
+    let review = plugins::bundled_review(state, id).await?;
+    let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let upgrade = review.installed_version.map(|from| UpgradeView {
+        from,
+        changes: review
+            .installed
+            .as_ref()
+            .map(|old| Changes::new(&old.manifest, &review.package.manifest)),
+        new_migrations: review.new_migrations,
+        snapshots: state.plugins.snapshots_on(),
+        base: review.base.clone(),
+    });
+    Ok(render(
+        code,
+        &ReviewPage {
+            shell,
+            approve_action: format!("/admin/plugin-bundled/{id}/approve"),
+            discard_action: None,
+            bundled_sha256: Some(review.sha256),
+            about: About::new(&review.package, true),
+            trust_title: "Comes with Tether",
+            trust_detail: "This app is part of Tether: it ships in the same image as Tether \
+                           itself and is exactly as trusted, so it isn't signed and pins no \
+                           key. Nothing else can install or update an app with this id. Look \
+                           at what it asks for before approving, as for any app."
+                .to_owned(),
+            uploaded: None,
+            base: review.base,
+            source: None,
+            source_was: None,
+            upgrade,
+            error: error.map(|e| e.message().to_owned()),
+        },
+    ))
+}
+
+/// `GET /admin/plugin-bundled/{id}`: an app that comes with Tether, to
+/// review before installing it or upgrading to it.
+pub async fn review_bundled(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<String>,
+) -> Result<Response, PageError> {
+    let (_, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    bundled_review_page(&state, shell, id, None).await
+}
+
+#[derive(Deserialize)]
+pub struct ApproveBundledForm {
+    /// The bundled package's SHA-256 the review showed.
+    #[serde(default)]
+    package: String,
+    /// What was installed when the review was shown (required here).
+    #[serde(default)]
+    reviewed: String,
+}
+
+/// `POST /admin/plugin-bundled/{id}/approve`
+pub async fn approve_bundled(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<String>,
+    Form(form): Form<ApproveBundledForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    let result =
+        plugins::approve_bundled(&state, session.account, id, &form.package, form.reviewed).await;
+    match result {
+        Ok(id) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) if err.status() == StatusCode::NOT_FOUND => {
+            list_page(&state, shell, Some(err)).await
+        }
+        Err(err) => bundled_review_page(&state, shell, id, Some(err)).await,
     }
 }
 
@@ -739,7 +876,16 @@ struct PluginPage {
     installed: String,
     rollback: Option<RollbackView>,
     updates: UpdatesView,
+    /// It comes with Tether: its updates do too.
+    included: Option<IncludedView>,
     error: Option<String>,
+}
+
+/// An app that comes with Tether: the version this Tether carries.
+pub struct IncludedView {
+    pub version: String,
+    /// Newer than the one installed.
+    pub newer: bool,
 }
 
 /// Where an app's updates come from, and the last check.
@@ -804,6 +950,13 @@ async fn plugin_page(
         checks_on: crate::updates::enabled(&state.db).await?,
         github: state.plugins.github().is_some(),
     };
+    let included = state.plugins.bundled().get(id).map(|app| {
+        let version = app.package.manifest.plugin.version.clone();
+        IncludedView {
+            newer: newer(&version, &installed.version),
+            version,
+        }
+    });
     let rollback = plugins::rollback_plan(state, id)
         .await?
         .map(|plan| RollbackView {
@@ -970,7 +1123,7 @@ async fn plugin_page(
                 .cloned()
                 .collect(),
             access,
-            about: About::new(&package),
+            about: About::new(&package, installed.origin == db::Origin::Bundled),
             enabled: installed.enabled,
             status: label,
             variant,
@@ -989,6 +1142,7 @@ async fn plugin_page(
             installed: time(installed.installed_at),
             rollback,
             updates,
+            included,
             error: error.map(|e| e.message().to_owned()),
         },
     ))
