@@ -48,7 +48,7 @@ The four goals are fixed; anything that doesn't serve one of them waits until af
 
 - Charging money, hosted plans or a paid tier, ever.
 - A multi-tenant hosted service run by the project.
-- A central plugin registry in v1. Apps install straight from their GitHub repos (or, for app developers, an uploaded .zip). A curated catalog comes after 1.0 (milestone 4).
+- A central plugin registry in v1. Apps install straight from their GitHub repos, and the first-party apps come with Tether (for app developers, a development build also installs an uploaded .zip). A curated catalog comes after 1.0 (milestone 4).
 - Email of any kind: no email login, verification or notifications.
 - Wormhole mapping, killboards or market tools. These stay with existing specialized tools.
 - Importing data from SeAT or Alliance Auth beyond groups and role mappings.
@@ -73,7 +73,7 @@ Every requirement below is in v1; the phase column sets build order.
 | F12 | Discord account linking, state and group role sync, nickname template | 1 |
 | F13 | Fleet ping broadcasts to Discord channels with role targeting | 1 |
 | F14 | Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates | 1 |
-| F15 | Plugin install from a GitHub repo URL or an uploaded .zip package: fetch the latest release or read the upload, verify its signature (publisher key pinned on first install), show capabilities, admin approves, migrate, activate. The first-party apps come with every deployment instead (bundled into the image, unsigned since they are as trusted as the image, and reviewed and approved the same way; their ids are reserved) | 2 |
+| F15 | Plugin install from a GitHub repo URL or an uploaded .zip package (development builds only, for app developers: 2026-09-26): fetch the latest release or read the upload, verify its signature (publisher key pinned on first install), show capabilities, admin approves, migrate, activate. The first-party apps come with every deployment instead (bundled into the image, unsigned since they are as trusted as the image, and reviewed and approved the same way; their ids are reserved) | 2 |
 | F16 | Two kinds of plugin ESI scopes: data-source scopes linked once by characters their owners offer and an admin approves (such as a Station Manager for corp mining data), and user scopes, which join the Member state's required scopes (F11): registering characters with the state's scopes is the consent. Plugins read only Member characters registered with the scope. The Dashboard shows each character's granted scopes and which apps use them; there is no per-plugin opt-out. Guests grant no scopes | 2 |
 | F17 | Plugins get a private database schema, background jobs, schedules, and pages described declaratively and rendered by the host with the shared components | 2 |
 | F18 | Plugin update checks against GitHub releases; one-click upgrade with pre-migration snapshot and one-step rollback; updates must be signed by the pinned key | 2 |

@@ -67,8 +67,10 @@ jobs:
         run: cargo test -p tether-web --features dev-login,dev-docs
 
   # dev-login signs anyone in without SSO; dev-docs loads Scalar from a CDN;
-  # plugin-http-test sends plugins' HTTP to a local stand-in. Prove a
-  # release build refuses each of them.
+  # dev-upload installs apps from an uploaded .zip; plugin-http-test sends
+  # plugins' HTTP to a local stand-in. Prove a release build refuses each
+  # of them. (The Hurl tests also check the release image has no upload
+  # route.)
   dev-features-guard:
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +80,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Release builds with dev features must fail
         run: |
-          for feature in dev-login dev-docs plugin-http-test; do
+          for feature in dev-login dev-docs dev-upload plugin-http-test; do
             if cargo check --release -p tether-server --features "$feature" 2> guard.log; then
               echo "A release build with $feature compiled; it must not."
               exit 1

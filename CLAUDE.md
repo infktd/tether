@@ -108,7 +108,7 @@ cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features
 tools/bin/sqlx migrate run
 tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; commit .sqlx/
 cargo check --workspace
-cargo run -p tether-server --features dev   # /dev/login fixtures and Scalar at /docs (debug builds only)
+cargo run -p tether-server --features dev   # /dev/login fixtures, Scalar at /docs and installing apps from a .zip (debug builds only)
 cargo test --workspace
 cargo test -p tether-web --test it groups::   # the web tests are one binary (crates/web/tests/it); filter by module
 cargo clean   # safe any time; target/ grows with every feature set and toolchain, and a fresh test build is ~4 GB

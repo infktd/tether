@@ -6,6 +6,10 @@
 compile_error!("the dev-login feature must never be enabled in release builds");
 #[cfg(all(feature = "dev-docs", not(debug_assertions)))]
 compile_error!("the dev-docs feature must never be enabled in release builds");
+// dev-upload installs apps from an uploaded .zip: for app developers only.
+// Release builds install from GitHub and ship the first-party apps.
+#[cfg(all(feature = "dev-upload", not(debug_assertions)))]
+compile_error!("the dev-upload feature must never be enabled in release builds");
 // plugin-http-test sends every plugin HTTP request to a local stand-in
 // (tests only).
 #[cfg(all(feature = "plugin-http-test", not(debug_assertions)))]
@@ -317,13 +321,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/audit", get(pages::system::audit_log))
         // Uploads and keys live outside /admin/plugins/, so no plugin id
         // can collide with their routes.
-        .route(
-            "/admin/plugins",
-            get(pages::plugins::list).merge(
-                post(pages::plugins::upload)
-                    .layer(DefaultBodyLimit::max(pages::plugins::UPLOAD_BODY_LIMIT)),
-            ),
-        )
+        .route("/admin/plugins", admin_plugins_route())
         .route("/admin/plugin-github", post(pages::plugins::install_github))
         .route(
             "/admin/plugin-bundled/{id}",
@@ -577,6 +575,18 @@ pub fn router(state: AppState) -> Router {
             pages::headers::security_headers,
         ))
         .with_state(state)
+}
+
+/// The Apps page, and in a development build (`dev-upload`) installing
+/// from an uploaded .zip. A release build has no upload route at all.
+fn admin_plugins_route() -> axum::routing::MethodRouter<AppState> {
+    let route = get(pages::plugins::list);
+    #[cfg(feature = "dev-upload")]
+    let route = route.merge(
+        post(pages::plugins::upload)
+            .layer(DefaultBodyLimit::max(pages::plugins::UPLOAD_BODY_LIMIT)),
+    );
+    route
 }
 
 /// Liveness: the process is up and serving HTTP.

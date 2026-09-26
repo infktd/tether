@@ -75,7 +75,7 @@
   <section class="card data-card">
     <header><h2>Installed <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2></header>
     {% if plugins.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet. {% if github %}Install one from GitHub below.{% else %}Upload one below.{% endif %}</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet.{% if !bundled.is_empty() %} Install one that comes with Tether above.{% else if github %} Install one from GitHub above.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Installed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
@@ -94,10 +94,9 @@
     {% endif %}
   </section>
 
-
-
+  {% if upload_form %}
   <details class="card install-file"{% if !github %} open{% endif %}>
-    <summary>Install from a file <span class="text-muted-foreground font-normal">(for app developers)</span></summary>
+    <summary>Install from a file <span class="text-muted-foreground font-normal">(development build)</span></summary>
     <form method="post" action="/admin/plugins" enctype="multipart/form-data" hx-boost="false" class="grid gap-4 px-5 pb-5">
       <p class="text-sm text-muted-foreground">The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig), for a build that isn't published yet. Nothing is installed until you approve it on the next page. A newer version of an installed app upgrades it, after you review what changed.</p>
       <div class="grid gap-4 max-w-md">
@@ -113,6 +112,7 @@
       <div><button type="submit" class="btn" data-variant="{% if github %}outline{% else %}primary{% endif %}">Upload and check</button></div>
     </form>
   </details>
+  {% endif %}
 
   {% if !pins.is_empty() %}
   <section class="card data-card">

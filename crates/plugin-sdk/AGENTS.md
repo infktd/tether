@@ -135,6 +135,8 @@ Keep the rotation files in later packages or drop them; either works once instal
 
 Admins can install straight from a repository, and Tether looks there once a day for newer versions. Attach the package and its signature to a GitHub release as `<plugin id>-<version>.zip` and `<plugin id>-<version>.zip.minisig`, for example `nmu.mining-ledger-1.2.0.zip`. The version in the name must match `plugin.version`. Drafts and pre-releases are skipped. Tether reads the 30 newest releases and takes the highest version of your plugin that has both files, so one repository can publish several plugins. The admin then enters the plugin id when installing.
 
+To try a build before publishing it, run a development build of Tether (`cargo run -p tether-server --features dev`): its Apps page can also install a signed package from a file. Release builds install only from GitHub. A package under the id of an app that comes with Tether (such as `tether.moon-mining`) is always refused.
+
 An upgrade is reviewed like an install. The admin sees what the new version asks for beyond the old one: hosts, secrets, scopes, timers, filters and permissions. A version must keep every migration already applied unchanged, and keep `storage` once it has data. A permission you drop takes its grants with it; renaming one is a drop plus an add. Admins can roll back one version: your earlier package goes back, and if your new migrations ran, so does the data (from the snapshot taken before them).
 
 ## Who sees what

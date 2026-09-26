@@ -811,15 +811,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-# Refused before the body is read.
+# Installing from an uploaded .zip is for app developers (the dev-upload
+# feature): a release image has no upload route at all.
 POST {{base}}/admin/plugins
 Origin: {{base}}
 [MultipartFormData]
 package: not a package
 signature: not a signature
-HTTP 303
-[Asserts]
-header "Location" == "/login"
+HTTP 405
 
 POST {{base}}/admin/plugin-uploads/1/approve
 Origin: {{base}}

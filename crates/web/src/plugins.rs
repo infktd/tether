@@ -823,6 +823,9 @@ pub struct Source {
 
 /// An uploaded package, checked (signature, pinned key, component) and
 /// waiting for approval. Rejections are audited too, with the reason.
+/// Development builds only (`dev-upload`); GitHub installs go through
+/// [`upload_from`].
+#[cfg(feature = "dev-upload")]
 pub async fn upload(
     state: &crate::AppState,
     actor: AccountId,

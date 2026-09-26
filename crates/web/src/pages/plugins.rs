@@ -1,9 +1,11 @@
-//! Plugin admin pages (F15): installed plugins, the upload form, the
-//! approval screen, a plugin's page (enable, disable, uninstall) and
-//! re-pinning a publisher key.
+//! Plugin admin pages (F15): installed plugins, the apps that come with
+//! Tether, the approval screen, a plugin's page (enable, disable,
+//! uninstall) and re-pinning a publisher key. Installing from an uploaded
+//! .zip is for app developers: only in a development build (`dev-upload`).
 
 use askama::Template;
 use axum::Form;
+#[cfg(feature = "dev-upload")]
 use axum::extract::multipart::{Field, Multipart, MultipartRejection};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -24,10 +26,12 @@ use crate::plugins::{self, Status};
 
 /// Request bodies on the upload route: the largest package and signature,
 /// plus room for the multipart framing.
+#[cfg(feature = "dev-upload")]
 pub const UPLOAD_BODY_LIMIT: usize =
     package::MAX_PACKAGE_BYTES + package::MAX_SIGNATURE_BYTES + 16 * 1024;
 /// How long an upload's body may take to arrive: it holds the one upload
 /// slot meanwhile.
+#[cfg(feature = "dev-upload")]
 pub const UPLOAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 fn time(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -243,6 +247,8 @@ struct PluginsPage {
     max_mib: usize,
     /// Whether installing from GitHub is set up here.
     github: bool,
+    /// Whether this is a development build that installs from a file.
+    upload_form: bool,
     error: Option<String>,
 }
 
@@ -353,6 +359,7 @@ async fn list_page(
             upload_hours: plugins::UPLOAD_HOURS,
             max_mib: package::MAX_PACKAGE_BYTES / (1024 * 1024),
             github: state.plugins.github().is_some(),
+            upload_form: cfg!(feature = "dev-upload"),
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -367,6 +374,7 @@ pub async fn list(
     list_page(&state, shell, None).await
 }
 
+#[cfg(feature = "dev-upload")]
 async fn read_field(mut field: Field<'_>, cap: usize) -> Result<Vec<u8>, AppError> {
     let mut bytes = Vec::new();
     while let Some(chunk) = field.chunk().await.map_err(multipart_error)? {
@@ -381,6 +389,7 @@ async fn read_field(mut field: Field<'_>, cap: usize) -> Result<Vec<u8>, AppErro
     Ok(bytes)
 }
 
+#[cfg(feature = "dev-upload")]
 fn multipart_error(err: axum::extract::multipart::MultipartError) -> AppError {
     let status = err.status();
     if status == StatusCode::PAYLOAD_TOO_LARGE {
@@ -391,6 +400,7 @@ fn multipart_error(err: axum::extract::multipart::MultipartError) -> AppError {
 }
 
 /// The package and its signature, and nothing else.
+#[cfg(feature = "dev-upload")]
 async fn read_upload(mut multipart: Multipart) -> Result<(Vec<u8>, String), AppError> {
     let mut package = None;
     let mut signature = None;
@@ -425,7 +435,9 @@ async fn read_upload(mut multipart: Multipart) -> Result<(Vec<u8>, String), AppE
 }
 
 /// `POST /admin/plugins` (multipart: `package`, `signature`). The
-/// permission is checked before any of the body is read.
+/// permission is checked before any of the body is read. Development
+/// builds only (`dev-upload`).
+#[cfg(feature = "dev-upload")]
 pub async fn upload(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
