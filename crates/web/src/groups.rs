@@ -119,6 +119,26 @@ pub(crate) async fn require_grants(
     Ok(())
 }
 
+/// Taking people out of a group that grants a sensitive permission (itself
+/// or through a group it leads) takes it away, as revoking would (sudo
+/// mode): a stale session mustn't strip the other admins.
+pub(crate) async fn gate_sensitive_removal(
+    tx: &mut sqlx::PgConnection,
+    group: GroupId,
+) -> Result<(), AppError> {
+    let mut grants = permissions::of_group(&mut *tx, group).await?;
+    for led in groups::leads(&mut *tx, group).await? {
+        grants.extend(permissions::of_group(&mut *tx, led).await?);
+    }
+    if grants
+        .iter()
+        .any(|p| tether_core::permissions::is_sensitive(p))
+    {
+        crate::sudo::check(crate::sudo::Action::SensitivePermission)?;
+    }
+    Ok(())
+}
+
 // ---- the users' side -------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -548,6 +568,7 @@ async fn remove_in(
     if group.flags.restricted {
         restricted_owner(standing(&mut *tx, actor).await?.is_owner)?;
     }
+    gate_sensitive_removal(&mut *tx, group.id).await?;
     if !groups::remove_member(&mut *tx, group.id, member).await? {
         return Err(AppError::not_found("That account isn't in this group."));
     }
@@ -790,6 +811,7 @@ pub async fn delete(db: &PgPool, actor: AccountId, group: GroupId) -> Result<(),
     if found.flags.restricted {
         restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
+    gate_sensitive_removal(&mut tx, group).await?;
     groups::delete(&mut *tx, group).await?;
     audit::record(
         &mut *tx,

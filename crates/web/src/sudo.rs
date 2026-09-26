@@ -233,11 +233,27 @@ pub(crate) async fn layer(
         fresh: is_fresh(session.reauthenticated_at),
         required: Mutex::new(None),
     });
-    let api = request.uri().path().starts_with("/api/");
+    let path = request.uri().path().to_owned();
+    let api = path.starts_with("/api/");
     let htmx = is_htmx(request.headers());
     let from = came_from(state, request.headers());
     let response = SCOPE.scope(scope.clone(), next.run(request)).await;
     let required = scope.required.lock().ok().and_then(|r| *r);
+    if let Some(action) = required {
+        // In the audit log, where an owner looks: a stale (perhaps stolen)
+        // session trying a gated action.
+        let recorded = tether_db::audit::record(
+            &state.db,
+            tether_db::audit::Actor::Account(session.account),
+            "session.sudo_required",
+            None,
+            serde_json::json!({ "action": action.key(), "path": path }),
+        )
+        .await;
+        if let Err(e) = recorded {
+            tracing::error!(error = %e, "recording a refused sensitive action");
+        }
+    }
     match required {
         Some(action) if !api => {
             let url = format!(

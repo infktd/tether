@@ -130,6 +130,14 @@ pub async fn add(
     let mine = tether_db::permissions::effective_in(&mut tx, actor).await?;
     for account in &covered {
         let theirs = tether_db::permissions::effective_in(&mut tx, *account).await?;
+        // Blacklisting holds nothing, as deactivating: stripping someone
+        // with sensitive powers needs a recent login too (sudo mode).
+        if theirs
+            .iter()
+            .any(|p| tether_core::permissions::is_sensitive(p))
+        {
+            crate::sudo::check(crate::sudo::Action::AccountDeactivate)?;
+        }
         if let Some(missing) = theirs.iter().find(|p| !mine.contains(*p)) {
             return Err(AppError::new(
                 axum::http::StatusCode::FORBIDDEN,

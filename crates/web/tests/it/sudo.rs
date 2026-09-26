@@ -397,6 +397,23 @@ async fn owner_only_actions_are_gated(db: PgPool) {
         res.location(),
         "/reauthenticate?action=app_uninstall&return_to=%2Fadmin%2Fplugins%2Fexample.hello"
     );
+
+    // Apps included with Tether: approving one installs it like any other
+    // (checked before anything else about the app).
+    let res = send(
+        &h.app,
+        post_from(
+            "/admin/plugin-bundled/tether.moon-mining/approve",
+            "package=00&reviewed=none",
+            &owner,
+            "/admin/plugin-bundled/tether.moon-mining",
+        ),
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        "/reauthenticate?action=app_install&return_to=%2Fadmin%2Fplugin-bundled%2Ftether.moon-mining"
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -656,4 +673,67 @@ async fn groups_granting_sensitive_permissions_are_gated(db: PgPool) {
     )
     .await;
     assert!(res.status.is_success(), "{}", res.body);
+}
+
+/// Taking a sensitive permission away through a group (removing a member
+/// or deleting the group) is gated like revoking it, and every refusal is
+/// in the audit log.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn taking_sensitive_permissions_away_is_gated_too(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    let res = send(
+        &h.app,
+        post_json("/api/admin/groups", &owner, r#"{"name":"Admins"}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let group = serde_json::from_str::<serde_json::Value>(&res.body).unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    for (uri, body) in [
+        (
+            "/api/admin/permissions/grants".to_owned(),
+            format!(r#"{{"permission":"admin.users","group_id":{group}}}"#),
+        ),
+        (
+            format!("/api/admin/groups/{group}/members"),
+            format!(r#"{{"account_id":{pilot_account}}}"#),
+        ),
+    ] {
+        let res = send(&h.app, post_json(&uri, &owner, &body)).await;
+        assert!(res.status.is_success(), "{uri}: {}", res.body);
+    }
+    age(&h, &owner, 60).await;
+
+    let from = format!("/admin/groups/{group}");
+    for uri in [
+        format!("/admin/groups/{group}/members/{pilot_account}/remove"),
+        format!("/admin/groups/{group}/delete"),
+    ] {
+        let res = send(&h.app, post_from(&uri, "", &owner, &from)).await;
+        assert!(
+            res.location()
+                .starts_with("/reauthenticate?action=sensitive_permission"),
+            "{uri}: {}",
+            res.location()
+        );
+    }
+    // Nothing changed.
+    let members: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.group_members WHERE group_id = $1")
+            .bind(group)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(members, 1);
+    let refused: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.audit_log WHERE action = 'session.sudo_required'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(refused, 2);
 }

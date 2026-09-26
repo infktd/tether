@@ -1153,6 +1153,8 @@ pub async fn approve_bundled(
     sha256: &str,
     reviewed: String,
 ) -> Result<String, AppError> {
+    // Before detaching: the task runs outside the request's sudo scope.
+    crate::sudo::check(crate::sudo::Action::AppInstall)?;
     let (state, id, sha256) = (state.clone(), id.to_owned(), sha256.to_owned());
     detached(async move { approve_bundled_now(&state, actor, &id, &sha256, reviewed).await }).await
 }

@@ -482,11 +482,12 @@ pub async fn update(
 
 pub async fn delete(db_pool: &PgPool, actor: AccountId, id: i64) -> Result<(), AppError> {
     let mut tx = db_pool.begin().await?;
-    let groups: Vec<String> = db::groups_of(&mut *tx, id)
-        .await?
-        .into_iter()
-        .map(|(_, _, _, name)| name)
-        .collect();
+    let made = db::groups_of(&mut *tx, id).await?;
+    // Deleting the config deletes its groups and whatever they grant.
+    for (group, _, _, _) in &made {
+        crate::groups::gate_sensitive_removal(&mut tx, *group).await?;
+    }
+    let groups: Vec<String> = made.into_iter().map(|(_, _, _, name)| name).collect();
     if !db::delete(&mut tx, id).await? {
         return Err(AppError::not_found("No such Auto Groups config."));
     }
