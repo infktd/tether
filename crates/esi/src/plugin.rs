@@ -80,6 +80,24 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
     Endpoint {
+        // Who holds which corporation roles (a Director's or Personnel
+        // Manager's view): Moon Mining finds Station Managers with it.
+        name: "corporation-roles",
+        scope: "esi-corporations.read_corporation_membership.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // A moon's name and system (public data, read with the data
+        // source's token like the rest: /universe/names doesn't do moons).
+        name: "universe-moon",
+        scope: MINING,
+        about: About::Corporation,
+        paged: false,
+        params: &["moon_id"],
+    },
+    Endpoint {
         name: "character-skills",
         scope: "esi-skills.read_skills.v1",
         about: About::Character,
@@ -280,6 +298,35 @@ impl Esi {
                     .get_corporations_corporation_id_structures()
                     .corporation_id(corporation)
             ),
+            "corporation-roles" => {
+                // Only who holds which roles, not grantable roles or where:
+                // enough for Moon Mining, less intel for any other plugin.
+                let response = self
+                    .call_full(
+                        priority,
+                        client
+                            .get_corporations_corporation_id_roles()
+                            .corporation_id(corporation)
+                            .send(),
+                    )
+                    .await?;
+                let pages = pages(response.headers());
+                let members: Vec<serde_json::Value> = response
+                    .into_inner()
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "character_id": m.character_id,
+                            "roles": m.roles,
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    body: serde_json::Value::Array(members),
+                    pages,
+                })
+            }
+            "universe-moon" => get!(client.get_universe_moons_moon_id().moon_id(id("moon_id")?)),
             "character-skills" => get!(
                 client
                     .get_characters_character_id_skills()

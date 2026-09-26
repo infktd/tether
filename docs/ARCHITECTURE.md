@@ -34,6 +34,8 @@ Plugins reach ESI, storage and Discord only through host functions, never direct
 
 Plugins are WebAssembly components installed at runtime from a GitHub repo URL or an uploaded .zip package, with no restart and no image rebuild. Each runs in its own Wasmtime instance and can only call host functions its manifest declares.
 
+First-party plugins (Alliance Auth's apps, starting with Moon Mining) live in `plugins/`, built and tested with the workspace and packaged like any other by `scripts/package-plugin.sh` (built, zipped, minisign-signed with the publisher's key). They get no powers a third-party plugin couldn't.
+
 **Package contents** (a .zip, published as a release asset on the plugin's GitHub repo or uploaded directly):
 
 - `plugin.toml`: identity, version, host API version, declared capabilities and permissions

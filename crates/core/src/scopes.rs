@@ -132,7 +132,7 @@ pub const ALL: &[ScopeInfo] = &[
     ),
     corporation(
         "esi-corporations.read_corporation_membership.v1",
-        "Read the corporation's member list",
+        "Read the corporation's member list and who holds which roles",
     ),
     corporation(
         "esi-corporations.read_divisions.v1",

@@ -1,0 +1,30 @@
+[package]
+name = "moon-mining"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Moon Mining for Tether (Alliance Auth's name): extractions, pop pings, fresh and old moons, mining totals, and an extraction planner for Station Managers."
+
+# CI builds and lints every crate tagged like this for its target.
+[package.metadata.tether]
+target = "wasm32-wasip2"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Same as the workspace lints minus `unsafe_code = "forbid"`: wit-bindgen's
+# generated ABI glue needs `unsafe`, and a crate can't partially override
+# workspace lints. Guest code is sandboxed by Wasmtime regardless.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tether-plugin-sdk.workspace = true

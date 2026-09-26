@@ -2,3 +2,6 @@
 /tools
 .env
 .DS_Store
+/dist
+# minisign secret keys never belong here
+*.key

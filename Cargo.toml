@@ -8,6 +8,7 @@ members = [
     "crates/plugins/test-guest-pages",
     "crates/plugins/test-guest-storage",
     "examples/hello-plugin",
+    "plugins/moon-mining",
 ]
 
 [workspace.package]

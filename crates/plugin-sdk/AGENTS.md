@@ -358,6 +358,8 @@ let names = esi::names(&[40161234, 30000142])?;
 | `corporation-mining-observers` | `esi-industry.read_corporation_mining.v1` | data source | yes | |
 | `corporation-mining-observer` | `esi-industry.read_corporation_mining.v1` | data source | yes | `observer_id` |
 | `corporation-structures` | `esi-corporations.read_structures.v1` | data source | yes | |
+| `corporation-roles` | `esi-corporations.read_corporation_membership.v1` | data source | no | |
+| `universe-moon` | `esi-industry.read_corporation_mining.v1` | data source | no | `moon_id` |
 | `character-skills` | `esi-skills.read_skills.v1` | character | no | |
 | `character-assets` | `esi-assets.read_assets.v1` | character | yes | |
 | `character-wallet` | `esi-wallet.read_character_wallet.v1` | character | no | |
@@ -368,7 +370,7 @@ let names = esi::names(&[40161234, 30000142])?;
 
 - The body is ESI's JSON, at most 4 MiB; `pages` says how many pages a paged endpoint has. At most 100 ESI calls per submit or job run, 20 per page render.
 - Errors: `NotAllowed` (endpoint or scope), `NotRegistered` (not a Member's character, or its token lacks the scope), `NotADataSource`, `Token` (the character must log in again), `Status(code)` from ESI, `Invalid`, `TooLarge`, `Unavailable`. Plan for `NotRegistered` and `Token`: people leave, and revoke tokens.
-- Corporation endpoints also need the character to hold the in-game role CCP requires (Station Manager for extractions and structures, Accountant for observers); without it ESI answers 403.
+- Corporation endpoints also need the character to hold the in-game role CCP requires (Station Manager for extractions and structures, Accountant for observers, Director or Personnel Manager for roles); without it ESI answers 403. `universe-moon` is public data, read through a data source only because `names` doesn't cover moons.
 - Every call is recorded in your plugin's access log, which admins see. An admin must also enable your scopes on Tether's EVE application.
 
 ## Discord

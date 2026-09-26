@@ -86,7 +86,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | App | Tether | Status |
 | --- | --- | --- |
 | Member Audit (My Characters, Character Sheet, Character Finder, Reports: User Compliance, Corporation Compliance, Skill Sets; Compliance Groups; sharing) | compliance, the Compliance Group and Register Character are core; the rest is the Member Audit plugin (F20) | partial / planned |
-| Moon Mining (Moons, Extractions, Reports, Add Corporation, surveys, ledgers) | Moon Tracker plugin (F21), plus a pop-time planner for Station Managers | planned; rename |
+| Moon Mining (Moons, Extractions, Reports, Add Corporation, surveys, ledgers) | Moon Mining plugin (`plugins/moon-mining`): extractions, pop pings, fresh moons for Members and old ones for Blue, mining totals by pilot and ore, and an extraction planner for Station Managers; corporations come from approved data sources (AA's Add Corporation) | done, except moon surveys (ore composition) and ISK values, which need prices |
 | Structures (fuel, notifications to Discord, timers) | none | not planned: NMU doesn't use it |
 | Fleet Pings | Pings: channel, target, message | partial: add fleet type, formup, comms, doctrine |
 | Secure Groups (Smart Groups, filters, grace) | the Compliance Group is one fixed filter | after v1 |

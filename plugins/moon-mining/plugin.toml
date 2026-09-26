@@ -1,0 +1,64 @@
+# Moon Mining, a first-party Tether plugin. `scripts/package-plugin.sh`
+# builds, zips and signs it, putting the publisher's key in below.
+[plugin]
+id = "tether.moon-mining"
+name = "Moon Mining"
+version = "0.1.0"
+host_api = "1"
+description = "Moon extractions and pops, fresh moons for Members and old ones for Blue, mining totals, and an extraction planner for Station Managers."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+discord = ["send_message"]
+
+[capabilities.esi]
+# From the corporation of each approved data-source character: a Station
+# Manager (extractions, structures), an Accountant (mining observers) and
+# a Director or Personnel Manager (who holds Station Manager, for the
+# planner).
+data_source = [
+    "esi-industry.read_corporation_mining.v1",
+    "esi-corporations.read_structures.v1",
+    "esi-corporations.read_corporation_membership.v1",
+]
+
+[[capabilities.schedules]]
+name = "sync"
+every = "30m"
+
+[[capabilities.schedules]]
+name = "ledger"
+every = "6h"
+
+[[capabilities.schedules]]
+name = "roles"
+every = "1d"
+
+[permissions]
+# Grant Member both view and old (old opens the main page); Blue only old.
+view = "See fresh moons, extractions, mining totals and (for Station Managers) the planner"
+old = "Open Moon Mining and see the old-moon list"
+manage = "Change Moon Mining settings"
+
+[[pages]]
+path = ""
+permission = "old"
+
+[[pages]]
+path = "totals"
+permission = "view"
+
+[[pages]]
+path = "planner"
+permission = "view"
+
+[[pages]]
+path = "settings"
+permission = "manage"
+
+[[navigation]]
+label = "Moon Mining"
+path = ""
