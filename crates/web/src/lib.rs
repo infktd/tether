@@ -81,7 +81,6 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
         .route("/dashboard", get(pages::profile))
-        .route("/dashboard/system", get(pages::system::dashboard_panel))
         .route(
             "/dashboard/access-tokens",
             get(pages::access_tokens::index).post(pages::access_tokens::create),
@@ -279,6 +278,7 @@ pub fn router(state: AppState) -> Router {
             post(pages::pings::unrestrict),
         )
         .route("/admin/system", get(pages::system::system))
+        .route("/admin/system/summary", get(pages::system::summary))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route("/admin/system/theme", post(pages::system::set_theme))
         .route(

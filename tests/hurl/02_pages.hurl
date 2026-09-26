@@ -567,7 +567,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/dashboard/system
+GET {{base}}/admin/system/summary
 HTTP 303
 [Asserts]
 header "Location" == "/login"

@@ -63,6 +63,9 @@ pub(crate) fn state_name(states: &[StateOption], id: tether_core::states::StateI
 struct OverviewPage {
     shell: Shell,
     groups: Vec<crate::admin_nav::Listed>,
+    /// `admin.system` holders get the System panel first (loaded after
+    /// the page).
+    system_panel: bool,
 }
 
 /// `GET /admin`: Administration's overview, every admin page this account
@@ -80,6 +83,7 @@ pub async fn index(
     Ok(render(
         StatusCode::OK,
         &OverviewPage {
+            system_panel: loaded.shell.nav.system,
             shell: loaded.shell,
             groups,
         },

@@ -36,12 +36,6 @@
   </div>
 </section>
 
-{% if system_panel %}
-<div hx-get="/dashboard/system" hx-trigger="load" hx-swap="outerHTML">
-  <section class="card"><p class="text-sm text-muted-foreground">Loading system status…</p></section>
-</div>
-{% endif %}
-
 {% include "profile_characters.html" %}
 
 {% for w in widgets %}

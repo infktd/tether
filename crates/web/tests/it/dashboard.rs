@@ -46,18 +46,25 @@ async fn install(h: &Harness, owner: &str) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn system_admins_get_the_admin_panels(db: PgPool) {
+async fn system_admins_get_the_system_panel_on_administration(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
     let pilot = log_in_as(&h, MITTANI, None).await;
 
-    let dashboard = page(&h, "/dashboard", &owner).await;
+    // At the top of Administration's overview, not on the Dashboard, which
+    // is for pilots.
+    let overview = page(&h, "/admin", &owner).await.body;
+    let panel_at = overview
+        .find(r#"hx-get="/admin/system/summary""#)
+        .expect("the System panel");
     assert!(
-        dashboard.body.contains(r#"hx-get="/dashboard/system""#),
-        "{}",
-        dashboard.body
+        panel_at < overview.find("admin-tile").unwrap(),
+        "{overview}"
     );
-    let panel = page(&h, "/dashboard/system", &owner).await;
+    let dashboard = page(&h, "/dashboard", &owner).await.body;
+    assert!(!dashboard.contains("/system"), "{dashboard}");
+    assert!(!dashboard.contains("Task Queue"), "{dashboard}");
+    let panel = page(&h, "/admin/system/summary", &owner).await;
     assert_eq!(panel.status, StatusCode::OK, "{}", panel.body);
     assert!(
         panel.body.contains(env!("CARGO_PKG_VERSION")),
@@ -68,14 +75,12 @@ async fn system_admins_get_the_admin_panels(db: PgPool) {
     assert!(panel.body.contains("ESI"), "{}", panel.body);
     assert!(!panel.body.contains("<html"), "a fragment");
 
-    assert!(
-        !page(&h, "/dashboard", &pilot)
-            .await
-            .body
-            .contains("/dashboard/system")
+    assert_eq!(
+        page(&h, "/dashboard/system", &owner).await.status,
+        StatusCode::NOT_FOUND
     );
     assert_eq!(
-        page(&h, "/dashboard/system", &pilot).await.status,
+        page(&h, "/admin/system/summary", &pilot).await.status,
         StatusCode::FORBIDDEN
     );
 }

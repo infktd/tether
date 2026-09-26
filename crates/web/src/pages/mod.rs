@@ -402,8 +402,6 @@ struct ProfilePage {
     groups: Vec<String>,
     permissions: Vec<String>,
     corp_sources: Vec<compliance::OwnSource>,
-    /// `admin.system` holders get the admin panels (loaded after the page).
-    system_panel: bool,
     widgets: Vec<DashboardWidget>,
     error: Option<String>,
 }
@@ -569,7 +567,6 @@ pub async fn profile(
             title: w.title,
         })
         .collect();
-    let system_panel = held.contains(tether_core::permissions::ADMIN_SYSTEM);
     let permissions = held.into_iter().collect();
     Ok(render(
         StatusCode::OK,
@@ -582,7 +579,6 @@ pub async fn profile(
             groups,
             permissions,
             corp_sources: compliance::own_sources(&state, session.account).await?,
-            system_panel,
             widgets,
             error: None,
         },

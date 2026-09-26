@@ -164,7 +164,7 @@ async fn system_page(
 }
 
 #[derive(Template)]
-#[template(path = "dashboard_system.html")]
+#[template(path = "admin_system_summary.html")]
 struct SystemPanel {
     esi_online: Option<i64>,
     esi_error: Option<String>,
@@ -175,10 +175,11 @@ struct SystemPanel {
     updates: updates::Status,
 }
 
-/// `GET /dashboard/system`: the Dashboard's admin panels (AA's Software
-/// Version, Task Queue and ESI status), a fragment loaded after the page
-/// so a slow ESI never holds the Dashboard up.
-pub async fn dashboard_panel(
+/// `GET /admin/system/summary`: the System panel at the top of
+/// Administration's overview (AA's Dashboard admin panels: Software
+/// Version, Task Queue and ESI status), a fragment loaded after the page so
+/// a slow ESI never holds the overview up.
+pub async fn summary(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {

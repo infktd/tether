@@ -8,6 +8,11 @@
     <h1 class="page-title">Administration</h1>
     <p class="text-muted-foreground mt-1">Everything you may change about this instance, by what it's about. You see only the pages you may open.</p>
   </div>
+  {% if system_panel %}
+  <div hx-get="/admin/system/summary" hx-trigger="load" hx-swap="outerHTML">
+    <section class="card"><p class="text-sm text-muted-foreground">Loading system status…</p></section>
+  </div>
+  {% endif %}
   {% for g in groups %}
   <section class="flex flex-col gap-3" aria-labelledby="group-{{ loop.index }}">
     <div>

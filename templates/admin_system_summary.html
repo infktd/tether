@@ -1,7 +1,10 @@
-{#- The Dashboard's admin panels: a fragment for /dashboard/system. -#}
+{#- Administration's System panel: a fragment for /admin/system/summary. -#}
 <section class="flex flex-col gap-3" aria-label="System">
-  <div class="flex items-center justify-between">
-    <h2 class="text-base font-semibold">System</h2>
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h2 class="text-[15px] font-semibold">System</h2>
+      <p class="text-sm text-muted-foreground">This server right now: its version, the job queue and ESI.</p>
+    </div>
     <a class="text-sm underline underline-offset-4" href="/admin/system">Details</a>
   </div>
   <div class="grid grid-cols-4 gap-4">
