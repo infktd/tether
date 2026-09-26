@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.hr-applications"
 name = "HR Applications"
-version = "0.1.0"
+version = "0.2.0"
 host_api = "1"
 description = "Application forms per corporation: pilots apply, recruiters review with comments and approve or reject, applicants follow their status."
 

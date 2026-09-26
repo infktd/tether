@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "fleet-activity-tracking"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde_json",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "hr-applications"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde_json",
@@ -2054,7 +2054,7 @@ dependencies = [
 
 [[package]]
 name = "member-audit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2102,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "moon-mining"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "ship-replacement"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde_json",
@@ -3532,7 +3532,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "structure-timers"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "tether-plugin-sdk",
@@ -3540,7 +3540,7 @@ dependencies = [
 
 [[package]]
 name = "structures"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",

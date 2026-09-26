@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.ship-replacement"
 name = "Ship Replacement"
-version = "0.1.0"
+version = "0.2.0"
 host_api = "1"
 description = "SRP fleets: pilots request SRP for their losses by killmail link, reviewers approve, reject or adjust payouts, with totals per fleet."
 

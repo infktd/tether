@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.moon-mining"
 name = "Moon Mining"
-version = "0.1.0"
+version = "0.2.0"
 host_api = "1"
 description = "Moon extractions and pops, fresh moons for Members and old ones for Blue, mining totals, and an extraction planner for Station Managers."
 

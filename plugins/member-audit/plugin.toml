@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.member-audit"
 name = "Member Audit"
-version = "0.1.0"
+version = "0.2.0"
 host_api = "1"
 description = "Every member character's skills, queue, assets, wallet, clones and location; Character Finder and Skill Sets for officers."
 
