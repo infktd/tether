@@ -261,9 +261,110 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
     run_jobs(&h).await;
 
     let officers = page(&h, "/compliance", &owner).await.body;
-    assert!(officers.contains("2 never registered"), "{officers}");
-    assert!(officers.contains("Character 90000011"), "{officers}");
+    assert!(
+        officers.contains(&format!("/corpstats/{CHRIBBA_CORP}")),
+        "{officers}"
+    );
     assert!(!officers.contains("No member list yet"), "{officers}");
+    // Corporation Stats: AA's tabs.
+    let list = page(&h, "/corpstats", &owner).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+    let unregistered = page(
+        &h,
+        &format!("/corpstats/{CHRIBBA_CORP}?tab=unregistered"),
+        &owner,
+    )
+    .await
+    .body;
+    assert!(
+        unregistered.contains("Character 90000011"),
+        "{unregistered}"
+    );
+    // Chribba registered: not in the table (the sidebar names the viewer).
+    assert!(
+        !unregistered.contains(r#"<span class="font-medium">Chribba</span>"#),
+        "{unregistered}"
+    );
+    let mains = page(&h, &format!("/corpstats/{CHRIBBA_CORP}?tab=mains"), &owner)
+        .await
+        .body;
+    assert!(mains.contains("Chribba"), "{mains}");
+    let found = page(&h, "/corpstats?q=chrib", &owner).await.body;
+    assert!(
+        found.contains("Search results") && found.contains("Chribba"),
+        "{found}"
+    );
+    // Update Now queues one refresh of that corporation.
+    let res = send(
+        &h.app,
+        form(&format!("/corpstats/{CHRIBBA_CORP}/update"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let again = send(
+        &h.app,
+        form(&format!("/corpstats/{CHRIBBA_CORP}/update"), "", &owner),
+    )
+    .await;
+    assert!(again.body.contains("already waiting"), "{}", again.body);
+    // Without a Corporation Stats permission: forbidden; with only
+    // view_corp for another corporation: not listed.
+    assert_eq!(
+        page(&h, "/corpstats", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ('corpstats.view_corp_corpstats', $1)")
+        .bind(GUEST_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let theirs = page(&h, "/corpstats", &pilot).await;
+    assert_eq!(theirs.status, StatusCode::OK, "{}", theirs.body);
+    assert!(
+        !theirs.body.contains(&format!("/corpstats/{CHRIBBA_CORP}")),
+        "{}",
+        theirs.body
+    );
+    assert_eq!(
+        page(&h, &format!("/corpstats/{CHRIBBA_CORP}"), &pilot)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(
+            &h.app,
+            form(&format!("/corpstats/{CHRIBBA_CORP}/update"), "", &pilot)
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+    // Seeing a corporation isn't enough to refresh it (AA: officers or the
+    // source's owner).
+    sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ('corpstats.view_state_corpstats', $1)")
+        .bind(GUEST_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO core.state_entities (state_id, entity_id, entity_kind, name) VALUES ($1, $2, 'corporation', 'x')")
+        .bind(GUEST_STATE)
+        .bind(CHRIBBA_CORP)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        page(&h, &format!("/corpstats/{CHRIBBA_CORP}"), &pilot)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let refused = send(
+        &h.app,
+        form(&format!("/corpstats/{CHRIBBA_CORP}/update"), "", &pilot),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
     let lists: i64 = sqlx::query_scalar("SELECT members::bigint FROM core.corp_member_lists")
         .fetch_one(&h.db)
         .await

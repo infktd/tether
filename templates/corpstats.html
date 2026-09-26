@@ -1,0 +1,61 @@
+{% extends "layout.html" %}
+{% block title %}Corporation Stats{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Corporation Stats</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title">Corporation Stats</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Corporations whose member list a member shared (Corp Stats sources, approved on the Compliance page). Refreshed daily, or with Update Now.</p>
+  </div>
+
+  <form method="get" action="/corpstats" class="flex gap-2 max-w-xl" role="search">
+    <label class="sr-only" for="q">Search members</label>
+    <input class="input" type="search" id="q" name="q" value="{{ query }}" placeholder="Search characters and mains (3 letters or more)" minlength="3" maxlength="100">
+    <button type="submit" class="btn" data-variant="outline">Search</button>
+  </form>
+
+  {% if !query.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Search results</h2></header>
+    {% if found.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Nobody matches.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Main</th></tr></thead>
+      <tbody>
+        {% for f in found %}
+        <tr>
+          <td class="font-medium">{% if let Some(n) = f.name %}{{ n }}{% else %}Character {{ f.character_id }}{% endif %}</td>
+          <td><a href="/corpstats/{{ f.corporation_id }}">{% if let Some(c) = f.corporation %}{{ c }}{% else %}Corporation {{ f.corporation_id }}{% endif %}</a></td>
+          <td>{% if let Some(m) = f.main_name %}{{ m }}{% else %}<span class="state-badge" data-state="guest">Unregistered</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="card data-card">
+    {% if corporations.is_empty() %}
+    <p class="px-5 py-5 text-sm text-muted-foreground">No corporations you may see have a member list yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Corporation</th><th scope="col">Members</th><th scope="col">Mains</th><th scope="col">Registered</th><th scope="col">Unregistered</th><th scope="col">Updated</th></tr></thead>
+      <tbody>
+        {% for c in corporations %}
+        <tr>
+          <td><a class="font-medium" href="/corpstats/{{ c.id }}">{{ c.name }}</a></td>
+          <td class="num">{{ c.members }}</td>
+          <td class="num">{{ c.mains }}</td>
+          <td class="num">{{ c.registered }}</td>
+          <td class="num">{% if c.unregistered > 0 %}<span class="text-highlight">{{ c.unregistered }}</span>{% else %}0{% endif %}</td>
+          <td class="num text-muted-foreground">{{ c.fetched }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

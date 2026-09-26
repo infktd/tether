@@ -367,8 +367,18 @@ pub async fn approve_corp_source(
 // ---- jobs ------------------------------------------------------------------
 
 /// Fetches every covered corporation's member list with one of its
-/// approved sources, and names members who never registered.
+/// approved sources (or just `only`'s, for Update Now), and names members
+/// who never registered.
 pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<usize, JobError> {
+    corp_stats_for(db, esi, vault, None).await
+}
+
+pub async fn corp_stats_for(
+    db: &PgPool,
+    esi: &Esi,
+    vault: &TokenVault,
+    only: Option<i64>,
+) -> Result<usize, JobError> {
     let sources = db::corp_sources(db).await.map_err(JobError::retry)?;
     let names: BTreeMap<i64, String> = sources
         .iter()
@@ -376,7 +386,10 @@ pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<us
         .collect();
     let mut by_corporation: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
     for source in sources.iter().filter(|s| s.in_use()) {
-        if let Some(corporation) = source.approved_corporation {
+        if let Some(corporation) = source
+            .approved_corporation
+            .filter(|c| only.is_none_or(|o| o == *c))
+        {
             by_corporation
                 .entry(corporation)
                 .or_default()
@@ -464,10 +477,11 @@ pub fn register_jobs(
     esi: Esi,
     vault: std::sync::Arc<TokenVault>,
 ) {
-    registry.register(CORP_STATS_JOB, move |_job| {
+    registry.register(CORP_STATS_JOB, move |job| {
         let (db, esi, vault) = (db.clone(), esi.clone(), vault.clone());
         async move {
-            corp_stats(&db, &esi, &vault).await?;
+            let only = job.payload["corporation_id"].as_i64();
+            corp_stats_for(&db, &esi, &vault, only).await?;
             Ok(())
         }
     });

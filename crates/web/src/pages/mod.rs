@@ -5,6 +5,7 @@ pub mod admin;
 pub mod assets;
 pub mod autogroups;
 pub mod compliance;
+pub mod corpstats;
 pub mod discord;
 pub mod groups;
 pub mod headers;
@@ -172,6 +173,8 @@ pub struct AdminNav {
     pub setup: bool,
     /// Officers: who isn't compliant, and Corp Stats.
     pub compliance: bool,
+    /// Corporation Stats, for any of its views.
+    pub corpstats: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
 }
@@ -187,6 +190,7 @@ impl AdminNav {
             || self.audit
             || self.setup
             || self.compliance
+            || self.corpstats
     }
 }
 
@@ -348,6 +352,14 @@ pub(crate) async fn load(
         plugins: perms.contains(tether_core::permissions::ADMIN_PLUGINS),
         audit: perms.contains(tether_core::permissions::ADMIN_AUDIT),
         compliance: perms.contains(tether_core::permissions::COMPLIANCE_VIEW),
+        corpstats: [
+            tether_core::permissions::COMPLIANCE_VIEW,
+            tether_core::permissions::CORPSTATS_CORP,
+            tether_core::permissions::CORPSTATS_ALLIANCE,
+            tether_core::permissions::CORPSTATS_STATE,
+        ]
+        .iter()
+        .any(|p| perms.contains(*p)),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };

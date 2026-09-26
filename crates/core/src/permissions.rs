@@ -10,6 +10,12 @@ pub const ADMIN_SYSTEM: &str = "admin.system";
 pub const ADMIN_PLUGINS: &str = "admin.plugins";
 pub const FLEET_PING: &str = "fleet.ping";
 pub const COMPLIANCE_VIEW: &str = "compliance.view";
+/// AA's Corporation Stats views: the main's own corporation, its
+/// alliance's corporations, or the corporations the main's state covers.
+/// (`compliance.view` sees every corporation.)
+pub const CORPSTATS_CORP: &str = "corpstats.view_corp_corpstats";
+pub const CORPSTATS_ALLIANCE: &str = "corpstats.view_alliance_corpstats";
+pub const CORPSTATS_STATE: &str = "corpstats.view_state_corpstats";
 pub const ADMIN_USERS: &str = "admin.users";
 /// AA's `group_management`: process every non-internal group's requests,
 /// see and remove its members, read its audit log.
@@ -31,6 +37,18 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     ),
     (REQUEST_GROUPS, "Can request non-public groups"),
     (DISCORD_ACCESS, "Can access the Discord service"),
+    (
+        CORPSTATS_CORP,
+        "Corporation Stats for your main's corporation: its members, mains and who never registered",
+    ),
+    (
+        CORPSTATS_ALLIANCE,
+        "Corporation Stats for every corporation in your main's alliance",
+    ),
+    (
+        CORPSTATS_STATE,
+        "Corporation Stats for every corporation your state covers",
+    ),
     (
         ADMIN_PERMISSIONS,
         "Grant and revoke permissions (effectively full admin: holders can grant themselves anything)",
@@ -78,6 +96,8 @@ pub fn is_sensitive(permission: &str) -> bool {
         || permission == FLEET_PING
         || permission == COMPLIANCE_VIEW
         || permission == GROUP_MANAGEMENT
+        // Member lists are intel.
+        || permission.starts_with("corpstats.")
 }
 
 #[cfg(test)]

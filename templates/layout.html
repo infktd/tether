@@ -92,6 +92,11 @@
           {% call icons::icon("check") %}{% endcall %} Compliance Report
         </a>
         {% endif %}
+        {% if shell.nav.corpstats %}
+        <a href="/corpstats" class="nav-item"{% if shell.active == "corpstats" %} aria-current="page"{% endif %}>
+          {% call icons::icon("activity") %}{% endcall %} Corporation Stats
+        </a>
+        {% endif %}
         {% if shell.nav.audit %}
         <a href="/admin/audit" class="nav-item"{% if shell.active == "audit" %} aria-current="page"{% endif %}>
           {% call icons::icon("scroll") %}{% endcall %} Audit log

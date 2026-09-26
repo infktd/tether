@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"found!\" FROM core.corp_sources s\n        JOIN core.characters c ON c.id = s.character_id\n        WHERE s.corporation_id = $2 AND s.approved_at IS NOT NULL AND c.account_id = $1\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "found!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d9d1ab73ebfaa8c82ce791799b0dd7a54fa4f1d5711437d3ab6081feb4e0c1ee"
+}

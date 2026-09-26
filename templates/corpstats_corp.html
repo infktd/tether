@@ -1,0 +1,78 @@
+{% extends "layout.html" %}
+{% block title %}{{ corp.name }}{% endblock %}
+{% block breadcrumb %}<a href="/corpstats">Corporation Stats</a>&nbsp;/&nbsp;<span class="text-foreground">{{ corp.name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title">{{ corp.name }}</h1>
+      <p class="text-muted-foreground mt-1">Updated {{ corp.fetched }}</p>
+    </div>
+    {% if can_update %}<form method="post" action="/corpstats/{{ corp.id }}/update"><button type="submit" class="btn" data-variant="outline">Update Now</button></form>{% endif %}
+  </div>
+  {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
+
+  <div class="grid grid-cols-4 gap-4">
+    <div class="card stat"><div class="stat-label">Members</div><div class="stat-value num">{{ corp.members }}</div></div>
+    <div class="card stat"><div class="stat-label">Mains</div><div class="stat-value num">{{ corp.mains }}</div></div>
+    <div class="card stat"><div class="stat-label">Registered</div><div class="stat-value num">{{ corp.registered }}</div></div>
+    <div class="card stat"><div class="stat-label">Unregistered</div><div class="stat-value num">{{ corp.unregistered }}</div></div>
+  </div>
+
+  <nav class="tab-nav" aria-label="Corporation Stats">
+    <a href="/corpstats/{{ corp.id }}?tab=mains"{% if tab == "mains" %} aria-current="page"{% endif %}>Mains</a>
+    <a href="/corpstats/{{ corp.id }}?tab=members"{% if tab == "members" %} aria-current="page"{% endif %}>Members</a>
+    <a href="/corpstats/{{ corp.id }}?tab=unregistered"{% if tab == "unregistered" %} aria-current="page"{% endif %}>Unregistered</a>
+  </nav>
+
+  <section class="card data-card">
+    {% if tab == "mains" %}
+    {% if mains.is_empty() %}
+    <p class="px-5 py-5 text-sm text-muted-foreground">Nobody in this corporation has registered yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Main</th><th scope="col">Main's corporation</th><th scope="col">Characters here</th></tr></thead>
+      <tbody>
+        {% for m in mains %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = m.main_name.as_str() %}{% let avatar_id = m.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ m.main_name }}</span>
+            </div>
+          </td>
+          <td>{% if let Some(c) = m.main_corporation %}{{ c }}{% endif %}</td>
+          <td>{% for c in m.characters %}{{ c }}{% if !loop.last %}, {% endif %}{% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% else %}
+    {% if members.is_empty() %}
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if tab == "unregistered" %}Everyone has registered.{% else %}No members listed.{% endif %}</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">Registered</th><th scope="col">Main</th></tr></thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = m.name.as_str() %}{% let avatar_id = m.id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ m.name }}</span>
+            </div>
+          </td>
+          <td>{% if m.registered %}<span class="state-badge" data-state="member">Yes</span>{% else %}<span class="state-badge" data-state="guest">No</span>{% endif %}</td>
+          <td>{{ m.main }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

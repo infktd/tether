@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH me AS (\n            SELECT c.corporation_id, c.alliance_id, a.state_id\n            FROM core.accounts a JOIN core.characters c ON c.id = a.main_character_id\n            WHERE a.id = $1\n        ),\n        -- A corporation's alliance, from any character we know in it.\n        lists AS (\n            SELECT l.*, (SELECT c.alliance_id FROM core.characters c\n                         JOIN core.corp_members cm\n                           ON cm.character_id = c.id AND cm.corporation_id = l.corporation_id\n                         WHERE c.alliance_id IS NOT NULL\n                         ORDER BY c.affiliation_checked_at DESC NULLS LAST\n                         LIMIT 1) AS alliance_id\n            FROM core.corp_member_lists l\n        )\n        SELECT l.corporation_id, n.name AS \"name?\", l.fetched_at, l.members,\n               (SELECT count(*) FROM core.corp_members m\n                JOIN core.characters c ON c.id = m.character_id\n                WHERE m.corporation_id = l.corporation_id) AS \"registered!\",\n               (SELECT count(DISTINCT c.account_id) FROM core.corp_members m\n                JOIN core.characters c ON c.id = m.character_id\n                WHERE m.corporation_id = l.corporation_id) AS \"mains!\"\n        FROM lists l\n        LEFT JOIN core.entity_names n ON n.id = l.corporation_id\n        WHERE $2\n           OR ($3 AND l.corporation_id = (SELECT corporation_id FROM me))\n           OR ($4 AND l.alliance_id IS NOT NULL AND l.alliance_id = (SELECT alliance_id FROM me))\n           OR ($5 AND EXISTS (\n                SELECT 1 FROM core.state_entities e\n                WHERE e.state_id = (SELECT state_id FROM me)\n                  AND ((e.entity_kind = 'corporation' AND e.entity_id = l.corporation_id)\n                    OR (e.entity_kind = 'alliance' AND e.entity_id = l.alliance_id))))\n        ORDER BY n.name NULLS LAST, l.corporation_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_member_lists",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "fetched_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.corp_member_lists",
+            "name": "fetched_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "members",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.corp_member_lists",
+            "name": "members"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "registered!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "mains!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "b2c3e10c7f26f14b524287aed5fe5a08ffc7e389257969a47f1f6f558df02f35"
+}

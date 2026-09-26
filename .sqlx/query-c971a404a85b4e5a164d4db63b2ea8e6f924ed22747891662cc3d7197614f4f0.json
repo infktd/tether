@@ -1,0 +1,72 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT m.corporation_id, cn.name AS \"corporation?\", m.character_id,\n               COALESCE(c.name, n.name) AS \"name?\", main.name AS \"main_name?\"\n        FROM core.corp_members m\n        LEFT JOIN core.characters c ON c.id = m.character_id\n        LEFT JOIN core.accounts a ON a.id = c.account_id\n        LEFT JOIN core.characters main ON main.id = a.main_character_id\n        LEFT JOIN core.entity_names n ON n.id = m.character_id\n        LEFT JOIN core.entity_names cn ON cn.id = m.corporation_id\n        WHERE m.corporation_id = ANY($1)\n          AND (lower(COALESCE(c.name, n.name, '')) LIKE $2 OR lower(COALESCE(main.name, '')) LIKE $2)\n        ORDER BY 4 NULLS LAST\n        LIMIT 200\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_members",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "corporation?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "character_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.corp_members",
+            "name": "character_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "main_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "c971a404a85b4e5a164d4db63b2ea8e6f924ed22747891662cc3d7197614f4f0"
+}

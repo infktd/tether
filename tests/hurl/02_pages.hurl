@@ -202,6 +202,22 @@ HTTP 200
 [Asserts]
 header "Content-Type" contains "javascript"
 
+GET {{base}}/corpstats
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/corpstats/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/corpstats/1/update
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/groups
 HTTP 303
 [Asserts]

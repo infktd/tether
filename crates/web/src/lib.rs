@@ -93,6 +93,9 @@ pub fn router(state: AppState) -> Router {
             "/notifications/{id}/delete",
             post(pages::notifications::delete),
         )
+        .route("/corpstats", get(pages::corpstats::index))
+        .route("/corpstats/{id}", get(pages::corpstats::show))
+        .route("/corpstats/{id}/update", post(pages::corpstats::update))
         .route("/groups", get(pages::groups::index))
         .route("/groups/{id}", get(pages::groups::direct))
         .route("/groups/{id}/join", post(pages::groups::join))

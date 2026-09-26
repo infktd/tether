@@ -26,7 +26,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Notifications | same | done |
 | Services, Services Management; "Can access the Discord service" | **Services** page; `discord.access_discord` | done |
 | Name format config, `{character_name}`, `{corp_ticker}` ... | **Name Formatter**, AA's fields | done |
-| Corporation Stats: Mains, Members, Unregistered, Update Now | Corp Stats, inside Compliance | Own page **Corporation Stats**, AA's tabs |
+| Corporation Stats: Mains, Members, Unregistered, Update Now | **Corporation Stats** | done |
 | Member Audit → Reports → User Compliance; Compliance Groups; Register Character | Compliance page, Compliant group, Register your characters | **Compliance Report**, **Compliance Group**, **Register Character** |
 | Auto Groups | **Auto Groups** (Admin) | done |
 | Fleet Pings (aa-fleetpings) | Pings | Rename to **Fleet Pings** |
@@ -73,7 +73,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | AA app | Tether | Status |
 | --- | --- | --- |
 | Auto Groups | Admin → Auto Groups: per-state configs, corporation and alliance groups, prefix, name or ticker, space replacement; groups are Internal and kept by Tether; a config's groups go with it | done; stricter than AA, it never takes over an existing group of the same name |
-| Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corp Stats: unregistered members per corporation, daily | partial: core |
+| Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corporation Stats: Mains, Members and Unregistered tabs, search, Update Now, AA's three view permissions (compliance.view sees all); sources offered by members and approved by admins | done |
 | Permissions Audit | Permissions page lists grants | missing: core ("who has this permission") |
 | Fleet Activity Tracking | none | planned: first-party plugin |
 | Fleet Operations (optimer) | Fleet Ops plugin (F22) | planned |
