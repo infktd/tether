@@ -62,6 +62,34 @@ pub struct NavEntry {
     pub label: String,
     /// A page path; `""` for the plugin's main page.
     pub path: String,
+    /// The sidebar section it goes in by default, one of [`NAV_SECTIONS`];
+    /// `apps` when left out. Admins can move it on the Menu page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+}
+
+/// The sidebar's default sections a `[[navigation]]` entry can name, in the
+/// order the sidebar shows them.
+pub const NAV_SECTIONS: &[&str] = &[
+    "account",
+    "fleet",
+    "industry",
+    "corporation",
+    "apps",
+    "admin",
+];
+
+/// Where a `[[navigation]]` entry goes when it names no section.
+pub const DEFAULT_NAV_SECTION: &str = "apps";
+
+impl NavEntry {
+    /// Its section: one of [`NAV_SECTIONS`] (checked when parsed).
+    pub fn section(&self) -> &'static str {
+        self.section
+            .as_deref()
+            .and_then(|s| NAV_SECTIONS.iter().copied().find(|known| *known == s))
+            .unwrap_or(DEFAULT_NAV_SECTION)
+    }
 }
 
 /// `[[widgets]]`: a Dashboard card showing one of the plugin's pages (its
@@ -370,6 +398,14 @@ impl Manifest {
         for entry in &self.navigation {
             check_text("a navigation label", &entry.label, 40, true)?;
             check_page_path("[[navigation]] path", &entry.path)?;
+            if let Some(section) = &entry.section
+                && !NAV_SECTIONS.contains(&section.as_str())
+            {
+                return Err(bad(format!(
+                    "[[navigation]] section must be one of {}",
+                    NAV_SECTIONS.join(", ")
+                )));
+            }
             if !nav_paths.insert(entry.path.as_str()) {
                 return Err(bad(format!(
                     "[[navigation]] path {:?} appears twice",
@@ -855,6 +891,8 @@ manage = "Manage the mining ledger"
             "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",
             "[[navigation]]\nlabel = \"A\"\npath = \"\"\n[[navigation]]\nlabel = \"B\"\npath = \"\"\n",
+            "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"mining\"\n",
+            "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"Fleet\"\n",
             "[[widgets]]\ntitle = \"\"\npath = \"\"\n",
             "[[widgets]]\ntitle = \"Ore\"\npath = \"../core\"\n",
             "[[widgets]]\ntitle = \"Ore\"\npath = \"\"\nsize = \"big\"\n",
@@ -867,6 +905,17 @@ manage = "Manage the mining ledger"
         ))
         .unwrap();
         assert_eq!(widgets.widgets[0].path, "ledger");
+    }
+
+    #[test]
+    fn navigation_goes_in_apps_unless_it_names_a_section() {
+        let m = Manifest::parse(&manifest(
+            "[[navigation]]\nlabel = \"Moons\"\npath = \"\"\n\n\
+             [[navigation]]\nlabel = \"Ledger\"\npath = \"ledger\"\nsection = \"industry\"\n",
+        ))
+        .unwrap();
+        assert_eq!(m.navigation[0].section(), "apps");
+        assert_eq!(m.navigation[1].section(), "industry");
     }
 
     #[test]

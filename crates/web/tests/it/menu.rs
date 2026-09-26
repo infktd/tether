@@ -111,8 +111,8 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
         sidebar(&states)
     );
 
-    // Moving: Leadership goes above Account.
-    for _ in 0..5 {
+    // Moving: Leadership goes above Account (past every default section).
+    for _ in 0..tether_web::menu::SECTIONS.len() {
         edit(
             &h,
             &owner,

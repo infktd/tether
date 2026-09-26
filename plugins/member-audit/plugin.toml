@@ -57,6 +57,7 @@ permission = "finder"
 [[navigation]]
 label = "Member Audit"
 path = ""
+section = "corporation"
 
 # aa-securegroups' Member Audit filters. Each character passes or not;
 # one passing character is enough for its account.

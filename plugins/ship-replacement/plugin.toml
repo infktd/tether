@@ -36,3 +36,4 @@ permission = "add_srpfleetmain"
 [[navigation]]
 label = "Ship Replacement"
 path = ""
+section = "fleet"

@@ -54,3 +54,4 @@ permission = "manage"
 [[navigation]]
 label = "Structures"
 path = ""
+section = "industry"

@@ -56,6 +56,7 @@ permission = "logs_view"
 [[navigation]]
 label = "Fleet Activity Tracking"
 path = ""
+section = "fleet"
 
 # aa-securegroups' FAT filter: at least N FATs in the last D days, added up
 # across an account's characters (Tether adds them; the app reports each

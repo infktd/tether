@@ -205,7 +205,7 @@ pub(crate) fn menu_items(
         .chain(
             plugin_nav
                 .iter()
-                .map(|l| crate::menu::plugin_item(&l.label, &l.href)),
+                .map(|l| crate::menu::plugin_item(&l.label, &l.href, l.section)),
         )
         .collect()
 }
@@ -213,6 +213,8 @@ pub(crate) fn menu_items(
 pub struct PluginNavLink {
     pub label: String,
     pub href: String,
+    /// Its default sidebar section.
+    pub section: &'static str,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -471,6 +473,7 @@ pub(crate) async fn load(
         .map(|item| PluginNavLink {
             label: item.label,
             href: item.href,
+            section: item.section,
         })
         .collect::<Vec<_>>();
     let menu =

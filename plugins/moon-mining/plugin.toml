@@ -62,3 +62,4 @@ permission = "manage"
 [[navigation]]
 label = "Moon Mining"
 path = ""
+section = "industry"

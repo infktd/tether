@@ -156,6 +156,7 @@ permission = "manage"
 [[navigation]]         # sidebar links, shown to whoever may open them
 label = "Mining"
 path = ""
+section = "industry"   # optional: account, fleet, industry, corporation, apps (the default) or admin
 
 [[widgets]]            # Dashboard cards (at most 3), shown to whoever may open their page
 title = "Next chunks"
@@ -163,6 +164,7 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
 ```
 
 - Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.
+- A `[[navigation]]` link goes in its `section` of the sidebar: `account`, `fleet`, `industry`, `corporation`, `apps` or `admin`. Leave it out for `apps`; any other name gets the package refused. It's only where the link starts out: admins can move, rename or hide it on the Menu page, and a section with nothing in it isn't shown.
 - A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
 - Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
 - Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.

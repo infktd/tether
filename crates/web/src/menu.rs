@@ -14,10 +14,14 @@ use tether_db::menu::{self as db, Entry, Kind};
 
 use crate::error::AppError;
 
-/// The default sections, in order.
+/// The default sections, in order. Apps name theirs in `[[navigation]]`
+/// (`tether_plugins::manifest::NAV_SECTIONS`, the same names); an empty
+/// section isn't shown.
 pub const SECTIONS: &[(&str, &str)] = &[
     ("account", "Account"),
     ("fleet", "Fleet"),
+    ("industry", "Industry"),
+    ("corporation", "Corporation"),
     ("apps", "Apps"),
     ("admin", "Admin"),
 ];
@@ -205,14 +209,20 @@ pub struct Available {
     pub default_hidden: bool,
 }
 
-/// An app's sidebar link as an item: keyed by its page.
-pub fn plugin_item(label: &str, href: &str) -> Available {
+/// An app's sidebar link as an item: keyed by its page. `section` is the
+/// default section its manifest names (Apps if it isn't one of
+/// [`SECTIONS`]).
+pub fn plugin_item(label: &str, href: &str, section: &str) -> Available {
+    let section = SECTIONS
+        .iter()
+        .find(|(name, _)| *name == section)
+        .map_or("apps", |(name, _)| name);
     Available {
         key: format!("plugin:{}", href.trim_start_matches("/plugins/")),
         label: label.to_owned(),
         href: href.to_owned(),
         icon: "package",
-        section: "apps",
+        section,
         active: "",
         badge: None,
         default_hidden: false,
@@ -332,8 +342,21 @@ pub fn build(entries: &[Entry], items: Vec<Available>) -> Vec<Section> {
             position: entry.position,
         });
     }
+    // A default section the saved menu doesn't have yet (one added in a
+    // newer Tether) goes right after the default section before it, so it
+    // doesn't land under Admin.
+    let saved: HashMap<&str, i32> = by_key
+        .iter()
+        .map(|(name, &i)| (*name, sections[i].position))
+        .collect();
     for (i, (name, label)) in SECTIONS.iter().enumerate() {
         if !by_key.contains_key(name) {
+            let offset = i32::try_from(i).unwrap_or(0);
+            let position = SECTIONS[..i]
+                .iter()
+                .rev()
+                .find_map(|(before, _)| saved.get(before))
+                .map_or(100_000 + offset * 10, |p| p + offset);
             by_key.insert(name, sections.len());
             sections.push(Section {
                 reference: format!("section:{name}"),
@@ -341,7 +364,7 @@ pub fn build(entries: &[Entry], items: Vec<Available>) -> Vec<Section> {
                 hidden: false,
                 custom: false,
                 nodes: Vec::new(),
-                position: 100_000 + i32::try_from(i).unwrap_or(0) * 10,
+                position,
             });
         }
     }
@@ -923,4 +946,76 @@ pub async fn edit(
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(sections: &[Section]) -> Vec<&str> {
+        sections.iter().map(|s| s.label.as_str()).collect()
+    }
+
+    fn section_entry(id: i64, name: &str, position: i32) -> Entry {
+        Entry {
+            id,
+            kind: Kind::Section,
+            key: Some(format!("section:{name}")),
+            label: None,
+            url: None,
+            new_tab: false,
+            parent_id: None,
+            position,
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn apps_go_in_the_section_they_name_and_empty_sections_hide() {
+        let items = vec![
+            plugin_item("Moon Mining", "/plugins/tether.moon-mining", "industry"),
+            plugin_item("Hello", "/plugins/example.hello", "apps"),
+            plugin_item("Odd", "/plugins/example.odd", "nowhere"),
+        ];
+        let all = build(&[], items);
+        assert_eq!(
+            labels(&all),
+            [
+                "Account",
+                "Fleet",
+                "Industry",
+                "Corporation",
+                "Apps",
+                "Admin"
+            ]
+        );
+        let shown = visible(all);
+        assert_eq!(labels(&shown), ["Industry", "Apps"]);
+        assert_eq!(shown[0].nodes[0].label, "Moon Mining");
+        let apps: Vec<&str> = shown[1].nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(apps, ["Hello", "Odd"]);
+    }
+
+    #[test]
+    fn a_new_default_section_follows_the_one_before_it_in_a_saved_menu() {
+        // Saved before Industry and Corporation existed, with Fleet moved
+        // below Apps.
+        let entries = [
+            section_entry(1, "account", 10),
+            section_entry(2, "apps", 20),
+            section_entry(3, "fleet", 30),
+            section_entry(4, "admin", 40),
+        ];
+        assert_eq!(
+            labels(&build(&entries, Vec::new())),
+            [
+                "Account",
+                "Apps",
+                "Fleet",
+                "Industry",
+                "Corporation",
+                "Admin"
+            ]
+        );
+    }
 }

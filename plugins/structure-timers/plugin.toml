@@ -38,3 +38,4 @@ permission = "timer_management"
 [[navigation]]
 label = "Structure Timers"
 path = ""
+section = "fleet"

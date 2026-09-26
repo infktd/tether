@@ -41,7 +41,9 @@ permission = "manage"
 [[navigation]]
 label = "Applications"
 path = ""
+section = "corporation"
 
 [[navigation]]
 label = "HR Application Management"
 path = "review"
+section = "corporation"

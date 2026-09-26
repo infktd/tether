@@ -193,6 +193,8 @@ pub struct NavItem {
     pub href: String,
     /// What opening it needs: a plugin permission, or `None` for admins.
     pub permission: Option<String>,
+    /// Its default sidebar section (`[[navigation]] section`).
+    pub section: &'static str,
 }
 
 /// The plugins running in this process.
@@ -339,6 +341,7 @@ impl Plugins {
                 r.manifest.navigation.iter().map(move |entry| NavItem {
                     href: page_href(&id, &entry.path),
                     permission: r.manifest.page_permission(&entry.path),
+                    section: entry.section(),
                     label: entry.label.clone(),
                     plugin_id: id.clone(),
                 })

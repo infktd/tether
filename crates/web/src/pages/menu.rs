@@ -26,7 +26,7 @@ fn catalogue(state: &AppState) -> Vec<Available> {
                 .plugins
                 .navigation()
                 .into_iter()
-                .map(|n| menu::plugin_item(&n.label, &n.href)),
+                .map(|n| menu::plugin_item(&n.label, &n.href, n.section)),
         )
         .collect()
 }
