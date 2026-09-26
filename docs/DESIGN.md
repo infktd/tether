@@ -161,10 +161,10 @@ Motion says something arrived or is on its way; it never decorates. Everything m
 ## Data display
 
 - **Relative times** for recent events ("1h 12m ago") with the absolute EVE time in a tooltip or sub-line.
-- **Countdowns** in Geist Mono, updated live from the server (server-sent events); the nearest one gets the accent color.
+- **Countdowns** in Geist Mono, updated live from the server (server-sent events); the nearest one gets the accent color. A countdown to an instant that is already known (a skill finishing, a timer) ticks in the browser instead, from the bundled `assets/live.js`, with the absolute EVE time in its tooltip: `2d 4h 13m` over a day, `4h 13m` over an hour, `13m 05s` under it. Once the instant passes it reads `done`.
 - **EVE time (UTC)** everywhere, labeled "EVE".
 - **ISK** abbreviated in tables (`1.24b`, `350.2m`), full value on hover or in detail views.
-- **EVE names** (systems, moons, structures, characters) exactly as ESI returns them. Character portraits and corp or alliance logos come from CCP's image server at 32px in tables and 36px in the sidebar, with initials as the fallback.
+- **EVE names** (systems, moons, structures, characters) exactly as ESI returns them. Character portraits and corp or alliance logos come from CCP's image server at 32px in tables and 36px in the sidebar (20px as an app's entity values, 64px in a profile), with initials as the fallback.
 
 **State badges** show an account's access state as a status badge: Member in the accent, Blue in info, Guest and admin-made states neutral. The label is always the state's name.
 
@@ -190,7 +190,15 @@ Admin settings must make sense without documentation open. Alliance Auth's setti
 
 ## Plugins
 
-Plugins never ship their own styles. They return a declarative page description (headers, stat rows, tables, cards, tabs, forms, badges) and the host renders it with these components, so every plugin looks native. Any exception needs a documented reason and still uses these tokens.
+Plugins never ship their own styles. They return a declarative page description (headers, stat rows, tables, cards, tabs, forms, badges, profiles, row actions, text to copy) and the host renders it with these components, so every plugin looks native. Any exception needs a documented reason and still uses these tokens.
+
+- **Page header**: the title, the one-line description under it, and on the right the page's own links (sub-pages such as "Skill Sets · Character Finder · Reports") as a segmented control like Tabs, the current page marked, then at most one primary button that opens a page ("Create timer"). Links to sub-pages live here, never in "More" cards at the bottom.
+- **Entities** (a character, corporation, alliance, faction, or an item or ship type) are their 20px picture from CCP's image server, `--radius-sm`, then the name at 14px: portraits for characters, logos for corporations, alliances and factions, icons for types (CCP's 32px icon). The host builds the image address from the kind and id; a plugin never supplies a URL. No id (0 or less) gets initials on `--muted`, as avatars do. In tables the picture sits before the name.
+- **Row actions**: buttons that post (Approve, Reject, Close) sit in a table's cell as small 32px buttons, right-aligned, several side by side: outline by default, outline with `--destructive` text for destructive ones, primary only for a region's one main action. A destructive or far-reaching one asks first: the browser's own popover, centred over a dimmed page, 360px wide, `--card` fill, 20px padding, with one sentence stating the consequence ("Its 4 members lose access"), then Cancel (outline) and the action, filled destructive or primary. No script; Escape or a click outside cancels.
+- **Text to copy** (a fitting in EFT format, a list): a card with its title on the left of the header and a small outline Copy button on the right; the text in Geist Mono at 13px, exactly as given (spaces and line breaks kept), on `--background` with a 1px border, `--radius-sm`, 12px padding, scrolling past 384px. The button reads "Copied" for 1.5s after copying; where the browser can't copy, it selects the text instead.
+- **Profile**: the top of a page about one character (or corporation). A card with the 64px portrait or logo on the left (`--radius`), then the name as an h2 at 20px/600 with an optional muted 13px subtitle, and on one line under it the corporation and alliance as 20px entities in `--foreground-soft`. Badges (neutral or status) follow the name. Under them, the facts: a grid of three columns (two below 1280px, four from 1536px), each a 12px muted label over its 14px value; numbers, ISK, times and countdowns in Geist Mono. It replaces a tall label/value card as a page's overview.
+- **Progress**: a 4px bar, `--muted` track, `--foreground-soft` fill, `--radius-sm`, full width of its cell, with an optional 12px muted label and the percentage in Geist Mono above it. A bar between two known instants (a skill in training) fills live in the browser. Neutral, never the accent; no animation between values (it moves as time does).
+- **Live pages**: a page that says it is still filling in (a first sync) reloads its content in place every few seconds (5 to 300) while it says so, and stops once it doesn't. The content swaps without the fade and without scrolling, so the page doesn't blink; a page with a form never reloads under someone typing, and an audited page never reloads at all.
 
 ## Don't
 
