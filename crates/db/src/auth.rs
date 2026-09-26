@@ -31,6 +31,10 @@ pub enum Purpose {
     DataSource(String),
     /// Offering a character's corporation member list (Corp Stats).
     CorpSource,
+    /// Change Main by logging in with the character (Alliance Auth's
+    /// Change Main): linked to the account like Add Character, then made
+    /// its main.
+    ChangeMain,
 }
 
 impl Purpose {
@@ -40,6 +44,7 @@ impl Purpose {
             Self::Register => ("register", None),
             Self::DataSource(plugin) => ("data_source", Some(plugin)),
             Self::CorpSource => ("corp_source", None),
+            Self::ChangeMain => ("change_main", None),
         }
     }
 
@@ -48,6 +53,7 @@ impl Purpose {
             ("register", _) => Self::Register,
             ("data_source", Some(plugin)) => Self::DataSource(plugin),
             ("corp_source", _) => Self::CorpSource,
+            ("change_main", _) => Self::ChangeMain,
             _ => Self::Login,
         }
     }

@@ -1477,7 +1477,8 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "account"
         ],
-        "summary": "`POST /api/me/main`: make one of your characters the main.",
+        "summary": "`POST /api/me/main`: Change Main to one of your characters.",
+        "description": "As Alliance Auth's: only with a working token (refreshed first if it has\nexpired, so a sale since the last ownership check counts now).",
         "operationId": "set_main",
         "requestBody": {
           "content": {
@@ -1494,7 +1495,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "description": "Main changed; state re-evaluated"
           },
           "404": {
-            "description": "Not one of your characters"
+            "description": "Not one of your characters, or not with a working token"
           }
         },
         "security": [

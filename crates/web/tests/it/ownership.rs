@@ -140,6 +140,111 @@ async fn a_sold_alt_is_caught_on_refresh(db: PgPool) {
     assert_eq!(again.checked, 0);
 }
 
+async fn change_main(h: &Harness, session: &str, character_id: i64) -> Res {
+    send(
+        &h.app,
+        post_json(
+            "/api/me/main",
+            session,
+            &format!(r#"{{"character_id":{character_id}}}"#),
+        ),
+    )
+    .await
+}
+
+/// Change Main through EVE SSO (AA's "add new token" on Change Main):
+/// logs in as `character` from the signed-in browser.
+async fn change_main_by_login(h: &Harness, character: &str, session: &str) -> Res {
+    let res = send(
+        &h.app,
+        axum::http::Request::post("/profile/main/login")
+            .header(axum::http::header::ORIGIN, SITE)
+            .header(axum::http::header::COOKIE, format!("{SESSION}={session}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let state = query_param(res.location(), "state").to_owned();
+    let browser = res.cookie_value(LOGIN);
+    send(
+        &h.app,
+        get(
+            &format!(
+                "/auth/callback?code=ok:{}&state={state}",
+                character.replace(' ', "%20")
+            ),
+            &[(LOGIN, browser.as_str()), (SESSION, session)],
+        ),
+    )
+    .await
+}
+
+async fn mains_set(db: &PgPool) -> Vec<serde_json::Value> {
+    sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'account.main_set' ORDER BY id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn change_main_moves_the_state_and_is_audited(db: PgPool) {
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = log_in_as(&h, MITTANI, Some(&owner)).await;
+    assert_eq!(state_of(&h, &owner).await, "Member");
+
+    // From the Dashboard (htmx): the page reloads, as the sidebar, banner
+    // and state follow the main.
+    let res = send(
+        &h.app,
+        axum::http::Request::post("/profile/main")
+            .header(axum::http::header::ORIGIN, SITE)
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .header(axum::http::header::COOKIE, format!("{SESSION}={owner}"))
+            .header("HX-Request", "true")
+            .body(axum::body::Body::from(format!("character_id={MITTANI_ID}")))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.headers["HX-Refresh"], "true");
+    assert_eq!(me(&h, &owner).await["main"]["id"], MITTANI_ID);
+    // The Mittani's corporation is an NPC one: Guest.
+    assert_eq!(state_of(&h, &owner).await, "Guest");
+    let audited = mains_set(&h.db).await;
+    let last = audited.last().unwrap();
+    assert_eq!(last["character_id"], MITTANI_ID);
+    assert_eq!(last["previous"], CHRIBBA_ID);
+    assert_eq!(last["how"], "change main");
+
+    // Back again through the API; asking for the main it already is is
+    // fine and changes nothing.
+    assert_eq!(
+        change_main(&h, &owner, CHRIBBA_ID).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(state_of(&h, &owner).await, "Member");
+    let count = mains_set(&h.db).await.len();
+    assert_eq!(
+        change_main(&h, &owner, CHRIBBA_ID).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(mains_set(&h.db).await.len(), count);
+
+    // Never someone else's character.
+    let other = log_in_as(&h, "1887431749:gigX", None).await;
+    let res = change_main(&h, &owner, 1887431749).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert!(res.body.contains("isn't on your account"), "{}", res.body);
+    assert_eq!(me(&h, &other).await["main"]["id"], 1887431749_i64);
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn change_main_needs_a_working_token(db: PgPool) {
     let h = member_harness(db).await;
@@ -150,17 +255,170 @@ async fn change_main_needs_a_working_token(db: PgPool) {
         .execute(&h.db)
         .await
         .unwrap();
+    let res = change_main(&h, &owner, MITTANI_ID).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(
+        res.body.contains("EVE access to The Mittani has ended"),
+        "{}",
+        res.body
+    );
+    assert_eq!(me(&h, &owner).await["main"]["id"], CHRIBBA_ID);
+    // The Dashboard offers a login with it instead of the direct button.
+    let dashboard = page(&h, "/dashboard", &owner).await.body;
+    assert!(dashboard.contains("Log in to Change Main"), "{dashboard}");
+    // Each attempt may call EVE SSO: limited with Token Management's
+    // refreshes (10 a minute per account).
+    for _ in 1..10 {
+        assert_eq!(
+            change_main(&h, &owner, MITTANI_ID).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        change_main(&h, &owner, MITTANI_ID).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+
+    // Logging in with it proves control again, and makes it the main.
+    let res = change_main_by_login(&h, MITTANI, &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let owner = res.cookie_value(SESSION);
+    let account = me(&h, &owner).await;
+    assert_eq!(account["main"]["id"], MITTANI_ID);
+    assert_eq!(account["characters"].as_array().unwrap().len(), 2);
+    assert_eq!(state_of(&h, &owner).await, "Guest");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn change_main_catches_a_sale_at_once(db: PgPool) {
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = log_in_as(&h, MITTANI, Some(&owner)).await;
+
+    // Sold since the last ownership check: the expired token is refreshed
+    // first, as AA's `require_valid`, and shows the new owner.
+    h.sso
+        .owner_hashes
+        .lock()
+        .unwrap()
+        .insert(MITTANI_ID, "someone-else".into());
+    let res = change_main(&h, &owner, MITTANI_ID).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(
+        res.body.contains("moved to another EVE account"),
+        "{}",
+        res.body
+    );
+    let account = me(&h, &owner).await;
+    assert_eq!(account["main"]["id"], CHRIBBA_ID);
+    assert_eq!(account["characters"].as_array().unwrap().len(), 1);
+    assert_eq!(ownership_lost(&h.db).await[0]["reason"], "sold");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn change_main_works_while_sso_is_down(db: PgPool) {
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = log_in_as(&h, MITTANI, Some(&owner)).await;
+    // The stored token state (kept by the ownership check) decides.
+    *h.sso.refresh_outcome.lock().unwrap() = RefreshOutcome::Unavailable;
+    assert_eq!(
+        change_main(&h, &owner, MITTANI_ID).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(me(&h, &owner).await["main"]["id"], MITTANI_ID);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn change_main_by_login_adds_or_moves_the_character(db: PgPool) {
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+
+    // A character new to Tether joins the account as its main.
+    let res = change_main_by_login(&h, MITTANI, &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let owner = res.cookie_value(SESSION);
+    let account = me(&h, &owner).await;
+    assert_eq!(account["main"]["id"], MITTANI_ID);
+    assert_eq!(account["characters"].as_array().unwrap().len(), 2);
+    assert_eq!(account["is_owner"], true);
+    assert_eq!(mains_set(&h.db).await.last().unwrap()["how"], "change main");
+
+    // One on another account moves here (as Add Character does, AA's
+    // token rule), and that account loses its main.
+    let other = log_in_as(&h, "1887431749:gigX", None).await;
+    let res = change_main_by_login(&h, "1887431749:gigX", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let owner = res.cookie_value(SESSION);
+    assert_eq!(me(&h, &owner).await["main"]["id"], 1887431749_i64);
+    let left = me(&h, &other).await;
+    assert!(left["main"].is_null(), "{left}");
+    assert_eq!(ownership_lost(&h.db).await[0]["reason"], "moved");
+
+    // Only from the session that started it.
+    let stranger = log_in_as(&h, "406944591:mynnna", None).await;
+    let started = send(
+        &h.app,
+        axum::http::Request::post("/profile/main/login")
+            .header(axum::http::header::ORIGIN, SITE)
+            .header(axum::http::header::COOKIE, format!("{SESSION}={owner}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let state = query_param(started.location(), "state").to_owned();
+    let browser = started.cookie_value(LOGIN);
     let res = send(
         &h.app,
-        post_json(
-            "/api/me/main",
-            &owner,
-            &format!(r#"{{"character_id":{MITTANI_ID}}}"#),
+        get(
+            &format!("/auth/callback?code=ok:{CHRIBBA}&state={state}"),
+            &[(LOGIN, browser.as_str()), (SESSION, stranger.as_str())],
         ),
     )
     .await;
-    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert_eq!(me(&h, &owner).await["main"]["id"], 1887431749_i64);
+
+    // Signed out: to the login page.
+    let res = send(
+        &h.app,
+        axum::http::Request::post("/profile/main/login")
+            .header(axum::http::header::ORIGIN, SITE)
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.location(), "/login");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_account_without_a_main_changes_main_to_an_alt(db: PgPool) {
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, MITTANI).await;
+    let owner = log_in_as(&h, CHRIBBA, Some(&owner)).await;
+    let account = me(&h, &owner).await["account_id"].as_i64().unwrap();
+    // Its main was lost (sold, say): Guest, and the banner points here.
+    sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE id = $1")
+        .bind(account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(account))
+        .await
+        .unwrap();
+    assert_eq!(state_of(&h, &owner).await, "Guest");
+    let dashboard = page(&h, "/dashboard", &owner).await.body;
+    assert!(
+        dashboard.contains("Your account has no main character"),
+        "{dashboard}"
+    );
+
+    assert_eq!(
+        change_main(&h, &owner, CHRIBBA_ID).await.status,
+        StatusCode::NO_CONTENT
+    );
     assert_eq!(me(&h, &owner).await["main"]["id"], CHRIBBA_ID);
+    assert_eq!(state_of(&h, &owner).await, "Member");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

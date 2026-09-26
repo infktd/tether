@@ -53,6 +53,104 @@ pub async fn after_lost(db: &PgPool, lost: &Lost) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// What Change Main to a character already on the account came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChangeMain {
+    /// It's the main now (or already was); the state was re-evaluated.
+    Done { name: String },
+    /// Not one of the account's characters.
+    NotOnAccount,
+    /// EVE revoked its token: logging in with it (Change Main through EVE
+    /// SSO) proves control again.
+    NoValidToken { name: String },
+    /// Its token showed another owner hash: sold. It left the account.
+    Sold { name: String },
+}
+
+impl ChangeMain {
+    /// Alliance Auth's messages, where it has one.
+    pub fn message(&self) -> String {
+        match self {
+            Self::Done { name } => format!("Changed main character to {name}."),
+            Self::NotOnAccount => "That character isn't on your account.".to_owned(),
+            Self::NoValidToken { name } => {
+                format!("EVE access to {name} has ended. Log in with it to make it your main.")
+            }
+            Self::Sold { name } => {
+                format!("{name} has moved to another EVE account, so it left yours.")
+            }
+        }
+    }
+}
+
+/// Change Main to one of the account's own characters, as Alliance Auth's:
+/// only with a working token, which (as AA's `require_valid`) is refreshed
+/// first if its access token has expired, so a sale or a revocation since
+/// the last ownership check counts now. If SSO can't be reached, the
+/// stored token state (kept by the 4-hourly check) decides. The state
+/// follows the new main. Rate limited with Token Management's refreshes:
+/// each may call EVE SSO from Tether's one client id.
+pub async fn change_main(
+    state: &crate::AppState,
+    account: accounts::AccountId,
+    character_id: i64,
+) -> Result<ChangeMain, crate::error::AppError> {
+    let db = &state.db;
+    let Some(current) = accounts::get(db, account).await? else {
+        return Ok(ChangeMain::NotOnAccount);
+    };
+    // Only the account's own characters' tokens are ever touched.
+    let Some(character) = current.characters.iter().find(|c| c.id == character_id) else {
+        return Ok(ChangeMain::NotOnAccount);
+    };
+    let name = character.name.clone();
+    if current.main.as_ref().is_some_and(|m| m.id == character_id) {
+        return Ok(ChangeMain::Done { name });
+    }
+    if let Err(wait) = state
+        .limits
+        .token_refresh
+        .check(account.0, std::time::Instant::now())
+    {
+        return Err(crate::error::AppError::too_many_requests(
+            wait.as_secs().max(1),
+        ));
+    }
+    match state.vault.access_token(character_id, &[]).await {
+        Ok(_) => {}
+        Err(VaultError::OwnerChanged) => {
+            if let Some(gone) = accounts::lose_ownership(db, character_id, LossCause::Sold).await? {
+                after_lost(db, &gone).await?;
+            }
+            return Ok(ChangeMain::Sold { name });
+        }
+        Err(VaultError::Revoked | VaultError::NoToken) => {
+            return Ok(ChangeMain::NoValidToken { name });
+        }
+        Err(err @ (VaultError::Unavailable(_) | VaultError::NotConfigured)) => {
+            tracing::warn!(character_id, error = %err, "change main: SSO unreachable; using the stored token state");
+        }
+        Err(err) => return Err(crate::error::AppError::internal(err)),
+    }
+    let changed = accounts::change_main(
+        db,
+        account,
+        character_id,
+        tether_db::audit::Actor::Account(account),
+    )
+    .await?;
+    Ok(match changed {
+        accounts::MainChange::Changed { name } => {
+            tracing::info!(account = account.0, character_id, "main changed");
+            crate::states::evaluate_account(db, account).await?;
+            ChangeMain::Done { name }
+        }
+        accounts::MainChange::Unchanged { name } => ChangeMain::Done { name },
+        accounts::MainChange::NotOnAccount => ChangeMain::NotOnAccount,
+        accounts::MainChange::NoValidToken { name } => ChangeMain::NoValidToken { name },
+    })
+}
+
 /// If more than this many tokens (or a tenth of those refreshed, whichever
 /// is more) come back revoked in one run, something is wrong with SSO or
 /// the app, not with the characters: nobody loses anything this run.

@@ -42,6 +42,13 @@ Origin: {{base}}
 character_id: 1
 HTTP 401
 
+# Change Main through EVE SSO needs a session too.
+POST {{base}}/profile/main/login
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # The wizard's form endpoints refuse without a setup session.
 POST {{base}}/setup/sso
 Origin: {{base}}

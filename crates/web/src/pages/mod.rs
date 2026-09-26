@@ -292,6 +292,9 @@ pub struct CharacterRow {
     pub is_main: bool,
     /// SSO revoked the character's token; logging in with it again fixes it.
     pub needs_login: bool,
+    /// It has a working token, so Change Main can pick it directly; the
+    /// others need a login with them first (as AA's token list).
+    pub can_be_main: bool,
     /// `registered` or `missing` when the state requires scopes; empty
     /// otherwise. Filled on the profile page only.
     pub status: &'static str,
@@ -468,6 +471,7 @@ pub(crate) async fn load(
             name: c.name.clone(),
             is_main: account.main.as_ref().is_some_and(|m| m.id == c.id),
             needs_login: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Revoked),
+            can_be_main: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Valid),
             status: "",
             scopes: Vec::new(),
         })
@@ -564,30 +568,62 @@ pub struct MainForm {
     character_id: i64,
 }
 
-/// `POST /profile/main`: htmx swaps in the characters card; without htmx,
-/// back to the profile.
+/// `POST /profile/main`: Change Main to a character already on the account
+/// (with a working token). On success htmx reloads the page (the sidebar,
+/// the no-main banner and the state follow the main); otherwise it swaps in
+/// the characters card with the reason. Without htmx, back to the Dashboard.
 pub async fn make_main(
     State(state): State<AppState>,
     session: CurrentSession,
     headers: HeaderMap,
     Form(form): Form<MainForm>,
 ) -> Result<Response, PageError> {
-    let changed = accounts::set_main(&state.db, session.account, form.character_id).await?;
-    if changed {
-        crate::states::evaluate_account(&state.db, session.account).await?;
-    }
+    let outcome = crate::ownership::change_main(&state, session.account, form.character_id).await?;
     if !is_htmx(&headers) {
         return Ok(Redirect::to("/dashboard").into_response());
     }
     let mut loaded = load(&state, &session, "profile").await?;
     annotate(&state, session.account, &mut loaded.characters).await?;
-    Ok(render(
+    let done = matches!(outcome, crate::ownership::ChangeMain::Done { .. });
+    let mut response = render(
         StatusCode::OK,
         &CharactersFragment {
             characters: loaded.characters,
-            error: (!changed).then(|| "That character isn't on your account.".to_owned()),
+            error: (!done).then(|| outcome.message()),
         },
-    ))
+    );
+    if done {
+        response
+            .headers_mut()
+            .insert("HX-Refresh", axum::http::HeaderValue::from_static("true"));
+    }
+    Ok(response)
+}
+
+/// `POST /profile/main/login`: Change Main by logging in with EVE SSO, as
+/// Alliance Auth's (its "add new token" on the Change Main page): the
+/// character joins the account as with Add Character (moving from another
+/// account if need be) and becomes the main. Asks for the same scopes as
+/// Add Character, so the login never narrows a grant.
+pub async fn change_main_login(
+    State(state): State<AppState>,
+    jar: axum_extra::extract::CookieJar,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    let required = crate::compliance::registration(&state.db, session.account)
+        .await?
+        .required;
+    let scopes = crate::compliance::ask_scopes(&state.db, session.account, required).await?;
+    Ok(crate::auth::start_login(
+        &state,
+        jar,
+        "/dashboard",
+        tether_db::auth::Purpose::ChangeMain,
+        &scopes,
+        Some(session.account),
+    )
+    .await?)
 }
 
 #[cfg(test)]

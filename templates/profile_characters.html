@@ -1,6 +1,11 @@
 {%- import "icons.html" as icons -%}
 <section class="card data-card" id="characters">
-  <header><h2>Characters</h2></header>
+  <header class="flex flex-wrap items-center justify-between gap-3">
+    <div><h2>Characters</h2><p>Change Main picks a character with working EVE access, or logs in with any character to make it your main.</p></div>
+    <form method="post" action="/profile/main/login" hx-boost="false">
+      <button type="submit" class="btn" data-variant="outline" data-size="sm">Change Main with EVE login</button>
+    </form>
+  </header>
   {% if let Some(error) = error %}<div class="alert mx-5" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}
   <table class="table">
     <thead>
@@ -36,10 +41,14 @@
         <td class="text-right">
           {% if c.is_main %}
           <span class="badge" data-variant="outline">{% call icons::icon("check") %}{% endcall %} Main</span>
-          {% else %}
+          {% else if c.can_be_main %}
           <form method="post" action="/profile/main" hx-post="/profile/main" hx-target="#characters" hx-swap="outerHTML">
             <input type="hidden" name="character_id" value="{{ c.id }}">
             <button type="submit" class="btn" data-variant="outline" data-size="sm">Change Main</button>
+          </form>
+          {% else %}
+          <form method="post" action="/profile/main/login" hx-boost="false">
+            <button type="submit" class="btn" data-variant="outline" data-size="sm" title="EVE access to {{ c.name }} has ended: log in with it to make it your main">Log in to Change Main</button>
           </form>
           {% endif %}
         </td>

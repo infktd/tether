@@ -715,30 +715,73 @@ pub async fn get(pool: &PgPool, account: AccountId) -> Result<Option<Account>, s
     }))
 }
 
-/// Makes one of the account's own characters its main. Returns false if the
-/// character isn't on this account.
-pub async fn set_main(
+/// What Change Main came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MainChange {
+    /// The character is the main now (audited).
+    Changed { name: String },
+    /// It already was.
+    Unchanged { name: String },
+    /// Not one of the account's characters (AA: "owned by a different
+    /// account").
+    NotOnAccount,
+    /// On the account, but without a working token: its owner hasn't
+    /// proven control since EVE revoked access (AA's `require_valid`).
+    NoValidToken { name: String },
+}
+
+/// Change Main, as Alliance Auth's: makes one of the account's own
+/// characters its main, only with a working token. Serialized with
+/// sign-ins and ownership changes, and audited in the same transaction.
+/// The caller re-evaluates the state (it follows the main).
+pub async fn change_main(
     pool: &PgPool,
     account: AccountId,
     character_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query!(
+    by: crate::audit::Actor,
+) -> Result<MainChange, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    lock(&mut tx).await?;
+    let Some(row) = sqlx::query!(
         r#"
-        UPDATE core.accounts SET main_character_id = $2
-        WHERE id = $1
-          AND EXISTS (SELECT 1 FROM core.characters WHERE id = $2 AND account_id = $1)
-          -- As AA, only to a character with a working token: still yours.
-          AND EXISTS (
-            SELECT 1 FROM core.character_tokens
-            WHERE character_id = $2 AND state = 'valid'
-          )
+        SELECT c.name, a.main_character_id,
+               EXISTS (
+                 SELECT 1 FROM core.character_tokens t
+                 WHERE t.character_id = c.id AND t.state = 'valid'
+               ) AS "valid!"
+        FROM core.characters c JOIN core.accounts a ON a.id = c.account_id
+        WHERE c.id = $1 AND c.account_id = $2
         "#,
-        account.0,
         character_id,
+        account.0,
     )
-    .execute(pool)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(MainChange::NotOnAccount);
+    };
+    if row.main_character_id == Some(character_id) {
+        return Ok(MainChange::Unchanged { name: row.name });
+    }
+    if !row.valid {
+        return Ok(MainChange::NoValidToken { name: row.name });
+    }
+    set_main_in(&mut tx, account, character_id).await?;
+    crate::audit::record(
+        &mut *tx,
+        by,
+        "account.main_set",
+        Some(&format!("account:{}", account.0)),
+        serde_json::json!({
+            "character_id": character_id,
+            "name": row.name,
+            "previous": row.main_character_id,
+            "how": "change main",
+        }),
+    )
     .await?;
-    Ok(result.rows_affected() == 1)
+    tx.commit().await?;
+    Ok(MainChange::Changed { name: row.name })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -915,31 +958,59 @@ mod tests {
         add(&pool, 2, "Alt", a).await;
         add(&pool, 4, "Tokenless", a).await;
         account(&pool, 3, "Stranger").await;
-        for id in [2, 3] {
+        for id in [1, 2, 3] {
             crate::tokens::upsert(&pool, id, b"sealed", &[])
                 .await
                 .unwrap();
         }
+        let change = |id| change_main(&pool, a, id, crate::audit::Actor::Account(a));
 
-        assert!(set_main(&pool, a, 2).await.unwrap());
+        assert_eq!(
+            change(2).await.unwrap(),
+            MainChange::Changed { name: "Alt".into() }
+        );
         assert_eq!(
             get(&pool, a).await.unwrap().unwrap().main.map(|m| m.id),
             Some(2)
         );
-        assert!(!set_main(&pool, a, 3).await.unwrap(), "someone else's");
-        assert!(!set_main(&pool, a, 4).await.unwrap(), "no token");
-        crate::tokens::mark_revoked(&pool, 2, "gone", None)
+        let audited: serde_json::Value = sqlx::query_scalar(
+            "SELECT details FROM core.audit_log WHERE action = 'account.main_set' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audited["character_id"], 2);
+        assert_eq!(audited["previous"], 1);
+        assert_eq!(
+            change(2).await.unwrap(),
+            MainChange::Unchanged { name: "Alt".into() }
+        );
+        assert_eq!(
+            change(3).await.unwrap(),
+            MainChange::NotOnAccount,
+            "someone else's"
+        );
+        assert_eq!(
+            change(4).await.unwrap(),
+            MainChange::NoValidToken {
+                name: "Tokenless".into()
+            }
+        );
+        crate::tokens::mark_revoked(&pool, 1, "gone", None)
             .await
             .unwrap();
-        add(&pool, 5, "Other", a).await;
-        crate::tokens::upsert(&pool, 5, b"sealed", &[])
-            .await
-            .unwrap();
-        crate::tokens::mark_revoked(&pool, 5, "gone", None)
-            .await
-            .unwrap();
-        assert!(!set_main(&pool, a, 5).await.unwrap(), "revoked token");
-        assert!(!set_main(&pool, a, 999).await.unwrap());
+        assert_eq!(
+            change(1).await.unwrap(),
+            MainChange::NoValidToken {
+                name: "Main".into()
+            },
+            "revoked token"
+        );
+        assert_eq!(change(999).await.unwrap(), MainChange::NotOnAccount);
+        assert_eq!(
+            get(&pool, a).await.unwrap().unwrap().main.map(|m| m.id),
+            Some(2)
+        );
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

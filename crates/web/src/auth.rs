@@ -247,6 +247,36 @@ pub async fn callback(
         db::Purpose::CorpSource => {
             crate::compliance::finish_corp_offer(&state, account, &identity).await?;
         }
+        db::Purpose::ChangeMain => {
+            // SSO just proved control, the character is on this account
+            // (linked above) and its token was stored: it's the main now.
+            // The state follows below, from fresh affiliations.
+            let changed = accounts::change_main(
+                &state.db,
+                account,
+                identity.character_id,
+                Actor::Account(account),
+            )
+            .await?;
+            match changed {
+                accounts::MainChange::Changed { .. } | accounts::MainChange::Unchanged { .. } => {
+                    tracing::info!(
+                        account = account.0,
+                        character_id = identity.character_id,
+                        "change main by login"
+                    );
+                }
+                // Only if the character left again in between, or EVE sent
+                // no refresh token: the main stays, and the Dashboard shows
+                // which one it is.
+                refused => tracing::warn!(
+                    account = account.0,
+                    character_id = identity.character_id,
+                    outcome = ?refused,
+                    "change main by login refused"
+                ),
+            }
+        }
         db::Purpose::Login | db::Purpose::Register => {}
     }
 

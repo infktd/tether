@@ -91,6 +91,7 @@ pub fn router(state: AppState) -> Router {
         // The old name (before AA's): kept so bookmarks still work.
         .route("/profile", get(pages::to_dashboard))
         .route("/profile/main", post(pages::make_main))
+        .route("/profile/main/login", post(pages::change_main_login))
         .route("/setup", get(pages::setup::page))
         .route("/setup/unlock", post(pages::setup::unlock))
         .route("/setup/sso", post(pages::setup::sso))

@@ -85,25 +85,20 @@ pub struct SetMain {
     pub character_id: i64,
 }
 
-/// `POST /api/me/main`: make one of your characters the main.
+/// `POST /api/me/main`: Change Main to one of your characters.
+///
+/// As Alliance Auth's: only with a working token (refreshed first if it has
+/// expired, so a sale since the last ownership check counts now).
 #[utoipa::path(post, path = "/api/me/main", tag = "account", security(("session" = [])), request_body = SetMain,
     responses((status = 204, description = "Main changed; state re-evaluated"),
-              (status = 404, description = "Not one of your characters")))]
+              (status = 404, description = "Not one of your characters, or not with a working token")))]
 pub async fn set_main(
     State(state): State<AppState>,
     session: CurrentSession,
     Json(body): Json<SetMain>,
 ) -> Result<StatusCode, AppError> {
-    if accounts::set_main(&state.db, session.account, body.character_id).await? {
-        tracing::info!(
-            account = session.account.0,
-            character_id = body.character_id,
-            "main changed"
-        );
-        // The state follows the main; affiliations were fetched at login.
-        crate::states::evaluate_account(&state.db, session.account).await?;
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(AppError::not_found("That character isn't on your account."))
+    match crate::ownership::change_main(&state, session.account, body.character_id).await? {
+        crate::ownership::ChangeMain::Done { .. } => Ok(StatusCode::NO_CONTENT),
+        other => Err(AppError::new(StatusCode::NOT_FOUND, other.message())),
     }
 }
