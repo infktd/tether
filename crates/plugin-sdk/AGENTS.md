@@ -436,6 +436,42 @@ let etag = appraisal.header("etag");
 | One request | 10 s (each redirect hop) |
 | URL | 2,048 characters, `https://` on port 443 |
 
+## Secure Groups filters
+
+Offer filters admins can put on smart groups (aa-securegroups takes skills, assets and FATs from apps). Declare them in `plugin.toml`:
+
+```toml
+[[filters]]
+name = "fats"
+label = "FATs in the last days"   # shown to admins and, as a requirement, to pilots
+combine = "sum"                   # "any": one character passing is enough (report 1 or 0);
+                                  # "sum": characters add up and must reach an admin-chosen total
+
+[[filters.fields]]                # at most 5; admins fill them in per smart group
+name = "days"
+label = "Days"
+kind = "number"                   # or "text"
+```
+
+From a job (hourly is usual; values over two days old count as unknown, and a group with an unknown filter is left alone), ask which settings groups use and report a value per character from your own data:
+
+```rust
+use tether_plugin_sdk::filters;
+
+for setting in filters::wanted() {        // setting.config: the admin's fields, a JSON object
+    let values: Vec<(i64, i64)> = compute(&setting.name, &setting.config);
+    filters::report(&setting.name, &setting.config, &values)?;
+}
+```
+
+- Tether combines characters into accounts; this interface never tells you which characters share one.
+- Report every character you have complete data for, 0s included: a reversed filter passes only when every character of an account was reported, so leave out characters you can't judge rather than guessing 0.
+- Values are 0 to 1,000,000,000; at most 100,000 per report, 50 reports per call, one character once per report. Only settings in `wanted()` are accepted. Not from pages.
+
+## Shared timers
+
+Timers one app publishes and another shows (aa-structures feeding the timerboard). With `timers = "publish"` under `[capabilities]`, `timers::publish(&[Timer { key, title, at, system, details, objective, corporation_id }])` replaces your published timers (at most 500; `at` in RFC 3339 EVE time; objective `friendly`, `hostile` or `neutral`; `corporation_id` makes it corporation-only). With `timers = "read"`, `timers::published()` returns every running app's timers that ended at most a day ago, with the source app's name; corporation-only ones only for a viewer whose main is in that corporation, and none in jobs. Not from pages (publishing).
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
