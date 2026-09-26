@@ -43,7 +43,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Email step | asks for and verifies an email | none | skip: no email, ever (PRD non-goal) |
 | Characters, Add Character | alts join the account through SSO | same | done |
 | Change Main | switch the main; state re-evaluated | picks from linked characters | partial: valid token required (see Behaviour) |
-| Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | planned: every 4 hours, with the daily token check (PRD) |
+| Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | at each login, on transfer, and every 4 hours (`ownership.check` refreshes each token, as AA) | done |
 | States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all, factions included (the main's militia, from ESI's affiliation endpoint); Guest covers everyone, which is what Public is for | done |
 | State changes | re-evaluated on affiliation updates; "State changed to: X" notification | same, and audited | done |
 | Groups: Internal, Hidden (direct join link), Open, Public, Restricted, States (only these states may join; removed on state change), Description | | same | done |
