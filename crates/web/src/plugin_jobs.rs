@@ -173,3 +173,69 @@ pub fn declared(manifest: &tether_plugins::manifest::Manifest) -> Vec<(String, i
         })
         .collect()
 }
+
+/// How soon after a schedule was last queued a run Tether triggers itself
+/// (a character registered) may queue it again. Longer than an admin's
+/// Run now gap ([`tether_jobs::schedule::RUN_NOW_GAP`]): registering alts
+/// one after another mustn't turn into an app syncing every minute.
+pub const TRIGGERED_GAP: Duration = Duration::from_secs(10 * 60);
+
+/// Runs every schedule of the running app `manifest` now (see
+/// [`tether_jobs::schedule::run_now_in`]: a run in flight isn't doubled,
+/// and one queued less than `gap` ago isn't repeated), each queued one
+/// audited as `schedule.run_now` by `actor`, with `why` as its details,
+/// in the same transaction. For when there's new data to read (a
+/// character registered, a data source approved), so nobody waits for the
+/// next tick. Best effort: errors are logged, never returned, since what
+/// prompted it has already happened. Returns the schedules queued.
+pub async fn run_app_schedules(
+    db: &PgPool,
+    manifest: &tether_plugins::manifest::Manifest,
+    actor: tether_db::audit::Actor,
+    why: &serde_json::Value,
+    gap: Duration,
+) -> Vec<String> {
+    let plugin = manifest.plugin.id.as_str();
+    let mut queued = Vec::new();
+    for (name, _) in declared(manifest) {
+        let full = db::schedule_name(plugin, &name);
+        match run_one(db, &full, actor, why, gap).await {
+            Ok(true) => queued.push(full),
+            Ok(false) => {}
+            Err(err) => {
+                tracing::warn!(plugin, schedule = full, error = %err, "couldn't run a schedule now");
+            }
+        }
+    }
+    if !queued.is_empty() {
+        tracing::info!(plugin, schedules = ?queued, "app schedules run now");
+    }
+    queued
+}
+
+/// One schedule of [`run_app_schedules`]: whether it was queued.
+async fn run_one(
+    db: &PgPool,
+    name: &str,
+    actor: tether_db::audit::Actor,
+    why: &serde_json::Value,
+    gap: Duration,
+) -> Result<bool, sqlx::Error> {
+    use tether_jobs::schedule::RunNow;
+    let mut tx = db.begin().await?;
+    let outcome = tether_jobs::schedule::run_now_in(&mut tx, name, gap).await?;
+    if outcome != RunNow::Queued {
+        tracing::debug!(schedule = name, ?outcome, "schedule not run now");
+        return Ok(false);
+    }
+    tether_db::audit::record(
+        &mut *tx,
+        actor,
+        "schedule.run_now",
+        Some(&format!("schedule:{name}")),
+        why.clone(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}

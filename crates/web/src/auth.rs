@@ -315,6 +315,17 @@ pub async fn callback(
         record_lost(&state, lost).await?;
     }
 
+    // Whether the character was already registered as a Member's, before
+    // this login's token: if this login registers it, apps sync it now
+    // (below). Unknown counts as registered: no sync, and nothing fails.
+    let was_registered = reauth
+        || crate::compliance::registered_member(&state.db, account, identity.character_id)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(character_id = identity.character_id, error = %err, "checking registration before login");
+                true
+            });
+
     // A re-authentication only proves who's there: its token isn't kept.
     if !reauth
         && let Err(err) = state
@@ -417,6 +428,16 @@ pub async fn callback(
         // counts at once.
         states::evaluate_account(&state.db, account).await?;
     }
+
+    // A character that just registered shows up in apps now, not at their
+    // next scheduled sync (in the background, best effort: never fails or
+    // slows the login).
+    crate::compliance::sync_if_newly_registered(
+        &state,
+        account,
+        identity.character_id,
+        was_registered,
+    );
 
     // Rotate: drop any session this browser already had, then issue a new
     // token.

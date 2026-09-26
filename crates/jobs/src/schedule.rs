@@ -172,6 +172,21 @@ pub const RUN_NOW_GAP: Duration = Duration::from_secs(60);
 /// doubled, and it runs by hand at most once per [`RUN_NOW_GAP`].
 pub async fn run_now(pool: &PgPool, name: &str) -> Result<RunNow, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    let outcome = run_now_in(&mut tx, name, RUN_NOW_GAP).await?;
+    if outcome == RunNow::Queued {
+        tx.commit().await?;
+    }
+    Ok(outcome)
+}
+
+/// [`run_now`] in the caller's transaction, with its own gap: not if it
+/// was queued less than `gap` ago. Nothing is queued until the caller
+/// commits, so what it records about the run (its audit) goes with it.
+pub async fn run_now_in(
+    tx: &mut sqlx::PgConnection,
+    name: &str,
+    gap: Duration,
+) -> Result<RunNow, sqlx::Error> {
     let found = sqlx::query!(
         r#"
         SELECT kind, payload, every_secs, enabled,
@@ -185,7 +200,7 @@ pub async fn run_now(pool: &PgPool, name: &str) -> Result<RunNow, sqlx::Error> {
         FOR UPDATE
         "#,
         name,
-        RUN_NOW_GAP.as_secs_f64(),
+        gap.as_secs_f64(),
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -223,7 +238,6 @@ pub async fn run_now(pool: &PgPool, name: &str) -> Result<RunNow, sqlx::Error> {
     )
     .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
     Ok(RunNow::Queued)
 }
 

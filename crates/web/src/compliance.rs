@@ -192,6 +192,70 @@ pub async fn registration(db: &PgPool, account: AccountId) -> Result<Registratio
     })
 }
 
+/// Whether `character` is registered as a Member's: the account is Member
+/// and the character's token carries every scope Member requires. Such a
+/// character is one apps' user-scope calls may read (F16).
+pub async fn registered_member(
+    db: &PgPool,
+    account: AccountId,
+    character: i64,
+) -> Result<bool, sqlx::Error> {
+    let current = registration(db, account).await?;
+    let member = current
+        .target
+        .as_ref()
+        .is_some_and(|s| s.builtin == Some(Builtin::Member));
+    Ok(member
+        && current
+            .characters
+            .iter()
+            .any(|c| c.id == character && c.problem.is_none()))
+}
+
+/// After a login stored `character`'s token: if that made it a registered
+/// Member character (`was_registered` says whether it was one before),
+/// every running app with user scopes runs its schedules now, so the
+/// pilot doesn't wait for their next tick to see the character in them.
+/// Audited as the system's `schedule.run_now`. Not a schedule queued in
+/// the last [`crate::plugin_jobs::TRIGGERED_GAP`]: registering alts one
+/// after another doesn't sync an app every minute. In the background, so
+/// the login doesn't wait for it; best effort, a failure is only logged.
+pub fn sync_if_newly_registered(
+    state: &AppState,
+    account: AccountId,
+    character: i64,
+    was_registered: bool,
+) {
+    if was_registered {
+        return;
+    }
+    let (db, plugins) = (state.db.clone(), state.plugins.clone());
+    tokio::spawn(async move {
+        match registered_member(&db, account, character).await {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::warn!(character, error = %err, "checking a new registration");
+                return;
+            }
+        }
+        let why = json!({ "reason": "character_registered", "character_id": character });
+        for running in plugins.all_running() {
+            if allowed_plugin_scopes(&running.manifest.capabilities.esi.user).is_empty() {
+                continue;
+            }
+            crate::plugin_jobs::run_app_schedules(
+                &db,
+                &running.manifest,
+                Actor::System,
+                &why,
+                crate::plugin_jobs::TRIGGERED_GAP,
+            )
+            .await;
+        }
+    });
+}
+
 /// The scopes to ask SSO for: `wanted`, plus every scope the account's
 /// tokens already carry, so a new login never narrows an old grant.
 pub async fn ask_scopes(

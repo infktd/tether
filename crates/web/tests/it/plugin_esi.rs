@@ -423,7 +423,7 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     assert!(out.contains("no Discord role"), "{out}");
 }
 
-// ---- the character viewer's endpoints ------------------------------------
+// ---- the character viewer's endpoints, and syncing right away --------------
 
 const MAIL: &str = "esi-mail.read_mail.v1";
 const STRUCTURES: &str = "esi-universe.read_structures.v1";
@@ -473,6 +473,59 @@ async fn esi_with(
     let mut query = vec![("endpoint", endpoint), (who.0, who_id.as_str())];
     query.extend_from_slice(params);
     probe(h, "esi", &query).await
+}
+
+/// The schedules of plugin jobs queued, oldest first.
+async fn queued_plugin_runs(db: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT schedule FROM core.jobs WHERE kind = 'plugin.job' AND state = 'queued' ORDER BY id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap()
+}
+
+/// `schedule.run_now` entries: who (`None`, the system) and why.
+async fn run_now_audits(db: &PgPool) -> Vec<(Option<i64>, String, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT actor_account_id, target, details FROM core.audit_log \
+         WHERE action = 'schedule.run_now' ORDER BY id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap()
+}
+
+/// As if the queued runs had finished, the last queued `ago` (a Postgres
+/// interval).
+async fn finish_runs(db: &PgPool, ago: &str) {
+    sqlx::query(
+        "UPDATE core.jobs SET state = 'succeeded', finished_at = now() WHERE kind = 'plugin.job'",
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE core.schedules SET last_enqueued_at = now() - $1::interval")
+        .bind(ago)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+/// Waits for the background sync a login starts: until `n` audited runs
+/// exist (at most five seconds), or, for none, a second for it to have
+/// (not) queued anything.
+async fn await_runs(db: &PgPool, n: usize) {
+    if n == 0 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        return;
+    }
+    for _ in 0..100 {
+        if run_now_audits(db).await.len() >= n {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 async fn mount_viewer_esi(h: &Harness) {
@@ -583,4 +636,150 @@ async fn the_character_viewer_reads_only_registered_members_with_the_scope(db: P
         "not registered".to_owned()
     )));
     let _ = owner;
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPool) {
+    let (h, owner) = member_with_viewer(db).await;
+    let schedule = format!("plugin:{ID}:sync");
+    assert!(queued_plugin_runs(&h.db).await.is_empty());
+
+    // Registering Chribba runs the app's schedules, audited as the
+    // system's doing.
+    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    await_runs(&h.db, 1).await;
+    assert_eq!(
+        queued_plugin_runs(&h.db).await,
+        std::slice::from_ref(&schedule)
+    );
+    let audits = run_now_audits(&h.db).await;
+    assert_eq!(audits.len(), 1, "{audits:?}");
+    assert_eq!(audits[0].0, None);
+    assert_eq!(audits[0].1, format!("schedule:{schedule}"));
+    assert_eq!(
+        audits[0].2,
+        serde_json::json!({ "reason": "character_registered", "character_id": CHRIBBA })
+    );
+
+    // Logging in again registers nothing new: no run.
+    finish_runs(&h.db, "1 hour").await;
+    let owner = log_in_as(&h, "196379789:Chribba", Some(&owner)).await;
+    await_runs(&h.db, 0).await;
+    assert!(queued_plugin_runs(&h.db).await.is_empty());
+    assert_eq!(run_now_audits(&h.db).await.len(), 1);
+
+    // An alt registered five minutes after the last run waits for the
+    // next tick: Tether's own runs are ten minutes apart at least.
+    finish_runs(&h.db, "5 minutes").await;
+    let owner = log_in_as(&h, "443630591:The Mittani", Some(&owner)).await;
+    let (_, owner) = grant(&h, &owner, "/register/start", "443630591:The Mittani").await;
+    await_runs(&h.db, 0).await;
+    assert!(queued_plugin_runs(&h.db).await.is_empty());
+    assert_eq!(run_now_audits(&h.db).await.len(), 1);
+    // Eleven minutes after, it would have run: another alt shows it.
+    finish_runs(&h.db, "11 minutes").await;
+    let owner = log_in_as(&h, "1887431749:gigX", Some(&owner)).await;
+    let (_, owner) = grant(&h, &owner, "/register/start", "1887431749:gigX").await;
+    await_runs(&h.db, 2).await;
+    assert_eq!(
+        queued_plugin_runs(&h.db).await,
+        std::slice::from_ref(&schedule)
+    );
+
+    // Approving a data source runs them too, as the approving admin, a
+    // minute after the last run (an admin's gap).
+    finish_runs(&h.db, "61 seconds").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/profile/plugins/acme.esi/offer",
+        "196379789:Chribba",
+    )
+    .await;
+    assert!(
+        queued_plugin_runs(&h.db).await.is_empty(),
+        "an offer isn't approval"
+    );
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        queued_plugin_runs(&h.db).await,
+        std::slice::from_ref(&schedule)
+    );
+    let admin = me(&h, &owner).await["account_id"].as_i64();
+    let audits = run_now_audits(&h.db).await;
+    assert_eq!(audits.len(), 3, "{audits:?}");
+    assert_eq!(audits[2].0, admin);
+    assert_eq!(
+        audits[2].2,
+        serde_json::json!({ "reason": "data_source_approved", "character_id": CHRIBBA })
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_approving(db: PgPool) {
+    let (h, owner) = member_with_viewer(db).await;
+    mount_viewer_esi(&h).await;
+    // The queue refuses the app's jobs.
+    sqlx::query(
+        "CREATE FUNCTION core.test_refuse_plugin_jobs() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'refused for the test'; END $$",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER test_refuse_plugin_jobs BEFORE INSERT ON core.jobs FOR EACH ROW \
+         WHEN (NEW.kind = 'plugin.job') EXECUTE FUNCTION core.test_refuse_plugin_jobs()",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+
+    // Registered all the same (`grant` checks the login went through).
+    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let out = esi_with(
+        &h,
+        "character-mail-body",
+        ("character", CHRIBBA),
+        &[("mail_id", "77")],
+    )
+    .await;
+    assert!(out.starts_with("ok"), "{out}");
+    assert!(page(&h, "/register", &owner).await.body.contains("Chribba"));
+
+    // Approved all the same.
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/profile/plugins/acme.esi/offer",
+        "196379789:Chribba",
+    )
+    .await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+
+    // Nothing queued, and nothing claimed to be: the audit goes with the
+    // run it records.
+    await_runs(&h.db, 0).await;
+    assert!(queued_plugin_runs(&h.db).await.is_empty());
+    assert!(run_now_audits(&h.db).await.is_empty());
 }

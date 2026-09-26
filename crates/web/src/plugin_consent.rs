@@ -166,6 +166,20 @@ pub async fn approve_source(
     )
     .await?;
     tx.commit().await?;
+    // The app reads its new source now, not at its next scheduled run: the
+    // admin's doing, so audited as theirs. Best effort: the approval
+    // stands whatever happens here.
+    if let Some(running) = state.plugins.running(plugin) {
+        let why = json!({ "reason": "data_source_approved", "character_id": character });
+        crate::plugin_jobs::run_app_schedules(
+            &state.db,
+            &running.manifest,
+            Actor::Account(admin),
+            &why,
+            tether_jobs::schedule::RUN_NOW_GAP,
+        )
+        .await;
+    }
     Ok(())
 }
 

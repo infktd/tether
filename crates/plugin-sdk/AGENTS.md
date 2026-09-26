@@ -257,7 +257,7 @@ Setting these yourself (`SET`, `set_config`, `ALTER ROLE`) doesn't lift them: th
 
 Work that shouldn't wait for a page view, such as syncing from ESI or a ping at a set time, runs as a job. There are two kinds, and both arrive at `run_job`:
 
-- **Schedules**, declared in `plugin.toml` (`[[capabilities.schedules]]`, `every = "30m"`, from 5 minutes to 7 days). They run while the plugin is enabled.
+- **Schedules**, declared in `plugin.toml` (`[[capabilities.schedules]]`, `every = "30m"`, from 5 minutes to 7 days). They run while the plugin is enabled. Tether also runs all of a plugin's schedules at once (restarting their intervals) when there's new data for it: when a character finishes registering (its token now carries every scope Member requires), for every plugin with user scopes, and when an admin approves one of your data sources. Admins can run one by hand too. A schedule already queued or running isn't queued again, nor one queued in the last minute (an admin's run, or an approval) or ten minutes (a registration), so a character that registers soon after another may wait for the next tick; a sync job should read every character each time (`esi::characters()`), not only the ones it expects to be new.
 - **One-off jobs**, queued from a form submission or another job with `jobs::enqueue`. Give one a key to be able to move or cancel it: queuing under the same key replaces the queued job, and `jobs::cancel(key)` removes it.
 
 ```rust
