@@ -1,5 +1,8 @@
 use crate::common::*;
+use std::net::SocketAddr;
+
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -175,31 +178,53 @@ async fn logging_in_without_the_setup_session_does_not_claim_ownership(db: PgPoo
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn unlock_is_rate_limited_per_ip(db: PgPool) {
     let h = harness(db, false).await;
-    let attempt = |ip: &'static str, token: &'static str| {
+    // Through the reverse proxy, a peer on the Docker network.
+    let proxy: SocketAddr = "172.18.0.3:40000".parse().unwrap();
+    let attempt = |peer: SocketAddr, ip: &'static str, token: &'static str| {
         let app = h.app.clone();
         async move {
-            let req = Request::post("/api/setup/unlock")
+            let mut req = Request::post("/api/setup/unlock")
                 .header(header::ORIGIN, SITE)
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("x-forwarded-for", ip)
                 .body(Body::from(format!(r#"{{"token":"{token}"}}"#)))
                 .unwrap();
+            req.extensions_mut().insert(ConnectInfo(peer));
             app.oneshot(req).await.unwrap()
         }
     };
 
     for _ in 0..5 {
         assert_eq!(
-            attempt("203.0.113.7", "guess").await.status(),
+            attempt(proxy, "203.0.113.7", "guess").await.status(),
             StatusCode::FORBIDDEN
         );
     }
-    let limited = attempt("203.0.113.7", SETUP_TOKEN).await;
+    let limited = attempt(proxy, "203.0.113.7", SETUP_TOKEN).await;
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(limited.headers().contains_key(header::RETRY_AFTER));
+
+    // A client reaching the app directly can't dodge the limit by making up
+    // X-Forwarded-For: only a proxy's is believed.
+    let direct: SocketAddr = "198.51.100.20:5000".parse().unwrap();
+    for (i, spoofed) in ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            attempt(direct, spoofed, "guess").await.status(),
+            StatusCode::FORBIDDEN,
+            "attempt {i}"
+        );
+    }
+    assert_eq!(
+        attempt(direct, "10.0.0.6", SETUP_TOKEN).await.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+
     // Other clients are unaffected.
     assert_eq!(
-        attempt("198.51.100.1", SETUP_TOKEN).await.status(),
+        attempt(proxy, "198.51.100.1", SETUP_TOKEN).await.status(),
         StatusCode::NO_CONTENT
     );
 }
