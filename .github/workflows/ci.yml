@@ -133,8 +133,9 @@ jobs:
           done
 
   # The top rule: a fresh `docker compose up` must give a working instance.
-  # Built natively on each architecture, then the full stack is started and
-  # /health checked over HTTPS through Caddy.
+  # Built natively on each architecture. The app is first started on its
+  # own, as the admin's-own-proxy option runs it, then the install switches
+  # to the default Caddy and the full stack is checked over HTTPS.
   docker:
     strategy:
       matrix:
@@ -142,13 +143,41 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install and start the stack
-        run: deploy/install.sh localhost
+      - name: Install without Caddy (--proxy none)
+        run: deploy/install.sh --proxy none localhost
+      # Compose starts the image's plain `tether` entrypoint with settings
+      # from the environment; a regression there once left `docker compose
+      # up` with no server. Checked straight on the app's port, with no
+      # proxy in the way.
+      - name: Image entrypoint serves /health, on 127.0.0.1 only, without Caddy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/health | grep -qx ok; then
+              echo "healthy"; break
+            fi
+            if [ "$i" = 60 ]; then
+              docker compose -f deploy/docker-compose.yml logs app
+              exit 1
+            fi
+            sleep 2
+          done
+          test -z "$(docker ps -q --filter label=com.docker.compose.service=caddy)"
+          test "$(cd deploy && docker compose port app 8080)" = "127.0.0.1:8080"
+      - name: Switch to Caddy (re-running install.sh keeps the secrets)
+        run: |
+          token=$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)
+          deploy/install.sh --proxy caddy
+          test "$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" = "$token"
+          grep -qx 'TETHER_PROXY=caddy' deploy/.env
+          ! grep -q '^COMPOSE_FILE=' deploy/.env
       - name: Ready over HTTPS (database connected, migrations applied)
         run: |
           for i in $(seq 1 60); do
             if curl -skf https://localhost/ready | grep -qx ready; then
-              echo "healthy"; exit 0
+              echo "healthy"
+              # Behind Caddy, the app's port isn't published.
+              test -z "$(docker port "$(cd deploy && docker compose ps -q app)")"
+              exit 0
             fi
             sleep 2
           done
