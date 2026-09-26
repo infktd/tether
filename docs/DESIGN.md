@@ -124,11 +124,30 @@ Page structure: sidebar → top bar with breadcrumb, search and icon buttons →
 - Status: soft fill (`--accent-soft`, `--info-soft`, `--destructive-soft`) with matching text and a 6px leading dot.
 - Notification levels use the status badges: danger is destructive, warning is accent, success is info (healthy), and info is the neutral badge with a dot. The top bar's bell carries the unread count as an accent count pill.
 
-**Sidebar navigation**: grouped under 12px/500 muted headings. Items are 36px tall links with a 16px icon, 14px text, `--radius-sm`. Active item: `--accent-surface` fill, `--foreground` text, weight 500, `aria-current="page"`. Count pills use the accent fill with dark text. The signed-in character sits at the bottom above a top border. Admins arrange the sections, items, folders (a collapsible item, open while one of its pages is shown) and custom links on the Menu page; the default is Account, Fleet, Apps and Admin.
+**Sidebar navigation**: grouped under 12px/500 muted headings. Items are 36px tall links with a 16px icon, 14px text, `--radius-sm`. Active item: `--accent-surface` fill, `--foreground` text, weight 500, `aria-current="page"`. Count pills use the accent fill with dark text. The signed-in character sits at the bottom above a top border. Admins arrange the sections, items, folders (a collapsible item, open while one of its pages is shown) and custom links on the Menu page; the default is Account, Fleet, Apps and Admin. Admin holds one item, Administration (see below); each admin page starts hidden in the sidebar, and admins can pin any of them on the Menu page.
 
 **Watermark**: on pages showing sensitive data, a single line in 11px Geist Mono, `--faint` color, bottom-right of the data card: `Viewing as <character> · <EVE time>`. Decorative, `aria-hidden`.
 
 **Icons**: Lucide-style outline icons, 16px, stroke width 2, `currentColor`. Bundled as inline SVG or a sprite, never fetched. No emoji.
+
+## Administration
+
+Admin pages live in one place instead of filling the sidebar. The sidebar's Administration item opens an overview (`/admin`) with every admin page the viewer may open, grouped: **Access** (States, Groups, Auto Groups, Permissions, Permissions Audit), **Members** (Users, Blacklist, Compliance Report, Corporation Stats), **Integrations** (Discord, Fleet Pings, Apps) and **Instance** (System, Menu, Audit log, Setup). A group with nothing the viewer may open is left out. The list lives in `crates/web/src/admin_nav.rs`; a new admin page goes there, with a group and one sentence on what it does.
+
+- **Overview**: page header, then each group as a 15px/600 heading with a one-line muted description, over tiles two across (three from 1536px). A tile is a link: a 32px `--muted` square holding the page's icon, its name at 14px/500, and its sentence at 13px muted. Hover lightens it like any surface.
+- **Rail**: every admin page (not the overview) shows a 184px rail to the left of its content, 24px gap: an Overview link, then the groups under nav headings, each page a 32px link. The current page is marked like the sidebar's. The rail sticks while the page scrolls and shows from 1280px; narrower, the sidebar item and the overview are the way around.
+- The sidebar's Administration item stays marked on every page in the hub.
+
+## Motion
+
+Motion says something arrived or is on its way; it never decorates. Everything moves for 200ms or less (the progress line, which grows for as long as a request takes, aside), eases out, and uses opacity and at most a 4px rise: no scaling, bouncing, sliding panels or parallax. Under `prefers-reduced-motion: reduce`, none of it happens.
+
+- **Page content** fades in and rises 4px over 180ms when a page arrives. The sidebar, top bar and rail stay still. The overview's tiles follow each other 25ms apart, at most 100ms.
+- **Swapped content** (htmx fragments) fades in over 150ms.
+- **Progress**: while a request runs, a 2px `--muted-foreground` line grows across the top of the page, appearing only after 150ms so quick requests show nothing. It is neutral, not the accent.
+- **Folders** in the sidebar open and close over 150ms where the browser can animate to auto height, and snap elsewhere.
+- **Hover and state changes**: 150ms color and opacity transitions, as before.
+- Counts and countdowns never animate between values: they change in place (Geist Mono keeps them from jittering).
 
 ## Data display
 
@@ -158,7 +177,7 @@ Admin settings must make sense without documentation open. Alliance Auth's setti
 - Real `<button>`, `<a href>`, `<input>` and `<label>` elements, never click handlers on divs.
 - Visible focus: a 2px `--ring` outline with 2px offset on every focusable element.
 - Text contrast of at least 4.5:1; `--muted-foreground` on `--background` passes, `--faint` is for decoration only.
-- Hover states lighten surfaces by one step (`--card` → `--accent-surface`); no motion beyond 150ms color and opacity transitions.
+- Hover states lighten surfaces by one step (`--card` → `--accent-surface`). Anything else that moves follows Motion above.
 
 ## Plugins
 
@@ -170,5 +189,6 @@ Plugins never ship their own styles. They return a declarative page description 
 - No more than one accent color per screen.
 - No Google Fonts, CDNs or remote assets at runtime.
 - No emoji in the UI.
+- No animation longer than 200ms except the progress line, and none that ignores reduced motion.
 - No zebra-striped tables or heavy table borders.
 - No light-gray text below 4.5:1 contrast for anything a user needs to read.

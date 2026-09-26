@@ -80,6 +80,7 @@ pub struct NewEntry<'a> {
     pub new_tab: bool,
     pub parent_id: Option<i64>,
     pub position: i32,
+    pub hidden: bool,
 }
 
 pub async fn insert<'e>(
@@ -88,8 +89,8 @@ pub async fn insert<'e>(
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.menu_entries (kind, key, label, url, new_tab, parent_id, position)
-        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+        INSERT INTO core.menu_entries (kind, key, label, url, new_tab, parent_id, position, hidden)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
         "#,
         entry.kind.as_str(),
         entry.key,
@@ -98,6 +99,7 @@ pub async fn insert<'e>(
         entry.new_tab,
         entry.parent_id,
         entry.position,
+        entry.hidden,
     )
     .fetch_one(executor)
     .await

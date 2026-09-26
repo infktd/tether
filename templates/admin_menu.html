@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}Menu{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/system">System</a>&nbsp;/&nbsp;<span class="text-foreground">Menu</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/system">System</a>&nbsp;/&nbsp;<span class="text-foreground">Menu</span>{% endblock %}
 {% macro arrows(reference) %}
 <form method="post" action="/admin/menu/move" class="contents"><input type="hidden" name="reference" value="{{ reference }}"><input type="hidden" name="dir" value="up"><button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Move up" title="Move up">{% call icons::icon("arrow-up") %}{% endcall %}</button></form>
 <form method="post" action="/admin/menu/move" class="contents"><input type="hidden" name="reference" value="{{ reference }}"><input type="hidden" name="dir" value="down"><button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Move down" title="Move down">{% call icons::icon("arrow-down") %}{% endcall %}</button></form>

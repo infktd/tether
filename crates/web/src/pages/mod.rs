@@ -161,6 +161,9 @@ pub struct Shell {
     pub group_management: Option<i64>,
     /// Unread notifications, for the top bar.
     pub unread: i64,
+    /// On Administration's pages: the rail of admin pages this account
+    /// may open.
+    pub admin_rail: Option<Vec<crate::admin_nav::Listed>>,
 }
 
 /// The sidebar items an account may see: built-in pages by its
@@ -174,6 +177,7 @@ pub(crate) fn menu_items(
         "dashboard" | "services" | "tokens" | "groups" => true,
         "group_management" => group_management.is_some(),
         "pings" => nav.pings,
+        "administration" => nav.any(),
         "system" => nav.system,
         "plugins" => nav.plugins,
         "users" => nav.users,
@@ -493,6 +497,7 @@ pub(crate) async fn load(
             no_main: account.main.is_none(),
             group_management,
             unread: tether_db::notifications::unread(&state.db, session.account).await?,
+            admin_rail: crate::admin_nav::rail(&nav, active),
         },
         state: access,
         is_owner: account.is_owner,

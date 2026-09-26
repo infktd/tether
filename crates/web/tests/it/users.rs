@@ -180,10 +180,14 @@ async fn a_users_admin_cant_deactivate_someone_holding_more(db: PgPool) {
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
     assert!(
         list.body.contains(r#"href="/admin/users""#),
-        "the sidebar links it"
+        "the rail links it"
     );
     let landing = page(&h, "/admin", &pilot).await;
-    assert_eq!(landing.location(), "/admin/users");
+    assert!(
+        landing.body.contains(r#"href="/admin/users""#),
+        "{}",
+        landing.body
+    );
 
     // A second account holding fleet.ping, which the pilot doesn't.
     let other: i64 =

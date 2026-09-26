@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}{{ main_name }}{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/users">Users</a>&nbsp;/&nbsp;<span class="text-foreground">{{ main_name }}</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/users">Users</a>&nbsp;/&nbsp;<span class="text-foreground">{{ main_name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="flex flex-wrap items-start justify-between gap-4">

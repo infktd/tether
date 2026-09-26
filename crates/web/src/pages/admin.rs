@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use tether_core::groups::Flags;
-use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_STATES};
+use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS};
 use tether_db::accounts::{self, AccountId};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
@@ -58,33 +58,32 @@ pub(crate) fn state_name(states: &[StateOption], id: tether_core::states::StateI
         .map_or_else(|| format!("state {}", id.0), |s| s.name.clone())
 }
 
-/// `GET /admin`: the first admin page this account may see.
+#[derive(Template)]
+#[template(path = "admin_overview.html")]
+struct OverviewPage {
+    shell: Shell,
+    groups: Vec<crate::admin_nav::Listed>,
+}
+
+/// `GET /admin`: Administration's overview, every admin page this account
+/// may open, by group.
 pub async fn index(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-) -> Result<Redirect, PageError> {
+) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
-    let perms = permissions::effective(&state.db, session.account).await?;
-    for (permission, page) in [
-        (tether_core::permissions::ADMIN_SYSTEM, "/admin/system"),
-        (tether_core::permissions::ADMIN_PLUGINS, "/admin/plugins"),
-        (tether_core::permissions::ADMIN_USERS, "/admin/users"),
-        (ADMIN_GROUPS, "/admin/groups"),
-        (ADMIN_PERMISSIONS, "/admin/permissions"),
-        (ADMIN_STATES, "/admin/states"),
-        (tether_core::permissions::ADMIN_DISCORD, "/admin/discord"),
-        (tether_core::permissions::ADMIN_AUDIT, "/admin/audit"),
-        (
-            tether_core::permissions::PERMISSIONS_AUDIT,
-            "/admin/permissions/audit",
-        ),
-        (tether_core::permissions::COMPLIANCE_VIEW, "/compliance"),
-    ] {
-        if perms.contains(permission) {
-            return Ok(Redirect::to(page));
-        }
+    let loaded = load(&state, &session, crate::admin_nav::OVERVIEW).await?;
+    let groups = crate::admin_nav::listed(&loaded.shell.nav, "");
+    if groups.is_empty() {
+        return Err(AppError::forbidden().into());
     }
-    Err(AppError::forbidden().into())
+    Ok(render(
+        StatusCode::OK,
+        &OverviewPage {
+            shell: loaded.shell,
+            groups,
+        },
+    ))
 }
 
 // ---- groups ----------------------------------------------------------------

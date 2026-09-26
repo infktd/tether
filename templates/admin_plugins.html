@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}Apps{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Apps</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Apps</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>

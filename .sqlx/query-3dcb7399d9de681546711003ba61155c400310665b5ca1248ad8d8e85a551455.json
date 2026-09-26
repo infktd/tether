@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO core.menu_entries (kind, key, label, url, new_tab, parent_id, position)\n        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id\n        ",
+  "query": "\n        INSERT INTO core.menu_entries (kind, key, label, url, new_tab, parent_id, position, hidden)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id\n        ",
   "describe": {
     "columns": [
       {
@@ -23,12 +23,13 @@
         "Text",
         "Bool",
         "Int8",
-        "Int4"
+        "Int4",
+        "Bool"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "103f19168c15543d7454aeefdefd7ceefe34fae881bf507f35b79d16b870e047"
+  "hash": "3dcb7399d9de681546711003ba61155c400310665b5ca1248ad8d8e85a551455"
 }

@@ -114,11 +114,12 @@ async fn the_audit_permission_opens_it(db: PgPool) {
     )
     .await;
     let landing = page(&h, "/admin", &pilot).await;
-    assert_eq!(landing.location(), "/admin/permissions/audit");
+    assert_eq!(landing.status, StatusCode::OK, "{}", landing.body);
+    assert!(landing.body.contains(r#"href="/admin/permissions/audit""#));
     let list = page(&h, "/admin/permissions/audit", &pilot).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
     assert!(
         list.body.contains(r#"href="/admin/permissions/audit""#),
-        "the sidebar links it"
+        "the rail links it"
     );
 }

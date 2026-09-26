@@ -97,7 +97,8 @@ async fn a_blacklisted_account_holds_nothing(db: PgPool) {
 
     // Admins can't reach the Blacklist state any other way.
     let states = page(&h, "/admin/states", &owner).await.body;
-    assert!(!states.contains(">Blacklist<"), "not on the States page");
+    let content = states.split(r#"class="admin-main""#).nth(1).unwrap();
+    assert!(!content.contains(">Blacklist<"), "not on the States page");
     let blacklist_state: i64 =
         sqlx::query_scalar("SELECT id FROM core.states WHERE builtin = 'blacklist'")
             .fetch_one(&h.db)
@@ -227,7 +228,7 @@ async fn the_pilot_log_keeps_notes(db: PgPool) {
         .unwrap();
     assert_eq!(left, 1);
     assert!(
-        page(&h, "/dashboard", &officer)
+        page(&h, "/admin", &officer)
             .await
             .body
             .contains(r#"href="/blacklist""#)

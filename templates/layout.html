@@ -11,7 +11,7 @@
 <script src="/static/notifications.js" defer></script>
 <title>{% block title %}{% endblock %} · Tether</title>
 </head>
-<body>
+<body hx-indicator="#page-progress">
 <div class="grid min-h-screen grid-cols-[256px_minmax(0,1fr)]">
   <aside class="bg-sidebar border-r flex flex-col">
     <div class="h-16 flex items-center px-5 border-b">
@@ -50,7 +50,8 @@
       </form>
     </div>
   </aside>
-  <div class="flex flex-col min-w-0">
+  <div class="flex flex-col min-w-0 relative">
+    <div id="page-progress" class="page-progress htmx-indicator" aria-hidden="true"></div>
     <header class="h-16 border-b flex items-center gap-4 px-8 text-sm text-muted-foreground">
       <div class="min-w-0 flex-1 truncate">{% block breadcrumb %}{% endblock %}</div>
       {% include "notification_bell.html" %}
@@ -72,7 +73,26 @@
         </section>
       </div>
       {% endif %}
+      {% if let Some(rail) = shell.admin_rail %}
+      <div class="admin-layout">
+        <nav class="admin-rail" aria-label="Administration">
+          <a href="/admin" class="admin-rail-item">Overview</a>
+          {% for g in rail %}
+          <div class="flex flex-col gap-0.5">
+            <div class="nav-heading">{{ g.label }}</div>
+            {% for p in g.pages %}
+            <a href="{{ p.href }}" class="admin-rail-item"{% if p.current %} aria-current="page"{% endif %}>{{ p.label }}</a>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </nav>
+        <div class="admin-main">
+      {% endif %}
       {% block content %}{% endblock %}
+      {% if shell.admin_rail.is_some() %}
+        </div>
+      </div>
+      {% endif %}
     </main>
   </div>
 </div>

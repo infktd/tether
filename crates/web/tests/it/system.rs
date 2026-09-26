@@ -66,11 +66,12 @@ async fn the_dashboard_and_audit_log_need_their_permissions(db: PgPool) {
             "{uri}"
         );
     }
-    // The dashboard is where /admin starts.
-    assert_eq!(page(&h, "/admin", &owner).await.location(), "/admin/system");
+    // Administration's overview lists it.
+    let overview = page(&h, "/admin", &owner).await.body;
+    assert!(overview.contains(r#"href="/admin/system""#), "{overview}");
     let dashboard = page(&h, "/admin/system", &owner).await.body;
     assert!(dashboard.contains("Answering"), "{dashboard}");
-    assert!(dashboard.contains(r#"href="/admin/audit""#), "sidebar link");
+    assert!(dashboard.contains(r#"href="/admin/audit""#), "rail link");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

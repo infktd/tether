@@ -93,6 +93,17 @@ pub const BUILTINS: &[Builtin] = &[
         "fleet",
         "pings",
     ),
+    // Admin pages live in the Administration hub (its rail and overview);
+    // they start hidden in the sidebar, and admins can pin any of them on
+    // the Menu page.
+    b(
+        "administration",
+        "Administration",
+        "/admin",
+        "sliders",
+        "admin",
+        crate::admin_nav::OVERVIEW,
+    ),
     b(
         "system",
         "System",
@@ -204,6 +215,8 @@ pub struct Available {
     /// The page name that marks it current (built-in items).
     pub active: &'static str,
     pub badge: Option<i64>,
+    /// Hidden in the sidebar until an admin shows it (admin pages).
+    pub default_hidden: bool,
 }
 
 /// An app's sidebar link as an item: keyed by its page.
@@ -216,6 +229,7 @@ pub fn plugin_item(label: &str, href: &str) -> Available {
         section: "apps",
         active: "",
         badge: None,
+        default_hidden: false,
     }
 }
 
@@ -228,6 +242,7 @@ pub fn builtin_item(b: &Builtin, badge: Option<i64>) -> Available {
         section: b.section,
         active: b.active,
         badge,
+        default_hidden: b.section == "admin" && b.key != "administration",
     }
 }
 
@@ -272,6 +287,8 @@ impl Node {
     pub fn is_current(&self, active: &str, active_href: &str) -> bool {
         (!self.active.is_empty() && self.active == active)
             || (self.kind == Kind::Item && !active_href.is_empty() && self.href == active_href)
+            // Administration stays marked on every page in its hub.
+            || (self.active == crate::admin_nav::OVERVIEW && crate::admin_nav::is_admin_page(active))
     }
 
     /// A folder holding the current page opens by itself.
@@ -413,7 +430,7 @@ pub fn build(entries: &[Entry], items: Vec<Available>) -> Vec<Section> {
                 active: item.active,
                 badge: item.badge,
                 new_tab: false,
-                hidden: entry.is_some_and(|e| e.hidden),
+                hidden: entry.map_or(item.default_hidden, |e| e.hidden),
                 children: Vec::new(),
                 parent: String::new(),
                 position: entry.map_or(100_000 + i32::try_from(index).unwrap_or(0), |e| e.position),
@@ -516,6 +533,7 @@ async fn materialize(
                     new_tab: false,
                     parent_id: None,
                     position: position(i),
+                    hidden: false,
                 },
             )
             .await?;
@@ -586,6 +604,8 @@ async fn place_node(
                     new_tab: false,
                     parent_id: Some(parent),
                     position: at,
+                    // Where it starts hidden (admin pages), it stays so.
+                    hidden: node.hidden,
                 },
             )
             .await?;
@@ -723,6 +743,7 @@ pub async fn edit(
                     new_tab: false,
                     parent_id: None,
                     position: position(sections.len()),
+                    hidden: false,
                 },
             )
             .await?;
@@ -751,6 +772,7 @@ pub async fn edit(
                     new_tab: false,
                     parent_id: Some(section.id),
                     position: 100_000,
+                    hidden: false,
                 },
             )
             .await?;
@@ -782,6 +804,7 @@ pub async fn edit(
                     new_tab,
                     parent_id: Some(parent.id),
                     position: 100_000,
+                    hidden: false,
                 },
             )
             .await?;

@@ -94,7 +94,10 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
 
+    // One Administration item; its overview and rail list the pages.
     let owner_nav = page(&h, "/dashboard", &owner).await.body;
+    assert!(owner_nav.contains(r#"href="/admin""#), "{owner_nav}");
+    assert!(owner_nav.contains("Administration"));
     for link in [
         "/admin/groups",
         "/admin/permissions",
@@ -102,18 +105,49 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
         "/setup",
     ] {
         assert!(
-            owner_nav.contains(&format!(r#"href="{link}""#)),
-            "owner sees {link}"
+            !owner_nav.contains(&format!(r#"href="{link}""#)),
+            "{link} lives in Administration, not the sidebar"
         );
     }
+    let overview = page(&h, "/admin", &owner).await;
+    assert_eq!(overview.status, StatusCode::OK, "{}", overview.body);
+    for part in [
+        "Access",
+        "Members",
+        "Integrations",
+        "Instance",
+        r#"href="/admin/groups""#,
+        r#"href="/admin/permissions""#,
+        r#"href="/admin/states""#,
+        r#"href="/setup""#,
+    ] {
+        assert!(overview.body.contains(part), "overview lists {part}");
+    }
+    assert!(
+        !overview.body.contains(r#"class="admin-rail""#),
+        "no rail on the overview"
+    );
+    // Every admin page carries the rail, its page marked.
+    let states = page(&h, "/admin/states", &owner).await.body;
+    assert!(states.contains(r#"class="admin-rail""#));
+    assert!(states.contains(
+        r#"<a href="/admin/states" class="admin-rail-item" aria-current="page">States</a>"#
+    ));
+    // Administration stays marked in the sidebar.
+    assert!(states.contains(r#"<a href="/admin" class="nav-item" aria-current="page">"#));
+
     let pilot_nav = page(&h, "/dashboard", &pilot).await.body;
     assert!(
         !pilot_nav.contains("Admin</div>"),
         "no Admin section for a plain pilot"
     );
+    assert_eq!(
+        page(&h, "/admin", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
 
     // Grant states to an assigned group the pilot is in: only that
-    // link appears.
+    // page appears.
     let group = create_group(&h, &owner, "State Wranglers", "internal").await;
     let group_id = group.rsplit('/').next().unwrap().to_owned();
     send(
@@ -131,12 +165,17 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
     )
     .await;
     let pilot_nav = page(&h, "/dashboard", &pilot).await.body;
-    assert!(pilot_nav.contains(r#"href="/admin/states""#));
-    assert!(!pilot_nav.contains(r#"href="/admin/groups""#));
-    assert_eq!(
-        page(&h, "/admin/states", &pilot).await.status,
-        StatusCode::OK
+    assert!(pilot_nav.contains(r#"href="/admin""#));
+    let overview = page(&h, "/admin", &pilot).await.body;
+    assert!(overview.contains(r#"href="/admin/states""#));
+    assert!(!overview.contains(r#"href="/admin/groups""#));
+    assert!(
+        !overview.contains("Instance"),
+        "a group with nothing to open is left out"
     );
+    let rail = page(&h, "/admin/states", &pilot).await;
+    assert_eq!(rail.status, StatusCode::OK);
+    assert!(!rail.body.contains(r#"href="/admin/groups""#));
     assert_eq!(
         page(&h, "/admin/groups", &pilot).await.status,
         StatusCode::FORBIDDEN

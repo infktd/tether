@@ -12,6 +12,7 @@ compile_error!("the dev-docs feature must never be enabled in release builds");
 compile_error!("the plugin-http-test feature must never be enabled in release builds");
 
 pub mod admin;
+pub mod admin_nav;
 mod api;
 pub mod auth;
 pub mod autogroups;

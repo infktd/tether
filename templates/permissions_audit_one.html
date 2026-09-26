@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}{{ name }}{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/permissions/audit">Permissions Audit</a>&nbsp;/&nbsp;<span class="text-foreground num">{{ name }}</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/permissions/audit">Permissions Audit</a>&nbsp;/&nbsp;<span class="text-foreground num">{{ name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
   <div>

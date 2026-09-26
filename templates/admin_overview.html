@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Administration{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Administration</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-8" hx-boost="true">
+  <div>
+    <h1 class="page-title">Administration</h1>
+    <p class="text-muted-foreground mt-1">Everything you may change about this instance, by what it's about. You see only the pages you may open.</p>
+  </div>
+  {% for g in groups %}
+  <section class="flex flex-col gap-3" aria-labelledby="group-{{ loop.index }}">
+    <div>
+      <h2 id="group-{{ loop.index }}" class="text-[15px] font-semibold">{{ g.label }}</h2>
+      <p class="text-sm text-muted-foreground">{{ g.about }}</p>
+    </div>
+    <div class="grid gap-4 grid-cols-2 2xl:grid-cols-3">
+      {% for p in g.pages %}
+      <a href="{{ p.href }}" class="admin-tile">
+        <span class="admin-tile-icon">{% call icons::icon(p.icon) %}{% endcall %}</span>
+        <span class="flex flex-col gap-1 min-w-0">
+          <span class="text-sm font-medium text-foreground">{{ p.label }}</span>
+          <span class="text-[13px] text-muted-foreground">{{ p.about }}</span>
+        </span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

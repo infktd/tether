@@ -31,7 +31,9 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
     );
     let before = page(&h, "/dashboard", &owner).await.body;
     let nav = sidebar(&before);
-    assert!(nav.contains(">Account<") && nav.contains(r#"href="/admin/system""#));
+    assert!(nav.contains(">Account<") && nav.contains(r#"href="/admin""#));
+    // Admin pages start hidden: Administration holds them.
+    assert!(!nav.contains(r#"href="/admin/system""#), "{nav}");
 
     // A section with a folder for the admin pages, and a custom link.
     let res = edit(&h, &owner, "sections", "label=Leadership").await;
@@ -97,6 +99,10 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
     assert!(nav.contains(r#"href="https://wiki.example/nmu" class="nav-item" target="_blank" rel="noopener noreferrer""#), "{nav}");
     assert!(nav.contains("My Tokens"), "{nav}");
     assert!(!nav.contains(r#"href="/services""#), "hidden: {nav}");
+    // Editing saved every item's place, but admin pages nobody pinned
+    // stay hidden; pinned ones (states, in the folder) show.
+    assert!(!nav.contains(r#"href="/admin/users""#), "{nav}");
+    assert!(nav.contains(r#"href="/admin/states""#), "{nav}");
     // The folder opens on its own page.
     let states = page(&h, "/admin/states", &owner).await.body;
     assert!(
@@ -152,6 +158,10 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
     assert_eq!(res.location(), "/admin/menu");
     let reset = page(&h, "/dashboard", &owner).await.body;
     assert!(sidebar(&reset).contains(r#"href="/services""#));
+    assert!(
+        !sidebar(&reset).contains(r#"href="/admin/states""#),
+        "hidden again"
+    );
     let audited: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.audit_log WHERE action LIKE 'menu.%'")
             .fetch_one(&h.db)
