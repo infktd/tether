@@ -159,6 +159,13 @@
   .nav-item[aria-current="page"] {
     @apply bg-accent text-foreground;
   }
+  /* A Menu folder: a nav item that opens, no browser marker. */
+  .nav-folder > summary {
+    @apply cursor-pointer list-none;
+  }
+  .nav-folder > summary::-webkit-details-marker {
+    display: none;
+  }
 
   /* Page tabs (DESIGN.md): a segmented control of links. */
   .tab-nav {

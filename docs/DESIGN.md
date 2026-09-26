@@ -124,7 +124,7 @@ Page structure: sidebar → top bar with breadcrumb, search and icon buttons →
 - Status: soft fill (`--accent-soft`, `--info-soft`, `--destructive-soft`) with matching text and a 6px leading dot.
 - Notification levels use the status badges: danger is destructive, warning is accent, success is info (healthy), and info is the neutral badge with a dot. The top bar's bell carries the unread count as an accent count pill.
 
-**Sidebar navigation**: grouped under 12px/500 muted headings. Items are 36px tall links with a 16px icon, 14px text, `--radius-sm`. Active item: `--accent-surface` fill, `--foreground` text, weight 500, `aria-current="page"`. Count pills use the accent fill with dark text. The signed-in character sits at the bottom above a top border.
+**Sidebar navigation**: grouped under 12px/500 muted headings. Items are 36px tall links with a 16px icon, 14px text, `--radius-sm`. Active item: `--accent-surface` fill, `--foreground` text, weight 500, `aria-current="page"`. Count pills use the accent fill with dark text. The signed-in character sits at the bottom above a top border. Admins arrange the sections, items, folders (a collapsible item, open while one of its pages is shown) and custom links on the Menu page; the default is Account, Fleet, Apps and Admin.
 
 **Watermark**: on pages showing sensitive data, a single line in 11px Geist Mono, `--faint` color, bottom-right of the data card: `Viewing as <character> · <EVE time>`. Decorative, `aria-hidden`.
 

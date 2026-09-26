@@ -1,0 +1,103 @@
+{% extends "layout.html" %}
+{% block title %}Menu{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/system">System</a>&nbsp;/&nbsp;<span class="text-foreground">Menu</span>{% endblock %}
+{% macro arrows(reference) %}
+<form method="post" action="/admin/menu/move" class="contents"><input type="hidden" name="reference" value="{{ reference }}"><input type="hidden" name="dir" value="up"><button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Move up" title="Move up">{% call icons::icon("arrow-up") %}{% endcall %}</button></form>
+<form method="post" action="/admin/menu/move" class="contents"><input type="hidden" name="reference" value="{{ reference }}"><input type="hidden" name="dir" value="down"><button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Move down" title="Move down">{% call icons::icon("arrow-down") %}{% endcall %}</button></form>
+{% endmacro %}
+{% macro remove(reference, name) %}
+<form method="post" action="/admin/menu/delete" class="contents" hx-confirm="Delete {{ name }}? Links and folders in it go too; pages go back to their usual place.">
+  <input type="hidden" name="reference" value="{{ reference }}">
+  <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Delete {{ name }}" title="Delete">{% call icons::icon("trash") %}{% endcall %}</button>
+</form>
+{% endmacro %}
+{% macro node_row(n, indent) %}
+<li class="flex flex-wrap items-center gap-2 py-2{% if indent %} pl-8{% endif %}">
+  <span class="text-muted-foreground">{% call icons::icon(n.icon) %}{% endcall %}</span>
+  <form method="post" action="/admin/menu/change" class="flex flex-1 flex-wrap items-center gap-2">
+    <input type="hidden" name="reference" value="{{ n.reference }}">
+    <label class="sr-only" for="label-{{ n.reference }}">Name</label>
+    <input class="input h-8 w-48" id="label-{{ n.reference }}" name="label" maxlength="40" value="{% if n.default_label.is_some() || !n.kind_is_item() %}{{ n.label }}{% endif %}" placeholder="{% if let Some(d) = n.default_label %}{{ d }}{% else %}{{ n.label }}{% endif %}">
+    {% if n.is_link() %}
+    <label class="sr-only" for="url-{{ n.reference }}">Address</label>
+    <input class="input h-8 w-64" id="url-{{ n.reference }}" name="url" maxlength="500" value="{{ n.href }}">
+    <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="new_tab" value="on"{% if n.new_tab %} checked{% endif %}> New tab</label>
+    {% endif %}
+    <label class="sr-only" for="parent-{{ n.reference }}">In</label>
+    <select class="select input h-8 text-sm" id="parent-{{ n.reference }}" name="parent">
+      {% for p in places %}{% if !(n.is_folder() && p.folder) && p.reference != n.reference %}<option value="{{ p.reference }}"{% if p.reference == n.parent %} selected{% endif %}>{{ p.label }}</option>{% endif %}{% endfor %}
+    </select>
+    <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="hidden" value="on"{% if n.hidden %} checked{% endif %}> Hidden</label>
+    <button type="submit" class="btn" data-variant="outline" data-size="sm">Save</button>
+  </form>
+  {% call arrows(n.reference) %}{% endcall %}
+  {% if !n.kind_is_item() %}{% call remove(n.reference, n.label) %}{% endcall %}{% endif %}
+</li>
+{% endmacro %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="page-title">Menu</h1>
+      <p class="text-muted-foreground mt-1 max-w-3xl">Arrange the sidebar: rename, reorder, hide, group pages into sections and folders, and add your own links. Everyone still sees only the pages they may open; hiding a page only takes it off the sidebar. Pages and apps added later appear in their usual section.</p>
+    </div>
+    <form method="post" action="/admin/menu/reset" hx-confirm="Put the sidebar back as Tether ships it? Your sections, folders and links are deleted.">
+      <button type="submit" class="btn" data-variant="outline">Reset</button>
+    </form>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% for s in sections %}
+  <section class="card">
+    <header class="flex flex-wrap items-center gap-2">
+      <form method="post" action="/admin/menu/change" class="flex flex-1 flex-wrap items-center gap-2">
+        <input type="hidden" name="reference" value="{{ s.reference }}">
+        <label class="sr-only" for="label-{{ s.reference }}">Section name</label>
+        <input class="input h-9 w-56 font-medium" id="label-{{ s.reference }}" name="label" maxlength="40" value="{{ s.label }}">
+        <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="hidden" value="on"{% if s.hidden %} checked{% endif %}> Hidden</label>
+        <button type="submit" class="btn" data-variant="outline" data-size="sm">Save</button>
+      </form>
+      {% call arrows(s.reference) %}{% endcall %}
+      {% if s.custom %}{% call remove(s.reference, s.label) %}{% endcall %}{% endif %}
+    </header>
+    <section>
+      {% if s.nodes.is_empty() %}<p class="text-sm text-muted-foreground">Empty: it doesn't show.</p>{% endif %}
+      <ul class="divide-y">
+        {% for n in s.nodes %}
+        {% call node_row(n, false) %}{% endcall %}
+        {% for c in n.children %}{% call node_row(c, true) %}{% endcall %}{% endfor %}
+        {% endfor %}
+      </ul>
+    </section>
+  </section>
+  {% endfor %}
+
+  <div class="grid gap-6 lg:grid-cols-3">
+    <form class="card" method="post" action="/admin/menu/sections">
+      <header><h2>New section</h2></header>
+      <section class="grid gap-2"><label class="label" for="new-section">Heading</label><input class="input" id="new-section" name="label" maxlength="40" required></section>
+      <footer><button type="submit" class="btn" data-variant="outline">Add section</button></footer>
+    </form>
+    <form class="card" method="post" action="/admin/menu/folders">
+      <header><h2>New folder</h2></header>
+      <section class="grid gap-3">
+        <div class="grid gap-2"><label class="label" for="new-folder">Name</label><input class="input" id="new-folder" name="label" maxlength="40" required></div>
+        <div class="grid gap-2"><label class="label" for="new-folder-in">In</label>
+          <select class="select input" id="new-folder-in" name="parent">{% for p in places %}{% if !p.folder %}<option value="{{ p.reference }}">{{ p.label }}</option>{% endif %}{% endfor %}</select></div>
+      </section>
+      <footer><button type="submit" class="btn" data-variant="outline">Add folder</button></footer>
+    </form>
+    <form class="card" method="post" action="/admin/menu/links">
+      <header><h2>New link</h2></header>
+      <section class="grid gap-3">
+        <div class="grid gap-2"><label class="label" for="new-link">Name</label><input class="input" id="new-link" name="label" maxlength="40" required></div>
+        <div class="grid gap-2"><label class="label" for="new-link-url">Address</label><input class="input" id="new-link-url" name="url" maxlength="500" placeholder="https:// or /page" required></div>
+        <div class="grid gap-2"><label class="label" for="new-link-in">In</label>
+          <select class="select input" id="new-link-in" name="parent">{% for p in places %}<option value="{{ p.reference }}">{{ p.label }}</option>{% endfor %}</select></div>
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="new_tab" value="on"> Open in a new tab</label>
+      </section>
+      <footer><button type="submit" class="btn" data-variant="outline">Add link</button></footer>
+    </form>
+  </div>
+</div>
+{% endblock %}

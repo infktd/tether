@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.menu_entries WHERE id = $1 AND kind <> 'item' AND key IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ce6a4a433cdfbd81226c4072b450e463fac52a49439c007788a4a0d7894e9133"
+}

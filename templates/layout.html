@@ -1,4 +1,9 @@
 {%- import "icons.html" as icons -%}
+{%- macro nav_link(l) -%}
+<a href="{{ l.href }}" class="nav-item"{% if l.is_current(shell.active, shell.active_href) %} aria-current="page"{% endif %}{% if l.new_tab %} target="_blank" rel="noopener noreferrer"{% endif %}>
+  {% call icons::icon(l.icon) %}{% endcall %} {{ l.label }}{% if let Some(pending) = l.badge %}{% if *pending > 0 %} <span class="ml-auto num text-xs text-highlight" aria-label="{{ pending }} pending">{{ pending }}</span>{% endif %}{% endif %}
+</a>
+{%- endmacro -%}
 <!doctype html>
 <html lang="en" class="dark">
 <head>
@@ -13,112 +18,23 @@
       <a href="/" class="text-[15px] font-semibold tracking-tight">Tether</a>
     </div>
     <nav class="flex-1 px-3 py-5 flex flex-col gap-6" aria-label="Main">
+      {% for section in shell.menu %}
       <div class="flex flex-col gap-1">
-        <div class="nav-heading">Account</div>
-        <a href="/dashboard" class="nav-item"{% if shell.active == "profile" %} aria-current="page"{% endif %}>
-          {% call icons::icon("user") %}{% endcall %} Dashboard
-        </a>
-        <a href="/services" class="nav-item"{% if shell.active == "services" %} aria-current="page"{% endif %}>
-          {% call icons::icon("message") %}{% endcall %} Services
-        </a>
-        <a href="/tokens" class="nav-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>
-          {% call icons::icon("lock") %}{% endcall %} Token Management
-        </a>
-        <a href="/groups" class="nav-item"{% if shell.active == "groups" %} aria-current="page"{% endif %}>
-          {% call icons::icon("users") %}{% endcall %} Groups
-        </a>
-        {% if let Some(pending) = shell.group_management %}
-        <a href="/group-management" class="nav-item"{% if shell.active == "group_management" %} aria-current="page"{% endif %}>
-          {% call icons::icon("users") %}{% endcall %} Group Management{% if *pending > 0 %} <span class="ml-auto num text-xs text-highlight" aria-label="{{ pending }} pending">{{ pending }}</span>{% endif %}
-        </a>
+        <div class="nav-heading">{{ section.label }}</div>
+        {% for n in section.nodes %}
+        {% if n.is_folder() %}
+        <details class="nav-folder"{% if n.open(shell.active, shell.active_href) %} open{% endif %}>
+          <summary class="nav-item">{% call icons::icon("folder") %}{% endcall %} {{ n.label }}</summary>
+          <div class="flex flex-col gap-1 pl-4 pt-1">
+            {% for c in n.children %}{% call nav_link(c) %}{% endcall %}{% endfor %}
+          </div>
+        </details>
+        {% else %}
+        {% call nav_link(n) %}{% endcall %}
         {% endif %}
-      </div>
-      {% if shell.nav.pings %}
-      <div class="flex flex-col gap-1">
-        <div class="nav-heading">Fleet</div>
-        <a href="/pings" class="nav-item"{% if shell.active == "pings" %} aria-current="page"{% endif %}>
-          {% call icons::icon("megaphone") %}{% endcall %} Fleet Pings
-        </a>
-      </div>
-      {% endif %}
-      {% if !shell.plugin_nav.is_empty() %}
-      <div class="flex flex-col gap-1">
-        <div class="nav-heading">Apps</div>
-        {% for link in shell.plugin_nav %}
-        <a href="{{ link.href }}" class="nav-item"{% if shell.active_href == link.href %} aria-current="page"{% endif %}>
-          {% call icons::icon("package") %}{% endcall %} {{ link.label }}
-        </a>
         {% endfor %}
       </div>
-      {% endif %}
-      {% if shell.nav.any() %}
-      <div class="flex flex-col gap-1">
-        <div class="nav-heading">Admin</div>
-        {% if shell.nav.system %}
-        <a href="/admin/system" class="nav-item"{% if shell.active == "system" %} aria-current="page"{% endif %}>
-          {% call icons::icon("activity") %}{% endcall %} System
-        </a>
-        {% endif %}
-        {% if shell.nav.plugins %}
-        <a href="/admin/plugins" class="nav-item"{% if shell.active == "plugins" %} aria-current="page"{% endif %}>
-          {% call icons::icon("package") %}{% endcall %} Apps
-        </a>
-        {% endif %}
-        {% if shell.nav.users %}
-        <a href="/admin/users" class="nav-item"{% if shell.active == "users" %} aria-current="page"{% endif %}>
-          {% call icons::icon("user") %}{% endcall %} Users
-        </a>
-        {% endif %}
-        {% if shell.nav.groups %}
-        <a href="/admin/groups" class="nav-item"{% if shell.active == "admin_groups" %} aria-current="page"{% endif %}>
-          {% call icons::icon("users") %}{% endcall %} Groups
-        </a>
-        <a href="/admin/autogroups" class="nav-item"{% if shell.active == "autogroups" %} aria-current="page"{% endif %}>
-          {% call icons::icon("layers") %}{% endcall %} Auto Groups
-        </a>
-        {% endif %}
-        {% if shell.nav.permissions %}
-        <a href="/admin/permissions" class="nav-item"{% if shell.active == "permissions" %} aria-current="page"{% endif %}>
-          {% call icons::icon("shield") %}{% endcall %} Permissions
-        </a>
-        {% endif %}
-        {% if shell.nav.permissions_audit %}
-        <a href="/admin/permissions/audit" class="nav-item"{% if shell.active == "permissions_audit" %} aria-current="page"{% endif %}>
-          {% call icons::icon("search") %}{% endcall %} Permissions Audit
-        </a>
-        {% endif %}
-        {% if shell.nav.states %}
-        <a href="/admin/states" class="nav-item"{% if shell.active == "states" %} aria-current="page"{% endif %}>
-          {% call icons::icon("layers") %}{% endcall %} States
-        </a>
-        {% endif %}
-        {% if shell.nav.discord %}
-        <a href="/admin/discord" class="nav-item"{% if shell.active == "discord" %} aria-current="page"{% endif %}>
-          {% call icons::icon("message") %}{% endcall %} Discord
-        </a>
-        {% endif %}
-        {% if shell.nav.compliance %}
-        <a href="/compliance" class="nav-item"{% if shell.active == "compliance" %} aria-current="page"{% endif %}>
-          {% call icons::icon("check") %}{% endcall %} Compliance Report
-        </a>
-        {% endif %}
-        {% if shell.nav.corpstats %}
-        <a href="/corpstats" class="nav-item"{% if shell.active == "corpstats" %} aria-current="page"{% endif %}>
-          {% call icons::icon("activity") %}{% endcall %} Corporation Stats
-        </a>
-        {% endif %}
-        {% if shell.nav.audit %}
-        <a href="/admin/audit" class="nav-item"{% if shell.active == "audit" %} aria-current="page"{% endif %}>
-          {% call icons::icon("scroll") %}{% endcall %} Audit log
-        </a>
-        {% endif %}
-        {% if shell.nav.setup %}
-        <a href="/setup" class="nav-item"{% if shell.active == "setup" %} aria-current="page"{% endif %}>
-          {% call icons::icon("settings") %}{% endcall %} Setup
-        </a>
-        {% endif %}
-      </div>
-      {% endif %}
+      {% endfor %}
     </nav>
     <div class="border-t p-3 flex items-center gap-3">
       {% let avatar_name = shell.user.name.as_str() %}{% let avatar_id = shell.user.character_id %}{% let avatar_size = 36 %}{% let avatar_class = "size-9" %}

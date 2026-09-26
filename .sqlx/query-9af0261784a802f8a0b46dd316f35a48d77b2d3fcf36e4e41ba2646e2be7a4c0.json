@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "LOCK TABLE core.menu_entries IN SHARE ROW EXCLUSIVE MODE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "9af0261784a802f8a0b46dd316f35a48d77b2d3fcf36e4e41ba2646e2be7a4c0"
+}

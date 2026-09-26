@@ -16,6 +16,7 @@ mod groups;
 mod jobs;
 mod maintenance;
 mod member_audit;
+mod menu;
 mod moon_mining;
 mod notifications;
 mod openapi;

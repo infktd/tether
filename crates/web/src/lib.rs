@@ -20,6 +20,7 @@ pub mod discord_sync;
 mod error;
 pub mod groups;
 pub mod maintenance;
+pub mod menu;
 pub mod notifications;
 pub mod openapi;
 pub mod ownership;
@@ -253,6 +254,14 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/system", get(pages::system::system))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route("/admin/system/theme", post(pages::system::set_theme))
+        .route("/admin/menu", get(pages::menu::index))
+        .route("/admin/menu/sections", post(pages::menu::add_section))
+        .route("/admin/menu/folders", post(pages::menu::add_folder))
+        .route("/admin/menu/links", post(pages::menu::add_link))
+        .route("/admin/menu/change", post(pages::menu::change))
+        .route("/admin/menu/move", post(pages::menu::move_entry))
+        .route("/admin/menu/delete", post(pages::menu::delete))
+        .route("/admin/menu/reset", post(pages::menu::reset))
         .route(
             "/admin/system/updates/check",
             post(pages::system::check_updates),

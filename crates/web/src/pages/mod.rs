@@ -9,6 +9,7 @@ pub mod corpstats;
 pub mod discord;
 pub mod groups;
 pub mod headers;
+pub mod menu;
 pub mod notifications;
 pub mod permissions_audit;
 pub mod pings;
@@ -144,6 +145,8 @@ pub struct Shell {
     pub nav: AdminNav,
     /// Plugin pages this account may open, from the plugins' manifests.
     pub plugin_nav: Vec<PluginNavLink>,
+    /// The sidebar: what this account may see, as the Menu arranges it.
+    pub menu: Vec<crate::menu::Section>,
     /// The plugin page being shown, to mark its sidebar link.
     pub active_href: String,
     /// The account's state when not every character is registered with
@@ -156,6 +159,48 @@ pub struct Shell {
     pub group_management: Option<i64>,
     /// Unread notifications, for the top bar.
     pub unread: i64,
+}
+
+/// The sidebar items an account may see: built-in pages by its
+/// permissions, then apps' pages.
+pub(crate) fn menu_items(
+    nav: &AdminNav,
+    group_management: Option<i64>,
+    plugin_nav: &[PluginNavLink],
+) -> Vec<crate::menu::Available> {
+    let may = |key: &str| match key {
+        "dashboard" | "services" | "tokens" | "groups" => true,
+        "group_management" => group_management.is_some(),
+        "pings" => nav.pings,
+        "system" => nav.system,
+        "plugins" => nav.plugins,
+        "users" => nav.users,
+        "admin_groups" | "autogroups" => nav.groups,
+        "permissions" => nav.permissions,
+        "permissions_audit" => nav.permissions_audit,
+        "states" => nav.states,
+        "discord" => nav.discord,
+        "compliance" => nav.compliance,
+        "corpstats" => nav.corpstats,
+        "audit" => nav.audit,
+        "setup" => nav.setup,
+        _ => false,
+    };
+    crate::menu::BUILTINS
+        .iter()
+        .filter(|b| may(b.key))
+        .map(|b| {
+            let badge = (b.key == "group_management")
+                .then_some(group_management)
+                .flatten();
+            crate::menu::builtin_item(b, badge)
+        })
+        .chain(
+            plugin_nav
+                .iter()
+                .map(|l| crate::menu::plugin_item(&l.label, &l.href)),
+        )
+        .collect()
 }
 
 pub struct PluginNavLink {
@@ -402,7 +447,9 @@ pub(crate) async fn load(
             label: item.label,
             href: item.href,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let menu =
+        crate::menu::sidebar(&state.db, menu_items(&nav, group_management, &plugin_nav)).await?;
     let characters = account
         .characters
         .iter()
@@ -434,6 +481,7 @@ pub(crate) async fn load(
             active,
             nav,
             plugin_nav,
+            menu,
             active_href: String::new(),
             not_compliant,
             no_main: account.main.is_none(),

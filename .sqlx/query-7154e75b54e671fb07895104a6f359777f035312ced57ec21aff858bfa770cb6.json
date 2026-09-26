@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.menu_entries WHERE kind = 'folder' AND parent_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7154e75b54e671fb07895104a6f359777f035312ced57ec21aff858bfa770cb6"
+}

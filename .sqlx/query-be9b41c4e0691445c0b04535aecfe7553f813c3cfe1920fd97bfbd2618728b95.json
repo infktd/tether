@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.menu_entries",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "be9b41c4e0691445c0b04535aecfe7553f813c3cfe1920fd97bfbd2618728b95"
+}

@@ -8,6 +8,7 @@ pub mod compliance;
 pub mod corpstats;
 pub mod discord;
 pub mod groups;
+pub mod menu;
 pub mod notifications;
 pub mod permissions;
 pub mod permissions_audit;

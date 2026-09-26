@@ -404,6 +404,53 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/menu
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/sections
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/folders
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/links
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/change
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/move
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/delete
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/menu/reset
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/dashboard/system
 HTTP 303
 [Asserts]

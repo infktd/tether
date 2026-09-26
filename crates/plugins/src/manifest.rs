@@ -315,9 +315,16 @@ impl Manifest {
         if self.navigation.len() > 10 {
             return Err(bad("more than 10 [[navigation]] entries"));
         }
+        let mut nav_paths = std::collections::HashSet::new();
         for entry in &self.navigation {
             check_text("a navigation label", &entry.label, 40, true)?;
             check_page_path("[[navigation]] path", &entry.path)?;
+            if !nav_paths.insert(entry.path.as_str()) {
+                return Err(bad(format!(
+                    "[[navigation]] path {:?} appears twice",
+                    entry.path
+                )));
+            }
         }
         if self.widgets.len() > MAX_WIDGETS {
             return Err(bad(format!("more than {MAX_WIDGETS} [[widgets]]")));
@@ -771,6 +778,7 @@ manage = "Manage the mining ledger"
             "[permissions]\nview = \"x\"\n[[pages]]\npath = \"/abs\"\npermission = \"view\"\n",
             "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",
+            "[[navigation]]\nlabel = \"A\"\npath = \"\"\n[[navigation]]\nlabel = \"B\"\npath = \"\"\n",
             "[[widgets]]\ntitle = \"\"\npath = \"\"\n",
             "[[widgets]]\ntitle = \"Ore\"\npath = \"../core\"\n",
             "[[widgets]]\ntitle = \"Ore\"\npath = \"\"\nsize = \"big\"\n",
