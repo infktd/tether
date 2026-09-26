@@ -578,7 +578,10 @@ async fn a_stale_session_cant_plant_a_main(db: PgPool) {
     assert!(res.location().contains("state="), "{}", res.location());
 
     // Were the main lost anyway, signing in with the alt makes it the main
-    // but doesn't count as confirming it's them.
+    // without a fresh sudo time: one more EVE login, as defence in depth.
+    // The barrier is the two gates above (a stale session can't link a
+    // character or remove the main's token); once an existing alt is the
+    // main, logging in with it again does confirm, as it should.
     sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE is_owner")
         .execute(&h.db)
         .await
