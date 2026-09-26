@@ -58,6 +58,11 @@ pub struct Manifest {
 pub struct PageRule {
     pub path: String,
     pub permission: String,
+    /// Every view of a page under this rule is written to Tether's audit
+    /// log (`plugin.page_view`: who, which page), for pages showing
+    /// private data such as mail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub audit: bool,
 }
 
 /// `[[navigation]]`: a sidebar link to one of the plugin's pages.
@@ -114,6 +119,12 @@ impl Manifest {
     /// The permission (full name, `plugin.<id>.<name>`) a page needs, or
     /// `None` if no rule covers it: admins only.
     pub fn page_permission(&self, path: &str) -> Option<String> {
+        self.page_rule(path)
+            .map(|rule| format!("plugin.{}.{}", self.plugin.id, rule.permission))
+    }
+
+    /// The `[[pages]]` rule that covers a page: the longest matching path.
+    pub fn page_rule(&self, path: &str) -> Option<&PageRule> {
         let covers = |rule: &PageRule| {
             rule.path.is_empty()
                 || path == rule.path
@@ -125,7 +136,11 @@ impl Manifest {
             .iter()
             .filter(|rule| covers(rule))
             .max_by_key(|rule| rule.path.len())
-            .map(|rule| format!("plugin.{}.{}", self.plugin.id, rule.permission))
+    }
+
+    /// Whether views of a page are audited (its rule says `audit = true`).
+    pub fn page_audited(&self, path: &str) -> bool {
+        self.page_rule(path).is_some_and(|rule| rule.audit)
     }
 }
 
@@ -864,6 +879,29 @@ manage = "Manage the mining ledger"
                 .unwrap_err()
                 .0
                 .contains("minisign")
+        );
+    }
+
+    #[test]
+    fn audited_pages_follow_their_rule() {
+        let m = Manifest::parse(&manifest(
+            "[permissions]\nview = \"See\"\n\n\
+             [[pages]]\npath = \"\"\npermission = \"view\"\n\n\
+             [[pages]]\npath = \"mail\"\npermission = \"view\"\naudit = true\n",
+        ))
+        .unwrap();
+        assert!(!m.page_audited(""));
+        assert!(!m.page_audited("mailbox"));
+        assert!(m.page_audited("mail"));
+        assert!(m.page_audited("mail/123"));
+        // Left out, it isn't written back either.
+        let written = serde_json::to_string(&m).unwrap();
+        assert_eq!(written.matches("\"audit\"").count(), 1, "{written}");
+        assert!(
+            Manifest::parse(&manifest(
+                "[permissions]\nview = \"See\"\n[[pages]]\npath = \"\"\npermission = \"view\"\naudit = \"yes\"\n",
+            ))
+            .is_err()
         );
     }
 

@@ -1,8 +1,48 @@
-{#- A plugin page's sections, drawn with the host's components. -#}
-{% macro value(v) -%}
-{%- if let Some(href) = v.href -%}<a class="underline underline-offset-4" href="{{ href }}">{{ v.text }}</a>
+{#- A plugin page's sections, drawn with the host's components. Image
+    addresses come from the host (built from an entity's kind and id), never
+    from the plugin. -#}
+{% macro picture(e) -%}
+{%- if let Some(src) = e.image -%}<img src="{{ src }}" alt="" loading="lazy" class="entity-img" data-size="{{ e.size }}">
+{%- else -%}<span class="entity-initials" data-size="{{ e.size }}" aria-hidden="true">{{ e.initials }}</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro entity(e) -%}
+<span class="entity">{% call picture(e) %}{% endcall %}<span class="entity-name">{{ e.name }}</span></span>
+{%- endmacro %}
+
+{% macro action_fields(a) -%}
+<input type="hidden" name="_form" value="{{ a.form }}">{% for (name, field) in a.fields %}<input type="hidden" name="{{ name }}" value="{{ field }}">{% endfor %}
+{%- endmacro %}
+
+{#- A button that posts like a one-button form. With a confirmation, it
+    opens a popover (the browser's own: no script) stating what will
+    happen, whose button posts. -#}
+{% macro action(a) -%}
+{%- if let Some(id) = a.popover -%}
+<button type="button" class="btn{% if a.style == "danger" %} btn-destructive-outline{% endif %}" data-size="sm" data-variant="{% if a.style == "primary" %}primary{% else %}outline{% endif %}" popovertarget="{{ id }}">{{ a.label }}</button>
+<div id="{{ id }}" popover class="confirm-popover" role="dialog" aria-labelledby="{{ id }}-text">
+  <p id="{{ id }}-text">{% if let Some(sentence) = a.confirm %}{{ sentence }}{% endif %}</p>
+  <div class="flex justify-end gap-2">
+    <button type="button" class="btn" data-variant="outline" data-size="sm" popovertarget="{{ id }}" popovertargetaction="hide">Cancel</button>
+    <form method="post" action="{{ a.href }}">{% call action_fields(a) %}{% endcall %}<button type="submit" class="btn" data-size="sm" data-variant="{% if a.style == "danger" %}destructive{% else %}primary{% endif %}">{{ a.label }}</button></form>
+  </div>
+</div>
+{%- else -%}
+<form method="post" action="{{ a.href }}" class="inline-flex">{% call action_fields(a) %}{% endcall %}<button type="submit" class="btn{% if a.style == "danger" %} btn-destructive-outline{% endif %}" data-size="sm" data-variant="{% if a.style == "primary" %}primary{% else %}outline{% endif %}">{{ a.label }}</button></form>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro value(v, mono_already) -%}
+{%- if !v.actions.is_empty() -%}<span class="row-actions">{% for a in v.actions %}{% call action(a) %}{% endcall %}{% endfor %}</span>
+{%- else if let Some(e) = v.entity -%}{% call entity(e) %}{% endcall %}
+{%- else if let Some(c) = v.countdown -%}<time class="num" datetime="{{ c.at }}" title="{{ c.title }}" data-countdown>{{ c.text }}</time>
+{%- else if let Some(p) = v.progress -%}<span class="meter-value">
+<span class="meter-meta">{% if let Some(label) = p.label %}<span class="truncate">{{ label }}</span>{% endif %}<span class="num ml-auto" data-percent>{{ p.percent }}%</span></span>
+<progress class="meter" max="1" value="{{ p.value }}"{% if let Some(from) = p.from %} data-from="{{ from }}"{% endif %}{% if let Some(to) = p.to %} data-to="{{ to }}"{% endif %}{% if let Some(label) = p.label %} aria-label="{{ label }}"{% endif %}>{{ p.percent }}%</progress>
+</span>
+{%- else if let Some(href) = v.href -%}{% if v.primary %}<a class="btn" data-variant="primary" data-size="sm" href="{{ href }}">{{ v.text }}</a>{% else %}<a class="underline underline-offset-4" href="{{ href }}">{{ v.text }}</a>{% endif %}
 {%- else if let Some(variant) = v.badge -%}<span class="badge"{% if !variant.is_empty() %} data-variant="{{ variant }}"{% endif %}>{{ v.text }}</span>
-{%- else if let Some(title) = v.title -%}<span title="{{ title }}">{{ v.text }}</span>
+{%- else if (v.mono && !mono_already) || v.title.is_some() -%}<span{% if v.mono && !mono_already %} class="num"{% endif %}{% if let Some(title) = v.title %} title="{{ title }}"{% endif %}>{{ v.text }}</span>
 {%- else -%}{{ v.text }}{%- endif -%}
 {%- endmacro %}
 
@@ -14,7 +54,7 @@
   {% for stat in stats %}
   <div class="card stat">
     <div class="stat-label">{{ stat.label }}</div>
-    <div class="stat-value num">{% call value(stat.value) %}{% endcall %}</div>
+    <div class="stat-value num">{% call value(stat.value, true) %}{% endcall %}</div>
     {% if let Some(caption) = stat.caption %}<div class="stat-caption">{{ caption }}</div>{% endif %}
   </div>
   {% endfor %}
@@ -29,7 +69,7 @@
     <thead><tr>{% for c in table.columns %}<th scope="col"{% if c.numeric %} class="text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in table.rows %}
-      <tr>{% for v in row %}<td{% if table.columns[loop.index0].numeric %} class="num text-right"{% endif %}>{% call value(v) %}{% endcall %}</td>{% endfor %}</tr>
+      <tr>{% for v in row %}{% let numeric = table.columns[loop.index0].numeric %}<td{% if numeric %} class="num text-right"{% endif %}>{% call value(v, numeric) %}{% endcall %}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table>
@@ -41,13 +81,49 @@
   <section>
     <dl class="grid gap-4 text-sm">
       {% for (label, v) in card.fields %}
-      <div class="grid gap-1"><dt class="font-medium">{{ label }}</dt><dd class="break-words">{% call value(v) %}{% endcall %}</dd></div>
+      <div class="grid gap-1"><dt class="font-medium">{{ label }}</dt><dd class="break-words">{% call value(v, false) %}{% endcall %}</dd></div>
       {% endfor %}
     </dl>
   </section>
 </section>
 {% when SectionView::Text(text) %}
 <p class="text-sm leading-relaxed whitespace-pre-line">{{ text }}</p>
+{% when SectionView::Profile(p) %}
+<section class="card profile">
+  <section class="flex flex-col gap-5">
+    <div class="flex items-center gap-4">
+      {% call picture(p.subject) %}{% endcall %}
+      <div class="flex min-w-0 flex-col gap-1.5">
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 class="profile-name">{{ p.subject.name }}</h2>
+          {% for b in p.badges %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endfor %}
+        </div>
+        {% if let Some(s) = p.subtitle %}<p class="text-[13px] text-muted-foreground">{{ s }}</p>{% endif %}
+        {% if p.corporation.is_some() || p.alliance.is_some() %}
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-foreground-soft">
+          {% if let Some(e) = p.corporation %}{% call entity(e) %}{% endcall %}{% endif %}
+          {% if let Some(e) = p.alliance %}{% call entity(e) %}{% endcall %}{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% if !p.facts.is_empty() %}
+    <dl class="profile-facts">
+      {% for (label, v) in p.facts %}
+      <div class="flex min-w-0 flex-col gap-1"><dt>{{ label }}</dt><dd class="break-words">{% call value(v, false) %}{% endcall %}</dd></div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+  </section>
+</section>
+{% when SectionView::Code(code) %}
+<section class="card code-block" data-code>
+  <header class="flex items-center justify-between gap-3">
+    {% if let Some(t) = code.title %}<h2>{{ t }}</h2>{% else %}<span></span>{% endif %}
+    <button type="button" class="btn" data-variant="outline" data-size="sm" data-copy data-copied-label="Copied">{{ code.copy_label }}</button>
+  </header>
+  <section><pre class="code-text" tabindex="0">{{ code.text }}</pre></section>
+</section>
 {% when SectionView::Form(form) %}
 <form class="card" method="post" action="{{ form.action }}">
   <input type="hidden" name="_form" value="{{ form.id }}">

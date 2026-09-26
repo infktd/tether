@@ -98,8 +98,9 @@ macro_rules! export {
     };
 }
 pub use bindings::tether::plugin::page::{
-    Badge, Card, Choice, Column, Field, FieldKind, Form, Link, NumberInput, Section, SelectInput,
-    Stat, Tab, Table, TextInput, Tone, Value,
+    Action, Badge, Card, Choice, CodeBlock, Column, Entity, EntityKind, Field, FieldKind, Form,
+    Link, NumberInput, Profile, Progress, Section, SelectInput, Stat, Tab, Table, TextInput, Tone,
+    Value,
 };
 pub use bindings::{Page, PageError, Request, Submission, SubmitResult};
 
@@ -596,7 +597,44 @@ impl Page {
             description: None,
             sections: Vec::new(),
             tabs: Vec::new(),
+            links: Vec::new(),
+            refresh_seconds: None,
         }
+    }
+
+    /// A link to another of your pages beside the title (at most 8), for
+    /// sub-pages: "Skill Sets · Character Finder · Reports". The page being
+    /// shown is marked.
+    pub fn link(mut self, label: impl Into<String>, path: impl Into<String>) -> Self {
+        self.links.push(link(label, path));
+        self
+    }
+
+    /// A primary button beside the title that opens another of your pages,
+    /// e.g. `.button("Create timer", "timers/new")`. Counts toward the 8
+    /// links.
+    pub fn button(mut self, label: impl Into<String>, path: impl Into<String>) -> Self {
+        self.links.push(link(label, path).primary());
+        self
+    }
+
+    /// Reload the page's content every `seconds` (5 to 300) while this
+    /// render says so, e.g. while a first sync fills it in. Leave it out
+    /// once there's nothing more to wait for. Ignored on pages with a form.
+    pub fn refresh(mut self, seconds: u32) -> Self {
+        self.refresh_seconds = Some(seconds);
+        self
+    }
+
+    /// The top of a page about one character or corporation.
+    pub fn profile(self, profile: Profile) -> Self {
+        self.section(Section::Profile(profile))
+    }
+
+    /// Text to copy (a fitting, a list): monospaced, kept exactly, with a
+    /// Copy button. See [`CodeBlock::new`].
+    pub fn code(self, code: CodeBlock) -> Self {
+        self.section(Section::Code(code))
     }
 
     /// The one-line description under the title.
@@ -898,6 +936,149 @@ impl From<Link> for Value {
     }
 }
 
+impl From<Entity> for Value {
+    fn from(entity: Entity) -> Self {
+        Value::Entity(entity)
+    }
+}
+
+impl From<Progress> for Value {
+    fn from(progress: Progress) -> Self {
+        Value::Progress(progress)
+    }
+}
+
+impl Profile {
+    /// A profile of `subject`: usually a [`character`], or a
+    /// [`corporation`] (its logo is shown).
+    pub fn new(subject: Entity) -> Self {
+        Self {
+            subject,
+            subtitle: None,
+            corporation: None,
+            alliance: None,
+            facts: Vec::new(),
+            badges: Vec::new(),
+        }
+    }
+
+    /// A line under the name.
+    pub fn subtitle(mut self, text: impl Into<String>) -> Self {
+        self.subtitle = Some(text.into());
+        self
+    }
+
+    pub fn corporation(mut self, corporation: Entity) -> Self {
+        self.corporation = Some(corporation);
+        self
+    }
+
+    pub fn alliance(mut self, alliance: Entity) -> Self {
+        self.alliance = Some(alliance);
+        self
+    }
+
+    /// One fact in the grid (at most 40): a label over its value.
+    pub fn fact(mut self, label: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.facts.push((label.into(), value.into()));
+        self
+    }
+
+    /// A badge after the name (at most 8).
+    pub fn badge(mut self, badge: Badge) -> Self {
+        self.badges.push(badge);
+        self
+    }
+}
+
+impl CodeBlock {
+    /// Text to copy, at most 16 KiB, e.g. a fitting in EFT format.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            title: None,
+            text: text.into(),
+            copy_label: None,
+        }
+    }
+
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// The button's words ("Copy" otherwise), e.g. "Copy fitting".
+    pub fn copy_label(mut self, label: impl Into<String>) -> Self {
+        self.copy_label = Some(label.into());
+        self
+    }
+}
+
+impl Progress {
+    /// Fills live between two RFC 3339 instants, e.g. a skill's start and
+    /// finish.
+    pub fn between(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
+        self.from = Some(from.into());
+        self.to = Some(to.into());
+        self
+    }
+
+    /// A few words above the bar.
+    pub fn label(mut self, text: impl Into<String>) -> Self {
+        self.label = Some(text.into());
+        self
+    }
+}
+
+fn entity(kind: EntityKind, id: i64, name: impl Into<String>) -> Entity {
+    Entity {
+        kind,
+        id,
+        name: name.into(),
+    }
+}
+
+/// A character: portrait and name.
+pub fn character(id: i64, name: impl Into<String>) -> Entity {
+    entity(EntityKind::Character, id, name)
+}
+
+/// A corporation: logo and name.
+pub fn corporation(id: i64, name: impl Into<String>) -> Entity {
+    entity(EntityKind::Corporation, id, name)
+}
+
+/// An alliance: logo and name.
+pub fn alliance(id: i64, name: impl Into<String>) -> Entity {
+    entity(EntityKind::Alliance, id, name)
+}
+
+/// A faction: logo and name.
+pub fn faction(id: i64, name: impl Into<String>) -> Entity {
+    entity(EntityKind::Faction, id, name)
+}
+
+/// An item or ship type: icon and name.
+pub fn item_type(id: i64, name: impl Into<String>) -> Entity {
+    entity(EntityKind::Type, id, name)
+}
+
+/// The time left until an RFC 3339 instant, ticking live ("2d 4h 13m");
+/// "done" once it has passed.
+pub fn countdown(rfc3339: impl Into<String>) -> Value {
+    Value::Countdown(rfc3339.into())
+}
+
+/// A bar filled to `fraction` (0 to 1). See [`Progress::between`] for one
+/// that fills live.
+pub fn progress(fraction: f64) -> Progress {
+    Progress {
+        fraction,
+        from: None,
+        to: None,
+        label: None,
+    }
+}
+
 /// An amount of ISK.
 pub fn isk(amount: f64) -> Value {
     Value::Isk(amount)
@@ -920,5 +1101,58 @@ pub fn link(label: impl Into<String>, path: impl Into<String>) -> Link {
     Link {
         label: label.into(),
         path: path.into(),
+        primary: false,
+    }
+}
+
+impl Link {
+    /// Drawn as a primary button. At most one per screen region.
+    pub fn primary(mut self) -> Self {
+        self.primary = true;
+        self
+    }
+}
+
+/// A button that posts to your `submit` as `form`, like a one-button form
+/// (see [`Action`]): add the row's id with [`Action::field`].
+pub fn action(label: impl Into<String>, form: impl Into<String>) -> Action {
+    Action {
+        label: label.into(),
+        form: form.into(),
+        fields: Vec::new(),
+        tone: Tone::Neutral,
+        confirm: None,
+    }
+}
+
+/// A row's buttons side by side (at most 4).
+pub fn actions(actions: Vec<Action>) -> Value {
+    Value::Actions(actions)
+}
+
+impl Action {
+    /// A hidden value it posts (at most 10), e.g. `.field("id", "42")`.
+    pub fn field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.push((name.into(), value.into()));
+        self
+    }
+
+    /// `Tone::Danger` for destructive actions, `Tone::Accent` for a
+    /// region's one primary action.
+    pub fn tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    /// Ask first, stating what will happen: "Its 4 members lose access."
+    pub fn confirm(mut self, sentence: impl Into<String>) -> Self {
+        self.confirm = Some(sentence.into());
+        self
+    }
+}
+
+impl From<Action> for Value {
+    fn from(action: Action) -> Self {
+        Value::Action(action)
     }
 }

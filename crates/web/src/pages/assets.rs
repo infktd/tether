@@ -30,6 +30,12 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../../../../assets/notifications.js"),
     },
     Asset {
+        path: "live.js",
+        content_type: "text/javascript; charset=utf-8",
+        immutable: false,
+        bytes: include_bytes!("../../../../assets/live.js"),
+    },
+    Asset {
         path: "htmx.min.js",
         content_type: "text/javascript; charset=utf-8",
         immutable: false,

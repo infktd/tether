@@ -1,0 +1,33 @@
+{#- A plugin page's content: the page itself includes it, and a live page
+    (one that asks to be reloaded) gets it again in place every few
+    seconds, until a render no longer asks. -#}
+{%- import "plugin_sections.html" as plugin -%}
+<div id="plugin-content" class="plugin-content"{% if let Some(seconds) = c.refresh %} hx-get="{{ c.href }}" hx-trigger="every {{ seconds }}s" hx-swap="outerHTML" data-live{% endif %}>
+  <div class="page-header">
+    <div class="min-w-0">
+      <h1 class="page-title">{{ c.title }}</h1>
+      {% if let Some(d) = c.description %}<p class="text-muted-foreground mt-1">{{ d }}</p>{% endif %}
+    </div>
+    {% if !c.links.is_empty() || !c.buttons.is_empty() %}
+    <div class="flex shrink-0 flex-wrap items-center gap-3">
+      {% if !c.links.is_empty() %}
+      <nav class="tab-nav" aria-label="Pages">
+        {% for l in c.links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}
+      </nav>
+      {% endif %}
+      {% for b in c.buttons %}<a class="btn" data-variant="primary" href="{{ b.href }}"{% if b.current %} aria-current="page"{% endif %}>{{ b.label }}</a>{% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% if let Some(error) = c.error %}<div class="alert" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}
+  {% call plugin::sections(c.sections) %}{% endcall %}
+  {% if !c.tabs.is_empty() %}
+  <nav class="tabs-list inline-flex self-start gap-1 rounded-lg bg-muted p-1" aria-label="Tabs">
+    {% for t in c.tabs %}
+    <a href="{{ t.href }}" class="px-3 py-1.5 text-sm rounded-md{% if t.current %} bg-background text-foreground font-medium{% else %} text-muted-foreground{% endif %}"{% if t.current %} aria-current="page"{% endif %}>{{ t.label }}</a>
+    {% endfor %}
+  </nav>
+  {% call plugin::sections(c.tab_sections) %}{% endcall %}
+  {% endif %}
+  <p class="self-end text-[11px] font-mono text-faint select-none" aria-hidden="true">{{ c.watermark }}</p>
+</div>

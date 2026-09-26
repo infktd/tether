@@ -296,6 +296,109 @@
     @apply rounded-sm px-1 text-muted-foreground hover:bg-accent hover:text-destructive;
   }
 
+  /* App pages (DESIGN.md, Plugins). The header: title on the left, the
+     page's own links on the right. */
+  .page-header {
+    @apply flex flex-wrap items-start justify-between gap-4;
+  }
+  /* A live page's content: its own element for htmx to swap, laid out as
+     if it weren't there (and so never faded on a swap). */
+  .plugin-content {
+    display: contents;
+  }
+
+  /* An entity: its 20px picture, then its name. */
+  .entity {
+    @apply inline-flex max-w-full items-center gap-2 align-middle;
+  }
+  .entity-name {
+    @apply min-w-0 truncate;
+  }
+  .entity-img,
+  .entity-initials {
+    @apply size-5 shrink-0 rounded-sm bg-muted;
+  }
+  .entity-initials {
+    @apply inline-flex items-center justify-center text-[9px] font-medium text-foreground-soft;
+  }
+  .entity-img[data-size="lg"],
+  .entity-initials[data-size="lg"] {
+    @apply size-16 text-lg;
+    border-radius: var(--radius);
+  }
+
+  /* Profile: the portrait, the name at 20px, then a grid of facts. */
+  .profile-name {
+    @apply text-xl font-semibold leading-tight;
+  }
+  .profile-facts {
+    @apply grid grid-cols-2 gap-x-6 gap-y-4 border-t pt-5 xl:grid-cols-3 2xl:grid-cols-4;
+  }
+  .profile-facts dt {
+    @apply text-xs text-muted-foreground;
+  }
+  .profile-facts dd {
+    @apply text-sm;
+  }
+
+  /* Progress: a 4px neutral bar, label and percentage above it. */
+  .meter-value {
+    @apply flex min-w-32 flex-col gap-1;
+  }
+  .meter-meta {
+    @apply flex items-baseline gap-2 text-xs text-muted-foreground;
+  }
+  .meter {
+    @apply block h-1 w-full overflow-hidden rounded-sm border-0 bg-muted;
+    appearance: none;
+    color: var(--foreground-soft);
+  }
+  .meter::-webkit-progress-bar {
+    background: var(--muted);
+  }
+  .meter::-webkit-progress-value {
+    background: var(--foreground-soft);
+  }
+  .meter::-moz-progress-bar {
+    background: var(--foreground-soft);
+  }
+
+  /* Buttons that post: right-aligned small outline buttons in tables. */
+  .row-actions,
+  .confirm-popover {
+    /* Not Geist Mono, even in a numeric (right-aligned) column. */
+    font-family: var(--font-sans);
+    font-variant-numeric: normal;
+  }
+  .row-actions {
+    @apply inline-flex flex-wrap items-center gap-2;
+  }
+  .table .row-actions {
+    @apply flex justify-end;
+  }
+  /* A confirmation stating the consequence: the browser's own popover,
+     centred, over a dimmed page. */
+  .confirm-popover {
+    @apply m-auto flex-col gap-4 rounded-lg border bg-card p-5 text-left text-sm text-foreground;
+    width: min(360px, calc(100vw - 32px));
+  }
+  /* Hidden until opened; browsers without popovers never show it inline
+     (so never post without it). */
+  .confirm-popover {
+    display: none;
+  }
+  .confirm-popover:popover-open {
+    display: flex;
+  }
+  .confirm-popover::backdrop {
+    background: rgb(0 0 0 / 0.5);
+  }
+
+  /* Text to copy, kept exactly. */
+  .code-text {
+    @apply max-h-96 overflow-auto rounded-sm border bg-background p-3 font-mono text-[13px] leading-relaxed whitespace-pre;
+  }
+
   .status-text[data-status="ok"] {
     @apply text-info-foreground;
   }

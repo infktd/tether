@@ -13,11 +13,11 @@
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, RawQuery, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use tether_plugins::host::{
-    FieldKind, Page, PageError as PluginPageError, RenderError, Request, Section, Submission,
-    SubmitResult, Tone, Value,
+    Action, Entity, EntityKind, FieldKind, Page, PageError as PluginPageError, Profile, Progress,
+    RenderError, Request, Section, Submission, SubmitResult, Tone, Value,
 };
 use tether_plugins::services::{Builtin, Character, State as ViewerState, Viewer};
 use tether_plugins::{manifest, page as page_rules};
@@ -54,8 +54,77 @@ pub struct ValueView {
     /// The full value, shown on hover (ISK, times).
     pub title: Option<String>,
     pub href: Option<String>,
+    /// A link drawn as a primary button.
+    pub primary: bool,
     /// A badge, and its Basecoat variant ("" for the default).
     pub badge: Option<&'static str>,
+    /// Buttons that post; empty for other values.
+    pub actions: Vec<ActionView>,
+    /// Numbers, ISK and times: Geist Mono.
+    pub mono: bool,
+    pub entity: Option<EntityView>,
+    pub countdown: Option<CountdownView>,
+    pub progress: Option<ProgressView>,
+}
+
+/// A character, corporation, alliance, faction or type: its picture from
+/// CCP's image server (an address the host builds from the kind and id,
+/// never one a plugin gave), or initials.
+pub struct EntityView {
+    pub name: String,
+    pub image: Option<String>,
+    pub initials: String,
+    /// `sm` (20px) or `lg` (64px, a profile's subject).
+    pub size: &'static str,
+}
+
+pub struct CountdownView {
+    /// The instant in UTC, as the host wrote it (`2026-09-24T18:00:00Z`),
+    /// for the script that ticks it.
+    pub at: String,
+    /// The time left when the page was drawn.
+    pub text: String,
+    /// The EVE time, on hover.
+    pub title: String,
+}
+
+pub struct ProgressView {
+    /// 0 to 1, with four decimals.
+    pub value: String,
+    pub percent: u32,
+    pub label: Option<String>,
+    /// Both or neither, in UTC as the host wrote them: the bar fills live
+    /// between them.
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// A button that posts like a one-button form.
+pub struct ActionView {
+    pub label: String,
+    /// The page's own address: it posts where the page's forms do.
+    pub href: String,
+    pub form: String,
+    pub fields: Vec<(String, String)>,
+    /// `outline`, `primary` or `danger`.
+    pub style: &'static str,
+    pub confirm: Option<String>,
+    /// The confirmation's popover id, with `confirm`.
+    pub popover: Option<String>,
+}
+
+pub struct BadgeView {
+    pub label: String,
+    pub variant: &'static str,
+}
+
+pub struct ProfileView {
+    pub subject: EntityView,
+    pub subtitle: Option<String>,
+    pub corporation: Option<EntityView>,
+    pub alliance: Option<EntityView>,
+    pub facts: Vec<(String, ValueView)>,
+    pub badges: Vec<BadgeView>,
 }
 
 pub struct StatView {
@@ -120,6 +189,14 @@ pub enum SectionView {
     Card(CardView),
     Text(String),
     Form(FormView),
+    Profile(ProfileView),
+    Code(CodeView),
+}
+
+pub struct CodeView {
+    pub title: Option<String>,
+    pub text: String,
+    pub copy_label: String,
 }
 
 pub struct TabLink {
@@ -160,47 +237,265 @@ fn grouped(n: i64) -> String {
     if n < 0 { format!("-{out}") } else { out }
 }
 
-fn value(plugin: &str, value: &Value) -> ValueView {
+/// A badge's Basecoat variant ("" for the default, the accent).
+fn badge_variant(tone: &Tone) -> &'static str {
+    match tone {
+        Tone::Neutral | Tone::Warning => "outline",
+        Tone::Success => "secondary",
+        Tone::Danger => "destructive",
+        Tone::Accent => "",
+    }
+}
+
+/// CCP's image for an entity: built here from its kind and id only, so a
+/// plugin can't point a browser anywhere. `None` without an id (fixtures,
+/// or a plugin that doesn't know it): initials instead.
+pub fn entity_image(kind: &EntityKind, id: i64, size: u32) -> Option<String> {
+    if id <= 0 {
+        return None;
+    }
+    Some(match kind {
+        EntityKind::Character => {
+            format!("https://images.evetech.net/characters/{id}/portrait?size={size}")
+        }
+        EntityKind::Corporation => {
+            format!("https://images.evetech.net/corporations/{id}/logo?size={size}")
+        }
+        EntityKind::Alliance => {
+            format!("https://images.evetech.net/alliances/{id}/logo?size={size}")
+        }
+        // Factions' logos are served as corporations'.
+        EntityKind::Faction => {
+            format!("https://images.evetech.net/corporations/{id}/logo?size={size}")
+        }
+        EntityKind::Type => format!("https://images.evetech.net/types/{id}/icon?size={size}"),
+    })
+}
+
+/// An entity at 20px (64px pictures, for sharp screens; types' 32px
+/// icons), or at 64px as a profile's subject (128px pictures; types' 64px
+/// icons, their largest).
+fn entity(entity: &Entity, large: bool) -> EntityView {
+    let is_type = matches!(entity.kind, EntityKind::Type);
+    let (size, pixels) = match (large, is_type) {
+        (false, false) => ("sm", 64),
+        (false, true) => ("sm", 32),
+        (true, false) => ("lg", 128),
+        (true, true) => ("lg", 64),
+    };
+    EntityView {
+        name: entity.name.clone(),
+        image: entity_image(&entity.kind, entity.id, pixels),
+        initials: super::initials(&entity.name),
+        size,
+    }
+}
+
+/// The time left until an instant: `2d 4h 13m`, `4h 13m`, `13m 05s`,
+/// `45s`; `done` once it has passed. `assets/live.js` writes the same.
+pub fn countdown_text(seconds_left: i64) -> String {
+    if seconds_left <= 0 {
+        return "done".to_owned();
+    }
+    let (d, h, m, s) = (
+        seconds_left / 86_400,
+        seconds_left % 86_400 / 3_600,
+        seconds_left % 3_600 / 60,
+        seconds_left % 60,
+    );
+    if d > 0 {
+        format!("{d}d {h}h {m}m")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else if m > 0 {
+        format!("{m}m {s:02}s")
+    } else {
+        format!("{s}s")
+    }
+}
+
+/// An RFC 3339 instant (checked by the host already) in UTC.
+fn utc(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|at| at.with_timezone(&chrono::Utc))
+}
+
+/// The one way the host writes an instant into a page: UTC, whole
+/// seconds, `Z`. Never the plugin's own text.
+fn machine_time(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+fn progress(progress: &Progress, now: chrono::DateTime<chrono::Utc>) -> ProgressView {
+    let span = progress
+        .from
+        .as_deref()
+        .and_then(utc)
+        .zip(progress.to.as_deref().and_then(utc))
+        .filter(|(from, to)| to > from);
+    let fraction = match span {
+        Some((from, to)) => {
+            let done = (now - from).num_milliseconds() as f64;
+            let whole = (to - from).num_milliseconds() as f64;
+            (done / whole).clamp(0.0, 1.0)
+        }
+        None => progress.fraction.clamp(0.0, 1.0),
+    };
+    ProgressView {
+        value: format!("{fraction:.4}"),
+        percent: (fraction * 100.0).floor() as u32,
+        label: progress.label.clone(),
+        from: span.map(|(from, _)| machine_time(from)),
+        to: span.map(|(_, to)| machine_time(to)),
+    }
+}
+
+/// What drawing a page's sections needs: whose page it is, where its forms
+/// and actions post, and ids for confirmation popovers (unique on the
+/// screen: a Dashboard shows several widgets).
+pub struct Ctx<'a> {
+    pub plugin: &'a str,
+    /// The page's address with its query: forms and actions post here.
+    pub action: &'a str,
+    /// Starts every popover id drawn with this context.
+    pub prefix: String,
+    next: std::cell::Cell<usize>,
+}
+
+impl<'a> Ctx<'a> {
+    pub fn new(plugin: &'a str, action: &'a str, prefix: String) -> Self {
+        Self {
+            plugin,
+            action,
+            prefix,
+            next: std::cell::Cell::new(0),
+        }
+    }
+
+    fn next_id(&self) -> String {
+        let n = self.next.get();
+        self.next.set(n + 1);
+        format!("{}-confirm-{n}", self.prefix)
+    }
+}
+
+fn action_view(ctx: &Ctx, action: &Action) -> ActionView {
+    ActionView {
+        label: action.label.clone(),
+        href: ctx.action.to_owned(),
+        form: action.form.clone(),
+        fields: action.fields.clone(),
+        style: match action.tone {
+            Tone::Danger => "danger",
+            Tone::Accent => "primary",
+            Tone::Neutral | Tone::Success | Tone::Warning => "outline",
+        },
+        confirm: action.confirm.clone(),
+        popover: action.confirm.as_ref().map(|_| ctx.next_id()),
+    }
+}
+
+fn value(ctx: &Ctx, value: &Value) -> ValueView {
+    let plugin = ctx.plugin;
     let plain = |text: String| ValueView {
         text,
         title: None,
         href: None,
+        primary: false,
         badge: None,
+        mono: false,
+        entity: None,
+        countdown: None,
+        progress: None,
+        actions: Vec::new(),
+    };
+    let mono = |text: String| ValueView {
+        mono: true,
+        ..plain(text)
     };
     match value {
         Value::Text(text) => plain(text.clone()),
-        Value::Number(n) => plain(grouped(*n)),
+        Value::Number(n) => mono(grouped(*n)),
         Value::Isk(amount) => ValueView {
             title: Some(format!("{} ISK", grouped(amount.trunc() as i64))),
-            ..plain(short_isk(*amount))
+            ..mono(short_isk(*amount))
         },
         Value::Time(text) => {
             // Checked as RFC 3339 by the host already.
-            let shown = chrono::DateTime::parse_from_rfc3339(text)
-                .map(|at| {
-                    at.with_timezone(&chrono::Utc)
-                        .format("%Y-%m-%d %H:%M")
-                        .to_string()
-                })
-                .unwrap_or_else(|_| text.clone());
+            let shown = utc(text)
+                .map(|at| at.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| text.clone());
             ValueView {
                 title: Some(format!("{text} (EVE time)")),
-                ..plain(shown)
+                ..mono(shown)
             }
         }
         Value::Badge(badge) => ValueView {
-            badge: Some(match badge.tone {
-                Tone::Neutral | Tone::Warning => "outline",
-                Tone::Success => "secondary",
-                Tone::Danger => "destructive",
-                Tone::Accent => "",
-            }),
+            badge: Some(badge_variant(&badge.tone)),
             ..plain(badge.label.clone())
         },
         Value::Link(link) => ValueView {
             href: Some(page_href(plugin, &link.path)),
+            primary: link.primary,
             ..plain(link.label.clone())
         },
+        Value::Action(action) => ValueView {
+            actions: vec![action_view(ctx, action)],
+            ..plain(String::new())
+        },
+        Value::Actions(actions) => ValueView {
+            actions: actions.iter().map(|a| action_view(ctx, a)).collect(),
+            ..plain(String::new())
+        },
+        Value::Entity(e) => ValueView {
+            entity: Some(entity(e, false)),
+            ..plain(e.name.clone())
+        },
+        Value::Countdown(text) => match utc(text) {
+            Some(at) => {
+                let left = (at - chrono::Utc::now()).num_seconds();
+                let shown = countdown_text(left);
+                ValueView {
+                    countdown: Some(CountdownView {
+                        at: machine_time(at),
+                        text: shown.clone(),
+                        title: format!("{} EVE", at.format("%Y-%m-%d %H:%M:%S")),
+                    }),
+                    ..mono(shown)
+                }
+            }
+            None => plain(text.clone()),
+        },
+        Value::Progress(p) => {
+            let view = progress(p, chrono::Utc::now());
+            ValueView {
+                progress: Some(view),
+                ..plain(String::new())
+            }
+        }
+    }
+}
+
+fn profile(ctx: &Ctx, p: &Profile) -> ProfileView {
+    ProfileView {
+        subject: entity(&p.subject, true),
+        subtitle: p.subtitle.clone(),
+        corporation: p.corporation.as_ref().map(|e| entity(e, false)),
+        alliance: p.alliance.as_ref().map(|e| entity(e, false)),
+        facts: p
+            .facts
+            .iter()
+            .map(|(label, v)| (label.clone(), value(ctx, v)))
+            .collect(),
+        badges: p
+            .badges
+            .iter()
+            .map(|b| BadgeView {
+                label: b.label.clone(),
+                variant: badge_variant(&b.tone),
+            })
+            .collect(),
     }
 }
 
@@ -208,14 +503,14 @@ fn number_text(n: Option<f64>) -> String {
     n.map(|n| n.to_string()).unwrap_or_default()
 }
 
-fn section(plugin: &str, action: &str, section: &Section) -> SectionView {
+fn section(ctx: &Ctx, section: &Section) -> SectionView {
     match section {
         Section::Stats(stats) => SectionView::Stats(
             stats
                 .iter()
                 .map(|s| StatView {
                     label: s.label.clone(),
-                    value: value(plugin, &s.value),
+                    value: value(ctx, &s.value),
                     caption: s.caption.clone(),
                 })
                 .collect(),
@@ -233,7 +528,7 @@ fn section(plugin: &str, action: &str, section: &Section) -> SectionView {
             rows: table
                 .rows
                 .iter()
-                .map(|row| row.iter().map(|v| value(plugin, v)).collect())
+                .map(|row| row.iter().map(|v| value(ctx, v)).collect())
                 .collect(),
             empty: table.empty.clone(),
         }),
@@ -243,13 +538,19 @@ fn section(plugin: &str, action: &str, section: &Section) -> SectionView {
             fields: card
                 .fields
                 .iter()
-                .map(|(label, v)| (label.clone(), value(plugin, v)))
+                .map(|(label, v)| (label.clone(), value(ctx, v)))
                 .collect(),
         }),
         Section::Text(text) => SectionView::Text(text.clone()),
+        Section::Profile(p) => SectionView::Profile(profile(ctx, p)),
+        Section::Code(code) => SectionView::Code(CodeView {
+            title: code.title.clone(),
+            text: code.text.clone(),
+            copy_label: code.copy_label.clone().unwrap_or_else(|| "Copy".to_owned()),
+        }),
         Section::Form(form) => SectionView::Form(FormView {
             id: form.id.clone(),
-            action: action.to_owned(),
+            action: ctx.action.to_owned(),
             title: form.title.clone(),
             description: form.description.clone(),
             submit_label: form.submit_label.clone(),
@@ -314,19 +615,43 @@ fn section(plugin: &str, action: &str, section: &Section) -> SectionView {
     }
 }
 
+/// Everything below the top bar: what a live page reloads.
+pub struct ContentView {
+    pub title: String,
+    pub description: Option<String>,
+    /// The page's own links beside the title.
+    pub links: Vec<TabLink>,
+    /// Its primary links, drawn as buttons after them.
+    pub buttons: Vec<TabLink>,
+    pub sections: Vec<SectionView>,
+    pub tabs: Vec<TabLink>,
+    pub tab_sections: Vec<SectionView>,
+    pub error: Option<String>,
+    pub watermark: String,
+    /// Seconds between reloads, while the page asks for them.
+    pub refresh: Option<u32>,
+    /// The page's address with its query: what a reload fetches.
+    pub href: String,
+}
+
 #[derive(Template)]
 #[template(path = "plugin_page.html")]
 struct PluginPage {
     shell: Shell,
     plugin_name: String,
-    title: String,
-    description: Option<String>,
-    sections: Vec<SectionView>,
-    tabs: Vec<TabLink>,
-    tab_sections: Vec<SectionView>,
-    error: Option<String>,
-    watermark: String,
+    c: ContentView,
 }
+
+/// A live page's content, reloaded in place (`plugin_content.html`).
+#[derive(Template)]
+#[template(path = "plugin_content.html")]
+struct PluginContent {
+    c: ContentView,
+}
+
+/// The id of a live page's content: htmx names it in `HX-Trigger` when it
+/// reloads it.
+const CONTENT_ID: &str = "plugin-content";
 
 // ---- access -----------------------------------------------------------------
 
@@ -334,6 +659,8 @@ struct PluginPage {
 struct Opened {
     shell: Shell,
     running: Running,
+    /// The signed-in account (the audit log's actor).
+    account: tether_db::accounts::AccountId,
     /// Who is looking, for `identity.current`.
     viewer: Viewer,
     path: String,
@@ -395,11 +722,13 @@ async fn open(
     } else {
         format!("{href}?{raw}")
     };
+    let account = session.account;
     Ok((
         session,
         Opened {
             shell,
             running,
+            account,
             viewer,
             path: path.to_owned(),
             query,
@@ -504,12 +833,50 @@ async fn render_error(state: &AppState, opened: &Opened, err: RenderError) -> Pa
     }
 }
 
-async fn render_page(state: &AppState, opened: &Opened) -> Result<Page, PageError> {
+/// How a page came to be rendered, for the audit log.
+#[derive(Clone, Copy)]
+enum Via {
+    Page,
+    Reload,
+    Form,
+    Widget,
+}
+
+impl Via {
+    fn as_str(self) -> &'static str {
+        match self {
+            Via::Page => "page",
+            Via::Reload => "reload",
+            Via::Form => "form",
+            Via::Widget => "widget",
+        }
+    }
+}
+
+/// Renders the page for the viewer. A page under an audited `[[pages]]`
+/// rule is written to the audit log first (`plugin.page_view`), and isn't
+/// shown if that fails.
+async fn render_page(state: &AppState, opened: &Opened, via: Via) -> Result<Page, PageError> {
+    let id = &opened.running.manifest.plugin.id;
+    if opened.running.manifest.page_audited(&opened.path) {
+        tether_db::audit::record(
+            &state.db,
+            tether_db::audit::Actor::Account(opened.account),
+            "plugin.page_view",
+            Some(&format!("plugin:{id}")),
+            serde_json::json!({
+                "path": opened.path,
+                "query": opened.query,
+                "via": via.as_str(),
+            }),
+        )
+        .await
+        .map_err(AppError::from)?;
+    }
     let request = Request {
         path: opened.path.clone(),
         query: opened.query.clone(),
     };
-    let id = &opened.running.manifest.plugin.id;
     match state
         .plugins
         .host()
@@ -529,8 +896,17 @@ async fn render_page(state: &AppState, opened: &Opened) -> Result<Page, PageErro
     }
 }
 
-fn draw(opened: Opened, page: &Page, status: StatusCode, error: Option<String>) -> Response {
+/// Draws a page, or with `reload` only its content, for a live page
+/// reloading itself.
+fn draw(
+    opened: Opened,
+    page: &Page,
+    status: StatusCode,
+    error: Option<String>,
+    reload: bool,
+) -> Response {
     let id = opened.running.manifest.plugin.id.clone();
+    let audited = opened.running.manifest.page_audited(&opened.path);
     let tab = opened.tab.min(page.tabs.len().saturating_sub(1));
     // Tab links keep the page's query, and set only the host's `_tab`.
     let base_query: Vec<String> = opened
@@ -543,21 +919,12 @@ fn draw(opened: Opened, page: &Page, status: StatusCode, error: Option<String>) 
         parts.push(format!("{TAB}={i}"));
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
-    let sections: Vec<SectionView> = page
-        .sections
-        .iter()
-        .map(|s| section(&id, &opened.href, s))
-        .collect();
+    let ctx = Ctx::new(&id, &opened.href, "page".to_owned());
+    let sections: Vec<SectionView> = page.sections.iter().map(|s| section(&ctx, s)).collect();
     let tab_sections: Vec<SectionView> = page
         .tabs
         .get(tab)
-        .map(|chosen| {
-            chosen
-                .sections
-                .iter()
-                .map(|s| section(&id, &opened.href, s))
-                .collect()
-        })
+        .map(|chosen| chosen.sections.iter().map(|s| section(&ctx, s)).collect())
         .unwrap_or_default();
     let tabs = page
         .tabs
@@ -569,25 +936,73 @@ fn draw(opened: Opened, page: &Page, status: StatusCode, error: Option<String>) 
             current: i == tab,
         })
         .collect();
+    let header_link = |l: &tether_plugins::host::Link| TabLink {
+        label: l.label.clone(),
+        href: page_href(&id, &l.path),
+        current: l.path == opened.path,
+    };
+    let links = page
+        .links
+        .iter()
+        .filter(|l| !l.primary)
+        .map(header_link)
+        .collect();
+    let buttons = page
+        .links
+        .iter()
+        .filter(|l| l.primary)
+        .map(header_link)
+        .collect();
     let watermark = format!(
         "Viewing as {} · {} EVE",
         opened.shell.user.name,
         chrono::Utc::now().format("%Y-%m-%d %H:%M")
     );
-    render(
-        status,
-        &PluginPage {
-            plugin_name: opened.running.manifest.plugin.name.clone(),
-            shell: opened.shell,
-            title: page.title.clone(),
-            description: page.description.clone(),
-            sections,
-            tabs,
-            tab_sections,
-            error,
-            watermark,
+    let content = ContentView {
+        title: page.title.clone(),
+        description: page.description.clone(),
+        links,
+        buttons,
+        sections,
+        tabs,
+        tab_sections,
+        // A page showing a problem with a post isn't reloaded: that would
+        // take the problem away.
+        // Nor is an audited page: every reload would be an audit entry, and
+        // an open tab would bury the log.
+        refresh: if error.is_none() && !audited {
+            page_rules::refresh_seconds(page)
+        } else {
+            None
         },
-    )
+        error,
+        watermark,
+        href: opened.href.clone(),
+    };
+    let mut response = if reload {
+        render(status, &PluginContent { c: content })
+    } else {
+        render(
+            status,
+            &PluginPage {
+                plugin_name: opened.running.manifest.plugin.name.clone(),
+                shell: opened.shell,
+                c: content,
+            },
+        )
+    };
+    let headers = response.headers_mut();
+    // The page and its content alone share an address: caches must tell
+    // them apart. Content alone, and audited pages, aren't kept at all (a
+    // page shown again from history would be an unrecorded view).
+    headers.insert(
+        header::VARY,
+        HeaderValue::from_static("HX-Request, HX-Trigger"),
+    );
+    if reload || audited {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 #[derive(Template)]
@@ -652,14 +1067,15 @@ pub async fn widget(
             {
                 unavailable(widget.title, href, mark)
             } else {
-                match render_page(&state, &opened).await {
+                match render_page(&state, &opened, Via::Widget).await {
                     Ok(page) => WidgetFragment {
                         title: widget.title,
-                        sections: page
-                            .sections
-                            .iter()
-                            .map(|s| section(&id, &opened.href, s))
-                            .collect(),
+                        sections: {
+                            // Popover ids unique among the Dashboard's
+                            // widgets.
+                            let ctx = Ctx::new(&id, &opened.href, format!("widget-{index}-{id}"));
+                            page.sections.iter().map(|s| section(&ctx, s)).collect()
+                        },
                         href,
                         failed: false,
                         watermark: mark,
@@ -690,23 +1106,58 @@ pub(crate) fn encode(text: &str) -> String {
 
 // ---- handlers ---------------------------------------------------------------
 
+/// Whether a request is a live page reloading its content: htmx names the
+/// element that asked in `HX-Trigger`.
+fn is_reload(headers: &HeaderMap) -> bool {
+    super::is_htmx(headers)
+        && headers
+            .get("hx-trigger")
+            .is_some_and(|v| v.as_bytes() == CONTENT_ID.as_bytes())
+}
+
 async fn show(
     state: AppState,
     session: Option<CurrentSession>,
     id: String,
     path: String,
     raw: Option<String>,
+    headers: HeaderMap,
 ) -> Result<Response, PageError> {
-    let (session, opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
-    if let Err(retry) = state
-        .limits
-        .plugin_pages
-        .check((session.account.0, id), std::time::Instant::now())
-    {
-        return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
+    let reload = is_reload(&headers);
+    let shown = async {
+        let (session, opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
+        if let Err(retry) = state
+            .limits
+            .plugin_pages
+            .check((session.account.0, id.clone()), std::time::Instant::now())
+        {
+            return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
+        }
+        let via = if reload { Via::Reload } else { Via::Page };
+        let page = render_page(&state, &opened, via).await?;
+        Ok::<_, PageError>(draw(opened, &page, StatusCode::OK, None, reload))
     }
-    let page = render_page(&state, &opened).await?;
-    Ok(draw(opened, &page, StatusCode::OK, None))
+    .await;
+    match shown {
+        Err(err) if reload => Ok(reload_failed(err.0.status())),
+        other => other,
+    }
+}
+
+/// A reload that didn't work leaves the content as it is (204), to try
+/// again at the next interval; or, if the page is gone for this viewer
+/// (signed out, no longer allowed, uninstalled), reloads the whole page,
+/// which then says so.
+fn reload_failed(status: StatusCode) -> Response {
+    let gone = matches!(
+        status,
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+    );
+    if gone {
+        (StatusCode::NO_CONTENT, [("hx-refresh", "true")]).into_response()
+    } else {
+        StatusCode::NO_CONTENT.into_response()
+    }
 }
 
 /// `GET /plugins/{id}`
@@ -715,8 +1166,9 @@ pub async fn main_page(
     session: Option<CurrentSession>,
     Path(id): Path<String>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
 ) -> Result<Response, PageError> {
-    show(state, session, id, String::new(), raw).await
+    show(state, session, id, String::new(), raw, headers).await
 }
 
 /// `GET /plugins/{id}/{*path}`
@@ -725,8 +1177,9 @@ pub async fn sub_page(
     session: Option<CurrentSession>,
     Path((id, path)): Path<(String, String)>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
 ) -> Result<Response, PageError> {
-    show(state, session, id, path, raw).await
+    show(state, session, id, path, raw, headers).await
 }
 
 async fn post(
@@ -755,25 +1208,33 @@ async fn post(
         .ok_or_else(|| AppError::bad_request("Send the form from its page."))?;
     let values: Vec<(String, String)> = posted.into_iter().filter(|(k, _)| k != FORM).collect();
     // The form as the plugin draws it now is what the values must fit.
-    let page = render_page(&state, &opened).await?;
-    let Some(form) = page_rules::find_form(&page, &form_id) else {
+    // So is an action button: the page must offer this very one (its form
+    // and hidden values) to this person now, and the plugin gets the
+    // values as the page drew them.
+    let page = render_page(&state, &opened, Via::Form).await?;
+    let values = if let Some(form) = page_rules::find_form(&page, &form_id) {
+        match page_rules::check_submission(form, &values) {
+            Ok(values) => values,
+            Err(problem) => {
+                return Ok(draw(
+                    opened,
+                    &page,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Some(problem),
+                    false,
+                ));
+            }
+        }
+    } else if let Some(action) = page_rules::find_action(&page, &form_id, &values) {
+        action.fields.clone()
+    } else {
         return Ok(draw(
             opened,
             &page,
             StatusCode::CONFLICT,
             Some("That form isn't on this page any more. Try again.".to_owned()),
+            false,
         ));
-    };
-    let values = match page_rules::check_submission(form, &values) {
-        Ok(values) => values,
-        Err(problem) => {
-            return Ok(draw(
-                opened,
-                &page,
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Some(problem),
-            ));
-        }
     };
     let submission = Submission {
         request: Request {
@@ -797,7 +1258,7 @@ async fn post(
         Ok(submitted) => {
             record_logs(&state.db, &id, &source(&opened.path), &submitted.logs).await;
             match submitted.result {
-                SubmitResult::Page(page) => Ok(draw(opened, &page, StatusCode::OK, None)),
+                SubmitResult::Page(page) => Ok(draw(opened, &page, StatusCode::OK, None, false)),
                 SubmitResult::Redirect(to) => {
                     Ok(Redirect::to(&page_href(&id, &to)).into_response())
                 }
@@ -843,5 +1304,55 @@ mod tests {
         assert_eq!(grouped(1_240_000_000), "1,240,000,000");
         assert_eq!(grouped(-1234), "-1,234");
         assert_eq!(grouped(12), "12");
+    }
+
+    #[test]
+    fn countdowns_read_as_live_js_writes_them() {
+        assert_eq!(
+            countdown_text(2 * 86_400 + 4 * 3_600 + 13 * 60 + 9),
+            "2d 4h 13m"
+        );
+        assert_eq!(countdown_text(4 * 3_600 + 13 * 60), "4h 13m");
+        assert_eq!(countdown_text(13 * 60 + 5), "13m 05s");
+        assert_eq!(countdown_text(45), "45s");
+        assert_eq!(countdown_text(0), "done");
+        assert_eq!(countdown_text(-3_600), "done");
+    }
+
+    #[test]
+    fn images_come_only_from_kind_and_id() {
+        assert_eq!(
+            entity_image(&EntityKind::Type, 587, 32).as_deref(),
+            Some("https://images.evetech.net/types/587/icon?size=32")
+        );
+        assert_eq!(
+            entity_image(&EntityKind::Alliance, 99, 64).as_deref(),
+            Some("https://images.evetech.net/alliances/99/logo?size=64")
+        );
+        assert_eq!(entity_image(&EntityKind::Character, 0, 64), None);
+        assert_eq!(entity_image(&EntityKind::Character, -1, 64), None);
+    }
+
+    #[test]
+    fn progress_between_instants_follows_the_clock() {
+        let at = |t: &str| utc(t).unwrap();
+        let bar = Progress {
+            fraction: 0.9,
+            from: Some("2026-09-24T18:00:00+02:00".to_owned()),
+            to: Some("2026-09-24T20:00:00+02:00".to_owned()),
+            label: None,
+        };
+        let view = progress(&bar, at("2026-09-24T16:30:00Z"));
+        assert_eq!(view.value, "0.2500");
+        assert_eq!(view.percent, 25);
+        assert_eq!(view.from.as_deref(), Some("2026-09-24T16:00:00Z"));
+        assert_eq!(progress(&bar, at("2027-01-01T00:00:00Z")).percent, 100);
+        assert_eq!(progress(&bar, at("2020-01-01T00:00:00Z")).percent, 0);
+        let fixed = Progress {
+            from: None,
+            to: None,
+            ..bar
+        };
+        assert_eq!(progress(&fixed, at("2020-01-01T00:00:00Z")).percent, 90);
     }
 }

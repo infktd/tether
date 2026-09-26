@@ -1,8 +1,9 @@
 //! A plugin whose pages misbehave on request, for the host's page checks.
 
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission, SubmitResult,
-    Table, Tone, badge, isk, link, log, time,
+    Card, CodeBlock, Column, Field, Form, Page, PageError, Plugin, Profile, Request, Stat,
+    Submission, SubmitResult, Table, Tone, action, actions, alliance, badge, character,
+    corporation, countdown, faction, isk, item_type, link, log, progress, time,
 };
 
 fn note_form() -> Form {
@@ -16,6 +17,65 @@ fn note_form() -> Form {
             vec![("ore".into(), "Ore".into()), ("ice".into(), "Ice".into())],
         ))
         .field(Field::checkbox("go", "Go elsewhere afterwards", false))
+}
+
+/// Every new block, with markup in every string a plugin gives: the host
+/// must escape all of it.
+fn blocks() -> Page {
+    const EVIL: &str = "<script>alert(1)</script>";
+    Page::new("Blocks")
+        .link("Blocks", "blocks")
+        .link(format!("Values {EVIL}"), "values")
+        .profile(
+            Profile::new(character(90_000_001, format!("Pilot {EVIL}")))
+                .subtitle(format!("Main {EVIL}"))
+                .corporation(corporation(98_000_001, "Corp \"quoted\" & co"))
+                .alliance(alliance(0, "Alliance <b>bold</b>"))
+                .badge(badge(format!("Badge {EVIL}"), Tone::Success))
+                .fact("Skill points", 48_210_332)
+                .fact(format!("Fact {EVIL}"), isk(1_240_000_000.0))
+                .fact("Ship", item_type(587, "Rifter"))
+                .fact("Faction", faction(500_001, "Faction"))
+                .fact("Clone", countdown("2099-01-01T00:00:00+02:00"))
+                .fact("Done", countdown("2000-01-01T00:00:00Z")),
+        )
+        .button(format!("Create {EVIL}"), "form")
+        .table(
+            Table::new(vec![
+                Column::text("Who"),
+                Column::text("Training"),
+                Column::text("Do"),
+            ])
+            .row(vec![
+                character(-5, "Fixture Pilot").into(),
+                progress(0.0)
+                    .between("2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z")
+                    .label(format!("Skill {EVIL}"))
+                    .into(),
+                actions(vec![
+                    action("Approve", "decide")
+                        .field("id", "7")
+                        .field("verdict", "approve")
+                        .tone(Tone::Accent),
+                    action(format!("Reject {EVIL}"), "decide")
+                        .field("id", "7")
+                        .field("verdict", format!("reject \"{EVIL}\""))
+                        .tone(Tone::Danger)
+                        .confirm(format!("Pilot 7 is told no {EVIL}")),
+                ]),
+            ])
+            .row(vec![
+                corporation(98_000_002, "Second Corp").into(),
+                progress(0.42).into(),
+                action("Close", "close").field("id", "8").into(),
+            ]),
+        )
+        .code(
+            CodeBlock::new(format!("[Rifter, {EVIL}]\n  Damage Control II\n"))
+                .title(format!("Fit {EVIL}"))
+                .copy_label(format!("Copy {EVIL}")),
+        )
+        .code(CodeBlock::new("plain"))
 }
 
 struct Pages;
@@ -84,6 +144,20 @@ impl Plugin for Pages {
                     "Second",
                     vec![tether_plugin_sdk::Section::Text("second tab".into())],
                 )),
+            "blocks" => Ok(blocks()),
+            "live" => Ok(Page::new("Live").refresh(1).text("syncing")),
+            "live-form" => Ok(Page::new("Live form").refresh(10).form(note_form())),
+            "mail/1" => Ok(Page::new("Mail")
+                .refresh(5)
+                .text(format!("mail {:?}", request.query))),
+            "bad-progress" => Ok(Page::new("Bad progress").card(Card::new("Bar").field(
+                "p",
+                progress(0.5).between("2026-09-24T18:00:00Z", "not a time"),
+            ))),
+            "bad-page-link" => Ok(Page::new("Bad page link").link("away", "//evil.example")),
+            "action-clash" => Ok(Page::new("Clash")
+                .form(note_form())
+                .card(Card::new("c").field("a", action("Go", "note")))),
             "form" => Ok(Page::new("Form").form(note_form())),
             "admin/secret" => Ok(Page::new("Secret")),
             _ => Err(PageError::NotFound),

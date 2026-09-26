@@ -24,8 +24,9 @@ wasmtime::component::bindgen!({
 
 pub use tether::plugin::log::Level;
 pub use tether::plugin::page::{
-    Badge, Card, Choice, Column, Field, FieldKind, Form, Link, NumberInput, Section, SelectInput,
-    Stat, Tab, Table, TextInput, Tone, Value,
+    Action, Badge, Card, Choice, CodeBlock, Column, Entity, EntityKind, Field, FieldKind, Form,
+    Link, NumberInput, Profile, Progress, Section, SelectInput, Stat, Tab, Table, TextInput, Tone,
+    Value,
 };
 // `Page`, `PageError` and `Request` are generated at this module's root:
 // the world `use`s them.

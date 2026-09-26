@@ -247,6 +247,13 @@ HTTP 200
 [Asserts]
 header "Content-Type" contains "javascript"
 
+# App pages' countdowns, progress bars and Copy buttons.
+GET {{base}}/static/live.js
+HTTP 200
+[Asserts]
+header "Content-Type" contains "javascript"
+body contains "data-countdown"
+
 GET {{base}}/corpstats
 HTTP 303
 [Asserts]

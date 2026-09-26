@@ -46,6 +46,67 @@ interface page {
         label: string,
         /// Relative to the plugin's pages, e.g. `moons/40161234`.
         path: string,
+        /// Drawn as a primary button (e.g. "Create timer" beside a page's
+        /// title) rather than as a link. At most one per screen region.
+        primary: bool,
+    }
+
+    /// A button that posts, like a one-button form: for row actions such
+    /// as Approve, Reject or Close. Posting it calls the plugin's `submit`
+    /// with `form` and `fields` as the submission, once the host has
+    /// checked that the page, as `render` draws it for that person and
+    /// address then, has this very button (the same form and fields), so
+    /// nobody can post values the page didn't offer them. A button only a
+    /// `submit` result shows can't post.
+    record action {
+        label: string,
+        /// Lowercase letters, digits and `_`, starting with a letter; not
+        /// the id of a form on the same page.
+        form: string,
+        /// Hidden values it posts (at most 10), e.g. the row's id: names as
+        /// for form fields, unique; values without control characters.
+        fields: list<tuple<string, string>>,
+        /// `danger` for destructive actions; `accent` for the one primary
+        /// action of a region; anything else is an outline button.
+        tone: tone,
+        /// With a confirmation first: one sentence stating what will
+        /// happen ("Its 4 members lose access"), not "Are you sure?".
+        confirm: option<string>,
+    }
+
+    /// What an entity is: which picture CCP's image server has for it.
+    enum entity-kind {
+        /// A portrait.
+        character,
+        /// A logo.
+        corporation,
+        alliance,
+        faction,
+        /// An item or ship type: its icon.
+        %type,
+    }
+
+    /// A character, corporation, alliance, faction or type, drawn as its
+    /// 20px picture and its name. The host builds the picture's address
+    /// from the kind and id (a plugin never gives a URL); an id of 0 or less
+    /// gets initials.
+    record entity {
+        kind: entity-kind,
+        id: s64,
+        name: string,
+    }
+
+    /// A thin bar, filled from 0 to 1.
+    record progress {
+        /// 0 to 1: how full it is. Used unless `from` and `to` are given.
+        fraction: f64,
+        /// With `to`: the RFC 3339 instants it runs between, for something
+        /// with a known end (a skill in training). The bar then fills live
+        /// in the browser. Give both or neither; `to` after `from`.
+        %from: option<string>,
+        to: option<string>,
+        /// A few words above the bar.
+        label: option<string>,
     }
 
     /// A value, typed so the host formats it the same way everywhere.
@@ -59,6 +120,16 @@ interface page {
         time(string),
         badge(badge),
         link(link),
+        entity(entity),
+        /// An instant (RFC 3339) shown as the time left until it, ticking
+        /// live ("2d 4h 13m"), with the EVE time on hover; "done" once it
+        /// has passed.
+        countdown(string),
+        progress(progress),
+        /// A button that posts (see `action`).
+        action(action),
+        /// Several, side by side (at most 4): a row's actions.
+        actions(list<action>),
     }
 
     record stat {
@@ -146,6 +217,31 @@ interface page {
         submit-label: string,
     }
 
+    /// The top of a page about one character or corporation: its portrait
+    /// or logo, name, corporation and alliance, and a grid of facts.
+    record profile {
+        /// Usually a character; a corporation shows its logo.
+        subject: entity,
+        /// A line under the name (e.g. "Main of 3 characters").
+        subtitle: option<string>,
+        corporation: option<entity>,
+        alliance: option<entity>,
+        /// Label and value pairs, three or four to a row.
+        facts: list<tuple<string, value>>,
+        /// Shown after the name.
+        badges: list<badge>,
+    }
+
+    /// Text to copy, such as a fitting in EFT format: shown as it is, in a
+    /// monospaced block, with a button that copies it.
+    record code-block {
+        title: option<string>,
+        /// Kept exactly, line breaks and spaces included.
+        text: string,
+        /// The button's words; "Copy" when left out.
+        copy-label: option<string>,
+    }
+
     variant section {
         stats(list<stat>),
         table(table),
@@ -153,6 +249,8 @@ interface page {
         /// A paragraph of plain text.
         text(string),
         form(form),
+        profile(profile),
+        code(code-block),
     }
 
     record tab {
@@ -166,6 +264,15 @@ interface page {
         sections: list<section>,
         /// Shown below the sections, one visible at a time.
         tabs: list<tab>,
+        /// The plugin's related pages, beside the title (at most 8), as a
+        /// segmented control with the one being shown marked; `primary`
+        /// ones as buttons after it (e.g. "Create timer").
+        links: list<link>,
+        /// While set, the host reloads the page's content every this many
+        /// seconds (5 to 300; others are brought into that range), e.g.
+        /// while a first sync fills it in. It stops once a render leaves it
+        /// out. Pages with a form, and audited pages, never reload.
+        refresh-seconds: option<u32>,
     }
 
     /// Which of the plugin's pages is wanted.

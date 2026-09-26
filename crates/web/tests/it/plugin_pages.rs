@@ -32,11 +32,23 @@ async fn install(h: &Harness, owner: &str) {
          [[navigation]]\nlabel = \"Secret\"\npath = \"admin/secret\"\n",
         key.public()
     );
-    for path in ["values", "form", "failed", "crash", "query", "missing"] {
+    for path in [
+        "values",
+        "form",
+        "failed",
+        "crash",
+        "query",
+        "missing",
+        "blocks",
+        "live",
+        "live-form",
+    ] {
         manifest.push_str(&format!(
             "\n[[pages]]\npath = \"{path}\"\npermission = \"view\"\n"
         ));
     }
+    // Mail is audited: every view is in the audit log.
+    manifest.push_str("\n[[pages]]\npath = \"mail\"\npermission = \"view\"\naudit = true\n");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -339,4 +351,264 @@ async fn plugin_permissions_are_granted_like_core_ones(db: PgPool) {
             .body
             .contains("plugin.acme.pages")
     );
+}
+
+/// A live page reloading its content, as htmx asks for it.
+fn reload(uri: &str, token: Option<&str>) -> Request<Body> {
+    let mut req = Request::get(uri)
+        .header("hx-request", "true")
+        .header("hx-trigger", "plugin-content");
+    if let Some(token) = token {
+        req = req.header(header::COOKIE, format!("{SESSION}={token}"));
+    }
+    req.body(Body::empty()).unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let res = page(&h, "/plugins/acme.pages/blocks", &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let body = &res.body;
+    // Every string the plugin gave is escaped.
+    assert!(!body.contains("<script>alert"), "{body}");
+    assert!(!body.contains("<b>bold"), "{body}");
+    for part in [
+        // Page links beside the title, the page shown marked; the primary
+        // one a button.
+        r#"<a href="/plugins/acme.pages/blocks" aria-current="page">Blocks</a>"#,
+        r#"<a href="/plugins/acme.pages/values">Values &#60;script&#62;"#,
+        r#"<a class="btn" data-variant="primary" href="/plugins/acme.pages/form">Create &#60;script&#62;"#,
+        // The profile: a 64px portrait built from the id, name, subtitle,
+        // badges, corporation, alliance (no id: initials) and facts.
+        r#"<img src="https://images.evetech.net/characters/90000001/portrait?size=128" alt="" loading="lazy" class="entity-img" data-size="lg">"#,
+        r#"<h2 class="profile-name">Pilot &#60;script&#62;"#,
+        "Main &#60;script&#62;",
+        r#"data-variant="secondary">Badge &#60;script&#62;"#,
+        r#"src="https://images.evetech.net/corporations/98000001/logo?size=64""#,
+        "Corp &#34;quoted&#34; &#38; co",
+        r#"<span class="entity-initials" data-size="sm" aria-hidden="true">A&#60;</span>"#,
+        "Fact &#60;script&#62;",
+        r#"<span class="num">48,210,332</span>"#,
+        // Types' 32px icons; factions' logos as corporations'.
+        r#"src="https://images.evetech.net/types/587/icon?size=32""#,
+        r#"src="https://images.evetech.net/corporations/500001/logo?size=64""#,
+        // Countdowns: the instant in UTC as the host writes it, the EVE
+        // time on hover, "done" once passed.
+        r#"<time class="num" datetime="2098-12-31T22:00:00Z" title="2098-12-31 22:00:00 EVE" data-countdown>"#,
+        r#"data-countdown>done</time>"#,
+        // Fixture ids get initials.
+        r#"aria-hidden="true">FP</span><span class="entity-name">Fixture Pilot</span>"#,
+        // Progress: live between two instants, or fixed.
+        r#"data-from="2000-01-01T00:00:00Z" data-to="2099-01-01T00:00:00Z" aria-label="Skill &#60;script&#62;"#,
+        r#"<progress class="meter" max="1" value="0.4200">42%</progress>"#,
+        // Text to copy, kept as it was and escaped, with its button.
+        "[Rifter, &#60;script&#62;alert(1)&#60;/script&#62;]\n  Damage Control II\n</pre>",
+        r#"data-copy data-copied-label="Copied">Copy &#60;script&#62;"#,
+        r#"data-copy data-copied-label="Copied">Copy</button>"#,
+        // Row actions: forms posting to the page, hidden values escaped; the
+        // destructive one asks first, in a popover stating the consequence.
+        r#"<form method="post" action="/plugins/acme.pages/blocks" class="inline-flex"><input type="hidden" name="_form" value="decide"><input type="hidden" name="id" value="7"><input type="hidden" name="verdict" value="approve"><button type="submit" class="btn" data-size="sm" data-variant="primary">Approve</button></form>"#,
+        r#"popovertarget="page-confirm-0">Reject &#60;script&#62;"#,
+        r#"<div id="page-confirm-0" popover class="confirm-popover" role="dialog""#,
+        "Pilot 7 is told no &#60;script&#62;",
+        r#"name="verdict" value="reject &#34;&#60;script&#62;alert(1)&#60;/script&#62;&#34;""#,
+        r#"data-variant="destructive">Reject &#60;script&#62;"#,
+        // The script that keeps them live, bundled.
+        r#"<script src="/static/live.js" defer></script>"#,
+    ] {
+        assert!(body.contains(part), "{part}\n\n{body}");
+    }
+    // Not a live page.
+    assert!(!body.contains("hx-trigger=\"every"), "{body}");
+
+    let js = send(&h.app, get("/static/live.js", &[])).await;
+    assert_eq!(js.status, StatusCode::OK);
+    assert!(js.body.contains("data-countdown"));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn actions_post_only_what_the_page_offers(db: PgPool) {
+    let (h, owner, pilot) = setup(db).await;
+    let uri = "/plugins/acme.pages/blocks";
+    // Exactly a button the page drew: the plugin gets its values.
+    let res = send(
+        &h.app,
+        post(uri, "_form=decide&verdict=approve&id=7", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("Saved"), "{}", res.body);
+    assert!(
+        res.body
+            .contains("got [(&#34;id&#34;, &#34;7&#34;), (&#34;verdict&#34;, &#34;approve&#34;)]"),
+        "{}",
+        res.body
+    );
+    let res = send(&h.app, post(uri, "_form=close&id=8", &owner)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Anything else is refused before the plugin sees it: another id, a
+    // value missing, one added, a name twice, a form nobody drew.
+    for body in [
+        "_form=decide&id=8&verdict=approve",
+        "_form=decide&id=7",
+        "_form=close&id=8&extra=1",
+        "_form=close&id=8&id=8",
+        "_form=nothing&id=8",
+    ] {
+        let res = send(&h.app, post(uri, body, &owner)).await;
+        assert_eq!(res.status, StatusCode::CONFLICT, "{body}: {}", res.body);
+        assert!(!res.body.contains("Saved"), "{body}");
+    }
+    // Posting needs the page's permission, as forms do.
+    let res = send(&h.app, post(uri, "_form=close&id=8", &pilot)).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let submitted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.plugin_logs WHERE plugin_id = $1 AND message LIKE 'submitted %'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(submitted, 2);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn live_pages_reload_their_content(db: PgPool) {
+    let (h, owner, pilot) = setup(db).await;
+    // Asked for every second: brought up to 5.
+    let res = page(&h, "/plugins/acme.pages/live", &owner).await;
+    assert!(
+        res.body.contains(
+            r#"<div id="plugin-content" class="plugin-content" hx-get="/plugins/acme.pages/live" hx-trigger="every 5s" hx-swap="outerHTML" data-live>"#
+        ),
+        "{}",
+        res.body
+    );
+    // The query comes along.
+    let res = page(&h, "/plugins/acme.pages/live?x=1&_tab=0", &owner).await;
+    assert!(
+        res.body
+            .contains(r#"hx-get="/plugins/acme.pages/live?x=1&#38;_tab=0""#),
+        "{}",
+        res.body
+    );
+    // A page with a form never reloads under someone typing.
+    let res = page(&h, "/plugins/acme.pages/live-form", &owner).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(!res.body.contains("hx-trigger"), "{}", res.body);
+
+    // A reload gets the content alone.
+    let res = send(&h.app, reload("/plugins/acme.pages/live", Some(&owner))).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(
+        res.body
+            .trim_start()
+            .starts_with(r#"<div id="plugin-content""#),
+        "{}",
+        res.body
+    );
+    assert!(!res.body.contains("<html") && !res.body.contains("app-sidebar"));
+    assert!(res.body.contains("syncing"));
+    // Caches tell the two apart, and don't keep the content alone.
+    assert_eq!(res.headers[header::VARY], "HX-Request, HX-Trigger");
+    assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
+    let whole = page(&h, "/plugins/acme.pages/live", &owner).await;
+    assert_eq!(whole.headers[header::VARY], "HX-Request, HX-Trigger");
+    assert!(whole.headers.get(header::CACHE_CONTROL).is_none());
+    // One that fails leaves what's shown (and tries again later)...
+    let res = send(&h.app, reload("/plugins/acme.pages/failed", Some(&owner))).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert!(res.headers.get("hx-refresh").is_none());
+    // ...but a page that's gone for this viewer loads again whole, which
+    // then says so.
+    for token in [Some(pilot.as_str()), None] {
+        let res = send(&h.app, reload("/plugins/acme.pages/live", token)).await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT);
+        assert_eq!(res.headers["hx-refresh"], "true");
+        assert!(res.body.is_empty());
+    }
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn audited_pages_record_every_view(db: PgPool) {
+    let (h, owner, pilot) = setup(db).await;
+    grant_view(&h.db).await;
+    let res = page(&h, "/plugins/acme.pages/mail/1?folder=inbox", &owner).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.body.contains("mail [(&#34;folder&#34;"), "{}", res.body);
+    // It asks to reload, but audited pages never do (each would be an
+    // entry), and browsers don't keep them.
+    assert!(!res.body.contains("hx-trigger"), "{}", res.body);
+    assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(res.headers[header::VARY], "HX-Request, HX-Trigger");
+    assert_eq!(
+        send(&h.app, reload("/plugins/acme.pages/mail/1", Some(&pilot)))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // Pages under other rules aren't.
+    assert_eq!(
+        page(&h, "/plugins/acme.pages/values", &owner).await.status,
+        StatusCode::OK
+    );
+    // Nor are views refused before the plugin is called.
+    let res = page(&h, "/plugins/acme.pages/mail/1", "not-a-session").await;
+    assert_eq!(res.location(), "/login");
+
+    let rows: Vec<(Option<String>, Option<String>, serde_json::Value)> = sqlx::query_as(
+        "SELECT actor_name, target, details FROM core.audit_log \
+         WHERE action = 'plugin.page_view' ORDER BY id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0].0.as_deref(), Some("Chribba"));
+    assert_eq!(rows[0].1.as_deref(), Some("plugin:acme.pages"));
+    assert_eq!(
+        rows[0].2,
+        serde_json::json!({"path": "mail/1", "query": [["folder", "inbox"]], "via": "page"})
+    );
+    assert_eq!(rows[1].0.as_deref(), Some("The Mittani"));
+    assert_eq!(rows[1].2["via"], "reload");
+
+    // A view that can't be recorded isn't shown: not as a page, a reload
+    // or a post.
+    sqlx::query(
+        "CREATE FUNCTION public.refuse_page_views() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN IF NEW.action = 'plugin.page_view' THEN RAISE EXCEPTION 'no'; END IF; \
+         RETURN NEW; END $$",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse BEFORE INSERT ON core.audit_log \
+         FOR EACH ROW EXECUTE FUNCTION public.refuse_page_views()",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = page(&h, "/plugins/acme.pages/mail/1?folder=inbox", &owner).await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!res.body.contains("mail ["), "{}", res.body);
+    let res = send(&h.app, reload("/plugins/acme.pages/mail/1", Some(&owner))).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = send(
+        &h.app,
+        post("/plugins/acme.pages/mail/1", "_form=x", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    let submitted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.plugin_logs WHERE plugin_id = $1 AND message LIKE 'submitted %'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(submitted, 0);
 }
