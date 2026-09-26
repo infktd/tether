@@ -105,6 +105,8 @@ tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; comm
 cargo check --workspace
 cargo run -p tether-server --features dev   # /dev/login fixtures and Scalar at /docs (debug builds only)
 cargo test --workspace
+cargo test -p tether-web --test it groups::   # the web tests are one binary (crates/web/tests/it); filter by module
+cargo clean   # safe any time; target/ grows with every feature set and toolchain, and a fresh test build is ~4 GB
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo clippy -p hello-plugin -p moon-mining -p member-audit -p tether-plugin-sdk --target wasm32-wasip2 -- -D warnings   # plus the tether-plugins-test-guest* crates

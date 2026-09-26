@@ -1,0 +1,2911 @@
+---
+source: crates/web/tests/it/openapi.rs
+expression: "tether_web::openapi::ApiDoc::openapi()"
+---
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tether API",
+    "description": "JSON API for bots, scripts and testing. The browser UI uses HTML over htmx instead.",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/admin/accounts/{id}/deactivate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/accounts/{id}/deactivate`: as AA's inactive users:\nGuest, no permissions, sessions ended, sign-in refused. Not the owner.",
+        "operationId": "deactivate_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/accounts/{id}/reactivate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/accounts/{id}/reactivate`",
+        "operationId": "reactivate_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/audit": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /api/admin/audit?limit=&before=`: newest first.",
+        "operationId": "audit_log",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEntryOut"
+                  }
+                }
+              }
+            }
+          },
+          "403": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/groups`",
+        "operationId": "create_group",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewGroup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "409": {
+            "description": "Name taken"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PUT /api/admin/groups/{id}`: every setting at once. Members whose\nstate is no longer allowed leave.",
+        "operationId": "update_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/groups/{id}`",
+        "operationId": "delete_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}/leader-groups/{leader_group_id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PUT /api/admin/groups/{id}/leader-groups/{leader_group_id}`: members\nof the other group lead this one.",
+        "operationId": "add_leader_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "leader_group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/groups/{id}/leader-groups/{leader_group_id}`",
+        "operationId": "remove_leader_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "leader_group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}/leaders/{account_id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PUT /api/admin/groups/{id}/leaders/{account_id}`: make them a Group\nLeader.",
+        "operationId": "add_leader",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/groups/{id}/leaders/{account_id}`",
+        "operationId": "remove_leader",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}/members": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/groups/{id}/members`",
+        "operationId": "add_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/groups/{id}/members/{account_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/groups/{id}/members/{account_id}`",
+        "operationId": "remove_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/permissions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /api/admin/permissions`",
+        "operationId": "list_permissions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionsOut"
+                }
+              }
+            }
+          },
+          "403": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/permissions/grants": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/permissions/grants`: grant to a state or a group.",
+        "operationId": "grant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/permissions/grants/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/permissions/grants/{id}`",
+        "operationId": "revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/reserved-group-names": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /api/admin/reserved-group-names`",
+        "operationId": "reserved_names",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReservedName"
+                  }
+                }
+              }
+            }
+          },
+          "403": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/reserved-group-names`: groups can't take the name\n(ignoring case).",
+        "operationId": "reserve_name",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservedName"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/reserved-group-names/{name}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/reserved-group-names/{name}`",
+        "operationId": "unreserve_name",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /api/admin/states`: highest priority first.",
+        "operationId": "list_states",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StateOut"
+                  }
+                }
+              }
+            }
+          },
+          "403": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states`: a new state, just above Guest.",
+        "operationId": "create_state",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StateNameIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "409": {
+            "description": "Name taken"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/resolve": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/resolve`: exact alliance, corporation and\ncharacter names to ids, via ESI.",
+        "operationId": "resolve_names",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveOut"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "502": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/states/{id}`: delete a state an admin made; its\naccounts are re-evaluated.",
+        "operationId": "delete_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`PATCH /api/admin/states/{id}`: rename a state, or set its priority\n(one per request).\nEvery state but Guest can be renamed, as in AA.",
+        "operationId": "rename_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/covers": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/{id}/covers`: add an alliance, corporation or\ncharacter. Its name and kind come from ESI, not the client.",
+        "operationId": "add_cover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {
+            "description": "No such state, or ESI doesn't know the id"
+          },
+          "409": {},
+          "502": {
+            "description": "ESI unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/covers/{entity_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/states/{id}/covers/{entity_id}`",
+        "operationId": "remove_cover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/move": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/{id}/move`: swap with the state above or below.\nChanging who is in a state needs every permission granted to it.",
+        "operationId": "move_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/scopes": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /api/admin/states/{id}/scopes`: require a character scope of every\ncharacter in the state. Accounts that lack it become Guest until they\nregister again.",
+        "operationId": "add_scope",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {},
+          "404": {},
+          "409": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/admin/states/{id}/scopes/{scope}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /api/admin/states/{id}/scopes/{scope}`",
+        "operationId": "remove_scope",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/audit-log": {
+      "get": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`GET /api/group-management/groups/{id}/audit-log`: the latest 200.",
+        "operationId": "audit_log",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LogOut"
+                  }
+                }
+              }
+            }
+          },
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/members": {
+      "get": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`GET /api/group-management/groups/{id}/members`",
+        "operationId": "members",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemberOut"
+                  }
+                }
+              }
+            }
+          },
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/members/{account_id}": {
+      "delete": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`DELETE /api/group-management/groups/{id}/members/{account_id}`:\nlogged as Removed.",
+        "operationId": "remove_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/requests/{account_id}/accept": {
+      "post": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`POST /api/group-management/groups/{id}/requests/{account_id}/accept`",
+        "operationId": "accept",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "Their state can't be in the group now"
+          },
+          "403": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/groups/{id}/requests/{account_id}/reject": {
+      "post": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`POST /api/group-management/groups/{id}/requests/{account_id}/reject`",
+        "operationId": "reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/group-management/requests": {
+      "get": {
+        "tags": [
+          "group management"
+        ],
+        "summary": "`GET /api/group-management/requests`: pending requests for the groups\nyou manage, oldest first.",
+        "operationId": "requests",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RequestOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "`GET /api/groups`: the groups you're in or have asked about, and the\nones you may join.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/groups/{id}/join": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "`POST /api/groups/{id}/join`",
+        "operationId": "join",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Joined an Open group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Request sent to the group's leaders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your state can't join, or you can't request groups"
+          },
+          "404": {
+            "description": "No such group"
+          },
+          "409": {
+            "description": "Already a member, or a request is pending"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/groups/{id}/leave": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "`POST /api/groups/{id}/leave`",
+        "operationId": "leave",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Leave request sent to the group's leaders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only admins change this group's members"
+          },
+          "404": {
+            "description": "Not a member"
+          },
+          "409": {
+            "description": "A request is pending"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/groups/{id}/retract": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "`POST /api/groups/{id}/retract`: withdraw a join request.",
+        "operationId": "retract",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "400": {
+            "description": "Leave requests can't be withdrawn"
+          },
+          "404": {
+            "description": "No request"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/me": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`GET /api/me`: the signed-in account and its characters.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/me/main": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`POST /api/me/main`: make one of your characters the main.",
+        "operationId": "set_main",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMain"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Main changed; state re-evaluated"
+          },
+          "404": {
+            "description": "Not one of your characters"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`GET /api/notifications`: your latest 50, newest first.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/delete-read": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`POST /api/notifications/delete-read`",
+        "operationId": "delete_read",
+        "responses": {
+          "204": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/read-all": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`POST /api/notifications/read-all`",
+        "operationId": "read_all",
+        "responses": {
+          "204": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/unread": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`GET /api/notifications/unread`",
+        "operationId": "unread",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/{id}": {
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`DELETE /api/notifications/{id}`",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/{id}/open": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "`POST /api/notifications/{id}/open`: returns it and marks it read.",
+        "operationId": "open",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationOut"
+                }
+              }
+            }
+          },
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/setup": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "`GET /api/setup`: public; says which step comes next.",
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/setup/callback-check": {
+      "post": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "`POST /api/setup/callback-check`: fetch our own public URL the way CCP's\nredirect will reach it (DNS, TLS, reverse proxy) and confirm this\ninstance answers. Matching the URL registered at CCP is proven by the\nfirst login.",
+        "operationId": "callback_check",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckOut"
+                }
+              }
+            }
+          },
+          "401": {},
+          "403": {}
+        }
+      }
+    },
+    "/api/setup/probe": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "`GET /api/setup/probe?nonce=`: echoes the nonce so the callback check\ncan tell this instance answered.",
+        "operationId": "probe",
+        "parameters": [
+          {
+            "name": "nonce",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {}
+        }
+      }
+    },
+    "/api/setup/sso": {
+      "post": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "`POST /api/setup/sso`: set the EVE SSO client id.",
+        "operationId": "set_sso",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsoIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsoOut"
+                }
+              }
+            }
+          },
+          "400": {},
+          "401": {},
+          "403": {}
+        }
+      }
+    },
+    "/api/setup/unlock": {
+      "post": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "`POST /api/setup/unlock`: exchange the setup token for a setup session.",
+        "operationId": "unlock",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlockIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Unlocked; sets the setup cookie"
+          },
+          "403": {
+            "description": "Wrong token"
+          },
+          "410": {
+            "description": "Setup is finished"
+          },
+          "429": {
+            "description": "Too many attempts from this IP"
+          }
+        }
+      }
+    },
+    "/api/tokens": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`GET /api/tokens`",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TokenOut"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/tokens/{character_id}": {
+      "delete": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`DELETE /api/tokens/{character_id}`",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "character_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {}
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/tokens/{character_id}/refresh": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`POST /api/tokens/{character_id}/refresh`: refresh now, with the\nownership check.",
+        "operationId": "refresh",
+        "parameters": [
+          {
+            "name": "character_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshOut"
+                }
+              }
+            }
+          },
+          "404": {},
+          "502": {
+            "description": "EVE SSO didn't answer"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness: the process is up and serving HTTP.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "ok"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness: the database answers.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "ready"
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuditEntryOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "at",
+          "action",
+          "details"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_account_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": "object"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CharacterRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CharacterSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "is_main"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "is_main": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckOut": {
+        "type": "object",
+        "required": [
+          "ok",
+          "url",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "CoverIn": {
+        "type": "object",
+        "required": [
+          "entity_id"
+        ],
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CoveredOut": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`alliance`, `corporation` or `character`."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "Created": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "EntityOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "GrantIn": {
+        "type": "object",
+        "required": [
+          "permission"
+        ],
+        "properties": {
+          "group_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "permission": {
+            "type": "string"
+          },
+          "state_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "GrantOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "permission"
+        ],
+        "properties": {
+          "group_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "permission": {
+            "type": "string"
+          },
+          "state_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "GroupOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "kind",
+          "is_member"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "is_member": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`open` (in or out at once), `requestable` (leaders approve) or\n`internal` (admins only; listed only when you're in it)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "pending": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A pending request: `join` or `leave`."
+          }
+        }
+      },
+      "GroupSettings": {
+        "type": "object",
+        "required": [
+          "internal",
+          "hidden",
+          "open",
+          "public",
+          "restricted"
+        ],
+        "properties": {
+          "compliance": {
+            "type": "boolean",
+            "description": "A compliance group (Internal only): Tether keeps its members."
+          },
+          "description": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "restricted": {
+            "type": "boolean"
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Only these states may be in it; empty for every state."
+          }
+        }
+      },
+      "LogOut": {
+        "type": "object",
+        "required": [
+          "at",
+          "request_type",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`accept` or `reject`."
+          },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "request_type": {
+            "type": "string",
+            "description": "`join`, `leave` or `removed`."
+          },
+          "requestor_corporation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestor_main": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "is_owner",
+          "state",
+          "characters",
+          "groups",
+          "permissions"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CharacterSummary"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "main": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CharacterRef",
+                "description": "`None` after the main was sold or lost its token, until Change Main."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "The access state's name: Member, Blue, Guest or one an admin made."
+          }
+        }
+      },
+      "MemberIn": {
+        "type": "object",
+        "required": [
+          "account_id"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "MemberOut": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "main_name",
+          "state"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "main_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "MoveIn": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "`up` (higher priority) or `down`."
+          },
+          "past": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The state expected to be passed; refused with 409 if the order\nchanged."
+          }
+        }
+      },
+      "NewGroup": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "Not listed; joinable through its direct link (default)."
+          },
+          "internal": {
+            "type": "boolean",
+            "description": "Only admins change its members (default, as AA's)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "open": {
+            "type": "boolean",
+            "description": "Join and leave without approval."
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Joinable without `request_groups`."
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "Only the owner changes its members or this flag."
+          }
+        }
+      },
+      "NotificationOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "level",
+          "title",
+          "message",
+          "created_at",
+          "read"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "level": {
+            "type": "string",
+            "description": "`danger`, `warning`, `info` or `success`."
+          },
+          "message": {
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "PermissionInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PermissionsOut": {
+        "type": "object",
+        "required": [
+          "available",
+          "grants"
+        ],
+        "properties": {
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionInfo"
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrantOut"
+            }
+          }
+        }
+      },
+      "RefreshOut": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "type": "string",
+            "description": "`valid`, `revoked` (log in with it again) or `sold` (it left the\naccount)."
+          }
+        }
+      },
+      "RequestOut": {
+        "type": "object",
+        "required": [
+          "group_id",
+          "group_name",
+          "account_id",
+          "main_name",
+          "leave",
+          "requested_at"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "group_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "group_name": {
+            "type": "string"
+          },
+          "leave": {
+            "type": "boolean",
+            "description": "True for a request to leave."
+          },
+          "main_name": {
+            "type": "string"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReservedName": {
+        "type": "object",
+        "required": [
+          "name",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ResolveIn": {
+        "type": "object",
+        "required": [
+          "names"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ResolveOut": {
+        "type": "object",
+        "required": [
+          "alliances",
+          "corporations",
+          "characters"
+        ],
+        "properties": {
+          "alliances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityOut"
+            }
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityOut"
+            }
+          },
+          "corporations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityOut"
+            }
+          }
+        }
+      },
+      "ScopeIn": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string"
+          }
+        }
+      },
+      "SetMain": {
+        "type": "object",
+        "required": [
+          "character_id"
+        ],
+        "properties": {
+          "character_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SetupState": {
+        "type": "string",
+        "enum": [
+          "needs_sso",
+          "needs_owner",
+          "needs_alliance",
+          "complete"
+        ]
+      },
+      "SetupStatus": {
+        "type": "object",
+        "required": [
+          "state",
+          "callback_url",
+          "sso_configured",
+          "owner_exists",
+          "unlocked"
+        ],
+        "properties": {
+          "callback_url": {
+            "type": "string",
+            "description": "Register exactly this with CCP."
+          },
+          "owner_exists": {
+            "type": "boolean"
+          },
+          "sso_configured": {
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState"
+          },
+          "suggested": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Suggestion",
+                "description": "For admins at the alliance step: the owner main's own alliance (or\ncorporation if it has no alliance)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unlocked": {
+            "type": "boolean",
+            "description": "This browser holds a valid setup session."
+          }
+        }
+      },
+      "SsoIn": {
+        "type": "object",
+        "required": [
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          }
+        }
+      },
+      "SsoOut": {
+        "type": "object",
+        "required": [
+          "callback_url"
+        ],
+        "properties": {
+          "callback_url": {
+            "type": "string"
+          }
+        }
+      },
+      "StateNameIn": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "StateOut": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "priority",
+          "accounts",
+          "covers",
+          "required_scopes",
+          "added_scopes"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Accounts in the state now."
+          },
+          "added_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The scopes an admin added (a subset of `required_scopes`)."
+          },
+          "builtin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`member`, `blue` or `guest` for the built-in states."
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoveredOut"
+            }
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Higher wins; Guest is 0."
+          },
+          "required_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Scopes every character must grant: for Member, the installed\nplugins' user scopes too."
+          }
+        }
+      },
+      "StatePatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Higher wins; 1 or more, and no other state's (Guest is 0)."
+          }
+        }
+      },
+      "StatusOut": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`member` or `left` (done at once), or `requested` (awaiting the\ngroup's leaders)."
+          }
+        }
+      },
+      "Suggestion": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TokenOut": {
+        "type": "object",
+        "required": [
+          "character_id",
+          "character_name",
+          "is_main",
+          "scopes",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "character_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "is_main": {
+            "type": "boolean"
+          },
+          "last_refreshed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "`valid`, `revoked` or `deleted`."
+          }
+        }
+      },
+      "UnlockIn": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "UnreadOut": {
+        "type": "object",
+        "required": [
+          "unread"
+        ],
+        "properties": {
+          "unread": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-tether_session",
+        "description": "Session cookie from logging in with EVE SSO at /auth/login"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "Liveness and readiness"
+    },
+    {
+      "name": "account",
+      "description": "The signed-in account"
+    },
+    {
+      "name": "notifications",
+      "description": "Your notifications"
+    },
+    {
+      "name": "groups",
+      "description": "Joining and leaving groups"
+    },
+    {
+      "name": "group management",
+      "description": "Requests, members and the Audit Log of the groups you manage"
+    },
+    {
+      "name": "admin",
+      "description": "Groups, permissions, states and the audit log"
+    },
+    {
+      "name": "setup",
+      "description": "First-run wizard"
+    }
+  ]
+}

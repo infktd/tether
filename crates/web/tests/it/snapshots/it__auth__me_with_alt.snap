@@ -1,0 +1,45 @@
+---
+source: crates/web/tests/it/auth.rs
+expression: "me(&h, &after_alt).await"
+---
+{
+  "account_id": 1,
+  "characters": [
+    {
+      "id": 90000001,
+      "is_main": true,
+      "name": "Main Pilot"
+    },
+    {
+      "id": 90000002,
+      "is_main": false,
+      "name": "Alt Pilot"
+    }
+  ],
+  "groups": [],
+  "is_owner": true,
+  "main": {
+    "id": 90000001,
+    "name": "Main Pilot"
+  },
+  "permissions": [
+    "admin.audit",
+    "admin.discord",
+    "admin.groups",
+    "admin.permissions",
+    "admin.plugins",
+    "admin.states",
+    "admin.system",
+    "admin.users",
+    "compliance.view",
+    "corpstats.view_alliance_corpstats",
+    "corpstats.view_corp_corpstats",
+    "corpstats.view_state_corpstats",
+    "discord.access_discord",
+    "fleet.ping",
+    "group_management",
+    "permissions_tool.audit_permissions",
+    "request_groups"
+  ],
+  "state": "Guest"
+}

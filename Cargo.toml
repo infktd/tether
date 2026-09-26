@@ -122,6 +122,11 @@ print_stderr = "deny"
 dbg_macro = "deny"
 
 # Dependencies rarely need debug info; skipping it keeps target/ smaller and
-# links faster. Our own crates keep full debug info.
+# links faster. Our own crates keep line tables: backtraces still name files
+# and lines, at a fraction of full debug info's size (use `debug = true`
+# locally for a debugger).
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 debug = false
