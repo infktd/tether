@@ -255,3 +255,39 @@ docker compose -f deploy/docker-compose.yml exec app tether doctor
 `doctor` knows the proxy from `TETHER_PROXY`: it names who terminates TLS,
 checks ports 80 and 443 and HTTPS against the public URL, and fits its
 fixes to the proxy (port 80 is only required with Caddy).
+
+## Releasing
+
+For maintainers. CI (`.github/workflows/ci.yml`) publishes the image
+once every check has passed on the commit: each push to main as `:edge`
+and `:sha-<commit>`, and each `vX.Y.Z` tag as `:X.Y.Z`, `:X.Y` and
+`:latest`. Pull requests never publish. Each architecture builds on its
+own native runner and the two are joined into one multi-arch image.
+
+1. With main green, tag and push the tag:
+   `git tag v1.2.0 && git push origin v1.2.0`.
+2. Watch the build on GitHub under Actions → CI → the run for `v1.2.0`.
+   The `publish-image` jobs (amd64, arm64) and `publish-manifest` run last.
+   The published tags are under the repository's Packages → tether
+   (`https://github.com/infktd/tether/pkgs/container/tether`).
+3. Once the image is published, create a GitHub release from the tag
+   (Releases → Draft a new release, or
+   `gh release create v1.2.0 --generate-notes`). New installs pin the
+   newest release, so create it only after the image exists. For a patch
+   to an older line (say 1.1.5 after 1.2.0), add `--latest=false`, so
+   GitHub's latest release stays the same as `:latest`.
+
+Only a tag on main publishes, and a published `X.Y.Z` is never replaced:
+to fix a bad release, tag the next patch. `:X.Y` and `:latest` never move
+back to an older release.
+
+One time only, after the first publish: make the package public so
+installs can pull it without logging in. On GitHub, go to Packages →
+tether → Package settings → Change visibility → Public. The workflow
+created the package, so it's already linked to the repository and CI can
+keep pushing to it.
+
+Recommended, also once: protect release tags with a ruleset (Settings →
+Rules → Rulesets → New tag ruleset, targeting `v*`, restricting creation,
+updates and deletion to you). Anyone who can push a `v*` tag on main can
+publish `:latest`.
