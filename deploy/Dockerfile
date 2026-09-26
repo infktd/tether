@@ -19,11 +19,24 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:trixie-slim
 # ca-certificates: rustls verifies ESI, SSO and Discord against the system
 # trust store.
+# postgresql-client-16: pg_dump, pg_restore and psql for snapshots and
+# backups, matching the database's Postgres 16 (a newer client's restore
+# scripts don't run on 16). Trixie ships 17, so it comes from the
+# PostgreSQL project's apt repository, set up at build time only with the
+# key postgresql-common carries; the running app never contacts it.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates postgresql-common \
+ && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+ && apt-get install -y --no-install-recommends postgresql-client-16 \
+ && apt-get purge -y --auto-remove postgresql-common \
+ && rm -f /etc/apt/sources.list.d/pgdg.sources /etc/apt/sources.list.d/pgdg.list \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tether
+ && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tether \
+ && install -d -o tether -g tether -m 0700 /var/lib/tether /var/lib/tether/snapshots
 COPY --from=build /usr/local/bin/tether /usr/local/bin/tether
+# Snapshots and nightly backups (encrypted); a volume in docker-compose.yml.
+# A fresh named volume takes this directory's owner and mode.
+ENV SNAPSHOT_DIR=/var/lib/tether/snapshots
 USER tether
 EXPOSE 8080
 ENTRYPOINT ["tether"]

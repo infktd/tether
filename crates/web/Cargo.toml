@@ -35,6 +35,7 @@ tether-esi.workspace = true
 tether-jobs.workspace = true
 tether-net.workspace = true
 tether-plugins.workspace = true
+tether-snapshots.workspace = true
 thiserror.workspace = true
 tether-db.workspace = true
 tether-discord.workspace = true

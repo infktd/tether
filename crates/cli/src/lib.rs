@@ -8,6 +8,7 @@
 
 mod commands;
 pub mod doctor;
+pub mod rollback;
 
 pub use commands::{
     Command, JobsCommand, OwnershipCommand, StateArg, StatesCommand, UsersCommand, run,

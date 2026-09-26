@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT current_setting('server_version_num')::int / 10000 AS \"major!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "major!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1fe5b7a743641dca9294a4211b8080765a30640c0e1f590655ce679af77e7c8e"
+}

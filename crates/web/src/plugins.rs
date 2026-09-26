@@ -26,6 +26,7 @@ use tether_db::PgPool;
 use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::plugin_keys::{self, PinnedBy};
+use tether_db::plugin_storage::password_secret;
 use tether_db::plugins as db;
 use tether_db::{plugin_jobs, plugin_storage, secrets};
 use tether_plugins::host::{Host, LoadedPlugin};
@@ -199,6 +200,7 @@ pub struct Plugins {
     host: Host,
     /// Opens plugins' database passwords.
     key: EncryptionKey,
+    snapshots: Option<Arc<tether_snapshots::Snapshots>>,
     slots: RwLock<BTreeMap<String, Slot>>,
     /// Held across every lifecycle change (database, then load or unload),
     /// so concurrent changes can't leave a plugin running that the
@@ -237,6 +239,7 @@ impl Plugins {
                     .with_jobs(crate::plugin_jobs::PluginQueue::new(deps.db.clone()))
                     .with_services(services),
                 key: deps.key.clone(),
+                snapshots: deps.snapshots.clone(),
                 slots: RwLock::default(),
                 lifecycle: tokio::sync::Mutex::new(()),
                 uploads: tokio::sync::Semaphore::new(1),
@@ -363,6 +366,10 @@ impl Plugins {
                     version = installed.version,
                     "plugin loaded"
                 );
+                if let Some(snapshots) = &self.snapshots {
+                    let kind = tether_snapshots::Kind::Plugin(installed.id.clone());
+                    snapshots.mark_running(&kind).await;
+                }
                 Slot::Running(running)
             }
             Err(why) => {
@@ -376,6 +383,26 @@ impl Plugins {
     async fn load(&self, db: &PgPool, installed: &db::Installed) -> Result<Running, String> {
         if sha256(&installed.package) != installed.package_sha256 {
             return Err("the stored package isn't the one that was approved".to_owned());
+        }
+        // A rollback cut short left its data set aside; running against
+        // the half-restored schema would split its data in two.
+        match tether_snapshots::set_aside_exists(db, &installed.id).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return Err(format!(
+                    "a rollback of its data was cut short: run `tether rollback --plugin {}` \
+                     again (with Tether stopped) to finish it",
+                    installed.id
+                ));
+            }
+            Err(e) => {
+                tracing::error!(plugin = installed.id, error = %e, "checking for a cut-short rollback");
+                return Err("its storage couldn't be checked".to_owned());
+            }
+        }
+        if let Err(e) = tether_snapshots::reset_restore_limits(db, &installed.id).await {
+            tracing::error!(plugin = installed.id, error = %e, "resetting a rollback's temp file cap");
+            return Err("its database limits couldn't be checked".to_owned());
         }
         let pinned = plugin_keys::get(db, &installed.id)
             .await
@@ -464,7 +491,14 @@ impl Plugins {
             .username(&names.role_name)
             .password(password.expose())
             .application_name(&format!("tether plugin {id}"));
-        migrate(db, &options, id, &package.migrations).await?;
+        migrate(
+            db,
+            &options,
+            id,
+            &package.migrations,
+            self.snapshots.as_deref(),
+        )
+        .await?;
         let pool = PgPoolOptions::new()
             .max_connections(POOL_CONNECTIONS)
             .min_connections(0)
@@ -531,21 +565,18 @@ const ROLE_CONNECTIONS: u32 = POOL_CONNECTIONS + 2;
 /// How long one plugin migration may run before its session is ended.
 pub const MIGRATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
-/// Where a plugin's database password is kept (sealed) in `core.secrets`.
-fn password_secret(plugin_id: &str) -> String {
-    format!("plugin.{plugin_id}.db_password")
-}
-
 /// Runs a plugin's pending migrations over its own role's connection, one
 /// transaction each, recording each with its checksum. A migration already
 /// applied must be unchanged. The host ends the session of one that runs
 /// past [`MIGRATION_DEADLINE`] (a plugin's SQL can lift its own statement
-/// timeout).
+/// timeout). When the plugin already has data (an upgrade), a snapshot of
+/// its schema comes first, and nothing runs without one (N14).
 async fn migrate(
     db: &PgPool,
     options: &PgConnectOptions,
     plugin: &str,
     migrations: &[package::Migration],
+    snapshots: Option<&tether_snapshots::Snapshots>,
 ) -> Result<(), String> {
     let failed = |e: sqlx::Error| {
         tracing::error!(plugin, error = %e, "plugin migrations");
@@ -574,6 +605,25 @@ async fn migrate(
     let pending = &migrations[applied.len().min(migrations.len())..];
     if pending.is_empty() {
         return Ok(());
+    }
+    // A fresh install has nothing to keep.
+    if !applied.is_empty() {
+        match snapshots {
+            Some(snapshots) => {
+                snapshots
+                    .before_plugin_migrations(db, plugin)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(plugin, error = %e, "snapshot before plugin migrations");
+                        format!(
+                            "its new migrations didn't run, because a snapshot of its data \
+                             couldn't be taken first ({})",
+                            e.brief()
+                        )
+                    })?;
+            }
+            None => tracing::warn!(plugin, "snapshots are off; migrating without one"),
+        }
     }
     let mut conn = PgConnection::connect_with(options).await.map_err(|e| {
         tracing::error!(plugin, error = %e, "connecting as a plugin role");

@@ -15,6 +15,7 @@ pub mod admin;
 mod api;
 pub mod auth;
 pub mod autogroups;
+pub mod backups;
 pub mod blacklist;
 pub mod compliance;
 mod csrf;
@@ -636,6 +637,7 @@ mod tests {
                 discord: discord.clone(),
                 key: key.clone(),
                 public_url: "https://tether.test".to_owned(),
+                snapshots: None,
             },
         );
         AppState {

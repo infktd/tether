@@ -445,6 +445,8 @@ async fn doctor_prints_fixes_and_fails_overall(db: PgPool) {
         key: None,
         discord: unreachable_discord(),
         github_api_url: "http://127.0.0.1:9".into(),
+        snapshot_dir: std::env::temp_dir(),
+        pg_bin_dir: None,
     };
     let mut out = Vec::new();
 
@@ -478,6 +480,8 @@ async fn doctor_skips_network_checks_for_localhost(db: PgPool) {
         key: None,
         discord: unreachable_discord(),
         github_api_url: "http://127.0.0.1:9".into(),
+        snapshot_dir: std::env::temp_dir(),
+        pg_bin_dir: None,
     };
     let checks = doctor::checks(&env).await;
     for name in ["port 80", "port 443", "https", "public url"] {
@@ -528,6 +532,8 @@ async fn discord_env(db: PgPool, key: Option<EncryptionKey>, server: &MockServer
         )
         .unwrap(),
         github_api_url: "http://127.0.0.1:9".into(),
+        snapshot_dir: std::env::temp_dir(),
+        pg_bin_dir: None,
     }
 }
 

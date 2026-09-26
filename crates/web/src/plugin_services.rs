@@ -58,6 +58,9 @@ pub struct Deps {
     /// The instance's public URL: plugins' HTTP User-Agent carries it, as
     /// a way to reach the operator (zKillboard asks for one).
     pub public_url: String,
+    /// Taken before a plugin's migrations on an upgrade. `None` (tests)
+    /// migrates without one.
+    pub snapshots: Option<Arc<tether_snapshots::Snapshots>>,
 }
 
 impl std::fmt::Debug for Deps {

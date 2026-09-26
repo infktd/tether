@@ -5,6 +5,7 @@
 //! is configured in the browser and stored in the database.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use clap::Args;
 use tether_core::Secret;
@@ -48,6 +49,47 @@ pub struct ServeConfig {
     /// generated at startup and logged.
     #[arg(long, env = "SETUP_TOKEN", hide_env_values = true)]
     pub setup_token: Option<Secret<String>>,
+
+    #[command(flatten)]
+    pub snapshots: SnapshotConfig,
+
+    /// Apply pending core migrations without a snapshot first. For local
+    /// development without the Postgres 16 client tools; never needed in
+    /// the app image.
+    #[arg(long, env = "SKIP_MIGRATION_SNAPSHOT", default_value_t = false)]
+    pub skip_migration_snapshot: bool,
+}
+
+/// Where snapshots and backups go, and the tools that make them.
+#[derive(Args, Debug, Clone)]
+pub struct SnapshotConfig {
+    /// The snapshots volume; the app image creates it.
+    #[arg(
+        long,
+        env = "SNAPSHOT_DIR",
+        default_value = "/var/lib/tether/snapshots"
+    )]
+    pub snapshot_dir: PathBuf,
+
+    /// Directory holding pg_dump, pg_restore and psql (Postgres 16);
+    /// default: PATH.
+    #[arg(long, env = "PG_BIN_DIR")]
+    pub pg_bin_dir: Option<PathBuf>,
+}
+
+impl SnapshotConfig {
+    pub fn snapshots(
+        &self,
+        database_url: &Secret<String>,
+        key: &tether_core::crypto::EncryptionKey,
+    ) -> Result<tether_snapshots::Snapshots, tether_snapshots::SnapshotError> {
+        tether_snapshots::Snapshots::new(tether_snapshots::Config {
+            dir: self.snapshot_dir.clone(),
+            pg_bin_dir: self.pg_bin_dir.clone(),
+            database_url: database_url.clone(),
+            key: key.clone(),
+        })
+    }
 }
 
 impl ServeConfig {
@@ -96,9 +138,13 @@ pub struct ToolConfig {
     #[arg(long, env = "PUBLIC_URL", value_parser = parse_public_url)]
     pub public_url: Option<String>,
 
-    /// Lets `doctor` open the stored Discord secrets to check them.
+    /// Lets `doctor` open the stored Discord secrets to check them, and
+    /// `rollback` open snapshots.
     #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]
     pub encryption_key: Option<Secret<String>>,
+
+    #[command(flatten)]
+    pub snapshots: SnapshotConfig,
 }
 
 impl ToolConfig {

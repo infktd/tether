@@ -1,0 +1,24 @@
+[package]
+name = "tether-snapshots"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tether-core.workspace = true
+tether-db.workspace = true
+thiserror.workspace = true
+# pg_dump, pg_restore and psql run as child processes; snapshots stream
+# through them and to disk.
+tokio = { workspace = true, features = ["process", "io-util", "fs"] }
+tracing.workspace = true

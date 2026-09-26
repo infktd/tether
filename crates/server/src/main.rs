@@ -29,6 +29,9 @@ enum Command {
     /// Check DNS, ports, TLS, database, ESI and SSO, with a fix for each
     /// problem.
     Doctor,
+    /// Put core, or one app's data, back as it was in a snapshot taken
+    /// before migrations (or a nightly backup). Stop the server first.
+    Rollback(tether_cli::rollback::Args),
     #[command(flatten)]
     Admin(tether_cli::Command),
 }
@@ -51,6 +54,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     match cli.command {
         Some(Command::Serve(config)) => serve(config).await.map(|()| ExitCode::SUCCESS),
         Some(Command::Doctor) => doctor().await,
+        Some(Command::Rollback(args)) => rollback(args).await.map(|()| ExitCode::SUCCESS),
         Some(Command::Admin(command)) => admin(command).await.map(|()| ExitCode::SUCCESS),
         None => match cli.serve {
             Some(config) => serve(config).await.map(|()| ExitCode::SUCCESS),
@@ -80,6 +84,24 @@ async fn admin(command: tether_cli::Command) -> anyhow::Result<()> {
     tether_cli::run(command, &db, &esi, &mut std::io::stdout().lock()).await
 }
 
+async fn rollback(args: tether_cli::rollback::Args) -> anyhow::Result<()> {
+    let (config, db, _) = tool_context().await?;
+    let key = config
+        .encryption_key
+        .as_ref()
+        .context("ENCRYPTION_KEY must be set: snapshots are encrypted with it")?;
+    let key = tether_core::crypto::EncryptionKey::from_hex(key)?;
+    let snapshots = config.snapshots.snapshots(&config.database_url, &key)?;
+    tether_cli::rollback::run(
+        args,
+        &db,
+        &snapshots,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout().lock(),
+    )
+    .await
+}
+
 async fn doctor() -> anyhow::Result<ExitCode> {
     let (config, db, esi) = tool_context().await?;
     // A bad key is reported by the Discord check, not fatal here.
@@ -101,6 +123,8 @@ async fn doctor() -> anyhow::Result<ExitCode> {
         sso_metadata_url: tether_cli::doctor::SSO_METADATA_URL.to_owned(),
         http_port: 80,
         https_port: 443,
+        snapshot_dir: config.snapshots.snapshot_dir.clone(),
+        pg_bin_dir: config.snapshots.pg_bin_dir.clone(),
     };
     let healthy = tether_cli::doctor::run(&env, &mut std::io::stdout().lock()).await?;
     Ok(if healthy {
@@ -144,16 +168,46 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         &config.database_url,
         &tether_db::ConnectOptions {
             max_connections: config.database_max_connections,
+            application_name: Some(tether_db::SERVER_APPLICATION_NAME),
             ..Default::default()
         },
     )
     .await?;
+    let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
+    let snapshots = std::sync::Arc::new(
+        config
+            .snapshots
+            .snapshots(&config.database_url, &key)
+            .context("setting up snapshots")?,
+    );
+    if tether_snapshots::rollback_running(&db).await? {
+        anyhow::bail!("`tether rollback` is restoring data; start Tether again once it's done");
+    }
+    if tether_snapshots::finish_interrupted_restore(&db).await? {
+        tracing::warn!(
+            "an interrupted rollback left TimescaleDB in restore mode; switched it back"
+        );
+    }
+    // Pending migrations on a database with data: snapshot first, so
+    // `tether rollback` can undo them (N14). No snapshot, no migration.
+    if config.skip_migration_snapshot {
+        tracing::warn!("SKIP_MIGRATION_SNAPSHOT is set: migrating without a snapshot");
+    } else if let Some(snapshot) = snapshots
+        .before_migrations(&db, &tether_db::MIGRATOR)
+        .await
+        .context(
+            "taking the snapshot before core migrations, so nothing was migrated; `tether doctor` \
+             checks what snapshots need",
+        )?
+    {
+        tracing::info!(snapshot = snapshot.name, "snapshot ready before migrating");
+    }
     tether_db::migrate(&db).await?;
     tracing::info!("database migrations applied");
+    snapshots.mark_running(&tether_snapshots::Kind::Core).await;
 
     let esi = tether_esi::Esi::new(&user_agent(&config.public_url()), None)?;
 
-    let key = tether_core::crypto::EncryptionKey::from_hex(&config.encryption_key)?;
     let discord = std::sync::Arc::new(tether_discord::Discord::new(
         tether_discord::Endpoints::discord(),
         outbound(&plain_agent())?,
@@ -185,6 +239,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             discord: discord.clone(),
             key: key.clone(),
             public_url: config.public_url(),
+            snapshots: Some(snapshots.clone()),
         },
     );
     {
@@ -220,6 +275,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_web::ownership::register_jobs(&mut registry, db.clone(), vault.clone());
     tether_web::autogroups::register_jobs(&mut registry, db.clone(), esi.clone());
     tether_web::smart_groups::register_jobs(&mut registry, db.clone(), esi.clone());
+    tether_web::backups::register_jobs(&mut registry, db.clone(), snapshots.clone());
     let schedules = tether_web::maintenance::schedules()
         .into_iter()
         .chain(tether_web::sync::schedules())
@@ -228,7 +284,8 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         .chain(tether_web::autogroups::schedules())
         .chain(tether_web::smart_groups::schedules())
         .chain(tether_web::discord_sync::schedules())
-        .chain(tether_web::updates::schedules());
+        .chain(tether_web::updates::schedules())
+        .chain(tether_web::backups::schedules());
     for spec in schedules {
         tether_jobs::schedule::ensure(&db, &spec).await?;
     }

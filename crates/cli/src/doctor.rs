@@ -3,6 +3,7 @@
 
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tether_core::crypto::EncryptionKey;
@@ -96,6 +97,10 @@ pub struct Env {
     /// Normally 80 and 443.
     pub http_port: u16,
     pub https_port: u16,
+    /// The snapshots volume (`SNAPSHOT_DIR`).
+    pub snapshot_dir: PathBuf,
+    /// Where the Postgres client tools are (`PG_BIN_DIR`); `None` for PATH.
+    pub pg_bin_dir: Option<PathBuf>,
 }
 
 /// Runs every check, prints them, and returns whether all passed (no FAIL).
@@ -166,6 +171,8 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(updates(&env.db, &env.github_api_url).await);
     checks.push(outbound());
     checks.push(plugin_hosts(&env.db).await);
+    checks.push(snapshots(&env.db, &env.snapshot_dir, env.pg_bin_dir.clone()).await);
+    checks.push(backups(&env.snapshot_dir).await);
     checks
 }
 
@@ -190,6 +197,133 @@ pub async fn plugin_hosts(db: &PgPool) -> Check {
             Check::ok(NAME, format!("approved for apps: {}", listed.join("; ")))
         }
         Err(err) => Check::fail(NAME, err.to_string(), "Fix the database check first."),
+    }
+}
+
+/// Snapshots need the Postgres client tools, a writable volume and room
+/// on it; without them the server won't migrate (N14).
+pub async fn snapshots(db: &PgPool, dir: &Path, pg_bin_dir: Option<PathBuf>) -> Check {
+    const NAME: &str = "snapshots";
+    let volume_fix = format!(
+        "Mount the snapshots volume at {} (deploy/docker-compose.yml does), writable by the \
+         app's user, or set SNAPSHOT_DIR.",
+        dir.display()
+    );
+    let server = sqlx::query_scalar!(
+        r#"SELECT current_setting('server_version_num')::int / 10000 AS "major!""#
+    )
+    .fetch_one(db)
+    .await;
+    let major = match server {
+        Ok(major) => u32::try_from(major).unwrap_or_default(),
+        Err(err) => return Check::fail(NAME, err.to_string(), "Fix the database check first."),
+    };
+    if let Err(err) = tether_snapshots::Tools::new(pg_bin_dir).check(major).await {
+        return Check::fail(
+            NAME,
+            err.to_string(),
+            format!(
+                "The app image includes postgresql-client-{major}. Outside Docker, install it \
+                 or point PG_BIN_DIR at its bin directory."
+            ),
+        );
+    }
+    if let Err(err) = writable(dir).await {
+        return Check::fail(
+            NAME,
+            format!("{} isn't writable: {err}", dir.display()),
+            volume_fix,
+        );
+    }
+    let free = match tether_snapshots::free_bytes(dir).await {
+        Ok(free) => free,
+        Err(err) => return Check::warn(NAME, err.to_string(), volume_fix),
+    };
+    let listed = match tether_snapshots::list(dir).await {
+        Ok(listed) => listed,
+        Err(err) => return Check::fail(NAME, err.to_string(), volume_fix),
+    };
+    let newest = listed
+        .iter()
+        .find(|s| s.header.reason == tether_snapshots::Reason::BeforeMigrations)
+        .map(|s| {
+            format!(
+                ", newest {} UTC ({})",
+                s.header.taken_at.format("%Y-%m-%d %H:%M"),
+                s.header.kind
+            )
+        })
+        .unwrap_or_default();
+    let taken = listed
+        .iter()
+        .filter(|s| s.header.reason == tether_snapshots::Reason::BeforeMigrations)
+        .count();
+    let detail = format!(
+        "{}: {} MiB free, {taken} snapshot(s) taken before migrations{newest}; Postgres {major} tools",
+        dir.display(),
+        free / (1024 * 1024)
+    );
+    match tether_snapshots::set_aside_schemas(db).await {
+        Ok(aside) if !aside.is_empty() => {
+            return Check::warn(
+                NAME,
+                format!(
+                    "{detail}; an app's rollback was cut short, its earlier data is in {}",
+                    aside.join(", ")
+                ),
+                "Stop Tether and run `tether rollback --plugin <app id>` again to finish it; \
+                 the app won't load until then.",
+            );
+        }
+        Ok(_) => {}
+        Err(err) => return Check::fail(NAME, err.to_string(), "Fix the database check first."),
+    }
+    if free < 1024 * 1024 * 1024 {
+        Check::warn(
+            NAME,
+            detail,
+            "Under 1 GiB free: snapshots before migrations and nightly backups may not fit, and \
+             the server won't migrate without a snapshot. Free some space.",
+        )
+    } else {
+        Check::ok(NAME, detail)
+    }
+}
+
+/// Creates and removes a file in `dir`.
+async fn writable(dir: &Path) -> std::io::Result<()> {
+    let probe = dir.join(format!(".doctor-{}", std::process::id()));
+    tokio::fs::write(&probe, b"").await?;
+    tokio::fs::remove_file(&probe).await
+}
+
+/// The last nightly backup should be under a day and a half old.
+pub async fn backups(dir: &Path) -> Check {
+    const NAME: &str = "backups";
+    let fix = "The nightly backup job runs a day apart; `docker compose logs app` and \
+               `tether jobs --state dead` show why it failed.";
+    let listed = match tether_snapshots::list(dir).await {
+        Ok(listed) => listed,
+        Err(err) => return Check::fail(NAME, err.to_string(), fix),
+    };
+    let nightly: Vec<_> = listed
+        .iter()
+        .filter(|s| s.header.reason == tether_snapshots::Reason::Nightly)
+        .collect();
+    let Some(last) = nightly.first() else {
+        return Check::warn(NAME, "no nightly backup yet", fix);
+    };
+    let age = chrono::Utc::now() - last.header.taken_at;
+    let detail = format!(
+        "last nightly backup {} UTC, {} kept (encrypted with ENCRYPTION_KEY: keep a copy of it \
+         somewhere else)",
+        last.header.taken_at.format("%Y-%m-%d %H:%M"),
+        nightly.len()
+    );
+    if age > chrono::Duration::hours(36) {
+        Check::warn(NAME, detail, fix)
+    } else {
+        Check::ok(NAME, detail)
     }
 }
 

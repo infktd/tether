@@ -3790,6 +3790,7 @@ dependencies = [
  "tether-esi",
  "tether-jobs",
  "tether-net",
+ "tether-snapshots",
  "tether-web",
  "tokio",
  "wiremock",
@@ -3962,10 +3963,28 @@ dependencies = [
  "tether-jobs",
  "tether-net",
  "tether-plugins",
+ "tether-snapshots",
  "tether-web",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "tether-snapshots"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tether-core",
+ "tether-db",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3991,6 +4010,7 @@ dependencies = [
  "tether-jobs",
  "tether-net",
  "tether-plugins",
+ "tether-snapshots",
  "tether-web",
  "thiserror 2.0.21",
  "tokio",

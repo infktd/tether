@@ -377,6 +377,7 @@ pub async fn harness_full(
             discord: discord.clone(),
             key: test_key(),
             public_url: site.to_owned(),
+            snapshots: None,
         },
     );
     let app = router(AppState {

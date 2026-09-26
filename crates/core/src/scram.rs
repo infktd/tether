@@ -9,7 +9,8 @@ use crate::Secret;
 const ITERATIONS: u32 = 4096;
 const BLOCK: usize = 64;
 
-fn hmac(key: &[u8], message: &[&[u8]]) -> [u8; 32] {
+/// HMAC-SHA-256 (RFC 2104) over the concatenated `message` parts.
+pub(crate) fn hmac(key: &[u8], message: &[&[u8]]) -> [u8; 32] {
     let mut block = [0u8; BLOCK];
     if key.len() > BLOCK {
         block[..32].copy_from_slice(&Sha256::digest(key));

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_try_advisory_xact_lock($1) AS \"got!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "got!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "60ad7ffe0b491e07cfb95c53f7c35f3fa949c94064818a11344f09536e9c9555"
+}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole\n            JOIN pg_database d ON d.oid = s.setdatabase\n            WHERE r.rolname = $1 AND d.datname = current_database()\n        ) AS \"raised!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "raised!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Name"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d6584264bae45e05e79a52cf2f8c58c2a9bcfbc4cbc7eb51e23e7f13ce0b72f7"
+}

@@ -12,6 +12,12 @@ services:
       SETUP_TOKEN: ${SETUP_TOKEN:?SETUP_TOKEN must be set in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env; re-run deploy/install.sh to add it}
       DATABASE_URL: postgres://tether:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/tether
+    volumes:
+      # Encrypted snapshots (before migrations and app upgrades) and nightly
+      # backups, for `tether rollback`. On the same disk as the database:
+      # copy backups/ elsewhere (with ENCRYPTION_KEY kept safe separately)
+      # to survive losing the disk.
+      - snapshots:/var/lib/tether/snapshots
     depends_on:
       db:
         condition: service_healthy
@@ -59,5 +65,6 @@ services:
 
 volumes:
   pgdata:
+  snapshots:
   caddy_data:
   caddy_config:

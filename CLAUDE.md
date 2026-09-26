@@ -92,6 +92,7 @@ No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bu
 - `tokio::time::pause()` for scheduler and job timing tests.
 - `insta` snapshots for API response shapes.
 - Hurl files in `tests/hurl/` for end-to-end smoke tests against a running stack.
+- The snapshot and rollback tests (`crates/cli/tests/rollback.rs`) need Postgres 16's client tools (pg_dump, pg_restore, psql): `TETHER_TEST_PG_BIN`, PATH, or failing those, the ones in the running dev database container (through `docker exec`). With `CI` set, missing tools fail them instead of skipping.
 - A `dev-login` Cargo feature creates fixture sessions for manual testing. It must be impossible to enable in release builds; add a test or CI check that proves it.
 
 ## Common commands
@@ -117,6 +118,9 @@ scripts/package-plugin.sh plugins/moon-mining ~/.minisign/tether.key   # first-p
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
 deploy/install.sh localhost    # writes deploy/.env once, then starts the stack
 docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync
+docker compose -f deploy/docker-compose.yml exec app tether rollback --list   # snapshots and nightly backups
+docker compose -f deploy/docker-compose.yml stop app && docker compose -f deploy/docker-compose.yml run --rm app rollback   # restore core's pre-migration snapshot (asks first; --plugin <id>, --snapshot <name>, --yes)
+SKIP_MIGRATION_SNAPSHOT=true cargo run -p tether-server --features dev   # locally, without Postgres 16's pg_dump, when a new migration is pending
 docker compose -f deploy/docker-compose.yml up --build
 # Hurl runs against a fresh stack (the setup flow expects no owner yet):
 hurl --test --insecure --jobs 1 --variable base=https://localhost --variable setup_token="$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" tests/hurl/*.hurl

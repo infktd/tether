@@ -48,9 +48,12 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://tether:tether@localhost:5432/tether
+      # The snapshot tests need Postgres 16's client tools; with CI set,
+      # they fail rather than skip without them.
+      TETHER_TEST_PG_BIN: /usr/lib/postgresql/16/bin
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y mold
+      - run: sudo apt-get update && sudo apt-get install -y mold postgresql-client-16
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Install sqlx-cli
@@ -167,6 +170,18 @@ jobs:
             --variable base=https://localhost \
             --variable setup_token="$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" \
             tests/hurl/*.hurl
+      - name: Nightly backup taken in the image (pg_dump, the snapshots volume)
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose -f deploy/docker-compose.yml exec -T app tether rollback --list \
+                | grep -q "nightly backup"; then
+              echo "backed up"; exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f deploy/docker-compose.yml exec -T app tether doctor || true
+          docker compose -f deploy/docker-compose.yml logs app
+          exit 1
       - name: Timescale telemetry is off
         run: |
           test "$(docker compose -f deploy/docker-compose.yml exec -T db \

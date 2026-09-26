@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT coalesce(sum(pg_table_size(c.oid)), 0)::bigint AS \"bytes!\"\n        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace\n        WHERE n.nspname = $1 AND c.relkind IN ('r', 'm', 'p')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Name"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "fdee99620589c340ce25689b8a7a6f7bd569335b7611c93f5305a80725806136"
+}

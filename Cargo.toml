@@ -34,6 +34,7 @@ tether-discord = { path = "crates/discord" }
 tether-net = { path = "crates/net" }
 tether-plugins = { path = "crates/plugins" }
 tether-plugin-sdk = { path = "crates/plugin-sdk" }
+tether-snapshots = { path = "crates/snapshots" }
 
 anyhow = "1"
 askama = "0.16"

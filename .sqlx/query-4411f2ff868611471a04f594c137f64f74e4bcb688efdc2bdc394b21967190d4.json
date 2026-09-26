@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT nspname::text AS \"name!\" FROM pg_namespace WHERE nspname LIKE 'rollback\\_%' ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4411f2ff868611471a04f594c137f64f74e4bcb688efdc2bdc394b21967190d4"
+}

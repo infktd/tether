@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT current_setting('timescaledb.restoring', true) AS \"restoring\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "restoring",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5ccc97394442ecf5e6fb26282fa03e606e32cf7b52f1a5be6dcc3f4db2eb5b0b"
+}

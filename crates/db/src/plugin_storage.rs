@@ -141,6 +141,20 @@ pub async fn get<'e>(
     .await
 }
 
+/// Where a plugin's database password is kept (sealed) in `core.secrets`.
+pub fn password_secret(plugin_id: &str) -> String {
+    format!("plugin.{plugin_id}.db_password")
+}
+
+/// Every plugin with storage, by id.
+pub async fn plugin_ids<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT plugin_id FROM core.plugin_storage ORDER BY plugin_id")
+        .fetch_all(executor)
+        .await
+}
+
 /// Applied migrations: `(version, sha256)`, in order.
 pub async fn applied<'e>(
     executor: impl sqlx::PgExecutor<'e>,
