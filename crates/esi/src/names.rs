@@ -123,8 +123,11 @@ pub async fn ticker(
     let fetched = match kind {
         tether_core::states::EntityKind::Corporation => esi.corporation_ticker(id, priority).await,
         tether_core::states::EntityKind::Alliance => esi.alliance_ticker(id, priority).await,
-        tether_core::states::EntityKind::Character => {
-            return Err(EsiError::InvalidInput("characters have no ticker".to_owned()).into());
+        tether_core::states::EntityKind::Character | tether_core::states::EntityKind::Faction => {
+            return Err(EsiError::InvalidInput(
+                "only corporations and alliances have tickers".to_owned(),
+            )
+            .into());
         }
     };
     let ticker = match fetched {

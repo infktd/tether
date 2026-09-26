@@ -74,11 +74,13 @@ pub fn check_name(name: &str) -> Result<&str, &'static str> {
     Ok(name)
 }
 
-/// A character's corporation and, if any, alliance.
+/// A character's corporation and, if any, alliance and faction (faction
+/// warfare enlistment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Affiliation {
     pub corporation_id: i64,
     pub alliance_id: Option<i64>,
+    pub faction_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,6 +88,8 @@ pub enum EntityKind {
     Alliance,
     Corporation,
     Character,
+    /// A faction warfare militia (AA's Member Factions).
+    Faction,
 }
 
 impl EntityKind {
@@ -94,6 +98,7 @@ impl EntityKind {
             Self::Alliance => "alliance",
             Self::Corporation => "corporation",
             Self::Character => "character",
+            Self::Faction => "faction",
         }
     }
 
@@ -102,6 +107,7 @@ impl EntityKind {
             "alliance" => Some(Self::Alliance),
             "corporation" => Some(Self::Corporation),
             "character" => Some(Self::Character),
+            "faction" => Some(Self::Faction),
             _ => None,
         }
     }
@@ -187,7 +193,8 @@ impl StateRules {
     }
 
     /// The highest-priority state covering the main by character,
-    /// corporation or alliance; Guest if none does or there's no main.
+    /// corporation, alliance or faction; Guest if none does or there's no
+    /// main.
     pub fn evaluate(&self, main: Option<Main>) -> StateId {
         let Some(main) = main else {
             return self.guest;
@@ -202,6 +209,8 @@ impl StateRules {
                             .contains(&(EntityKind::Corporation, a.corporation_id))
                             || a.alliance_id
                                 .is_some_and(|id| rule.covers.contains(&(EntityKind::Alliance, id)))
+                            || a.faction_id
+                                .is_some_and(|id| rule.covers.contains(&(EntityKind::Faction, id)))
                     })
             })
             .map_or(self.guest, |rule| rule.id)
@@ -256,8 +265,30 @@ mod tests {
             affiliation: Some(Affiliation {
                 corporation_id,
                 alliance_id,
+                faction_id: None,
             }),
         })
+    }
+
+    #[test]
+    fn a_faction_covers_its_militia() {
+        const CALDARI: i64 = 500_001;
+        let mut rules = rules();
+        rules.add(BLUE_STATE, EntityKind::Faction, CALDARI);
+        let enlisted = |alliance_id| {
+            Some(Main {
+                character_id: PILOT,
+                affiliation: Some(Affiliation {
+                    corporation_id: 1,
+                    alliance_id,
+                    faction_id: Some(CALDARI),
+                }),
+            })
+        };
+        assert_eq!(rules.evaluate(enlisted(None)), BLUE_STATE);
+        assert_eq!(rules.evaluate(main(1, None)), GUEST);
+        // Priority still decides: a Member alliance in the militia is Member.
+        assert_eq!(rules.evaluate(enlisted(Some(NMU))), MEMBER);
     }
 
     #[test]

@@ -116,3 +116,107 @@ async fn esi_outage_at_login_queues_a_retry_that_fixes_the_state(db: PgPool) {
     assert!(matches!(outcome, tether_jobs::Outcome::Succeeded(_)));
     assert_eq!(state_of(&h, &token).await, "Member");
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_state_can_cover_a_faction(db: PgPool) {
+    const CALDARI_STATE: i64 = 500001;
+    // The Mittani, enlisted in the Caldari militia (AA's Member Factions).
+    cover(&db, Builtin::Blue, EntityKind::Faction, CALDARI_STATE).await;
+    let h = harness(db, true).await;
+    Mock::given(method("POST"))
+        .and(path("/characters/affiliation"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "character_id": 443630591,
+                "corporation_id": 1000167,
+                "faction_id": CALDARI_STATE,
+            }])),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let mittani = log_in_as(&h, MITTANI, None).await;
+    assert_eq!(state_of(&h, &mittani).await, "Blue");
+    let faction: Option<i64> =
+        sqlx::query_scalar("SELECT faction_id FROM core.characters WHERE id = 443630591")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(faction, Some(CALDARI_STATE));
+
+    // Admins find factions by name, as alliances and corporations.
+    Mock::given(method("POST"))
+        .and(path("/universe/ids"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "factions": [{ "id": CALDARI_STATE, "name": "Caldari State" }],
+        })))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let res = send(
+        &h.app,
+        form(
+            "/admin/states/search",
+            &format!("state_id={BLUE_STATE}&name=Caldari+State"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("Caldari State"), "{}", res.body);
+    assert!(res.body.contains("faction"), "{}", res.body);
+    let api = send(
+        &h.app,
+        post_json(
+            "/api/admin/states/resolve",
+            &owner,
+            r#"{"names":["Caldari State"]}"#,
+        ),
+    )
+    .await;
+    let api: serde_json::Value = serde_json::from_str(&api.body).unwrap();
+    assert_eq!(api["factions"][0]["id"], CALDARI_STATE);
+
+    // Adding one always asks first, with a warning: anyone can enlist.
+    Mock::given(method("POST"))
+        .and(path("/universe/names"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": CALDARI_STATE, "name": "Caldari State", "category": "faction" },
+        ])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let add = format!("/admin/states/{MEMBER_STATE}/covers");
+    let asked = send(
+        &h.app,
+        form(&add, &format!("entity_id={CALDARI_STATE}"), &owner),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.body);
+    assert!(asked.body.contains("enlists"), "{}", asked.body);
+    let listed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.state_entities WHERE state_id = $1 AND entity_kind = 'faction'",
+    )
+    .bind(MEMBER_STATE)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(listed, 0, "not until confirmed");
+    let added = send(
+        &h.app,
+        form(
+            &add,
+            &format!("entity_id={CALDARI_STATE}&confirm=1"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(added.location(), "/admin/states", "{}", added.body);
+    // Member outranks Blue once the accounts are re-evaluated.
+    let account = me(&h, &mittani).await["account_id"].as_i64().unwrap();
+    tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(account))
+        .await
+        .unwrap();
+    assert_eq!(state_of(&h, &mittani).await, "Member");
+}

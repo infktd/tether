@@ -551,6 +551,7 @@ mod tests {
             affiliation: Some(Affiliation {
                 corporation_id: 100,
                 alliance_id: Some(200),
+                faction_id: None,
             }),
         });
         let want = desired(std::slice::from_ref(&config), StateId(1), main);

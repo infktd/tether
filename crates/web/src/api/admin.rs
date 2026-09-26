@@ -521,7 +521,7 @@ pub struct StateOut {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CoveredOut {
     pub entity_id: i64,
-    /// `alliance`, `corporation` or `character`.
+    /// `alliance`, `corporation`, `character` or `faction`.
     pub kind: &'static str,
     pub name: String,
 }
@@ -823,6 +823,8 @@ pub struct ResolveOut {
     pub alliances: Vec<EntityOut>,
     pub corporations: Vec<EntityOut>,
     pub characters: Vec<EntityOut>,
+    /// Faction warfare militias.
+    pub factions: Vec<EntityOut>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -831,8 +833,8 @@ pub struct EntityOut {
     pub name: String,
 }
 
-/// `POST /api/admin/states/resolve`: exact alliance, corporation and
-/// character names to ids, via ESI.
+/// `POST /api/admin/states/resolve`: exact alliance, corporation,
+/// character and faction names to ids, via ESI.
 #[utoipa::path(post, path = "/api/admin/states/resolve", tag = "admin", security(("session" = [])), request_body = ResolveIn,
     responses((status = 200, body = ResolveOut), (status = 400), (status = 403), (status = 502)))]
 pub async fn resolve_names(
@@ -867,5 +869,6 @@ pub async fn resolve_names(
         alliances: out(resolved.alliances),
         corporations: out(resolved.corporations),
         characters: out(resolved.characters),
+        factions: out(resolved.factions),
     }))
 }

@@ -457,7 +457,7 @@ pub async fn counts(pool: &PgPool) -> Result<HashMap<StateId, i64>, sqlx::Error>
 pub async fn all_mains(pool: &PgPool) -> Result<Vec<Option<Main>>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT c.id AS "character_id?", c.corporation_id, c.alliance_id
+        SELECT c.id AS "character_id?", c.corporation_id, c.alliance_id, c.faction_id
         FROM core.accounts a
         LEFT JOIN core.characters c ON c.id = a.main_character_id
         "#
@@ -466,7 +466,14 @@ pub async fn all_mains(pool: &PgPool) -> Result<Vec<Option<Main>>, sqlx::Error> 
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| main_from(r.character_id, r.corporation_id, r.alliance_id))
+        .map(|r| {
+            main_from(
+                r.character_id,
+                r.corporation_id,
+                r.alliance_id,
+                r.faction_id,
+            )
+        })
         .collect())
 }
 
@@ -474,12 +481,14 @@ fn main_from(
     character_id: Option<i64>,
     corporation_id: Option<i64>,
     alliance_id: Option<i64>,
+    faction_id: Option<i64>,
 ) -> Option<Main> {
     Some(Main {
         character_id: character_id?,
         affiliation: corporation_id.map(|corporation_id| Affiliation {
             corporation_id,
             alliance_id,
+            faction_id,
         }),
     })
 }
@@ -508,19 +517,22 @@ pub async fn update_affiliations(
     let ids: Vec<i64> = affiliations.iter().map(|(id, _)| *id).collect();
     let corps: Vec<i64> = affiliations.iter().map(|(_, a)| a.corporation_id).collect();
     let alliances: Vec<Option<i64>> = affiliations.iter().map(|(_, a)| a.alliance_id).collect();
+    let factions: Vec<Option<i64>> = affiliations.iter().map(|(_, a)| a.faction_id).collect();
     sqlx::query!(
         r#"
         UPDATE core.characters c
         SET corporation_id = u.corporation_id,
             alliance_id = u.alliance_id,
+            faction_id = u.faction_id,
             affiliation_checked_at = now()
-        FROM UNNEST($1::bigint[], $2::bigint[], $3::bigint[])
-            AS u(id, corporation_id, alliance_id)
+        FROM UNNEST($1::bigint[], $2::bigint[], $3::bigint[], $4::bigint[])
+            AS u(id, corporation_id, alliance_id, faction_id)
         WHERE c.id = u.id
         "#,
         &ids,
         &corps,
         &alliances as &[Option<i64>],
+        &factions as &[Option<i64>],
     )
     .execute(pool)
     .await?;
@@ -534,7 +546,7 @@ pub async fn main<'e>(
 ) -> Result<Option<Main>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT c.id, c.corporation_id, c.alliance_id
+        SELECT c.id, c.corporation_id, c.alliance_id, c.faction_id
         FROM core.accounts a
         JOIN core.characters c ON c.id = a.main_character_id
         WHERE a.id = $1
@@ -543,7 +555,7 @@ pub async fn main<'e>(
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.and_then(|r| main_from(Some(r.id), r.corporation_id, r.alliance_id)))
+    Ok(row.and_then(|r| main_from(Some(r.id), r.corporation_id, r.alliance_id, r.faction_id)))
 }
 
 /// Records the account's state and whether it's compliant; returns the

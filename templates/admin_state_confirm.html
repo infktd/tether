@@ -7,6 +7,7 @@
     <h1 class="page-title">{{ summary }}?</h1>
     <p class="text-muted-foreground mt-1">This changes <span class="num text-foreground">{{ total }}</span> {% if total == 1 %}account{% else %}accounts{% endif %}. Their permissions and Discord roles follow within a minute.</p>
   </div>
+  {% if let Some(w) = warning %}<div class="alert max-w-2xl" data-variant="destructive" role="alert"><section>{{ w }}</section></div>{% endif %}
   <form class="card data-card max-w-2xl" method="post" action="{{ action }}">
     <header><h2>Who changes</h2></header>
     <table class="table">

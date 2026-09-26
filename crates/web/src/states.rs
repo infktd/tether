@@ -48,6 +48,7 @@ pub async fn refresh_account(
                 Affiliation {
                     corporation_id: a.corporation_id,
                     alliance_id: a.alliance_id,
+                    faction_id: a.faction_id,
                 },
             )
         })

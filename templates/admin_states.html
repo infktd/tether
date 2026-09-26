@@ -41,7 +41,7 @@
       <div>
         <h3 class="label mb-2">Covers</h3>
         {% if c.covers.is_empty() %}
-        <p class="text-sm text-muted-foreground">Nobody yet. Find an alliance, corporation or character below.</p>
+        <p class="text-sm text-muted-foreground">Nobody yet. Find an alliance, corporation, character or faction below.</p>
         {% else %}
         <ul class="flex flex-wrap gap-2" role="list">
           {% for e in c.covers %}
@@ -89,7 +89,7 @@
       <form hx-post="/admin/states/search" hx-target="#search-{{ c.id }}" hx-swap="innerHTML" method="post" action="/admin/states/search" class="flex gap-2 max-w-xl">
         <input type="hidden" name="state_id" value="{{ c.id }}">
         <label class="sr-only" for="search-name-{{ c.id }}">Add to {{ c.name }}: exact name</label>
-        <input class="input" type="search" id="search-name-{{ c.id }}" name="name" placeholder="Exact alliance, corporation or character name" required maxlength="100">
+        <input class="input" type="search" id="search-name-{{ c.id }}" name="name" placeholder="Exact alliance, corporation, character or faction name" required maxlength="100">
         <button type="submit" class="btn" data-variant="outline">Find</button>
       </form>
       <div id="search-{{ c.id }}" aria-live="polite"></div>

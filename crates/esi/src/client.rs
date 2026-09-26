@@ -56,6 +56,8 @@ pub struct CharacterAffiliation {
     pub character_id: i64,
     pub corporation_id: i64,
     pub alliance_id: Option<i64>,
+    /// The militia the character is enlisted in, if any.
+    pub faction_id: Option<i64>,
 }
 
 /// An alliance or corporation, by id and name.
@@ -81,12 +83,14 @@ impl NamedEntity {
     }
 }
 
-/// Alliances, corporations and characters whose names matched exactly.
+/// Alliances, corporations, characters and factions whose names matched
+/// exactly.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResolvedNames {
     pub alliances: Vec<Entity>,
     pub corporations: Vec<Entity>,
     pub characters: Vec<Entity>,
+    pub factions: Vec<Entity>,
 }
 
 #[derive(Clone, Debug)]
@@ -216,6 +220,7 @@ impl Esi {
                 character_id: a.character_id,
                 corporation_id: a.corporation_id,
                 alliance_id: a.alliance_id,
+                faction_id: a.faction_id,
             }));
         }
         Ok(out)
@@ -266,6 +271,13 @@ impl Esi {
                     .characters
                     .into_iter()
                     .map(|c| (c.id, c.name))
+                    .collect(),
+            ),
+            factions: entities(
+                response
+                    .factions
+                    .into_iter()
+                    .map(|f| (f.id, f.name))
                     .collect(),
             ),
         })

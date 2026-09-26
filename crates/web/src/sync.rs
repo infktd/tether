@@ -55,6 +55,7 @@ pub async fn affiliation_sync(db: &PgPool, esi: &Esi) -> Result<SyncSummary, Sta
                 Affiliation {
                     corporation_id: a.corporation_id,
                     alliance_id: a.alliance_id,
+                    faction_id: a.faction_id,
                 },
             )
         })

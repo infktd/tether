@@ -32,6 +32,10 @@ fn image_url(kind: EntityKind, id: i64) -> String {
         EntityKind::Character => {
             format!("https://images.evetech.net/characters/{id}/portrait?size=64")
         }
+        // Factions' logos are served as corporations'.
+        EntityKind::Faction => {
+            format!("https://images.evetech.net/corporations/{id}/logo?size=64")
+        }
     }
 }
 
@@ -218,12 +222,13 @@ struct ConfirmPage {
     summary: String,
     moves: Vec<Move>,
     total: usize,
+    warning: Option<String>,
     action: String,
     fields: Vec<(&'static str, String)>,
 }
 
-/// Previews the change; if it moves anyone and isn't confirmed yet, shows
-/// who moves where with Apply and Cancel. Otherwise applies it.
+/// Previews the change; if it moves anyone (or warns) and isn't confirmed
+/// yet, shows who moves where with Apply and Cancel. Otherwise applies it.
 async fn change(
     state: &AppState,
     session: Option<CurrentSession>,
@@ -238,7 +243,7 @@ async fn change(
             Ok(preview) => preview,
             Err(err) => return states_page(state, shell, Some(err)).await,
         };
-        if preview.moves_anyone() {
+        if preview.needs_confirming() {
             let total = preview.moves.iter().map(|m| m.accounts).sum();
             return Ok(render(
                 StatusCode::OK,
@@ -247,6 +252,7 @@ async fn change(
                     summary: preview.summary,
                     moves: preview.moves,
                     total,
+                    warning: preview.warning,
                     action,
                     fields,
                 },
@@ -454,6 +460,7 @@ pub async fn search(
         (EntityKind::Alliance, resolved.alliances),
         (EntityKind::Corporation, resolved.corporations),
         (EntityKind::Character, resolved.characters),
+        (EntityKind::Faction, resolved.factions),
     ] {
         results.extend(found.into_iter().map(|e| SearchRow {
             image: image_url(kind, e.id),

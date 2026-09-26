@@ -727,7 +727,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "admin"
         ],
-        "summary": "`POST /api/admin/states/resolve`: exact alliance, corporation and\ncharacter names to ids, via ESI.",
+        "summary": "`POST /api/admin/states/resolve`: exact alliance, corporation,\ncharacter and faction names to ids, via ESI.",
         "operationId": "resolve_names",
         "requestBody": {
           "content": {
@@ -2066,7 +2066,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           },
           "kind": {
             "type": "string",
-            "description": "`alliance`, `corporation` or `character`."
+            "description": "`alliance`, `corporation`, `character` or `faction`."
           },
           "name": {
             "type": "string"
@@ -2564,7 +2564,8 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "required": [
           "alliances",
           "corporations",
-          "characters"
+          "characters",
+          "factions"
         ],
         "properties": {
           "alliances": {
@@ -2584,6 +2585,13 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "items": {
               "$ref": "#/components/schemas/EntityOut"
             }
+          },
+          "factions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityOut"
+            },
+            "description": "Faction warfare militias."
           }
         }
       },

@@ -80,15 +80,23 @@ pub struct Preview {
     /// One line, e.g. "Add Pandemic Horde to Blue".
     pub summary: String,
     pub moves: Vec<Move>,
+    /// Something the admin must read before applying, even if nobody
+    /// moves yet.
+    pub warning: Option<String>,
 }
 
 impl Preview {
     pub fn moves_anyone(&self) -> bool {
         !self.moves.is_empty()
     }
+
+    /// Whether to show the confirmation step.
+    pub fn needs_confirming(&self) -> bool {
+        self.moves_anyone() || self.warning.is_some()
+    }
 }
 
-/// A resolved alliance, corporation or character, named by ESI (through
+/// A resolved alliance, corporation, character or faction, named by ESI (through
 /// the names cache), never by the client.
 struct Entity {
     id: i64,
@@ -115,7 +123,7 @@ async fn entity(db: &PgPool, esi: &Esi, entity_id: i64) -> Result<Entity, AppErr
             .remove(&entity_id)
             .ok_or_else(|| AppError::not_found("EVE doesn't know that id."))?;
     let kind = named.kind().ok_or_else(|| {
-        AppError::bad_request("That isn't an alliance, corporation or character.")
+        AppError::bad_request("That isn't an alliance, corporation, character or faction.")
     })?;
     Ok(Entity {
         id: named.id,
@@ -324,6 +332,7 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
     let states = db::list(&mut *conn).await?;
     let before = db::load_rules(&mut conn).await?;
     let mut after = before.clone();
+    let mut warning = None;
     let summary = match change {
         Change::Create { name } => {
             let name = core::check_name(name).map_err(AppError::bad_request)?;
@@ -374,6 +383,17 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
             check_covers(s)?;
             let e = entity(db, esi, *entity_id).await?;
             after.add(s.id, e.kind, e.id);
+            // As AA's Member Factions, but never silently: militias are
+            // open to anyone with the standings, and who is enlisted shows
+            // only after the next affiliation check.
+            if e.kind == EntityKind::Faction {
+                warning = Some(format!(
+                    "Anyone who enlists in the {} militia joins {}: enlisting takes minutes, and \
+                     tens of thousands of pilots already have. Who moves shows after the next \
+                     affiliation check (hourly), so the list below may be short.",
+                    e.name, s.name
+                ));
+            }
             format!("Add {} to {}", e.name, s.name)
         }
         Change::Remove {
@@ -416,6 +436,7 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
     Ok(Preview {
         summary,
         moves: moved,
+        warning,
     })
 }
 
@@ -575,7 +596,7 @@ pub async fn apply(
                 .count();
             if count >= MAX_COVERED {
                 return Err(AppError::bad_request(format!(
-                    "A state can list at most {MAX_COVERED} alliances, corporations and characters."
+                    "A state can list at most {MAX_COVERED} alliances, corporations, characters and factions."
                 )));
             }
             if !db::add_entity(&mut *tx, *id, e.kind, e.id, &e.name).await? {

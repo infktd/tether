@@ -44,7 +44,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Characters, Add Character | alts join the account through SSO | same | done |
 | Change Main | switch the main; state re-evaluated | picks from linked characters | partial: valid token required (see Behaviour) |
 | Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | partial: add to the daily token check |
-| States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all but Factions and Public; Guest covers everyone, which is what Public is for | partial: add Factions |
+| States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all, factions included (the main's militia, from ESI's affiliation endpoint); Guest covers everyone, which is what Public is for | done |
 | State changes | re-evaluated on affiliation updates; "State changed to: X" notification | same, and audited | done |
 | Groups: Internal, Hidden (direct join link), Open, Public, Restricted, States (only these states may join; removed on state change), Description | | same | done |
 | Group Leaders, Group Leader Groups | non-admins process one group's requests | same; accepting also needs the group's permissions | done, stricter |

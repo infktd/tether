@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id AS \"character_id?\", c.corporation_id, c.alliance_id\n        FROM core.accounts a\n        LEFT JOIN core.characters c ON c.id = a.main_character_id\n        ",
+  "query": "\n        SELECT c.id AS \"character_id?\", c.corporation_id, c.alliance_id, c.faction_id\n        FROM core.accounts a\n        LEFT JOIN core.characters c ON c.id = a.main_character_id\n        ",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "alliance_id"
           }
         }
+      },
+      {
+        "ordinal": 3,
+        "name": "faction_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "faction_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "f51cefccd2c43d0a05eb7fa6860c5e90022779a2b8fd9e86a6dd2c7aeedc0020"
+  "hash": "a8c2aadde73613b44dc26df1e42fc2d32e2ecfc918df7794ba1a50093d91523a"
 }
