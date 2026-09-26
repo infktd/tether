@@ -34,6 +34,12 @@ pub enum EsiError {
 
 impl<E: std::fmt::Debug> From<eve_esi_client::Error<E>> for EsiError {
     fn from(err: eve_esi_client::Error<E>) -> Self {
+        // Never the body of an answer that didn't read: it can be a
+        // character's notifications or a corporation's assets, and this
+        // error ends up in logs.
+        if let eve_esi_client::Error::InvalidResponsePayload(_, e) = &err {
+            return Self::Unavailable(format!("ESI's answer didn't read: {e}"));
+        }
         match err.status() {
             Some(status) => Self::Status(status.as_u16()),
             None => Self::Unavailable(err.to_string()),

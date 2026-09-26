@@ -65,6 +65,8 @@ pub struct Endpoint {
 }
 
 const MINING: &str = "esi-industry.read_corporation_mining.v1";
+const STARBASES: &str = "esi-corporations.read_starbases.v1";
+const ASSETS: &str = "esi-assets.read_corporation_assets.v1";
 
 pub const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
@@ -105,13 +107,34 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
     Endpoint {
-        // A moon's name and system (public data, read with the data
-        // source's token like the rest: /universe/names doesn't do moons).
+        // A moon's name and system (/universe/names doesn't do moons).
+        // Public: any plugin, no token. It was read through a mining data
+        // source before public endpoints existed; plugins that still pass
+        // one work as before (the subject isn't used).
         name: "universe-moon",
-        scope: MINING,
-        about: About::Corporation,
+        scope: "",
+        about: About::Public,
         paged: false,
         params: &["moon_id"],
+    },
+    Endpoint {
+        // A planet's name and system (public; /universe/names doesn't do
+        // planets). Structures matches customs offices' notifications
+        // with it.
+        name: "universe-planet",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["planet_id"],
+    },
+    Endpoint {
+        // Which alliance holds sovereignty where (public): only system
+        // and alliance ids, for claims by alliances.
+        name: "sovereignty-systems",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &[],
     },
     Endpoint {
         // The data-source character's own notifications, trimmed to those
@@ -133,6 +156,67 @@ pub const ENDPOINTS: &[Endpoint] = &[
         about: About::Corporation,
         paged: false,
         params: &["system_id"],
+    },
+    Endpoint {
+        // The corporation's starbases (POS): type, system, moon, state and
+        // its timers. CCP requires the Director role.
+        name: "corporation-starbases",
+        scope: STARBASES,
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // One starbase's fuel bay (fuel blocks and strontium), by the ids
+        // `corporation-starbases` gives. Only the fuels, not who may
+        // anchor, take fuel or be shot at.
+        name: "corporation-starbase",
+        scope: STARBASES,
+        about: About::Corporation,
+        paged: false,
+        params: &["starbase_id", "system_id"],
+    },
+    Endpoint {
+        // The corporation's customs offices (POCOs): system, reinforcement
+        // window, access and tax rates. CCP requires the Director role.
+        name: "corporation-customs-offices",
+        scope: "esi-planets.read_customs_offices.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // The corporation's assets trimmed to what sits in structures'
+        // slots and bays (`STRUCTURE_ASSET_FLAGS`: fittings, fighters,
+        // fuel, quantum cores, moon material) and its Orbital Skyhooks:
+        // never its hangars, cargo, deliveries or anything else. Pages
+        // are ESI's (one may come back empty). CCP requires the Director
+        // role.
+        name: "corporation-structure-assets",
+        scope: ASSETS,
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // Names of the corporation's own items (starbases, customs offices
+        // as "Customs Office (planet)"), for up to 1,000 `item_ids` (a
+        // comma list). ESI names only the corporation's items.
+        name: "corporation-asset-names",
+        scope: ASSETS,
+        about: About::Corporation,
+        paged: false,
+        params: &["item_ids"],
+    },
+    Endpoint {
+        // Where the corporation's own items are in space, for up to 1,000
+        // `item_ids`: Structures finds an Orbital Skyhook's planet (the
+        // nearest one) with it, as ESI names none.
+        name: "corporation-asset-locations",
+        scope: ASSETS,
+        about: About::Corporation,
+        paged: false,
+        params: &["item_ids"],
     },
     Endpoint {
         // The fleet the data-source character runs (aa-afat's ESI fleet
@@ -222,7 +306,8 @@ pub const ENDPOINTS: &[Endpoint] = &[
 
 /// The notification types `corporation-structure-notifications` passes
 /// on: Upwell structures' attacks, reinforcements, fuel, services, power
-/// and anchoring, and moon drills. Everything else a character receives
+/// and anchoring, Metenox reagents, starbases, customs offices, Orbital
+/// Skyhooks, and moon drills. Everything else a character receives
 /// stays with the host.
 pub const STRUCTURE_NOTIFICATIONS: &[&str] = &[
     "StructureUnderAttack",
@@ -236,6 +321,21 @@ pub const STRUCTURE_NOTIFICATIONS: &[&str] = &[
     "StructureOnline",
     "StructureAnchoring",
     "StructureUnanchoring",
+    // Metenox moon drills running low on, or out of, magmatic gas.
+    "StructureLowReagentsAlert",
+    "StructureNoReagentsAlert",
+    // Starbases: under attack, low on fuel or strontium.
+    "TowerAlertMsg",
+    "TowerResourceAlertMsg",
+    // Customs offices: attacked, reinforced.
+    "OrbitalAttacked",
+    "OrbitalReinforced",
+    // Orbital Skyhooks.
+    "SkyhookDeployed",
+    "SkyhookDestroyed",
+    "SkyhookLostShields",
+    "SkyhookOnline",
+    "SkyhookUnderAttack",
     "MoonminingExtractionStarted",
     "MoonminingExtractionFinished",
     "MoonminingAutomaticFracture",
@@ -253,6 +353,59 @@ struct Notification {
     timestamp: String,
     #[serde(default)]
     text: Option<String>,
+}
+
+/// Where `corporation-structure-assets` looks. Slots and bays only
+/// structures have: services, fuel bay, quantum core, moon material bay.
+pub const STRUCTURE_ASSET_FLAGS: &[&str] = &["StructureFuel", "QuantumCoreRoom", "MoonMaterialBay"];
+pub const STRUCTURE_ASSET_FLAG_PREFIXES: &[&str] = &["ServiceSlot"];
+/// Slots and bays ships have too (fittings, fighters): passed only for
+/// items in the corporation's Upwell structures.
+pub const SHARED_ASSET_FLAGS: &[&str] = &["FighterBay"];
+pub const SHARED_ASSET_FLAG_PREFIXES: &[&str] =
+    &["HiSlot", "MedSlot", "LoSlot", "RigSlot", "FighterTube"];
+
+/// `prefix` then one digit, as `HiSlot0`.
+fn numbered(flag: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|p| {
+        flag.strip_prefix(p)
+            .is_some_and(|n| n.len() == 1 && n.bytes().all(|b| b.is_ascii_digit()))
+    })
+}
+
+/// Orbital Skyhooks' type ids: ESI lists skyhooks nowhere but the
+/// corporation's assets (anchored in space, at their planet).
+pub const SKYHOOK_TYPES: &[i64] = &[81080];
+
+/// A corporation asset, read loosely (see `corporation-structure-assets`).
+#[derive(serde::Deserialize)]
+struct Asset {
+    item_id: i64,
+    type_id: i64,
+    location_id: i64,
+    location_flag: String,
+    location_type: String,
+    quantity: i64,
+}
+
+impl Asset {
+    /// In a structure's slot or bay, or a skyhook itself. Flags ships
+    /// share count only for items in one of `upwell`, the corporation's
+    /// Upwell structures (none if those couldn't be read).
+    fn about_structures(&self, upwell: Option<&[i64]>) -> bool {
+        let flag = self.location_flag.as_str();
+        let in_upwell = upwell.is_some_and(|ids| ids.contains(&self.location_id));
+        STRUCTURE_ASSET_FLAGS.contains(&flag)
+            || numbered(flag, STRUCTURE_ASSET_FLAG_PREFIXES)
+            || (in_upwell && self.in_shared_slot())
+            || (SKYHOOK_TYPES.contains(&self.type_id) && self.location_type == "solar_system")
+    }
+
+    /// In a slot or bay ships have too.
+    fn in_shared_slot(&self) -> bool {
+        let flag = self.location_flag.as_str();
+        SHARED_ASSET_FLAGS.contains(&flag) || numbered(flag, SHARED_ASSET_FLAG_PREFIXES)
+    }
 }
 
 pub fn endpoint(name: &str) -> Option<&'static Endpoint> {
@@ -288,6 +441,42 @@ fn pages(headers: &reqwest::header::HeaderMap) -> u32 {
         .unwrap_or(1)
 }
 
+/// Item ids a plugin names, most at once.
+pub const MAX_ITEM_IDS: usize = 1000;
+
+/// `item_ids`: 1 to [`MAX_ITEM_IDS`] positive ids, comma-separated, each
+/// once.
+fn item_ids(params: &[(String, String)]) -> Result<Vec<i64>, EsiError> {
+    let bad = || {
+        EsiError::InvalidInput(format!(
+            "item_ids must be 1 to {MAX_ITEM_IDS} positive ids, comma-separated"
+        ))
+    };
+    let text = params
+        .iter()
+        .find(|(k, _)| k == "item_ids")
+        .map(|(_, v)| v.as_str())
+        .ok_or_else(bad)?;
+    let mut ids = Vec::new();
+    for part in text.split(',') {
+        // Refused before reading all of a long list.
+        if ids.len() >= MAX_ITEM_IDS {
+            return Err(bad());
+        }
+        let id: i64 = part.trim().parse().map_err(|_| bad())?;
+        if id <= 0 {
+            return Err(bad());
+        }
+        ids.push(id);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() || ids.len() > MAX_ITEM_IDS {
+        return Err(bad());
+    }
+    Ok(ids)
+}
+
 impl Esi {
     /// The shared client, sending `token` with every request: same rate
     /// limits, error-limit backoff and cache.
@@ -319,6 +508,33 @@ impl Esi {
             http,
             shared.inner().clone(),
         ))
+    }
+
+    /// The corporation's Upwell structures' ids, through the same client
+    /// and cache (Structures reads the list just before), or none if the
+    /// token can't read them (no scope or Station Manager role).
+    async fn upwell_ids(&self, client: &Client, corporation: i64) -> Option<Vec<i64>> {
+        let mut ids = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let response = self
+                .call_full(
+                    Priority::Bulk,
+                    client
+                        .get_corporations_corporation_id_structures()
+                        .corporation_id(corporation)
+                        .page(page)
+                        .send(),
+                )
+                .await
+                .ok()?;
+            let last = pages(response.headers());
+            ids.extend(response.into_inner().iter().map(|s| s.structure_id));
+            if page >= last || page >= 50 {
+                return Some(ids);
+            }
+            page += 1;
+        }
     }
 
     /// A corporation's member list (character ids), read with a member's
@@ -386,6 +602,12 @@ impl Esi {
                 .find(|(k, _)| k == name)
                 .map(|(_, v)| v.as_str())
         };
+        let positive = |name: &str| -> Result<i64, EsiError> {
+            param(name)
+                .and_then(|v| v.parse::<i64>().ok())
+                .filter(|id| *id > 0)
+                .ok_or_else(|| EsiError::InvalidInput(format!("{name} must be a number")))
+        };
         match endpoint.name {
             "killmail" => {
                 let id: i64 = param("killmail_id")
@@ -424,6 +646,80 @@ impl Esi {
                         },
                         "attackers": killmail.attackers.len(),
                     }),
+                    pages: 1,
+                })
+            }
+            "universe-moon" => {
+                let id = positive("moon_id")?;
+                let moon = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()?
+                            .get_universe_moons_moon_id()
+                            .moon_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&moon)?,
+                    pages: 1,
+                })
+            }
+            "universe-planet" => {
+                let id = positive("planet_id")?;
+                let planet = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()?
+                            .get_universe_planets_planet_id()
+                            .planet_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: serde_json::json!({
+                        "planet_id": planet.planet_id,
+                        "name": planet.name,
+                        "system_id": planet.system_id,
+                        "type_id": planet.type_id,
+                        "position": {
+                            "x": planet.position.x,
+                            "y": planet.position.y,
+                            "z": planet.position.z,
+                        },
+                    }),
+                    pages: 1,
+                })
+            }
+            "sovereignty-systems" => {
+                let systems = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()?.get_sovereignty_systems().send(),
+                    )
+                    .await?
+                    .into_inner();
+                // Only which alliance holds which system.
+                let systems = json(&systems)?;
+                let claimed: Vec<serde_json::Value> = systems["solar_systems"]
+                    .as_array()
+                    .map(|all| {
+                        all.iter()
+                            .filter_map(|s| {
+                                let alliance = s["claim"]["alliance"]["alliance_id"].as_i64()?;
+                                let system = s["solar_system_id"].as_i64()?;
+                                Some(serde_json::json!({
+                                    "system_id": system,
+                                    "alliance_id": alliance,
+                                }))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(Response {
+                    body: serde_json::Value::Array(claimed),
                     pages: 1,
                 })
             }
@@ -525,7 +821,174 @@ impl Esi {
                     pages,
                 })
             }
-            "universe-moon" => get!(client.get_universe_moons_moon_id().moon_id(id("moon_id")?)),
+            "corporation-starbases" => paged!(
+                client
+                    .get_corporations_corporation_id_starbases()
+                    .corporation_id(corporation)
+            ),
+            "corporation-starbase" => {
+                let starbase = self
+                    .call_full(
+                        priority,
+                        client
+                            .get_corporations_corporation_id_starbases_starbase_id()
+                            .corporation_id(corporation)
+                            .starbase_id(id("starbase_id")?)
+                            .system_id(id("system_id")?)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                let fuels: Vec<serde_json::Value> = starbase
+                    .fuels
+                    .iter()
+                    .map(|f| serde_json::json!({ "type_id": f.type_id, "quantity": f.quantity }))
+                    .collect();
+                Ok(Response {
+                    body: serde_json::json!({ "fuels": fuels }),
+                    pages: 1,
+                })
+            }
+            "corporation-customs-offices" => paged!(
+                client
+                    .get_corporations_corporation_id_customs_offices()
+                    .corporation_id(corporation)
+            ),
+            "corporation-structure-assets" => {
+                let page = page.map_or(1, std::num::NonZeroU32::get);
+                let request = client
+                    .get_corporations_corporation_id_assets()
+                    .corporation_id(corporation)
+                    .page(page)
+                    .send();
+                // `location_flag` is read as text: a flag CCP adds after
+                // this client was generated fails the typed read of the
+                // whole page. That page is then fetched again as it is
+                // (headers included, for the page count) and read loosely.
+                let raw = client.client().clone();
+                let url = format!("{}/corporations/{corporation}/assets", client.baseurl());
+                let request = async move {
+                    match request.await {
+                        Ok(response) => {
+                            let (status, headers) = (response.status(), response.headers().clone());
+                            let items = response
+                                .into_inner()
+                                .iter()
+                                .map(|a| Asset {
+                                    item_id: a.item_id,
+                                    type_id: a.type_id,
+                                    location_id: a.location_id,
+                                    location_flag: a.location_flag.to_string(),
+                                    location_type: a.location_type.to_string(),
+                                    quantity: a.quantity,
+                                })
+                                .collect::<Vec<_>>();
+                            Ok(ResponseValue::new(items, status, headers))
+                        }
+                        Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
+                            let fallback =
+                                eve_esi_client::Error::InvalidResponsePayload(bytes, err);
+                            let Ok(response) = raw.get(&url).query(&[("page", page)]).send().await
+                            else {
+                                return Err(fallback);
+                            };
+                            let (status, headers) = (response.status(), response.headers().clone());
+                            if !status.is_success() {
+                                // Its status and error-limit headers reach
+                                // the budget.
+                                return Err(eve_esi_client::Error::UnexpectedResponse(response));
+                            }
+                            let Ok(bytes) = response.bytes().await else {
+                                return Err(fallback);
+                            };
+                            match serde_json::from_slice::<Vec<Asset>>(&bytes) {
+                                Ok(items) => Ok(ResponseValue::new(items, status, headers)),
+                                Err(_) => Err(fallback),
+                            }
+                        }
+                        Err(other) => Err(other),
+                    }
+                };
+                let response = self.call_full(priority, request).await?;
+                let pages = pages(response.headers());
+                // Slots and bays ships share pass only for the
+                // corporation's own Upwell structures: never its ships'
+                // fittings (nor their item ids, which asset names and
+                // locations would take).
+                let assets = response.into_inner();
+                let upwell = if assets.iter().any(Asset::in_shared_slot) {
+                    self.upwell_ids(&client, corporation).await
+                } else {
+                    None
+                };
+                let items: Vec<serde_json::Value> = assets
+                    .into_iter()
+                    .filter(|a| a.about_structures(upwell.as_deref()))
+                    .map(|a| {
+                        serde_json::json!({
+                            "item_id": a.item_id,
+                            "type_id": a.type_id,
+                            "location_id": a.location_id,
+                            "location_flag": a.location_flag,
+                            "location_type": a.location_type,
+                            "quantity": a.quantity,
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    body: serde_json::Value::Array(items),
+                    pages,
+                })
+            }
+            "corporation-asset-locations" => {
+                let ids = item_ids(params)?;
+                let locations = self
+                    .call_full(
+                        priority,
+                        client
+                            .post_corporations_corporation_id_assets_locations()
+                            .corporation_id(corporation)
+                            .body(ids)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                let locations: Vec<serde_json::Value> = locations
+                    .iter()
+                    .map(|l| {
+                        serde_json::json!({
+                            "item_id": l.item_id,
+                            "position": { "x": l.position.x, "y": l.position.y, "z": l.position.z },
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    body: serde_json::Value::Array(locations),
+                    pages: 1,
+                })
+            }
+            "corporation-asset-names" => {
+                let ids = item_ids(params)?;
+                let names = self
+                    .call_full(
+                        priority,
+                        client
+                            .post_corporations_corporation_id_assets_names()
+                            .corporation_id(corporation)
+                            .body(ids)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                let names: Vec<serde_json::Value> = names
+                    .iter()
+                    .map(|n| serde_json::json!({ "item_id": n.item_id, "name": n.name }))
+                    .collect();
+                Ok(Response {
+                    body: serde_json::Value::Array(names),
+                    pages: 1,
+                })
+            }
             "corporation-structure-notifications" => {
                 let request = client
                     .get_characters_character_id_notifications()
@@ -614,6 +1077,7 @@ impl Esi {
                         "security_status": system.security_status,
                         "constellation_id": system.constellation_id,
                         "region_id": constellation.region_id,
+                        "planets": system.planets.iter().map(|p| p.planet_id).collect::<Vec<_>>(),
                     }),
                     pages: 1,
                 })
@@ -739,6 +1203,84 @@ mod tests {
             // The filter compares the type's text: it must round-trip.
             assert_eq!(kind.to_string(), *name);
         }
+    }
+
+    fn asset(flag: &str, type_id: i64, location_type: &str) -> Asset {
+        Asset {
+            item_id: 1,
+            type_id,
+            location_id: 2,
+            location_flag: flag.to_owned(),
+            location_type: location_type.to_owned(),
+            quantity: 1,
+        }
+    }
+
+    #[test]
+    fn structure_assets_are_slots_bays_and_skyhooks_only() {
+        // The asset's location is item 2.
+        let upwell: &[i64] = &[2];
+        for flag in [
+            "ServiceSlot4",
+            "StructureFuel",
+            "QuantumCoreRoom",
+            "MoonMaterialBay",
+        ] {
+            assert!(asset(flag, 34, "item").about_structures(None), "{flag}");
+        }
+        // Ships have these too: only in the corporation's structures.
+        for flag in [
+            "HiSlot0",
+            "MedSlot7",
+            "LoSlot3",
+            "RigSlot2",
+            "FighterTube1",
+            "FighterBay",
+        ] {
+            assert!(
+                asset(flag, 34, "item").about_structures(Some(upwell)),
+                "{flag}"
+            );
+            assert!(
+                !asset(flag, 34, "item").about_structures(Some(&[3])),
+                "{flag}"
+            );
+            assert!(!asset(flag, 34, "item").about_structures(None), "{flag}");
+        }
+        for flag in [
+            "Hangar",
+            "CorpSAG1",
+            "Cargo",
+            "CorpDeliveries",
+            "OfficeFolder",
+            "HiSlot",
+            "HiSlot10",
+            "HiSlotX",
+            "AutoFit",
+        ] {
+            assert!(
+                !asset(flag, 34, "item").about_structures(Some(upwell)),
+                "{flag}"
+            );
+        }
+        assert!(asset("AutoFit", 81080, "solar_system").about_structures(None));
+        // A skyhook in a hangar (packaged, say) isn't one in space.
+        assert!(!asset("Hangar", 81080, "item").about_structures(None));
+    }
+
+    #[test]
+    fn item_ids_are_a_short_list_of_positive_ids() {
+        let p = |v: &str| vec![("item_ids".to_owned(), v.to_owned())];
+        assert_eq!(item_ids(&p("3, 1,3")).unwrap(), vec![1, 3]);
+        assert!(item_ids(&p("")).is_err());
+        assert!(item_ids(&p("1,-2")).is_err());
+        assert!(item_ids(&p("1,x")).is_err());
+        assert!(item_ids(&[]).is_err());
+        let many = (1..=1001)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(item_ids(&p(&many)).is_err());
     }
 
     #[test]

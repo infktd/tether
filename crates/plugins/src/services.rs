@@ -32,8 +32,9 @@ pub const MAX_ESI_CALLS_PAGE: usize = 20;
 pub fn esi_cost(endpoint: &str) -> usize {
     match endpoint {
         // Two ESI requests each: fleet then members; system then
-        // constellation.
-        "fleet-members" | "universe-system" => 2,
+        // constellation; an assets page then the structures it's checked
+        // against (cached, one page mostly).
+        "fleet-members" | "universe-system" | "corporation-structure-assets" => 2,
         _ => 1,
     }
 }
