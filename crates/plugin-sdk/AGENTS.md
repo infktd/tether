@@ -150,6 +150,10 @@ permission = "manage"
 [[navigation]]         # sidebar links, shown to whoever may open them
 label = "Mining"
 path = ""
+
+[[widgets]]            # Dashboard cards (at most 3), shown to whoever may open their page
+title = "Next chunks"
+path = "widget"        # the page's sections are drawn on the Dashboard (not its tabs), with a link to the page
 ```
 
 - Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.

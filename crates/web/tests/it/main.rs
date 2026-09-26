@@ -8,6 +8,7 @@ mod admin_pages;
 mod auth;
 mod autogroups;
 mod compliance;
+mod dashboard;
 mod dev_login;
 mod discord;
 mod groups;

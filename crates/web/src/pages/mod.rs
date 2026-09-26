@@ -319,7 +319,17 @@ struct ProfilePage {
     permissions: Vec<String>,
     plugin_access: Vec<plugin_access::PluginAccess>,
     corp_sources: Vec<compliance::OwnSource>,
+    /// `admin.system` holders get the admin panels (loaded after the page).
+    system_panel: bool,
+    widgets: Vec<DashboardWidget>,
     error: Option<String>,
+}
+
+/// A plugin's Dashboard widget, loaded after the page.
+pub struct DashboardWidget {
+    pub title: String,
+    /// The fragment's address.
+    pub url: String,
 }
 
 #[derive(Template)]
@@ -452,10 +462,25 @@ pub async fn profile(
     let mut loaded = load(&state, &session, "profile").await?;
     annotate(&state, session.account, &mut loaded.characters).await?;
     let groups = tether_db::groups::names_for(&state.db, session.account).await?;
-    let permissions = permissions::effective(&state.db, session.account)
-        .await?
+    let held = permissions::effective(&state.db, session.account).await?;
+    let widgets = state
+        .plugins
+        .widgets()
         .into_iter()
+        .filter(|w| {
+            held.contains(
+                w.permission
+                    .as_deref()
+                    .unwrap_or(tether_core::permissions::ADMIN_PLUGINS),
+            )
+        })
+        .map(|w| DashboardWidget {
+            url: format!("/dashboard/widgets/{}/{}", w.plugin_id, w.index),
+            title: w.title,
+        })
         .collect();
+    let system_panel = held.contains(tether_core::permissions::ADMIN_SYSTEM);
+    let permissions = held.into_iter().collect();
     Ok(render(
         StatusCode::OK,
         &ProfilePage {
@@ -468,6 +493,8 @@ pub async fn profile(
             permissions,
             plugin_access: plugin_access::for_profile(&state, &session).await?,
             corp_sources: compliance::own_sources(&state, session.account).await?,
+            system_panel,
+            widgets,
             error: None,
         },
     ))

@@ -61,6 +61,11 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
         .route("/dashboard", get(pages::profile))
+        .route("/dashboard/system", get(pages::system::dashboard_panel))
+        .route(
+            "/dashboard/widgets/{plugin}/{index}",
+            get(pages::plugin_pages::widget),
+        )
         // The old name (before AA's): kept so bookmarks still work.
         .route("/profile", get(pages::to_dashboard))
         .route("/profile/main", post(pages::make_main))

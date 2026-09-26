@@ -36,7 +36,20 @@
   </div>
 </section>
 
+{% if system_panel %}
+<div hx-get="/dashboard/system" hx-trigger="load" hx-swap="outerHTML">
+  <section class="card"><p class="text-sm text-muted-foreground">Loading system status…</p></section>
+</div>
+{% endif %}
+
 {% include "profile_characters.html" %}
+
+{% for w in widgets %}
+<div class="flex flex-col gap-3" hx-get="{{ w.url }}" hx-trigger="load" hx-swap="innerHTML">
+  <h2 class="text-base font-semibold">{{ w.title }}</h2>
+  <p class="text-sm text-muted-foreground">Loading…</p>
+</div>
+{% endfor %}
 
 
 <section class="card">

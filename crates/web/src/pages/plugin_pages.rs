@@ -587,6 +587,92 @@ fn draw(opened: Opened, page: &Page, status: StatusCode, error: Option<String>) 
     )
 }
 
+#[derive(Template)]
+#[template(path = "dashboard_widget.html")]
+struct WidgetFragment {
+    title: String,
+    /// The widget's page.
+    href: String,
+    sections: Vec<SectionView>,
+    /// The plugin failed, or the viewer opened too many of its pages; its
+    /// log says why (admins read it there).
+    failed: bool,
+    /// As on the page itself.
+    watermark: String,
+}
+
+/// `GET /dashboard/widgets/{plugin}/{index}`: a plugin's Dashboard widget,
+/// a fragment loaded after the Dashboard: its page's sections (not its
+/// tabs). Checked and rate limited as opening the page is, so anyone who
+/// may not open it gets the same 404 as for nothing. A plugin that fails
+/// costs only its own widget.
+pub async fn widget(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, index)): Path<(String, String)>,
+) -> Result<Response, PageError> {
+    // Signed in first: whether a plugin is installed is nobody else's
+    // business.
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    let index: usize = index.parse().map_err(|_| missing())?;
+    manifest::check_id(&id).map_err(|_| missing())?;
+    let running = state.plugins.running(&id).ok_or_else(missing)?;
+    let widget = running
+        .manifest
+        .widgets
+        .get(index)
+        .cloned()
+        .ok_or_else(missing)?;
+    let href = page_href(&id, &widget.path);
+    let watermark = |name: &str| {
+        format!(
+            "Viewing as {name} · {} EVE",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M")
+        )
+    };
+    let unavailable = |title: String, href: String, watermark: String| WidgetFragment {
+        title,
+        href,
+        sections: Vec::new(),
+        failed: true,
+        watermark,
+    };
+    let fragment = match open(&state, Some(session), &id, &widget.path, None).await {
+        Ok((session, opened)) => {
+            let mark = watermark(&opened.shell.user.name);
+            // The page's own budget: a widget is a page view.
+            if state
+                .limits
+                .plugin_pages
+                .check((session.account.0, id.clone()), std::time::Instant::now())
+                .is_err()
+            {
+                unavailable(widget.title, href, mark)
+            } else {
+                match render_page(&state, &opened).await {
+                    Ok(page) => WidgetFragment {
+                        title: widget.title,
+                        sections: page
+                            .sections
+                            .iter()
+                            .map(|s| section(&id, &opened.href, s))
+                            .collect(),
+                        href,
+                        failed: false,
+                        watermark: mark,
+                    },
+                    Err(_) => unavailable(widget.title, href, mark),
+                }
+            }
+        }
+        Err(err) if err.0.status() == StatusCode::NOT_FOUND => return Err(err),
+        Err(err) if err.0.status() == StatusCode::UNAUTHORIZED => return Err(err),
+        // No main yet, and the like: nothing to show, politely.
+        Err(_) => unavailable(widget.title, href, String::new()),
+    };
+    Ok(render(StatusCode::OK, &fragment))
+}
+
 /// Percent-encodes a query component.
 fn encode(text: &str) -> String {
     text.bytes()

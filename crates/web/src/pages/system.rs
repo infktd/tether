@@ -69,22 +69,27 @@ fn time(at: chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M").to_string()
 }
 
-async fn system_page(
-    state: &AppState,
-    shell: Shell,
-    error: Option<AppError>,
-) -> Result<Response, PageError> {
-    // Bounded: the page for diagnosing ESI must load when ESI doesn't.
+/// Whether ESI answers: pilots online, or why not. Bounded: the pages for
+/// diagnosing ESI must load when ESI doesn't.
+async fn esi_status(state: &AppState) -> (Option<i64>, Option<String>) {
     let online = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         state.esi.players_online(),
     )
     .await;
-    let (esi_online, esi_error) = match online {
+    match online {
         Ok(Ok(n)) => (Some(n), None),
         Ok(Err(err)) => (None, Some(err.to_string())),
         Err(_) => (None, Some("no answer within 5 seconds".to_owned())),
-    };
+    }
+}
+
+async fn system_page(
+    state: &AppState,
+    shell: Shell,
+    error: Option<AppError>,
+) -> Result<Response, PageError> {
+    let (esi_online, esi_error) = esi_status(state).await;
     let counts = tether_jobs::counts(&state.db).await?;
     let dead_count = counts
         .iter()
@@ -133,6 +138,49 @@ async fn system_page(
             schedules,
             updates: updates::status(&state.db).await?,
             error: error.map(|e| e.message().to_owned()),
+        },
+    ))
+}
+
+#[derive(Template)]
+#[template(path = "dashboard_system.html")]
+struct SystemPanel {
+    esi_online: Option<i64>,
+    esi_error: Option<String>,
+    budget: BudgetSnapshot,
+    queued: i64,
+    running: i64,
+    dead: i64,
+    updates: updates::Status,
+}
+
+/// `GET /dashboard/system`: the Dashboard's admin panels (AA's Software
+/// Version, Task Queue and ESI status), a fragment loaded after the page
+/// so a slow ESI never holds the Dashboard up.
+pub async fn dashboard_panel(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    session.require(&state, ADMIN_SYSTEM).await?;
+    let (esi_online, esi_error) = esi_status(&state).await;
+    let counts = tether_jobs::counts(&state.db).await?;
+    let count = |wanted: JobState| {
+        counts
+            .iter()
+            .find(|(s, _)| *s == wanted)
+            .map_or(0, |(_, n)| *n)
+    };
+    Ok(render(
+        StatusCode::OK,
+        &SystemPanel {
+            esi_online,
+            esi_error,
+            budget: state.esi.budget(),
+            queued: count(JobState::Queued),
+            running: count(JobState::Running),
+            dead: count(JobState::Dead),
+            updates: updates::status(&state.db).await?,
         },
     ))
 }

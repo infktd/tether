@@ -171,6 +171,18 @@ pub struct Running {
     pub manifest: Arc<tether_plugins::manifest::Manifest>,
 }
 
+/// A Dashboard widget of a running plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WidgetItem {
+    pub plugin_id: String,
+    /// Its place in the manifest's `[[widgets]]`.
+    pub index: usize,
+    pub title: String,
+    /// What opening its page needs: a plugin permission, or `None` for
+    /// admins.
+    pub permission: Option<String>,
+}
+
 /// A sidebar link to a running plugin's page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavItem {
@@ -296,6 +308,27 @@ impl Plugins {
                     label: entry.label.clone(),
                     plugin_id: id.clone(),
                 })
+            })
+            .collect()
+    }
+
+    /// Every running plugin's Dashboard widgets, by plugin name.
+    pub fn widgets(&self) -> Vec<WidgetItem> {
+        self.all_running()
+            .into_iter()
+            .flat_map(|r| {
+                let id = r.manifest.plugin.id.clone();
+                r.manifest
+                    .widgets
+                    .iter()
+                    .enumerate()
+                    .map(|(index, widget)| WidgetItem {
+                        plugin_id: id.clone(),
+                        index,
+                        title: widget.title.clone(),
+                        permission: r.manifest.page_permission(&widget.path),
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
     }

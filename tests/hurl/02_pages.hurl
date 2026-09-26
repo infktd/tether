@@ -351,6 +351,16 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/dashboard/system
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/dashboard/widgets/nmu.moons/0
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/users
 HTTP 303
 [Asserts]

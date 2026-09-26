@@ -1,0 +1,39 @@
+{#- The Dashboard's admin panels: a fragment for /dashboard/system. -#}
+<section class="flex flex-col gap-3" aria-label="System">
+  <div class="flex items-center justify-between">
+    <h2 class="text-base font-semibold">System</h2>
+    <a class="text-sm underline underline-offset-4" href="/admin/system">Details</a>
+  </div>
+  <div class="grid grid-cols-4 gap-4">
+    <div class="card stat">
+      <div class="stat-label">Software Version</div>
+      <div class="stat-value num">{{ updates.current }}</div>
+      <div class="stat-caption">
+        {% if !updates.enabled %}Update checks are off
+        {% else if updates.newer %}{% if let Some(latest) = updates.latest %}<span class="badge" data-variant="secondary">{{ latest }} available</span>{% endif %}
+        {% else if updates.latest.is_some() %}Up to date
+        {% else %}Not checked yet{% endif %}
+      </div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Task Queue</div>
+      <div class="stat-value num">{{ queued }}</div>
+      <div class="stat-caption">Waiting; <span class="num">{{ running }}</span> running{% if dead > 0 %}, <span class="text-destructive"><span class="num">{{ dead }}</span> dead</span>{% endif %}</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">ESI</div>
+      {% if let Some(online) = esi_online %}
+      <div class="stat-value"><span class="badge" data-variant="secondary">Answering</span></div>
+      <div class="stat-caption"><span class="num">{{ online }}</span> pilots online</div>
+      {% else %}
+      <div class="stat-value"><span class="badge" data-variant="destructive">Down</span></div>
+      <div class="stat-caption">{% if let Some(e) = esi_error %}{{ e }}{% endif %}</div>
+      {% endif %}
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Error budget</div>
+      <div class="stat-value num">{% if let Some(r) = budget.error_remain %}{{ r }}{% else %}—{% endif %}</div>
+      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% else %}ESI hasn't reported one yet{% endif %}</div>
+    </div>
+  </div>
+</section>

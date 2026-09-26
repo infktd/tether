@@ -38,6 +38,9 @@ pub struct Manifest {
     /// Sidebar entries, shown to whoever may open their page.
     #[serde(default)]
     pub navigation: Vec<NavEntry>,
+    /// Dashboard widgets, shown to whoever may open their page.
+    #[serde(default)]
+    pub widgets: Vec<Widget>,
 }
 
 /// `[[pages]]`: pages under `path` (a page path; `""` for all) need
@@ -57,6 +60,19 @@ pub struct NavEntry {
     /// A page path; `""` for the plugin's main page.
     pub path: String,
 }
+
+/// `[[widgets]]`: a Dashboard card showing one of the plugin's pages (its
+/// sections, not its tabs), with a link to the page.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Widget {
+    pub title: String,
+    /// A page path; `""` for the plugin's main page.
+    pub path: String,
+}
+
+/// Most widgets a plugin may add.
+pub const MAX_WIDGETS: usize = 3;
 
 impl Manifest {
     /// The permission (full name, `plugin.<id>.<name>`) a page needs, or
@@ -302,6 +318,13 @@ impl Manifest {
         for entry in &self.navigation {
             check_text("a navigation label", &entry.label, 40, true)?;
             check_page_path("[[navigation]] path", &entry.path)?;
+        }
+        if self.widgets.len() > MAX_WIDGETS {
+            return Err(bad(format!("more than {MAX_WIDGETS} [[widgets]]")));
+        }
+        for widget in &self.widgets {
+            check_text("a widget title", &widget.title, 40, true)?;
+            check_page_path("[[widgets]] path", &widget.path)?;
         }
         Ok(())
     }
@@ -748,9 +771,18 @@ manage = "Manage the mining ledger"
             "[permissions]\nview = \"x\"\n[[pages]]\npath = \"/abs\"\npermission = \"view\"\n",
             "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",
+            "[[widgets]]\ntitle = \"\"\npath = \"\"\n",
+            "[[widgets]]\ntitle = \"Ore\"\npath = \"../core\"\n",
+            "[[widgets]]\ntitle = \"Ore\"\npath = \"\"\nsize = \"big\"\n",
+            &"[[widgets]]\ntitle = \"Ore\"\npath = \"\"\n".repeat(MAX_WIDGETS + 1),
         ] {
             assert!(Manifest::parse(&manifest(bad)).is_err(), "{bad}");
         }
+        let widgets = Manifest::parse(&manifest(
+            "[[widgets]]\ntitle = \"Ore\"\npath = \"ledger\"\n",
+        ))
+        .unwrap();
+        assert_eq!(widgets.widgets[0].path, "ledger");
     }
 
     #[test]

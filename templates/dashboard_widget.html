@@ -1,0 +1,12 @@
+{#- A plugin's Dashboard widget: a fragment for /dashboard/widgets/... -#}
+{%- import "plugin_sections.html" as plugin -%}
+<div class="flex items-center justify-between">
+  <h2 class="text-base font-semibold">{{ title }}</h2>
+  <a class="text-sm underline underline-offset-4" href="{{ href }}">Open</a>
+</div>
+{% if failed %}
+<section class="card"><p class="text-sm text-muted-foreground">This widget couldn't load. Try its page, or ask an admin to check the app's log.</p></section>
+{% else %}
+{% call plugin::sections(sections) %}{% endcall %}
+{% endif %}
+{% if !watermark.is_empty() %}<p class="self-end text-[11px] font-mono text-faint select-none" aria-hidden="true">{{ watermark }}</p>{% endif %}
