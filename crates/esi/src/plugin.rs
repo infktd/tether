@@ -16,6 +16,14 @@
 //! across data sources, so while one source keeps an entry fresh, another
 //! source of the same corporation reads it without ESI checking its roles.
 //! Admins approve data sources knowing that (the approval page says so).
+//!
+//! `fleet-members` checks that the data-source character is the fleet boss
+//! from `/characters/{id}/fleet`, as of ESI's cached answer (a few
+//! seconds). Its members, `/fleets/{fleet_id}/members`, may then come from
+//! the shared cache, filled for the boss a moment before: "boss" means boss
+//! as of that cached answer, so a character that just passed boss can read
+//! the members once more. It makes two ESI requests, and costs a plugin
+//! two of its per-call ESI budget.
 
 use std::time::Duration;
 

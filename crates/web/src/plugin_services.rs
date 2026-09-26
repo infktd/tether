@@ -382,7 +382,14 @@ impl Services for PluginServices {
                 return Err(EsiError::Unavailable);
             }
             let result = esi_get(&deps, &plugins, &plugin, &endpoint, subject, &params, page).await;
-            if matches!(result, Err(EsiError::Status(_))) {
+            // `fleet-members` answers "not in a fleet" for ESI's 404: still
+            // an error ESI counted, so it counts here too.
+            let not_in_fleet = endpoint == "fleet-members"
+                && result.as_ref().is_ok_and(|r| {
+                    serde_json::from_str::<serde_json::Value>(&r.body)
+                        .is_ok_and(|v| v["in_fleet"] == serde_json::Value::Bool(false))
+                });
+            if matches!(result, Err(EsiError::Status(_))) || not_in_fleet {
                 throttle.error(&plugin);
             }
             // Only the catalogue's own names: a plugin's text isn't logged.

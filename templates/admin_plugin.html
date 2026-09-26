@@ -40,7 +40,7 @@
           <td class="font-medium">{{ d.name }}</td>
           <td class="num">{{ d.corporation }}</td>
           <td><div class="text-sm">{{ d.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ d.when }} EVE</div></td>
-          <td>{% if d.state == "approved" %}<span class="badge" data-variant="secondary">approved</span>{% else if d.state == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting</span>{% endif %}</td>
+          <td>{% if d.state == "approved" %}<span class="badge" data-variant="secondary">approved</span>{% else if d.state == "suspended" %}<span class="badge" data-variant="destructive">account deactivated or blacklisted: not used</span>{% else if d.state == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting</span>{% endif %}</td>
           <td class="text-right">
             <div class="inline-flex gap-2">
               {% if d.state != "approved" %}<form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>{% endif %}

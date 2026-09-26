@@ -17,6 +17,18 @@ pub use crate::host::tether::plugin::identity::{Builtin, Character, State, Viewe
 pub const MAX_ESI_CALLS: usize = 100;
 /// ESI calls in one page render: pages run on every view.
 pub const MAX_ESI_CALLS_PAGE: usize = 20;
+
+/// ESI requests one call of a catalogue endpoint makes, which is what it
+/// costs of the budgets above. `fleet-members` reads the character's fleet
+/// and then its members.
+pub fn esi_cost(endpoint: &str) -> usize {
+    match endpoint {
+        // Two ESI requests each: fleet then members; system then
+        // constellation.
+        "fleet-members" | "universe-system" => 2,
+        _ => 1,
+    }
+}
 /// Discord messages in one plugin call.
 pub const MAX_DISCORD_SENDS: usize = 5;
 
@@ -47,3 +59,14 @@ pub trait Services: Send + Sync + std::fmt::Debug {
 }
 
 pub type Shared = Arc<dyn Services>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_request_endpoints_cost_two() {
+        assert_eq!(esi_cost("fleet-members"), 2);
+        assert_eq!(esi_cost("character-skills"), 1);
+    }
+}

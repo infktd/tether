@@ -3,6 +3,8 @@
 //! expiry, members register their characters (once each, only while the
 //! link is open), managers add, remove and delete, and statistics per
 //! pilot, corporation, alliance and month behind aa-afat's permissions.
+//! ESI-tracked fleets through an FC's approved data source, with mocked
+//! `/characters/{id}/fleet` and `/fleets/{id}/members`.
 
 use std::sync::OnceLock;
 
@@ -26,6 +28,9 @@ const ALT: i64 = 406944591;
 const LINE_CORP: i64 = 1000167;
 const GIGX: i64 = 1887431749;
 const GIGX_CORP: i64 = 98133756;
+const FLEET: i64 = 1_234_567_890_123;
+const ROKH: i64 = 24688;
+const JITA: i64 = 30000142;
 
 /// SQL naming the plugin's schema (read from core, not input).
 macro_rules! sql {
@@ -52,15 +57,17 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_fleet_activity_tracking.sql");
+    let first = plugin_file("migrations/0001_fleet_activity_tracking.sql");
+    let second = plugin_file("migrations/0002_esi_fleet_tracking.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         (
             "migrations/0001_fleet_activity_tracking.sql",
-            migration.as_bytes(),
+            first.as_bytes(),
         ),
+        ("migrations/0002_esi_fleet_tracking.sql", second.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -76,6 +83,10 @@ async fn mount_names(h: &Harness) {
             { "id": CHRIBBA_CORP, "name": "Otherworld Enterprises", "category": "corporation" },
             { "id": LINE_CORP, "name": "Science and Trade Institute", "category": "corporation" },
             { "id": GIGX, "name": "gigX", "category": "character" },
+            { "id": LINE, "name": "Line Member", "category": "character" },
+            { "id": ALT, "name": "Line Alt", "category": "character" },
+            { "id": ROKH, "name": "Rokh", "category": "inventory_type" },
+            { "id": JITA, "name": "Jita", "category": "solar_system" },
         ])))
         .with_priority(1)
         .mount(&h.esi_server)
@@ -688,4 +699,606 @@ async fn housekeeping_clears_old_logs(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(left, vec!["Chribba".to_owned()]);
+}
+
+// ---- ESI-tracked fleets ------------------------------------------------------
+
+async fn work(h: &Harness) {
+    let registry = registry(h);
+    let config = WorkerConfig::default();
+    while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
+}
+
+/// Chribba (the owner, our FC) offers himself as the app's data source
+/// and approves it; returns the owner's new session.
+async fn approve_fc(h: &Harness, owner: &str) -> String {
+    let owner = offer_source(h, owner, CHRIBBA, "Chribba").await;
+    approve_source(h, &owner, CHRIBBA).await;
+    owner
+}
+
+async fn approve_source(h: &Harness, owner: &str, character: i64) {
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/sources/{character}/approve"),
+            "",
+            owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+/// Offers a character of the session's account as the app's data source
+/// (the SSO round trip); returns the session after it.
+async fn offer_source(h: &Harness, session: &str, character: i64, name: &str) -> String {
+    let res = send(
+        &h.app,
+        form(&format!("/profile/plugins/{ID}/offer"), "", session),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let login = res.cookie_value(LOGIN);
+    let state = query_param(res.location(), "state").to_owned();
+    let asked = h.sso.last_requested.lock().unwrap().clone();
+    assert!(
+        asked.contains(&"esi-fleets.read_fleet.v1".to_owned()),
+        "{asked:?}"
+    );
+    let res = send(
+        &h.app,
+        get(
+            &format!(
+                "/auth/callback?code=ok:{character}:{}&state={state}",
+                name.replace(' ', "%20")
+            ),
+            &[(LOGIN, &login), (SESSION, session)],
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    res.cookie_value(SESSION)
+}
+
+/// ESI's view of Chribba's fleet: `boss` runs it.
+async fn mount_fleet(h: &Harness, boss: i64) {
+    mount_fleet_of(h, CHRIBBA, boss).await;
+}
+
+/// ESI's view of `character`'s fleet: `boss` runs it.
+async fn mount_fleet_of(h: &Harness, character: i64, boss: i64) {
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{character}/fleet")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "fleet_id": FLEET, "fleet_boss_id": boss, "role": "fleet_commander",
+            "squad_id": -1, "wing_id": -1,
+        })))
+        .mount(&h.esi_server)
+        .await;
+}
+
+fn member(character: i64) -> serde_json::Value {
+    serde_json::json!({
+        "character_id": character, "join_time": "2026-09-26T18:00:00Z",
+        "role": "squad_member", "role_name": "Squad Member (Boss)",
+        "ship_type_id": ROKH, "solar_system_id": JITA, "squad_id": 1,
+        "takes_fleet_warp": true, "wing_id": 1,
+    })
+}
+
+/// The members: Line and his alt on the first read, gigX joining after.
+async fn mount_members(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!([member(LINE), member(ALT)])),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            member(LINE),
+            member(ALT),
+            member(GIGX),
+        ])))
+        .mount(&h.esi_server)
+        .await;
+}
+
+/// Creates a link tracking Chribba's fleet.
+async fn tracked_link(h: &Harness, owner: &str) -> String {
+    tracked_link_by(h, owner, CHRIBBA).await
+}
+
+async fn tracked_link_by(h: &Harness, session: &str, character: i64) -> String {
+    let res = post(
+        h,
+        "links/create",
+        &format!(
+            "_form=create&fleet=Tracked+fleet&fleet_type=&doctrine=&expiry=120&track={character}"
+        ),
+        session,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    res.location()
+        .strip_prefix(&format!("/plugins/{ID}/links/"))
+        .unwrap()
+        .to_owned()
+}
+
+/// Makes the link's last fleet read two minutes old (resume waits a
+/// minute after one).
+async fn age_poll(h: &Harness, hash: &str) {
+    let schema = schema(h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET esi_polled_at = now() - interval '2 minutes' WHERE hash = $1"
+    ))
+    .bind(hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+}
+
+async fn queued_polls(h: &Harness) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'track_fleets' AND state = 'queued'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// Runs the queued poll now (it waits a minute otherwise).
+async fn poll_now(h: &Harness) {
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'track_fleets' AND state = 'queued'",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(h).await;
+}
+
+async fn tracking(h: &Harness, hash: &str) -> (Option<String>, Option<String>) {
+    let schema = schema(h).await;
+    sqlx::query_as(sql!(
+        "SELECT esi_state, esi_stop_reason FROM \"{schema}\".links WHERE hash = $1"
+    ))
+    .bind(hash)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+type EsiFat = (i64, Option<i64>, Option<i64>, bool);
+
+async fn esi_fats(h: &Harness, hash: &str) -> Vec<EsiFat> {
+    let schema = schema(h).await;
+    sqlx::query_as(sql!(
+        "SELECT f.character_id, f.ship_type_id, f.system_id, f.esi FROM \"{schema}\".fats f \
+         JOIN \"{schema}\".links l ON l.id = f.link_id WHERE l.hash = $1 ORDER BY f.character_id"
+    ))
+    .bind(hash)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let owner = approve_fc(&h, &owner).await;
+    mount_fleet(&h, CHRIBBA).await;
+    mount_members(&h).await;
+
+    let hash = tracked_link(&h, &owner).await;
+    assert_eq!(queued_polls(&h).await, 1);
+    // A character tracks one fleet at a time.
+    let again = post(
+        &h,
+        "links/create",
+        &format!("_form=create&fleet=Twice&fleet_type=&doctrine=&expiry=60&track={CHRIBBA}"),
+        &owner,
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    assert!(again.body.contains("already tracked"), "{}", again.body);
+    work(&h).await;
+    let rokh = (Some(ROKH), Some(JITA), true);
+    assert_eq!(
+        esi_fats(&h, &hash).await,
+        vec![(ALT, rokh.0, rokh.1, true), (LINE, rokh.0, rokh.1, true)]
+    );
+    // Polling again a minute later: gigX joined; nobody twice.
+    assert_eq!(queued_polls(&h).await, 1);
+    poll_now(&h).await;
+    let fats = esi_fats(&h, &hash).await;
+    assert_eq!(
+        fats.iter().map(|f| f.0).collect::<Vec<_>>(),
+        vec![ALT, LINE, GIGX]
+    );
+    poll_now(&h).await;
+    assert_eq!(esi_fats(&h, &hash).await.len(), 3);
+
+    // The FC sees who, in what, where.
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert_eq!(details.status, StatusCode::OK, "{}", details.body);
+    assert!(details.body.contains("Rokh"), "{}", details.body);
+    assert!(details.body.contains("Jita"));
+    assert!(details.body.contains("ESI fleet"));
+    assert!(details.body.contains("Tracking"));
+    assert!(details.body.contains("Line Alt"));
+    // Other FCs see who, not where: ships and systems are intel.
+    grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
+    let other_fc = open(&h, &format!("links/{hash}"), &line).await;
+    assert_eq!(other_fc.status, StatusCode::OK, "{}", other_fc.body);
+    assert!(other_fc.body.contains("Line Alt"));
+    assert!(!other_fc.body.contains("Rokh"), "{}", other_fc.body);
+
+    // Removing a FAT while tracking would be undone by the next read.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=remove_fat&character_id={GIGX}"),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("Stop ESI tracking first"), "{}", res.body);
+    assert_eq!(esi_fats(&h, &hash).await.len(), 3);
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=stop_tracking&confirm=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("manual".into()))
+    );
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=remove_fat&character_id={GIGX}"),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+    // Resuming waits a minute after the last read.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=resume&confirm=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("try again shortly"), "{}", res.body);
+    age_poll(&h, &hash).await;
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=resume&confirm=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+
+    // Members see the FAT like any other, and their affiliation fills in
+    // when they next use the app: for the last week's FATs only.
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".fats SET created_at = now() - interval '8 days' WHERE character_id = $1"
+    ))
+    .bind(ALT)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = post(
+        &h,
+        &format!("links/{hash}/add"),
+        &format!("_form=register&c_{LINE}=on"),
+        &line,
+    )
+    .await;
+    // Both of Line's characters are in already: nothing left to tick.
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    let other = create_link(&h, &owner, "Next fleet", "").await;
+    let res = post(
+        &h,
+        &format!("links/{other}/add"),
+        &format!("_form=register&c_{LINE}=on"),
+        &line,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    for (character, expected) in [(LINE, Some(LINE_CORP)), (ALT, None)] {
+        let corporation: Option<i64> = sqlx::query_scalar(sql!(
+            "SELECT f.corporation_id FROM \"{schema}\".fats f JOIN \"{schema}\".links l ON l.id = f.link_id WHERE f.character_id = $1 AND l.hash = $2"
+        ))
+        .bind(character)
+        .bind(&hash)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+        assert_eq!(corporation, expected, "{character}");
+    }
+
+    // Closing the link stops tracking, and the job stops queuing itself.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=close&confirm=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("closed".into()))
+    );
+    poll_now(&h).await;
+    assert_eq!(queued_polls(&h).await, 0);
+
+    // Reopened and resumed, it tracks again, until the six-hour cap.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=reopen&expiry=60",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    age_poll(&h, &hash).await;
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=resume&confirm=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    assert_eq!(queued_polls(&h).await, 1);
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET esi_started_at = now() - interval '7 hours' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("cap".into()))
+    );
+    assert_eq!(queued_polls(&h).await, 0);
+
+    let logs = open(&h, "logs", &owner).await;
+    assert!(
+        logs.body.contains("ESI Fleet Tracking Stopped"),
+        "{}",
+        logs.body
+    );
+    assert!(logs.body.contains("Resume ESI Fleet Tracking"));
+    no_problems(&plugin_problems(&h).await);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn esi_tracking_stops_when_not_in_a_fleet(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let owner = approve_fc(&h, &owner).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/fleet")))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_json(serde_json::json!({ "error": "Character is not in a fleet" })),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let hash = tracked_link(&h, &owner).await;
+    work(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("fleet_ended".into()))
+    );
+    assert_eq!(queued_polls(&h).await, 0);
+    assert!(esi_fats(&h, &hash).await.is_empty());
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn esi_tracking_stops_when_boss_passes_and_resumes(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let owner = approve_fc(&h, &owner).await;
+    // Line has boss now.
+    mount_fleet(&h, LINE).await;
+    mount_members(&h).await;
+    let hash = tracked_link(&h, &owner).await;
+    work(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("not_boss".into()))
+    );
+    assert_eq!(queued_polls(&h).await, 0);
+    assert!(esi_fats(&h, &hash).await.is_empty());
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(details.body.contains("Not boss"), "{}", details.body);
+    assert!(
+        details.body.contains("isn&#39;t the fleet boss")
+            || details.body.contains("isn't the fleet boss"),
+        "{}",
+        details.body
+    );
+    let resume = open(&h, &format!("links/{hash}?_tab=1"), &owner).await;
+    assert!(
+        resume.body.contains("Resume ESI tracking"),
+        "{}",
+        resume.body
+    );
+    // Not within a minute of the last read.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=resume&confirm=on",
+        &owner,
+    )
+    .await;
+    assert!(res.body.contains("try again shortly"), "{}", res.body);
+    age_poll(&h, &hash).await;
+    // A manager can't restart someone else's character's tracking: only
+    // its owner is offered Resume.
+    grant(&h, &owner, "manage_afat", MEMBER_STATE).await;
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=resume&confirm=on",
+        &line,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("stopped"));
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        "_form=resume&confirm=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await, (Some("tracking".into()), None));
+    assert_eq!(queued_polls(&h).await, 1);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn esi_tracking_stops_on_403(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let owner = approve_fc(&h, &owner).await;
+    mount_fleet(&h, CHRIBBA).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "forbidden" })),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let hash = tracked_link(&h, &owner).await;
+    work(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("refused".into()))
+    );
+    assert_eq!(queued_polls(&h).await, 0);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn only_your_own_approved_characters_track(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let owner = approve_fc(&h, &owner).await;
+    grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
+
+    // The FC whose character is approved may pick it.
+    let create = open(&h, "links/create", &owner).await;
+    assert!(
+        create.body.contains("Track Chribba&#39;s fleet")
+            || create.body.contains("Track Chribba's fleet"),
+        "{}",
+        create.body
+    );
+    // Another FC can't pick it, and is told how to opt in.
+    let create = open(&h, "links/create", &line).await;
+    assert_eq!(create.status, StatusCode::OK, "{}", create.body);
+    assert!(!create.body.contains("Chribba"), "{}", create.body);
+    assert!(create.body.contains("Offer a character"), "{}", create.body);
+    let res = post(
+        &h,
+        "links/create",
+        &format!("_form=create&fleet=Mine&fleet_type=&doctrine=&expiry=60&track={CHRIBBA}"),
+        &line,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(queued_polls(&h).await, 0);
+
+    // A data source that's withdrawn stops the tracking at the next poll.
+    mount_fleet(&h, CHRIBBA).await;
+    mount_members(&h).await;
+    let hash = tracked_link(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/sources/{CHRIBBA}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("data_source".into()))
+    );
+    assert_eq!(queued_polls(&h).await, 0);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_deactivated_fcs_data_source_stops_tracking(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
+    // Line, an FC, offers his main; the owner approves it.
+    let line = offer_source(&h, &line, LINE, "Line Member").await;
+    approve_source(&h, &owner, LINE).await;
+    mount_fleet_of(&h, LINE, LINE).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!([member(LINE), member(ALT)])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let hash = tracked_link_by(&h, &line, LINE).await;
+    work(&h).await;
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+
+    // Deactivated: his character is no longer a data source anywhere.
+    let account: i64 = sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+        .bind(LINE)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    let res = send(
+        &h.app,
+        form(&format!("/admin/users/{account}/deactivate"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let sources = tether_db::plugin_esi::data_sources(&h.db, ID)
+        .await
+        .unwrap();
+    assert!(sources.iter().all(|s| !s.in_use()), "{sources:?}");
+    poll_now(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("data_source".into()))
+    );
+    assert_eq!(queued_polls(&h).await, 0);
+    let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(
+        admin.body.contains("account deactivated or blacklisted"),
+        "{}",
+        admin.body
+    );
 }

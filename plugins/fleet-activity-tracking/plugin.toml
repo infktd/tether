@@ -5,13 +5,21 @@ id = "tether.fleet-activity-tracking"
 name = "Fleet Activity Tracking"
 version = "0.1.0"
 host_api = "1"
-description = "FAT links for fleets, with fleet types and expiry; attendance statistics per alliance, corporation, pilot and month."
+description = "FAT links for fleets, with fleet types and expiry, or an FC's ESI fleet tracked while it runs (a data source's esi-fleets.read_fleet.v1 shows the fleets it bosses: members, ships, systems); stats per alliance, corporation, pilot and month."
 
 [publisher]
 key = "PUBLISHER_KEY"
 
 [capabilities]
 storage = true
+
+[capabilities.esi]
+# ESI-tracked fleets (aa-afat's): an FC offers their character as this
+# app's data source and an admin approves it once; nobody else is asked
+# for the scope. It exposes the fleets that character is boss of: every
+# member, their ship and their system, each minute while tracked. The host
+# reads only a fleet that character is boss of.
+data_source = ["esi-fleets.read_fleet.v1"]
 
 # Clears out old logs.
 [[capabilities.schedules]]

@@ -610,6 +610,8 @@ async fn plugin_page(
         .map(|d| {
             let state = if d.in_use() {
                 "approved"
+            } else if d.approved && !d.account_ok {
+                "suspended"
             } else if d.approved {
                 "moved"
             } else {

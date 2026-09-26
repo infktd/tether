@@ -77,8 +77,9 @@ impl CallState {
         }
     }
 
-    fn esi(&mut self) -> Result<services::Shared, services::EsiError> {
-        self.esi_calls += 1;
+    /// Spends `cost` of the call's ESI budget (the ESI requests it makes).
+    fn esi_costing(&mut self, cost: usize) -> Result<services::Shared, services::EsiError> {
+        self.esi_calls += cost;
         let max = if self.jobs_refused {
             services::MAX_ESI_CALLS_PAGE
         } else {
@@ -90,6 +91,10 @@ impl CallState {
             )));
         }
         self.services.clone().ok_or(services::EsiError::Unavailable)
+    }
+
+    fn esi(&mut self) -> Result<services::Shared, services::EsiError> {
+        self.esi_costing(1)
     }
 }
 
@@ -107,7 +112,7 @@ impl tether::plugin::esi::Host for CallState {
         params: Vec<(String, String)>,
         page: Option<u32>,
     ) -> Result<services::EsiResponse, services::EsiError> {
-        let services = self.esi()?;
+        let services = self.esi_costing(services::esi_cost(&endpoint))?;
         services
             .esi_get(self.plugin.clone(), endpoint, subject, params, page)
             .await

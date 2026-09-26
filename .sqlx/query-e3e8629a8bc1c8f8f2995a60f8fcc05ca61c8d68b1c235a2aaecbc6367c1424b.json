@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT d.corporation_id AS \"corporation_id!\" FROM core.plugin_data_sources d\n        JOIN core.characters c ON c.id = d.character_id\n        JOIN core.accounts a ON a.id = c.account_id\n        WHERE d.plugin_id = $1 AND d.character_id = $2 AND d.approved_at IS NOT NULL\n          AND d.corporation_id IS NOT NULL AND c.corporation_id = d.corporation_id\n          AND a.active AND NOT core.blacklisted(a.id)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_data_sources",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "e3e8629a8bc1c8f8f2995a60f8fcc05ca61c8d68b1c235a2aaecbc6367c1424b"
+}

@@ -66,12 +66,16 @@ pub struct DataSource {
     /// The corporation it was approved for; a source whose character has
     /// moved since isn't used until approved again.
     pub approved_corporation: Option<i64>,
+    /// The character's account is active and not blacklisted.
+    pub account_ok: bool,
 }
 
 impl DataSource {
-    /// Approved, and still in the corporation it was approved for.
+    /// Approved, still in the corporation it was approved for, and on an
+    /// account in good standing.
     pub fn in_use(&self) -> bool {
         self.approved
+            && self.account_ok
             && self.approved_corporation.is_some()
             && self.approved_corporation == self.character.corporation_id
     }
@@ -144,9 +148,11 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
         r#"
         SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,
                d.approved_at IS NOT NULL AS "approved!", o.name AS "offered_by?",
-               d.corporation_id AS approved_corporation
+               d.corporation_id AS approved_corporation,
+               COALESCE(ca.active AND NOT core.blacklisted(ca.id), false) AS "account_ok!"
         FROM core.plugin_data_sources d
         JOIN core.characters c ON c.id = d.character_id
+        LEFT JOIN core.accounts ca ON ca.id = c.account_id
         LEFT JOIN core.accounts a ON a.id = d.offered_by
         LEFT JOIN core.characters o ON o.id = a.main_character_id
         WHERE d.plugin_id = $1 ORDER BY c.name
@@ -168,6 +174,7 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
             offered_at: r.offered_at,
             approved: r.approved,
             approved_corporation: r.approved_corporation,
+            account_ok: r.account_ok,
         })
         .collect())
 }
@@ -183,8 +190,10 @@ pub async fn approved_source_corporation<'e>(
         r#"
         SELECT d.corporation_id AS "corporation_id!" FROM core.plugin_data_sources d
         JOIN core.characters c ON c.id = d.character_id
+        JOIN core.accounts a ON a.id = c.account_id
         WHERE d.plugin_id = $1 AND d.character_id = $2 AND d.approved_at IS NOT NULL
           AND d.corporation_id IS NOT NULL AND c.corporation_id = d.corporation_id
+          AND a.active AND NOT core.blacklisted(a.id)
         "#,
         plugin_id,
         character_id

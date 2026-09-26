@@ -11,14 +11,18 @@
 //! - **Statistics** per pilot, corporation and alliance, by month, behind
 //!   aa-afat's permissions.
 //! - **Logs** of what FCs and managers did, kept for 60 days.
-//!
-//! aa-afat's ESI-tracked fleets need ESI's fleet endpoints, which the host
-//! doesn't offer plugins yet: FAT links are clickable ones.
+//! - **ESI-tracked fleets** (aa-afat's): a link can follow the fleet an FC's
+//!   character is boss of, adding a FAT (with ship and system) for everyone
+//!   in it. The FC opts in by offering that character as the app's data
+//!   source, which an admin approves. One keyed job polls every tracked
+//!   fleet each minute while any is tracked; tracking stops when the fleet
+//!   ends, the character isn't boss, ESI refuses, the data source goes, the
+//!   link closes, or after six hours.
 
 use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
-use tether_plugin_sdk::esi;
+use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
-use tether_plugin_sdk::jobs::{Job, JobError};
+use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
@@ -45,6 +49,20 @@ const MAX_STAT_ROWS: usize = 300;
 const MAX_FLEET: u32 = 100;
 const MAX_DOCTRINE: u32 = 100;
 const MAX_TYPE_NAME: u32 = 50;
+
+/// The job that polls tracked fleets, queued under its own name as key so
+/// there's only ever one.
+const TRACK_JOB: &str = "track_fleets";
+/// How often a tracked fleet is read (ESI caches fleet members for a few
+/// seconds; a minute is plenty for attendance).
+const TRACK_EVERY: Duration = Duration::seconds(60);
+/// Tracking stops this long after it first started.
+const TRACK_CAP: Duration = Duration::hours(6);
+/// Fleets read per run: two host calls each at most (the fleet, and names
+/// for new members), within the host's 100 ESI calls per job run.
+const TRACKED_PER_RUN: i64 = 40;
+/// Who the log says stopped tracking when the job did.
+const TRACKER: &str = "ESI fleet tracking";
 
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -98,6 +116,7 @@ impl Plugin for FleetActivityTracking {
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
             "housekeeping" => housekeeping(),
+            TRACK_JOB => track_fleets(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -197,6 +216,11 @@ fn can_create(viewer: &Viewer) -> bool {
     viewer.can("add_fatlink") || viewer.can("manage_afat")
 }
 
+/// Whether the character is one of the viewer's.
+fn owns(viewer: &Viewer, character_id: i64) -> bool {
+    viewer.characters.iter().any(|c| c.id == character_id)
+}
+
 fn can_edit(viewer: &Viewer, link: &LinkInfo) -> bool {
     viewer.can("manage_afat")
         || (viewer.can("add_fatlink") && link.creator_account == viewer.account_id)
@@ -248,6 +272,33 @@ fn remember_characters(viewer: &Viewer) {
         &[Db::json(serde_json::Value::Array(rows).to_string())],
     ) {
         log::warn(format!("remembering characters: {err:?}"));
+    }
+    // Recent FATs recorded without an affiliation (from an ESI fleet, or a
+    // manual FAT by id) take the character's corporation once it's known.
+    // Only the last week's: today's corporation isn't the one of months ago.
+    let ids = id_list(
+        viewer
+            .characters
+            .iter()
+            .filter(|c| c.corporation_id > 0)
+            .map(|c| c.id),
+    );
+    match storage::execute(
+        "UPDATE fats f SET corporation_id = c.corporation_id, alliance_id = c.alliance_id \
+         FROM characters c WHERE c.character_id = f.character_id AND f.corporation_id IS NULL \
+         AND f.created_at > now() - interval '7 days' \
+         AND c.character_id = ANY(string_to_array($1, ',')::bigint[])",
+        &[ids],
+    ) {
+        Ok(0) => {}
+        Ok(_) => learn_names(
+            &viewer
+                .characters
+                .iter()
+                .flat_map(|c| [c.corporation_id, c.alliance_id.unwrap_or_default()])
+                .collect::<Vec<_>>(),
+        ),
+        Err(err) => log::warn(format!("filling in affiliations: {err:?}")),
     }
 }
 
@@ -317,11 +368,26 @@ struct LinkInfo {
     reopened: i64,
     fats: i64,
     open: bool,
+    /// Set for a link following an ESI fleet.
+    esi: Option<Tracking>,
+}
+
+/// A link's ESI fleet tracking.
+struct Tracking {
+    character_id: i64,
+    character_name: String,
+    tracking: bool,
+    stop_reason: Option<String>,
+    polled_at: Option<String>,
+    /// Still within the six-hour cap.
+    within_cap: bool,
 }
 
 const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.creator_account, \
      l.creator_name, l.created_at, l.expires_at, l.reopened, \
-     (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, l.expires_at > now()";
+     (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, l.expires_at > now(), \
+     l.esi_state, l.esi_character_name, l.esi_stop_reason, l.esi_polled_at, \
+     l.esi_started_at > now() - interval '6 hours', l.esi_character_id"; // TRACK_CAP
 
 fn link_info(row: &[Db]) -> LinkInfo {
     LinkInfo {
@@ -337,6 +403,33 @@ fn link_info(row: &[Db]) -> LinkInfo {
         reopened: int(row, 9),
         fats: int(row, 10),
         open: flag(row, 11),
+        esi: maybe_text(row, 12).map(|state| Tracking {
+            character_id: int(row, 17),
+            character_name: text(row, 13),
+            tracking: state == "tracking",
+            stop_reason: maybe_text(row, 14),
+            polled_at: maybe_text(row, 15),
+            within_cap: flag(row, 16),
+        }),
+    }
+}
+
+/// Why tracking stopped, for people.
+fn stop_text(reason: &str, character: &str) -> String {
+    match reason {
+        "fleet_ended" => format!("{character} isn't in a fleet: the fleet ended or they left it."),
+        "not_boss" => format!(
+            "{character} isn't the fleet boss. Pass boss back to them, then resume tracking."
+        ),
+        "refused" => "ESI refused to show the fleet (403).".to_owned(),
+        "data_source" => format!(
+            "{character} is no longer an approved data source of this app (withdrawn, removed, or moved corporation)."
+        ),
+        "token" => format!("{character}'s login has expired: they need to log in again."),
+        "cap" => "Tracking stopped after six hours.".to_owned(),
+        "manual" => "Tracking was stopped by hand.".to_owned(),
+        "closed" => "The FAT link was closed.".to_owned(),
+        other => other.to_owned(),
     }
 }
 
@@ -585,32 +678,84 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
     Ok(page)
 }
 
+/// The viewer's own characters that are approved data sources of this app:
+/// the ones whose ESI fleet they may track.
+fn trackable_characters(viewer: &Viewer) -> Vec<(i64, String)> {
+    let sources = esi::data_sources();
+    viewer
+        .characters
+        .iter()
+        .filter(|c| sources.iter().any(|s| s.id == c.id))
+        .map(|c| (c.id, c.name.clone()))
+        .collect()
+}
+
+/// Says which link already tracks a character's fleet (one at a time).
+fn already_tracked(character_id: i64) -> Result<String, PageError> {
+    let rows = query(
+        "SELECT fleet, esi_character_name FROM links \
+         WHERE esi_character_id = $1 AND esi_state = 'tracking'",
+        &[character_id.into()],
+    )?;
+    Ok(match rows.first() {
+        Some(r) => format!(
+            "{}'s fleet is already tracked by the FAT link \"{}\". Stop that tracking (or close \
+             that link) first: a character tracks one fleet at a time.",
+            text(r, 1),
+            text(r, 0)
+        ),
+        None => "That character's fleet is already tracked by another FAT link.".to_owned(),
+    })
+}
+
 fn create_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
     if !can_create(viewer) {
         return Err(PageError::Forbidden);
     }
     let mut page = Page::new("Create FAT Link").description(
-        "Members open the link's register page while it's open to record their attendance.",
+        "Members open the link's register page while it's open to record their attendance, \
+         or Tether tracks your ESI fleet and gives everyone in it a FAT.",
     );
     if let Some(note) = note {
         page = page.text(note);
     }
-    Ok(page.form(
-        Form::new("create", "Create FAT link")
-            .field(Field::text("fleet", "Fleet name", MAX_FLEET).required())
-            .field(
-                Field::select("fleet_type", "Fleet type", type_options(None)?)
-                    .help("Managers keep the list of fleet types."),
-            )
-            .field(Field::text("doctrine", "Doctrine", MAX_DOCTRINE))
-            .field(
-                Field::number("expiry", "Open for (minutes)")
-                    .range(Some(1.0), Some(MAX_EXPIRY_MINUTES as f64), true)
-                    .value(DEFAULT_EXPIRY_MINUTES.to_string())
-                    .help("After this, nobody can register; you can close it sooner or reopen it once.")
-                    .required(),
-            ),
-    ))
+    let mut form = Form::new("create", "Create FAT link")
+        .field(Field::text("fleet", "Fleet name", MAX_FLEET).required())
+        .field(
+            Field::select("fleet_type", "Fleet type", type_options(None)?)
+                .help("Managers keep the list of fleet types."),
+        )
+        .field(Field::text("doctrine", "Doctrine", MAX_DOCTRINE))
+        .field(
+            Field::number("expiry", "Open for (minutes)")
+                .range(Some(1.0), Some(MAX_EXPIRY_MINUTES as f64), true)
+                .value(DEFAULT_EXPIRY_MINUTES.to_string())
+                .help("After this, nobody can register and ESI tracking stops; you can close it sooner or reopen it once.")
+                .required(),
+        );
+    let trackable = trackable_characters(viewer);
+    if trackable.is_empty() {
+        page = page.text(
+            "To track your ESI fleet: on your Dashboard, under Fleet Activity Tracking, choose \
+             Offer a character and log in with your FC character; an admin approves it once. \
+             Then it's offered here.",
+        );
+    } else {
+        let mut options = vec![(
+            String::new(),
+            "Don't track: members click the link".to_owned(),
+        )];
+        options.extend(
+            trackable
+                .into_iter()
+                .map(|(id, name)| (id.to_string(), format!("Track {name}'s fleet"))),
+        );
+        form = form.field(Field::select("track", "ESI fleet", options).help(
+            "Every minute while the link is open (up to six hours), everyone in the fleet that \
+             character is boss of gets a FAT, with ship and system.",
+        ));
+    }
+    Ok(page.form(form))
 }
 
 fn minutes(submission: &Submission, name: &str) -> Result<i64, PageError> {
@@ -636,15 +781,34 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
     let doctrine = optional(submission.value("doctrine"));
     let expiry = minutes(submission, "expiry")?;
     let expires = Utc::now() + Duration::minutes(expiry);
+    // Only the viewer's own characters that are approved data sources.
+    let track = match submission.value("track") {
+        "" => None,
+        id => Some(
+            trackable_characters(viewer)
+                .into_iter()
+                .find(|(c, _)| c.to_string() == id)
+                .ok_or(PageError::Forbidden)?,
+        ),
+    };
+    let tracking = track.is_some();
     let description = format!(
-        "FAT link for \"{fleet}\" ({}), open for {expiry} minutes",
-        fleet_type.as_deref().unwrap_or("no fleet type")
+        "FAT link for \"{fleet}\" ({}), open for {expiry} minutes{}",
+        fleet_type.as_deref().unwrap_or("no fleet type"),
+        track
+            .as_ref()
+            .map(|(_, name)| format!(", tracking {name}'s ESI fleet"))
+            .unwrap_or_default()
     );
     // The link and its log entry in one statement.
-    let rows = query(
+    let track_id = track.as_ref().map(|(id, _)| *id);
+    let rows = storage::query(
         "WITH created AS ( \
-             INSERT INTO links (hash, fleet, fleet_type, doctrine, creator_account, creator_id, creator_name, expires_at) \
-             VALUES (replace(gen_random_uuid()::text, '-', ''), $1, $2, $3, $4, $5, $6, $7) RETURNING hash) \
+             INSERT INTO links (hash, fleet, fleet_type, doctrine, creator_account, creator_id, creator_name, \
+                                expires_at, esi_character_id, esi_character_name, esi_state, esi_started_at) \
+             VALUES (replace(gen_random_uuid()::text, '-', ''), $1, $2, $3, $4, $5, $6, $7, $9, $10, \
+                     CASE WHEN $9::bigint IS NULL THEN NULL ELSE 'tracking' END, \
+                     CASE WHEN $9::bigint IS NULL THEN NULL ELSE now() END) RETURNING hash) \
          INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
          SELECT 'Create FAT Link', $5, $6, hash, $8 FROM created RETURNING link_hash",
         &[
@@ -656,12 +820,26 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
             viewer.main.name.clone().into(),
             Db::timestamp(rfc3339(expires)),
             description.into(),
+            track_id.into(),
+            track.map(|(_, name)| name).into(),
         ],
-    )?;
+    );
+    let rows = match rows {
+        Ok(rows) => rows.rows,
+        // That character already tracks a fleet on another link.
+        Err(storage::Error::Database(e)) if e.code == "23505" && track_id.is_some() => {
+            let note = already_tracked(track_id.unwrap_or_default())?;
+            return Ok(SubmitResult::Page(create_page(viewer, Some(&note))?));
+        }
+        Err(e) => return Err(failed("creating the link", e)),
+    };
     let hash = rows
         .first()
         .map(|r| text(r, 0))
         .ok_or_else(|| PageError::Failed("the new link has no hash".into()))?;
+    if tracking {
+        poll_now()?;
+    }
     Ok(SubmitResult::Redirect(format!("links/{hash}")))
 }
 
@@ -677,8 +855,10 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
         // submission share an instant, which would single out one account's
         // characters to every FC.
         "SELECT f.character_id, f.character_name, coalesce(c.name, ''), coalesce(a.name, ''), \
-                date_trunc('minute', f.created_at), f.added_by, f.corporation_id, f.alliance_id \
+                date_trunc('minute', f.created_at), f.added_by, f.corporation_id, f.alliance_id, \
+                coalesce(s.name, ''), coalesce(y.name, ''), f.esi, f.ship_type_id, f.system_id \
          FROM fats f LEFT JOIN names c ON c.id = f.corporation_id LEFT JOIN names a ON a.id = f.alliance_id \
+         LEFT JOIN names s ON s.id = f.ship_type_id LEFT JOIN names y ON y.id = f.system_id \
          WHERE f.link_id = $1 ORDER BY lower(f.character_name) LIMIT $2",
         &[link.id.into(), MAX_ATTENDEES.into()],
     )?;
@@ -692,14 +872,36 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
     } else {
         badge("Closed", Tone::Neutral)
     };
-    page = page.stats(vec![
+    let mut stats = vec![
         Stat::new("Status", status_stat),
         Stat::new("FATs", link.fats),
         Stat::new(
             if link.open { "Closes" } else { "Closed" },
             time(link.expires_at.clone()),
         ),
-    ]);
+    ];
+    if let Some(esi) = &link.esi {
+        stats.push(Stat::new(
+            "ESI fleet",
+            match (esi.tracking, esi.stop_reason.as_deref()) {
+                (true, _) => badge("Tracking", Tone::Success),
+                (false, Some("not_boss")) => badge("Not boss", Tone::Warning),
+                (false, _) => badge("Stopped", Tone::Neutral),
+            },
+        ));
+    }
+    page = page.stats(stats);
+    if let Some(esi) = &link.esi
+        && !esi.tracking
+    {
+        page = page.text(format!(
+            "ESI tracking stopped: {}",
+            stop_text(
+                esi.stop_reason.as_deref().unwrap_or_default(),
+                &esi.character_name
+            )
+        ));
+    }
     let mut card = Card::new("FAT link")
         .field(
             "Register link",
@@ -719,16 +921,35 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
     if link.reopened > 0 {
         card = card.field("Reopened", link.reopened);
     }
+    if let Some(esi) = &link.esi {
+        card = card.field(
+            "ESI fleet",
+            if esi.tracking {
+                format!("Tracking {}'s fleet every minute", esi.character_name)
+            } else {
+                format!("{}'s fleet, not tracked now", esi.character_name)
+            },
+        );
+        if let Some(at) = &esi.polled_at {
+            card = card.field("Fleet last read", time(at.clone()));
+        }
+    }
+    // Ships and systems are where pilots were (intel): only for the link's
+    // FC and managers, not every FC.
+    let intel = can_edit(viewer, &link);
+    let mut columns = vec![
+        Column::text("Character"),
+        Column::text("Corporation"),
+        Column::text("Alliance"),
+    ];
+    if intel {
+        columns.extend([Column::text("Ship"), Column::text("System")]);
+    }
+    columns.extend([Column::numeric("Registered"), Column::text("How")]);
     page = page.card(card).table(with_rows(
-        Table::new(vec![
-            Column::text("Character"),
-            Column::text("Corporation"),
-            Column::text("Alliance"),
-            Column::numeric("Registered"),
-            Column::text("How"),
-        ])
-        .title("Attendees")
-        .empty("Nobody has registered yet."),
+        Table::new(columns)
+            .title("Attendees")
+            .empty("Nobody has registered yet."),
         attendees.iter().map(|r| {
             let corporation = match (text(r, 2), int(r, 6)) {
                 (name, _) if !name.is_empty() => name,
@@ -740,16 +961,24 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 (_, 0) => String::new(),
                 (_, id) => format!("Alliance {id}"),
             };
-            vec![
-                text(r, 1).into(),
-                corporation.into(),
-                alliance.into(),
-                time(text(r, 4)),
-                match maybe_text(r, 5) {
-                    Some(by) => format!("Added by {by}").into(),
-                    None => "Registered".into(),
-                },
-            ]
+            // Names from ESI, or the id until they're known.
+            let named = |name: String, id: i64, what: &str| match (name, id) {
+                (name, _) if !name.is_empty() => name,
+                (_, 0) => String::new(),
+                (_, id) => format!("{what} {id}"),
+            };
+            let mut row: Vec<Value> = vec![text(r, 1).into(), corporation.into(), alliance.into()];
+            if intel {
+                row.push(named(text(r, 8), int(r, 11), "Type").into());
+                row.push(named(text(r, 9), int(r, 12), "System").into());
+            }
+            row.push(time(text(r, 4)));
+            row.push(match (maybe_text(r, 5), flag(r, 10)) {
+                (Some(by), _) => format!("Added by {by}").into(),
+                (None, true) => "ESI fleet".into(),
+                (None, false) => "Registered".into(),
+            });
+            row
         }),
     ));
     if link.fats > MAX_ATTENDEES {
@@ -785,6 +1014,41 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 ),
         )],
     );
+    if let Some(esi) = &link.esi
+        && esi.tracking
+    {
+        page = page.tab(
+            "Stop tracking",
+            vec![Section::Form(
+                Form::new("stop_tracking", "Stop ESI tracking")
+                    .description(format!(
+                        "Stops reading {}'s fleet; the link stays open for members to click. \
+                         Only {} can resume it.",
+                        esi.character_name, esi.character_name
+                    ))
+                    .field(Field::checkbox("confirm", "Stop tracking", false).required()),
+            )],
+        );
+    }
+    // Only the owner of the tracked character resumes it.
+    if let Some(esi) = &link.esi
+        && !esi.tracking
+        && link.open
+        && esi.within_cap
+        && owns(viewer, esi.character_id)
+    {
+        page = page.tab(
+            "Resume tracking",
+            vec![Section::Form(
+                Form::new("resume", "Resume ESI tracking")
+                    .description(format!(
+                        "Reads {}'s fleet again every minute. They must be the fleet boss.",
+                        esi.character_name
+                    ))
+                    .field(Field::checkbox("confirm", "Resume tracking", true).required()),
+            )],
+        );
+    }
     if link.open {
         page = page.tab(
             "Close",
@@ -942,8 +1206,75 @@ fn change_link(
                         Some(&link.hash),
                         format!("\"{}\" closed early", link.fleet),
                     ),
+                    // Its ESI tracking stops with it.
+                    stop_statement(
+                        link.id,
+                        "closed",
+                        viewer.main.id,
+                        &viewer.main.name,
+                        &format!("\"{}\": {}", link.fleet, stop_text("closed", "")),
+                    ),
                 ],
                 "closing the link",
+            )?;
+            Ok(back())
+        }
+        "resume" => {
+            // Only the owner of the tracked character restarts it: a
+            // manager can stop anyone's tracking, never start it.
+            let Some(esi) = link.esi.as_ref().filter(|e| owns(viewer, e.character_id)) else {
+                return Err(PageError::Forbidden);
+            };
+            // Only a stopped, open link, within six hours of first
+            // tracking, and not read in the last minute.
+            let resumed = storage::execute(
+                "WITH resumed AS ( \
+                     UPDATE links SET esi_state = 'tracking', esi_stop_reason = NULL \
+                     WHERE id = $1 AND esi_state = 'stopped' AND expires_at > now() \
+                       AND esi_started_at > $5 AND (esi_polled_at IS NULL OR esi_polled_at < $6) \
+                     RETURNING hash) \
+                 INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
+                 SELECT 'Resume ESI Fleet Tracking', $2, $3, hash, $4 FROM resumed",
+                &[
+                    link.id.into(),
+                    viewer.main.id.into(),
+                    viewer.main.name.clone().into(),
+                    format!("\"{}\": tracking resumed", link.fleet).into(),
+                    Db::timestamp(rfc3339(Utc::now() - TRACK_CAP)),
+                    Db::timestamp(rfc3339(Utc::now() - TRACK_EVERY)),
+                ],
+            );
+            let resumed = match resumed {
+                Ok(n) => n,
+                Err(storage::Error::Database(e)) if e.code == "23505" => {
+                    let note = already_tracked(esi.character_id)?;
+                    return Ok(SubmitResult::Page(details_page(viewer, hash, Some(&note))?));
+                }
+                Err(e) => return Err(failed("resuming tracking", e)),
+            };
+            if resumed == 0 {
+                return Ok(SubmitResult::Page(details_page(
+                    viewer,
+                    hash,
+                    Some(
+                        "Tracking can't be resumed now: it's running, the link is closed, six hours \
+                         have passed, or the fleet was read less than a minute ago (try again shortly).",
+                    ),
+                )?));
+            }
+            poll_now()?;
+            Ok(back())
+        }
+        "stop_tracking" => {
+            run(
+                &[stop_statement(
+                    link.id,
+                    "manual",
+                    viewer.main.id,
+                    &viewer.main.name,
+                    &format!("\"{}\": {}", link.fleet, stop_text("manual", "")),
+                )],
+                "stopping tracking",
             )?;
             Ok(back())
         }
@@ -986,6 +1317,17 @@ fn change_link(
         }
         "add_fat" => add_fat(viewer, &link, submission.value("character").trim()),
         "remove_fat" if manage => {
+            // The next read of the fleet would add it straight back.
+            if link.esi.as_ref().is_some_and(|e| e.tracking) {
+                return Ok(SubmitResult::Page(details_page(
+                    viewer,
+                    hash,
+                    Some(
+                        "This link is tracking an ESI fleet, which would add the FAT back within a \
+                         minute. Stop ESI tracking first, then remove it.",
+                    ),
+                )?));
+            }
             let rows = query(
                 "SELECT character_id, character_name FROM fats WHERE link_id = $1 \
                  AND (character_id::text = $2 OR lower(character_name) = lower($3))",
@@ -1845,5 +2187,237 @@ fn housekeeping() -> Result<(), JobError> {
     if removed > 0 {
         log::info(format!("cleared {removed} old log entries"));
     }
+    // A tracking job that gave up after its retries leaves fleets marked as
+    // tracked; queue it again (it stops what's closed or over the cap).
+    let tracked = storage::query(
+        "SELECT 1 FROM links WHERE esi_state = 'tracking' LIMIT 1",
+        &[],
+    )
+    .map_err(|e| JobError::Retry(format!("reading tracked fleets: {e:?}")))?;
+    if !tracked.rows.is_empty() {
+        queue_poll(None).map_err(|e| JobError::Retry(format!("queuing tracking: {e:?}")))?;
+    }
     Ok(())
+}
+
+// ---- ESI fleet tracking ----------------------------------------------------
+
+/// Queues the tracking job, now or at `at`. Under one key, so queuing it
+/// again moves the queued one instead of adding another.
+fn queue_poll(at: Option<DateTime<Utc>>) -> Result<(), jobs::Error> {
+    let job = NewJob::new(TRACK_JOB).key(TRACK_JOB);
+    jobs::enqueue(match at {
+        Some(at) => job.at(rfc3339(at)),
+        None => job,
+    })
+}
+
+/// From a form: read tracked fleets now.
+fn poll_now() -> Result<(), PageError> {
+    queue_poll(None).map_err(|e| failed("queuing fleet tracking", e))
+}
+
+/// Stops a link's tracking and logs why, if it was still tracking.
+fn stop_statement(
+    link_id: i64,
+    reason: &str,
+    actor_id: i64,
+    actor_name: &str,
+    description: &str,
+) -> Statement {
+    Statement::new(
+        "WITH stopped AS ( \
+             UPDATE links SET esi_state = 'stopped', esi_stop_reason = $2 \
+             WHERE id = $1 AND esi_state = 'tracking' RETURNING hash) \
+         INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
+         SELECT 'ESI Fleet Tracking Stopped', $3, $4, hash, $5 FROM stopped",
+        vec![
+            link_id.into(),
+            reason.into(),
+            actor_id.into(),
+            actor_name.into(),
+            description.into(),
+        ],
+    )
+}
+
+/// A link being tracked, as the job reads it.
+struct Tracked {
+    id: i64,
+    fleet: String,
+    character_id: i64,
+    character_name: String,
+}
+
+/// The job stops a link's tracking.
+fn stop(link: &Tracked, reason: &str) -> Result<(), JobError> {
+    let why = stop_text(reason, &link.character_name);
+    storage::transaction(&[
+        stop_statement(
+            link.id,
+            reason,
+            link.character_id,
+            TRACKER,
+            &format!("\"{}\": {why}", link.fleet),
+        ),
+        // A read just now: resuming waits a minute from here.
+        Statement::new(
+            "UPDATE links SET esi_polled_at = now() WHERE id = $1",
+            vec![link.id.into()],
+        ),
+    ])
+    .map_err(|e| JobError::Retry(format!("stopping tracking: {e:?}")))?;
+    log::info(format!("stopped tracking link {}: {reason}", link.id));
+    Ok(())
+}
+
+/// Every minute while any fleet is tracked: each tracked link's fleet,
+/// through its FC's data-source character, adding a FAT for every member.
+fn track_fleets() -> Result<(), JobError> {
+    let retry = |what: &str, e: storage::Error| JobError::Retry(format!("{what}: {e:?}"));
+    let rows = storage::query(
+        "SELECT id, fleet, esi_character_id, esi_character_name, expires_at > now(), \
+                esi_started_at > $2 \
+         FROM links WHERE esi_state = 'tracking' \
+         ORDER BY esi_polled_at NULLS FIRST, id LIMIT $1",
+        &[
+            TRACKED_PER_RUN.into(),
+            Db::timestamp(rfc3339(Utc::now() - TRACK_CAP)),
+        ],
+    )
+    .map_err(|e| retry("reading tracked fleets", e))?;
+    let sources: Vec<i64> = esi::data_sources().iter().map(|s| s.id).collect();
+    // Each character read once a run (the database allows one tracking link
+    // per character already).
+    let mut read: Vec<i64> = Vec::new();
+    for row in &rows.rows {
+        let link = Tracked {
+            id: int(row, 0),
+            fleet: text(row, 1),
+            character_id: int(row, 2),
+            character_name: text(row, 3),
+        };
+        if read.contains(&link.character_id) {
+            continue;
+        }
+        read.push(link.character_id);
+        if !flag(row, 4) {
+            stop(&link, "closed")?;
+        } else if !flag(row, 5) {
+            stop(&link, "cap")?;
+        } else if !sources.contains(&link.character_id) {
+            stop(&link, "data_source")?;
+        } else {
+            poll(&link)?;
+        }
+    }
+    // Again in a minute while any fleet is still tracked.
+    let left = storage::query(
+        "SELECT 1 FROM links WHERE esi_state = 'tracking' LIMIT 1",
+        &[],
+    )
+    .map_err(|e| retry("reading tracked fleets", e))?;
+    if !left.rows.is_empty() {
+        queue_poll(Some(Utc::now() + TRACK_EVERY))
+            .map_err(|e| JobError::Retry(format!("queuing the next poll: {e:?}")))?;
+    }
+    Ok(())
+}
+
+/// Reads one fleet, and adds FATs or stops tracking.
+fn poll(link: &Tracked) -> Result<(), JobError> {
+    let answer = match esi::get(
+        "fleet-members",
+        Subject::DataSource(link.character_id),
+        &[],
+        None,
+    ) {
+        Ok(response) => response.body,
+        Err(esi::Error::Status(403)) => return stop(link, "refused"),
+        Err(esi::Error::Status(404)) => return stop(link, "fleet_ended"),
+        Err(esi::Error::NotADataSource | esi::Error::NotAllowed(_)) => {
+            return stop(link, "data_source");
+        }
+        Err(esi::Error::Token | esi::Error::NotRegistered) => return stop(link, "token"),
+        Err(err) => {
+            // ESI or Tether trouble that may pass: try again next minute.
+            log::warn(format!("reading the fleet of link {}: {err:?}", link.id));
+            return touch(link);
+        }
+    };
+    let answer: serde_json::Value = serde_json::from_str(&answer).unwrap_or_default();
+    if answer["in_fleet"].as_bool() != Some(true) {
+        return stop(link, "fleet_ended");
+    }
+    if answer["boss"].as_bool() != Some(true) {
+        return stop(link, "not_boss");
+    }
+    let members: Vec<(i64, Option<i64>, Option<i64>)> = answer["members"]
+        .as_array()
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(|m| {
+                    Some((
+                        m["character_id"].as_i64().filter(|id| *id > 0)?,
+                        m["ship_type_id"].as_i64(),
+                        m["solar_system_id"].as_i64(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Names for pilots, ships and systems we don't know yet (one call).
+    learn_names(
+        &members
+            .iter()
+            .flat_map(|(c, s, y)| [*c, s.unwrap_or_default(), y.unwrap_or_default()])
+            .collect::<Vec<_>>(),
+    );
+    let rows: Vec<serde_json::Value> = members
+        .iter()
+        .map(|(c, s, y)| {
+            serde_json::json!({ "character_id": c, "ship_type_id": s, "solar_system_id": y })
+        })
+        .collect();
+    // A FAT for everyone not on the link yet; one already there (clicked,
+    // or added by hand) gains the ship and system it lacked. Affiliation
+    // comes from characters the app has seen; others get theirs when they
+    // next use the app.
+    storage::transaction(&[
+        Statement::new(
+            "INSERT INTO fats (link_id, character_id, character_name, corporation_id, alliance_id, \
+                               ship_type_id, system_id, esi) \
+             SELECT l.id, x.character_id, \
+                    coalesce(c.name, n.name, 'Character ' || x.character_id::text), \
+                    c.corporation_id, c.alliance_id, x.ship_type_id, x.solar_system_id, true \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, ship_type_id bigint, solar_system_id bigint) \
+             JOIN links l ON l.id = $2 AND l.esi_state = 'tracking' AND l.expires_at > now() \
+             LEFT JOIN characters c ON c.character_id = x.character_id \
+             LEFT JOIN names n ON n.id = x.character_id \
+             ON CONFLICT (link_id, character_id) DO UPDATE SET \
+                 ship_type_id = coalesce(fats.ship_type_id, EXCLUDED.ship_type_id), \
+                 system_id = coalesce(fats.system_id, EXCLUDED.system_id)",
+            vec![
+                Db::json(serde_json::Value::Array(rows).to_string()),
+                link.id.into(),
+            ],
+        ),
+        Statement::new(
+            "UPDATE links SET esi_polled_at = now() WHERE id = $1",
+            vec![link.id.into()],
+        ),
+    ])
+    .map_err(|e| JobError::Retry(format!("storing fleet members: {e:?}")))?;
+    Ok(())
+}
+
+/// Marks a link read (so the others get their turn) without changes.
+fn touch(link: &Tracked) -> Result<(), JobError> {
+    storage::execute(
+        "UPDATE links SET esi_polled_at = now() WHERE id = $1",
+        &[link.id.into()],
+    )
+    .map(|_| ())
+    .map_err(|e| JobError::Retry(format!("marking a fleet read: {e:?}")))
 }

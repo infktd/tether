@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,\n               d.approved_at IS NOT NULL AS \"approved!\", o.name AS \"offered_by?\",\n               d.corporation_id AS approved_corporation\n        FROM core.plugin_data_sources d\n        JOIN core.characters c ON c.id = d.character_id\n        LEFT JOIN core.accounts a ON a.id = d.offered_by\n        LEFT JOIN core.characters o ON o.id = a.main_character_id\n        WHERE d.plugin_id = $1 ORDER BY c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,\n               d.approved_at IS NOT NULL AS \"approved!\", o.name AS \"offered_by?\",\n               d.corporation_id AS approved_corporation,\n               COALESCE(ca.active AND NOT core.blacklisted(ca.id), false) AS \"account_ok!\"\n        FROM core.plugin_data_sources d\n        JOIN core.characters c ON c.id = d.character_id\n        LEFT JOIN core.accounts ca ON ca.id = c.account_id\n        LEFT JOIN core.accounts a ON a.id = d.offered_by\n        LEFT JOIN core.characters o ON o.id = a.main_character_id\n        WHERE d.plugin_id = $1 ORDER BY c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -85,6 +85,12 @@
             "name": "corporation_id"
           }
         }
+      },
+      {
+        "ordinal": 8,
+        "name": "account_ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -100,8 +106,9 @@
       false,
       null,
       false,
-      true
+      true,
+      null
     ]
   },
-  "hash": "d9c6754b4929c3ecfd4b46ddf4a5e5c4161bf3d10f9246658f782f8d0d0b1228"
+  "hash": "f09a059ffe5a13c7d67a164f043d9b168933bf7b1ea2f58ca098c8cdcabae60a"
 }
