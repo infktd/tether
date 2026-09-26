@@ -297,6 +297,8 @@ async fn the_unread_count_is_live(db: PgPool) {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(res.headers()[header::CONTENT_TYPE], "text/event-stream");
+    // Unbuffered through nginx.
+    assert_eq!(res.headers()["x-accel-buffering"], "no");
     let mut body = Box::pin(res.into_body().into_data_stream());
     let first = next_event(&mut body, Duration::from_secs(5)).await.unwrap();
     assert!(first.contains(r#"id="notification-bell""#), "{first}");

@@ -2,7 +2,7 @@
 
 use askama::Template;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderName, StatusCode};
 use axum::response::sse::Sse;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
@@ -107,8 +107,13 @@ pub async fn stream(
         .map(|c| hash_token(c.value()))
         .ok_or_else(AppError::unauthorized)?;
     let stream = UnreadStream::new(state.db.clone(), &state.notices, session.account, hash);
-    Ok(Sse::new(stream)
-        .keep_alive(UnreadStream::keep_alive())
+    // nginx buffers proxied responses unless told not to, which would hold
+    // events back; the generated server block turns buffering off here too,
+    // but an admin's own nginx config may not.
+    Ok((
+        [(HeaderName::from_static("x-accel-buffering"), "no")],
+        Sse::new(stream).keep_alive(UnreadStream::keep_alive()),
+    )
         .into_response())
 }
 
