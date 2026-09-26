@@ -13,6 +13,7 @@ mod dev_login;
 mod discord;
 mod fleet_activity_tracking;
 mod groups;
+mod hr_applications;
 mod jobs;
 mod maintenance;
 mod member_audit;

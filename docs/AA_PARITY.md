@@ -79,7 +79,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Fleet Operations (optimer) | Fleet Ops plugin (F22) | planned |
 | Structure Timers (timerboard: structure, timer type, objective, system, planet/moon, EVE time, details, important, corporation timers; `timer_view`, `timer_management`) | Structure Timers plugin (`plugins/structure-timers`): Upcoming and Past with countdowns, Create Timer from the EVE time or the time left, Edit Timer and delete; corporation timers seen by the creator's corporation only | done; stricter than AA: a corporation timer can't be edited or deleted from outside its corporation. Countdowns are drawn when the page loads (plugin pages have no live updates) |
 | Ship Replacement (SRP) | none | planned: first-party plugin |
-| HR Applications | none | planned: first-party plugin |
+| HR Applications (a form per corporation with questions, written or multiple choice; My Applications; HR Application Management with Pending and Reviewed, search, Mark in Progress, comments, approve, reject, delete; `human_resources`, `approve_application`, `reject_application`, `delete_application`) | HR Applications plugin (`plugins/hr-applications`): the same, with AA's names; Application Forms in the plugin (AA's admin site; `manage`); `all_corporations` for what AA's superusers see | done; stricter than AA: nobody reviews their own application, an applicant can withdraw only until a reviewer marks it in progress (so reviewers' comments survive), and applying asks the pilot's consent to share answers and characters. Comments are capped at 200 per application. The characters shown are those on the account when they applied (plugins see an account only while its owner is looking) |
 
 ## Community apps
 

@@ -1558,6 +1558,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hr-applications"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tether-plugin-sdk",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

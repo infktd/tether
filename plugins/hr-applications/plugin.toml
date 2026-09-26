@@ -1,0 +1,47 @@
+# HR Applications, a first-party Tether plugin (Alliance Auth's
+# hrapplications). `scripts/package-plugin.sh` builds, zips and signs it,
+# putting the publisher's key in below.
+[plugin]
+id = "tether.hr-applications"
+name = "HR Applications"
+version = "0.1.0"
+host_api = "1"
+description = "Application forms per corporation: pilots apply, recruiters review with comments and approve or reject, applicants follow their status."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# AA's names where AA has one. In AA anyone with a main may apply: grant
+# basic to Guest and Member. Recruiters get human_resources, and approve,
+# reject and delete as AA splits them.
+[permissions]
+basic = "Apply to corporations and follow your own applications"
+human_resources = "Review applications to your main's corporation: read, mark in progress and comment"
+approve_application = "Approve applications you're reviewing"
+reject_application = "Reject applications you're reviewing"
+delete_application = "Delete applications you can review"
+all_corporations = "Review applications to every corporation, not just your main's (AA's superusers)"
+manage = "Create and change application forms and their questions"
+
+[[pages]]
+path = ""
+permission = "basic"
+
+[[pages]]
+path = "review"
+permission = "human_resources"
+
+[[pages]]
+path = "forms"
+permission = "manage"
+
+[[navigation]]
+label = "Applications"
+path = ""
+
+[[navigation]]
+label = "HR Application Management"
+path = "review"
