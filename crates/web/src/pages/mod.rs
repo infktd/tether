@@ -10,6 +10,7 @@ pub mod discord;
 pub mod groups;
 pub mod headers;
 pub mod notifications;
+pub mod permissions_audit;
 pub mod pings;
 pub mod plugin_access;
 pub mod plugin_pages;
@@ -175,6 +176,7 @@ pub struct AdminNav {
     pub compliance: bool,
     /// Corporation Stats, for any of its views.
     pub corpstats: bool,
+    pub permissions_audit: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
 }
@@ -191,6 +193,7 @@ impl AdminNav {
             || self.setup
             || self.compliance
             || self.corpstats
+            || self.permissions_audit
     }
 }
 
@@ -360,6 +363,7 @@ pub(crate) async fn load(
         ]
         .iter()
         .any(|p| perms.contains(*p)),
+        permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
     };

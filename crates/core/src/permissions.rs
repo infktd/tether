@@ -24,6 +24,8 @@ pub const GROUP_MANAGEMENT: &str = "group_management";
 pub const REQUEST_GROUPS: &str = "request_groups";
 /// AA's `discord.access_discord`: may link Discord and be in the server.
 pub const DISCORD_ACCESS: &str = "discord.access_discord";
+/// AA's permissions tool: who holds every permission, and through what.
+pub const PERMISSIONS_AUDIT: &str = "permissions_tool.audit_permissions";
 
 /// Every permission that can be granted, with a description for admins.
 pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
@@ -58,6 +60,10 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Set up access states: who is Member, Blue or in a state you create, and in what order. Holders can only change who is in a state if they hold everything granted to it",
     ),
     (ADMIN_AUDIT, "Read the audit log"),
+    (
+        PERMISSIONS_AUDIT,
+        "Permissions Audit: see who holds every permission, and through which state or group",
+    ),
     (
         ADMIN_USERS,
         "Deactivate and reactivate accounts (a deactivated account is Guest and can't sign in)",
@@ -96,6 +102,8 @@ pub fn is_sensitive(permission: &str) -> bool {
         || permission == FLEET_PING
         || permission == COMPLIANCE_VIEW
         || permission == GROUP_MANAGEMENT
+        // Who holds what maps out the admins.
+        || permission == PERMISSIONS_AUDIT
         // Member lists are intel.
         || permission.starts_with("corpstats.")
 }

@@ -38,6 +38,7 @@ expression: "me(&h, &after_alt).await"
     "discord.access_discord",
     "fleet.ping",
     "group_management",
+    "permissions_tool.audit_permissions",
     "request_groups"
   ],
   "state": "Guest"

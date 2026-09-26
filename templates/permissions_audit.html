@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{% block title %}Permissions Audit{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Permissions Audit</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title">Permissions Audit</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Every permission, and how many states, groups and accounts hold it. The owner holds everything; deactivated accounts hold nothing; group permissions count only while an account has a main.</p>
+  </div>
+  <section class="card data-card">
+    <table class="table">
+      <thead><tr><th scope="col">Permission</th><th scope="col">States</th><th scope="col">Groups</th><th scope="col">Accounts</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="w-full whitespace-normal">
+            <a class="font-medium num" href="/admin/permissions/audit/{{ r.name }}">{{ r.name }}</a>
+            <div class="text-xs text-muted-foreground">{{ r.description }}</div>
+          </td>
+          <td class="num">{{ r.states }}</td>
+          <td class="num">{{ r.groups }}</td>
+          <td class="num">{{ r.accounts }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

@@ -73,6 +73,10 @@ pub async fn index(
         (ADMIN_STATES, "/admin/states"),
         (tether_core::permissions::ADMIN_DISCORD, "/admin/discord"),
         (tether_core::permissions::ADMIN_AUDIT, "/admin/audit"),
+        (
+            tether_core::permissions::PERMISSIONS_AUDIT,
+            "/admin/permissions/audit",
+        ),
         (tether_core::permissions::COMPLIANCE_VIEW, "/compliance"),
     ] {
         if perms.contains(permission) {

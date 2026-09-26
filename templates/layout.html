@@ -77,6 +77,11 @@
           {% call icons::icon("shield") %}{% endcall %} Permissions
         </a>
         {% endif %}
+        {% if shell.nav.permissions_audit %}
+        <a href="/admin/permissions/audit" class="nav-item"{% if shell.active == "permissions_audit" %} aria-current="page"{% endif %}>
+          {% call icons::icon("search") %}{% endcall %} Permissions Audit
+        </a>
+        {% endif %}
         {% if shell.nav.states %}
         <a href="/admin/states" class="nav-item"{% if shell.active == "states" %} aria-current="page"{% endif %}>
           {% call icons::icon("layers") %}{% endcall %} States

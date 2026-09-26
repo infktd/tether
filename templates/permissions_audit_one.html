@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/permissions/audit">Permissions Audit</a>&nbsp;/&nbsp;<span class="text-foreground num">{{ name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title num">{{ name }}</h1>
+    <p class="text-muted-foreground mt-1">{{ description }}</p>
+  </div>
+  <section class="card data-card">
+    <header><h2>Who holds it <span class="num text-muted-foreground font-normal">{{ holders.len() }}</span></h2></header>
+    {% if holders.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Nobody.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Pilot</th><th scope="col">State</th><th scope="col">Through</th></tr></thead>
+      <tbody>
+        {% for h in holders %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = h.main_name.as_str() %}{% let avatar_id = h.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <span class="font-medium">{{ h.main_name }}</span>
+            </div>
+          </td>
+          <td><span class="state-badge" data-state="{{ h.state_style }}">{{ h.state }}</span></td>
+          <td>
+            <div class="flex flex-wrap gap-1">
+              {% if h.owner %}<span class="badge" data-variant="outline">Owner</span>{% endif %}
+              {% if h.via_state %}<span class="badge" data-variant="outline">State: {{ h.state }}</span>{% endif %}
+              {% for g in h.via_groups %}<span class="badge" data-variant="outline">Group: {{ g }}</span>{% endfor %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -21,7 +21,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Group Management → Group Requests, Group Membership, Audit Log | **Group Management** (leaders and `group_management`); group settings under Admin → Groups | done |
 | Internal, Hidden, Open, Public, Restricted; Requestable | same | done |
 | Group Leaders, Group Leader Groups | same | done |
-| Permissions; Permissions Audit | Permissions | Add **Permissions Audit** |
+| Permissions; Permissions Audit | Permissions; **Permissions Audit** | done |
 | Token Management | **Token Management** | done |
 | Notifications | same | done |
 | Services, Services Management; "Can access the Discord service" | **Services** page; `discord.access_discord` | done |
@@ -74,7 +74,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | --- | --- | --- |
 | Auto Groups | Admin → Auto Groups: per-state configs, corporation and alliance groups, prefix, name or ticker, space replacement; groups are Internal and kept by Tether; a config's groups go with it | done; stricter than AA, it never takes over an existing group of the same name |
 | Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corporation Stats: Mains, Members and Unregistered tabs, search, Update Now, AA's three view permissions (compliance.view sees all); sources offered by members and approved by admins | done |
-| Permissions Audit | Permissions page lists grants | missing: core ("who has this permission") |
+| Permissions Audit (`permissions_tool.audit_permissions`) | Admin → Permissions Audit: every permission (core and apps') with counts of states, groups and active accounts holding it; each one lists its holders and whether the owner, their state or which groups give it | done; counts follow Tether's rules (the owner holds everything, deactivated accounts nothing, groups only with a main) |
 | Fleet Activity Tracking | none | planned: first-party plugin |
 | Fleet Operations (optimer) | Fleet Ops plugin (F22) | planned |
 | Structure Timers | none | planned: first-party plugin |

@@ -351,6 +351,16 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/permissions/audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/permissions/audit/fleet.ping
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/states
 HTTP 303
 [Asserts]

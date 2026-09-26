@@ -10,6 +10,7 @@ pub mod discord;
 pub mod groups;
 pub mod notifications;
 pub mod permissions;
+pub mod permissions_audit;
 pub mod pings;
 pub mod plugin_esi;
 pub mod plugin_jobs;
