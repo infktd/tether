@@ -502,7 +502,8 @@ API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0
 - `storage`: SQL in the plugin's own schema (see Storage);
 - `jobs`: schedules and one-off jobs (see Jobs);
 - `identity`, `esi` and `discord` (see above);
-- `http`: HTTPS to hosts an admin approved (see HTTP).
+- `http`: HTTPS to hosts an admin approved (see HTTP);
+- `filters` and `timers`: Secure Groups filters and shared timers (see above).
 
 ## Checklist before publishing
 
