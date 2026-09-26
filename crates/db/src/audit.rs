@@ -25,6 +25,14 @@ pub async fn record<'e>(
     target: Option<&str>,
     details: Value,
 ) -> Result<(), sqlx::Error> {
+    // Changes made through an access token say which one.
+    let mut details = details;
+    if let (Actor::Account(a), Some(token)) = (actor, crate::permissions::token_scope())
+        && token.account == a
+        && let Some(object) = details.as_object_mut()
+    {
+        object.insert("via_token".to_owned(), token.token_id.into());
+    }
     let (actor_id, fixed_name) = match actor {
         Actor::Account(a) => (Some(a.0), None),
         Actor::System => (None, None),

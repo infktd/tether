@@ -1,6 +1,7 @@
 //! Permission grants and effective permissions.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use tether_core::permissions::CORE_PERMISSIONS;
 use tether_core::states::StateId;
@@ -85,12 +86,57 @@ pub async fn of_group<'e>(
 
 /// What the account may do: everything for the owner; otherwise the grants
 /// to its state plus the grants to its groups.
+/// A request made with a personal access token: its account, the token,
+/// and the token's scopes. While it runs, that account holds only the
+/// permissions both it and the token have, in every check (grants,
+/// "you must already hold it", the owner's), and is never the owner.
+#[derive(Debug, Clone)]
+pub struct TokenScope {
+    pub account: AccountId,
+    pub token_id: i64,
+    pub scopes: Arc<BTreeSet<String>>,
+}
+
+tokio::task_local! {
+    static TOKEN_SCOPE: TokenScope;
+}
+
+/// Runs a request under a token's scope.
+pub async fn with_token_scope<F: std::future::Future>(scope: TokenScope, request: F) -> F::Output {
+    TOKEN_SCOPE.scope(scope, request).await
+}
+
+/// The token the current request runs on, if any.
+pub fn token_scope() -> Option<TokenScope> {
+    TOKEN_SCOPE.try_with(Clone::clone).ok()
+}
+
+/// The scopes limiting `account` in the current request, if it's the
+/// token's account.
+pub fn scoped_by_token(account: AccountId) -> Option<Arc<BTreeSet<String>>> {
+    token_scope()
+        .filter(|t| t.account == account)
+        .map(|t| t.scopes)
+}
+
 pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<String>, sqlx::Error> {
     effective_in(&mut *pool.acquire().await?, account).await
 }
 
 /// [`effective`], inside the caller's transaction.
 pub async fn effective_in(
+    conn: &mut sqlx::PgConnection,
+    account: AccountId,
+) -> Result<BTreeSet<String>, sqlx::Error> {
+    let mut held = held_in(conn, account).await?;
+    if let Some(scopes) = scoped_by_token(account) {
+        held.retain(|p| scopes.contains(p));
+    }
+    Ok(held)
+}
+
+/// What the account holds, whatever token the request runs on.
+async fn held_in(
     conn: &mut sqlx::PgConnection,
     account: AccountId,
 ) -> Result<BTreeSet<String>, sqlx::Error> {

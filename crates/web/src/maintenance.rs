@@ -35,6 +35,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
     let plugin_jobs =
         tether_db::plugin_jobs::prune_finished(db, crate::plugin_jobs::KEEP_FINISHED_HOURS).await?;
     let jobs = tether_jobs::schedule::prune_succeeded(db, KEEP_SUCCEEDED).await?;
+    let access_tokens = tether_db::personal_tokens::prune(db).await?;
     tracing::info!(
         sessions = expired.sessions,
         login_attempts = expired.login_attempts,
@@ -45,6 +46,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         plugin_access,
         plugin_jobs,
         jobs,
+        access_tokens,
         "pruned"
     );
     Ok(())

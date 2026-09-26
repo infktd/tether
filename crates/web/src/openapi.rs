@@ -85,7 +85,8 @@ use crate::{api, setup};
 pub struct ApiDoc;
 
 /// Signed-in endpoints use the browser session cookie, set by EVE SSO login.
-/// Personal access tokens for bots arrive with F19.
+/// Bots and scripts use a personal access token (F19) instead, on the
+/// admin API and `GET /api/me` only.
 struct SessionCookie;
 
 impl Modify for SessionCookie {
@@ -97,6 +98,19 @@ impl Modify for SessionCookie {
                 SESSION_COOKIE,
                 "Session cookie from logging in with EVE SSO at /auth/login",
             ))),
+        );
+        components.add_security_scheme(
+            "access_token",
+            SecurityScheme::Http(
+                utoipa::openapi::security::HttpBuilder::new()
+                    .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                    .description(Some(
+                        "A personal access token (tether_pat_...) made on the Dashboard: \
+                         only /api/admin/ endpoints whose permission it carries, and GET /api/me \
+                         with account:read",
+                    ))
+                    .build(),
+            ),
         );
     }
 }

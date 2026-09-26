@@ -89,6 +89,10 @@
 </section>
 {% endfor %}
 
+<section class="card">
+  <header class="flex flex-wrap items-center justify-between gap-3"><div><h2>Access tokens</h2><p>For bots and scripts using Tether's API as you.</p></div><a class="btn" data-variant="outline" href="/dashboard/access-tokens">Manage tokens</a></header>
+</section>
+
 {% if !permissions.is_empty() %}
 <section class="card">
   <header><h2>Permissions</h2></header>

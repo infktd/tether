@@ -2878,6 +2878,11 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
       }
     },
     "securitySchemes": {
+      "access_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A personal access token (tether_pat_...) made on the Dashboard: only /api/admin/ endpoints whose permission it carries, and GET /api/me with account:read"
+      },
       "session": {
         "type": "apiKey",
         "in": "cookie",

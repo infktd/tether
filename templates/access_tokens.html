@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% block title %}Access tokens{% endblock %}
+{% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;<span class="text-foreground">Access tokens</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title">Access tokens</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Tokens let bots and scripts use Tether's API as you: send one as <span class="num">Authorization: Bearer …</span>. A token does only what you tick, only while you still may, and only on the admin API (and reading your account). It never works on pages, and can't change your main, your EVE tokens, your groups or other tokens.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if let Some(token) = created %}
+  <div class="alert" role="status">
+    <section class="grid gap-2">
+      <strong>Copy your token now: it won't be shown again.</strong>
+      <pre class="rounded-sm border bg-background px-3 py-2 text-sm break-all whitespace-pre-wrap select-all num">{{ token }}</pre>
+    </section>
+  </div>
+  {% endif %}
+
+  <section class="card data-card">
+    <header><h2>Your tokens <span class="num text-muted-foreground font-normal">{{ tokens.len() }}</span></h2></header>
+    {% if tokens.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">None yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Name</th><th scope="col">May</th><th scope="col">Expires</th><th scope="col">Last used</th><th scope="col"><span class="sr-only">Revoke</span></th></tr></thead>
+      <tbody>
+        {% for t in tokens %}
+        <tr>
+          <td><div class="font-medium">{{ t.name }}</div><div class="text-xs text-muted-foreground num">{{ t.prefix }}…</div></td>
+          <td class="w-full whitespace-normal"><div class="flex flex-wrap gap-1">{% for s in t.scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div></td>
+          <td class="num">{% if self.expired(t) %}<span class="badge" data-variant="destructive">Expired</span>{% else %}{{ self.when(t.expires_at) }}{% endif %}</td>
+          <td class="num">{% if let Some(u) = t.last_used_at %}{{ self.when(u) }}{% else %}<span class="text-muted-foreground">Never</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/dashboard/access-tokens/{{ t.id }}/revoke" hx-boost="true" hx-confirm="Revoke {{ t.name }}? Anything using it stops working.">
+              <button type="submit" class="btn" data-variant="outline" data-size="sm">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <form class="card" method="post" action="/dashboard/access-tokens">
+    <header><h2>New token</h2></header>
+    <section class="flex flex-col gap-4 max-w-3xl">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="grid gap-2"><label class="label" for="token-name">Name</label><input class="input" id="token-name" name="name" maxlength="60" placeholder="Recruitment bot" required></div>
+        <div class="grid gap-2"><label class="label" for="token-days">Lasts (days)</label><input class="input" type="number" id="token-days" name="days" min="1" max="{{ max_days }}" value="90" required></div>
+      </div>
+      <fieldset class="grid gap-2">
+        <legend class="label mb-1">May</legend>
+        <div class="flex flex-wrap gap-x-5 gap-y-2">
+          {% for s in offered %}<label class="label gap-2 font-normal num"><input type="checkbox" class="input" name="scopes" value="{{ s }}"> {{ s }}</label>{% endfor %}
+        </div>
+      </fieldset>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Make token</button></footer>
+  </form>
+</div>
+{% endblock %}

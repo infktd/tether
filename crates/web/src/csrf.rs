@@ -23,6 +23,11 @@ pub async fn verify_origin(
         return next.run(request).await;
     }
     let headers = request.headers();
+    // A script with an access token and no cookies: nothing ambient to
+    // forge, so nothing to check.
+    if crate::auth::bearer(headers).is_some() && !headers.contains_key(header::COOKIE) {
+        return next.run(request).await;
+    }
     let allowed = match headers.get(header::ORIGIN) {
         Some(origin) => origin.to_str().is_ok_and(|o| o == state.site.origin()),
         None => headers

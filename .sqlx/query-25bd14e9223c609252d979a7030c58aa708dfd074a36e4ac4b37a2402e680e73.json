@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.personal_tokens WHERE expires_at < now() - interval '30 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "25bd14e9223c609252d979a7030c58aa708dfd074a36e4ac4b37a2402e680e73"
+}

@@ -480,6 +480,19 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/dashboard/access-tokens
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/dashboard/access-tokens
+Origin: {{base}}
+HTTP 401
+
+POST {{base}}/dashboard/access-tokens/1/revoke
+Origin: {{base}}
+HTTP 401
+
 GET {{base}}/dashboard/system
 HTTP 303
 [Asserts]

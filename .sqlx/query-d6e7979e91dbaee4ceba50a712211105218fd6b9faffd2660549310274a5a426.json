@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT t.id, t.account_id, t.scopes,\n               (t.last_used_at IS NULL OR t.last_used_at < now() - interval '1 minute') AS \"stale!\"\n        FROM core.personal_tokens t JOIN core.accounts a ON a.id = t.account_id\n        WHERE t.token_hash = $1 AND t.expires_at > now() AND a.active\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.personal_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.personal_tokens",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "scopes",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.personal_tokens",
+            "name": "scopes"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "stale!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "d6e7979e91dbaee4ceba50a712211105218fd6b9faffd2660549310274a5a426"
+}

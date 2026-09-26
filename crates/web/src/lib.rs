@@ -26,6 +26,7 @@ pub mod notifications;
 pub mod openapi;
 pub mod ownership;
 pub mod pages;
+pub mod personal_tokens;
 pub mod pings;
 pub mod plugin_consent;
 pub mod plugin_jobs;
@@ -65,6 +66,14 @@ pub fn router(state: AppState) -> Router {
         .route("/login", get(pages::login))
         .route("/dashboard", get(pages::profile))
         .route("/dashboard/system", get(pages::system::dashboard_panel))
+        .route(
+            "/dashboard/access-tokens",
+            get(pages::access_tokens::index).post(pages::access_tokens::create),
+        )
+        .route(
+            "/dashboard/access-tokens/{id}/revoke",
+            post(pages::access_tokens::revoke),
+        )
         .route(
             "/dashboard/widgets/{plugin}/{index}",
             get(pages::plugin_pages::widget),
@@ -506,6 +515,10 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf::verify_origin,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::token_layer,
         ))
         // Outermost, so every response carries them, rejections included.
         .layer(middleware::from_fn_with_state(

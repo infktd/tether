@@ -1,6 +1,7 @@
 //! Server-rendered pages (askama + Basecoat + htmx). Interactive pieces are
 //! htmx requests to endpoints that return HTML fragments.
 
+pub mod access_tokens;
 pub mod admin;
 pub mod assets;
 pub mod autogroups;

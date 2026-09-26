@@ -13,6 +13,7 @@ pub mod menu;
 pub mod notifications;
 pub mod permissions;
 pub mod permissions_audit;
+pub mod personal_tokens;
 pub mod ping_options;
 pub mod pings;
 pub mod plugin_esi;

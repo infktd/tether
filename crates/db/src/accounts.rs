@@ -556,6 +556,13 @@ pub async fn deactivate(
     sqlx::query!("DELETE FROM core.sessions WHERE account_id = $1", account.0)
         .execute(&mut *tx)
         .await?;
+    // Its access tokens too: reactivating must not bring them back.
+    sqlx::query!(
+        "DELETE FROM core.personal_tokens WHERE account_id = $1",
+        account.0
+    )
+    .execute(&mut *tx)
+    .await?;
     Ok(true)
 }
 
@@ -635,7 +642,8 @@ pub async fn standing<'e>(
     .fetch_optional(executor)
     .await?;
     Ok(row.map(|r| Standing {
-        is_owner: r.is_owner,
+        // A token never acts as the owner, whose account it may belong to.
+        is_owner: r.is_owner && crate::permissions::scoped_by_token(account).is_none(),
         active: r.active,
         has_main: r.has_main,
         state: StateId(r.state_id),

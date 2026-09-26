@@ -253,7 +253,11 @@ async fn any_character_counts_and_leaders_lose_their_groups(db: PgPool) {
     // A leader of a group.
     let group = send(
         &h.app,
-        post_json("/api/admin/groups", &owner, r#"{"name":"Haulers","internal":false,"hidden":false}"#),
+        post_json(
+            "/api/admin/groups",
+            &owner,
+            r#"{"name":"Haulers","internal":false,"hidden":false}"#,
+        ),
     )
     .await;
     let group: serde_json::Value = serde_json::from_str(&group.body).unwrap();

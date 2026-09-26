@@ -315,16 +315,102 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Res
     Ok((jar, Redirect::to("/")).into_response())
 }
 
-/// The signed-in account. Rejects with 401 when there is no live session.
+/// The signed-in account: by session cookie, or by personal access token
+/// (`Authorization: Bearer tether_pat_...`). Rejects with 401 when there
+/// is neither.
 #[derive(Debug, Clone)]
 pub struct CurrentSession {
     pub account: AccountId,
+    /// A personal access token's scopes; `None` for a browser session.
+    pub token_scopes: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+}
+
+/// Personal access tokens start with this.
+pub const PAT_PREFIX: &str = "tether_pat_";
+
+/// The bearer token on a request, if it carries one of ours.
+pub(crate) fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .filter(|t| {
+            t.strip_prefix(PAT_PREFIX).is_some_and(|hex| {
+                hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            })
+        })
+}
+
+/// Where a personal access token may be used: the permission-gated JSON
+/// API (every `/api/admin/` endpoint checks a permission, which the token
+/// must also carry), and reading the account with `account:read`. Never
+/// pages, and never what an account does for itself (its main, its EVE
+/// tokens, its groups, its own access tokens).
+fn token_may_call(
+    method: &axum::http::Method,
+    path: &str,
+    scopes: &std::collections::BTreeSet<String>,
+) -> bool {
+    path.starts_with("/api/admin/")
+        || (method == axum::http::Method::GET && path == "/api/me" && scopes.contains(ACCOUNT_READ))
+}
+
+/// The scope that lets a token read its account (`GET /api/me`).
+pub const ACCOUNT_READ: &str = "account:read";
+
+/// Authenticates access tokens before any handler runs, and runs the
+/// request under the token's scope (see
+/// [`tether_db::permissions::TokenScope`]), so every permission check in
+/// it sees only what the token carries.
+pub async fn token_layer(
+    State(state): State<AppState>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Some(token) = bearer(request.headers()) else {
+        return next.run(request).await;
+    };
+    let found = match tether_db::personal_tokens::find(&state.db, &hash_token(token)).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return AppError::unauthorized().into_response(),
+        Err(err) => return AppError::from(err).into_response(),
+    };
+    let scopes: std::collections::BTreeSet<String> = found.scopes.into_iter().collect();
+    if !token_may_call(request.method(), request.uri().path(), &scopes) {
+        tracing::info!(
+            account = found.account.0,
+            token = found.id,
+            path = request.uri().path(),
+            "access token used outside its reach"
+        );
+        return AppError::forbidden().into_response();
+    }
+    let scope = tether_db::permissions::TokenScope {
+        account: found.account,
+        token_id: found.id,
+        scopes: std::sync::Arc::new(scopes),
+    };
+    request.extensions_mut().insert(scope.clone());
+    tether_db::permissions::with_token_scope(scope, next.run(request)).await
 }
 
 impl FromRequestParts<AppState> for CurrentSession {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
+        if bearer(&parts.headers).is_some() {
+            // Checked by `token_layer`; without it, refuse.
+            let scope = parts
+                .extensions
+                .get::<tether_db::permissions::TokenScope>()
+                .cloned()
+                .ok_or_else(AppError::unauthorized)?;
+            return Ok(Self {
+                account: scope.account,
+                token_scopes: Some(scope.scopes),
+            });
+        }
         let jar = CookieJar::from_headers(&parts.headers);
         let token = jar.get(SESSION_COOKIE).ok_or_else(AppError::unauthorized)?;
         let record = find_session(state, token.value())
@@ -332,6 +418,7 @@ impl FromRequestParts<AppState> for CurrentSession {
             .ok_or_else(AppError::unauthorized)?;
         Ok(Self {
             account: record.account,
+            token_scopes: None,
         })
     }
 }
@@ -353,10 +440,15 @@ impl OptionalFromRequestParts<AppState> for CurrentSession {
 }
 
 impl CurrentSession {
-    /// Fails with 403 unless the account holds `permission`.
+    /// Fails with 403 unless the account holds `permission` (and, for an
+    /// access token, the token carries it).
     pub async fn require(&self, state: &AppState, permission: &str) -> Result<(), AppError> {
         let permissions = tether_db::permissions::effective(&state.db, self.account).await?;
-        if permissions.contains(permission) {
+        let scoped = self
+            .token_scopes
+            .as_ref()
+            .is_none_or(|scopes| scopes.contains(permission));
+        if scoped && permissions.contains(permission) {
             Ok(())
         } else {
             tracing::info!(account = self.account.0, permission, "permission denied");

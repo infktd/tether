@@ -4,6 +4,7 @@
 
 mod common;
 
+mod access_tokens;
 mod admin_pages;
 mod auth;
 mod autogroups;
