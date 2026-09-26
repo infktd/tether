@@ -11,6 +11,7 @@ pub mod groups;
 pub mod notifications;
 pub mod permissions;
 pub mod permissions_audit;
+pub mod ping_options;
 pub mod pings;
 pub mod plugin_esi;
 pub mod plugin_jobs;

@@ -1388,7 +1388,7 @@ async fn fleet_pings_need_the_permission(db: PgPool) {
 
     let res = page(&h, "/pings", &owner).await;
     assert_eq!(res.status, StatusCode::OK);
-    assert!(res.body.contains("No ping channels yet"));
+    assert!(res.body.contains("No ping channels for you yet"));
     assert!(res.body.contains(r#"href="/pings""#), "nav link");
 
     // Anyone can be Guest or join an Open group: pinging stays off-limits.
@@ -1458,7 +1458,7 @@ async fn admins_choose_the_ping_channels(db: PgPool) {
         page(&h, "/pings", &owner)
             .await
             .body
-            .contains("No ping channels yet")
+            .contains("No ping channels for you yet")
     );
 }
 
@@ -1933,4 +1933,335 @@ async fn a_sync_refreshes_the_stored_discord_name(db: PgPool) {
         .unwrap()
         .unwrap();
     assert_eq!(link.username, "Unpercieved");
+}
+
+// ---- fleet pings: aa-fleetpings' fields and limits --------------------------
+
+fn enc(text: &str) -> String {
+    text.replace('%', "%25")
+        .replace(' ', "+")
+        .replace(':', "%3A")
+        .replace('#', "%23")
+        .replace('/', "%2F")
+        .replace('&', "%26")
+}
+
+async fn add_option(h: &Harness, token: &str, body: &str) -> Res {
+    send(&h.app, form("/admin/pings/options", body, token)).await
+}
+
+async fn option_id(h: &Harness, name: &str) -> i64 {
+    sqlx::query_scalar("SELECT id FROM core.ping_options WHERE name = $1")
+        .bind(name)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_detailed_ping_posts_an_embed_and_copy_text(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    let res = add_option(
+        &h,
+        &owner,
+        &format!("kind=fleet_type&name=Roaming&color={}", enc("#00FF00")),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/pings", "{}", res.body);
+    let res = add_option(
+        &h,
+        &owner,
+        &format!(
+            "kind=doctrine&name=Caracals&link={}",
+            enc("https://doctrines.example/caracals")
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/pings", "{}", res.body);
+
+    let fields = format!(
+        "channel_id={PING_CHANNEL}&target=here&pre_ping=on&fleet_type=Roaming&fc_name=Chribba\
+         &fleet_name={}&formup_location=Jita&formup_time=2026-09-30T19%3A00&comms={}\
+         &doctrine=caracals&srp=yes&message={}",
+        enc("Sunday roam"),
+        enc("Mumble: Fleet 1"),
+        enc("Bring points @everyone")
+    );
+    // The copy-paste text first: nothing is sent.
+    let preview = send(&h.app, form("/pings/preview", &fields, &owner)).await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.body);
+    for line in [
+        "Pre-Ping: Roaming Fleet",
+        "FC: Chribba",
+        "Fleet Name: Sunday roam",
+        "Formup Location: Jita",
+        "Formup Time: 2026-09-30 19:00 EVE",
+        "Comms: Mumble: Fleet 1",
+        "Doctrine: caracals",
+        "SRP: Yes",
+    ] {
+        assert!(preview.body.contains(line), "{line}: {}", preview.body);
+    }
+
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "content": "@here\n**Pre-Ping: Roaming Fleet**",
+            "allowed_mentions": { "parse": ["everyone"] },
+            "embeds": [{
+                "title": "Sunday roam",
+                "color": 0x00ff00,
+                "footer": { "text": "Sent by Chribba via Tether" },
+            }],
+        })))
+        .respond_with(message_posted("900000000000000009"))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let res = send(&h.app, form("/pings", &fields, &owner)).await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
+    let sent = h.discord_server.received_requests().await.unwrap();
+    let body: serde_json::Value = sent
+        .iter()
+        .find(|r| r.url.path().ends_with("/messages"))
+        .unwrap()
+        .body_json()
+        .unwrap();
+    let embed = &body["embeds"][0];
+    let field = |name: &str| {
+        embed["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .map(|f| f["value"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(
+        field("Doctrine").as_deref(),
+        Some("[caracals](https://doctrines.example/caracals)")
+    );
+    assert_eq!(field("SRP").as_deref(), Some("Yes"));
+    let description = embed["description"].as_str().unwrap();
+    assert!(
+        description.contains("@\u{200B}everyone"),
+        "defused: {description}"
+    );
+    assert!(
+        description.contains("<t:"),
+        "a Discord timestamp: {description}"
+    );
+    let listed = page(&h, "/pings", &owner).await.body;
+    assert!(
+        listed.contains("Pre-Ping: Roaming Fleet: Sunday roam"),
+        "{listed}"
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn limits_decide_who_may_use_what(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = pings_ready(&h).await;
+    let granted = send(
+        &h.app,
+        form(
+            "/admin/permissions/grant",
+            "permission=fleet.ping&grantee=state:1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(granted.status, StatusCode::SEE_OTHER, "{}", granted.body);
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000001"))
+        .mount(&h.discord_server)
+        .await;
+    add_option(&h, &owner, "kind=fleet_type&name=CTA").await;
+    add_option(&h, &owner, "kind=doctrine&name=Supers").await;
+    let fcs = send(
+        &h.app,
+        post_json("/api/admin/groups", &owner, r#"{"name":"FCs"}"#),
+    )
+    .await;
+    let fcs: serde_json::Value = serde_json::from_str(&fcs.body).unwrap();
+    let fcs = fcs["id"].as_i64().unwrap();
+    for item in [
+        format!("option:{}", option_id(&h, "CTA").await),
+        format!("option:{}", option_id(&h, "Supers").await),
+        "everyone".to_owned(),
+    ] {
+        let res = send(
+            &h.app,
+            form(
+                "/admin/pings/restrictions",
+                &format!("item={}&grantee=group%3A{fcs}", enc(&item)),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(res.location(), "/admin/pings", "{item}: {}", res.body);
+    }
+
+    // The pilot isn't an FC: none of it is offered, and none of it goes
+    // through when posted anyway.
+    let form_page = page(&h, "/pings", &pilot).await.body;
+    assert!(!form_page.contains(">CTA<"), "{form_page}");
+    assert!(!form_page.contains(r#"value="everyone""#), "{form_page}");
+    for (fields, why) in [
+        ("fleet_type=CTA&message=go", "Choose one of the fleet types"),
+        ("doctrine=supers&message=go", "open to you"),
+        ("target=everyone&message=go", "Choose who to ping"),
+    ] {
+        let body = if fields.starts_with("target=") {
+            format!("channel_id={PING_CHANNEL}&{fields}")
+        } else {
+            format!("channel_id={PING_CHANNEL}&target=none&{fields}")
+        };
+        let res = send(&h.app, form("/pings", &body, &pilot)).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{fields}");
+        assert!(res.body.contains(why), "{fields}: {}", res.body);
+    }
+
+    // In the group, they are.
+    let pilot_account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
+    let res = send(
+        &h.app,
+        post_json(
+            &format!("/api/admin/groups/{fcs}/members"),
+            &owner,
+            &format!(r#"{{"account_id":{pilot_account}}}"#),
+        ),
+    )
+    .await;
+    assert!(res.status.is_success(), "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=everyone&fleet_type=CTA&doctrine=Supers"),
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
+    // A lookalike with an invisible character doesn't pass for a closed
+    // doctrine either.
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&doctrine=Sup%E2%80%8Bers"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+
+    // A limited channel disappears for everyone else.
+    let res = send(
+        &h.app,
+        form(
+            "/admin/pings/restrictions",
+            &format!("item=channel%3A{PING_CHANNEL}&grantee=state%3A2"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/pings", "{}", res.body);
+    let pilot_view = page(&h, "/pings", &pilot).await.body;
+    assert!(pilot_view.contains("No ping channels for you yet"));
+    // Nor its history.
+    assert!(!pilot_view.contains("CTA Fleet"), "{pilot_view}");
+    assert!(page(&h, "/pings", &owner).await.body.contains("CTA Fleet"));
+    // Limits are stored by their canonical name, whatever was posted.
+    let res = send(
+        &h.app,
+        form(
+            "/admin/pings/restrictions",
+            &format!("item=channel%3A0{PING_CHANNEL}&grantee=state%3A1"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/pings", "{}", res.body);
+    let items: Vec<String> =
+        sqlx::query_scalar("SELECT item FROM core.ping_restrictions WHERE item LIKE 'channel:%'")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert!(
+        items
+            .iter()
+            .all(|i| i == &format!("channel:{PING_CHANNEL}")),
+        "{items:?}"
+    );
+    let res = send(
+        &h.app,
+        form(
+            "/admin/pings/restrictions",
+            &format!("item=channel%3A{PING_CHANNEL}&grantee=group%3A999999"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn mass_pings_can_be_switched_off_and_settings_are_checked(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = pings_ready(&h).await;
+    assert_eq!(
+        page(&h, "/admin/pings", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let res = send(&h.app, form("/admin/pings/settings", "", &owner)).await;
+    assert_eq!(res.location(), "/admin/pings", "{}", res.body);
+    let form_page = page(&h, "/pings", &owner).await.body;
+    assert!(!form_page.contains(r#"value="here""#), "{form_page}");
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=here&message=go"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&formup_time=-5000-01-01T00%3A00"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+
+    for (body, why) in [
+        ("kind=fleet_type&name=X&color=green", "six hex digits"),
+        (
+            "kind=doctrine&name=Y&link=http%3A%2F%2Fexample.com",
+            "https://",
+        ),
+        ("kind=nonsense&name=Z", "Choose what to add"),
+        ("kind=comms&name=", "Give it a name"),
+    ] {
+        let res = add_option(&h, &owner, body).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(res.body.contains(why), "{body}: {}", res.body);
+    }
+    let res = send(
+        &h.app,
+        form(
+            "/admin/pings/restrictions",
+            "item=option%3A999&grantee=state%3A1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
 }

@@ -252,6 +252,42 @@ pub struct TextChannel {
     pub name: String,
 }
 
+/// A rich card under a message (Discord's embed). Mentions in it never
+/// ping anyone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Embed {
+    pub title: String,
+    pub description: Option<String>,
+    /// `0xRRGGBB`.
+    pub color: Option<u32>,
+    /// `(name, value)`, shown three to a row.
+    pub fields: Vec<(String, String)>,
+    pub footer: Option<String>,
+}
+
+impl Embed {
+    fn json(&self) -> serde_json::Value {
+        let mut embed = serde_json::json!({
+            "title": self.title,
+            "fields": self
+                .fields
+                .iter()
+                .map(|(name, value)| serde_json::json!({ "name": name, "value": value, "inline": true }))
+                .collect::<Vec<_>>(),
+        });
+        if let Some(description) = &self.description {
+            embed["description"] = description.as_str().into();
+        }
+        if let Some(color) = self.color {
+            embed["color"] = color.into();
+        }
+        if let Some(footer) = &self.footer {
+            embed["footer"] = serde_json::json!({ "text": footer });
+        }
+        embed
+    }
+}
+
 /// Who a message pings. Nothing else in it can ping anyone: mentions typed
 /// into the text are ignored by Discord (`allowed_mentions`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,15 +678,16 @@ impl Discord {
             .collect())
     }
 
-    /// Posts `content` to a channel, pinging only `mention`. `nonce` (up to
-    /// 25 characters) makes Discord drop a repeat of the same message, so a
-    /// retry after a lost response doesn't post twice. Returns the message
-    /// id.
+    /// Posts `content` (with an optional embed) to a channel, pinging only
+    /// `mention`. `nonce` (up to 25 characters) makes Discord drop a repeat
+    /// of the same message, so a retry after a lost response doesn't post
+    /// twice. Returns the message id.
     pub async fn send_message(
         &self,
         config: &DiscordConfig,
         channel_id: u64,
         content: &str,
+        embed: Option<&Embed>,
         mention: Mention,
         nonce: &str,
     ) -> Result<u64, DiscordError> {
@@ -661,13 +698,17 @@ impl Discord {
         let bot = self.bot(config);
         let channel = id(channel_id, "channel id")?;
         // twilight has no enforce_nonce, so the body is written here.
-        let payload = serde_json::to_vec(&serde_json::json!({
+        let mut body = serde_json::json!({
             "content": content,
             "allowed_mentions": mention.allowed(),
             "nonce": nonce,
             "enforce_nonce": true,
-        }))
-        .map_err(|err| DiscordError::Protocol(err.to_string()))?;
+        });
+        if let Some(embed) = embed {
+            body["embeds"] = serde_json::json!([embed.json()]);
+        }
+        let payload =
+            serde_json::to_vec(&body).map_err(|err| DiscordError::Protocol(err.to_string()))?;
         let response = bot.create_message(channel).payload_json(&payload).await?;
         let body = response.bytes().await.map_err(protocol)?;
         let created: Created = serde_json::from_slice(&body)

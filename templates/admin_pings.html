@@ -1,0 +1,114 @@
+{% extends "layout.html" %}
+{% block title %}Fleet Pings settings{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/pings">Fleet Pings</a>&nbsp;/&nbsp;<span class="text-foreground">Settings</span>{% endblock %}
+{% macro limits(things, empty) %}
+{% if things.is_empty() %}
+<p class="px-5 pb-5 text-sm text-muted-foreground">{{ empty }}</p>
+{% else %}
+<table class="table">
+  <thead><tr><th scope="col">Name</th><th scope="col">Who may use it</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+  <tbody>
+    {% for t in things %}
+    <tr>
+      <td class="font-medium">
+        {% if let Some(o) = t.option %}{% if let Some(c) = o.color %}<svg class="inline-block size-3 align-middle mr-1" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="{{ c }}"/></svg>{% endif %}{% endif %}{{ t.label }}
+        {% if let Some(o) = t.option %}{% if let Some(l) = o.link %}<div class="text-xs text-muted-foreground break-all">{{ l }}</div>{% endif %}{% endif %}
+      </td>
+      <td class="w-full whitespace-normal">
+        <div class="flex flex-wrap items-center gap-2">
+          {% if t.limits.is_empty() %}<span class="text-sm text-muted-foreground">Everyone who can ping</span>{% endif %}
+          {% for l in t.limits %}
+          <form method="post" action="/admin/pings/restrictions/{{ l.id }}/remove" class="grant-chip">
+            <span>{% if l.state_id.is_some() %}State: {% else %}Group: {% endif %}{{ l.name }}</span>
+            <button type="submit" aria-label="Stop limiting {{ t.label }} to {{ l.name }}" title="Remove">×</button>
+          </form>
+          {% endfor %}
+          <form method="post" action="/admin/pings/restrictions" class="flex items-center gap-2">
+            <input type="hidden" name="item" value="{{ t.item }}">
+            <label class="sr-only" for="grantee-{{ t.item }}">Limit {{ t.label }} to</label>
+            <select class="select input h-8 text-sm" id="grantee-{{ t.item }}" name="grantee">
+              <option value="">Limit to…</option>
+              <optgroup label="States">{% for s in states %}<option value="state:{{ s.id }}">{{ s.name }}</option>{% endfor %}</optgroup>
+              <optgroup label="Groups">{% for g in groups %}<option value="group:{{ g.id }}">{{ g.name }}</option>{% endfor %}</optgroup>
+            </select>
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button>
+          </form>
+        </div>
+      </td>
+      <td>
+        {% if let Some(o) = t.option %}
+        <form method="post" action="/admin/pings/options/{{ o.id }}/delete" hx-confirm="Delete {{ o.name }}?">
+          <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Delete {{ o.name }}" title="Delete">{% call icons::icon("trash") %}{% endcall %}</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endmacro %}
+{% macro add_form(kind, what, color, link) %}
+<form method="post" action="/admin/pings/options" class="flex flex-wrap items-end gap-2 px-5 pb-5">
+  <input type="hidden" name="kind" value="{{ kind }}">
+  <div class="grid gap-1.5"><label class="label" for="name-{{ kind }}">New {{ what }}</label><input class="input" id="name-{{ kind }}" name="name" maxlength="100" required></div>
+  {% if color %}<div class="grid gap-1.5"><label class="label" for="color-{{ kind }}">Colour</label><input class="input w-28" id="color-{{ kind }}" name="color" placeholder="#5865f2" maxlength="7"></div>{% endif %}
+  {% if link %}<div class="grid gap-1.5 flex-1 min-w-64"><label class="label" for="link-{{ kind }}">Link (https)</label><input class="input" type="url" id="link-{{ kind }}" name="link" placeholder="https://" maxlength="500"></div>{% endif %}
+  <button type="submit" class="btn" data-variant="outline">Add</button>
+</form>
+{% endmacro %}
+{% macro chips(list) %}
+{% if list.is_empty() %}<p class="px-5 pb-5 text-sm text-muted-foreground">None yet.</p>{% else %}
+<ul class="px-5 pb-3 flex flex-wrap gap-2">
+  {% for o in list %}
+  <li><form method="post" action="/admin/pings/options/{{ o.id }}/delete" class="grant-chip"><span>{{ o.name }}</span><button type="submit" aria-label="Delete {{ o.name }}" title="Delete">×</button></form></li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endmacro %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Fleet Pings settings</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">What the ping form offers, and who may use which channel, ping, fleet type and doctrine. Anything without a limit is open to everyone who can send pings; a limit lets in the listed states and groups only. Ping channels themselves are chosen on the <a class="underline underline-offset-4" href="/admin/discord">Discord</a> page.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  <form class="card" method="post" action="/admin/pings/settings">
+    <header><h2>Mass pings</h2></header>
+    <section><label class="label gap-2 font-normal"><input type="checkbox" class="input" name="mass_mentions" value="on"{% if mass_mentions %} checked{% endif %}> Allow @here and @everyone</label></section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
+  <section class="card data-card">
+    <header><h2>Channels</h2></header>
+    {% call limits(channels, "No ping channels yet.") %}{% endcall %}
+  </section>
+  <section class="card data-card">
+    <header><h2>Pings</h2><p>@here, @everyone and the roles Tether manages.</p></header>
+    {% call limits(targets, "Nothing to limit yet.") %}{% endcall %}
+  </section>
+  <section class="card data-card">
+    <header><h2>Fleet types</h2><p>The colour marks the ping in Discord.</p></header>
+    {% call limits(fleet_types, "None yet: pings have no fleet type.") %}{% endcall %}
+    {% call add_form("fleet_type", "fleet type", true, false) %}{% endcall %}
+  </section>
+  <section class="card data-card">
+    <header><h2>Doctrines</h2><p>Suggested on the form, with their link in the ping. A limited doctrine can't be typed in by anyone else either.</p></header>
+    {% call limits(doctrines, "None yet: pilots type the doctrine in.") %}{% endcall %}
+    {% call add_form("doctrine", "doctrine", false, true) %}{% endcall %}
+  </section>
+  <div class="grid gap-6 lg:grid-cols-2">
+    <section class="card data-card">
+      <header><h2>Formup locations</h2><p>Suggested on the form; anything else can be typed.</p></header>
+      {% call chips(formups) %}{% endcall %}
+      {% call add_form("formup", "formup location", false, false) %}{% endcall %}
+    </section>
+    <section class="card data-card">
+      <header><h2>Comms</h2><p>Suggested on the form; anything else can be typed.</p></header>
+      {% call chips(comms) %}{% endcall %}
+      {% call add_form("comms", "comms", false, false) %}{% endcall %}
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -235,6 +235,19 @@ pub fn router(state: AppState) -> Router {
             "/pings",
             get(pages::pings::pings_page).post(pages::pings::send),
         )
+        .route("/pings/preview", post(pages::pings::preview))
+        .route("/admin/pings", get(pages::pings::settings))
+        .route("/admin/pings/settings", post(pages::pings::save_settings))
+        .route("/admin/pings/options", post(pages::pings::add_option))
+        .route(
+            "/admin/pings/options/{id}/delete",
+            post(pages::pings::delete_option),
+        )
+        .route("/admin/pings/restrictions", post(pages::pings::restrict))
+        .route(
+            "/admin/pings/restrictions/{id}/remove",
+            post(pages::pings::unrestrict),
+        )
         .route("/admin/system", get(pages::system::system))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route(

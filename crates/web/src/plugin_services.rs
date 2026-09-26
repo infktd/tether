@@ -351,6 +351,7 @@ async fn discord_send(
             &config,
             u64::try_from(channel_id).map_err(|e| unavailable(e.to_string()))?,
             &content,
+            None,
             target,
             &nonce,
         )

@@ -233,7 +233,7 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 - [x] Users (F23), as AA's admin site Users: an admin page to find any account by character, see its characters, state, groups and permissions, and Deactivate or Reactivate it (`admin.users`; the API and CLI came with the login task)
 - [x] Dashboard (F14, F23): admin panels on the Dashboard (version, task queue, ESI status) and widgets plugins can add
 - [x] States cover factions (F4, F23), as AA's Member Factions
-- [ ] Fleet Pings, AA parity (F13, F23): aa-fleetpings' fields (target, pre-ping, fleet type, FC, fleet name, formup location and time, comms, doctrine, SRP, additional information) and copy-paste text; channels, targets, fleet types and doctrines limited to groups or states, checked on the server; a setting to turn off @here and @everyone
+- [x] Fleet Pings, AA parity (F13, F23): aa-fleetpings' fields (target, pre-ping, fleet type, FC, fleet name, formup location and time, comms, doctrine, SRP, additional information) and copy-paste text; channels, targets, fleet types and doctrines limited to groups or states, checked on the server; a setting to turn off @here and @everyone
 - [ ] The accent colour setting from DESIGN.md
 - [ ] Menu customization (F23), as AA's Menu: admins reorder and hide sidebar items, group them in folders and add custom links; apps' links included
 - [ ] Structure Timers plugin (F23), as AA's timerboard: timers with structure type, objective (friendly, hostile, neutral), system, planet or moon, EVE time and details, important and corporation-only flags, visible and editable by permission

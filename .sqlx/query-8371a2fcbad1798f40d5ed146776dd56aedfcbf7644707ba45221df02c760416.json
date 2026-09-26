@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.ping_restrictions WHERE id = $1 RETURNING item, state_id, group_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "item",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "item"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "group_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "8371a2fcbad1798f40d5ed146776dd56aedfcbf7644707ba45221df02c760416"
+}

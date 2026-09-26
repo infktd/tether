@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.item,\n               -- COALESCE: a comparison with a NULL column is NULL, and\n               -- bool_or skips NULLs.\n               COALESCE(bool_or(COALESCE(r.state_id = a.state_id, false)\n                       OR (a.main_character_id IS NOT NULL AND COALESCE(r.group_id IN (\n                           SELECT group_id FROM core.group_members WHERE account_id = a.id), false))),\n                   false) AS \"allowed!\"\n        FROM core.ping_restrictions r\n        JOIN core.accounts a ON a.id = $1\n        GROUP BY r.item\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "item",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "item"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "allowed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "891de048c23e25b440b29368cd001d89eca02dd6e31bf6dc868b5fdab5ac3272"
+}

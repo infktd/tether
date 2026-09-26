@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.id, r.item, r.state_id, r.group_id,\n               COALESCE(s.name, g.name) AS \"name!\"\n        FROM core.ping_restrictions r\n        LEFT JOIN core.states s ON s.id = r.state_id\n        LEFT JOIN core.groups g ON g.id = r.group_id\n        ORDER BY r.item, 5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "item",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "item"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "state_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.ping_restrictions",
+            "name": "group_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "034adba63fd6fe1991faadf618f01c5ef36589364850b0d786b7dbeba8af71dd"
+}

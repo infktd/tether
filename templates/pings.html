@@ -3,26 +3,29 @@
 {% block breadcrumb %}Fleet&nbsp;/&nbsp;<span class="text-foreground">Fleet Pings</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div>
-    <h1 class="page-title">Fleet Pings</h1>
-    <p class="text-muted-foreground mt-1">Post to a Discord channel and ping who you choose. Mentions typed into the message don't ping anyone.</p>
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="page-title">Fleet Pings</h1>
+      <p class="text-muted-foreground mt-1">Post a fleet to Discord and ping who you choose, or copy it for EVE and other chats. Mentions typed into the text don't ping anyone.</p>
+    </div>
+    {% if settings %}<a class="btn" data-variant="outline" href="/admin/pings">{% call icons::icon("settings") %}{% endcall %} Settings</a>{% endif %}
   </div>
   {% include "admin_error.html" %}
 
-  {% if channels.is_empty() %}
+  {% if offer.channels.is_empty() %}
   <section class="card">
-    <header><h2>No ping channels yet</h2></header>
-    <section><p class="text-sm text-muted-foreground">An admin chooses which Discord channels pings go to, on the Discord admin page.</p></section>
+    <header><h2>No ping channels for you yet</h2></header>
+    <section><p class="text-sm text-muted-foreground">An admin chooses which Discord channels pings go to, and who may use them.</p></section>
   </section>
   {% else %}
   <form class="card" method="post" action="/pings" hx-confirm="Send this ping now?">
     <header><h2>New ping</h2></header>
-    <section class="flex flex-col gap-4 max-w-2xl">
-      <div class="grid grid-cols-2 gap-4">
+    <section class="flex flex-col gap-5 max-w-3xl">
+      <div class="grid grid-cols-3 gap-4">
         <div class="grid gap-2">
           <label class="label" for="channel_id">Channel</label>
           <select class="select input" id="channel_id" name="channel_id">
-            {% for c in channels %}<option value="{{ c.channel_id }}"{% if form.channel_id == c.channel_id.to_string() %} selected{% endif %}>#{{ c.name }}</option>{% endfor %}
+            {% for c in offer.channels %}<option value="{{ c.channel_id }}"{% if form.channel_id == c.channel_id.to_string() %} selected{% endif %}>#{{ c.name }}</option>{% endfor %}
           </select>
         </div>
         <div class="grid gap-2">
@@ -31,13 +34,63 @@
             {% for t in targets %}<option value="{{ t.value }}"{% if form.target == t.value %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
           </select>
         </div>
+        <div class="grid gap-2">
+          <label class="label" for="fleet_type">Fleet type</label>
+          <select class="select input" id="fleet_type" name="fleet_type">
+            <option value="">—</option>
+            {% for t in offer.fleet_types %}<option value="{{ t.name }}"{% if form.fleet_type == t.name %} selected{% endif %}>{{ t.name }}</option>{% endfor %}
+          </select>
+        </div>
       </div>
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="pre_ping" value="on"{% if form.pre_ping.is_some() %} checked{% endif %}> Pre-ping: the fleet isn't up yet</label>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="grid gap-2">
+          <label class="label" for="fc_name">FC</label>
+          <input class="input" id="fc_name" name="fc_name" value="{{ form.fc_name }}" maxlength="{{ max_field }}">
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="fleet_name">Fleet name</label>
+          <input class="input" id="fleet_name" name="fleet_name" value="{{ form.fleet_name }}" maxlength="{{ max_field }}">
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="formup_location">Formup location</label>
+          <input class="input" id="formup_location" name="formup_location" list="formups" value="{{ form.formup_location }}" maxlength="{{ max_field }}">
+          <datalist id="formups">{% for f in offer.formups %}<option value="{{ f.name }}"></option>{% endfor %}</datalist>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="formup_time">Formup time (EVE)</label>
+          <div class="flex items-center gap-3">
+            <input class="input" type="datetime-local" id="formup_time" name="formup_time" value="{{ form.formup_time }}">
+            <label class="label gap-2 font-normal whitespace-nowrap"><input type="checkbox" class="input" name="formup_now" value="on"{% if form.formup_now.is_some() %} checked{% endif %}> Now</label>
+          </div>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="comms">Comms</label>
+          <input class="input" id="comms" name="comms" list="comms-list" value="{{ form.comms }}" maxlength="{{ max_field }}">
+          <datalist id="comms-list">{% for c in offer.comms %}<option value="{{ c.name }}"></option>{% endfor %}</datalist>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="doctrine">Doctrine</label>
+          <input class="input" id="doctrine" name="doctrine" list="doctrines" value="{{ form.doctrine }}" maxlength="{{ max_field }}">
+          <datalist id="doctrines">{% for d in offer.doctrines %}<option value="{{ d.name }}"></option>{% endfor %}</datalist>
+        </div>
+      </div>
+      <fieldset class="flex items-center gap-4 text-sm">
+        <legend class="label mb-2">SRP</legend>
+        <label class="label gap-2 font-normal"><input type="radio" class="input" name="srp" value=""{% if form.srp.is_empty() %} checked{% endif %}> Not said</label>
+        <label class="label gap-2 font-normal"><input type="radio" class="input" name="srp" value="yes"{% if form.srp == "yes" %} checked{% endif %}> Yes</label>
+        <label class="label gap-2 font-normal"><input type="radio" class="input" name="srp" value="no"{% if form.srp == "no" %} checked{% endif %}> No</label>
+      </fieldset>
       <div class="grid gap-2">
-        <label class="label" for="message">Message</label>
-        <textarea class="textarea" id="message" name="message" rows="5" maxlength="{{ max_message }}" required placeholder="Form up in Jita for a roam, doctrine Caracals, undock in 15.">{{ form.message }}</textarea>
+        <label class="label" for="message">Additional information</label>
+        <textarea class="textarea" id="message" name="message" rows="4" maxlength="{{ max_message }}" placeholder="Bring points and a spare cap booster.">{{ form.message }}</textarea>
       </div>
+      <div id="ping-preview"></div>
     </section>
-    <footer><button type="submit" class="btn" data-variant="primary">Send ping</button></footer>
+    <footer class="flex gap-2">
+      <button type="submit" class="btn" data-variant="primary">Send ping</button>
+      <button type="button" class="btn" data-variant="outline" hx-post="/pings/preview" hx-target="#ping-preview" hx-confirm="unset">Copy-paste text</button>
+    </footer>
   </form>
   {% endif %}
 
@@ -47,7 +100,7 @@
     <p class="px-5 pb-5 text-sm text-muted-foreground">None yet.</p>
     {% else %}
     <table class="table">
-      <thead><tr><th scope="col">When (EVE)</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Message</th><th scope="col">Status</th></tr></thead>
+      <thead><tr><th scope="col">When (EVE)</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Ping</th><th scope="col">Status</th></tr></thead>
       <tbody>
         {% for p in recent %}
         <tr>

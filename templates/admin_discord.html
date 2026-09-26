@@ -119,7 +119,7 @@
   {% endif %}
 
   <section class="card data-card">
-    <header><h2>Ping channels</h2><p>Where fleet pings may go. The bot needs View Channel and Send Messages there, and Mention Everyone for @everyone and @here. Everyone who can send pings sees the ping history for every channel here.</p></header>
+    <header><h2>Ping channels</h2><p>Where fleet pings may go. The bot needs View Channel and Send Messages there, and Mention Everyone for @everyone and @here. Pingers see the history of the channels they may use. Fleet types, doctrines and who may use which channel are in <a class="underline underline-offset-4" href="/admin/pings">Fleet Pings settings</a>.</p></header>
     {% if ping_channels.is_empty() %}
     <p class="px-5 pb-5 text-sm text-muted-foreground">None yet: fleet pings are off.</p>
     {% else %}

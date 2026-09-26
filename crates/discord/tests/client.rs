@@ -473,6 +473,7 @@ async fn messages_ping_only_the_chosen_target_and_carry_a_nonce() {
             &config(),
             600_000_000_000_000_001,
             &content,
+            None,
             mention,
             "tether-ping-7",
         )
@@ -481,6 +482,52 @@ async fn messages_ping_only_the_chosen_target_and_carry_a_nonce() {
     assert_eq!(id, 900_000_000_000_000_001);
     assert_eq!(Mention::Here.prefix(), "@here");
     assert_eq!(Mention::None.prefix(), "");
+}
+
+#[tokio::test]
+async fn messages_can_carry_an_embed() {
+    use tether_discord::{Embed, Mention};
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v10/channels/600000000000000001/messages"))
+        .and(body_json(serde_json::json!({
+            "content": "@here",
+            "allowed_mentions": { "parse": ["everyone"] },
+            "nonce": "tether-ping-8",
+            "enforce_nonce": true,
+            "embeds": [{
+                "title": "Roam",
+                "description": "Bring points",
+                "color": 0x00ff00,
+                "fields": [{ "name": "FC", "value": "Dev Owner", "inline": true }],
+                "footer": { "text": "Sent by Dev Owner" },
+            }],
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "900000000000000002", "channel_id": "600000000000000001"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let embed = Embed {
+        title: "Roam".into(),
+        description: Some("Bring points".into()),
+        color: Some(0x00ff00),
+        fields: vec![("FC".into(), "Dev Owner".into())],
+        footer: Some("Sent by Dev Owner".into()),
+    };
+    let id = discord
+        .send_message(
+            &config(),
+            600_000_000_000_000_001,
+            "@here",
+            Some(&embed),
+            Mention::Here,
+            "tether-ping-8",
+        )
+        .await
+        .unwrap();
+    assert_eq!(id, 900_000_000_000_000_002);
 }
 
 fn has_content_type_json() -> wiremock::matchers::HeaderExactMatcher {
