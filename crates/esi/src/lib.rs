@@ -11,3 +11,6 @@ pub mod vault;
 pub use client::{
     CharacterAffiliation, Entity, Esi, EsiError, NamedEntity, Priority, ResolvedNames,
 };
+
+/// ESI's address, as eve-esi-client publishes it.
+pub const ESI_BASE_URL: &str = eve_esi_client::BASE_URL;

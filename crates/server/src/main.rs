@@ -249,7 +249,11 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         tether_esi::jwt::CCP_JWKS_URL,
     )?;
     let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
-        std::sync::Arc::new(tether_esi::sso::EveSso::new(verifier));
+        std::sync::Arc::new(tether_esi::sso::EveSso::new(
+            verifier,
+            tether_net::Allowlist::production(),
+            &user_agent(&config.public_url()),
+        )?);
     let site = tether_web::Site::new(config.public_url());
     let vault = std::sync::Arc::new(tether_esi::vault::TokenVault::new(
         db.clone(),

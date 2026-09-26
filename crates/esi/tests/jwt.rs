@@ -275,3 +275,189 @@ fn the_jwks_url_must_be_allowed() {
         "{err}"
     );
 }
+
+// EveSso end to end, against a mock EVE SSO: the token exchange goes
+// through Tether's allow-listed client, and the token it returns is
+// verified with the keys above.
+
+mod eve_sso {
+    use super::*;
+    use tether_core::Secret;
+    use tether_esi::sso::{EveSso, Sso, SsoConfig, SsoEndpoints, SsoError};
+    use wiremock::matchers::body_string_contains;
+
+    fn config() -> SsoConfig {
+        SsoConfig {
+            client_id: CLIENT.into(),
+            redirect_uri: "https://tether.test/auth/callback".into(),
+        }
+    }
+
+    /// A mock SSO (token endpoint and keys on one server) and an EveSso
+    /// pointed at it.
+    async fn sso() -> (MockServer, EveSso) {
+        let (server, verifier) = ccp().await;
+        let sso = EveSso::with_endpoints(
+            verifier,
+            Allowlist::production().with_local(&server.address().to_string()),
+            "tether tests",
+            SsoEndpoints {
+                authorize_url: format!("{}/v2/oauth/authorize", server.uri()),
+                token_url: format!("{}/v2/oauth/token", server.uri()),
+            },
+        )
+        .unwrap();
+        (server, sso)
+    }
+
+    fn tokens(refresh: &str) -> Value {
+        json!({
+            "access_token": sign_rsa(&claims(json!({})), RSA_KID),
+            "token_type": "Bearer",
+            "expires_in": 1199,
+            "refresh_token": refresh,
+        })
+    }
+
+    #[tokio::test]
+    async fn logs_in_and_refreshes_through_the_mock_sso() {
+        let (server, sso) = sso().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .and(body_string_contains("code=the-code"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(tokens("refresh-1")))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v2/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(tokens("refresh-2")))
+            .mount(&server)
+            .await;
+
+        let pending = sso
+            .begin(&config(), &["esi-skills.read_skills.v1".into()])
+            .unwrap();
+        assert!(
+            pending
+                .authorize_url
+                .starts_with(&format!("{}/v2/oauth/authorize?", server.uri())),
+            "{}",
+            pending.authorize_url
+        );
+        assert!(pending.authorize_url.contains("code_challenge="));
+        assert!(pending.authorize_url.contains(&pending.state));
+
+        let identity = sso
+            .finish(&config(), "the-code".into(), pending.pkce_verifier)
+            .await
+            .unwrap();
+        assert_eq!(identity.character_id, 2118174283);
+        assert_eq!(identity.character_name, "Unpercieved");
+        assert_eq!(
+            identity.tokens.refresh_token.as_ref().unwrap().expose(),
+            "refresh-1"
+        );
+        // The PKCE verifier went to the token endpoint, which checks it.
+        let exchange = &server.received_requests().await.unwrap();
+        let exchange = exchange
+            .iter()
+            .find(|r| r.url.path() == "/v2/oauth/token")
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&exchange.body).contains("code_verifier="),
+            "no PKCE verifier sent"
+        );
+
+        let refreshed = sso
+            .refresh(&config(), Secret::new("refresh-1".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            refreshed.refresh_token.as_ref().unwrap().expose(),
+            "refresh-2"
+        );
+        assert_eq!(
+            refreshed.owner_hash.as_deref(),
+            Some("Ld8qQh5nEXAMPLEownerHASH=")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dead_refresh_token_is_a_revocation_and_an_outage_is_not() {
+        let (server, sso) = sso().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/oauth/token"))
+            .and(body_string_contains("refresh_token=dead"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": "invalid_grant",
+                "error_description": "Invalid refresh token. Token missing/expired."
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v2/oauth/token"))
+            .and(body_string_contains("refresh_token=unlucky"))
+            .respond_with(ResponseTemplate::new(502).set_body_string("<html>Bad gateway</html>"))
+            .mount(&server)
+            .await;
+
+        let dead = sso
+            .refresh(&config(), Secret::new("dead".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(dead, SsoError::Revoked(_)), "{dead:?}");
+        let outage = sso
+            .refresh(&config(), Secret::new("unlucky".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(outage, SsoError::Unavailable(_)), "{outage:?}");
+    }
+
+    #[tokio::test]
+    async fn a_redirecting_token_endpoint_is_not_followed() {
+        let (server, sso) = sso().await;
+        let elsewhere = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/oauth/token"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("Location", format!("{}/steal", elsewhere.uri())),
+            )
+            .mount(&server)
+            .await;
+
+        let err = sso
+            .refresh(&config(), Secret::new("refresh-1".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SsoError::Unavailable(_)), "{err:?}");
+        assert!(
+            elsewhere.received_requests().await.unwrap().is_empty(),
+            "the refresh token followed the redirect"
+        );
+    }
+
+    #[test]
+    fn the_token_endpoint_must_be_allowed() {
+        let verifier = JwtVerifier::new(outbound(Allowlist::production()), CCP_JWKS).unwrap();
+        let err = EveSso::with_endpoints(
+            verifier,
+            Allowlist::production(),
+            "tether tests",
+            SsoEndpoints {
+                authorize_url: "https://login.eveonline.com/v2/oauth/authorize".into(),
+                token_url: "https://evil.example/v2/oauth/token".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, SsoError::Config(_)), "{err:?}");
+        // CCP's own endpoints are on the list.
+        let verifier = JwtVerifier::new(outbound(Allowlist::production()), CCP_JWKS).unwrap();
+        EveSso::new(verifier, Allowlist::production(), "tether tests").unwrap();
+    }
+
+    const CCP_JWKS: &str = tether_esi::jwt::CCP_JWKS_URL;
+}

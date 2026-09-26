@@ -3717,7 +3717,6 @@ dependencies = [
  "chrono",
  "eve-esi-client",
  "jsonwebtoken",
- "oauth2",
  "reqwest",
  "serde",
  "serde_json",

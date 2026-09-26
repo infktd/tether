@@ -13,10 +13,12 @@
 //! [`Allowlist::only`]: exactly the hosts an admin approved for that
 //! plugin, never these.
 //!
-//! Two libraries make their own connections and can't take this client:
-//! eve-esi-client (ESI and EVE SSO, endpoints fixed in the library) and
-//! twilight (Discord, whose endpoint is checked against this list where it
-//! is set up). `doctor` checks the configured endpoints.
+//! eve-esi-client takes its HTTP clients from here too:
+//! [`Outbound::library_client`] builds them for ESI and EVE SSO, and the
+//! base and token URLs they're given are checked against the list, scheme
+//! and port included, like every other request. Only twilight (Discord)
+//! makes its own connections; its endpoint is checked against this list
+//! where it is set up. `doctor` checks the configured endpoints.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -273,6 +275,11 @@ pub fn install_crypto_provider() {
     }
 }
 
+/// Longest wait for a connection, within a client's overall timeout: a
+/// host dropping connection attempts fails fast instead of holding a
+/// request (a login callback, a token refresh) for the whole timeout.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Whether a client follows redirects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Redirects {
@@ -338,6 +345,7 @@ impl Outbound {
         let client = reqwest::Client::builder()
             .user_agent(user_agent)
             .timeout(timeout)
+            .connect_timeout(CONNECT_TIMEOUT.min(timeout))
             .no_proxy()
             .referer(false)
             .dns_resolver(Arc::new(AllowResolver(allow.clone())))
@@ -353,8 +361,14 @@ impl Outbound {
 
     /// A bare `reqwest::Client` held to the same rules (allow-listed DNS,
     /// no redirects, no proxy), for a library that must be handed one:
-    /// eve-esi-client's typed calls with a token of the caller's, sent as
-    /// a default header. Mark any secret header sensitive.
+    /// eve-esi-client's ESI and SSO clients, and its typed calls with a
+    /// token of the caller's, sent as a default header. Mark any secret
+    /// header sensitive.
+    ///
+    /// Only names are checked here (at DNS): the library builds the URLs,
+    /// so [`Allowlist::check`] the base or endpoint URL it is given before
+    /// handing it this client. That also covers scheme and port, and IP
+    /// literals, which never reach the resolver.
     pub fn library_client(
         allow: Allowlist,
         user_agent: &str,
@@ -366,6 +380,7 @@ impl Outbound {
         reqwest::Client::builder()
             .user_agent(user_agent)
             .timeout(timeout)
+            .connect_timeout(CONNECT_TIMEOUT.min(timeout))
             .no_proxy()
             .referer(false)
             .dns_resolver(Arc::new(AllowResolver(allow)))
@@ -427,8 +442,9 @@ impl Request {
     }
 }
 
-/// Proxy variables in the environment. [`Outbound`] ignores them, but the
-/// libraries with their own clients may not, so `doctor` warns.
+/// Proxy variables in the environment. Every client Tether builds ignores
+/// them (and twilight has no proxy support), so `doctor` warns that an
+/// operator relying on one would be surprised.
 pub fn proxy_variables() -> Vec<String> {
     [
         "HTTP_PROXY",

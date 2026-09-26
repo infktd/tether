@@ -698,19 +698,17 @@ pub async fn updates(db: &PgPool, api_url: &str) -> Check {
     }
 }
 
-/// eve-esi-client's fixed base URL (it makes its own connections).
-const ESI_BASE_URL: &str = "https://esi.evetech.net";
-
 /// The allow-list (N5): every endpoint the server is configured to call must
-/// be on it, and proxy settings that the libraries with their own HTTP
-/// clients honour are flagged.
+/// be on it. Proxy settings in the environment are flagged: every client
+/// ignores them, which may not be what the operator expects.
 pub fn outbound(proxy: Proxy) -> Check {
     const NAME: &str = "outbound";
     let allow = tether_net::Allowlist::production();
     let endpoints = [
-        ("ESI", ESI_BASE_URL.to_owned()),
+        ("ESI", tether_esi::ESI_BASE_URL.to_owned()),
         ("EVE SSO keys", tether_esi::jwt::CCP_JWKS_URL.to_owned()),
-        ("EVE SSO", SSO_METADATA_URL.to_owned()),
+        ("EVE SSO", tether_esi::sso::SsoEndpoints::ccp().token_url),
+        ("EVE SSO metadata", SSO_METADATA_URL.to_owned()),
         ("Discord", tether_discord::Endpoints::discord().api_base()),
         ("GitHub", GITHUB_API_URL.to_owned()),
     ];
@@ -731,10 +729,10 @@ pub fn outbound(proxy: Proxy) -> Check {
         return Check::warn(
             NAME,
             format!(
-                "{} set: ESI and EVE SSO requests may go through a proxy",
+                "{} set, but Tether ignores proxy settings and connects directly",
                 proxies.join(", ")
             ),
-            "Unset them in the app's environment, unless routing Tether's traffic through that proxy is intended.",
+            "Allow direct outbound HTTPS to the hosts Tether contacts, and unset the proxy variables in the app's environment.",
         );
     }
     let hosts: Vec<&str> = allow.hosts().collect();

@@ -137,6 +137,7 @@ The host is the only thing that talks to ESI. It owns every token, schedules eve
 - **Scheduler:** next fetch comes from the `Expires` header; conditional requests with `ETag` / `If-None-Match`; identical requests from different plugins are merged and served from a shared cache; interactive requests jump ahead of bulk syncs.
 - **Budgets:** tracks ESI error-limit and rate-limit headers and slows down before hitting them; per-plugin shares, so one misbehaving plugin is throttled and flagged instead of getting the whole instance blocked.
 - **User-Agent:** includes the admin contact, set once at the host level.
+- **Outbound (N5):** eve-esi-client makes no connections of its own. Its ESI client and its EVE SSO token exchange both get their `reqwest::Client` from `tether_net::Outbound::library_client` (allow-listed DNS, no redirects, no proxies), and the ESI base URL and SSO token URL are checked against the allow-list, scheme and port included, before use. A redirecting token endpoint therefore can't forward a code or refresh token anywhere.
 
 ## Storage and jobs
 

@@ -70,11 +70,8 @@ pub enum SsoError {
 pub type SsoFuture<'a> = Pin<Box<dyn Future<Output = Result<SsoIdentity, SsoError>> + Send + 'a>>;
 pub type RefreshFuture<'a> = Pin<Box<dyn Future<Output = Result<SsoTokens, SsoError>> + Send + 'a>>;
 
-/// The login provider. A trait so tests can swap in a fake.
-///
-/// TODO(eve-esi-client): once it re-exports its oauth2 types and allows
-/// overriding the SSO URLs, test `EveSso` itself against wiremock instead of
-/// only testing the web flow with a fake.
+/// The login provider. A trait so the web tests can swap in a fake;
+/// [`EveSso`] itself is tested against a mock SSO in `tests/jwt.rs`.
 pub trait Sso: Send + Sync {
     /// Starts a login asking for `scopes` (none for a plain login).
     fn begin(&self, config: &SsoConfig, scopes: &[String]) -> Result<PendingLogin, SsoError>;
@@ -120,28 +117,90 @@ fn tokens_from(set: eve_esi_client::auth::TokenSet) -> SsoTokens {
     }
 }
 
+/// Where EVE SSO is: CCP's endpoints ([`SsoEndpoints::ccp`]), or a mock
+/// server in tests. Only the token URL is contacted by the server (and
+/// checked against the allow-list); the authorize URL is where browsers
+/// are sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsoEndpoints {
+    /// Where the browser is sent to log in.
+    pub authorize_url: String,
+    /// Where codes and refresh tokens are exchanged, server to server.
+    pub token_url: String,
+}
+
+impl SsoEndpoints {
+    /// CCP's, as eve-esi-client publishes them.
+    pub fn ccp() -> Self {
+        Self {
+            authorize_url: eve_esi_client::SSO_AUTHORIZE_URL.to_owned(),
+            token_url: eve_esi_client::SSO_TOKEN_URL.to_owned(),
+        }
+    }
+}
+
+/// How long one token request may take.
+const TOKEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The real EVE SSO, via eve-esi-client, with tokens verified against
-/// CCP's JWKS.
+/// CCP's JWKS. Token requests go through Tether's allow-listed HTTP client
+/// (N5), which never follows redirects: a redirecting token endpoint can't
+/// forward a code or refresh token anywhere.
 #[derive(Debug)]
 pub struct EveSso {
     verifier: crate::jwt::JwtVerifier,
+    endpoints: SsoEndpoints,
+    http: reqwest::Client,
 }
 
 impl EveSso {
-    pub fn new(verifier: crate::jwt::JwtVerifier) -> Self {
-        Self { verifier }
+    /// CCP's SSO. `user_agent` identifies this instance to CCP.
+    pub fn new(
+        verifier: crate::jwt::JwtVerifier,
+        allow: tether_net::Allowlist,
+        user_agent: &str,
+    ) -> Result<Self, SsoError> {
+        Self::with_endpoints(verifier, allow, user_agent, SsoEndpoints::ccp())
     }
 
-    fn client(config: &SsoConfig) -> Result<SsoClient, SsoError> {
-        tether_net::install_crypto_provider();
-        SsoClient::new(config.client_id.clone(), &config.redirect_uri)
+    /// Another SSO (tests). The token endpoint must be on `allow`, scheme
+    /// and port included: codes and refresh tokens are sent there.
+    pub fn with_endpoints(
+        verifier: crate::jwt::JwtVerifier,
+        allow: tether_net::Allowlist,
+        user_agent: &str,
+        endpoints: SsoEndpoints,
+    ) -> Result<Self, SsoError> {
+        allow
+            .check(&endpoints.token_url)
+            .map_err(|err| SsoError::Config(format!("the SSO token endpoint: {err}")))?;
+        let http = tether_net::Outbound::library_client(
+            allow,
+            user_agent,
+            TOKEN_TIMEOUT,
+            reqwest::header::HeaderMap::new(),
+        )
+        .map_err(|err| SsoError::Config(err.to_string()))?;
+        Ok(Self {
+            verifier,
+            endpoints,
+            http,
+        })
+    }
+
+    fn client(&self, config: &SsoConfig) -> Result<SsoClient, SsoError> {
+        SsoClient::builder(config.client_id.clone(), config.redirect_uri.clone())
+            .authorize_url(self.endpoints.authorize_url.clone())
+            .token_url(self.endpoints.token_url.clone())
+            .http_client(self.http.clone())
+            .build()
             .map_err(|err| SsoError::Config(err.to_string()))
     }
 }
 
 impl Sso for EveSso {
     fn begin(&self, config: &SsoConfig, scopes: &[String]) -> Result<PendingLogin, SsoError> {
-        let pending = Self::client(config)?.authorize(scopes.iter().cloned());
+        let pending = self.client(config)?.authorize(scopes.iter().cloned());
         Ok(PendingLogin {
             authorize_url: pending.url,
             state: pending.csrf_state.secret().clone(),
@@ -156,8 +215,10 @@ impl Sso for EveSso {
         pkce_verifier: Secret<String>,
     ) -> SsoFuture<'a> {
         Box::pin(async move {
-            let verifier = oauth2::PkceCodeVerifier::new(pkce_verifier.expose().clone());
-            let tokens = Self::client(config)?
+            let verifier =
+                eve_esi_client::auth::PkceCodeVerifier::new(pkce_verifier.expose().clone());
+            let tokens = self
+                .client(config)?
                 .exchange(code, verifier)
                 .await
                 .map_err(|err| SsoError::Exchange(err.to_string()))?;
@@ -182,7 +243,8 @@ impl Sso for EveSso {
         refresh_token: Secret<String>,
     ) -> RefreshFuture<'a> {
         Box::pin(async move {
-            let set = Self::client(config)?
+            let set = self
+                .client(config)?
                 .refresh(refresh_token.expose())
                 .await
                 .map_err(refresh_error)?;

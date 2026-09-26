@@ -116,18 +116,29 @@ impl Esi {
     /// `user_agent` identifies this instance to CCP. `base_url` overrides
     /// ESI's address (tests point it at a mock server).
     pub fn new(user_agent: &str, base_url: Option<&str>) -> Result<Self, EsiError> {
-        tether_net::install_crypto_provider();
-        let mut builder = Client::builder().user_agent(user_agent);
+        let allow = match base_url {
+            Some(url) => tether_net::Allowlist::production().with_url(url),
+            None => tether_net::Allowlist::production(),
+        };
+        // ESI is reached through Tether's allow-listed client (N5), like
+        // everything else: listed hosts only, no redirects, no proxies.
+        allow
+            .check(base_url.unwrap_or(eve_esi_client::BASE_URL))
+            .map_err(|e| EsiError::Config(e.to_string()))?;
+        let http = tether_net::Outbound::library_client(
+            allow.clone(),
+            user_agent,
+            eve_esi_client::DEFAULT_TIMEOUT,
+            reqwest::header::HeaderMap::new(),
+        )
+        .map_err(|e| EsiError::Config(e.to_string()))?;
+        let mut builder = Client::builder().user_agent(user_agent).http_client(http);
         if let Some(url) = base_url {
             builder = builder.base_url(url);
         }
         let client = builder
             .build()
             .map_err(|err| EsiError::Config(err.to_string()))?;
-        let allow = match base_url {
-            Some(url) => tether_net::Allowlist::production().with_url(url),
-            None => tether_net::Allowlist::production(),
-        };
         Ok(Self {
             client,
             budget: Arc::default(),

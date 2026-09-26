@@ -643,10 +643,18 @@ mod tests {
     }
 
     fn state(db: PgPool) -> AppState {
-        let sso: std::sync::Arc<dyn tether_esi::sso::Sso> =
-            std::sync::Arc::new(tether_esi::sso::EveSso::new(
+        let sso: std::sync::Arc<dyn tether_esi::sso::Sso> = std::sync::Arc::new(
+            tether_esi::sso::EveSso::with_endpoints(
                 tether_esi::jwt::JwtVerifier::new(local_net(), "http://127.0.0.1:9/jwks").unwrap(),
-            ));
+                tether_net::Allowlist::production().with_local("127.0.0.1:9"),
+                "tether tests",
+                tether_esi::sso::SsoEndpoints {
+                    authorize_url: "http://127.0.0.1:9/v2/oauth/authorize".into(),
+                    token_url: "http://127.0.0.1:9/v2/oauth/token".into(),
+                },
+            )
+            .unwrap(),
+        );
         let key =
             tether_core::crypto::EncryptionKey::from_hex(&tether_core::Secret::new("0".repeat(64)))
                 .unwrap();
