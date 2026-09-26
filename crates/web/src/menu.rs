@@ -83,9 +83,28 @@ pub const BUILTINS: &[Builtin] = &[
         "fleet",
         "pings",
     ),
+    // Officer tools, as AA's sidebar: shown to whoever holds their
+    // permissions, and in the Administration hub too.
+    b(
+        "corpstats",
+        "Corporation Stats",
+        "/corpstats",
+        "activity",
+        "corporation",
+        "corpstats",
+    ),
+    b(
+        "compliance",
+        "Compliance Report",
+        "/compliance",
+        "check",
+        "corporation",
+        "compliance",
+    ),
     // Admin pages live in the Administration hub (its rail and overview);
-    // they start hidden in the sidebar, and admins can pin any of them on
-    // the Menu page.
+    // they start hidden in the sidebar (all but Permissions Audit, a
+    // sidebar item in AA), and admins can pin any of them on the Menu
+    // page.
     b(
         "administration",
         "Administration",
@@ -168,22 +187,6 @@ pub const BUILTINS: &[Builtin] = &[
         "discord",
     ),
     b(
-        "compliance",
-        "Compliance Report",
-        "/compliance",
-        "check",
-        "admin",
-        "compliance",
-    ),
-    b(
-        "corpstats",
-        "Corporation Stats",
-        "/corpstats",
-        "activity",
-        "admin",
-        "corpstats",
-    ),
-    b(
         "audit",
         "Audit log",
         "/admin/audit",
@@ -193,6 +196,11 @@ pub const BUILTINS: &[Builtin] = &[
     ),
     b("setup", "Setup", "/setup", "settings", "admin", "setup"),
 ];
+
+/// Admin-section items shown in the sidebar by default: Administration,
+/// and Permissions Audit (AA's sidebar item for its holders, often
+/// leadership without other admin powers).
+const SHOWN_ADMIN_ITEMS: &[&str] = &["administration", "permissions_audit"];
 
 /// An item one viewer may see (or, for the Menu page, any item).
 #[derive(Debug, Clone)]
@@ -238,7 +246,7 @@ pub fn builtin_item(b: &Builtin, badge: Option<i64>) -> Available {
         section: b.section,
         active: b.active,
         badge,
-        default_hidden: b.section == "admin" && b.key != "administration",
+        default_hidden: b.section == "admin" && !SHOWN_ADMIN_ITEMS.contains(&b.key),
     }
 }
 
@@ -283,8 +291,11 @@ impl Node {
     pub fn is_current(&self, active: &str, active_href: &str) -> bool {
         (!self.active.is_empty() && self.active == active)
             || (self.kind == Kind::Item && !active_href.is_empty() && self.href == active_href)
-            // Administration stays marked on every page in its hub.
-            || (self.active == crate::admin_nav::OVERVIEW && crate::admin_nav::is_admin_page(active))
+            // Administration stays marked on every page in its hub, but
+            // for those with a sidebar item of their own.
+            || (self.active == crate::admin_nav::OVERVIEW
+                && crate::admin_nav::is_admin_page(active)
+                && !crate::admin_nav::has_own_item(active))
     }
 
     /// A folder holding the current page opens by itself.

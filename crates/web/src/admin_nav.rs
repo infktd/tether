@@ -187,6 +187,13 @@ pub fn is_admin_page(active: &str) -> bool {
     active == OVERVIEW || PAGES.iter().any(|p| p.active == active)
 }
 
+/// Hub pages that are also sidebar items by default (AA's officer tools:
+/// Corporation Stats, the Compliance Report, Permissions Audit): the
+/// sidebar marks their own item, not Administration.
+pub fn has_own_item(active: &str) -> bool {
+    matches!(active, "corpstats" | "compliance" | "permissions_audit")
+}
+
 /// Whether a viewer with `nav` may open a page.
 pub fn may(nav: &AdminNav, page: &Page) -> bool {
     match page.active {

@@ -268,3 +268,81 @@ async fn account_pages_are_in_the_account_menu_only(db: PgPool) {
         "no second way to access tokens"
     );
 }
+
+/// Grants `permission` to the state of the account `character_id` is on.
+async fn grant_to_state_of(h: &Harness, character_id: i64, permission: &str) {
+    sqlx::query(
+        "INSERT INTO core.permission_grants (permission, state_id) \
+         SELECT $1, a.state_id FROM core.accounts a \
+         JOIN core.characters c ON c.account_id = a.id WHERE c.id = $2",
+    )
+    .bind(permission)
+    .bind(character_id)
+    .execute(&h.db)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn officer_tools_are_sidebar_items_for_their_holders(db: PgPool) {
+    const GIGX_ID: i64 = 1887431749;
+    let h = harness(db, true).await;
+    let _owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let body = page(&h, "/dashboard", &pilot).await.body;
+    let nav = sidebar(&body);
+    for link in ["/corpstats", "/compliance", "/admin/permissions/audit"] {
+        assert!(!nav.contains(&format!(r#"href="{link}""#)), "{link}: {nav}");
+    }
+
+    // As AA: Corporation Stats and the Compliance Report under
+    // Corporation, Permissions Audit under Admin, for their holders.
+    grant_to_state_of(&h, GIGX_ID, "corpstats.view_corp_corpstats").await;
+    grant_to_state_of(&h, GIGX_ID, "compliance.view").await;
+    grant_to_state_of(&h, GIGX_ID, "permissions_tool.audit_permissions").await;
+    let body = page(&h, "/dashboard", &pilot).await.body;
+    let nav = sidebar(&body);
+    let corporation = nav.find(">Corporation<").expect("the Corporation section");
+    let admin = nav.find(">Admin<").expect("the Admin section");
+    let stats = nav.find(r#"href="/corpstats""#).expect("Corporation Stats");
+    let compliance = nav
+        .find(r#"href="/compliance""#)
+        .expect("Compliance Report");
+    let audit = nav
+        .find(r#"href="/admin/permissions/audit""#)
+        .expect("Permissions Audit");
+    assert!(
+        corporation < stats && stats < compliance && compliance < admin,
+        "{nav}"
+    );
+    assert!(admin < audit, "{nav}");
+    // Still in the Administration hub.
+    let overview = page(&h, "/admin", &pilot).await.body;
+    for link in ["/corpstats", "/compliance", "/admin/permissions/audit"] {
+        assert!(
+            overview.contains(&format!(r#"href="{link}" class="admin-tile""#)),
+            "{link}"
+        );
+    }
+
+    // Their own item is marked, not Administration.
+    let body = page(&h, "/corpstats", &pilot).await.body;
+    let nav = sidebar(&body);
+    assert!(
+        nav.contains(r#"href="/corpstats" class="nav-item" aria-current="page""#),
+        "{nav}"
+    );
+    assert!(
+        !nav.contains(r#"href="/admin" class="nav-item" aria-current="page""#),
+        "{nav}"
+    );
+    // Other admin pages still start hidden, and mark Administration.
+    grant_to_state_of(&h, GIGX_ID, "admin.audit").await;
+    let body = page(&h, "/admin/audit", &pilot).await.body;
+    let nav = sidebar(&body);
+    assert!(!nav.contains(r#"href="/admin/audit""#), "{nav}");
+    assert!(
+        nav.contains(r#"href="/admin" class="nav-item" aria-current="page""#),
+        "{nav}"
+    );
+}
