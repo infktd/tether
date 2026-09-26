@@ -102,6 +102,7 @@
         <button type="submit" class="btn" data-variant="outline">Save</button>
       </form>
       {% if let Some(sm) = smart %}
+      {% if sm.frozen %}<div class="alert" data-variant="destructive" role="status"><section>An app filter has no answers from its app in the last two days (the app is off, gone, or hasn't run yet), so Tether leaves this group's members as they are until it answers or you remove that filter.</section></div>{% endif %}
       <div class="grid gap-2">
         <div class="label">Filters</div>
         {% if sm.filters.is_empty() %}<p class="text-sm text-muted-foreground">None yet: nobody is added until there's at least one.</p>{% endif %}
@@ -128,6 +129,20 @@
           <div class="flex flex-wrap gap-3">{% for g in leader_groups %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="groups" value="{{ g.id }}"> {{ g.name }}</label>{% endfor %}{% for g in other_groups %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="groups" value="{{ g.id }}"> {{ g.name }}</label>{% endfor %}</div>
           <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
         </form>
+        {% if !app_filters.is_empty() %}<p class="text-xs text-muted-foreground lg:col-span-2">An app's filter lets that app's answers decide who is in the group: keep them off groups that grant admin permissions.</p>{% endif %}
+        {% for af in app_filters %}
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
+          <input type="hidden" name="kind" value="app"><input type="hidden" name="app" value="{{ af.value }}">
+          <div class="label">{{ af.label }}</div>
+          <div class="flex flex-wrap gap-2">
+            {% for (fname, flabel, number) in af.fields %}
+            <input class="input {% if *number %}w-28{% else %}flex-1 min-w-40{% endif %}" {% if *number %}type="number"{% endif %} name="f_{{ fname }}" placeholder="{{ flabel }}" aria-label="{{ flabel }}" maxlength="100" required>
+            {% endfor %}
+            {% if af.sum %}<input class="input w-28" type="number" name="at_least" min="1" placeholder="At least" aria-label="At least" required>{% endif %}
+          </div>
+          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+        </form>
+        {% endfor %}
         <div class="grid gap-3">
           <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 flex flex-wrap items-end gap-2">
             <input type="hidden" name="kind" value="character_age">

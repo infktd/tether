@@ -150,6 +150,18 @@ impl Names {
                 self.group_list(groups)
             ),
             Filter::Compliant {} => "compliant".to_owned(),
+            Filter::App {
+                label,
+                sum,
+                at_least,
+                ..
+            } => {
+                if *sum {
+                    format!("{label}: at least {at_least}")
+                } else {
+                    label.clone()
+                }
+            }
         };
         if rule.reversed {
             format!("not {text}")
@@ -157,6 +169,39 @@ impl Names {
             text
         }
     }
+}
+
+/// Adds apps' filter values to the facts; returns which settings have
+/// fresh values.
+async fn fill_app(
+    conn: &mut sqlx::PgConnection,
+    facts: &mut HashMap<AccountId, Facts>,
+    only: Option<AccountId>,
+) -> Result<BTreeSet<String>, sqlx::Error> {
+    for (account, key, highest, total, reported) in db::app_values(&mut *conn, only).await? {
+        if let Some(f) = facts.get_mut(&account) {
+            f.app.insert(key, (highest, total, reported));
+        }
+    }
+    db::app_keys_known(&mut *conn).await
+}
+
+fn uses_app(rules: &[Rule]) -> bool {
+    rules.iter().any(|r| matches!(r.filter, Filter::App { .. }))
+}
+
+/// An app filter with no fresh values (the app is gone, or hasn't reported
+/// lately): the group can't be judged, so it fails closed.
+fn unknown_app(rules: &[Rule], known: &BTreeSet<String>) -> bool {
+    rules.iter().any(|r| match &r.filter {
+        Filter::App {
+            plugin,
+            name,
+            config,
+            ..
+        } => !known.contains(&tether_core::smart::app_key(plugin, name, config)),
+        _ => false,
+    })
 }
 
 /// Refuses an account a smart group it doesn't pass, naming why (Internal
@@ -178,7 +223,18 @@ pub async fn check(
             "This group's requirements can't be checked right now: an admin needs to look at them.",
         ));
     }
-    let facts = db::facts(&mut *tx, Some(&[account])).await?;
+    let mut facts = db::facts(&mut *tx, Some(&[account])).await?;
+    let known = if uses_app(&rules) {
+        fill_app(&mut *tx, &mut facts, Some(account)).await?
+    } else {
+        BTreeSet::new()
+    };
+    if unknown_app(&rules, &known) {
+        return Err(AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "This group's requirements can't be checked right now: an app hasn't reported yet.",
+        ));
+    }
     let Some(facts) = facts.get(&account) else {
         return Err(AppError::forbidden());
     };
@@ -234,13 +290,24 @@ pub async fn sweep(db: &PgPool, esi: &Esi) -> Result<usize, sqlx::Error> {
     fill_birthdays(db, esi).await?;
     // Read once, outside any group's lock; adds are checked again as they
     // happen.
-    let facts = db::facts(db, None).await?;
+    let mut facts = db::facts(db, None).await?;
+    if let Err(err) = db::prune_app_values(db).await {
+        tracing::warn!(error = %err, "pruning app filter values failed");
+    }
+    // An app's values that can't be read leave only its groups alone.
+    let known = match fill_app(&mut *db.acquire().await?, &mut facts, None).await {
+        Ok(known) => known,
+        Err(err) => {
+            tracing::warn!(error = %err, "app filter values unreadable; their groups wait");
+            BTreeSet::new()
+        }
+    };
     let guest: i64 = sqlx::query_scalar!(r#"SELECT core.guest_state() AS "g!""#)
         .fetch_one(db)
         .await?;
     let mut changed = 0;
     for (group, settings) in groups {
-        changed += sweep_one(db, group, settings, &facts, StateId(guest)).await?;
+        changed += sweep_one(db, group, settings, &facts, &known, StateId(guest)).await?;
     }
     Ok(changed)
 }
@@ -250,6 +317,7 @@ async fn sweep_one(
     group: GroupId,
     settings: Settings,
     facts: &HashMap<AccountId, Facts>,
+    known: &BTreeSet<String>,
     guest: StateId,
 ) -> Result<usize, sqlx::Error> {
     let mut tx = db.begin().await?;
@@ -270,6 +338,13 @@ async fn sweep_one(
             group = group.0,
             ?broken,
             "smart group has filters that don't read; left alone"
+        );
+        return Ok(0);
+    }
+    if unknown_app(&rules, known) {
+        tracing::warn!(
+            group = group.0,
+            "an app filter has no fresh values; left alone"
         );
         return Ok(0);
     }
@@ -515,7 +590,7 @@ async fn check_filter(
                 return Err(too_many());
             }
         }
-        Filter::CharacterAge { .. } | Filter::Compliant {} => {}
+        Filter::CharacterAge { .. } | Filter::Compliant {} | Filter::App { .. } => {}
     }
     Ok(())
 }

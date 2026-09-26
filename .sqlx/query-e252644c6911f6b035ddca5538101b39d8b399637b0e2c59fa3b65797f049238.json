@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT config->>'name' AS \"name!\", config->>'config' AS \"config!\"\n        FROM core.smart_filters\n        WHERE kind = 'app' AND config->>'plugin' = $1\n          AND config ? 'name' AND config ? 'config'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "config!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "e252644c6911f6b035ddca5538101b39d8b399637b0e2c59fa3b65797f049238"
+}

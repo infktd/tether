@@ -58,6 +58,7 @@ pub struct CallState {
     viewer: Option<services::Viewer>,
     esi_calls: usize,
     discord_sends: usize,
+    filter_reports: usize,
     http_calls: usize,
 }
 
@@ -75,6 +76,7 @@ impl CallState {
             viewer: None,
             esi_calls: 0,
             discord_sends: 0,
+            filter_reports: 0,
             http_calls: 0,
         }
     }
@@ -172,6 +174,68 @@ impl tether::plugin::discord::Host for CallState {
             .ok_or(services::DiscordError::Unavailable)?;
         services
             .discord_send(self.plugin.clone(), channel, text, mention)
+            .await
+    }
+}
+
+impl tether::plugin::filters::Host for CallState {
+    async fn wanted(&mut self) -> Vec<services::FilterWanted> {
+        match &self.services {
+            Some(services) => services.filters_wanted(self.plugin.clone()).await,
+            None => Vec::new(),
+        }
+    }
+
+    async fn report(
+        &mut self,
+        name: String,
+        config: String,
+        values: Vec<services::FilterValue>,
+    ) -> Result<(), services::FilterError> {
+        if self.jobs_refused {
+            return Err(services::FilterError::Invalid(
+                "pages can't report filter values: do that in submit or a job".to_owned(),
+            ));
+        }
+        self.filter_reports += 1;
+        if self.filter_reports > services::MAX_FILTER_REPORTS {
+            return Err(services::FilterError::Invalid(format!(
+                "at most {} reports in one call",
+                services::MAX_FILTER_REPORTS
+            )));
+        }
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::FilterError::Unavailable)?;
+        services
+            .filters_report(self.plugin.clone(), name, config, values)
+            .await
+    }
+}
+
+impl tether::plugin::timers::Host for CallState {
+    async fn publish(&mut self, timers: Vec<services::Timer>) -> Result<(), services::TimerError> {
+        if self.jobs_refused {
+            return Err(services::TimerError::Invalid(
+                "pages can't publish timers: do that in submit or a job".to_owned(),
+            ));
+        }
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::TimerError::Unavailable)?;
+        services.timers_publish(self.plugin.clone(), timers).await
+    }
+
+    async fn published(&mut self) -> Result<Vec<services::SharedTimer>, services::TimerError> {
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::TimerError::Unavailable)?;
+        let corporation = self.viewer.as_ref().map(|v| v.main.corporation_id);
+        services
+            .timers_published(self.plugin.clone(), corporation)
             .await
     }
 }

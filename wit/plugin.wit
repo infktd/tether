@@ -507,6 +507,81 @@ interface http {
     send: func(request: request) -> result<response, error>;
 }
 
+/// Secure Groups filters the plugin offers, declared in `plugin.toml`
+/// (`[[filters]]`), as aa-securegroups takes them from apps (skills,
+/// assets, FATs). The host says which settings smart groups use; the plugin
+/// works out a value per character from its own data and reports it, on its
+/// own schedule. The host combines characters into accounts itself, so this
+/// interface never tells a plugin which characters share an account.
+interface filters {
+    /// One filter setting smart groups use: the filter's name and the
+    /// values an admin gave its fields, as a JSON object.
+    record setting {
+        name: string,
+        config: string,
+    }
+
+    /// A character's value for one setting: 1 or 0 for yes-or-no filters,
+    /// a count for filters that add up across characters.
+    record value {
+        character-id: s64,
+        value: s64,
+    }
+
+    variant error {
+        /// Not a declared filter, not a setting in use, or too many values.
+        invalid(string),
+        unavailable,
+    }
+
+    /// The settings of this plugin's filters that smart groups use now.
+    wanted: func() -> list<setting>;
+    /// Replaces this plugin's values for one setting (at most 100,000).
+    /// Values more than two days old count as unknown, so report at least
+    /// daily. Only from submit or a job.
+    report: func(name: string, config: string, values: list<value>) -> result<_, error>;
+}
+
+/// Timers apps share, as aa-structures feeds Alliance Auth's timerboard:
+/// one app publishes (with `timers = "publish"`), another shows them (with
+/// `timers = "read"`). Nothing else passes between apps.
+interface timers {
+    record timer {
+        /// The publisher's own id for it, e.g. a structure and state.
+        key: string,
+        /// What the timer is for, e.g. "Astrahus: armor timer".
+        title: string,
+        /// When it ends (RFC 3339, EVE time).
+        at: string,
+        /// Solar system name.
+        system: string,
+        details: string,
+        /// `friendly`, `hostile` or `neutral`.
+        objective: string,
+        /// Only for pilots whose main is in this corporation.
+        corporation-id: option<s64>,
+    }
+
+    record shared {
+        timer: timer,
+        /// The publishing app's name.
+        source: string,
+    }
+
+    variant error {
+        /// Not allowed (the capability, or a page), or a timer breaks a
+        /// limit; which.
+        invalid(string),
+        unavailable,
+    }
+
+    /// Replaces this app's published timers (at most 500). Only from
+    /// submit or a job.
+    publish: func(timers: list<timer>) -> result<_, error>;
+    /// Every app's published timers that haven't ended more than a day ago.
+    published: func() -> result<list<shared>, error>;
+}
+
 world plugin {
     import log;
     import storage;
@@ -515,6 +590,8 @@ world plugin {
     import esi;
     import discord;
     import http;
+    import filters;
+    import timers;
     use jobs.{job, job-error};
     use page.{page, request, page-error, submission, submit-result};
 

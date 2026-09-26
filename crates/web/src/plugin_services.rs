@@ -25,8 +25,9 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Channel, Character, DiscordError, EsiError, EsiResponse, Fut, HttpError, HttpRequest,
-    HttpResponse, Mention, Named, Services, Subject,
+    Channel, Character, DiscordError, EsiError, EsiResponse, FilterError, FilterValue,
+    FilterWanted, Fut, HttpError, HttpRequest, HttpResponse, Mention, Named, Services, SharedTimer,
+    Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -541,5 +542,41 @@ impl Services for PluginServices {
             crate::plugin_http::send(&deps, &plugins, &http, &plugin, request, from_page).await
         });
         Box::pin(async move { task.await.unwrap_or(Err(HttpError::Unavailable)) })
+    }
+
+    fn filters_wanted(&self, plugin: String) -> Fut<Vec<FilterWanted>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move { crate::plugin_shared::wanted(&db, &plugins, &plugin).await })
+    }
+
+    fn filters_report(
+        &self,
+        plugin: String,
+        name: String,
+        config: String,
+        values: Vec<FilterValue>,
+    ) -> Fut<Result<(), FilterError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_shared::report(&db, &plugins, &plugin, &name, &config, &values).await
+        })
+    }
+
+    fn timers_publish(&self, plugin: String, timers: Vec<Timer>) -> Fut<Result<(), TimerError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(
+            async move { crate::plugin_shared::publish(&db, &plugins, &plugin, &timers).await },
+        )
+    }
+
+    fn timers_published(
+        &self,
+        plugin: String,
+        viewer_corporation: Option<i64>,
+    ) -> Fut<Result<Vec<SharedTimer>, TimerError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_shared::published(&db, &plugins, &plugin, viewer_corporation).await
+        })
     }
 }

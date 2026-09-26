@@ -329,7 +329,19 @@ struct GroupPage {
     members: Vec<MemberRow>,
     /// Secure Groups: its settings and filters, if it's a smart group.
     smart: Option<SmartView>,
+    /// Filters running apps offer.
+    app_filters: Vec<AppFilterView>,
     error: Option<String>,
+}
+
+/// An app's Secure Groups filter, for the add form.
+pub struct AppFilterView {
+    /// `plugin/filter`.
+    pub value: String,
+    pub label: String,
+    pub sum: bool,
+    /// `(name, label, number)`.
+    pub fields: Vec<(String, String, bool)>,
 }
 
 pub struct SmartView {
@@ -338,6 +350,8 @@ pub struct SmartView {
     pub notify: bool,
     /// `(id, what it asks)`.
     pub filters: Vec<(i64, String)>,
+    /// An app filter has no fresh values: sweeps leave the group alone.
+    pub frozen: bool,
 }
 
 async fn group_page(
@@ -404,19 +418,59 @@ async fn group_page(
                     .into_iter()
                     .map(|id| (id, "a filter that no longer reads (delete it)".to_owned())),
             );
+            let known = tether_db::smart_groups::app_keys_known(&state.db).await?;
+            let frozen = rules.iter().any(|r| match &r.filter {
+                tether_core::smart::Filter::App {
+                    plugin,
+                    name,
+                    config,
+                    ..
+                } => !known.contains(&tether_core::smart::app_key(plugin, name, config)),
+                _ => false,
+            });
             Some(SmartView {
                 auto_join: s.auto_join,
                 grace_days: s.grace_days,
                 notify: s.notify,
                 filters,
+                frozen,
             })
         }
         None => None,
     };
+    let app_filters = state
+        .plugins
+        .all_running()
+        .into_iter()
+        .flat_map(|r| {
+            let (id, name) = (r.manifest.plugin.id.clone(), r.manifest.plugin.name.clone());
+            r.manifest
+                .filters
+                .iter()
+                .map(|f| AppFilterView {
+                    value: format!("{id}/{}", f.name),
+                    label: format!("{name}: {}", f.label),
+                    sum: f.combine == tether_plugins::manifest::Combine::Sum,
+                    fields: f
+                        .fields
+                        .iter()
+                        .map(|x| {
+                            (
+                                x.name.clone(),
+                                x.label.clone(),
+                                x.kind == tether_plugins::manifest::FieldKind::Number,
+                            )
+                        })
+                        .collect(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let page = GroupPage {
         shell,
         smart,
+        app_filters,
         flags: found.group.flags,
         group: group_row(found),
         states,
@@ -600,6 +654,7 @@ pub async fn smart_filter(
             all: field(&fields, "match") == "all",
         }),
         "compliant" => Ok(Filter::Compliant {}),
+        "app" => app_filter(&state, &fields),
         _ => Err(AppError::bad_request("Choose a filter.")),
     };
     let result = match filter {
@@ -616,6 +671,73 @@ pub async fn smart_filter(
         Err(err) => Err(err),
     };
     on_group(&state, shell, id, result).await
+}
+
+/// An app's filter from the form: `app` is `plugin/filter`; each field is
+/// `f_<name>`; `at_least` for filters that add up.
+fn app_filter(state: &AppState, fields: &Fields) -> Result<tether_core::smart::Filter, AppError> {
+    let (plugin, name) = field(fields, "app")
+        .split_once('/')
+        .ok_or_else(|| AppError::bad_request("Choose an app's filter."))?;
+    let running = state
+        .plugins
+        .running(plugin)
+        .ok_or_else(|| AppError::bad_request("That app isn't running."))?;
+    let spec = running
+        .manifest
+        .filters
+        .iter()
+        .find(|f| f.name == name)
+        .ok_or_else(|| AppError::bad_request("That app has no such filter."))?;
+    let mut config = std::collections::BTreeMap::new();
+    let mut shown = Vec::new();
+    for f in &spec.fields {
+        let raw = field(fields, &format!("f_{}", f.name)).trim();
+        if raw.is_empty() || raw.chars().count() > 100 || raw.chars().any(char::is_control) {
+            return Err(AppError::bad_request(format!(
+                "Fill in {} (at most 100 characters).",
+                f.label
+            )));
+        }
+        let value = match f.kind {
+            tether_plugins::manifest::FieldKind::Number => serde_json::Value::from(
+                raw.parse::<i64>()
+                    .map_err(|_| AppError::bad_request(format!("{} is a number.", f.label)))?,
+            ),
+            tether_plugins::manifest::FieldKind::Text => serde_json::Value::from(raw),
+        };
+        shown.push(format!("{}: {raw}", f.label));
+        config.insert(f.name.clone(), value);
+    }
+    let sum = spec.combine == tether_plugins::manifest::Combine::Sum;
+    let at_least = if sum {
+        field(fields, "at_least")
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|n| *n >= 1)
+            .ok_or_else(|| AppError::bad_request("Give a total of at least 1."))?
+    } else {
+        0
+    };
+    let label = if shown.is_empty() {
+        format!("{}: {}", running.manifest.plugin.name, spec.label)
+    } else {
+        format!(
+            "{}: {} ({})",
+            running.manifest.plugin.name,
+            spec.label,
+            shown.join(", ")
+        )
+    };
+    Ok(tether_core::smart::Filter::App {
+        plugin: plugin.to_owned(),
+        name: name.to_owned(),
+        config: serde_json::to_string(&config).map_err(AppError::internal)?,
+        sum,
+        at_least,
+        label,
+    })
 }
 
 /// `POST /admin/groups/{id}/smart/filters/{filter}/delete`

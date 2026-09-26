@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_filter_values (plugin_id, name, config, character_id, value)\n        SELECT $1, $2, $3, u.c, u.v FROM unnest($4::bigint[], $5::bigint[]) AS u(c, v)\n        JOIN core.characters ch ON ch.id = u.c\n        ON CONFLICT (plugin_id, name, config, character_id) DO UPDATE SET value = EXCLUDED.value\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "116fa59310fd99f4acf5ef35a274f457e27b2151f149c53d8c8eda28d9394cdd"
+}

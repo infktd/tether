@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT plugin_id, name, config FROM core.plugin_filter_reports\n        WHERE reported_at > now() - interval '2 days'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_filter_reports",
+            "name": "plugin_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_filter_reports",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "config",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_filter_reports",
+            "name": "config"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "48b15add3e1366c73a2f9e3aa562b75401ca5bc0abe9899c546308d8bf379718"
+}

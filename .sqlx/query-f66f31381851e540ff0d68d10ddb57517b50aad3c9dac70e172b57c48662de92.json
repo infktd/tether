@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_filter_reports (plugin_id, name, config) VALUES ($1, $2, $3)\n        ON CONFLICT (plugin_id, name, config) DO UPDATE SET reported_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f66f31381851e540ff0d68d10ddb57517b50aad3c9dac70e172b57c48662de92"
+}

@@ -1,0 +1,85 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.account_id, v.plugin_id, v.name, v.config,\n               max(v.value) AS \"highest!\",\n               LEAST(sum(v.value), 9223372036854775807)::bigint AS \"total!\",\n               count(*) AS \"reported!\"\n        FROM core.plugin_filter_values v\n        JOIN core.plugin_filter_reports r\n          ON r.plugin_id = v.plugin_id AND r.name = v.name AND r.config = v.config\n        JOIN core.characters c ON c.id = v.character_id\n        WHERE r.reported_at > now() - interval '2 days'\n          AND ($1::bigint IS NULL OR c.account_id = $1)\n        GROUP BY c.account_id, v.plugin_id, v.name, v.config\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_filter_values",
+            "name": "plugin_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_filter_values",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "config",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_filter_values",
+            "name": "config"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "highest!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "reported!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "e114485aa48c5d23bb7c09b4806ffc0e322ae83e6a0a16437fc93e2a64c58d25"
+}

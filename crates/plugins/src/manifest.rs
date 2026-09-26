@@ -41,6 +41,9 @@ pub struct Manifest {
     /// Dashboard widgets, shown to whoever may open their page.
     #[serde(default)]
     pub widgets: Vec<Widget>,
+    /// Secure Groups filters it offers.
+    #[serde(default)]
+    pub filters: Vec<FilterSpec>,
 }
 
 /// `[[pages]]`: pages under `path` (a page path; `""` for all) need
@@ -134,6 +137,54 @@ pub struct Capabilities {
     /// plugin never sees them.
     #[serde(default)]
     pub secrets: BTreeMap<String, SecretSpec>,
+    /// Shared timers (aa-structures feeding the timerboard): `publish` or
+    /// `read`.
+    #[serde(default)]
+    pub timers: Option<TimersAccess>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TimersAccess {
+    Publish,
+    Read,
+}
+
+/// `[[filters]]`: a Secure Groups filter the plugin offers.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterSpec {
+    pub name: String,
+    /// What it asks, e.g. "Has the skills in a skill set".
+    pub label: String,
+    /// How characters make an account: `any` passes if one does; `sum`
+    /// adds values up and needs at least an admin-chosen total.
+    pub combine: Combine,
+    #[serde(default)]
+    pub fields: Vec<FilterField>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Combine {
+    Any,
+    Sum,
+}
+
+/// A setting an admin gives the filter.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterField {
+    pub name: String,
+    pub label: String,
+    pub kind: FieldKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldKind {
+    Text,
+    Number,
 }
 
 /// Where a secret goes: `[capabilities.secrets.janice_api_key]` with
@@ -324,6 +375,31 @@ impl Manifest {
                     "[[navigation]] path {:?} appears twice",
                     entry.path
                 )));
+            }
+        }
+        if self.filters.len() > 10 {
+            return Err(bad("more than 10 [[filters]]"));
+        }
+        let mut filter_names = std::collections::BTreeSet::new();
+        for filter in &self.filters {
+            check_name("a filter name", &filter.name)?;
+            if !filter_names.insert(filter.name.as_str()) {
+                return Err(bad(format!("filter {:?} appears twice", filter.name)));
+            }
+            check_text("a filter label", &filter.label, 80, true)?;
+            if filter.fields.len() > 5 {
+                return Err(bad(format!("filter {}: more than 5 fields", filter.name)));
+            }
+            let mut fields = std::collections::BTreeSet::new();
+            for field in &filter.fields {
+                check_name("a filter field name", &field.name)?;
+                if !fields.insert(field.name.as_str()) {
+                    return Err(bad(format!(
+                        "filter {}: field {:?} appears twice",
+                        filter.name, field.name
+                    )));
+                }
+                check_text("a filter field label", &field.label, 60, true)?;
             }
         }
         if self.widgets.len() > MAX_WIDGETS {

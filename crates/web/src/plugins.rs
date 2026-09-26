@@ -1098,6 +1098,8 @@ async fn uninstall_now(
     plugin_jobs::remove(&mut tx, id).await?;
     // Its secrets' values; its approvals go with its row.
     let secrets_deleted = tether_db::plugin_http::delete_secrets(&mut *tx, id).await?;
+    // What it reported for Secure Groups and the timers it published.
+    tether_db::smart_groups::forget_plugin(&mut tx, id).await?;
     let grants = tether_db::permissions::remove_plugin_grants(&mut tx, id).await?;
     // Member stops requiring its user scopes.
     crate::states::enqueue_evaluate_all(&mut *tx).await?;

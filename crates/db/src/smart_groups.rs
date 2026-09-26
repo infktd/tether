@@ -180,7 +180,8 @@ pub async fn facts<'e>(
                    WHERE c.account_id = a.id AND x IS NOT NULL
                ) AS "affiliations!",
                ARRAY(SELECT gm.group_id FROM core.group_members gm WHERE gm.account_id = a.id)
-                   AS "groups!"
+                   AS "groups!",
+               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS "characters!"
         FROM core.accounts a
         JOIN core.characters m ON m.id = a.main_character_id
         WHERE a.active AND NOT core.blacklisted(a.id)
@@ -205,6 +206,8 @@ pub async fn facts<'e>(
                     main_age_days: r.age_days,
                     groups: r.groups.into_iter().collect(),
                     compliant: r.compliant,
+                    app: Default::default(),
+                    characters: r.characters,
                 },
             )
         })
@@ -370,5 +373,241 @@ pub async fn uses_age<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<bool, s
         r#"SELECT EXISTS (SELECT 1 FROM core.smart_filters WHERE kind = 'character_age') AS "e!""#
     )
     .fetch_one(executor)
+    .await
+}
+
+/// Fresh app filter values, combined per account: `(account, key,
+/// highest, sum, characters reported)`; only the given account's if one
+/// is given. Sums saturate rather than overflow.
+pub async fn app_values<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    only: Option<AccountId>,
+) -> Result<Vec<(AccountId, String, i64, i64, i64)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT c.account_id, v.plugin_id, v.name, v.config,
+               max(v.value) AS "highest!",
+               LEAST(sum(v.value), 9223372036854775807)::bigint AS "total!",
+               count(*) AS "reported!"
+        FROM core.plugin_filter_values v
+        JOIN core.plugin_filter_reports r
+          ON r.plugin_id = v.plugin_id AND r.name = v.name AND r.config = v.config
+        JOIN core.characters c ON c.id = v.character_id
+        WHERE r.reported_at > now() - interval '2 days'
+          AND ($1::bigint IS NULL OR c.account_id = $1)
+        GROUP BY c.account_id, v.plugin_id, v.name, v.config
+        "#,
+        only.map(|a| a.0),
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                AccountId(r.account_id),
+                tether_core::smart::app_key(&r.plugin_id, &r.name, &r.config),
+                r.highest,
+                r.total,
+                r.reported,
+            )
+        })
+        .collect())
+}
+
+/// App filter settings reported in the last two days (empty reports
+/// count).
+pub async fn app_keys_known<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<BTreeSet<String>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT plugin_id, name, config FROM core.plugin_filter_reports
+        WHERE reported_at > now() - interval '2 days'
+        "#
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| tether_core::smart::app_key(&r.plugin_id, &r.name, &r.config))
+        .collect())
+}
+
+/// Drops values of settings no smart group uses any more, and of reports
+/// over a week old.
+pub async fn prune_app_values<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        WITH gone AS (
+            DELETE FROM core.plugin_filter_reports r
+            WHERE r.reported_at < now() - interval '7 days'
+               OR NOT EXISTS (
+                   SELECT 1 FROM core.smart_filters f
+                   WHERE f.kind = 'app' AND f.config->>'plugin' = r.plugin_id
+                     AND f.config->>'name' = r.name AND f.config->>'config' = r.config)
+            RETURNING r.plugin_id, r.name, r.config
+        )
+        DELETE FROM core.plugin_filter_values v USING gone g
+        WHERE v.plugin_id = g.plugin_id AND v.name = g.name AND v.config = g.config
+        "#
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// The settings of a plugin's filters smart groups use: `(name, config)`.
+pub async fn app_wanted<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin: &str,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT config->>'name' AS "name!", config->>'config' AS "config!"
+        FROM core.smart_filters
+        WHERE kind = 'app' AND config->>'plugin' = $1
+          AND config ? 'name' AND config ? 'config'
+        "#,
+        plugin
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.name, r.config)).collect())
+}
+
+/// Replaces a plugin's values for one setting, one report at a time per
+/// setting. Only characters Tether knows are kept.
+pub async fn app_report(
+    tx: &mut sqlx::PgConnection,
+    plugin: &str,
+    name: &str,
+    config: &str,
+    values: &[(i64, i64)],
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock(hashtext($1 || chr(31) || $2 || chr(31) || $3)::bigint)",
+        plugin,
+        name,
+        config
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        r#"
+        INSERT INTO core.plugin_filter_reports (plugin_id, name, config) VALUES ($1, $2, $3)
+        ON CONFLICT (plugin_id, name, config) DO UPDATE SET reported_at = now()
+        "#,
+        plugin,
+        name,
+        config
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM core.plugin_filter_values WHERE plugin_id = $1 AND name = $2 AND config = $3",
+        plugin,
+        name,
+        config
+    )
+    .execute(&mut *tx)
+    .await?;
+    let characters: Vec<i64> = values.iter().map(|(c, _)| *c).collect();
+    let numbers: Vec<i64> = values.iter().map(|(_, v)| *v).collect();
+    sqlx::query!(
+        r#"
+        INSERT INTO core.plugin_filter_values (plugin_id, name, config, character_id, value)
+        SELECT $1, $2, $3, u.c, u.v FROM unnest($4::bigint[], $5::bigint[]) AS u(c, v)
+        JOIN core.characters ch ON ch.id = u.c
+        ON CONFLICT (plugin_id, name, config, character_id) DO UPDATE SET value = EXCLUDED.value
+        "#,
+        plugin,
+        name,
+        config,
+        &characters,
+        &numbers,
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// Drops everything a plugin reported or published (uninstall).
+pub async fn forget_plugin(tx: &mut sqlx::PgConnection, plugin: &str) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM core.plugin_filter_values WHERE plugin_id = $1",
+        plugin
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM core.shared_timers WHERE plugin_id = $1",
+        plugin
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// A shared timer, as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedTimer {
+    pub plugin_id: String,
+    pub key: String,
+    pub title: String,
+    pub at: DateTime<Utc>,
+    pub system: String,
+    pub details: String,
+    pub objective: String,
+    pub corporation_id: Option<i64>,
+}
+
+/// Replaces a plugin's published timers.
+pub async fn publish_timers(
+    tx: &mut sqlx::PgConnection,
+    plugin: &str,
+    timers: &[SharedTimer],
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM core.shared_timers WHERE plugin_id = $1",
+        plugin
+    )
+    .execute(&mut *tx)
+    .await?;
+    for t in timers {
+        sqlx::query!(
+            r#"
+            INSERT INTO core.shared_timers
+                (plugin_id, key, title, at, system, details, objective, corporation_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (plugin_id, key) DO NOTHING
+            "#,
+            plugin,
+            t.key,
+            t.title,
+            t.at,
+            t.system,
+            t.details,
+            t.objective,
+            t.corporation_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Every published timer that ended no more than a day ago.
+pub async fn shared_timers<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<Vec<SharedTimer>, sqlx::Error> {
+    sqlx::query_as!(
+        SharedTimer,
+        r#"
+        SELECT plugin_id, key, title, at, system, details, objective, corporation_id
+        FROM core.shared_timers WHERE at > now() - interval '1 day' ORDER BY at
+        "#
+    )
+    .fetch_all(executor)
     .await
 }

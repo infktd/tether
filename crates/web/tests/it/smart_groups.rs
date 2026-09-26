@@ -384,3 +384,50 @@ async fn smart_groups_never_reach_past_what_you_hold(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn huge_app_values_never_stop_sweeps(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    sqlx::query("INSERT INTO core.characters (id, account_id, name) VALUES (90000003, $1, 'Alt')")
+        .bind(pilot_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    // Values that would overflow a sum, however they got there.
+    sqlx::query(
+        "INSERT INTO core.plugin_filter_reports (plugin_id, name, config) VALUES ('x', 'y', '{}')",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    for character in [1887431749_i64, 90000003] {
+        sqlx::query(
+            "INSERT INTO core.plugin_filter_values (plugin_id, name, config, character_id, value) \
+             VALUES ('x', 'y', '{}', $1, 9223372036854775807)",
+        )
+        .bind(character)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    }
+    let miners = group(
+        &h,
+        &owner,
+        r#"{"name":"Miners","internal":false,"hidden":false}"#,
+    )
+    .await;
+    smart(&h, &owner, miners, "smart=on&auto_join=on&grace_days=0").await;
+    filter(
+        &h,
+        &owner,
+        miners,
+        &format!("kind=state&states={MEMBER_STATE}"),
+    )
+    .await;
+    assert_eq!(sweep(&h).await, 1, "other groups carry on");
+    assert!(in_group(&h, miners, pilot_account).await);
+}

@@ -12,10 +12,14 @@ pub use crate::host::tether::plugin::discord::{Channel, Error as DiscordError, M
 pub use crate::host::tether::plugin::esi::{
     Error as EsiError, Named, Response as EsiResponse, Subject,
 };
+pub use crate::host::tether::plugin::filters::{
+    Error as FilterError, Setting as FilterWanted, Value as FilterValue,
+};
 pub use crate::host::tether::plugin::http::{
     Error as HttpError, Method as HttpMethod, Request as HttpRequest, Response as HttpResponse,
 };
 pub use crate::host::tether::plugin::identity::{Builtin, Character, State, Viewer};
+pub use crate::host::tether::plugin::timers::{Error as TimerError, Shared as SharedTimer, Timer};
 
 /// ESI calls in one job run or form submission.
 pub const MAX_ESI_CALLS: usize = 100;
@@ -33,6 +37,8 @@ pub fn esi_cost(endpoint: &str) -> usize {
         _ => 1,
     }
 }
+/// Filter reports in one plugin call.
+pub const MAX_FILTER_REPORTS: usize = 50;
 /// Discord messages in one plugin call.
 pub const MAX_DISCORD_SENDS: usize = 5;
 /// HTTP requests in one job run or form submission.
@@ -74,6 +80,25 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         request: HttpRequest,
         from_page: bool,
     ) -> Fut<Result<HttpResponse, HttpError>>;
+    /// The settings of `plugin`'s Secure Groups filters in use.
+    fn filters_wanted(&self, plugin: String) -> Fut<Vec<FilterWanted>>;
+    /// Replaces `plugin`'s values for one filter setting.
+    fn filters_report(
+        &self,
+        plugin: String,
+        name: String,
+        config: String,
+        values: Vec<FilterValue>,
+    ) -> Fut<Result<(), FilterError>>;
+    /// Replaces `plugin`'s published timers.
+    fn timers_publish(&self, plugin: String, timers: Vec<Timer>) -> Fut<Result<(), TimerError>>;
+    /// Every app's published timers, for a plugin that may read them;
+    /// corporation-only ones only for `viewer_corporation`.
+    fn timers_published(
+        &self,
+        plugin: String,
+        viewer_corporation: Option<i64>,
+    ) -> Fut<Result<Vec<SharedTimer>, TimerError>>;
 }
 
 pub type Shared = Arc<dyn Services>;

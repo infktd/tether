@@ -116,6 +116,7 @@ impl Plugin for FleetActivityTracking {
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
             "housekeeping" => housekeeping(),
+            "report_filters" => report_filters(),
             TRACK_JOB => track_fleets(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
@@ -2178,6 +2179,34 @@ fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
 // ---- jobs ------------------------------------------------------------------
 
 /// Daily: logs older than LOG_DAYS go.
+/// Secure Groups' FAT filter: each character's FATs in the last `days`,
+/// for every setting a smart group uses.
+fn report_filters() -> Result<(), JobError> {
+    for setting in tether_plugin_sdk::filters::wanted() {
+        if setting.name != "fats" {
+            continue;
+        }
+        let days = serde_json::from_str::<serde_json::Value>(&setting.config)
+            .ok()
+            .and_then(|c| c.get("days").and_then(serde_json::Value::as_i64))
+            .filter(|d| (1..=3650).contains(d));
+        let Some(days) = days else {
+            log::warn(format!("ignoring a FAT filter setting: {}", setting.config));
+            continue;
+        };
+        let rows = storage::query(
+            "SELECT character_id, count(*) FROM fats \
+             WHERE created_at > now() - make_interval(days => $1::int) GROUP BY character_id",
+            &[Db::Integer(days)],
+        )
+        .map_err(|e| JobError::Retry(format!("counting FATs: {e:?}")))?;
+        let values: Vec<(i64, i64)> = rows.rows.iter().map(|r| (int(r, 0), int(r, 1))).collect();
+        tether_plugin_sdk::filters::report(&setting.name, &setting.config, &values)
+            .map_err(|e| JobError::Retry(format!("reporting FATs: {e:?}")))?;
+    }
+    Ok(())
+}
+
 fn housekeeping() -> Result<(), JobError> {
     let removed = storage::execute(
         &format!("DELETE FROM logs WHERE at < now() - interval '{LOG_DAYS} days'"),

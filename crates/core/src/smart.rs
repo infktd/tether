@@ -2,7 +2,7 @@
 //! account must pass to be in a group. Every filter must pass; a reversed
 //! filter must fail. Pure: the facts come from the database.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,24 @@ pub enum Filter {
     Groups { groups: Vec<i64>, all: bool },
     /// Every character registered with the state's scopes.
     Compliant {},
+    /// An app's filter (Member Audit's skills, FAT's attendance): the app
+    /// reports a value per character; `sum` adds an account's characters
+    /// up and needs `at_least`, else any character with a value passes.
+    App {
+        plugin: String,
+        name: String,
+        /// The admin's settings, as the app gets them (JSON text).
+        config: String,
+        sum: bool,
+        at_least: i64,
+        /// What it asks, for people: "Member Audit: has skill set Capitals".
+        label: String,
+    },
+}
+
+/// The key an app filter's values are kept under.
+pub fn app_key(plugin: &str, name: &str, config: &str) -> String {
+    format!("{plugin}\u{1f}{name}\u{1f}{config}")
 }
 
 impl Filter {
@@ -34,6 +52,7 @@ impl Filter {
             Self::CharacterAge { .. } => "character_age",
             Self::Groups { .. } => "groups",
             Self::Compliant {} => "compliant",
+            Self::App { .. } => "app",
         }
     }
 
@@ -59,6 +78,21 @@ impl Filter {
                 }
             }
             Self::Compliant {} => facts.compliant,
+            Self::App {
+                plugin,
+                name,
+                config,
+                sum,
+                at_least,
+                ..
+            } => {
+                let (max, total, _) = facts
+                    .app
+                    .get(&app_key(plugin, name, config))
+                    .copied()
+                    .unwrap_or((0, 0, 0));
+                if *sum { total >= *at_least } else { max > 0 }
+            }
         }
     }
 }
@@ -75,6 +109,11 @@ pub struct Facts {
     pub main_age_days: Option<i64>,
     pub groups: BTreeSet<i64>,
     pub compliant: bool,
+    /// App filter values, by [`app_key`]: the highest of the account's
+    /// characters, their sum, and how many were reported.
+    pub app: BTreeMap<String, (i64, i64, i64)>,
+    /// How many characters the account has.
+    pub characters: i64,
 }
 
 /// A stored filter with its reversal.
@@ -87,6 +126,25 @@ pub struct Rule {
 
 impl Rule {
     pub fn passes(&self, facts: &Facts) -> bool {
+        // A reversed app filter gates on absence, and an app only reports
+        // characters it has data for: pass only when every character of
+        // the account was reported, or missing data would let anyone in.
+        if self.reversed
+            && let Filter::App {
+                plugin,
+                name,
+                config,
+                ..
+            } = &self.filter
+        {
+            let reported = facts
+                .app
+                .get(&app_key(plugin, name, config))
+                .map_or(0, |(_, _, n)| *n);
+            if reported < facts.characters {
+                return false;
+            }
+        }
         self.filter.passes(facts) != self.reversed
     }
 }
@@ -108,6 +166,8 @@ mod tests {
             main_age_days: Some(400),
             groups: [7].into(),
             compliant: true,
+            app: [(app_key("fat", "fats", "{\"days\":30}"), (4, 9, 3))].into(),
+            characters: 3,
         }
     }
 
@@ -172,6 +232,43 @@ mod tests {
             ..facts()
         };
         assert!(!Filter::CharacterAge { days: 1 }.passes(&unknown));
+    }
+
+    #[test]
+    fn app_filters_read_the_hosts_values() {
+        let f = facts();
+        let fats = |at_least| Filter::App {
+            plugin: "fat".into(),
+            name: "fats".into(),
+            config: "{\"days\":30}".into(),
+            sum: true,
+            at_least,
+            label: "FAT: FATs".into(),
+        };
+        assert!(fats(9).passes(&f));
+        assert!(!fats(10).passes(&f));
+        // Unknown settings never pass.
+        let other = Filter::App {
+            plugin: "fat".into(),
+            name: "fats".into(),
+            config: "{\"days\":7}".into(),
+            sum: false,
+            at_least: 0,
+            label: String::new(),
+        };
+        assert!(!other.passes(&f));
+        // Reversed, it passes only when every character was reported.
+        let not_active = Rule {
+            id: 2,
+            filter: fats(20),
+            reversed: true,
+        };
+        assert!(not_active.passes(&f));
+        let partly = Facts {
+            characters: 4,
+            ..facts()
+        };
+        assert!(!not_active.passes(&partly));
     }
 
     #[test]

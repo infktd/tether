@@ -227,6 +227,59 @@ pub mod discord {
     }
 }
 
+/// Secure Groups filters you declare in `plugin.toml` (`[[filters]]`):
+/// ask which settings smart groups use, work out a value per character from
+/// your own data, and report it, from a job, at least daily. The host
+/// combines characters into accounts: this never tells you which share
+/// one.
+///
+/// ```ignore
+/// use tether_plugin_sdk::filters;
+///
+/// for setting in filters::wanted() {
+///     // setting.config is the admin's field values, as a JSON object.
+///     let values = my_values(&setting.name, &setting.config); // Vec<(character, value)>
+///     filters::report(&setting.name, &setting.config, &values)?;
+/// }
+/// ```
+pub mod filters {
+    pub use crate::bindings::tether::plugin::filters::{Error, Setting, Value};
+
+    /// The settings of your filters that smart groups use now.
+    pub fn wanted() -> Vec<Setting> {
+        crate::bindings::tether::plugin::filters::wanted()
+    }
+
+    /// Replaces your values for one setting: `(character id, value)`, 1 or 0
+    /// for yes-or-no filters, a count for ones that add up. Not from pages.
+    pub fn report(name: &str, config: &str, values: &[(i64, i64)]) -> Result<(), Error> {
+        let values: Vec<Value> = values
+            .iter()
+            .map(|(character_id, value)| Value {
+                character_id: *character_id,
+                value: *value,
+            })
+            .collect();
+        crate::bindings::tether::plugin::filters::report(name, config, &values)
+    }
+}
+
+/// Timers apps share: publish yours (`timers = "publish"`), or show
+/// everyone's (`timers = "read"`).
+pub mod timers {
+    pub use crate::bindings::tether::plugin::timers::{Error, Shared, Timer};
+
+    /// Replaces your published timers (at most 500). Not from pages.
+    pub fn publish(timers: &[Timer]) -> Result<(), Error> {
+        crate::bindings::tether::plugin::timers::publish(timers)
+    }
+
+    /// Every app's published timers that ended at most a day ago.
+    pub fn published() -> Result<Vec<Shared>, Error> {
+        crate::bindings::tether::plugin::timers::published()
+    }
+}
+
 /// Outbound HTTPS to the hosts in `capabilities.http` that an admin
 /// approved. The host sends the request, sets the User-Agent, adds a
 /// secret you name (you never see its value), follows redirects only

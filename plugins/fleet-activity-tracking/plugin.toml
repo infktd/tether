@@ -26,6 +26,11 @@ data_source = ["esi-fleets.read_fleet.v1"]
 name = "housekeeping"
 every = "1d"
 
+# Reports FAT counts for the Secure Groups filter below.
+[[capabilities.schedules]]
+name = "report_filters"
+every = "1h"
+
 # aa-afat's permissions. Grant Member basic_access; FCs add_fatlink;
 # fleet officers manage_afat; leadership the statistics and logs.
 [permissions]
@@ -51,3 +56,16 @@ permission = "logs_view"
 [[navigation]]
 label = "Fleet Activity Tracking"
 path = ""
+
+# aa-securegroups' FAT filter: at least N FATs in the last D days, added up
+# across an account's characters (Tether adds them; the app reports each
+# character's count).
+[[filters]]
+name = "fats"
+label = "FATs in the last days"
+combine = "sum"
+
+[[filters.fields]]
+name = "days"
+label = "Days"
+kind = "number"

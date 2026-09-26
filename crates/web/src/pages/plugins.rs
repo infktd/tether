@@ -103,6 +103,26 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
             ),
         );
     }
+    match c.timers {
+        Some(tether_plugins::manifest::TimersAccess::Publish) => add(
+            "Shared timers",
+            "Publishes timers other apps (such as Structure Timers) can show".to_owned(),
+        ),
+        Some(tether_plugins::manifest::TimersAccess::Read) => add(
+            "Shared timers",
+            "Shows timers other apps publish (such as Structures' reinforcement timers)".to_owned(),
+        ),
+        None => {}
+    }
+    for filter in &manifest.filters {
+        add(
+            "Secure Groups filter",
+            format!(
+                "{}: its answers decide who is in any smart group an admin uses it for",
+                filter.label
+            ),
+        );
+    }
     if lines.is_empty() {
         lines.push(Capability {
             title: "Nothing else".to_owned(),

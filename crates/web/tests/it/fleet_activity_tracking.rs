@@ -1302,3 +1302,109 @@ async fn a_deactivated_fcs_data_source_stops_tracking(db: PgPool) {
         admin.body
     );
 }
+
+// ---- Secure Groups: the FAT filter ---------------------------------------------
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn fats_feed_secure_groups(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let hash = create_link(&h, &owner, "Roam", "").await;
+    let res = post(
+        &h,
+        &format!("links/{hash}/add"),
+        &format!("_form=register&c_{LINE}=on&c_{ALT}=on"),
+        &line,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let line_account = me(&h, &line).await["account_id"].as_i64().unwrap();
+
+    // At least 2 FATs in 30 days, added up across an account's characters.
+    let group = send(
+        &h.app,
+        post_json(
+            "/api/admin/groups",
+            &owner,
+            r#"{"name":"Active pilots","internal":false,"hidden":false}"#,
+        ),
+    )
+    .await;
+    let group = serde_json::from_str::<serde_json::Value>(&group.body).unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{group}/smart"),
+            "smart=on&auto_join=on&grace_days=0",
+            &owner,
+        ),
+    )
+    .await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{group}/smart/filters"),
+            &format!("kind=app&app={ID}/fats&f_days=30&at_least=2"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        format!("/admin/groups/{group}"),
+        "{}",
+        res.body
+    );
+    let in_group = |account: i64| {
+        let db = h.db.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM core.group_members WHERE group_id = $1 AND account_id = $2)",
+            )
+            .bind(group)
+            .bind(account)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Nothing reported yet: the group can't be judged, so it's left alone.
+    tether_web::smart_groups::sweep(&h.db, &h.esi)
+        .await
+        .unwrap();
+    assert!(!in_group(line_account).await);
+
+    // The app's hourly job reports each character's count.
+    sqlx::query(
+        "UPDATE core.schedules SET next_run_at = now() - interval '1 minute' WHERE name = $1",
+    )
+    .bind(format!("plugin:{ID}:report_filters"))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    tether_jobs::schedule::run_due(&h.db).await.unwrap();
+    work(&h).await;
+    no_problems(&plugin_problems(&h).await);
+    let values: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT character_id, value FROM core.plugin_filter_values ORDER BY character_id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(values, vec![(ALT, 1), (LINE, 1)]);
+
+    // One FAT each: 2 across the account, so in.
+    tether_web::smart_groups::sweep(&h.db, &h.esi)
+        .await
+        .unwrap();
+    assert!(in_group(line_account).await);
+    let owner_account = me(&h, &owner).await["account_id"].as_i64().unwrap();
+    assert!(!in_group(owner_account).await, "no FATs, not in");
+    let listed = page(&h, "/groups", &line).await.body;
+    assert!(
+        listed.contains("Fleet Activity Tracking: FATs in the last days (Days: 30): at least 2"),
+        "{listed}"
+    );
+}
