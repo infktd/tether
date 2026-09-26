@@ -9,6 +9,10 @@
 //! no Referer is sent, so traffic goes where the list says and nothing
 //! more leaves with it.
 //!
+//! [`ALLOWED`] is Tether's own list. Plugins get their own clients with
+//! [`Allowlist::only`]: exactly the hosts an admin approved for that
+//! plugin, never these.
+//!
 //! Two libraries make their own connections and can't take this client:
 //! eve-esi-client (ESI and EVE SSO, endpoints fixed in the library) and
 //! twilight (Discord, whose endpoint is checked against this list where it
@@ -53,6 +57,9 @@ pub struct Allowlist {
     https: BTreeSet<String>,
     /// `host:port` pairs reachable over plain HTTP (tests only).
     http: BTreeSet<String>,
+    /// Names must resolve to public addresses (plugins' hosts, whose DNS
+    /// their publishers control).
+    public_only: bool,
 }
 
 impl Allowlist {
@@ -61,6 +68,22 @@ impl Allowlist {
         Self {
             https: ALLOWED.iter().map(|(h, _)| format!("{h}:443")).collect(),
             http: BTreeSet::new(),
+            public_only: false,
+        }
+    }
+
+    /// Exactly these hosts, over HTTPS on port 443, and nothing else: a
+    /// plugin's approved hosts (never [`ALLOWED`]'s, unless listed here).
+    /// Their names must resolve to public addresses: a publisher's DNS
+    /// can't point a plugin at loopback, private or link-local networks.
+    pub fn only<'a>(hosts: impl IntoIterator<Item = &'a str>) -> Self {
+        Self {
+            https: hosts
+                .into_iter()
+                .map(|h| format!("{}:443", h.to_ascii_lowercase()))
+                .collect(),
+            http: BTreeSet::new(),
+            public_only: true,
         }
     }
 
@@ -166,9 +189,67 @@ impl Resolve for AllowResolver {
             if !allow.resolvable(&host) {
                 return Err(format!("{host} isn't an allowed destination").into());
             }
-            let addrs = tokio::net::lookup_host((host.as_str(), 0)).await?;
-            Ok(Box::new(addrs.collect::<Vec<_>>().into_iter()) as Addrs)
+            let addrs: Vec<_> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(|a| !allow.public_only || is_public(a.ip()))
+                .collect();
+            if addrs.is_empty() {
+                return Err(format!("{host} doesn't resolve to a public address").into());
+            }
+            Ok(Box::new(addrs.into_iter()) as Addrs)
         })
+    }
+}
+
+/// Whether an address is on the public internet: not loopback, private,
+/// shared (CGNAT), link-local, unspecified, broadcast, documentation,
+/// benchmarking or multicast, nor an IPv6 form of one.
+pub fn is_public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_multicast()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (18..20).contains(&b))
+                || (a == 192 && b == 0 && v4.octets()[2] == 0)
+                || a >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let s = v6.segments();
+            let v4 = |hi: u16, lo: u16| {
+                let [a, b] = hi.to_be_bytes();
+                let [c, d] = lo.to_be_bytes();
+                IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d))
+            };
+            // NAT64 (64:ff9b::/96) and 6to4 (2002::/16): the IPv4 address
+            // inside decides.
+            if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                return is_public(v4(s[6], s[7]));
+            }
+            if s[0] == 0x2002 {
+                return is_public(v4(s[1], s[2]));
+            }
+            let first = s[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || (first & 0xffc0) == 0xfec0
+                || (first == 0x64 && s[1] == 0xff9b && s[2] == 1)
+                || (first == 0x2001 && s[1] == 0x0db8))
+        }
     }
 }
 
@@ -305,6 +386,20 @@ impl Request {
         Self(self.0.form(form))
     }
 
+    pub fn body(self, body: Vec<u8>) -> Self {
+        Self(self.0.body(body))
+    }
+
+    /// A header carrying a credential: marked sensitive, so it's kept out
+    /// of debug output and not HPACK-indexed. `None` if it isn't a valid
+    /// header name and value.
+    pub fn sensitive_header(self, name: &str, value: &str) -> Option<Self> {
+        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes()).ok()?;
+        let mut value = reqwest::header::HeaderValue::from_str(value).ok()?;
+        value.set_sensitive(true);
+        Some(Self(self.0.header(name, value)))
+    }
+
     pub async fn send(self) -> Result<reqwest::Response, reqwest::Error> {
         self.0.send().await
     }
@@ -363,6 +458,68 @@ mod tests {
                 "{blocked}"
             );
         }
+    }
+
+    #[test]
+    fn public_addresses() {
+        for ip in [
+            "1.1.1.1",
+            "185.60.1.1",
+            "2606:4700::1111",
+            "::ffff:8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+        ] {
+            assert!(is_public(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.17.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "224.0.0.1",
+            "198.18.0.1",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "2001:db8::1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::1",
+            "2002:a00:1::1",
+            "fec0::1",
+            "192.0.0.8",
+        ] {
+            assert!(!is_public(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[test]
+    fn only_is_exactly_the_hosts_given() {
+        let allow = Allowlist::only(["zkillboard.com"]);
+        assert!(allow.check("https://zkillboard.com/api/killID/1/").is_ok());
+        assert!(allow.check("https://ZKILLBOARD.com/").is_ok());
+        for blocked in [
+            "https://esi.evetech.net/status",
+            "https://api.github.com/",
+            "http://zkillboard.com/",
+            "https://zkillboard.com:8443/",
+            "https://www.zkillboard.com/",
+        ] {
+            assert!(allow.check(blocked).is_err(), "{blocked}");
+        }
+        assert!(
+            Allowlist::only([])
+                .check("https://zkillboard.com/")
+                .is_err()
+        );
     }
 
     #[test]

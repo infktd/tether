@@ -11,6 +11,8 @@ workspace = true
 [features]
 dev-login = ["tether-web/dev-login"]
 dev-docs = ["tether-web/dev-docs"]
+# Tests only; here so CI can prove a release build refuses it.
+plugin-http-test = ["tether-web/plugin-http-test"]
 # Everything for local development.
 dev = ["dev-login", "dev-docs"]
 

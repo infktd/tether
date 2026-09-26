@@ -207,6 +207,9 @@ pub struct Plugins {
     /// One upload is read and checked at a time: each can hold a 40 MiB
     /// package, its unpacked contents and a compile.
     uploads: tokio::sync::Semaphore,
+    /// Plugins' HTTP clients and rate limit (held here for tests to route).
+    #[cfg_attr(not(feature = "plugin-http-test"), allow(dead_code))]
+    http: Arc<crate::plugin_http::Http>,
 }
 
 impl std::fmt::Debug for Plugins {
@@ -219,9 +222,13 @@ impl Plugins {
     /// `deps` are what plugins reach through the host: the job queue (in
     /// `deps.db`), ESI and Discord.
     pub fn new(host: Host, deps: crate::plugin_services::Deps) -> Arc<Self> {
+        let http = Arc::new(crate::plugin_http::Http::new());
         Arc::new_cyclic(|plugins| {
-            let services =
-                crate::plugin_services::PluginServices::new(deps.clone(), plugins.clone());
+            let services = crate::plugin_services::PluginServices::new(
+                deps.clone(),
+                plugins.clone(),
+                http.clone(),
+            );
             Self {
                 host: host
                     .with_jobs(crate::plugin_jobs::PluginQueue::new(deps.db.clone()))
@@ -230,8 +237,16 @@ impl Plugins {
                 slots: RwLock::default(),
                 lifecycle: tokio::sync::Mutex::new(()),
                 uploads: tokio::sync::Semaphore::new(1),
+                http,
             }
         })
+    }
+
+    /// Tests only: serves every plugin's approved hosts from a plain-HTTP
+    /// stand-in at `host_port`. Compiled out of release builds.
+    #[cfg(feature = "plugin-http-test")]
+    pub fn route_http_to(&self, host_port: &str) {
+        self.http.route_to(host_port);
     }
 
     pub fn host(&self) -> &Host {
@@ -663,6 +678,12 @@ fn unsupported(package: &Package) -> Option<&'static str> {
              offers plugins uses; see the SDK's AGENTS.md.",
         );
     }
+    if crate::plugin_http::declares_core_host(&package.manifest) {
+        return Some(
+            "It asks to call one of Tether's own destinations (ESI, EVE SSO, Discord or \
+             GitHub) over HTTP. Apps reach ESI and Discord through Tether instead.",
+        );
+    }
     if !package.manifest.capabilities.storage && !package.migrations.is_empty() {
         return Some(
             "This package has database migrations but doesn't ask for storage \
@@ -874,6 +895,9 @@ async fn approve_now(
         .map(|(name, description)| (format!("plugin.{id}.{name}"), description.clone()))
         .collect();
     tether_db::permissions::add_plugin_permissions(&mut tx, &id, &declared).await?;
+    // Exactly the hosts and secrets shown on the review page; nothing else
+    // is reachable at runtime.
+    crate::plugin_http::approve(&mut tx, &id, manifest, actor).await?;
     // Member now requires its user scopes (F11, F16).
     if tether_db::compliance::set_plugin_scopes(&mut *tx, &id, &manifest.capabilities.esi.user)
         .await?
@@ -1072,6 +1096,8 @@ async fn uninstall_now(
         secrets::delete(&mut *tx, &password_secret(id)).await?;
     }
     plugin_jobs::remove(&mut tx, id).await?;
+    // Its secrets' values; its approvals go with its row.
+    let secrets_deleted = tether_db::plugin_http::delete_secrets(&mut *tx, id).await?;
     let grants = tether_db::permissions::remove_plugin_grants(&mut tx, id).await?;
     // Member stops requiring its user scopes.
     crate::states::enqueue_evaluate_all(&mut *tx).await?;
@@ -1086,6 +1112,7 @@ async fn uninstall_now(
         json!({
             "version": version,
             "data_deleted": storage.is_some(),
+            "secrets_deleted": secrets_deleted,
             "grants_removed": grants
                 .iter()
                 .map(|g| match g.grantee {

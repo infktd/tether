@@ -110,7 +110,7 @@ Upgrades snapshot the plugin's schema first, so a failed upgrade rolls back to t
 | `identity` | Read the current user, characters, corp, alliance, roles |
 | `jobs` | Enqueue background work and run declared schedules |
 | `discord` | Send messages and read role mappings, if declared |
-| `http` | Outbound requests to hosts declared in the manifest only |
+| `http` | HTTPS to hosts declared in the manifest and approved by the admin only; the host adds admin-entered secrets, caps and logs every request |
 | `log` | Structured logs shown in the admin panel |
 
 **Consent, three layers:**

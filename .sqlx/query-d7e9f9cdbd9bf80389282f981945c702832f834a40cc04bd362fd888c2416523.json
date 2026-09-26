@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.plugin_http_secrets WHERE plugin_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d7e9f9cdbd9bf80389282f981945c702832f834a40cc04bd362fd888c2416523"
+}

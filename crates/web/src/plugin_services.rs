@@ -1,5 +1,5 @@
-//! Tether's side of the plugin ESI, identity and Discord interfaces (F16,
-//! N8, N10).
+//! Tether's side of the plugin ESI, identity, Discord and HTTP interfaces
+//! (F16, N8, N10). HTTP lives in [`crate::plugin_http`].
 //!
 //! Every ESI call is checked here, on every call:
 //! - the endpoint is in the catalogue (`tether_esi::plugin`);
@@ -25,7 +25,8 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Channel, Character, DiscordError, EsiError, EsiResponse, Fut, Mention, Named, Services, Subject,
+    Channel, Character, DiscordError, EsiError, EsiResponse, Fut, HttpError, HttpRequest,
+    HttpResponse, Mention, Named, Services, Subject,
 };
 
 use crate::plugins::Plugins;
@@ -66,6 +67,7 @@ pub struct PluginServices {
     plugins: Weak<Plugins>,
     sends: RateLimiter<String>,
     throttle: Arc<ErrorThrottle>,
+    http: Arc<crate::plugin_http::Http>,
 }
 
 /// Plugins that cause too many ESI errors are refused for a while: the
@@ -121,12 +123,17 @@ impl std::fmt::Debug for PluginServices {
 }
 
 impl PluginServices {
-    pub fn new(deps: Deps, plugins: Weak<Plugins>) -> Arc<Self> {
+    pub fn new(
+        deps: Deps,
+        plugins: Weak<Plugins>,
+        http: Arc<crate::plugin_http::Http>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             deps,
             plugins,
             sends: RateLimiter::new(SENDS_PER_MINUTE, Duration::from_secs(60)),
             throttle: Arc::new(ErrorThrottle::new()),
+            http,
         })
     }
 }
@@ -519,5 +526,20 @@ impl Services for PluginServices {
             }
             result
         })
+    }
+
+    fn http_send(
+        &self,
+        plugin: String,
+        request: HttpRequest,
+        from_page: bool,
+    ) -> Fut<Result<HttpResponse, HttpError>> {
+        let (deps, plugins, http) = (self.deps.clone(), self.plugins.clone(), self.http.clone());
+        // Its own task: if the plugin's call is cut off (its deadline), a
+        // request already sent still finishes and reaches the log.
+        let task = tokio::spawn(async move {
+            crate::plugin_http::send(&deps, &plugins, &http, &plugin, request, from_page).await
+        });
+        Box::pin(async move { task.await.unwrap_or(Err(HttpError::Unavailable)) })
     }
 }

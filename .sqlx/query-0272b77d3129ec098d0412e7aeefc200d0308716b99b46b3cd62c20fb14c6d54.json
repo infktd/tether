@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.plugin_http_hosts WHERE plugin_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0272b77d3129ec098d0412e7aeefc200d0308716b99b46b3cd62c20fb14c6d54"
+}

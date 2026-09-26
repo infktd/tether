@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"found!\" FROM core.plugin_http_secrets\n        WHERE plugin_id = $1 AND name = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "found!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f5cbd1c05fd46379df7b93cdfe3230b79771ad20dd79bf044369e7ea3e0bef17"
+}

@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT at, method, host, path, status, outcome, secret, bytes, duration_ms\n        FROM core.plugin_http_log WHERE plugin_id = $1 ORDER BY id DESC LIMIT $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "method",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "method"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "host"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "path"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "secret",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "secret"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "duration_ms",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_log",
+            "name": "duration_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a3a9a043b861c9a790f4172a0ff9af158fc4c761ecade35bc632c8ab4a1200fd"
+}

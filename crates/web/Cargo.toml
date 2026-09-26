@@ -13,6 +13,9 @@ workspace = true
 dev-login = []
 # Scalar at /docs, loaded from a CDN. Refuses to compile in release builds.
 dev-docs = []
+# Tests only: plugin HTTP requests go to a local stand-in (wiremock).
+# Refuses to compile in release builds.
+plugin-http-test = []
 
 [dependencies]
 askama.workspace = true
@@ -40,6 +43,8 @@ tokio.workspace = true
 utoipa.workspace = true
 
 [dev-dependencies]
+# The integration tests route plugin HTTP to wiremock.
+tether-web = { path = ".", features = ["plugin-http-test"] }
 futures-core.workspace = true
 tether-plugins = { workspace = true, features = ["testing"] }
 wiremock.workspace = true

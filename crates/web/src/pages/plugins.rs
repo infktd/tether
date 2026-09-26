@@ -89,7 +89,10 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         );
     }
     for host in &c.http {
-        add("HTTPS requests", host.clone());
+        add(
+            "HTTPS requests",
+            format!("{host}, which sees this server's IP address"),
+        );
     }
     for (name, secret) in &c.secrets {
         add(
@@ -499,6 +502,26 @@ pub struct AccessView {
     pub outcome: String,
 }
 
+pub struct HttpCallView {
+    pub at: String,
+    pub method: String,
+    pub host: String,
+    pub path: String,
+    pub status: String,
+    pub outcome: String,
+    pub secret: String,
+    pub bytes: i64,
+    pub ms: i32,
+}
+
+pub struct SecretView {
+    pub name: String,
+    pub host: String,
+    pub header: String,
+    /// When it was last entered, or `None` if it has no value yet.
+    pub set: Option<String>,
+}
+
 pub struct ScheduleView {
     pub name: String,
     pub every: String,
@@ -552,6 +575,11 @@ struct PluginPage {
     uses_discord: bool,
     esi_scopes: Vec<String>,
     access: Vec<AccessView>,
+    http_hosts: Vec<String>,
+    /// Declared by the running package, but never approved: refused.
+    http_unapproved: Vec<String>,
+    http_secrets: Vec<SecretView>,
+    http_calls: Vec<HttpCallView>,
     schedules: Vec<ScheduleView>,
     active_jobs: i64,
     upcoming: Vec<JobView>,
@@ -661,11 +689,53 @@ async fn plugin_page(
             outcome: a.outcome,
         })
         .collect();
+    let approved = tether_db::plugin_http::approved(&state.db, id).await?;
+    let http_unapproved = package
+        .manifest
+        .capabilities
+        .http
+        .iter()
+        .filter(|h| !approved.hosts.contains(h))
+        .cloned()
+        .collect();
+    let set = tether_db::plugin_http::secrets_set(&state.db, id).await?;
+    let http_secrets = approved
+        .secrets
+        .iter()
+        .map(|s| SecretView {
+            name: s.name.clone(),
+            host: s.host.clone(),
+            header: s.header.clone(),
+            set: set
+                .iter()
+                .find(|(name, _)| *name == s.name)
+                .map(|(_, at)| time(*at)),
+        })
+        .collect();
+    let http_calls = tether_db::plugin_http::recent(&state.db, id, 30)
+        .await?
+        .into_iter()
+        .map(|c| HttpCallView {
+            at: c.at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            status: c.status.map_or_else(String::new, |s| s.to_string()),
+            secret: c.secret.unwrap_or_default(),
+            method: c.method,
+            host: c.host,
+            path: c.path,
+            outcome: c.outcome,
+            bytes: c.bytes,
+            ms: c.duration_ms,
+        })
+        .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         code,
         &PluginPage {
             shell,
+            http_hosts: approved.hosts,
+            http_unapproved,
+            http_secrets,
+            http_calls,
             schedules,
             active_jobs,
             upcoming: upcoming.into_iter().map(job_view).collect(),
@@ -858,6 +928,40 @@ pub async fn repin(
         Ok(()) => Ok(Redirect::to(&format!("/admin/plugin-keys/{id}")).into_response()),
         // Keep what they typed; the key is public.
         Err(err) => key_page(&state, shell, id, form.new_key, Some(err)).await,
+    }
+}
+
+// ---- secrets -------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SecretForm {
+    #[serde(default)]
+    value: String,
+}
+
+// The value never reaches a log or an error.
+impl std::fmt::Debug for SecretForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretForm")
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
+
+/// `POST /admin/plugins/{id}/secrets/{name}`: enters or replaces a secret's
+/// value, which is never shown again.
+pub async fn set_secret(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, name)): Path<(String, String)>,
+    Form(form): Form<SecretForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    let value = tether_core::Secret::new(form.value);
+    match crate::plugin_http::set_secret(&state, session.account, id, &name, &value).await {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
     }
 }
 

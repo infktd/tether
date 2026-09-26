@@ -27,6 +27,7 @@ mod ownership;
 mod pages;
 mod permissions_audit;
 mod plugin_esi;
+mod plugin_http;
 mod plugin_keys;
 mod plugin_pages;
 mod plugins;

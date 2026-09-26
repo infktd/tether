@@ -17,6 +17,7 @@ pub mod personal_tokens;
 pub mod ping_options;
 pub mod pings;
 pub mod plugin_esi;
+pub mod plugin_http;
 pub mod plugin_jobs;
 pub mod plugin_keys;
 pub mod plugin_storage;

@@ -3982,6 +3982,7 @@ dependencies = [
  "tether-jobs",
  "tether-net",
  "tether-plugins",
+ "tether-web",
  "thiserror 2.0.21",
  "tokio",
  "tower",

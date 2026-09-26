@@ -92,6 +92,55 @@
   </section>
   {% endif %}
 
+  {% if !http_hosts.is_empty() || !http_unapproved.is_empty() || !http_calls.is_empty() %}
+  <section class="card data-card">
+    <header><h2>HTTPS requests</h2><p>The hosts you approved for this app; it can reach nothing else. Tether sends each request, adds the secrets below, and records every one here (the query string isn't kept), for 90 days; EVE time.</p></header>
+    <section class="flex flex-wrap gap-2 px-5">
+      {% for h in http_hosts %}<span class="badge num" data-variant="secondary">{{ h }}</span>{% endfor %}
+      {% for h in http_unapproved %}<span class="badge num" data-variant="destructive">{{ h }}: not approved, refused</span>{% endfor %}
+    </section>
+    {% if !http_secrets.is_empty() %}
+    <table class="table">
+      <thead><tr><th scope="col">Secret</th><th scope="col">Sent to</th><th scope="col">Value</th><th scope="col" class="text-right"><span class="sr-only">Enter</span></th></tr></thead>
+      <tbody>
+        {% for s in http_secrets %}
+        <tr>
+          <td class="num">{{ s.name }}</td>
+          <td><div class="num">{{ s.host }}</div><div class="text-xs text-muted-foreground num">{{ s.header }} header</div></td>
+          <td>{% if let Some(at) = s.set %}<span class="badge" data-variant="secondary">set</span> <span class="text-xs text-muted-foreground num">{{ at }} EVE</span>{% else %}<span class="badge" data-variant="outline">not set</span>{% endif %}</td>
+          <td class="text-right">
+            <form method="post" action="/admin/plugins/{{ about.id }}/secrets/{{ s.name }}" class="inline-flex items-center gap-2">
+              <label class="sr-only" for="secret-{{ s.name }}">Value for {{ s.name }}</label>
+              <input class="input" type="password" id="secret-{{ s.name }}" name="value" maxlength="4096" autocomplete="new-password" spellcheck="false" required placeholder="{% if s.set.is_some() %}Replace the saved value{% else %}Enter the value{% endif %}">
+              <button type="submit" class="btn" data-variant="outline" data-size="sm">Save</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="px-5 pb-2 text-xs text-muted-foreground">Values are stored encrypted and never shown again, not even to the app.</p>
+    {% endif %}
+    {% if http_calls.is_empty() %}<p class="px-5 pb-5 text-sm text-muted-foreground">No requests yet.</p>{% else %}
+    <table class="table">
+      <thead><tr><th scope="col">When</th><th scope="col">Request</th><th scope="col">Status</th><th scope="col">Outcome</th><th scope="col" class="text-right">Bytes</th><th scope="col" class="text-right">ms</th></tr></thead>
+      <tbody>
+        {% for c in http_calls %}
+        <tr>
+          <td class="num whitespace-nowrap">{{ c.at }}</td>
+          <td class="w-full whitespace-normal"><div class="break-all text-sm num">{{ c.method }} {{ c.host }}{{ c.path }}</div>{% if !c.secret.is_empty() %}<div class="text-xs text-muted-foreground num">with {{ c.secret }}</div>{% endif %}</td>
+          <td class="num">{{ c.status }}</td>
+          <td>{{ c.outcome }}</td>
+          <td class="num text-right">{{ c.bytes }}</td>
+          <td class="num text-right">{{ c.ms }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endif %}
+
   {% if !schedules.is_empty() %}
   <section class="card data-card">
     <header><h2>Schedules</h2><p>Declared in the app; they run while it's enabled.</p></header>

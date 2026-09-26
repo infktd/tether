@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.secrets WHERE left(name, length($1)) = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dac02263922b10ce1f16d5e74a104626a1745a6a792ce706fce286186f98582c"
+}

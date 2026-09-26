@@ -454,6 +454,59 @@ interface jobs {
     cancel: func(key: string) -> result<bool, error>;
 }
 
+/// Outbound HTTPS to the hosts an admin approved for this plugin
+/// (`capabilities.http`), and nowhere else. The host sends the request:
+/// it sets the User-Agent, adds a secret the plugin names (its value is
+/// never shown to the plugin), follows redirects only within the approved
+/// hosts, caps sizes, rate-limits each plugin and records every call.
+interface http {
+    enum method {
+        get,
+        post,
+    }
+
+    record request {
+        method: method,
+        /// A full `https://` URL on an approved host (port 443).
+        url: string,
+        /// Only `accept`, `accept-language`, `content-type`,
+        /// `if-none-match` and `if-modified-since`; never credentials or
+        /// cookies.
+        headers: list<tuple<string, string>>,
+        /// For POST; at most 64 KiB.
+        body: option<list<u8>>,
+        /// A secret declared in `capabilities.secrets` whose host is this
+        /// URL's: the host adds it in its header.
+        secret: option<string>,
+    }
+
+    record response {
+        status: u16,
+        /// Only a few safe ones: `content-type`, `etag`, `last-modified`,
+        /// `cache-control`, `expires`, `age`, `retry-after`, lowercase.
+        headers: list<tuple<string, string>>,
+        /// At most 1 MiB.
+        body: list<u8>,
+    }
+
+    variant error {
+        /// Not an approved host, a header or method the host doesn't
+        /// allow, a secret that isn't this plugin's (or isn't entered
+        /// yet), or a redirect off the approved hosts; why.
+        not-allowed(string),
+        /// Too many requests: in this call, or by this plugin lately.
+        too-many,
+        /// The request body or the response is bigger than allowed.
+        too-large,
+        timeout,
+        /// The host couldn't be reached, or answered something unreadable.
+        unavailable,
+    }
+
+    /// Sends one request and returns the answer, whatever its status.
+    send: func(request: request) -> result<response, error>;
+}
+
 world plugin {
     import log;
     import storage;
@@ -461,6 +514,7 @@ world plugin {
     import identity;
     import esi;
     import discord;
+    import http;
     use jobs.{job, job-error};
     use page.{page, request, page-error, submission, submit-result};
 

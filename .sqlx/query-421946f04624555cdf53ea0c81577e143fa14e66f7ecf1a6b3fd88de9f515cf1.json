@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_http_hosts (plugin_id, host, approved_by)\n        SELECT $1, h, $3 FROM unnest($2::text[]) AS h\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "421946f04624555cdf53ea0c81577e143fa14e66f7ecf1a6b3fd88de9f515cf1"
+}

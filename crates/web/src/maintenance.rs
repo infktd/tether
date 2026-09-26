@@ -1,6 +1,7 @@
 //! Housekeeping on a schedule: expired sessions, login attempts, setup
 //! sessions and Discord link attempts, plugin uploads nobody approved, old
-//! plugin log lines, and succeeded jobs older than a week.
+//! plugin log lines, plugin data access and HTTP logs, and succeeded jobs
+//! older than a week.
 
 use std::time::Duration;
 
@@ -32,6 +33,12 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         crate::plugin_services::ACCESS_LOG_KEEP,
     )
     .await?;
+    let plugin_http = tether_db::plugin_http::prune_log(
+        db,
+        crate::plugin_http::LOG_DAYS,
+        crate::plugin_http::LOG_KEEP,
+    )
+    .await?;
     let plugin_jobs =
         tether_db::plugin_jobs::prune_finished(db, crate::plugin_jobs::KEEP_FINISHED_HOURS).await?;
     let jobs = tether_jobs::schedule::prune_succeeded(db, KEEP_SUCCEEDED).await?;
@@ -44,6 +51,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         plugin_uploads,
         plugin_logs,
         plugin_access,
+        plugin_http,
         plugin_jobs,
         jobs,
         access_tokens,

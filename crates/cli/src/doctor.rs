@@ -165,7 +165,32 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(discord(env).await);
     checks.push(updates(&env.db, &env.github_api_url).await);
     checks.push(outbound());
+    checks.push(plugin_hosts(&env.db).await);
     checks
+}
+
+/// The hosts each enabled app may call over HTTPS, as its admin approved
+/// them at install: beyond Tether's own list, per instance.
+pub async fn plugin_hosts(db: &PgPool) -> Check {
+    const NAME: &str = "app hosts";
+    match tether_db::plugin_http::enabled_hosts(db).await {
+        Ok(rows) if rows.is_empty() => Check::ok(NAME, "no app may make HTTPS requests"),
+        Ok(rows) => {
+            let mut by_plugin: Vec<(String, Vec<String>)> = Vec::new();
+            for (plugin, host) in rows {
+                match by_plugin.last_mut() {
+                    Some((p, hosts)) if *p == plugin => hosts.push(host),
+                    _ => by_plugin.push((plugin, vec![host])),
+                }
+            }
+            let listed: Vec<String> = by_plugin
+                .iter()
+                .map(|(plugin, hosts)| format!("{plugin} -> {}", hosts.join(", ")))
+                .collect();
+            Check::ok(NAME, format!("approved for apps: {}", listed.join("; ")))
+        }
+        Err(err) => Check::fail(NAME, err.to_string(), "Fix the database check first."),
+    }
 }
 
 pub async fn database(db: &PgPool) -> Check {

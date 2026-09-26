@@ -649,3 +649,40 @@ fn doctor_proves_the_allow_list_holds() {
         assert!(check.detail.contains("Let's Encrypt"));
     }
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn doctor_lists_the_hosts_apps_may_call(db: PgPool) {
+    let none = doctor::plugin_hosts(&db).await;
+    assert_eq!(none.status, Status::Ok, "{none:?}");
+    assert!(none.detail.contains("no app"), "{none:?}");
+
+    for (id, enabled) in [("nmu.srp", true), ("nmu.off", false)] {
+        sqlx::query(
+            "INSERT INTO core.plugins (id, name, version, package, signature, package_sha256, enabled) \
+             VALUES ($1, $1, '1.0.0', '\\x00', 'sig', '\\x00', $2)",
+        )
+        .bind(id)
+        .bind(enabled)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    for (id, host) in [
+        ("nmu.srp", "zkillboard.com"),
+        ("nmu.srp", "janice.e-351.com"),
+        ("nmu.off", "evil.example"),
+    ] {
+        sqlx::query("INSERT INTO core.plugin_http_hosts (plugin_id, host) VALUES ($1, $2)")
+            .bind(id)
+            .bind(host)
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    let check = doctor::plugin_hosts(&db).await;
+    assert_eq!(check.status, Status::Ok, "{check:?}");
+    assert_eq!(
+        check.detail,
+        "approved for apps: nmu.srp -> janice.e-351.com, zkillboard.com"
+    );
+}

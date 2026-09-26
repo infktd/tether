@@ -227,6 +227,113 @@ pub mod discord {
     }
 }
 
+/// Outbound HTTPS to the hosts in `capabilities.http` that an admin
+/// approved. The host sends the request, sets the User-Agent, adds a
+/// secret you name (you never see its value), follows redirects only
+/// within your approved hosts and records every request.
+///
+/// ```ignore
+/// use tether_plugin_sdk::http;
+///
+/// let answer = http::get("https://zkillboard.com/api/killID/128570923/")?;
+/// if answer.is_success() {
+///     let json = answer.text().unwrap_or("");
+/// }
+/// // With an API key the admin entered (`[capabilities.secrets.janice_api_key]`):
+/// let priced = http::Request::post("https://janice.e-351.com/api/rest/v2/appraisal", b"Tritanium 100".to_vec())
+///     .header("content-type", "text/plain")
+///     .secret("janice_api_key")
+///     .send()?;
+/// ```
+pub mod http {
+    pub use crate::bindings::tether::plugin::http::{Error, Method, Request, Response};
+
+    /// Sends a request and returns the answer, whatever its status.
+    pub fn send(request: &Request) -> Result<Response, Error> {
+        crate::bindings::tether::plugin::http::send(request)
+    }
+
+    /// A plain GET.
+    pub fn get(url: &str) -> Result<Response, Error> {
+        Request::get(url).send()
+    }
+
+    /// A GET asking for JSON (`accept: application/json`).
+    pub fn get_json(url: &str) -> Result<Response, Error> {
+        Request::get(url)
+            .header("accept", "application/json")
+            .send()
+    }
+
+    /// POSTs JSON text (`content-type: application/json`).
+    pub fn post_json(url: &str, json: &str) -> Result<Response, Error> {
+        Request::post(url, json.as_bytes().to_vec())
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .send()
+    }
+
+    impl Request {
+        pub fn get(url: impl Into<String>) -> Self {
+            Self {
+                method: Method::Get,
+                url: url.into(),
+                headers: Vec::new(),
+                body: None,
+                secret: None,
+            }
+        }
+
+        pub fn post(url: impl Into<String>, body: Vec<u8>) -> Self {
+            Self {
+                method: Method::Post,
+                url: url.into(),
+                headers: Vec::new(),
+                body: Some(body),
+                secret: None,
+            }
+        }
+
+        /// One of `accept`, `accept-language`, `content-type`,
+        /// `if-none-match` and `if-modified-since`.
+        pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+            self.headers.push((name.into(), value.into()));
+            self
+        }
+
+        /// Has the host add this secret (its name in
+        /// `capabilities.secrets`); the URL must be on the secret's host.
+        pub fn secret(mut self, name: impl Into<String>) -> Self {
+            self.secret = Some(name.into());
+            self
+        }
+
+        pub fn send(&self) -> Result<Response, Error> {
+            send(self)
+        }
+    }
+
+    impl Response {
+        /// A 2xx status.
+        pub fn is_success(&self) -> bool {
+            (200..300).contains(&self.status)
+        }
+
+        /// The body as UTF-8 text, if it is.
+        pub fn text(&self) -> Option<&str> {
+            std::str::from_utf8(&self.body).ok()
+        }
+
+        /// A response header by its lowercase name.
+        pub fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.as_str())
+        }
+    }
+}
+
 /// Background work: the schedules declared in `plugin.toml`
 /// (`[[capabilities.schedules]]`) and one-off jobs queued here. Either way
 /// the host calls [`Plugin::run_job`].

@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT h.plugin_id, h.host FROM core.plugin_http_hosts h\n        JOIN core.plugins p ON p.id = h.plugin_id\n        WHERE p.enabled ORDER BY h.plugin_id, h.host\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_hosts",
+            "name": "plugin_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_hosts",
+            "name": "host"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2af8b8c7abf7c68e04fa00ff97c1ec8cebdb9a3b6d684bf3aefb1a8082b5ace1"
+}

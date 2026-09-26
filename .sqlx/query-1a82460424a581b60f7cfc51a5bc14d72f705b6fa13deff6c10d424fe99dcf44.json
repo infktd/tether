@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT host FROM core.plugin_http_hosts WHERE plugin_id = $1 ORDER BY host",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_hosts",
+            "name": "host"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1a82460424a581b60f7cfc51a5bc14d72f705b6fa13deff6c10d424fe99dcf44"
+}

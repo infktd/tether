@@ -98,7 +98,7 @@ view = "View the mining ledger"
 manage = "Manage the mining ledger"
 ```
 
-The admin sees every capability before approving an install. Secrets are values like API keys that the admin enters. Each goes to one declared host in one header (not `Cookie`, `Host` or headers that frame the request); the host adds it to your requests there, and your plugin never sees it. Names and descriptions can't contain control characters or invisible formatting (bidi overrides, zero-width characters).
+The admin sees every capability before approving an install. Secrets are values like API keys that the admin enters. Each goes to one declared host in one header (not `Cookie`, `Host` or headers that frame the request); the host adds it to your requests there, and your plugin never sees it (see HTTP below). `http` can't name Tether's own destinations (ESI, EVE SSO, CCP's image server, Discord, GitHub or their subdomains): a package that does is refused, since ESI and Discord go through the host API. Names and descriptions can't contain control characters or invisible formatting (bidi overrides, zero-width characters).
 
 ## Packaging and signing
 
@@ -397,6 +397,43 @@ discord::send(&channel.unwrap(), "Moon popped at 1DQ1-A I", Mention::State("Memb
 - Mentions are only the Discord role Tether maps to a state, named like `Mention::State("Member".into())`; typed `@everyone` and `@here` are defused, and nobody else can be pinged.
 - From `submit` and jobs only, not pages. At most 1,500 characters, 5 messages per call and 20 a minute per plugin.
 
+## HTTP
+
+With `http = ["zkillboard.com"]` in `[capabilities]`, a plugin can call those exact hosts over HTTPS, once an admin approved them at install. Nothing else is reachable: not other hosts, not plain HTTP, not other ports, not IP addresses.
+
+```rust
+use tether_plugin_sdk::http;
+
+let answer = http::get_json("https://zkillboard.com/api/killID/128570923/")?;
+if answer.is_success() {
+    let kills: Vec<serde_json::Value> = serde_json::from_slice(&answer.body)?;
+}
+// A POST with a secret the admin entered (declared as [capabilities.secrets.janice_api_key]):
+let appraisal = http::Request::post("https://janice.e-351.com/api/rest/v2/appraisal?market=2", b"Tritanium 100".to_vec())
+    .header("content-type", "text/plain")
+    .secret("janice_api_key")
+    .send()?;
+let etag = appraisal.header("etag");
+```
+
+- `http::get`, `http::get_json` and `http::post_json` cover most calls; `http::Request::get(url)` / `::post(url, body)` with `.header(...)` and `.secret(name)`, then `.send()`, for the rest. A response is its `status`, a few `headers` and the `body` bytes (`text()` for UTF-8), whatever the status: a 404 or 500 is an answer, not an error.
+- You may set only `accept`, `accept-language`, `content-type`, `if-none-match` and `if-modified-since` (at most 10, 256 printable ASCII characters each). Never `Authorization`, `Cookie`, `Proxy-*`, `Host` or `User-Agent`, nor any header one of your secrets goes in: Tether sets the User-Agent (`tether (app <your id>)`), and adds a secret you name with `.secret(...)`, in its declared header with its prefix, only on requests to its declared host. The value never reaches your plugin; ask for a secret on another host and the request is refused.
+- Responses carry only `content-type`, `etag`, `last-modified`, `cache-control`, `expires`, `age` and `retry-after` (lowercase), never `Set-Cookie`.
+- Tether follows redirects itself, only to your approved hosts (a secret only ever goes to its own host), at most 3 in a row. A redirect anywhere else fails with `NotAllowed`.
+- Pages can only GET (a page view can be triggered by a link on another site); POST from `submit` or a job.
+- Errors: `NotAllowed(why)` (host, scheme, header, method, secret, redirect), `TooMany` (a limit below), `TooLarge`, `Timeout`, `Unavailable`.
+- Every request (method, host, path, status, size, time, and the secret's name if one was added) is in your plugin's HTTP log, which admins see. The query string isn't kept.
+- Be a good citizen: cache answers in storage, use `if-none-match` with the `etag` you got, and respect `retry-after`. Many APIs ask for gentle rates.
+- A new version that adds hosts or changes its secrets needs the admin's approval again; until then the new ones are refused.
+
+| Limit | Value |
+| --- | --- |
+| Requests | 20 per submit or job run, 5 per page render; 60 a minute and 5,000 a day per plugin, refused attempts included |
+| Request body | 64 KiB, POST only |
+| Response body | 1 MiB (larger fails with `TooLarge`) |
+| One request | 10 s (each redirect hop) |
+| URL | 2,048 characters, `https://` on port 443 |
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
@@ -414,7 +451,7 @@ Every call runs in a fresh sandbox; nothing is kept between calls (state goes in
 | Component size | 32 MiB |
 | Data copied out of the plugin per call (its page, its log lines) | 16 MiB; past it, the call fails |
 
-There is no filesystem, no network access of your own, no environment variables and no stdio (writes to stdout and stderr are discarded; use `log`). Clocks and random numbers work. A plugin that imports the filesystem or sockets (for example by using `std::fs` or `std::net`) is refused at load, as is one that defines its own component resource types.
+There is no filesystem, no network access of your own (only `http` through the host), no environment variables and no stdio (writes to stdout and stderr are discarded; use `log`). Clocks and random numbers work. A plugin that imports the filesystem or sockets (for example by using `std::fs` or `std::net`) is refused at load, as is one that defines its own component resource types.
 
 Hitting a limit ends that call only; the next call starts clean. Admins see which limit was hit.
 
@@ -426,9 +463,8 @@ API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0
 - pages: `render`, and forms: `submit`;
 - `storage`: SQL in the plugin's own schema (see Storage);
 - `jobs`: schedules and one-off jobs (see Jobs);
-- `identity`, `esi` and `discord` (see above).
-
-Coming during milestone 2: outbound HTTP to hosts an admin approved.
+- `identity`, `esi` and `discord` (see above);
+- `http`: HTTPS to hosts an admin approved (see HTTP).
 
 ## Checklist before publishing
 

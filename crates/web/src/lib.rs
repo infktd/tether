@@ -6,6 +6,10 @@
 compile_error!("the dev-login feature must never be enabled in release builds");
 #[cfg(all(feature = "dev-docs", not(debug_assertions)))]
 compile_error!("the dev-docs feature must never be enabled in release builds");
+// plugin-http-test sends every plugin HTTP request to a local stand-in
+// (tests only).
+#[cfg(all(feature = "plugin-http-test", not(debug_assertions)))]
+compile_error!("the plugin-http-test feature must never be enabled in release builds");
 
 pub mod admin;
 mod api;
@@ -29,6 +33,7 @@ pub mod pages;
 pub mod personal_tokens;
 pub mod pings;
 pub mod plugin_consent;
+pub mod plugin_http;
 pub mod plugin_jobs;
 pub mod plugin_services;
 pub mod plugins;
@@ -356,6 +361,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/admin/plugins/{id}/channels/{channel}/remove",
             post(pages::plugins::remove_channel),
+        )
+        .route(
+            "/admin/plugins/{id}/secrets/{name}",
+            post(pages::plugins::set_secret),
         )
         .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
         .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))

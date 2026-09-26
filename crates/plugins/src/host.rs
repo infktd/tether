@@ -58,6 +58,7 @@ pub struct CallState {
     viewer: Option<services::Viewer>,
     esi_calls: usize,
     discord_sends: usize,
+    http_calls: usize,
 }
 
 impl CallState {
@@ -74,6 +75,7 @@ impl CallState {
             viewer: None,
             esi_calls: 0,
             discord_sends: 0,
+            http_calls: 0,
         }
     }
 
@@ -170,6 +172,44 @@ impl tether::plugin::discord::Host for CallState {
             .ok_or(services::DiscordError::Unavailable)?;
         services
             .discord_send(self.plugin.clone(), channel, text, mention)
+            .await
+    }
+}
+
+impl tether::plugin::http::Host for CallState {
+    async fn send(
+        &mut self,
+        request: services::HttpRequest,
+    ) -> Result<services::HttpResponse, services::HttpError> {
+        // Page renders run on plain GETs anyone can be linked into: they
+        // may read from elsewhere, never change anything there.
+        if self.jobs_refused && request.method != services::HttpMethod::Get {
+            return Err(services::HttpError::NotAllowed(
+                "pages can only GET: send other requests from submit or a job".to_owned(),
+            ));
+        }
+        self.http_calls += 1;
+        let max = if self.jobs_refused {
+            services::MAX_HTTP_CALLS_PAGE
+        } else {
+            services::MAX_HTTP_CALLS
+        };
+        if self.http_calls > max {
+            return Err(services::HttpError::TooMany);
+        }
+        if request
+            .body
+            .as_ref()
+            .is_some_and(|b| b.len() > services::MAX_HTTP_REQUEST_BODY)
+        {
+            return Err(services::HttpError::TooLarge);
+        }
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::HttpError::Unavailable)?;
+        services
+            .http_send(self.plugin.clone(), request, self.jobs_refused)
             .await
     }
 }

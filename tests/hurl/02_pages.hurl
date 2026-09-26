@@ -830,6 +830,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/plugins/nmu.hello/secrets/api_key
+Origin: {{base}}
+[Form]
+value: not-a-real-key
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/plugin-keys/nmu.hello
 Origin: {{base}}
 [Form]

@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT name, host, header, prefix FROM core.plugin_http_secrets\n        WHERE plugin_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_secrets",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_secrets",
+            "name": "host"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "header",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_secrets",
+            "name": "header"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "prefix",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_http_secrets",
+            "name": "prefix"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "c2d7884362ad98aeae3c0aabdc76ac713fd7231031a2b83b339cc9df79679272"
+}
