@@ -11,6 +11,7 @@ members = [
     "plugins/moon-mining",
     "plugins/member-audit",
     "plugins/fleet-activity-tracking",
+    "plugins/structure-timers",
 ]
 
 [workspace.package]

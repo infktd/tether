@@ -1,0 +1,37 @@
+# Structure Timers, a first-party Tether plugin (Alliance Auth's
+# timerboard). `scripts/package-plugin.sh` builds, zips and signs it,
+# putting the publisher's key in below.
+[plugin]
+id = "tether.structure-timers"
+name = "Structure Timers"
+version = "0.1.0"
+host_api = "1"
+description = "Structure timers in EVE time: upcoming and past, important ones marked, and corporation-only timers seen by the creator's corporation alone."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# AA's permission names. Grant Member timer_view; FCs and directors
+# timer_management too.
+[permissions]
+timer_view = "See structure timers"
+timer_management = "Create, edit and delete structure timers"
+
+[[pages]]
+path = ""
+permission = "timer_view"
+
+[[pages]]
+path = "add"
+permission = "timer_management"
+
+[[pages]]
+path = "timer"
+permission = "timer_management"
+
+[[navigation]]
+label = "Structure Timers"
+path = ""

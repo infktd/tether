@@ -30,6 +30,7 @@ mod plugins;
 mod setup;
 mod states;
 mod storage;
+mod structure_timers;
 mod sync;
 mod system;
 mod theme;
