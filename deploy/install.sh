@@ -21,6 +21,8 @@
 # Asked interactively when a terminal is attached and a flag is missing.
 # deploy/README.md describes each proxy.
 set -eu
+# Byte-wise character classes in the validation below, whatever the locale.
+export LC_ALL=C
 
 cd "$(dirname "$0")"
 
@@ -58,12 +60,18 @@ get_var() {
 tmp=
 trap 'rm -f "$tmp"' EXIT
 
+# A 0600 temp file next to .env with .env's owner (cp -p, so a re-run with
+# sudo doesn't hand .env to root), for the rewrite to replace it in one
+# rename: .env is never half-written.
+env_tmp() {
+    tmp=$(mktemp .env.XXXXXX)
+    cp -p .env "$tmp"
+}
+
 # Sets KEY=VALUE in .env, replacing an existing line or adding one. Only for
 # the proxy settings; secrets are written once and never touched again.
-# The new file (0600, from mktemp) replaces the old in one rename, so .env
-# is never half-written.
 set_var() {
-    tmp=$(mktemp .env.XXXXXX)
+    env_tmp
     awk -v key="$1" -v value="$2" '
         BEGIN { done = 0 }
         index($0, key "=") == 1 { if (!done) print key "=" value; done = 1; next }
@@ -75,7 +83,7 @@ set_var() {
 }
 
 unset_var() {
-    tmp=$(mktemp .env.XXXXXX)
+    env_tmp
     awk -v key="$1" 'index($0, key "=") != 1' .env > "$tmp"
     mv -f "$tmp" .env
     tmp=
