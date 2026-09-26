@@ -48,7 +48,7 @@ The four goals are fixed; anything that doesn't serve one of them waits until af
 
 - Charging money, hosted plans or a paid tier, ever.
 - A multi-tenant hosted service run by the project.
-- A central plugin registry. Plugins install straight from their GitHub repos or an uploaded .zip package.
+- A central plugin registry in v1. Apps install straight from their GitHub repos (or, for app developers, an uploaded .zip). A curated catalog comes after 1.0 (milestone 4).
 - Email of any kind: no email login, verification or notifications.
 - Wormhole mapping, killboards or market tools. These stay with existing specialized tools.
 - Importing data from SeAT or Alliance Auth beyond groups and role mappings.
@@ -82,6 +82,7 @@ Every requirement below is in v1; the phase column sets build order.
 | F21 | Plugin: Moon Mining (AA's name; was Moon Tracker), the first plugin built. Extraction timers from owner (data-source) characters; Discord ping to Members at each pop; fresh moons visible to Members only, then on the old-moon list for Blue after a configurable window (default 4 hours); viewer watermark on fresh-moon pages; per-pilot mining totals. Plus an extraction planner for characters with the in-game Station Manager role: a chosen pop cadence (such as one moon a day at a set EVE time) turned into the duration to set at each Athanor, accounting for auto-fracture, flagging gaps, overlaps and idle drills (ESI can't set extractions, so it only advises) | 3 |
 | F22 | Plugin: Fleet Ops, per the existing Fleet Ops PRD | 3 |
 | F23 | Alliance Auth parity: every admin and audit feature of AA core and the AA apps alliances use for administration, under AA's names, per `docs/AA_PARITY.md` (which lists what's done, missing and deliberately skipped) | 2–3 |
+| F24 | App catalog, after 1.0 (Jay's plan): a GitHub organization holds the first-party apps and a registry repository; publishers open pull requests to list their apps, and the maintainers review them. Tether reads the registry through `api.github.com` (no new outbound host) and shows a "Browse apps" page with one-click installs. The registry lists each app's repository and publisher key, so an install trusts the reviewed key rather than the first one it sees, and the registry index is signed with a key built into Tether. Corps may donate ISK; nothing is gated behind it | 4 |
 
 ## Non-functional requirements
 
@@ -125,7 +126,7 @@ Rust for the host and the server-rendered UI, WASM for v1 plugins. The plugin ru
 
 ## Milestones and acceptance criteria
 
-Five milestones, about 510 to 870 hours in total. A short plugin-runtime spike goes first because it's the riskiest piece; NMU can switch its login over after milestone 1.
+Five milestones to 1.0, about 510 to 870 hours in total. A short plugin-runtime spike goes first because it's the riskiest piece; NMU can switch its login over after milestone 1.
 
 | Milestone | Scope | Accepted when | Est. hours |
 | --- | --- | --- | --- |
@@ -134,6 +135,7 @@ Five milestones, about 510 to 870 hours in total. A short plugin-runtime spike g
 | 1. ESI and Discord | F9–F14, N5–N7, N13 | A character leaving the alliance loses Member and Discord roles with no admin action; ESI error budget never exceeded in a week of staging | 80–120 |
 | 2. Plugin runtime | F15–F19, N8–N10, N14 | A signed plugin installs from GitHub, requests consent, runs jobs and renders pages with no restart; upgrade and rollback both work | 150–250 |
 | 3. First-party plugins | F20–F22, N11, N12, N15 | NMU and the multiboxing corp run on it daily; SeAT and Alliance Auth are shut down | 120–240 |
+| 4. App catalog (after 1.0) | F24 | An admin browses the catalog in Tether and installs a listed app in one click; a publisher gets an app listed through a reviewed pull request | not estimated |
 
 The host API is marked unstable until milestone 3 ends, then frozen as v1.
 
