@@ -241,6 +241,59 @@ pub async fn retry_job(
     Ok(Redirect::to("/admin/system").into_response())
 }
 
+/// Runs a schedule now for an admin (the System page's or an app page's
+/// Run now), audited as `schedule.run_now`.
+pub(crate) async fn run_schedule(
+    state: &AppState,
+    actor: tether_db::accounts::AccountId,
+    name: &str,
+) -> Result<(), AppError> {
+    use tether_jobs::schedule::RunNow;
+    match tether_jobs::schedule::run_now(&state.db, name).await? {
+        RunNow::Queued => {}
+        RunNow::Busy => {
+            return Err(AppError::bad_request(
+                "Its last run is still queued or running; it'll pick up the latest data.",
+            ));
+        }
+        RunNow::TooSoon => {
+            return Err(AppError::bad_request(
+                "It ran less than a minute ago. Give it a moment.",
+            ));
+        }
+        RunNow::Off => {
+            return Err(AppError::not_found("No schedule by that name is running."));
+        }
+    }
+    audit::record(
+        &state.db,
+        Actor::Account(actor),
+        "schedule.run_now",
+        Some(&format!("schedule:{name}")),
+        json!({}),
+    )
+    .await?;
+    Ok(())
+}
+
+/// `POST /admin/system/schedules/{name}/run`: one of Tether's own
+/// schedules (apps' are run from their pages).
+pub async fn run_now(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(name): Path<String>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
+    if name.starts_with("plugin:") {
+        let err = AppError::bad_request("Run an app's schedules from its page.");
+        return system_page(&state, shell, Some(err)).await;
+    }
+    match run_schedule(&state, session.account, &name).await {
+        Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
+        Err(err) => system_page(&state, shell, Some(err)).await,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdatesForm {
     /// A checkbox: present when ticked.

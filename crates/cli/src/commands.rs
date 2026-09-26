@@ -77,6 +77,13 @@ pub enum OwnershipCommand {
 pub enum JobsCommand {
     /// Put a dead job back in the queue.
     Retry { job_id: i64 },
+    /// List the schedules (Tether's and apps', named
+    /// plugin:<app id>:<schedule>).
+    Schedules,
+    /// Run a schedule now, as its next tick would (a run still in flight
+    /// isn't doubled; once a minute at most). A name ending in `*` runs
+    /// every schedule it starts, e.g. `plugin:tether.moon-mining:*`.
+    Run { schedule: String },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -131,6 +138,14 @@ pub async fn run(
             command: Some(JobsCommand::Retry { job_id }),
             ..
         } => retry_job(db, job_id, out).await,
+        Command::Jobs {
+            command: Some(JobsCommand::Schedules),
+            ..
+        } => list_schedules(db, out).await,
+        Command::Jobs {
+            command: Some(JobsCommand::Run { schedule }),
+            ..
+        } => run_schedules(db, &schedule, out).await,
         Command::Sync => sync(db, out).await,
         Command::Ownership {
             command: OwnershipCommand::Sweep { force },
@@ -365,6 +380,62 @@ async fn retry_job(db: &PgPool, job_id: i64, out: &mut dyn Write) -> anyhow::Res
     .await?;
     tx.commit().await?;
     writeln!(out, "Job {job_id} is queued again.")?;
+    Ok(())
+}
+
+async fn list_schedules(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
+    let schedules = tether_jobs::schedule::list(db).await?;
+    writeln!(
+        out,
+        "{:<48} {:>8}  {:<4} next (UTC)",
+        "schedule", "every", "on"
+    )?;
+    for s in &schedules {
+        writeln!(
+            out,
+            "{:<48} {:>7}s  {:<4} {}",
+            s.name,
+            s.every_secs,
+            if s.enabled { "yes" } else { "no" },
+            s.next_run_at.format("%Y-%m-%d %H:%M:%S")
+        )?;
+    }
+    Ok(())
+}
+
+async fn run_schedules(db: &PgPool, pattern: &str, out: &mut dyn Write) -> anyhow::Result<()> {
+    use tether_jobs::schedule::RunNow;
+    let names: Vec<String> = match pattern.strip_suffix('*') {
+        Some(prefix) => tether_jobs::schedule::list(db)
+            .await?
+            .into_iter()
+            .map(|s| s.name)
+            .filter(|n| n.starts_with(prefix))
+            .collect(),
+        None => vec![pattern.to_owned()],
+    };
+    if names.is_empty() {
+        bail!("no schedule starts with {pattern:?}; see `tether jobs schedules`");
+    }
+    for name in &names {
+        let said = match tether_jobs::schedule::run_now(db, name).await? {
+            RunNow::Queued => {
+                audit::record(
+                    db,
+                    Actor::Cli,
+                    "schedule.run_now",
+                    Some(&format!("schedule:{name}")),
+                    json!({}),
+                )
+                .await?;
+                "queued"
+            }
+            RunNow::Busy => "already queued or running",
+            RunNow::TooSoon => "ran less than a minute ago",
+            RunNow::Off => "no such schedule, or it's off",
+        };
+        writeln!(out, "{name}: {said}")?;
+    }
     Ok(())
 }
 

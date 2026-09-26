@@ -89,7 +89,7 @@
   <section class="card data-card">
     <header><h2>Schedules</h2></header>
     <table class="table">
-      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last queued</th><th scope="col">Next</th></tr></thead>
+      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last queued</th><th scope="col">Next</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for s in schedules %}
         <tr>
@@ -97,6 +97,7 @@
           <td>{{ s.every }}</td>
           <td class="num">{{ s.last_run }}</td>
           <td class="num">{{ s.next_run }}</td>
+          <td class="text-right">{% if s.enabled %}<form method="post" action="/admin/system/schedules/{{ s.name }}/run"><button type="submit" class="btn" data-variant="outline" data-size="sm">Run now</button></form>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

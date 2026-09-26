@@ -359,3 +359,63 @@ fn github_client(github: &MockServer) -> tether_net::Outbound {
     )
     .unwrap()
 }
+
+/// Run now: a schedule's job is queued at once, once; a run in flight
+/// isn't doubled; apps' schedules are run from their pages.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn schedules_run_now_from_the_system_page(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    tether_jobs::schedule::ensure(
+        &h.db,
+        &tether_jobs::schedule::ScheduleSpec::new(
+            "affiliation.sync",
+            "affiliation.sync",
+            std::time::Duration::from_secs(3600),
+        ),
+    )
+    .await
+    .unwrap();
+
+    let res = send(
+        &h.app,
+        form("/admin/system/schedules/affiliation.sync/run", "", &owner),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/system", "{}", res.body);
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE schedule = 'affiliation.sync' AND state = 'queued'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+
+    // Still queued: not doubled.
+    let again = send(
+        &h.app,
+        form("/admin/system/schedules/affiliation.sync/run", "", &owner),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::BAD_REQUEST);
+    assert!(
+        again.body.contains("still queued or running"),
+        "{}",
+        again.body
+    );
+
+    let app = send(
+        &h.app,
+        form("/admin/system/schedules/plugin:acme.x:y/run", "", &owner),
+    )
+    .await;
+    assert_eq!(app.status, StatusCode::BAD_REQUEST);
+    let audited: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.audit_log WHERE action = 'schedule.run_now'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(audited, 1);
+    let page = page(&h, "/admin/system", &owner).await.body;
+    assert!(page.contains("/admin/system/schedules/affiliation.sync/run"));
+}

@@ -319,6 +319,10 @@ pub fn router(state: AppState) -> Router {
             post(pages::system::check_updates),
         )
         .route("/admin/jobs/{id}/retry", post(pages::system::retry_job))
+        .route(
+            "/admin/system/schedules/{name}/run",
+            post(pages::system::run_now),
+        )
         .route("/admin/audit", get(pages::system::audit_log))
         // Uploads and keys live outside /admin/plugins/, so no plugin id
         // can collide with their routes.
@@ -383,6 +387,10 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
         .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))
         .route("/admin/plugins/{id}/update", post(pages::plugins::update))
+        .route(
+            "/admin/plugins/{id}/schedules/{name}/run",
+            post(pages::plugins::run_schedule),
+        )
         .route(
             "/admin/plugins/{id}/source",
             post(pages::plugins::set_source),

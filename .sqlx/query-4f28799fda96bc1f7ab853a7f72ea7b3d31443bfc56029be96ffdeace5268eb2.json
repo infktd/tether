@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.jobs (kind, payload, schedule, plugin_id)\n        VALUES ($1, $2, $3, $2::jsonb ->> 'plugin')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4f28799fda96bc1f7ab853a7f72ea7b3d31443bfc56029be96ffdeace5268eb2"
+}

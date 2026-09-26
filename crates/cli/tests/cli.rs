@@ -771,3 +771,66 @@ async fn doctor_lists_the_hosts_apps_may_call(db: PgPool) {
         "approved for apps: acme.srp -> janice.e-351.com, zkillboard.com"
     );
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn jobs_run_runs_schedules_now(db: PgPool) {
+    let (_esi_server, esi) = mock_esi().await;
+    for name in [
+        "plugin:acme.moons:sync",
+        "plugin:acme.moons:pings",
+        "affiliation.sync",
+    ] {
+        tether_jobs::schedule::ensure(
+            &db,
+            &tether_jobs::schedule::ScheduleSpec::new(
+                name,
+                "plugin.job",
+                std::time::Duration::from_secs(3600),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    let jobs = |schedule: Option<JobsCommand>| Command::Jobs {
+        command: schedule,
+        state: None,
+        limit: 20,
+    };
+    let listed = cli(&db, &esi, jobs(Some(JobsCommand::Schedules)))
+        .await
+        .unwrap();
+    assert!(listed.contains("plugin:acme.moons:sync"), "{listed}");
+
+    let out = cli(
+        &db,
+        &esi,
+        jobs(Some(JobsCommand::Run {
+            schedule: "plugin:acme.moons:*".to_owned(),
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("plugin:acme.moons:pings: queued"), "{out}");
+    assert!(out.contains("plugin:acme.moons:sync: queued"), "{out}");
+    assert!(!out.contains("affiliation.sync"), "{out}");
+    // Not doubled.
+    let again = cli(
+        &db,
+        &esi,
+        jobs(Some(JobsCommand::Run {
+            schedule: "plugin:acme.moons:sync".to_owned(),
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(again.contains("already queued or running"), "{again}");
+    let none = cli(
+        &db,
+        &esi,
+        jobs(Some(JobsCommand::Run {
+            schedule: "nothing:*".to_owned(),
+        })),
+    )
+    .await;
+    assert!(none.is_err());
+}

@@ -134,7 +134,7 @@ deploy/install.sh --version 1.2.0   # move the pin to another published image (X
 deploy/install.sh --proxy none localhost   # or nginx/traefik: the admin's own proxy, no Caddy; app on 127.0.0.1:8080 (deploy/README.md)
 (cd deploy && docker compose pull && docker compose up -d)   # honours COMPOSE_FILE in deploy/.env (proxy and build overrides; a --build install rebuilds on up); `up -f deploy/docker-compose.yml` would not
 git tag v1.2.0 && git push origin v1.2.0   # release: CI publishes ghcr.io/<owner>/tether:1.2.0, :1.2, :latest after its checks; then a GitHub release (deploy/README.md, Releasing)
-docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync
+docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync; `tether jobs run plugin:<app id>:*` runs an app's schedules now
 docker compose -f deploy/docker-compose.yml exec app tether rollback --list   # snapshots and nightly backups
 docker compose -f deploy/docker-compose.yml stop app && docker compose -f deploy/docker-compose.yml run --rm app rollback   # restore core's pre-migration snapshot (asks first; --plugin <id>, --snapshot <name>, --yes)
 SKIP_MIGRATION_SNAPSHOT=true cargo run -p tether-server --features dev   # locally, without Postgres 16's pg_dump, when a new migration is pending

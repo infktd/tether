@@ -51,6 +51,8 @@ const ROUTES: &[&str] = &[
     "/admin/discord/channels/1/remove",
     "/admin/system/updates/check",
     "/admin/jobs/1/retry",
+    "/admin/system/schedules/affiliation.sync/run",
+    "/admin/plugins/example.hello/schedules/sync/run",
     "/admin/plugin-uploads/1/approve",
     "/admin/plugin-uploads/1/discard",
     "/admin/plugins/example.hello/enable",

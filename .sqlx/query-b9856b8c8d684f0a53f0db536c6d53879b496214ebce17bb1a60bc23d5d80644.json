@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.schedules\n        SET last_enqueued_at = now(), next_run_at = now() + make_interval(secs => $2)\n        WHERE name = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b9856b8c8d684f0a53f0db536c6d53879b496214ebce17bb1a60bc23d5d80644"
+}

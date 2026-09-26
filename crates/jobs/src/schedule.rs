@@ -150,6 +150,83 @@ impl Scheduler {
     }
 }
 
+/// What asking a schedule to run now did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunNow {
+    /// Its job is queued.
+    Queued,
+    /// Its previous run is still queued or running.
+    Busy,
+    /// It was queued less than [`RUN_NOW_GAP`] ago.
+    TooSoon,
+    /// No such schedule, or it's switched off (its plugin disabled).
+    Off,
+}
+
+/// How often an admin may run one schedule by hand: a run that just
+/// happened has done its work, and a plugin's jobs spend ESI budget.
+pub const RUN_NOW_GAP: Duration = Duration::from_secs(60);
+
+/// Queues a schedule's job now, as its next tick would, and restarts its
+/// interval from now. Only that schedule: a run still in flight isn't
+/// doubled, and it runs by hand at most once per [`RUN_NOW_GAP`].
+pub async fn run_now(pool: &PgPool, name: &str) -> Result<RunNow, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let found = sqlx::query!(
+        r#"
+        SELECT kind, payload, every_secs, enabled,
+               COALESCE(last_enqueued_at > now() - make_interval(secs => $2), false) AS "too_soon!",
+               EXISTS (SELECT 1 FROM core.jobs j
+                       WHERE j.schedule = s.name AND j.state IN ('queued', 'running')) AS "busy!"
+        FROM core.schedules s
+        WHERE name = $1
+          AND (s.payload->>'plugin' IS NULL
+               OR EXISTS (SELECT 1 FROM core.plugins p WHERE p.id = s.payload->>'plugin'))
+        FOR UPDATE
+        "#,
+        name,
+        RUN_NOW_GAP.as_secs_f64(),
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(s) = found else {
+        return Ok(RunNow::Off);
+    };
+    if !s.enabled {
+        return Ok(RunNow::Off);
+    }
+    if s.busy {
+        return Ok(RunNow::Busy);
+    }
+    if s.too_soon {
+        return Ok(RunNow::TooSoon);
+    }
+    sqlx::query!(
+        r#"
+        INSERT INTO core.jobs (kind, payload, schedule, plugin_id)
+        VALUES ($1, $2, $3, $2::jsonb ->> 'plugin')
+        "#,
+        s.kind,
+        s.payload,
+        name,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        r#"
+        UPDATE core.schedules
+        SET last_enqueued_at = now(), next_run_at = now() + make_interval(secs => $2)
+        WHERE name = $1
+        "#,
+        name,
+        f64::from(s.every_secs),
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(RunNow::Queued)
+}
+
 /// A schedule, for admins.
 #[derive(Debug, Clone)]
 pub struct ScheduleRow {

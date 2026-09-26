@@ -812,6 +812,18 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/system/schedules/affiliation.sync/run
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/acme.hello/schedules/sync/run
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/jobs/1/retry
 Origin: {{base}}
 HTTP 303
