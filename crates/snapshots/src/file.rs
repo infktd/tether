@@ -9,7 +9,7 @@
 //! The header is plaintext, so snapshots can be listed without the key,
 //! but it can't be changed: every chunk is sealed with the SHA-256 of
 //! everything before the prefix as associated data. Chunks are sealed with
-//! [`tether_core::crypto::StreamSealer`] (STREAM over XChaCha20-Poly1305),
+//! [`tether_core::crypto::StreamSealer`] (`aead-stream`'s STREAM over XChaCha20-Poly1305),
 //! so nothing is ever held whole in memory.
 
 use sha2::{Digest, Sha256};

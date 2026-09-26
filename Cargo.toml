@@ -44,6 +44,9 @@ axum = "0.8"
 futures-core = "0.3"
 axum-extra = { version = "0.12", features = ["cookie"] }
 chacha20poly1305 = "0.11"
+# Snapshots are sealed as a STREAM (RustCrypto's construction over the
+# XChaCha20-Poly1305 above; same aead 0.6). Approved by Jay.
+aead-stream = { version = "0.6", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "4.6", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }

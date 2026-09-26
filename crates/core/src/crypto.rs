@@ -8,12 +8,14 @@
 //!
 //! Layout: `version (1) || nonce (24) || ciphertext+tag`.
 //!
-//! Large data (snapshots) is sealed in chunks with [`StreamSealer`], under
-//! a key [derived](EncryptionKey::derive) for that purpose, never the
-//! instance key itself.
+//! Large data (snapshots) is sealed in chunks with [`StreamSealer`]
+//! (`aead-stream`'s STREAM, BE32), under a key
+//! [derived](EncryptionKey::derive) for that purpose, never the instance
+//! key itself.
 
 use std::fmt;
 
+use aead_stream::{DecryptorBE32, EncryptorBE32, StreamBE32};
 use chacha20poly1305::aead::{Aead, Payload};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
 
@@ -87,13 +89,13 @@ impl EncryptionKey {
     pub fn stream_sealer(&self, aad: &[u8]) -> Result<StreamSealer, CryptoError> {
         let mut prefix = [0u8; STREAM_PREFIX_LEN];
         getrandom::fill(&mut prefix).map_err(|_| CryptoError::Random)?;
-        Ok(StreamSealer(Stream::new(self.cipher.clone(), prefix, aad)))
+        Ok(StreamSealer::new(self.cipher.clone(), prefix, aad))
     }
 
     /// Opens a stream sealed by [`EncryptionKey::stream_sealer`] with this
     /// key, that prefix and the same `aad`.
     pub fn stream_opener(&self, prefix: [u8; STREAM_PREFIX_LEN], aad: &[u8]) -> StreamOpener {
-        StreamOpener(Stream::new(self.cipher.clone(), prefix, aad))
+        StreamOpener::new(self.cipher.clone(), prefix, aad)
     }
 
     pub fn encrypt(&self, plaintext: &[u8], context: &str) -> Result<Vec<u8>, CryptoError> {
@@ -155,54 +157,25 @@ pub const STREAM_TAG: usize = 16;
 /// The random part of every chunk's nonce, stored once per stream.
 pub const STREAM_PREFIX_LEN: usize = 19;
 
-/// The STREAM construction (Hoang, Reyhanitabar, Rogaway and Vizár, 2015;
-/// the "BE32" layout of RustCrypto's `aead-stream`) over
-/// XChaCha20-Poly1305: chunk `i`'s nonce is `prefix (19) || i as u32
-/// big-endian (4) || last (1)`. Chunks can't be reordered, dropped or
-/// repeated without failing to open, nothing can follow the last one, and
-/// a stream cut short is caught because its last chunk never arrives.
-struct Stream {
-    cipher: XChaCha20Poly1305,
-    prefix: [u8; STREAM_PREFIX_LEN],
-    aad: Vec<u8>,
-    counter: u32,
-    finished: bool,
-}
+type Stream = StreamBE32<XChaCha20Poly1305>;
 
-impl Stream {
-    fn new(cipher: XChaCha20Poly1305, prefix: [u8; STREAM_PREFIX_LEN], aad: &[u8]) -> Self {
-        Self {
-            cipher,
-            prefix,
-            aad: aad.to_vec(),
-            counter: 0,
-            finished: false,
-        }
-    }
-
-    /// The next chunk's nonce; moves the counter on.
-    fn next_nonce(&mut self, last: bool) -> Result<XNonce, CryptoError> {
-        if self.finished {
-            return Err(CryptoError::StreamEnded);
-        }
-        let mut nonce = [0u8; NONCE_LEN];
-        nonce[..STREAM_PREFIX_LEN].copy_from_slice(&self.prefix);
-        nonce[STREAM_PREFIX_LEN..NONCE_LEN - 1].copy_from_slice(&self.counter.to_be_bytes());
-        nonce[NONCE_LEN - 1] = u8::from(last);
-        if last {
-            self.finished = true;
-        } else {
-            self.counter = self
-                .counter
-                .checked_add(1)
-                .ok_or(CryptoError::StreamTooLong)?;
-        }
-        Ok(XNonce::from(nonce))
-    }
+/// RustCrypto's `aead-stream` STREAM construction (Hoang, Reyhanitabar,
+/// Rogaway and Vizár, 2015) in its BE32 layout, over XChaCha20-Poly1305:
+/// chunk `i`'s nonce is `prefix (19) || i as u32 big-endian (4) || last
+/// (1)`. Chunks can't be reordered, dropped or repeated without failing to
+/// open, nothing can follow the last one, and a stream cut short is caught
+/// because its last chunk never arrives.
+fn stream_nonce(prefix: [u8; STREAM_PREFIX_LEN]) -> aead_stream::Nonce<XChaCha20Poly1305, Stream> {
+    prefix.into()
 }
 
 /// Seals a stream chunk by chunk. See [`EncryptionKey::stream_sealer`].
-pub struct StreamSealer(Stream);
+pub struct StreamSealer {
+    prefix: [u8; STREAM_PREFIX_LEN],
+    aad: Vec<u8>,
+    /// `None` once the last chunk is sealed (sealing it consumes this).
+    encryptor: Option<EncryptorBE32<XChaCha20Poly1305>>,
+}
 
 impl fmt::Debug for StreamSealer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -211,9 +184,17 @@ impl fmt::Debug for StreamSealer {
 }
 
 impl StreamSealer {
+    fn new(cipher: XChaCha20Poly1305, prefix: [u8; STREAM_PREFIX_LEN], aad: &[u8]) -> Self {
+        Self {
+            prefix,
+            aad: aad.to_vec(),
+            encryptor: Some(EncryptorBE32::from_aead(cipher, &stream_nonce(prefix))),
+        }
+    }
+
     /// Stored with the stream: the opener needs it.
     pub fn prefix(&self) -> [u8; STREAM_PREFIX_LEN] {
-        self.0.prefix
+        self.prefix
     }
 
     /// Seals the next chunk (at most [`STREAM_CHUNK`] bytes); `last` must
@@ -222,23 +203,35 @@ impl StreamSealer {
         if chunk.len() > STREAM_CHUNK {
             return Err(CryptoError::ChunkTooBig);
         }
-        let nonce = self.0.next_nonce(last)?;
-        self.0
-            .cipher
-            .encrypt(
-                &nonce,
-                Payload {
-                    msg: chunk,
-                    aad: &self.0.aad,
-                },
-            )
-            .map_err(|_| CryptoError::Decrypt)
+        let payload = Payload {
+            msg: chunk,
+            aad: &self.aad,
+        };
+        if last {
+            let encryptor = self.encryptor.take().ok_or(CryptoError::StreamEnded)?;
+            encryptor
+                .encrypt_last(payload)
+                .map_err(|_| CryptoError::Decrypt)
+        } else {
+            // The only way the next chunk can fail: the counter ran out.
+            self.encryptor
+                .as_mut()
+                .ok_or(CryptoError::StreamEnded)?
+                .encrypt_next(payload)
+                .map_err(|_| CryptoError::StreamTooLong)
+        }
     }
 }
 
 /// Opens a sealed stream chunk by chunk. See
 /// [`EncryptionKey::stream_opener`].
-pub struct StreamOpener(Stream);
+pub struct StreamOpener {
+    aad: Vec<u8>,
+    /// `None` once a chunk claiming to be the last was tried (trying it
+    /// consumes this).
+    decryptor: Option<DecryptorBE32<XChaCha20Poly1305>>,
+    finished: bool,
+}
 
 impl fmt::Debug for StreamOpener {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -247,29 +240,44 @@ impl fmt::Debug for StreamOpener {
 }
 
 impl StreamOpener {
+    fn new(cipher: XChaCha20Poly1305, prefix: [u8; STREAM_PREFIX_LEN], aad: &[u8]) -> Self {
+        Self {
+            aad: aad.to_vec(),
+            decryptor: Some(DecryptorBE32::from_aead(cipher, &stream_nonce(prefix))),
+            finished: false,
+        }
+    }
+
     /// Opens the next chunk. `last` says whether the stream claims this is
     /// its final chunk; a false claim fails to open.
     pub fn open(&mut self, sealed: &[u8], last: bool) -> Result<Vec<u8>, CryptoError> {
         if sealed.len() > STREAM_CHUNK + STREAM_TAG {
             return Err(CryptoError::ChunkTooBig);
         }
-        let nonce = self.0.next_nonce(last)?;
-        self.0
-            .cipher
-            .decrypt(
-                &nonce,
-                Payload {
-                    msg: sealed,
-                    aad: &self.0.aad,
-                },
-            )
-            .map_err(|_| CryptoError::Decrypt)
+        let payload = Payload {
+            msg: sealed,
+            aad: &self.aad,
+        };
+        if last {
+            let decryptor = self.decryptor.take().ok_or(CryptoError::StreamEnded)?;
+            let plain = decryptor
+                .decrypt_last(payload)
+                .map_err(|_| CryptoError::Decrypt)?;
+            self.finished = true;
+            Ok(plain)
+        } else {
+            self.decryptor
+                .as_mut()
+                .ok_or(CryptoError::StreamEnded)?
+                .decrypt_next(payload)
+                .map_err(|_| CryptoError::Decrypt)
+        }
     }
 
     /// Whether the last chunk has been opened: a stream that ends before
     /// then was cut short.
     pub fn finished(&self) -> bool {
-        self.0.finished
+        self.finished
     }
 }
 
@@ -464,6 +472,37 @@ mod tests {
             sealer.seal(&vec![0; STREAM_CHUNK + 1], true),
             Err(CryptoError::ChunkTooBig)
         );
+    }
+
+    #[test]
+    fn stream_nonces_are_prefix_counter_and_last_flag() {
+        // The file format depends on this layout: chunk i is plain
+        // XChaCha20-Poly1305 under `prefix || i (u32 BE) || last`.
+        let k = key(K1).derive("test").unwrap();
+        let mut sealer = k.stream_sealer(b"header").unwrap();
+        let prefix = sealer.prefix();
+        let first = sealer.seal(b"one", false).unwrap();
+        let second = sealer.seal(b"two", true).unwrap();
+        let nonce = |i: u32, last: bool| {
+            let mut n = [0u8; NONCE_LEN];
+            n[..STREAM_PREFIX_LEN].copy_from_slice(&prefix);
+            n[STREAM_PREFIX_LEN..NONCE_LEN - 1].copy_from_slice(&i.to_be_bytes());
+            n[NONCE_LEN - 1] = u8::from(last);
+            XNonce::from(n)
+        };
+        let open = |sealed: &[u8], n: XNonce| {
+            k.cipher
+                .decrypt(
+                    &n,
+                    Payload {
+                        msg: sealed,
+                        aad: b"header",
+                    },
+                )
+                .unwrap()
+        };
+        assert_eq!(open(&first, nonce(0, false)), b"one");
+        assert_eq!(open(&second, nonce(1, true)), b"two");
     }
 
     #[test]
