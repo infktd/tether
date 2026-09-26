@@ -1113,7 +1113,9 @@ dependencies = [
 
 [[package]]
 name = "eve-esi-client"
-version = "0.6.0"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395b10874c63b9b72a693e4c72f3dde65700346ef9a27760cbafc368f3270bf3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

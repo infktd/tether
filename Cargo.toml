@@ -79,7 +79,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # TLS everywhere is rustls with ring as its crypto provider, installed by
 # `tether_net::install_crypto_provider` before any client is built: no
 # aws-lc-sys (a C build) anywhere in the tree.
-eve-esi-client = { version = "0.6", default-features = false, features = ["rustls-no-provider"] }
+eve-esi-client = { version = "0.5.1", default-features = false, features = ["rustls-no-provider"] }
 # Same version as eve-esi-client's, so no second copy. Default features off
 # (they bring aws-lc-rs). Proxies are refused per client by Outbound.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
