@@ -135,9 +135,12 @@ jobs:
           done
 
   # The top rule: a fresh `docker compose up` must give a working instance.
-  # Built natively on each architecture. The app is first started on its
-  # own, as the admin's-own-proxy option runs it, then the install switches
-  # to the default Caddy and the full stack is checked over HTTPS.
+  # Built from this commit's source (install.sh --build, through
+  # docker-compose.build.yml) natively on each architecture, not pulled:
+  # published images are built from the same Dockerfile.
+  # The app is first started on its own, as the admin's-own-proxy option
+  # runs it, then the install switches to the default Caddy and the full
+  # stack is checked over HTTPS.
   docker:
     strategy:
       matrix:
@@ -145,8 +148,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install without Caddy (--proxy none)
-        run: deploy/install.sh --proxy none localhost
+      - name: Install from source without Caddy (--build --proxy none)
+        run: deploy/install.sh --build --proxy none localhost
       # Compose starts the image's plain `tether` entrypoint with settings
       # from the environment; a regression there once left `docker compose
       # up` with no server. Checked straight on the app's port, with no
@@ -165,13 +168,14 @@ jobs:
           done
           test -z "$(docker ps -q --filter label=com.docker.compose.service=caddy)"
           test "$(cd deploy && docker compose port app 8080)" = "127.0.0.1:8080"
-      - name: Switch to Caddy (re-running install.sh keeps the secrets)
+      - name: Switch to Caddy (re-running install.sh keeps the secrets and the build)
         run: |
           token=$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)
           deploy/install.sh --proxy caddy
           test "$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" = "$token"
           grep -qx 'TETHER_PROXY=caddy' deploy/.env
-          ! grep -q '^COMPOSE_FILE=' deploy/.env
+          grep -qx 'TETHER_IMAGE=tether:local' deploy/.env
+          grep -qx 'COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml' deploy/.env
       - name: Ready over HTTPS (database connected, migrations applied)
         run: |
           for i in $(seq 1 60); do
@@ -224,3 +228,54 @@ jobs:
         run: |
           test "$(docker compose -f deploy/docker-compose.yml exec -T db \
             psql -U tether -tAc 'show timescaledb.telemetry_level')" = off
+
+  # The deploy files alone, as the install without a clone downloads them
+  # (deploy/README.md): install.sh pins a published image, refuses --build,
+  # and each proxy's compose files resolve. Nothing is pulled or started:
+  # the image for this commit isn't published yet.
+  deploy-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck --severity=warning deploy/install.sh
+      - name: install.sh from the deploy files alone
+        run: |
+          dir=$RUNNER_TEMP/standalone/deploy
+          mkdir -p "$dir"
+          for f in docker-compose.yml docker-compose.host-proxy.yml \
+              docker-compose.traefik.yml Caddyfile install.sh .env.example; do
+            cp "deploy/$f" "$dir/"
+          done
+          cd "$dir"
+          # Only GitHub's API not answering (shared runners' addresses hit
+          # its rate limit) is tolerated, and then edge is pinned by hand.
+          if ! ./install.sh --no-start localhost 2> err.log; then
+            cat err.log
+            grep -q "couldn't ask api.github.com" err.log
+            echo "::warning::GitHub's API didn't answer; pinning edge instead."
+            ./install.sh --version edge --no-start localhost
+          fi
+          grep -Eqx 'TETHER_IMAGE=ghcr\.io/infktd/tether:(edge|[0-9]+\.[0-9]+\.[0-9]+)' .env
+          before=$(grep '^TETHER_IMAGE=' .env)
+          ./install.sh --no-start
+          test "$(grep '^TETHER_IMAGE=' .env)" = "$before"
+          if ./install.sh --build --no-start; then
+            echo "--build must need a clone"; exit 1
+          fi
+          docker compose config -q
+          ./install.sh --version 1.2.3 --proxy none --no-start
+          grep -qx 'TETHER_IMAGE=ghcr.io/infktd/tether:1.2.3' .env
+          docker compose config -q
+          test "$(docker compose config --images | grep tether)" = ghcr.io/infktd/tether:1.2.3
+          printf 'TRAEFIK_NETWORK=traefik\nTRAEFIK_CERTRESOLVER=le\n' >> .env
+          COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml docker compose config -q
+      - name: Compose files with the build override
+        working-directory: deploy
+        run: |
+          printf 'DOMAIN=localhost\nPOSTGRES_PASSWORD=x\nSETUP_TOKEN=x\nENCRYPTION_KEY=x\nTRAEFIK_NETWORK=traefik\nTRAEFIK_CERTRESOLVER=le\n' > .env
+          for proxy in "" :docker-compose.host-proxy.yml :docker-compose.traefik.yml; do
+            COMPOSE_FILE=docker-compose.yml$proxy:docker-compose.build.yml docker compose config -q
+            test "$(COMPOSE_FILE=docker-compose.yml$proxy:docker-compose.build.yml \
+              docker compose config --images | grep tether)" = tether:local
+          done

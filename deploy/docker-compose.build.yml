@@ -1,0 +1,18 @@
+# Override that builds the app image from this clone instead of pulling a
+# published one: `deploy/install.sh --build` adds it through COMPOSE_FILE
+# in deploy/.env (with TETHER_IMAGE=tether:local), and CI's install test
+# uses it. Also for development:
+#
+#   cd deploy && docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# The image is tagged tether:local, never a registry name, so a local build
+# can't be mistaken for a published one or replaced by a pull.
+services:
+  app:
+    image: tether:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # Built on every `up`, and skipped by `docker compose pull` (there's
+    # nothing to pull).
+    pull_policy: build

@@ -1,15 +1,120 @@
 # Deploying Tether
 
+Tether runs from a published image, `ghcr.io/infktd/tether`, built for
+amd64 and arm64. Your server downloads it and compiles nothing.
+
+## Install
+
+You need Docker with the compose plugin, and a domain pointing at the
+server.
+
+**Without cloning.** Download the deploy files and run the installer:
+
 ```bash
+ref=main   # main until the first release; then the release tag, such as v1.2.0
+mkdir -p tether/deploy && cd tether/deploy &&
+curl -fsSL --fail-early -O \
+  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,.env.example}" &&
+chmod +x install.sh && cd .. && deploy/install.sh alliance.example.com
+```
+
+**Or from a clone:**
+
+```bash
+git clone https://github.com/infktd/tether.git && cd tether
 deploy/install.sh alliance.example.com
 ```
 
-That writes `deploy/.env` (the domain and generated secrets, once), starts
-the stack and prints the setup token for the browser wizard. Nothing else
-runs by hand. Re-running it is safe: secrets are never replaced, and the
-reverse proxy settings only change when you pass `--proxy` or another proxy
-flag. `deploy/install.sh --help` lists the flags; with a terminal attached,
-it asks for what's missing.
+Either way you end up in a `tether` directory with `deploy/` inside, and
+the commands below run from there.
+
+install.sh writes `deploy/.env` (the domain and generated secrets, once),
+pins the app image, pulls it, starts the stack and prints the setup token
+for the browser wizard. Nothing else runs by hand. Re-running it is safe:
+secrets are never replaced, and the image and reverse proxy settings only
+change when you pass `--version`, `--build`, `--proxy` or another proxy
+flag. `deploy/install.sh --help` lists the flags; with a terminal
+attached, it asks for what's missing.
+
+Those downloads are made by your shell and Docker while you install or
+upgrade, not by Tether: the deploy files from `raw.githubusercontent.com`,
+the newest release's number from `api.github.com`, and the images from
+`ghcr.io` (Tether) and Docker Hub (Postgres, Caddy). The running app only
+talks to the hosts in CLAUDE.md's Opsec list.
+
+### Which image runs
+
+On the first install, install.sh pins `TETHER_IMAGE` in `deploy/.env` to
+the newest release, `ghcr.io/infktd/tether:X.Y.Z`, or to
+`ghcr.io/infktd/tether:edge` while there's no release yet. If GitHub
+doesn't answer, it stops and asks for `--version`, rather than quietly
+following edge. Re-running install.sh never changes the pin: only
+`--version` and `--build` do. On edge, every run pulls the newest main.
+
+| Tag | What it is |
+| --- | --- |
+| `X.Y.Z` | A release; never changes |
+| `X.Y` | The newest `X.Y.*` release |
+| `latest` | The newest release |
+| `edge` | The newest commit on main that passed CI |
+| `sha-<commit>` | One build of main |
+
+## Upgrading
+
+```bash
+deploy/install.sh --version 1.3.0
+```
+
+That moves the pin, pulls the image and restarts the app. On startup,
+Tether takes an encrypted snapshot of the database before running any new
+migrations. On `edge`, re-running `deploy/install.sh` pulls the newest
+build. Editing `TETHER_IMAGE` in `deploy/.env` and running
+`cd deploy && docker compose pull && docker compose up -d` does the same.
+
+Get the release's deploy files first, in case they changed: in a clone,
+`git fetch --tags && git checkout v1.3.0` (or `git pull` on main). Without
+a clone, run this from the same `tether` directory. It replaces the deploy
+files, so redo any edits you made to them, but it never touches `.env`:
+
+```bash
+ref=v1.3.0
+(cd deploy && curl -fsSL --fail-early -O \
+  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,.env.example}" &&
+  chmod +x install.sh)
+```
+
+Don't re-run the whole install block for this: it would make a second
+`tether/deploy` inside the first. (install.sh refuses to write a new `.env`
+while the database volume exists, so that copy can't take over your
+database with new secrets.)
+
+## Rolling back
+
+Go back to the previous tag, and restore the snapshot the upgrade took:
+
+```bash
+cd deploy
+docker compose stop app
+docker compose run --rm app rollback        # restores that snapshot; asks first
+cd .. && deploy/install.sh --version 1.2.0  # the version you ran before
+```
+
+`rollback` restores the newest snapshot taken before migrations, and warns
+that anything written since then is lost. If the upgrade ran no migrations
+it took no snapshot, and `rollback` would restore an older one. Check
+`docker compose run --rm app rollback --list` first: without a snapshot
+from the upgrade, skip the `rollback` line. Apps roll back on their own
+pages.
+
+## Building from source
+
+`deploy/install.sh --build`, from a clone, builds the image on this
+machine instead of pulling it. It sets `TETHER_IMAGE=tether:local` and adds
+`docker-compose.build.yml` to `COMPOSE_FILE`, and every later run rebuilds
+(`git pull` first to upgrade). `--version` switches back to a published
+image. CI and development use this. An install from before published
+images has no `TETHER_IMAGE` and keeps building until `--version` moves it
+over.
 
 ## Choosing a reverse proxy
 

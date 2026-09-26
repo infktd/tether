@@ -194,12 +194,12 @@ Built into the host, not a plugin. REST only (twilight-http): no gateway connect
 
 ## Deployment
 
-Host and Postgres containers, plus Caddy by default. Images for amd64 and arm64. `deploy/install.sh` writes `.env` and starts the stack; `deploy/README.md` walks through each proxy.
+Host and Postgres containers, plus Caddy by default. The host runs from a published image for amd64 and arm64; nothing is compiled on the server. `deploy/install.sh` writes `.env`, pins the image, pulls it and starts the stack; `deploy/README.md` walks through installing (from a clone or from the deploy files alone), upgrades, rollback and each proxy.
 
 ```yaml
 services:
   app:
-    image: ghcr.io/<org>/alliance-platform:1
+    image: ${TETHER_IMAGE}   # ghcr.io/infktd/tether:1.2.0, pinned by install.sh
     env_file: .env
     depends_on: [db]
     restart: unless-stopped
@@ -217,16 +217,18 @@ volumes:
   pgdata:
 ```
 
+- Images (`.github/workflows/ci.yml`): once every CI job has passed on a commit, the publish jobs build `deploy/Dockerfile` natively on an amd64 and an arm64 runner (no emulation), push each by digest to `ghcr.io/<owner>/tether`, and join them into one multi-arch image with `docker buildx imagetools create`. Pushes to main publish `:edge` and `:sha-<commit>`, and `vX.Y.Z` tags publish `:X.Y.Z`, `:X.Y` and `:latest` (neither `:edge`, `:X.Y` nor `:latest` moves back to an older commit or release). Pull requests never publish. Only these jobs may write packages. Images carry OCI labels for source, revision, version and license (GPL-2.0-or-later). The CI install test (`docker` job) builds from source instead, through `docker-compose.build.yml`.
+- The image in use is `TETHER_IMAGE` in `.env`. On a first install, install.sh pins the newest GitHub release (`api.github.com`, asked by the admin's shell), or `:edge` when there's none; after that, only `--version` or `--build` change it. `--build` (from a clone) sets `tether:local` and adds `docker-compose.build.yml` to `COMPOSE_FILE`. ghcr.io, raw.githubusercontent.com (the deploy files, for an install without a clone) and Docker Hub are sources for the admin's shell and Docker at install and upgrade time. The running app never contacts them.
 - Reverse proxy, chosen at install (`install.sh --proxy`, stored as `TETHER_PROXY` in `.env`):
   - `caddy` (default): the file above on its own. Caddy terminates TLS with Let's Encrypt certificates and is the only way in; the app's port isn't published.
   - `nginx`: the admin's nginx on the host. `COMPOSE_FILE` in `.env` adds `docker-compose.host-proxy.yml`, which publishes the app on `127.0.0.1:TETHER_PORT` and gives Caddy a profile nobody enables. install.sh writes a server block for the domain (forwarded headers, unbuffered server-sent events, a 41 MiB body limit, no security headers since the app sends them) and, as root, installs it, runs `nginx -t` and reloads. Certificates are the admin's (certbot).
   - `traefik`: the admin's Traefik in Docker. `docker-compose.traefik.yml` attaches the app to Traefik's external network with router labels (domain, entry point, certificate resolver) and turns Caddy off. Nothing is published on the host.
   - `none`: the admin's own proxy, pointed at `127.0.0.1:TETHER_PORT` (the host-proxy override), with the requirements listed in `deploy/README.md`.
 - Behind any of them, the public URL is `https://DOMAIN` (fixed, not taken from request headers), so cookies, the SSO callback and the same-origin check don't depend on the proxy. The client's address, used to rate-limit the setup wizard, is the last `X-Forwarded-For` entry, believed only when the connection comes from a loopback or private address: the proxy on Caddy's or Traefik's network, or through Docker's forwarding of the 127.0.0.1 port. A public peer is a client reaching the app directly, and its own address is used.
-- `.env` holds only the domain, a generated database password, a generated setup token, a generated encryption key (for tokens and secrets at rest; it never enters the database) and the proxy settings. Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
+- `.env` holds only the domain, a generated database password, a generated setup token, a generated encryption key (for tokens and secrets at rest; it never enters the database), the pinned image and the proxy settings. Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
 - The wizard's first step requires the setup token, which is also printed to the logs at startup as a fallback. Once an owner exists the wizard's token step is closed and the token is refused, unless the owner's account loses its last character (then setup reopens behind the same token).
 - `doctor` checks DNS, external reachability of 80 and 443, TLS, database, ESI credentials and callback match, and the Discord token, printing a fix for each failure. It reads `TETHER_PROXY`: it says who terminates TLS, requires port 80 only with Caddy, and points its TLS fixes at Caddy's logs, certbot, Traefik's resolver or the admin's proxy.
-- Upgrades: change the image tag and restart. Migrations run after an automatic snapshot; rollback is the previous tag plus that snapshot: `docker compose stop app`, `docker compose run --rm app rollback`, set the tag back, `docker compose up -d`.
+- Upgrades: `install.sh --version X.Y.Z` (or edit `TETHER_IMAGE`, then `docker compose pull && docker compose up -d`). Migrations run after an automatic snapshot. Rollback is the previous tag plus that snapshot: `docker compose stop app`, `docker compose run --rm app rollback`, then `install.sh --version <previous>`. Skip the `rollback` step if the upgrade ran no migrations: it took no snapshot, and `rollback` would restore an older one.
 - Volumes: `pgdata` (Postgres), `snapshots` (encrypted snapshots and backups, `/var/lib/tether/snapshots` in the app), and Caddy's two (unused with another proxy). Snapshots are only as safe as `ENCRYPTION_KEY`: keep a copy of it apart from the backups.
 - Admins sign in like everyone else, through EVE SSO on the public domain (N6). There is no separate admin login, listener or private network: admin pages and API endpoints check permissions on the server for every request.
 

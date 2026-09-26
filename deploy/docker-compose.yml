@@ -22,12 +22,15 @@ name: tether
 # switching away from Caddy, `docker compose --profile caddy rm -sf caddy`
 # removes its container (install.sh does that). deploy/README.md has each
 # option.
+#
+# The app's image. install.sh pins TETHER_IMAGE in .env to a published
+# release (or :edge, the newest main, before the first release) and pulls
+# it; nothing is built on the server. `install.sh --version X.Y.Z` moves
+# the pin. `install.sh --build` builds from a clone instead, through
+# docker-compose.build.yml.
 services:
   app:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: ${TETHER_IMAGE:-tether:local}
+    image: ${TETHER_IMAGE:-ghcr.io/infktd/tether:latest}
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN must be set in .env}
       # For `tether doctor`: which proxy's checks and fixes apply.

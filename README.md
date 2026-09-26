@@ -10,7 +10,7 @@ Tether runs the day-to-day of an EVE Online alliance or corporation: who's in, w
 
 ## Why Tether
 
-- **One command, then your browser.** `deploy/install.sh your.domain`, then a setup wizard walks you through connecting EVE and Discord. There's no `migrate`, no `collectstatic`, and no editing of config files by hand.
+- **One command, then your browser.** `deploy/install.sh your.domain` pulls a prebuilt image (amd64 or arm64) and starts it, then a setup wizard walks you through connecting EVE and Discord. There's nothing to compile, no `migrate`, no `collectstatic`, and no editing of config files by hand.
 - **Apps that can't touch your tokens.** Apps run in a WebAssembly sandbox. They ask Tether for ESI data and Tether makes the call, checking each request against what you approved. Refresh tokens never leave the core.
 - **Familiar to admins.** Tether uses the names alliance admins already know from existing auth tools: States, Groups, Secure Groups, Blacklist, Corporation Stats, Fleet Pings. The screens are cleaner, and it does less magic behind your back.
 - **Light.** A single Rust binary next to Postgres. Most pages render in milliseconds, and the whole stack runs comfortably on a small VPS. There's no Redis or Celery, and no extra services to babysit.
@@ -43,13 +43,17 @@ More apps install straight from a GitHub repository. Tether reviews what each on
 
 ## Install
 
-You need a server with Docker (with the compose plugin) and a domain pointing at it.
+You need a server with Docker (with the compose plugin) and a domain pointing at it. Tether runs from a published image (`ghcr.io/infktd/tether`), so the server downloads it and compiles nothing. You don't need to clone the repository: this fetches just the deploy files and runs the installer.
 
 ```bash
-git clone https://github.com/infktd/tether.git
-cd tether
-deploy/install.sh alliance.example.com
+ref=main   # main until the first release; then the release tag, such as v1.2.0
+mkdir -p tether/deploy && cd tether/deploy &&
+curl -fsSL --fail-early -O \
+  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,.env.example}" &&
+chmod +x install.sh && cd .. && deploy/install.sh alliance.example.com
 ```
+
+A clone works too: `git clone https://github.com/infktd/tether.git && cd tether && deploy/install.sh alliance.example.com`.
 
 Then open `https://alliance.example.com/`, enter the setup token the script printed, and follow the wizard. It shows you exactly what to register on [developers.eveonline.com](https://developers.eveonline.com/) and checks that it works.
 
@@ -60,6 +64,8 @@ docker compose -f deploy/docker-compose.yml exec app tether doctor
 ```
 
 `doctor` checks DNS, ports, TLS, the database, EVE SSO and Discord, and tells you how to fix anything that's off.
+
+To upgrade, run `deploy/install.sh --version X.Y.Z`. It pins the new image, pulls it and restarts. Tether snapshots the database before migrating, so rolling back is the previous version plus that snapshot. [deploy/README.md](deploy/README.md) covers upgrades, rollback and building from source (`--build`).
 
 ## Building apps
 

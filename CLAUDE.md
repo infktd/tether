@@ -56,6 +56,14 @@ All HTTP from Tether's own code goes through `tether_net::Outbound`, which refus
 
 Plugin hosts are separate and per instance: a plugin's `capabilities.http` hosts are reachable only once that instance's admin approved them at install (again on upgrade if they change), each plugin through its own `Outbound` allowed exactly its approved hosts on 443 (`crates/web/src/plugin_http.rs`). Plugins can't declare Tether's own destinations, every request is logged, and `doctor` lists the approved hosts. A first-party plugin declaring a new host is still a new destination for this project: ask first (Jay approved `zkillboard.com` for Ship Replacement). Libraries with their own clients: eve-esi-client's ESI and SSO endpoints are fixed in the library, and twilight's Discord endpoint is checked against the list; `doctor` verifies the configured endpoints.
 
+Build and deploy sources are separate. They're what the image build, CI and the admin's install fetch, never destinations of the running app. The notable ones:
+
+- crates.io, the Rust toolchain (`static.rust-lang.org`), and Docker Hub for base images (`rust`, `debian`, `timescale/timescaledb`, `caddy`, the `docker/dockerfile` frontend)
+- Debian's apt mirrors, and apt.postgresql.org, only while building the image, for `postgresql-client-16`
+- GitHub releases of pinned, checksum-verified CI tools (Tailwind CLI, Hurl)
+- GitHub's container registry (`ghcr.io`), approved by Jay: CI publishes the app image there, and Docker pulls it at install and upgrade
+- `raw.githubusercontent.com` and `api.github.com`, from the admin's shell only: the deploy files for an install without a clone, and the newest release number when install.sh first pins the image (Jay asked for the install without a clone, 2026-09-26)
+
 Inbound, the app's port is reachable only from the reverse proxy: Caddy's Docker network, Traefik's, or 127.0.0.1 on the host (never published on a public address). Tether believes X-Forwarded-For only from loopback and private peers (`crates/web/src/ratelimit.rs`).
 
 No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bundled into the build. The one exception is dev-only tooling (such as Scalar at `/docs`), which may load from a CDN because it is compiled out of release builds. Keep this list in sync with the `doctor` checks and PRD requirement N5.
@@ -120,9 +128,12 @@ scripts/package-plugin.sh plugins/moon-mining ~/.minisign/tether.key   # first-p
 scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image bundles them (deploy/Dockerfile)
 BUNDLED_APPS_DIR=dist/apps cargo run -p tether-server --features dev   # offer them under "Included with Tether"
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
-deploy/install.sh localhost    # writes deploy/.env once, then starts the stack (bundled Caddy)
+deploy/install.sh localhost    # writes deploy/.env once, pins the published image (newest release, else :edge), pulls it and starts the stack (bundled Caddy)
+deploy/install.sh --build localhost   # build the image from this clone instead (tether:local, docker-compose.build.yml); what CI's install test does
+deploy/install.sh --version 1.2.0   # move the pin to another published image (X.Y.Z, X.Y, latest, edge, sha-<commit>), pull and restart: upgrades
 deploy/install.sh --proxy none localhost   # or nginx/traefik: the admin's own proxy, no Caddy; app on 127.0.0.1:8080 (deploy/README.md)
-(cd deploy && docker compose up -d --build)   # honours COMPOSE_FILE in deploy/.env (the proxy override); `up -f deploy/docker-compose.yml` would not
+(cd deploy && docker compose pull && docker compose up -d)   # honours COMPOSE_FILE in deploy/.env (proxy and build overrides; a --build install rebuilds on up); `up -f deploy/docker-compose.yml` would not
+git tag v1.2.0 && git push origin v1.2.0   # release: CI publishes ghcr.io/<owner>/tether:1.2.0, :1.2, :latest after its checks; then a GitHub release (deploy/README.md, Releasing)
 docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync
 docker compose -f deploy/docker-compose.yml exec app tether rollback --list   # snapshots and nightly backups
 docker compose -f deploy/docker-compose.yml stop app && docker compose -f deploy/docker-compose.yml run --rm app rollback   # restore core's pre-migration snapshot (asks first; --plugin <id>, --snapshot <name>, --yes)

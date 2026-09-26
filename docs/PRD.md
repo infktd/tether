@@ -90,10 +90,10 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 
 | ID | Area | Requirement |
 | --- | --- | --- |
-| N1 | Install | Two containers, host and Postgres, plus Caddy unless the admin chose their own reverse proxy (nginx on the host, Traefik in Docker, or any other) at install. `.env` holds only the domain, a generated database password, a generated setup token, a generated encryption key and the reverse proxy choice |
+| N1 | Install | Two containers, host and Postgres, plus Caddy unless the admin chose their own reverse proxy (nginx on the host, Traefik in Docker, or any other) at install. The host is a published image, pulled, never compiled on the server; installing needs only the deploy files, not a clone. `.env` holds only the domain, a generated database password, a generated setup token, a generated encryption key, the pinned image and the reverse proxy choice |
 | N2 | Install | Core migrations run automatically on startup; no manual migrate, collect or create-user steps |
 | N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure, fitted to the reverse proxy in use (port 80 is required only with Caddy) |
-| N4 | Platforms | Images for amd64 and arm64 |
+| N4 | Platforms | Published multi-arch images for amd64 and arm64 (`ghcr.io`), each built natively on its own architecture by CI once its checks pass |
 | N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only, when Caddy is the proxy; no other CA. With the admin's own nginx, Traefik or other proxy, certificates are that proxy's business, outside Tether), plus the hosts an instance's admin approves for each plugin (never these core ones). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admins sign in like everyone else: EVE SSO on the public domain, with no separate admin login, listener or private network. Admin pages and API endpoints are gated by permissions, checked on the server for every request |
 | N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (milestone 2, with the snapshots) |
@@ -103,7 +103,7 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 | N11 | Performance | Host under 300 MB RAM idle; whole stack comfortable on 1 OCPU and 6 GB for 500 characters |
 | N12 | Performance | Pages load in under 500 ms on that box, excluding waits on ESI |
 | N13 | Reliability | ESI and Discord outages delay work through retries instead of losing it |
-| N14 | Upgrades | Upgrade by changing the image tag; rollback is one command using the automatic pre-migration snapshot |
+| N14 | Upgrades | Upgrade by changing the image tag (`install.sh --version X.Y.Z`); rollback is the previous tag plus one command using the automatic pre-migration snapshot |
 | N15 | Design | All core pages and plugin pages use the shared component library and design tokens |
 
 ## Technical decisions
@@ -256,6 +256,7 @@ Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from AR
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
 
 - [x] Reverse proxy choice at install (N1): `deploy/install.sh --proxy caddy|nginx|traefik|none`, asked interactively. Caddy stays the default; nginx gets a generated server block (installed and reloaded when run as root), Traefik gets labels on its network, `none` publishes the app on 127.0.0.1 with documented requirements (`deploy/README.md`). X-Forwarded-For is believed only from loopback and private peers; `doctor` fits its checks to the proxy; CI starts the image through compose without Caddy and checks `/health`
+- [ ] Published images (N1, N4, N14): CI publishes `ghcr.io/<owner>/tether` after every check passes (main as `:edge` and `:sha-<commit>`, `vX.Y.Z` tags as `:X.Y.Z`, `:X.Y`, `:latest`), amd64 and arm64 built natively and joined by digest. `docker-compose.yml` pulls `TETHER_IMAGE`, which install.sh pins (newest release, else `:edge`) and moves only on `--version` or `--build`. `docker-compose.build.yml` builds from a clone, for CI and development. Installs work from the deploy files alone. Built; tick it once the first publish from main has run and the package is public
 - [ ] Fresh VPS with a real domain: `deploy/install.sh <domain>`, then only the browser wizard; no other shell commands
 - [ ] Register the production callback URL (`https://<domain>/auth/callback`) on the EVE application
 - [ ] Caddy obtains a Let's Encrypt certificate for the domain (or, with `--proxy nginx`/`traefik`, the admin's proxy serves one)
