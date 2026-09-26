@@ -58,7 +58,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Notifications | in-app, unread count, mark all read, delete read, max per user | same; the count is live | done |
 | Token Management | list tokens and scopes, delete, refresh | same; a refresh runs the ownership check, and a deleted token follows the dead-token rules (the character leaves a day later unless logged in again) | done |
 | Dashboard | Characters and Membership widgets; admin panels: Software Version, Task Queue, ESI status, Announcements; apps add widgets | Profile; admin System page (ESI health, job queue, error budget, updates) | partial: rename, admin panels, plugin widgets |
-| Admin site | Django admin for every model | purpose-built admin pages, API and CLI | done, deliberately different |
+| Admin site | Django admin for every model | purpose-built admin pages, API and CLI; **Users** (Admin → Users): find any account by any character (or id), filter by state and status, see its characters (corporation, token, added, last login), state, groups and permissions, Deactivate or Reactivate | done, deliberately different |
 | Menu (reorder, hide, folders, custom links) | | fixed sidebar | missing: milestone 2 |
 | Themes, Custom CSS | | dark theme; accent colour setting designed but not built | partial: build the accent setting; no custom CSS (plugins never ship CSS) |
 | Analytics | opt-out telemetry to Google Analytics | none | skip: no telemetry (N5) |
@@ -107,7 +107,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 - **Losing the main clears it.** When the main is sold or loses its last valid token, the account has no main: Guest, services off, until the owner picks one. An alt that loses its last valid token leaves the account. Nothing is promoted silently. Deliberately different: AA refuses every sign-in to an account without a main (its owner is stuck unless still signed in); Tether lets the owner sign in with one of the account's characters, which SSO just proved, and makes it the main, the same way AA re-attaches a returning owner. If the owner account loses its last character, it stops being the owner and first-run setup reopens behind the setup token.
 - **Safety on top of AA** (deliberate): only `invalid_grant` / `invalid_token` count as a dead token (errors about the whole app, such as a wrong client id, never do); a character leaves its account for a dead token only after a day's grace, if it's still dead then, and never the owner account's last character; if a tenth or more of all tokens die at once, nobody loses anything until an admin looks (a sale proven by a changed owner hash still acts at once). Deactivating someone needs every permission they hold, and a deactivated account's characters can't be moved to a fresh account.
 - **Change Main** only to a character with a valid token.
-- **Deactivate account** (admin, audited; not the owner): Guest, sessions ended, login refused, services removed; reactivate undoes it. **(decided)** *Tether today: absent.*
+- **Deactivate account** (admin, audited; not the owner): Guest, sessions ended, login refused, services removed; reactivate undoes it. **(decided)**
 - **Sessions** last 14 days from sign-in (Django's default), rotated at sign-in. *Tether today: 30 days.*
 - **Names** refresh with the affiliation sync, so nicknames follow renames. *Tether today: at login only.*
 

@@ -68,6 +68,7 @@ pub async fn index(
     for (permission, page) in [
         (tether_core::permissions::ADMIN_SYSTEM, "/admin/system"),
         (tether_core::permissions::ADMIN_PLUGINS, "/admin/plugins"),
+        (tether_core::permissions::ADMIN_USERS, "/admin/users"),
         (ADMIN_GROUPS, "/admin/groups"),
         (ADMIN_PERMISSIONS, "/admin/permissions"),
         (ADMIN_STATES, "/admin/states"),

@@ -66,7 +66,7 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     ),
     (
         ADMIN_USERS,
-        "Deactivate and reactivate accounts (a deactivated account is Guest and can't sign in)",
+        "Users: find every account and see its characters (alts), groups and permissions; deactivate and reactivate accounts (a deactivated account is Guest and can't sign in)",
     ),
     (
         ADMIN_SYSTEM,

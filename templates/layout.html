@@ -64,6 +64,11 @@
           {% call icons::icon("package") %}{% endcall %} Apps
         </a>
         {% endif %}
+        {% if shell.nav.users %}
+        <a href="/admin/users" class="nav-item"{% if shell.active == "users" %} aria-current="page"{% endif %}>
+          {% call icons::icon("user") %}{% endcall %} Users
+        </a>
+        {% endif %}
         {% if shell.nav.groups %}
         <a href="/admin/groups" class="nav-item"{% if shell.active == "admin_groups" %} aria-current="page"{% endif %}>
           {% call icons::icon("users") %}{% endcall %} Groups

@@ -15,33 +15,30 @@ use crate::error::AppError;
 
 /// Deactivates (`active = false`) or reactivates an account, as AA's
 /// inactive users: Guest, no permissions, sessions ended, sign-in refused.
-/// Audited; the account is re-evaluated at once. Never the owner.
+/// Audited, and re-evaluated in the same transaction. Never the owner.
 pub async fn set_active(
     db: &tether_db::PgPool,
     actor: Actor,
     account: AccountId,
     active: bool,
 ) -> Result<(), AppError> {
-    // Deactivating someone must not be a way past what you hold: only
-    // accounts whose permissions are all yours (the owner can't be
-    // deactivated at all).
-    if let Actor::Account(me) = actor {
-        let mine = tether_db::permissions::effective(db, me).await?;
-        // A deactivated account holds nothing now; what counts is what it
-        // gets back: its state's grants once re-evaluated.
-        let theirs = if active {
-            would_hold(db, account).await?
-        } else {
-            tether_db::permissions::effective(db, account).await?
-        };
-        if let Some(missing) = theirs.iter().find(|p| !mine.contains(*p)) {
-            return Err(AppError::new(
-                StatusCode::FORBIDDEN,
-                format!("That account holds {missing}, which you don't, so you can't change it."),
-            ));
-        }
-    }
     let mut tx = db.begin().await?;
+    // The same lock order as every evaluation: the states first.
+    tether_db::states::lock_shared(&mut tx).await?;
+    // Changing someone must not be a way past what you hold: only accounts
+    // whose permissions are all yours (the owner can't be deactivated at
+    // all). Deactivating checks what they hold now; reactivating checks
+    // what they hold afterwards (their state's grants, and those of any
+    // Auto or compliance groups they rejoin), in this transaction, so
+    // nothing is kept if the check fails.
+    let mine = match actor {
+        Actor::Account(me) => Some(tether_db::permissions::effective_in(&mut tx, me).await?),
+        _ => None,
+    };
+    if !active && let Some(mine) = &mine {
+        let theirs = tether_db::permissions::effective_in(&mut tx, account).await?;
+        refuse_unless_held(mine, &theirs)?;
+    }
     let changed = if active {
         tether_db::accounts::reactivate(&mut *tx, account).await?
     } else {
@@ -94,25 +91,28 @@ pub async fn set_active(
         json!({ "groups_left": left }),
     )
     .await?;
+    let rules = tether_db::states::load_rules(&mut tx).await?;
+    crate::states::evaluate_in(&mut tx, &rules, account, None).await?;
+    if active && let Some(mine) = &mine {
+        let theirs = tether_db::permissions::effective_in(&mut tx, account).await?;
+        // Dropping the transaction rolls the reactivation back.
+        refuse_unless_held(mine, &theirs)?;
+    }
     tx.commit().await?;
-    crate::states::evaluate_account(db, account).await?;
     Ok(())
 }
 
-/// What a deactivated account would hold once reactivated: the grants of
-/// the state its main would put it in (it left its groups on deactivation).
-async fn would_hold(
-    db: &tether_db::PgPool,
-    account: AccountId,
-) -> Result<std::collections::BTreeSet<String>, AppError> {
-    let mut conn = db.acquire().await?;
-    let rules = tether_db::states::load_rules(&mut conn).await?;
-    let main = tether_db::states::main(&mut *conn, account).await?;
-    let state = rules.evaluate(main);
-    Ok(tether_db::states::granted_to(&mut *conn, &[state])
-        .await?
-        .into_iter()
-        .collect())
+fn refuse_unless_held(
+    mine: &std::collections::BTreeSet<String>,
+    theirs: &std::collections::BTreeSet<String>,
+) -> Result<(), AppError> {
+    match theirs.iter().find(|p| !mine.contains(*p)) {
+        Some(missing) => Err(AppError::new(
+            StatusCode::FORBIDDEN,
+            format!("That account holds {missing}, which you don't, so you can't change it."),
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Exactly one of a state or a group.

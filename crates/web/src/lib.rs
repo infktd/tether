@@ -167,6 +167,16 @@ pub fn router(state: AppState) -> Router {
             post(pages::admin::remove_leader_group),
         )
         .route("/admin/permissions", get(pages::admin::permissions))
+        .route("/admin/users", get(pages::users::index))
+        .route("/admin/users/{id}", get(pages::users::show))
+        .route(
+            "/admin/users/{id}/deactivate",
+            post(pages::users::deactivate),
+        )
+        .route(
+            "/admin/users/{id}/reactivate",
+            post(pages::users::reactivate),
+        )
         .route(
             "/admin/permissions/audit",
             get(pages::permissions_audit::index),

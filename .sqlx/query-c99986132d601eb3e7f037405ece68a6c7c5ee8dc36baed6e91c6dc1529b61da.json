@@ -1,0 +1,134 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH found AS (\n            SELECT a.id, a.is_owner, a.active, a.state_id, a.main_character_id,\n                   (SELECT c.name FROM core.characters c\n                    WHERE c.account_id = a.id AND c.id IS DISTINCT FROM a.main_character_id\n                      AND ($2::text IS NOT NULL AND c.name ILIKE $2 OR c.id = $3)\n                      AND NOT EXISTS (\n                          SELECT 1 FROM core.characters m\n                          WHERE m.id = a.main_character_id AND (m.name ILIKE $2 OR m.id = $3))\n                    ORDER BY c.name LIMIT 1) AS matched\n            FROM core.accounts a\n            WHERE ($1::bigint IS NULL OR a.state_id = $1)\n              AND ($4::boolean IS NULL OR a.active = $4)\n              AND ($2::text IS NULL OR a.id = $3 OR EXISTS (\n                  SELECT 1 FROM core.characters c\n                  WHERE c.account_id = a.id AND (c.name ILIKE $2 OR c.id = $3)))\n        )\n        SELECT f.id, COALESCE(m.id, 0) AS \"main_id!\",\n               COALESCE(m.name, '(no main)') AS \"main_name!\",\n               corp.name AS \"corporation?\", ally.name AS \"alliance?\",\n               s.name AS state, COALESCE(s.builtin, 'custom') AS \"state_style!\",\n               f.is_owner, f.active,\n               (SELECT count(*) FROM core.characters c WHERE c.account_id = f.id) AS \"characters!\",\n               f.matched,\n               count(*) OVER () AS \"total!\"\n        FROM found f\n        JOIN core.states s ON s.id = f.state_id\n        LEFT JOIN core.characters m ON m.id = f.main_character_id\n        LEFT JOIN core.entity_names corp ON corp.id = m.corporation_id\n        LEFT JOIN core.entity_names ally ON ally.id = m.alliance_id\n        ORDER BY f.is_owner DESC, m.name NULLS LAST, f.id\n        LIMIT $5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "main_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "main_name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "corporation?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "alliance?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "state_style!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_owner",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "is_owner"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "active",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "active"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "characters!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "matched",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c99986132d601eb3e7f037405ece68a6c7c5ee8dc36baed6e91c6dc1529b61da"
+}

@@ -19,6 +19,7 @@ pub mod setup;
 pub mod states;
 pub mod system;
 pub mod tokens;
+pub mod users;
 
 use askama::Template;
 use axum::Form;
@@ -177,6 +178,7 @@ pub struct AdminNav {
     /// Corporation Stats, for any of its views.
     pub corpstats: bool,
     pub permissions_audit: bool,
+    pub users: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
 }
@@ -194,6 +196,7 @@ impl AdminNav {
             || self.compliance
             || self.corpstats
             || self.permissions_audit
+            || self.users
     }
 }
 
@@ -363,6 +366,7 @@ pub(crate) async fn load(
         ]
         .iter()
         .any(|p| perms.contains(*p)),
+        users: perms.contains(tether_core::permissions::ADMIN_USERS),
         permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,

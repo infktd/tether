@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id, c.name, (c.id = a.main_character_id) IS TRUE AS \"main!\",\n               corp.name AS \"corporation?\", ally.name AS \"alliance?\",\n               t.state AS \"token?\", c.added_at, c.last_login_at\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        LEFT JOIN core.entity_names corp ON corp.id = c.corporation_id\n        LEFT JOIN core.entity_names ally ON ally.id = c.alliance_id\n        WHERE c.account_id = $1\n        ORDER BY c.id = a.main_character_id DESC NULLS LAST, c.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "main!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "corporation?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "alliance?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "token?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.character_tokens",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "added_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "added_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "last_login_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "last_login_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "1215bf686ea40e247f139b93b4a01b0b70414acb0352baa38ea7ceceec868b72"
+}

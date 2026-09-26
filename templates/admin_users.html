@@ -1,0 +1,73 @@
+{% extends "layout.html" %}
+{% block title %}Users{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Users</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6">
+  <div>
+    <h1 class="page-title">Users</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Every account, found by any of its characters. Open one to see its characters, state, groups and permissions, or to deactivate it.</p>
+  </div>
+
+  <form method="get" action="/admin/users" class="flex flex-wrap gap-2 items-end" role="search">
+    <div class="grid gap-1.5 min-w-64 flex-1 max-w-md">
+      <label class="label" for="q">Character</label>
+      <input class="input" type="search" id="q" name="q" value="{{ query }}" placeholder="Name, character id or account id" maxlength="100">
+    </div>
+    <div class="grid gap-1.5">
+      <label class="label" for="state">State</label>
+      <select class="select input" id="state" name="state">
+        <option value="">All states</option>
+        {% for s in states %}
+        <option value="{{ s.id }}"{% if state == s.id %} selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="grid gap-1.5">
+      <label class="label" for="status">Status</label>
+      <select class="select input" id="status" name="status">
+        <option value="">All</option>
+        <option value="active"{% if status == "active" %} selected{% endif %}>Active</option>
+        <option value="inactive"{% if status == "inactive" %} selected{% endif %}>Deactivated</option>
+      </select>
+    </div>
+    <button type="submit" class="btn" data-variant="outline">Search</button>
+  </form>
+
+  <section class="card data-card">
+    <header><h2>Accounts <span class="num text-muted-foreground font-normal">{% if total > rows.len() as i64 %}{{ rows.len() }} of {{ total }}{% else %}{{ total }}{% endif %}</span></h2></header>
+    {% if rows.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">Nobody matches.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Main</th><th scope="col">Corporation</th><th scope="col">State</th><th scope="col">Characters</th><th scope="col">Status</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            <div class="flex items-center gap-3">
+              {% let avatar_name = r.main_name.as_str() %}{% let avatar_id = r.main_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+              {% include "avatar.html" %}
+              <div class="min-w-0">
+                <a class="font-medium" href="/admin/users/{{ r.account_id }}">{{ r.main_name }}</a>
+                {% if let Some(m) = r.matched %}<div class="text-xs text-muted-foreground">found by {{ m }}</div>{% endif %}
+              </div>
+            </div>
+          </td>
+          <td>
+            {% if let Some(c) = r.corporation %}{{ c }}{% endif %}
+            {% if let Some(a) = r.alliance %}<div class="text-xs text-muted-foreground">{{ a }}</div>{% endif %}
+          </td>
+          <td><span class="state-badge" data-state="{{ r.state_style }}">{{ r.state }}</span></td>
+          <td class="num">{{ r.characters }}</td>
+          <td>
+            {% if r.owner %}<span class="badge" data-variant="outline">Owner</span>{% endif %}
+            {% if !r.active %}<span class="badge" data-variant="destructive">Deactivated</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

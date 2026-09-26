@@ -351,6 +351,28 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/users
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/users/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/deactivate
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/reactivate
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/permissions/audit
 HTTP 303
 [Asserts]

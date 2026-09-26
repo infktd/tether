@@ -31,4 +31,5 @@ mod sync;
 mod system;
 mod tokens;
 mod transfers;
+mod users;
 mod vault;

@@ -22,6 +22,7 @@ pub mod settings;
 pub mod setup;
 pub mod states;
 pub mod tokens;
+pub mod users;
 
 use std::time::Duration;
 
