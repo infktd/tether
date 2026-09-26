@@ -47,6 +47,7 @@ pub async fn prune(db: &PgPool) -> Result<(), sqlx::Error> {
         sessions = expired.sessions,
         login_attempts = expired.login_attempts,
         setup_sessions = expired.setup_sessions,
+        login_destinations = expired.login_destinations,
         discord_links,
         plugin_uploads,
         plugin_logs,

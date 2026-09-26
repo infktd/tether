@@ -31,6 +31,26 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# A deep link is still sent to plain /login, and the page it was headed to
+# is kept server-side for after the login: the cookie is only a handle.
+GET {{base}}/admin/users?page=2
+Accept: text/html
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+cookie "__Host-tether_next" exists
+cookie "__Host-tether_next[HttpOnly]" exists
+cookie "__Host-tether_next[Secure]" exists
+cookie "__Host-tether_next" not contains "admin"
+
+# A form post never becomes a destination: nothing is replayed.
+POST {{base}}/admin/users/1/deactivate
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+cookie "__Host-tether_next" not exists
+
 # The old address moved to AA's name.
 GET {{base}}/profile
 HTTP 308

@@ -23,8 +23,13 @@ use tether_db::audit::{self, Actor};
 pub const SESSION_COOKIE: &str = "__Host-tether_session";
 /// Binds a pending login to the browser that started it.
 pub const LOGIN_COOKIE: &str = "__Host-tether_login";
+/// A signed-out browser's handle on the page it was headed to (the page
+/// itself is kept server-side, in `core.login_destinations`).
+pub const NEXT_COOKIE: &str = "__Host-tether_next";
 
 const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
+/// How long a signed-out browser's destination waits for it to log in.
+const DESTINATION_TTL: Duration = Duration::from_secs(15 * 60);
 pub(crate) const SESSION_TTL: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const SESSION_TOUCH_EVERY: Duration = Duration::from_secs(5 * 60);
 
@@ -48,8 +53,20 @@ pub async fn login(
     {
         return Ok(Redirect::to("/login").into_response());
     }
-    let return_to = safe_return_to(query.return_to.as_deref());
-    start_login(&state, jar, &return_to, db::Purpose::Login, &[], None).await
+    // Where to land afterwards: the page asked for (setup's links), else
+    // the one a signed-out visit was sent here from, else the Dashboard.
+    let remembered = match jar.get(NEXT_COOKIE) {
+        Some(c) => db::take_destination(&state.db, &hash_token(c.value())).await?,
+        None => None,
+    };
+    let jar = jar.remove(removal(NEXT_COOKIE));
+    let return_to = query
+        .return_to
+        .as_deref()
+        .or(remembered.as_deref())
+        .and_then(safe_path)
+        .unwrap_or("/");
+    start_login(&state, jar, return_to, db::Purpose::Login, &[], None).await
 }
 
 /// Sends the browser to EVE SSO asking for `scopes`, remembering why.
@@ -556,20 +573,22 @@ pub(crate) fn removal(name: &'static str) -> Cookie<'static> {
         .build()
 }
 
-/// Only local paths, so `return_to` can't become an open redirect.
-fn safe_return_to(value: Option<&str>) -> String {
-    match value {
-        Some(path)
-            if path.starts_with('/')
-                && !path.starts_with("//")
-                && !path.contains('\\')
-                && !path.chars().any(char::is_control)
-                && path.len() <= 512 =>
-        {
-            path.to_owned()
-        }
-        _ => "/".to_owned(),
-    }
+/// A same-site path to send the browser to after logging in, or `None`.
+/// Only relative paths from the root: exactly one leading `/` and no `//`
+/// anywhere (so never another host, whatever the scheme), no backslashes
+/// (which some browsers read as `/`), only printable ASCII (the request's
+/// own path is percent-encoded already), at most 512 bytes, and never back
+/// into logging in. Nothing else becomes a redirect, so there's no open
+/// redirect.
+pub(crate) fn safe_path(path: &str) -> Option<&str> {
+    let loops = path == "/login" || path.starts_with("/login?") || path.starts_with("/auth/");
+    (path.starts_with('/')
+        && !path.contains("//")
+        && !path.contains('\\')
+        && path.len() <= 512
+        && path.bytes().all(|b| b.is_ascii_graphic())
+        && !loops)
+        .then_some(path)
 }
 
 /// Signed out, a form post to a signed-in page goes to log in before its
@@ -577,7 +596,11 @@ fn safe_return_to(value: Option<&str>) -> String {
 /// extractor runs first, so a missing or empty body used to answer 415 or
 /// 422 instead. The API (its own 401s), setup, login and the dev fixtures
 /// are left alone.
+///
+/// Signed out, a page that sends the browser to log in remembers where it
+/// was headed ([`remember_destination`]), so logging in lands there.
 pub async fn sign_in_first(
+    State(state): State<AppState>,
     session: Option<CurrentSession>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -589,28 +612,152 @@ pub async fn sign_in_first(
     if request.method() == axum::http::Method::POST && session.is_none() && !open {
         return Redirect::to("/login").into_response();
     }
-    next.run(request).await
+    if session.is_some() || bearer(request.headers()).is_some() {
+        return next.run(request).await;
+    }
+    let destination = page_visit(&request).map(str::to_owned);
+    let (parts, body) = request.into_parts();
+    let ip = crate::ratelimit::client_ip(&parts);
+    let jar = CookieJar::from_headers(&parts.headers);
+    let response = next
+        .run(axum::extract::Request::from_parts(parts, body))
+        .await;
+    match destination {
+        Some(path) if sends_to_login(&response) => {
+            // Each one writes a row: a client can't make them endlessly.
+            if let Some(ip) = ip
+                && state
+                    .limits
+                    .login_destinations
+                    .check(ip, std::time::Instant::now())
+                    .is_err()
+            {
+                return response;
+            }
+            remember_destination(&state, jar, &path, response).await
+        }
+        _ => response,
+    }
+}
+
+/// The path and query of a signed-out GET that a browser navigated to
+/// (not htmx, an event stream or a script's fetch), if it's one to come
+/// back to. POSTs never are: nothing is replayed.
+fn page_visit(request: &axum::extract::Request) -> Option<&str> {
+    if request.method() != axum::http::Method::GET || crate::pages::is_htmx(request.headers()) {
+        return None;
+    }
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_ascii_lowercase)
+    };
+    // Browsers say what a request is for; without that (older browsers,
+    // tools), the Accept header must allow a page.
+    if header("sec-fetch-dest").is_some_and(|dest| dest != "document") {
+        return None;
+    }
+    if header("accept").is_some_and(|a| !(a.contains("text/html") || a.contains("*/*"))) {
+        return None;
+    }
+    let uri = request.uri();
+    let path = uri.path_and_query().map_or(uri.path(), |p| p.as_str());
+    // The home page is where a login lands anyway.
+    safe_path(path).filter(|p| *p != "/")
+}
+
+fn sends_to_login(response: &Response) -> bool {
+    response.status().is_redirection()
+        && response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .is_some_and(|l| l == "/login")
+}
+
+/// Records `path` for this browser server-side (a new random handle in
+/// `__Host-tether_next`, or the one it has) and passes the redirect to log
+/// in on. The redirect stands even if recording fails.
+async fn remember_destination(
+    state: &AppState,
+    jar: CookieJar,
+    path: &str,
+    response: Response,
+) -> Response {
+    let recorded = async {
+        let handle = match jar.get(NEXT_COOKIE) {
+            Some(c) if is_token(c.value()) => Secret::new(c.value().to_owned()),
+            _ => new_token().map_err(AppError::internal)?,
+        };
+        db::remember_destination(
+            &state.db,
+            &hash_token(handle.expose()),
+            path,
+            DESTINATION_TTL,
+        )
+        .await?;
+        cookie(NEXT_COOKIE, &handle, DESTINATION_TTL)
+    }
+    .await;
+    match recorded {
+        Ok(cookie) => (CookieJar::new().add(cookie), response).into_response(),
+        // The cause was logged where it happened (`AppError::internal`).
+        Err(_) => {
+            tracing::warn!("couldn't remember a login destination");
+            response
+        }
+    }
+}
+
+/// One of our random cookie tokens (64 hex digits), so a cookie a browser
+/// sends back is only ever reused when it has that shape.
+fn is_token(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::safe_return_to;
+    use super::safe_path;
 
     #[test]
     fn return_to_only_allows_local_paths() {
-        assert_eq!(
-            safe_return_to(Some("/profile?tab=alts")),
-            "/profile?tab=alts"
-        );
-        for bad in [
-            "https://evil.example",
-            "//evil.example",
-            "/\\evil.example",
-            "profile",
-            "/a\r\nSet-Cookie: x",
+        for good in [
+            "/profile?tab=alts",
+            "/admin/users",
+            "/admin/users?page=2&q=a%20b",
+            "/plugins/example.app/fleet%2Fops",
+            "/",
         ] {
-            assert_eq!(safe_return_to(Some(bad)), "/", "{bad:?}");
+            assert_eq!(safe_path(good), Some(good), "{good:?}");
         }
-        assert_eq!(safe_return_to(None), "/");
+        for bad in [
+            "",
+            "https://evil.example",
+            "http:/evil.example",
+            "javascript:alert(1)",
+            "//evil.example",
+            "///evil.example",
+            "/admin//evil.example",
+            "/admin?next=https://evil.example",
+            "/\\evil.example",
+            "/\\/evil.example",
+            "\\evil.example",
+            "profile",
+            " /admin",
+            "/a\r\nSet-Cookie: x",
+            "/a\tb",
+            "/a b",
+            "/caf\u{e9}",
+            "/login",
+            "/login?x=1",
+            "/auth/login",
+            "/auth/callback?code=x",
+        ] {
+            assert_eq!(safe_path(bad), None, "{bad:?}");
+        }
+        let long = format!("/{}", "a".repeat(511));
+        assert_eq!(safe_path(&long), Some(long.as_str()));
+        assert_eq!(safe_path(&format!("{long}a")), None);
     }
 }

@@ -221,12 +221,58 @@ pub async fn delete_session(pool: &PgPool, token_hash: &[u8]) -> Result<(), sqlx
     Ok(())
 }
 
+/// Remembers the page a signed-out browser was headed to, keyed by the
+/// hash of its `__Host-tether_next` token, replacing what it had.
+pub async fn remember_destination(
+    pool: &PgPool,
+    browser_hash: &[u8],
+    path: &str,
+    ttl: Duration,
+) -> Result<(), sqlx::Error> {
+    // Opportunistic cleanup, as for login attempts.
+    sqlx::query!("DELETE FROM core.login_destinations WHERE expires_at < now()")
+        .execute(pool)
+        .await?;
+    sqlx::query!(
+        r#"
+        INSERT INTO core.login_destinations (browser_hash, path, expires_at)
+        VALUES ($1, $2, now() + make_interval(secs => $3))
+        ON CONFLICT (browser_hash)
+            DO UPDATE SET path = EXCLUDED.path, expires_at = EXCLUDED.expires_at
+        "#,
+        browser_hash,
+        path,
+        ttl.as_secs_f64(),
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Consumes the page a browser was headed to, if it hasn't expired.
+pub async fn take_destination(
+    pool: &PgPool,
+    browser_hash: &[u8],
+) -> Result<Option<String>, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        DELETE FROM core.login_destinations WHERE browser_hash = $1
+        RETURNING path, expires_at > now() AS "live!"
+        "#,
+        browser_hash,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.filter(|r| r.live).map(|r| r.path))
+}
+
 /// Rows removed by [`prune_expired`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Pruned {
     pub sessions: u64,
     pub login_attempts: u64,
     pub setup_sessions: u64,
+    pub login_destinations: u64,
 }
 
 /// Deletes expired sessions, login attempts and setup sessions.
@@ -243,9 +289,15 @@ pub async fn prune_expired(pool: &PgPool) -> Result<Pruned, sqlx::Error> {
         .execute(pool)
         .await?
         .rows_affected();
+    let login_destinations =
+        sqlx::query!("DELETE FROM core.login_destinations WHERE expires_at < now()")
+            .execute(pool)
+            .await?
+            .rows_affected();
     Ok(Pruned {
         sessions,
         login_attempts,
         setup_sessions,
+        login_destinations,
     })
 }
