@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT g.id FROM core.groups g\n        WHERE NOT g.internal\n          AND EXISTS (\n            SELECT 1 FROM core.accounts a\n            WHERE a.id = $1 AND a.active AND a.main_character_id IS NOT NULL\n              AND a.state_id <> core.guest_state()\n          AND NOT core.blacklisted(a.id)\n              AND NOT core.blacklisted(a.id)\n          )\n          AND (\n            EXISTS (SELECT 1 FROM core.group_leaders l WHERE l.group_id = g.id AND l.account_id = $1)\n            OR EXISTS (\n                SELECT 1 FROM core.group_leader_groups lg\n                JOIN core.group_members m ON m.group_id = lg.leader_group_id\n                WHERE lg.group_id = g.id AND m.account_id = $1\n            )\n        )\n        ORDER BY g.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.groups",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e9ef45bb8e6146b6a79a1b147e6058f6ceabf50e475bedb767d92c8bdf20abbc"
+}

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.blacklist WHERE entity_id = $1 RETURNING entity_kind, name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entity_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.blacklist",
+            "name": "entity_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.blacklist",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3b14a1fb03b06e3d6fc9849a3c0e6943978fa88786a45f73db5d8ea6fdbdd9f7"
+}

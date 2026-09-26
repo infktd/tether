@@ -11,6 +11,7 @@ pub mod admin;
 mod api;
 pub mod auth;
 pub mod autogroups;
+pub mod blacklist;
 pub mod compliance;
 mod csrf;
 #[cfg(feature = "dev-login")]
@@ -254,6 +255,19 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/system", get(pages::system::system))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route("/admin/system/theme", post(pages::system::set_theme))
+        .route(
+            "/blacklist",
+            get(pages::blacklist::index).post(pages::blacklist::add),
+        )
+        .route(
+            "/blacklist/{entity_id}/remove",
+            post(pages::blacklist::remove),
+        )
+        .route("/blacklist/notes", post(pages::blacklist::add_note))
+        .route(
+            "/blacklist/notes/{id}/delete",
+            post(pages::blacklist::delete_note),
+        )
         .route("/admin/menu", get(pages::menu::index))
         .route("/admin/menu/sections", post(pages::menu::add_section))
         .route("/admin/menu/folders", post(pages::menu::add_folder))

@@ -195,7 +195,10 @@ pub async fn save_name_format(
         tether_core::nickname::validate(format).map_err(AppError::bad_request)?;
     }
     let mut tx = state.db.begin().await?;
-    if tether_db::states::get(&mut *tx, state_id).await?.is_none() {
+    if tether_db::states::get(&mut *tx, state_id)
+        .await?
+        .is_none_or(|s| s.is_blacklist())
+    {
         return Err(AppError::not_found("No such state."));
     }
     db::set_name_format(&mut *tx, state_id, (!format.is_empty()).then_some(format)).await?;
@@ -312,6 +315,7 @@ pub async fn add_mapping(
     let open = match grantee {
         Grantee::State(id) => tether_db::states::get(&mut *tx, id)
             .await?
+            .filter(|s| !s.is_blacklist())
             .ok_or_else(|| AppError::not_found("No such state."))?
             .is_guest(),
         Grantee::Group(group) => {

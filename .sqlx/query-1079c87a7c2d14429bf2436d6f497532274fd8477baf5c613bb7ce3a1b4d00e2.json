@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT a.id FROM core.accounts a\n        JOIN core.characters c ON c.account_id = a.id\n        WHERE NOT a.is_owner AND $1 IN (c.id, c.corporation_id, c.alliance_id)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1079c87a7c2d14429bf2436d6f497532274fd8477baf5c613bb7ce3a1b4d00e2"
+}

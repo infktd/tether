@@ -106,8 +106,15 @@ pub(crate) async fn evaluate_in(
     // The state comes from the main's affiliation alone, as in Alliance
     // Auth. Compliance (F11) is a flag on top: every character registered
     // with the state's scopes.
-    let state = rules.evaluate(main);
+    // Blacklisted: any character on the account, not just the main, so a
+    // clean alt made main is no way out (never the owner).
+    let blacklisted = tether_db::blacklist::is_blacklisted(&mut *tx, account).await?;
+    let state = match rules.blacklist() {
+        Some(blacklist) if blacklisted => blacklist,
+        _ => rules.evaluate(main),
+    };
     let compliant = state == rules.guest()
+        || blacklisted
         || crate::compliance::problems(&mut *tx, account, state)
             .await?
             .is_empty();
@@ -160,6 +167,19 @@ pub(crate) async fn evaluate_in(
         )
         .await?;
     }
+    // Blacklisted: no groups at all, as a deactivated account.
+    if blacklisted {
+        for group in tether_db::groups::leave_all(&mut *tx, account).await? {
+            audit::record(
+                &mut *tx,
+                Actor::System,
+                "group.member.remove",
+                Some(&format!("group:{}", group.0)),
+                serde_json::json!({ "account_id": account.0, "reason": "blacklisted" }),
+            )
+            .await?;
+        }
+    }
     // Auto Groups: the main's corporation and alliance groups, for the
     // states a config covers. One that doesn't exist yet waits for the
     // hourly sync, which creates it (never queued from here: one missing
@@ -170,6 +190,7 @@ pub(crate) async fn evaluate_in(
     for (group, allowed) in tether_db::groups::compliance_groups(&mut *tx).await? {
         let member = compliant
             && state != rules.guest()
+            && !blacklisted
             && tether_core::groups::state_allowed(&allowed, state);
         if tether_db::compliance::set_group_member(&mut *tx, group, account, member).await? {
             audit::record(

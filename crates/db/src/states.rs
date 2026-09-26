@@ -19,11 +19,19 @@ fn state(id: i64, name: String, builtin: Option<String>, priority: i32) -> State
 }
 
 /// Every state, highest priority first (Guest last).
+/// The states admins arrange, highest priority first. Not the Blacklist:
+/// only the Blacklist page changes it, so nothing that lists states can
+/// offer it (grants, group states, Auto Groups, moves).
 pub async fn list<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>, sqlx::Error> {
-    let rows =
-        sqlx::query!("SELECT id, name, builtin, priority FROM core.states ORDER BY priority DESC")
-            .fetch_all(executor)
-            .await?;
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, name, builtin, priority FROM core.states
+        WHERE builtin IS DISTINCT FROM 'blacklist'
+        ORDER BY priority DESC
+        "#
+    )
+    .fetch_all(executor)
+    .await?;
     Ok(rows
         .into_iter()
         .map(|r| state(r.id, r.name, r.builtin, r.priority))
@@ -120,6 +128,12 @@ pub async fn load_rules(conn: &mut sqlx::PgConnection) -> Result<StateRules, sql
     }
     for c in covered(&mut *conn).await? {
         rules.add(c.state, c.kind, c.entity_id);
+    }
+    // The Blacklist covers nothing here: evaluation checks every
+    // character against core.blacklist (see core.blacklisted), whatever
+    // the priorities.
+    if let Some(blacklist) = builtin(&mut *conn, Builtin::Blacklist).await? {
+        rules.set_blacklist(blacklist.id, blacklist.priority);
     }
     Ok(rules)
 }

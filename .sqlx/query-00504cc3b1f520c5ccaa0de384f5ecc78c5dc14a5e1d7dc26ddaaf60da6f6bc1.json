@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, builtin, priority FROM core.states ORDER BY priority DESC",
+  "query": "\n        SELECT id, name, builtin, priority FROM core.states\n        WHERE builtin IS DISTINCT FROM 'blacklist'\n        ORDER BY priority DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "14c9b2e39c46846383bb1d9c536b83d1fdbd2c465bc35a70d4a151e53b019636"
+  "hash": "00504cc3b1f520c5ccaa0de384f5ecc78c5dc14a5e1d7dc26ddaaf60da6f6bc1"
 }

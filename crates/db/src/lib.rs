@@ -4,6 +4,7 @@ pub mod accounts;
 pub mod audit;
 pub mod auth;
 pub mod autogroups;
+pub mod blacklist;
 pub mod compliance;
 pub mod corpstats;
 pub mod discord;

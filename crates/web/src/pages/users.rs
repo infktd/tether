@@ -105,7 +105,16 @@ struct OnePage {
     /// Whether the viewer may open groups and the Permissions Audit.
     link_groups: bool,
     link_audit: bool,
+    /// The Pilot Log on its characters, for those who may read it.
+    notes: Option<Vec<NoteView>>,
     error: Option<String>,
+}
+
+pub struct NoteView {
+    pub name: String,
+    pub note: String,
+    pub by: String,
+    pub at: String,
 }
 
 async fn user_page(
@@ -126,7 +135,7 @@ async fn user_page(
         .await?
         .map(when)
         .unwrap_or_default();
-    let characters = db::characters(&state.db, account)
+    let characters: Vec<CharacterView> = db::characters(&state.db, account)
         .await?
         .into_iter()
         .map(|row| CharacterView {
@@ -136,6 +145,26 @@ async fn user_page(
         })
         .collect();
     let viewer = tether_db::permissions::effective(&state.db, session.account).await?;
+    let notes = if viewer.contains(tether_core::permissions::BLACKLIST_VIEW) {
+        let ids: Vec<i64> = characters
+            .iter()
+            .map(|c: &CharacterView| c.row.id)
+            .collect();
+        Some(
+            tether_db::blacklist::notes(&state.db, Some(&ids), None, 100)
+                .await?
+                .into_iter()
+                .map(|n| NoteView {
+                    at: when(n.added_at),
+                    name: n.name,
+                    note: n.note,
+                    by: n.added_by_name,
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         status,
@@ -159,6 +188,7 @@ async fn user_page(
                 .collect(),
             link_groups: viewer.contains(ADMIN_GROUPS),
             link_audit: viewer.contains(PERMISSIONS_AUDIT),
+            notes,
             error: error.map(|e| e.message().to_owned()),
         },
     ))

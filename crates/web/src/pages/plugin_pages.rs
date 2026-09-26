@@ -448,7 +448,10 @@ async fn viewer(
         builtin: current.builtin.map(|b| match b {
             tether_core::states::Builtin::Member => Builtin::Member,
             tether_core::states::Builtin::Blue => Builtin::Blue,
-            tether_core::states::Builtin::Guest => Builtin::Guest,
+            // Plugins know three states; the Blacklist holds nothing anyway.
+            tether_core::states::Builtin::Guest | tether_core::states::Builtin::Blacklist => {
+                Builtin::Guest
+            }
         }),
         name: current.name,
     };

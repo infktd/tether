@@ -148,6 +148,9 @@ pub async fn grant(
             let target = tether_db::states::get(&mut *tx, id)
                 .await?
                 .ok_or_else(|| AppError::not_found("No such state."))?;
+            if target.is_blacklist() {
+                return Err(AppError::bad_request("The Blacklist holds no permissions."));
+            }
             if sensitive && target.is_guest() {
                 return Err(AppError::bad_request(format!(
                     "{permission} can't go to Guest: anyone who logs in with EVE is Guest."

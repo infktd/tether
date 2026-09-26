@@ -15,6 +15,8 @@ pub enum Builtin {
     Member,
     Blue,
     Guest,
+    /// Above every other state; its members hold nothing (the Blacklist).
+    Blacklist,
 }
 
 impl Builtin {
@@ -23,6 +25,7 @@ impl Builtin {
             Self::Member => "member",
             Self::Blue => "blue",
             Self::Guest => "guest",
+            Self::Blacklist => "blacklist",
         }
     }
 
@@ -31,6 +34,7 @@ impl Builtin {
             "member" => Some(Self::Member),
             "blue" => Some(Self::Blue),
             "guest" => Some(Self::Guest),
+            "blacklist" => Some(Self::Blacklist),
             _ => None,
         }
     }
@@ -48,6 +52,11 @@ pub struct State {
 impl State {
     pub fn is_guest(&self) -> bool {
         self.builtin == Some(Builtin::Guest)
+    }
+
+    /// The Blacklist, which only the Blacklist page changes.
+    pub fn is_blacklist(&self) -> bool {
+        self.builtin == Some(Builtin::Blacklist)
     }
 
     /// For badges: `member`, `blue`, `guest` or `custom`.
@@ -132,6 +141,8 @@ struct Rule {
 #[derive(Debug, Clone)]
 pub struct StateRules {
     guest: StateId,
+    /// The Blacklist state, whose members hold nothing.
+    blacklist: Option<StateId>,
     /// Highest priority first.
     rules: Vec<Rule>,
 }
@@ -140,12 +151,27 @@ impl StateRules {
     pub fn new(guest: StateId) -> Self {
         Self {
             guest,
+            blacklist: None,
             rules: Vec::new(),
         }
     }
 
     pub fn guest(&self) -> StateId {
         self.guest
+    }
+
+    /// Adds the Blacklist state, above every other.
+    pub fn set_blacklist(&mut self, id: StateId, priority: i32) {
+        self.blacklist = Some(id);
+        self.add_state(id, priority);
+    }
+
+    pub fn blacklist(&self) -> Option<StateId> {
+        self.blacklist
+    }
+
+    pub fn is_blacklist(&self, id: StateId) -> bool {
+        self.blacklist == Some(id)
     }
 
     /// Adds a state (not Guest, which covers everyone else).

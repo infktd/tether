@@ -166,6 +166,7 @@ async fn states_page(
                 Some(Builtin::Guest) => "Everyone no state above covers. Guests can sign in \
                      and see their profile; nothing else unless you grant it."
                     .to_owned(),
+                Some(Builtin::Blacklist) => "Above every state, on the Blacklist page.".to_owned(),
                 None => format!("Pilots whose main is covered here are {}.", s.name),
             },
             plugin_scopes: if s.builtin == Some(Builtin::Member) {

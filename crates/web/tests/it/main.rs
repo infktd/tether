@@ -7,6 +7,7 @@ mod common;
 mod admin_pages;
 mod auth;
 mod autogroups;
+mod blacklist;
 mod compliance;
 mod dashboard;
 mod dev_login;

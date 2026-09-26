@@ -92,7 +92,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Secure Groups (Smart Groups, filters, grace) | the Compliance Group is one fixed filter | planned: core, with app-provided filters (PRD) |
 | AA SRP, AFAT | AFAT's additions (alliance stats, fleet types, expiring links, logs) are in the Fleet Activity Tracking plugin | SRP: planned plugin; AFAT: partial, ESI-tracked fleets planned (above) |
 | AA-Discordbot | none | skip: Tether's Discord is REST only |
-| Blacklist ("Pilot Log", Blacklist state) | a high-priority state can already act as a blacklist | planned: core Blacklist and Pilot Log (PRD) |
+| Blacklist ("Pilot Log", Blacklist state) | **Blacklist** (/blacklist): blacklist pilots, corporations or alliances with a reason; every account with a character that is, or is in, a listed entry goes to the Blacklist state at once (any character, not just the main, so a clean alt is no way out), holding nothing (no permissions, groups, group leadership or services) until removed; never the owner or an NPC corporation, and never an account holding permissions the admin doesn't. **Pilot Log**: notes on anyone, shown on the Users page. Permissions `blacklist.view_blacklist`, `blacklist.add_notes`, `blacklist.manage_blacklist` | done |
 | Corp Tools, CorpStats 2.0 | overlap with Member Audit and Corporation Stats | skip |
 
 ## Behaviour

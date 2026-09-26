@@ -1,7 +1,7 @@
 //! Permissions Audit (AA's permissions tool): for every permission, who
 //! holds it and through what, computed the way `permissions::effective`
-//! grants it (active accounts only; groups only while the account has a
-//! main; the owner holds everything).
+//! grants it (active accounts only, never blacklisted ones; groups only
+//! while the account has a main; the owner holds everything).
 
 use crate::PgPool;
 
@@ -21,7 +21,9 @@ pub async fn counts(pool: &PgPool, permission: &str) -> Result<Counts, sqlx::Err
         SELECT (SELECT count(*) FROM g WHERE state_id IS NOT NULL) AS "states!",
                (SELECT count(*) FROM g WHERE group_id IS NOT NULL) AS "groups!",
                (SELECT count(*) FROM core.accounts a
-                WHERE a.active AND (
+                WHERE a.active
+                  AND NOT core.blacklisted(a.id)
+                  AND (
                     a.is_owner
                     OR a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL)
                     OR (a.main_character_id IS NOT NULL AND EXISTS (
@@ -70,7 +72,9 @@ pub async fn holders(pool: &PgPool, permission: &str) -> Result<Vec<Holder>, sql
         FROM core.accounts a
         JOIN core.states s ON s.id = a.state_id
         LEFT JOIN core.characters main ON main.id = a.main_character_id
-        WHERE a.active AND (
+        WHERE a.active
+                  AND NOT core.blacklisted(a.id)
+                  AND (
             a.is_owner
             OR a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL)
             OR (a.main_character_id IS NOT NULL AND EXISTS (

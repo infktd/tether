@@ -706,6 +706,8 @@ pub async fn led_by<'e>(
             SELECT 1 FROM core.accounts a
             WHERE a.id = $1 AND a.active AND a.main_character_id IS NOT NULL
               AND a.state_id <> core.guest_state()
+          AND NOT core.blacklisted(a.id)
+              AND NOT core.blacklisted(a.id)
           )
           AND (
             EXISTS (SELECT 1 FROM core.group_leaders l WHERE l.group_id = g.id AND l.account_id = $1)

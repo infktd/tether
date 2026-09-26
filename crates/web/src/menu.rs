@@ -111,6 +111,14 @@ pub const BUILTINS: &[Builtin] = &[
     ),
     b("users", "Users", "/admin/users", "user", "admin", "users"),
     b(
+        "blacklist",
+        "Blacklist",
+        "/blacklist",
+        "shield",
+        "admin",
+        "blacklist",
+    ),
+    b(
         "admin_groups",
         "Groups",
         "/admin/groups",

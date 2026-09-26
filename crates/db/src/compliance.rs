@@ -597,7 +597,7 @@ pub async fn prune_member_lists<'e>(
             SELECT 1 FROM core.accounts a
             JOIN core.characters m ON m.id = a.main_character_id
             JOIN core.states st ON st.id = a.state_id
-            WHERE m.corporation_id = l.corporation_id AND st.builtin IS DISTINCT FROM 'guest'
+            WHERE m.corporation_id = l.corporation_id AND st.builtin IS DISTINCT FROM 'guest' AND st.builtin IS DISTINCT FROM 'blacklist'
         )
         "#
     )
@@ -666,7 +666,7 @@ pub async fn corporation_covered<'e>(
         FROM core.accounts a
         JOIN core.characters c ON c.id = a.main_character_id
         JOIN core.states s ON s.id = a.state_id
-        WHERE c.corporation_id = $1 AND s.builtin IS DISTINCT FROM 'guest'
+        WHERE c.corporation_id = $1 AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'
         LIMIT 1
         "#,
         corporation_id
@@ -703,7 +703,7 @@ pub async fn corporations_without_lists(
         JOIN core.states s ON s.id = a.state_id
         LEFT JOIN core.entity_names n ON n.id = c.corporation_id
         WHERE c.corporation_id IS NOT NULL
-          AND s.builtin IS DISTINCT FROM 'guest'
+          AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'
           AND c.corporation_id NOT IN (SELECT corporation_id FROM core.corp_member_lists)
           AND c.corporation_id NOT BETWEEN 1000000 AND 1999999
         ORDER BY 2 NULLS LAST, 1

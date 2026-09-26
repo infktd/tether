@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.corp_member_lists l\n        WHERE NOT EXISTS (\n            SELECT 1 FROM core.corp_sources s\n            JOIN core.characters c ON c.id = s.character_id\n            WHERE s.corporation_id = l.corporation_id AND s.approved_at IS NOT NULL\n              AND c.corporation_id = s.corporation_id\n        )\n        -- Or nobody's main is in it any more.\n        OR NOT EXISTS (\n            SELECT 1 FROM core.accounts a\n            JOIN core.characters m ON m.id = a.main_character_id\n            JOIN core.states st ON st.id = a.state_id\n            WHERE m.corporation_id = l.corporation_id AND st.builtin IS DISTINCT FROM 'guest' AND st.builtin IS DISTINCT FROM 'blacklist'\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "467c52e51f4df0f026fd4dafdc35b735c21190b401c23fe4445f712a2bb080f1"
+}

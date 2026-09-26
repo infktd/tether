@@ -66,6 +66,22 @@
     </table>
   </section>
 
+  {% if let Some(notes) = notes %}
+  <section class="card data-card">
+    <header><h2>Pilot Log <span class="num text-muted-foreground font-normal">{{ notes.len() }}</span></h2><p>Notes on this account's characters. <a class="underline underline-offset-4" href="/blacklist">Blacklist and Pilot Log</a></p></header>
+    {% if notes.is_empty() %}<p class="px-5 pb-5 text-sm text-muted-foreground">No notes.</p>{% else %}
+    <table class="table">
+      <thead><tr><th scope="col">About</th><th scope="col">Note</th><th scope="col">Added</th></tr></thead>
+      <tbody>
+        {% for n in notes %}
+        <tr><td class="font-medium">{{ n.name }}</td><td class="w-full whitespace-normal"><div class="break-words text-sm">{{ n.note }}</div></td><td><div class="num text-sm">{{ n.at }}</div><div class="text-xs text-muted-foreground">{{ n.by }}</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <div class="grid gap-6 lg:grid-cols-2">
     <section class="card data-card">
       <header><h2>Groups <span class="num text-muted-foreground font-normal">{{ groups.len() }}</span></h2></header>

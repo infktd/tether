@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, entity_id, entity_kind, name, note, added_by, added_by_name, added_at\n        FROM core.pilot_notes WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "entity_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "entity_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "entity_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "entity_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "added_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "added_by"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "added_by_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "added_by_name"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "added_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "added_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "90f2a24f2c0cd09de9d508637652a25d049fe1f472e46ecf6e51b6a4e95f8bcc"
+}

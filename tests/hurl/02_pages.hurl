@@ -451,6 +451,35 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/blacklist
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/blacklist
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/blacklist/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/blacklist/notes
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/blacklist/notes/1/delete
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/dashboard/system
 HTTP 303
 [Asserts]

@@ -94,9 +94,14 @@ pub async fn effective_in(
     conn: &mut sqlx::PgConnection,
     account: AccountId,
 ) -> Result<BTreeSet<String>, sqlx::Error> {
-    // Deactivated accounts hold nothing (AA's inactive users).
+    // Deactivated accounts hold nothing (AA's inactive users), nor do
+    // blacklisted ones; the owner always holds everything.
     let owner = sqlx::query_scalar!(
-        r#"SELECT is_owner AS "is_owner!" FROM core.accounts WHERE id = $1 AND active"#,
+        r#"
+        SELECT a.is_owner AS "is_owner!" FROM core.accounts a
+        WHERE a.id = $1 AND a.active
+          AND NOT core.blacklisted(a.id)
+        "#,
         account.0
     )
     .fetch_optional(&mut *conn)

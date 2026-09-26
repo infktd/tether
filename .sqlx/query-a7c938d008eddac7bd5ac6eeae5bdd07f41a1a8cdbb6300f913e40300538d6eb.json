@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH g AS (SELECT state_id, group_id FROM core.permission_grants WHERE permission = $1)\n        SELECT (SELECT count(*) FROM g WHERE state_id IS NOT NULL) AS \"states!\",\n               (SELECT count(*) FROM g WHERE group_id IS NOT NULL) AS \"groups!\",\n               (SELECT count(*) FROM core.accounts a\n                WHERE a.active\n                  AND NOT core.blacklisted(a.id)\n                  AND (\n                    a.is_owner\n                    OR a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL)\n                    OR (a.main_character_id IS NOT NULL AND EXISTS (\n                        SELECT 1 FROM core.group_members m\n                        WHERE m.account_id = a.id\n                          AND m.group_id IN (SELECT group_id FROM g WHERE group_id IS NOT NULL)))\n                )) AS \"accounts!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "states!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "groups!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "accounts!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a7c938d008eddac7bd5ac6eeae5bdd07f41a1a8cdbb6300f913e40300538d6eb"
+}

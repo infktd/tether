@@ -24,6 +24,11 @@ pub const GROUP_MANAGEMENT: &str = "group_management";
 pub const REQUEST_GROUPS: &str = "request_groups";
 /// AA's `discord.access_discord`: may link Discord and be in the server.
 pub const DISCORD_ACCESS: &str = "discord.access_discord";
+/// The Blacklist and Pilot Log (AA's blacklist app): see them; add notes;
+/// add to and remove from the Blacklist (and delete anyone's notes).
+pub const BLACKLIST_VIEW: &str = "blacklist.view_blacklist";
+pub const BLACKLIST_ADD_NOTES: &str = "blacklist.add_notes";
+pub const BLACKLIST_MANAGE: &str = "blacklist.manage_blacklist";
 /// AA's permissions tool: who holds every permission, and through what.
 pub const PERMISSIONS_AUDIT: &str = "permissions_tool.audit_permissions";
 
@@ -60,6 +65,15 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Set up access states: who is Member, Blue or in a state you create, and in what order. Holders can only change who is in a state if they hold everything granted to it",
     ),
     (ADMIN_AUDIT, "Read the audit log"),
+    (
+        BLACKLIST_VIEW,
+        "See the Blacklist and the Pilot Log (notes on pilots, corporations and alliances)",
+    ),
+    (BLACKLIST_ADD_NOTES, "Add notes to the Pilot Log"),
+    (
+        BLACKLIST_MANAGE,
+        "Blacklist and unblacklist pilots, corporations and alliances (blacklisted accounts hold nothing), and delete any note",
+    ),
     (
         PERMISSIONS_AUDIT,
         "Permissions Audit: see who holds every permission, and through which state or group",
@@ -104,6 +118,7 @@ pub fn is_sensitive(permission: &str) -> bool {
         || permission == GROUP_MANAGEMENT
         // Who holds what maps out the admins.
         || permission == PERMISSIONS_AUDIT
+        || permission.starts_with("blacklist.")
         // Member lists are intel.
         || permission.starts_with("corpstats.")
 }

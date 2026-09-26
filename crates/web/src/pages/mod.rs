@@ -4,6 +4,7 @@
 pub mod admin;
 pub mod assets;
 pub mod autogroups;
+pub mod blacklist;
 pub mod compliance;
 pub mod corpstats;
 pub mod discord;
@@ -175,6 +176,7 @@ pub(crate) fn menu_items(
         "system" => nav.system,
         "plugins" => nav.plugins,
         "users" => nav.users,
+        "blacklist" => nav.blacklist,
         "admin_groups" | "autogroups" => nav.groups,
         "permissions" => nav.permissions,
         "permissions_audit" => nav.permissions_audit,
@@ -224,6 +226,7 @@ pub struct AdminNav {
     pub corpstats: bool,
     pub permissions_audit: bool,
     pub users: bool,
+    pub blacklist: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
 }
@@ -242,6 +245,7 @@ impl AdminNav {
             || self.corpstats
             || self.permissions_audit
             || self.users
+            || self.blacklist
     }
 }
 
@@ -422,6 +426,7 @@ pub(crate) async fn load(
         .iter()
         .any(|p| perms.contains(*p)),
         users: perms.contains(tether_core::permissions::ADMIN_USERS),
+        blacklist: perms.contains(tether_core::permissions::BLACKLIST_VIEW),
         permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
         setup: account.is_owner,
