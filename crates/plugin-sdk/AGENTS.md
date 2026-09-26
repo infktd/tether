@@ -361,6 +361,8 @@ let names = esi::names(&[40161234, 30000142])?;
 | `corporation-roles` | `esi-corporations.read_corporation_membership.v1` | data source | no | |
 | `universe-moon` | `esi-industry.read_corporation_mining.v1` | data source | no | `moon_id` |
 | `character-skills` | `esi-skills.read_skills.v1` | character | no | |
+| `character-skillqueue` | `esi-skills.read_skillqueue.v1` | character | no | |
+| `character-ship` | `esi-location.read_ship_type.v1` | character | no | |
 | `character-assets` | `esi-assets.read_assets.v1` | character | yes | |
 | `character-wallet` | `esi-wallet.read_character_wallet.v1` | character | no | |
 | `character-wallet-journal` | `esi-wallet.read_character_wallet.v1` | character | yes | |

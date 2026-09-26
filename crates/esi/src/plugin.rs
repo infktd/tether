@@ -105,6 +105,20 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
     Endpoint {
+        name: "character-skillqueue",
+        scope: "esi-skills.read_skillqueue.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-ship",
+        scope: "esi-location.read_ship_type.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
         name: "character-assets",
         scope: "esi-assets.read_assets.v1",
         about: About::Character,
@@ -330,6 +344,16 @@ impl Esi {
             "character-skills" => get!(
                 client
                     .get_characters_character_id_skills()
+                    .character_id(character)
+            ),
+            "character-skillqueue" => get!(
+                client
+                    .get_characters_character_id_skillqueue()
+                    .character_id(character)
+            ),
+            "character-ship" => get!(
+                client
+                    .get_characters_character_id_ship()
                     .character_id(character)
             ),
             "character-assets" => paged!(

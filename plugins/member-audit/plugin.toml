@@ -1,0 +1,54 @@
+# Member Audit, a first-party Tether plugin. `scripts/package-plugin.sh`
+# builds, zips and signs it, putting the publisher's key in below.
+[plugin]
+id = "tether.member-audit"
+name = "Member Audit"
+version = "0.1.0"
+host_api = "1"
+description = "Every member character's skills, queue, assets, wallet, clones and location; Character Finder and Skill Sets for officers."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+[capabilities.esi]
+# From every Member character (Member requires these once installed, as
+# AA's Member Audit compliance does).
+user = [
+    "esi-skills.read_skills.v1",
+    "esi-skills.read_skillqueue.v1",
+    "esi-assets.read_assets.v1",
+    "esi-wallet.read_character_wallet.v1",
+    "esi-clones.read_clones.v1",
+    "esi-clones.read_implants.v1",
+    "esi-location.read_location.v1",
+    "esi-location.read_ship_type.v1",
+]
+
+[[capabilities.schedules]]
+name = "sync"
+every = "15m"
+
+# Grant Member basic; officers (recruiters, auditors) finder too.
+[permissions]
+basic = "Use Member Audit for your own characters"
+finder = "Character Finder and reports: every member's characters"
+manage = "Create and delete skill sets"
+
+[[pages]]
+path = ""
+permission = "basic"
+
+[[pages]]
+path = "finder"
+permission = "finder"
+
+[[pages]]
+path = "reports"
+permission = "finder"
+
+[[navigation]]
+label = "Member Audit"
+path = ""

@@ -31,7 +31,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Auto Groups | none | Build |
 | Fleet Pings (aa-fleetpings) | Pings | Rename to **Fleet Pings** |
 | Moon Mining (aa-moonmining): Moons, Extractions, Reports, Add Corporation | Moon Tracker (planned plugin) | Rename the plugin to **Moon Mining**, with AA's pages |
-| Member Audit: My Characters, Character Sheet, Character Finder, Reports, Skill Sets | Member Audit (planned plugin) | Use AA's page names |
+| Member Audit: My Characters, Character Sheet, Character Finder, Reports, Skill Sets | Member Audit plugin, same names | done |
 | Community Apps / apps | Plugins | **Apps** in the UI; "plugin" in the SDK and code |
 | Add Refinery Owner, Add Structure Owner (apps' corp data characters) | data sources | Show as **owners** ("Add Owner"); keep "data source" in the SDK |
 
@@ -85,7 +85,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 
 | App | Tether | Status |
 | --- | --- | --- |
-| Member Audit (My Characters, Character Sheet, Character Finder, Reports: User Compliance, Corporation Compliance, Skill Sets; Compliance Groups; sharing) | compliance, the Compliance Group and Register Character are core; the rest is the Member Audit plugin (F20) | partial / planned |
+| Member Audit (My Characters, Character Sheet, Character Finder, Reports: User Compliance, Corporation Compliance, Skill Sets; Compliance Groups; sharing) | compliance, Compliance Groups and Register Character are core; the Member Audit plugin (`plugins/member-audit`) has My Characters (with combined totals and queues for multiboxers), the Character Sheet (skills, queue, assets, wallet journal, clones, implants, location, ship), Character Finder, Skill Sets and the Skill Sets report | done, except mail, contacts, contracts, loyalty, planets and character sharing (more scopes every Member would need; on request) |
 | Moon Mining (Moons, Extractions, Reports, Add Corporation, surveys, ledgers) | Moon Mining plugin (`plugins/moon-mining`): extractions, pop pings, fresh moons for Members and old ones for Blue, mining totals by pilot and ore, and an extraction planner for Station Managers; corporations come from approved data sources (AA's Add Corporation) | done, except moon surveys (ore composition) and ISK values, which need prices |
 | Structures (fuel, notifications to Discord, timers) | none | not planned: NMU doesn't use it |
 | Fleet Pings | Pings: channel, target, message | partial: add fleet type, formup, comms, doctrine |
