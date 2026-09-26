@@ -630,7 +630,7 @@ impl Esi {
                 let moon = self
                     .call_full(
                         Priority::Bulk,
-                        self.uncached()?
+                        self.uncached()
                             .get_universe_moons_moon_id()
                             .moon_id(id)
                             .send(),
@@ -647,7 +647,7 @@ impl Esi {
                 let planet = self
                     .call_full(
                         Priority::Bulk,
-                        self.uncached()?
+                        self.uncached()
                             .get_universe_planets_planet_id()
                             .planet_id(id)
                             .send(),
@@ -673,7 +673,7 @@ impl Esi {
                 let systems = self
                     .call_full(
                         Priority::Bulk,
-                        self.uncached()?.get_sovereignty_systems().send(),
+                        self.uncached().get_sovereignty_systems().send(),
                     )
                     .await?
                     .into_inner();
