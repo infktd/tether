@@ -83,11 +83,13 @@
     {% if !uncovered.is_empty() %}
     <section class="card">
       <header><h2>No member list yet</h2><p>Corporations with pilots here but no shared member list: ask a member of each to share it from their profile.</p></header>
-      <ul class="flex flex-wrap gap-2" role="list">
-        {% for c in uncovered %}
-        <li class="entity-chip pr-2"><img src="https://images.evetech.net/corporations/{{ c.id }}/logo?size=64" alt="" width="20" height="20"><span>{{ c.name }}</span></li>
-        {% endfor %}
-      </ul>
+      <section>
+        <ul class="flex flex-wrap gap-2" role="list">
+          {% for c in uncovered %}
+          <li class="entity-chip pr-2"><img src="https://images.evetech.net/corporations/{{ c.id }}/logo?size=64" alt="" width="20" height="20"><span>{{ c.name }}</span></li>
+          {% endfor %}
+        </ul>
+      </section>
     </section>
     {% endif %}
   </section>

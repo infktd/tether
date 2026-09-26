@@ -123,9 +123,11 @@
 
   <section class="card">
     <header><h2>Scopes on your EVE application</h2><p>EVE only grants scopes Tether's application allows. Enable all of these at developers.eveonline.com (your application → Permissions), or registering fails.</p></header>
-    <ul class="flex flex-wrap gap-2" role="list">
-      {% for s in application_scopes %}<li><span class="badge num" data-variant="outline">{{ s }}</span></li>{% endfor %}
-    </ul>
+    <section>
+      <ul class="flex flex-wrap gap-2" role="list">
+        {% for s in application_scopes %}<li><span class="badge num" data-variant="outline">{{ s }}</span></li>{% endfor %}
+      </ul>
+    </section>
   </section>
 
   <form class="card" method="post" action="/admin/states">

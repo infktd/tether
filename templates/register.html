@@ -22,11 +22,13 @@
   {% if !required.is_empty() %}
   <section class="card">
     <header><h2>What registering grants</h2><p>Tether keeps the token encrypted and never shows it to anyone, apps included. You can revoke it on EVE's site at any time; your account is then flagged as not compliant again.</p></header>
-    <ul class="grid gap-2 text-sm" role="list">
-      {% for s in required %}
-      <li class="flex items-start gap-2">{% call icons::icon("check") %}{% endcall %}<span>{{ s.description }} <span class="text-xs text-muted-foreground num">{{ s.scope }}</span></span></li>
-      {% endfor %}
-    </ul>
+    <section>
+      <ul class="grid gap-2 text-sm" role="list">
+        {% for s in required %}
+        <li class="flex items-start gap-2">{% call icons::icon("check") %}{% endcall %}<span>{{ s.description }} <span class="text-xs text-muted-foreground num">{{ s.scope }}</span></span></li>
+        {% endfor %}
+      </ul>
+    </section>
   </section>
   {% endif %}
 
