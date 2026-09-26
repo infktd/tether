@@ -38,14 +38,15 @@ pub struct Approved {
 /// Replaces a plugin's approved hosts and secrets with exactly these, in
 /// the install's (or an upgrade's) transaction. A secret that's gone, or
 /// now goes to another host, header or prefix, loses its value: the admin
-/// enters it again for where it goes now.
+/// enters it again for where it goes now. Returns the names of the
+/// secrets whose values were deleted, for the audit log.
 pub async fn approve(
     tx: &mut sqlx::PgConnection,
     plugin_id: &str,
     hosts: &[String],
     secrets: &[SecretSpec],
     by: AccountId,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<String>, sqlx::Error> {
     let before = sqlx::query_as!(
         SecretSpec,
         r#"
@@ -56,9 +57,12 @@ pub async fn approve(
     )
     .fetch_all(&mut *tx)
     .await?;
+    let mut deleted = Vec::new();
     for old in &before {
-        if !secrets.contains(old) {
-            crate::secrets::delete(&mut *tx, &secret_name(plugin_id, &old.name)).await?;
+        if !secrets.contains(old)
+            && crate::secrets::delete(&mut *tx, &secret_name(plugin_id, &old.name)).await?
+        {
+            deleted.push(old.name.clone());
         }
     }
     sqlx::query!(
@@ -100,7 +104,7 @@ pub async fn approve(
         .execute(&mut *tx)
         .await?;
     }
-    Ok(())
+    Ok(deleted)
 }
 
 /// What was approved for a plugin.

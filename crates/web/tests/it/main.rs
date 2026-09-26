@@ -43,5 +43,6 @@ mod system;
 mod theme;
 mod tokens;
 mod transfers;
+mod upgrades;
 mod users;
 mod vault;

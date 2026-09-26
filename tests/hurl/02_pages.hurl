@@ -822,6 +822,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/plugins/nmu.hello/rollback
+Origin: {{base}}
+[Form]
+confirmation: nmu.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/plugins/nmu.hello/uninstall
 Origin: {{base}}
 [Form]

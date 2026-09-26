@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "plugin_changes.html" as changes -%}
 {% block title %}{{ about.name }}{% endblock %}
 {% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/plugins">Apps</a>&nbsp;/&nbsp;<span class="text-foreground">{{ about.name }}</span>{% endblock %}
 {% block content %}
@@ -208,6 +209,25 @@
   </section>
 
   {% include "admin_plugin_about.html" %}
+
+  {% if let Some(r) = rollback %}
+  <form class="card" method="post" action="/admin/plugins/{{ about.id }}/rollback">
+    <header><h2>Roll back to <span class="num">{{ r.to }}</span></h2><p>Version <span class="num">{{ r.from }}</span> was installed over it on {{ r.upgraded_at }} EVE. Rolling back puts version <span class="num">{{ r.to }}</span> back as it was approved, with what it asked for then: permissions it didn't have go, with every grant of them.{% if let Some(taken) = r.restore %} The upgrade changed its data, so its data goes back to the snapshot taken {{ taken }} EVE: everything it stored since is lost.{% endif %}{% if r.deletes_data %} Version <span class="num">{{ r.to }}</span> kept no data, so its database schema and everything in it is deleted.{% endif %} One step only: afterwards there's no newer version to go back to, except by installing it again.</p></header>
+    <section>
+      <h3 class="text-sm font-medium mb-3">What it asks for, going back to <span class="num">{{ r.to }}</span></h3>
+      {% if let Some(c) = r.changes %}{% call changes::list(c) %}{% endcall %}{% else %}<p class="text-sm text-muted-foreground">One of the two packages can't be read, so what changes can't be shown.</p>{% endif %}
+    </section>
+    {% if let Some(why) = r.blocked %}
+    <section><div class="alert" data-variant="destructive" role="alert"><section>{{ why }}</section></div></section>
+    {% else %}
+    <section class="grid gap-2 max-w-md">
+      <label class="label" for="rollback-confirmation">Type <span class="num">{{ about.id }}</span> to confirm</label>
+      <input class="input" id="rollback-confirmation" name="confirmation" autocomplete="off" required>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Roll back</button></footer>
+    {% endif %}
+  </form>
+  {% endif %}
 
   <form class="card" method="post" action="/admin/plugins/{{ about.id }}/uninstall">
     <header><h2>Uninstall</h2><p>Stops the app and removes it{% if about.storage %}, and deletes its data: its database schema and everything in it{% endif %}. Its pinned key stays, so a later package under this id must still be signed with it.</p></header>

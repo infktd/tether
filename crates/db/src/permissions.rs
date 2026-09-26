@@ -246,6 +246,77 @@ pub async fn add_plugin_permissions(
     Ok(())
 }
 
+/// Makes a plugin's permissions exactly `permissions` on an upgrade or
+/// rollback: new ones are added, descriptions updated, and ones it no
+/// longer declares removed with every grant of them. Grants of the ones it
+/// keeps stay. Returns the grants removed, for the audit log.
+pub async fn sync_plugin_permissions(
+    tx: &mut sqlx::PgConnection,
+    plugin_id: &str,
+    permissions: &[(String, String)],
+) -> Result<Vec<Grant>, sqlx::Error> {
+    let names: Vec<String> = permissions.iter().map(|(name, _)| name.clone()).collect();
+    let held = sqlx::query_scalar!(
+        "SELECT permission FROM core.plugin_permissions WHERE plugin_id = $1 FOR UPDATE",
+        plugin_id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    // New ones start with nobody holding them, as at install.
+    let new: Vec<String> = names
+        .iter()
+        .filter(|n| !held.contains(n))
+        .cloned()
+        .collect();
+    sqlx::query!(
+        "DELETE FROM core.permission_grants WHERE permission = ANY($1)",
+        &new
+    )
+    .execute(&mut *tx)
+    .await?;
+    let rows = sqlx::query!(
+        r#"
+        DELETE FROM core.permission_grants
+        WHERE permission IN (
+            SELECT permission FROM core.plugin_permissions
+            WHERE plugin_id = $1 AND NOT permission = ANY($2)
+        )
+        RETURNING id, permission, state_id, group_id
+        "#,
+        plugin_id,
+        &names
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM core.plugin_permissions WHERE plugin_id = $1 AND NOT permission = ANY($2)",
+        plugin_id,
+        &names
+    )
+    .execute(&mut *tx)
+    .await?;
+    for (permission, description) in permissions {
+        // A name another plugin holds fails on the UNIQUE constraint, as
+        // at install; the name carries the plugin's id, so it can't.
+        sqlx::query!(
+            r#"
+            INSERT INTO core.plugin_permissions (plugin_id, permission, description)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (plugin_id, permission) DO UPDATE SET description = EXCLUDED.description
+            "#,
+            plugin_id,
+            permission,
+            description,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
+        .collect())
+}
+
 /// Removes every grant of a plugin's permissions (its permissions go with
 /// the plugin's row), after locking them so no grant can slip in. Returns
 /// what was removed, for the audit log.

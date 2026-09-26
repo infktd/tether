@@ -38,12 +38,13 @@ pub async fn get<'e>(
         .await
 }
 
+/// Deletes a secret; true if there was one.
 pub async fn delete<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     name: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query!("DELETE FROM core.secrets WHERE name = $1", name)
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!("DELETE FROM core.secrets WHERE name = $1", name)
         .execute(executor)
         .await?;
-    Ok(())
+    Ok(done.rows_affected() == 1)
 }

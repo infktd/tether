@@ -1,20 +1,22 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
-{% block title %}Review {{ about.name }}{% endblock %}
-{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/plugins">Apps</a>&nbsp;/&nbsp;<span class="text-foreground">Review {{ about.name }}</span>{% endblock %}
+{%- import "plugin_changes.html" as changes -%}
+{% block title %}{% if upgrade.is_some() %}Upgrade{% else %}Review{% endif %} {{ about.name }}{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<a href="/admin/plugins">Apps</a>&nbsp;/&nbsp;<span class="text-foreground">{% if upgrade.is_some() %}Upgrade{% else %}Review{% endif %} {{ about.name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="flex items-end justify-between gap-4">
     <div>
       <h1 class="page-title">{{ about.name }}</h1>
-      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}Version <span class="num">{{ about.version }}</span>, uploaded {{ uploaded }} EVE</p>
+      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}{% if let Some(u) = upgrade %}Version <span class="num">{{ u.from }}</span> to <span class="num">{{ about.version }}</span>{% else %}Version <span class="num">{{ about.version }}</span>{% endif %}, uploaded {{ uploaded }} EVE</p>
     </div>
     <div class="flex gap-2">
       <form method="post" action="/admin/plugin-uploads/{{ upload_id }}/discard">
         <button type="submit" class="btn" data-variant="outline">Discard</button>
       </form>
       <form method="post" action="/admin/plugin-uploads/{{ upload_id }}/approve">
-        <button type="submit" class="btn" data-variant="primary">Approve and install</button>
+        <input type="hidden" name="reviewed" value="{{ base }}">
+        <button type="submit" class="btn" data-variant="primary">{% if upgrade.is_some() %}Approve and upgrade{% else %}Approve and install{% endif %}</button>
       </form>
     </div>
   </div>
@@ -23,6 +25,22 @@
   <div class="alert" role="status">
     <section><strong>{{ trust_title }}.</strong> {{ trust_detail }}</section>
   </div>
+
+  {% if let Some(u) = upgrade %}
+  <section class="card">
+    <header><h2>What changes</h2><p>What this version asks for beyond version <span class="num">{{ u.from }}</span>, and what it no longer asks for. Approving records exactly what it asks for now.</p></header>
+    <section>
+      {% if let Some(c) = u.changes %}{% call changes::list(c) %}{% endcall %}{% else %}<p class="text-sm text-muted-foreground">The installed version's package can't be read any more, so what changes can't be shown. Check the full list below.</p>{% endif %}
+    </section>
+  </section>
+
+  <div class="alert" role="status">
+    <section>
+      {% if u.new_migrations > 0 %}{% if u.snapshots %}<strong>A snapshot comes first.</strong> Its <span class="num">{{ u.new_migrations }}</span> new database migration(s) run when it restarts, after a snapshot of its data.{% else %}<strong>Snapshots are off here.</strong> Its <span class="num">{{ u.new_migrations }}</span> new database migration(s) run when it restarts, with no snapshot to go back to.{% endif %}{% else %}<strong>Its data stays as it is.</strong> This version has no new database migrations.{% endif %}
+      Version <span class="num">{{ u.from }}</span> is kept: you can roll back to it in one step on the app's page.
+    </section>
+  </div>
+  {% endif %}
 
   {% include "admin_plugin_about.html" %}
 </div>

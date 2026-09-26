@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT previous_version, previous_package, previous_signature,\n               previous_package_sha256, upgraded_at\n        FROM core.plugins WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "previous_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_version"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "previous_package",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_package"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "previous_signature",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_signature"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "previous_package_sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_package_sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "upgraded_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "upgraded_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ba430a561d864176a0a6271d878b4c2484bf613113afeeb0cf0be51f73473b05"
+}

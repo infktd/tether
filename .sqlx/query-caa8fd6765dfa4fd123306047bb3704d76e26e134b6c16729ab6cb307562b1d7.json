@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO core.plugin_permissions (plugin_id, permission, description)\n            VALUES ($1, $2, $3)\n            ON CONFLICT (plugin_id, permission) DO UPDATE SET description = EXCLUDED.description\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "caa8fd6765dfa4fd123306047bb3704d76e26e134b6c16729ab6cb307562b1d7"
+}

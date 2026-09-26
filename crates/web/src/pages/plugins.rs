@@ -42,6 +42,7 @@ fn plugin_id(id: &str) -> Result<&str, AppError> {
 }
 
 /// One thing a plugin asks for, in plain words.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Capability {
     pub title: String,
     pub detail: String,
@@ -132,6 +133,7 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
     lines
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct PermissionRow {
     pub name: String,
     pub description: String,
@@ -410,7 +412,84 @@ struct ReviewPage {
     trust_title: &'static str,
     trust_detail: String,
     uploaded: String,
+    /// What is installed now, sent back on approval.
+    base: String,
+    upgrade: Option<UpgradeView>,
     error: Option<String>,
+}
+
+/// What an upgrade (or a rollback) changes in what the plugin asks for.
+pub struct UpgradeView {
+    pub from: String,
+    /// `None` when the installed version's package can't be read.
+    pub changes: Option<Changes>,
+    pub new_migrations: usize,
+    pub snapshots: bool,
+    /// The [`plugins::base`] the review compares against.
+    pub base: String,
+}
+
+/// From one version's manifest to another's.
+pub struct Changes {
+    pub added: Vec<Capability>,
+    pub removed: Vec<Capability>,
+    pub permissions_added: Vec<PermissionRow>,
+    pub permissions_removed: Vec<PermissionRow>,
+    /// Kept (with their grants), but described differently.
+    pub permissions_changed: Vec<PermissionRow>,
+}
+
+impl Changes {
+    fn new(old: &Manifest, new: &Manifest) -> Self {
+        let (before, after) = (capabilities(old), capabilities(new));
+        let (had, has) = (permissions(old), permissions(new));
+        Self {
+            added: after
+                .iter()
+                .filter(|c| !before.contains(c))
+                .cloned()
+                .collect(),
+            removed: before
+                .iter()
+                .filter(|c| !after.contains(c))
+                .cloned()
+                .collect(),
+            permissions_added: has
+                .iter()
+                .filter(|p| !had.iter().any(|h| h.name == p.name))
+                .cloned()
+                .collect(),
+            permissions_removed: had
+                .iter()
+                .filter(|p| !has.iter().any(|h| h.name == p.name))
+                .cloned()
+                .collect(),
+            permissions_changed: has
+                .iter()
+                .filter(|p| {
+                    had.iter()
+                        .any(|h| h.name == p.name && h.description != p.description)
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
+    fn unchanged(&self) -> bool {
+        self.added.is_empty()
+            && self.removed.is_empty()
+            && self.permissions_added.is_empty()
+            && self.permissions_removed.is_empty()
+            && self.permissions_changed.is_empty()
+    }
+
+    fn any_added(&self) -> bool {
+        !self.added.is_empty() || !self.permissions_added.is_empty()
+    }
+
+    fn any_removed(&self) -> bool {
+        !self.removed.is_empty() || !self.permissions_removed.is_empty()
+    }
 }
 
 fn trust_text(trust: &Trust) -> (&'static str, String) {
@@ -444,6 +523,16 @@ async fn review_page(
     let pending = plugins::pending(state, upload_id).await?;
     let (trust_title, trust_detail) = trust_text(&pending.trust);
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let upgrade = pending.installed_version.map(|from| UpgradeView {
+        from,
+        changes: pending
+            .installed
+            .as_ref()
+            .map(|old| Changes::new(&old.manifest, &pending.package.manifest)),
+        new_migrations: pending.new_migrations,
+        snapshots: state.plugins.snapshots_on(),
+        base: pending.base.clone(),
+    });
     Ok(render(
         code,
         &ReviewPage {
@@ -453,6 +542,8 @@ async fn review_page(
             trust_title,
             trust_detail,
             uploaded: time(pending.upload.uploaded_at),
+            base: pending.base,
+            upgrade,
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -468,14 +559,22 @@ pub async fn review(
     review_page(&state, shell, upload_id, None).await
 }
 
+#[derive(Deserialize)]
+pub struct ApproveForm {
+    /// What was installed when the review was shown.
+    #[serde(default)]
+    reviewed: Option<String>,
+}
+
 /// `POST /admin/plugin-uploads/{id}/approve`
 pub async fn approve(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Path(upload_id): Path<i64>,
+    Form(form): Form<ApproveForm>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
-    match plugins::approve(&state, session.account, upload_id).await {
+    match plugins::approve(&state, session.account, upload_id, form.reviewed).await {
         Ok(id) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         // The upload is gone (or never was): back to the list.
         Err(err) if err.status() == StatusCode::NOT_FOUND => {
@@ -611,7 +710,21 @@ struct PluginPage {
     variant: &'static str,
     failure: Option<String>,
     installed: String,
+    rollback: Option<RollbackView>,
     error: Option<String>,
+}
+
+/// Going back to the version an upgrade replaced.
+pub struct RollbackView {
+    pub from: String,
+    pub to: String,
+    pub upgraded_at: String,
+    /// When the snapshot its data goes back to was taken.
+    pub restore: Option<String>,
+    pub deletes_data: bool,
+    pub blocked: Option<String>,
+    /// What it asks for goes back to what the earlier version asked for.
+    pub changes: Option<Changes>,
 }
 
 async fn plugin_page(
@@ -630,6 +743,22 @@ async fn plugin_page(
         .clone();
     let status = state.plugins.status(id);
     let (label, variant) = status_label(&status, installed.enabled);
+    let rollback = plugins::rollback_plan(state, id)
+        .await?
+        .map(|plan| RollbackView {
+            changes: match (&plan.current, &plan.earlier) {
+                (Some(current), Some(earlier)) => {
+                    Some(Changes::new(&current.manifest, &earlier.manifest))
+                }
+                _ => None,
+            },
+            from: plan.from,
+            to: plan.to,
+            upgraded_at: time(plan.upgraded_at),
+            restore: plan.restore.map(|s| time(s.header.taken_at)),
+            deletes_data: plan.deletes_data,
+            blocked: plan.blocked,
+        });
     let schedules = tether_db::plugin_jobs::schedules(&state.db, id)
         .await?
         .into_iter()
@@ -797,6 +926,7 @@ async fn plugin_page(
                 }
             },
             installed: time(installed.installed_at),
+            rollback,
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -862,6 +992,21 @@ pub async fn uninstall(
     let id = plugin_id(&id)?;
     match plugins::uninstall(&state, session.account, id, &form.confirmation).await {
         Ok(()) => Ok(Redirect::to("/admin/plugins").into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+/// `POST /admin/plugins/{id}/rollback`
+pub async fn roll_back(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<String>,
+    Form(form): Form<ConfirmForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    match plugins::roll_back(&state, session.account, id, &form.confirmation).await {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         Err(err) => plugin_page(&state, shell, id, Some(err)).await,
     }
 }

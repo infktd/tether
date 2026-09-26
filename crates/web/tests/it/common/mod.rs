@@ -341,6 +341,27 @@ pub async fn harness_full(
     esi_server: MockServer,
     site: &str,
 ) -> Harness {
+    harness_parts(db, configured, esi_server, site, None).await
+}
+
+/// With snapshots before plugin migrations, as the server runs.
+pub async fn harness_with_snapshots(
+    db: PgPool,
+    snapshots: Arc<tether_snapshots::Snapshots>,
+) -> Harness {
+    let esi_server = MockServer::start().await;
+    mount_affiliations(&esi_server).await;
+    mount_universe(&esi_server).await;
+    harness_parts(db, true, esi_server, SITE, Some(snapshots)).await
+}
+
+async fn harness_parts(
+    db: PgPool,
+    configured: bool,
+    esi_server: MockServer,
+    site: &str,
+    snapshots: Option<Arc<tether_snapshots::Snapshots>>,
+) -> Harness {
     if configured {
         settings::set(&db, settings::SSO_CLIENT_ID, "client-123".into())
             .await
@@ -377,7 +398,7 @@ pub async fn harness_full(
             discord: discord.clone(),
             key: test_key(),
             public_url: site.to_owned(),
-            snapshots: None,
+            snapshots,
         },
     );
     let app = router(AppState {

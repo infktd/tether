@@ -255,6 +255,11 @@ impl Plugins {
         self.http.route_to(host_port);
     }
 
+    /// Whether snapshots are taken before plugin migrations here.
+    pub fn snapshots_on(&self) -> bool {
+        self.snapshots.is_some()
+    }
+
     pub fn host(&self) -> &Host {
         &self.host
     }
@@ -583,25 +588,7 @@ async fn migrate(
         "its migrations couldn't be checked".to_owned()
     };
     let applied = plugin_storage::applied(db, plugin).await.map_err(failed)?;
-    for (version, sha) in &applied {
-        let found = migrations
-            .iter()
-            .find(|m| i64::from(m.version) == i64::from(*version));
-        match found {
-            None => {
-                return Err(format!(
-                    "migration {version:04} was applied, but this package doesn't have it"
-                ));
-            }
-            Some(m) if sha256(m.sql.as_bytes()) != *sha => {
-                return Err(format!(
-                    "migration {version:04}_{} changed since it was applied",
-                    m.name
-                ));
-            }
-            Some(_) => {}
-        }
-    }
+    check_applied(&applied, migrations)?;
     let pending = &migrations[applied.len().min(migrations.len())..];
     if pending.is_empty() {
         return Ok(());
@@ -674,6 +661,34 @@ async fn migrate(
         tracing::info!(plugin, migration = label, "plugin migration applied");
     }
     let _ = conn.close().await;
+    Ok(())
+}
+
+/// Every applied migration (`(version, sha256)`) must be in the package,
+/// unchanged.
+fn check_applied(
+    applied: &[(i32, Vec<u8>)],
+    migrations: &[package::Migration],
+) -> Result<(), String> {
+    for (version, sha) in applied {
+        let found = migrations
+            .iter()
+            .find(|m| i64::from(m.version) == i64::from(*version));
+        match found {
+            None => {
+                return Err(format!(
+                    "migration {version:04} was applied, but this package doesn't have it"
+                ));
+            }
+            Some(m) if sha256(m.sql.as_bytes()) != *sha => {
+                return Err(format!(
+                    "migration {version:04}_{} changed since it was applied",
+                    m.name
+                ));
+            }
+            Some(_) => {}
+        }
+    }
     Ok(())
 }
 
@@ -833,11 +848,10 @@ async fn check_upload(
     if db::count_uploads(&state.db).await.map_err(db_err)? >= MAX_PENDING_UPLOADS {
         return Err(fail(AppError::bad_request(TOO_MANY_UPLOADS)));
     }
-    if db::exists(&state.db, &id).await.map_err(db_err)? {
-        return Err(fail(AppError::bad_request(
-            "A plugin with this id is already installed. Upgrading isn't supported yet: \
-             uninstall it first.",
-        )));
+    if let Some(installed) = db::get(&state.db, &id).await.map_err(db_err)? {
+        check_upgrade(&state.db, &installed.version, unverified.package())
+            .await
+            .map_err(fail)?;
     }
     if let Some(why) = unsupported(unverified.package()) {
         return Err(fail(AppError::bad_request(why)));
@@ -870,6 +884,16 @@ pub struct Pending {
     pub upload: db::Upload,
     pub package: Package,
     pub trust: Trust,
+    /// For an upgrade: the installed version.
+    pub installed_version: Option<String>,
+    /// For an upgrade: the installed version's package, unless it can't be
+    /// read any more (a newer Tether may check manifests more strictly).
+    pub installed: Option<Package>,
+    /// What is installed now ([`base`]): approving is refused if it
+    /// changes meanwhile, since the review compared against it.
+    pub base: String,
+    /// For an upgrade: how many of its migrations are new.
+    pub new_migrations: usize,
 }
 
 pub async fn pending(state: &crate::AppState, upload_id: i64) -> Result<Pending, AppError> {
@@ -882,29 +906,60 @@ pub async fn pending(state: &crate::AppState, upload_id: i64) -> Result<Pending,
         .verify(&upload.signature, pinned.as_deref())
         .map_err(package_error)?;
     let trust = verified.trust().clone();
+    let package = verified.into_package();
+    // Stored packages were checked when approved; read for what it declares.
+    let current = db::get(&state.db, &package.manifest.plugin.id).await?;
+    let installed = current.as_ref().and_then(|installed| {
+        package::read(&installed.package)
+            .inspect_err(|e| {
+                tracing::warn!(plugin = installed.id, error = %e, "reading the installed package");
+            })
+            .ok()
+            .map(|p| p.package().clone())
+    });
+    let new_migrations = if current.is_some() {
+        let applied = plugin_storage::applied(&state.db, &package.manifest.plugin.id).await?;
+        package.migrations.len().saturating_sub(applied.len())
+    } else {
+        0
+    };
     Ok(Pending {
-        package: verified.into_package(),
+        package,
         trust,
         upload,
+        installed_version: current.as_ref().map(|c| c.version.clone()),
+        installed,
+        base: base(current.as_ref()),
+        new_migrations,
     })
 }
 
-/// Installs an upload and starts it. Everything is checked again in the
-/// transaction: the pin may have moved, or another install finished, since
-/// the upload was checked. Returns the plugin id.
+/// What is installed under an id, as the review saw it: the package's
+/// SHA-256 in hex, or `none`.
+pub fn base(installed: Option<&db::Installed>) -> String {
+    installed.map_or_else(|| "none".to_owned(), |i| hex(&i.package_sha256))
+}
+
+/// Installs (or upgrades to) an upload and starts it. Everything is
+/// checked again in the transaction: the pin may have moved, or another
+/// install finished, since the upload was checked. `reviewed` is the
+/// [`base`] the review compared against, when the form sent it. Returns
+/// the plugin id.
 pub async fn approve(
     state: &crate::AppState,
     actor: AccountId,
     upload_id: i64,
+    reviewed: Option<String>,
 ) -> Result<String, AppError> {
     let state = state.clone();
-    detached(async move { approve_now(&state, actor, upload_id).await }).await
+    detached(async move { approve_now(&state, actor, upload_id, reviewed).await }).await
 }
 
 async fn approve_now(
     state: &crate::AppState,
     actor: AccountId,
     upload_id: i64,
+    reviewed: Option<String>,
 ) -> Result<String, AppError> {
     let plugins = &state.plugins;
     let _lifecycle = plugins.lifecycle.lock().await;
@@ -920,6 +975,16 @@ async fn approve_now(
         .map_err(package_error)?;
     if let Some(why) = unsupported(verified.package()) {
         return Err(AppError::bad_request(why));
+    }
+    let installed = db::get_locked(&mut tx, &id).await?;
+    if reviewed.is_some_and(|r| r != base(installed.as_ref())) {
+        return Err(AppError::bad_request(
+            "This app was installed, upgraded, rolled back or uninstalled since this page was \
+             shown. Look at what changes again before approving.",
+        ));
+    }
+    if let Some(installed) = installed {
+        return upgrade_now(state, actor, tx, upload, verified, installed).await;
     }
     record_trust(&mut tx, Actor::Account(actor), &verified).await?;
     let manifest = &verified.package().manifest;
@@ -942,11 +1007,7 @@ async fn approve_now(
             "An app with this id is already installed.",
         ));
     }
-    let declared: Vec<(String, String)> = manifest
-        .permissions
-        .iter()
-        .map(|(name, description)| (format!("plugin.{id}.{name}"), description.clone()))
-        .collect();
+    let declared = declared_permissions(&id, manifest);
     tether_db::permissions::add_plugin_permissions(&mut tx, &id, &declared).await?;
     // Exactly the hosts and secrets shown on the review page; nothing else
     // is reachable at runtime.
@@ -991,6 +1052,517 @@ async fn approve_now(
         plugins.activate(&state.db, &installed).await;
     }
     Ok(id)
+}
+
+/// A plugin's permissions by their full names, with descriptions.
+fn declared_permissions(id: &str, manifest: &manifest::Manifest) -> Vec<(String, String)> {
+    manifest
+        .permissions
+        .iter()
+        .map(|(name, description)| (format!("plugin.{id}.{name}"), description.clone()))
+        .collect()
+}
+
+/// Grants removed with permissions, for the audit log.
+fn grants_json(grants: &[tether_db::permissions::Grant]) -> Vec<serde_json::Value> {
+    grants
+        .iter()
+        .map(|g| match g.grantee {
+            tether_db::permissions::Grantee::State(state) => {
+                json!({ "permission": g.permission, "state_id": state.0 })
+            }
+            tether_db::permissions::Grantee::Group(group) => {
+                json!({ "permission": g.permission, "group_id": group.0 })
+            }
+        })
+        .collect()
+}
+
+/// Whether `package` can replace the installed version of its plugin: it
+/// must be newer, keep its storage if it had some, and carry every
+/// migration already applied, unchanged.
+async fn check_upgrade(db: &PgPool, installed: &str, package: &Package) -> Result<(), AppError> {
+    let id = package.manifest.plugin.id.as_str();
+    let new = &package.manifest.plugin.version;
+    let newer = match (
+        manifest::parse_version(new),
+        manifest::parse_version(installed),
+    ) {
+        (Some(new), Some(old)) => new > old,
+        _ => false,
+    };
+    if !newer {
+        return Err(AppError::bad_request(format!(
+            "Version {installed} of this app is installed and this package is version {new}. \
+             Only a newer version can be installed over it; to go back to the version before \
+             an upgrade, roll back on the app's page."
+        )));
+    }
+    if plugin_storage::get(db, id).await?.is_some() && !package.manifest.capabilities.storage {
+        return Err(AppError::bad_request(
+            "This version doesn't ask for database storage, but the installed one keeps data. \
+             Uninstall the app first if its data should go.",
+        ));
+    }
+    let applied = plugin_storage::applied(db, id).await?;
+    check_applied(&applied, &package.migrations).map_err(|why| {
+        AppError::bad_request(format!(
+            "This version can't upgrade the installed one: {why}."
+        ))
+    })
+}
+
+/// Replaces an installed plugin with a newer version, keeping the one it
+/// replaces for a rollback. Its permissions, HTTP hosts, secrets and scopes
+/// become the new version's (the review showed what changed); storage is
+/// created if it asks for it now. The plugin restarts; its new migrations
+/// run after a snapshot of its data (see [`migrate`]).
+async fn upgrade_now(
+    state: &crate::AppState,
+    actor: AccountId,
+    mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
+    upload: db::Upload,
+    verified: Verified,
+    installed: db::Installed,
+) -> Result<String, AppError> {
+    let id = installed.id.clone();
+    let package = verified.package();
+    let manifest = &package.manifest;
+    // Checked at upload; again now the row is locked.
+    check_upgrade(&state.db, &installed.version, package).await?;
+    record_trust(&mut tx, Actor::Account(actor), &verified).await?;
+    let package_sha256 = sha256(&upload.package);
+    let upgraded = db::upgrade(
+        &mut tx,
+        &db::NewPlugin {
+            id: &id,
+            name: &manifest.plugin.name,
+            version: &manifest.plugin.version,
+            package: &upload.package,
+            signature: &upload.signature,
+            package_sha256: &package_sha256,
+            installed_by: actor,
+        },
+    )
+    .await?;
+    // The row is locked (get_locked), so it's there.
+    if !upgraded {
+        return Err(AppError::not_found("No app with that id is installed."));
+    }
+    let changed = apply_manifest(state, &mut tx, &id, manifest, actor).await?;
+    audit::record(
+        &mut *tx,
+        Actor::Account(actor),
+        "plugin.upgraded",
+        Some(&target(&id)),
+        json!({
+            "upload": upload.id,
+            "from": installed.version,
+            "to": manifest.plugin.version,
+            "key": verified.key(),
+            "sha256": hex(&package_sha256),
+            "capabilities": manifest.capabilities,
+            "permissions": manifest.permissions,
+            "grants_removed": grants_json(&changed.grants_removed),
+            "secrets_deleted": changed.secrets_deleted,
+            "storage": changed
+                .storage_created
+                .as_ref()
+                .map(|n| json!({ "schema": n.schema_name, "role": n.role_name })),
+        }),
+    )
+    .await?;
+    tx.commit().await?;
+    let plugins = &state.plugins;
+    plugins.deactivate(&id).await;
+    if installed.enabled
+        && let Some(upgraded) = db::get(&state.db, &id).await?
+    {
+        plugins.activate(&state.db, &upgraded).await;
+    }
+    Ok(id)
+}
+
+/// What [`apply_manifest`] changed.
+struct Applied {
+    grants_removed: Vec<tether_db::permissions::Grant>,
+    /// Secrets whose values went: gone, or now for another host, header
+    /// or prefix.
+    secrets_deleted: Vec<String>,
+    storage_created: Option<plugin_storage::Names>,
+}
+
+/// Makes what an installed plugin may do exactly what `manifest` asks for,
+/// on an upgrade or a rollback: its permissions (grants of dropped ones go),
+/// HTTP hosts and secrets, and the user scopes Member requires. Creates its
+/// storage if it asks for storage and has none.
+async fn apply_manifest(
+    state: &crate::AppState,
+    tx: &mut PgConnection,
+    id: &str,
+    manifest: &manifest::Manifest,
+    actor: AccountId,
+) -> Result<Applied, AppError> {
+    let declared = declared_permissions(id, manifest);
+    let grants_removed = tether_db::permissions::sync_plugin_permissions(tx, id, &declared).await?;
+    let secrets_deleted = crate::plugin_http::approve(tx, id, manifest, actor).await?;
+    if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
+        .await?
+    {
+        crate::states::enqueue_evaluate_all(&mut *tx).await?;
+    }
+    let storage_created =
+        if manifest.capabilities.storage && plugin_storage::get(&mut *tx, id).await?.is_none() {
+            if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
+                return Err(AppError::bad_request(
+                    "Too many apps have database storage already. Uninstall one first.",
+                ));
+            }
+            Some(create_storage(state, tx, id).await?)
+        } else {
+            None
+        };
+    Ok(Applied {
+        grants_removed,
+        secrets_deleted,
+        storage_created,
+    })
+}
+
+/// Going back to the version an upgrade replaced: what would happen.
+pub struct RollbackPlan {
+    pub from: String,
+    pub to: String,
+    pub upgraded_at: chrono::DateTime<chrono::Utc>,
+    /// The installed package, and the earlier one when it can be read: what
+    /// it asks for changes from one to the other.
+    pub current: Option<Package>,
+    pub earlier: Option<Package>,
+    /// The snapshot its data goes back to, when the upgrade changed its
+    /// data (ran migrations the earlier version doesn't have).
+    pub restore: Option<tether_snapshots::Snapshot>,
+    /// It asked for no storage before: its data is deleted.
+    pub deletes_data: bool,
+    /// Why it can't be done, in plain words.
+    pub blocked: Option<String>,
+}
+
+/// What rolling a plugin back would do, or `None` if there's no earlier
+/// version to go back to.
+pub async fn rollback_plan(
+    state: &crate::AppState,
+    id: &str,
+) -> Result<Option<RollbackPlan>, AppError> {
+    Ok(plan_rollback(state, id).await?.map(|(plan, _)| plan))
+}
+
+/// The plan, and the earlier version when it can be put back: its package
+/// as stored, and the key it checked out against.
+async fn plan_rollback(
+    state: &crate::AppState,
+    id: &str,
+) -> Result<Option<(RollbackPlan, Option<(db::Previous, String)>)>, AppError> {
+    let Some(installed) = db::get(&state.db, id).await? else {
+        return Ok(None);
+    };
+    let Some(previous) = db::previous(&state.db, id).await? else {
+        return Ok(None);
+    };
+    let mut plan = RollbackPlan {
+        from: installed.version.clone(),
+        to: previous.version.clone(),
+        upgraded_at: previous.upgraded_at,
+        current: package::read(&installed.package)
+            .ok()
+            .map(|p| p.package().clone()),
+        earlier: package::read(&previous.package)
+            .ok()
+            .map(|p| p.package().clone()),
+        restore: None,
+        deletes_data: false,
+        blocked: None,
+    };
+    let block = |mut plan: RollbackPlan, why: String| {
+        plan.blocked = Some(why);
+        Ok(Some((plan, None)))
+    };
+    // As loading does: only the package approved, signed with the key
+    // pinned now.
+    let pinned = plugin_keys::get(&state.db, id).await?;
+    let Some(pinned) = pinned else {
+        return block(plan, "No publisher key is pinned for this app.".to_owned());
+    };
+    let old = match earlier_checked(id, &previous, &pinned) {
+        Ok(old) => old,
+        Err(why) => return block(plan, why),
+    };
+    if let Some(why) = unsupported(&old) {
+        return block(
+            plan,
+            format!("Version {} can't run now: {why}", previous.version),
+        );
+    }
+    if let Some(names) = plugin_storage::get(&state.db, id).await? {
+        if !old.manifest.capabilities.storage {
+            plan.deletes_data = true;
+        } else {
+            let applied = plugin_storage::applied(&state.db, id).await?;
+            if check_applied(&applied, &old.migrations).is_err() {
+                let Some(snapshots) = state.plugins.snapshots.as_deref() else {
+                    return block(
+                        plan,
+                        "The upgrade changed its data and snapshots are off here, so its data \
+                         can't be put back."
+                            .to_owned(),
+                    );
+                };
+                let found = snapshot_for(snapshots, id, &names.role_name, &old.migrations).await;
+                let snapshot = match found {
+                    Ok(Some(snapshot)) => snapshot,
+                    Ok(None) => {
+                        return block(
+                            plan,
+                            format!(
+                                "The upgrade changed its data, and no snapshot of its data from \
+                                 version {} is left to put back.",
+                                previous.version
+                            ),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(plugin = id, error = %e, "listing snapshots");
+                        return block(
+                            plan,
+                            format!("Its snapshots couldn't be read ({}).", e.brief()),
+                        );
+                    }
+                };
+                // What would stop the restore: the tools, TimescaleDB's
+                // version, the plugin's role.
+                if let Err(e) = snapshots.check(&state.db, &snapshot).await {
+                    return block(
+                        plan,
+                        format!(
+                            "The upgrade changed its data, and the snapshot of it from {} UTC \
+                             can't be restored: {e}.",
+                            snapshot.header.taken_at.format("%Y-%m-%d %H:%M")
+                        ),
+                    );
+                }
+                plan.restore = Some(snapshot);
+            }
+        }
+    }
+    Ok(Some((plan, Some((previous, pinned)))))
+}
+
+/// The earlier package, if it's the one approved, signed with `pinned`,
+/// and for this plugin; otherwise why not.
+fn earlier_checked(id: &str, previous: &db::Previous, pinned: &str) -> Result<Package, String> {
+    let version = &previous.version;
+    let verified = match package::read(&previous.package)
+        .and_then(|p| p.verify(&previous.signature, Some(pinned)))
+    {
+        Ok(verified) => verified,
+        Err(PackageError::KeyChanged { .. }) => {
+            return Err(format!(
+                "Version {version} is signed with a publisher key this app has moved on from, \
+                 so it can't be put back."
+            ));
+        }
+        Err(e) => return Err(format!("Version {version} doesn't check out: {e}.")),
+    };
+    if sha256(&previous.package) != previous.package_sha256
+        || *verified.trust() != Trust::Pinned
+        || verified.package().manifest.plugin.id != id
+    {
+        return Err(format!(
+            "Version {version} isn't signed with the key pinned for this app, so it can't be \
+             put back."
+        ));
+    }
+    Ok(verified.into_package())
+}
+
+/// The newest snapshot of a plugin's data taken before migrations, with
+/// its current role (not from before a reinstall), whose migrations are
+/// all in `migrations`, unchanged: data the earlier version can run on.
+async fn snapshot_for(
+    snapshots: &tether_snapshots::Snapshots,
+    id: &str,
+    role: &str,
+    migrations: &[package::Migration],
+) -> Result<Option<tether_snapshots::Snapshot>, tether_snapshots::SnapshotError> {
+    let kind = tether_snapshots::Kind::Plugin(id.to_owned());
+    // Newest first.
+    let all = tether_snapshots::list(snapshots.dir()).await?;
+    Ok(all.into_iter().find(|s| {
+        s.header.kind == kind
+            && s.header.reason == tether_snapshots::Reason::BeforeMigrations
+            && s.header.plugin_role.as_deref() == Some(role)
+            && s.header.plugin_migrations.iter().all(|m| {
+                migrations.iter().any(|p| {
+                    i64::from(p.version) == i64::from(m.version)
+                        && hex(&sha256(p.sql.as_bytes())) == m.sha256
+                })
+            })
+    }))
+}
+
+/// Goes back to the version the last upgrade replaced, after the admin
+/// typed the plugin's id: the earlier package, its permissions, hosts,
+/// secrets and scopes, and, if the upgrade changed its data, its data as
+/// the snapshot taken before that. One step back only.
+pub async fn roll_back(
+    state: &crate::AppState,
+    actor: AccountId,
+    id: &str,
+    confirmation: &str,
+) -> Result<(), AppError> {
+    if confirmation.trim() != id {
+        return Err(AppError::bad_request(
+            "Type the app's id exactly to confirm rolling it back.",
+        ));
+    }
+    let (state, id) = (state.clone(), id.to_owned());
+    detached(async move { roll_back_now(&state, actor, &id).await }).await
+}
+
+async fn roll_back_now(
+    state: &crate::AppState,
+    actor: AccountId,
+    id: &str,
+) -> Result<(), AppError> {
+    let plugins = &state.plugins;
+    let _lifecycle = plugins.lifecycle.lock().await;
+    let Some((plan, earlier)) = plan_rollback(state, id).await? else {
+        return Err(AppError::not_found(
+            "This app has no earlier version to roll back to.",
+        ));
+    };
+    let Some((previous, key)) = earlier else {
+        return Err(AppError::bad_request(
+            plan.blocked
+                .unwrap_or_else(|| "It can't be rolled back.".to_owned()),
+        ));
+    };
+    let installed = db::get(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;
+    plugins.deactivate(id).await;
+    // Runs it again as the database says if anything below fails.
+    let restart = || async {
+        if installed.enabled {
+            match db::get(&state.db, id).await {
+                Ok(Some(current)) => plugins.activate(&state.db, &current).await,
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::error!(plugin = id, error = %e, "restarting after a rollback");
+                }
+            }
+        }
+    };
+    if let (Some(snapshot), Some(snapshots)) = (&plan.restore, plugins.snapshots.as_deref())
+        && let Err(e) = snapshots
+            .restore(&state.db, snapshot, Actor::Account(actor))
+            .await
+    {
+        tracing::error!(plugin = id, error = %e, "restoring a plugin for a rollback");
+        restart().await;
+        return Err(AppError::bad_request(format!(
+            "Its data couldn't be put back ({}), so nothing was rolled back.",
+            e.brief()
+        )));
+    }
+    let finished = async {
+        let mut tx = state.db.begin().await?;
+        db::get_locked(&mut tx, id)
+            .await?
+            .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;
+        // The pin may have moved since the plan (a re-pin doesn't take the
+        // lifecycle lock): check the earlier package against it again.
+        let pinned = plugin_keys::get_locked(&mut tx, id).await?;
+        if pinned.as_deref() != Some(key.as_str()) {
+            return Err(AppError::bad_request(
+                "This app's pinned key changed while it was being rolled back. Look again.",
+            ));
+        }
+        let old = earlier_checked(id, &previous, &key).map_err(AppError::bad_request)?;
+        if !db::roll_back(
+            &mut tx,
+            id,
+            &old.manifest.plugin.name,
+            &previous.package_sha256,
+        )
+        .await?
+        {
+            return Err(AppError::bad_request(
+                "This app changed while it was being rolled back. Look again.",
+            ));
+        }
+        let data_deleted = if plan.deletes_data
+            && let Some(names) = plugin_storage::get(&mut *tx, id).await?
+        {
+            plugin_storage::drop(&mut tx, &names)
+                .await
+                .map_err(AppError::internal)?;
+            secrets::delete(&mut *tx, &password_secret(id)).await?;
+            true
+        } else {
+            false
+        };
+        let changed = apply_manifest(state, &mut tx, id, &old.manifest, actor).await?;
+        audit::record(
+            &mut *tx,
+            Actor::Account(actor),
+            "plugin.rolled_back",
+            Some(&target(id)),
+            json!({
+                "from": plan.from,
+                "to": plan.to,
+                "key": key,
+                "sha256": hex(&previous.package_sha256),
+                "capabilities": old.manifest.capabilities,
+                "permissions": old.manifest.permissions,
+                "snapshot": plan.restore.as_ref().map(|s| json!({
+                    "name": s.name,
+                    "taken_at": s.header.taken_at,
+                })),
+                "data_deleted": data_deleted,
+                "grants_removed": grants_json(&changed.grants_removed),
+                "secrets_deleted": changed.secrets_deleted,
+            }),
+        )
+        .await?;
+        tx.commit().await?;
+        Ok::<(), AppError>(())
+    }
+    .await;
+    // Rolled back or not, it runs as the database now says.
+    restart().await;
+    match (finished, &plan.restore) {
+        (Err(err), Some(snapshot)) => {
+            tracing::error!(
+                plugin = id,
+                snapshot = snapshot.name,
+                error = %err.message(),
+                "a rollback restored the data but didn't put the earlier version back"
+            );
+            Err(AppError::new(
+                err.status(),
+                format!(
+                    "Its data was put back as it was at {} UTC, but version {} wasn't: {} \
+                     Version {} runs again and migrates the restored data, so what it stored \
+                     since then is lost.",
+                    snapshot.header.taken_at.format("%Y-%m-%d %H:%M"),
+                    plan.to,
+                    err.message(),
+                    plan.from
+                ),
+            ))
+        }
+        (finished, _) => finished,
+    }
 }
 
 /// Creates a plugin's role (with a random password, kept sealed) and
@@ -1168,17 +1740,7 @@ async fn uninstall_now(
             "version": version,
             "data_deleted": storage.is_some(),
             "secrets_deleted": secrets_deleted,
-            "grants_removed": grants
-                .iter()
-                .map(|g| match g.grantee {
-                    tether_db::permissions::Grantee::State(state) => {
-                        json!({ "permission": g.permission, "state_id": state.0 })
-                    }
-                    tether_db::permissions::Grantee::Group(group) => {
-                        json!({ "permission": g.permission, "group_id": group.0 })
-                    }
-                })
-                .collect::<Vec<_>>(),
+            "grants_removed": grants_json(&grants),
         }),
     )
     .await?;

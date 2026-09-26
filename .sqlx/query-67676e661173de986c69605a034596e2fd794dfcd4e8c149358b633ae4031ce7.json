@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,\n               previous_version, upgraded_at\n        FROM core.plugins WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "package",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "package"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "signature",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "signature"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "package_sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "package_sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "installed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "installed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "previous_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_version"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "upgraded_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "upgraded_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "67676e661173de986c69605a034596e2fd794dfcd4e8c149358b633ae4031ce7"
+}

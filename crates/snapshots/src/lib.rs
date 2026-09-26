@@ -103,7 +103,7 @@ pub enum SnapshotError {
          can't be restored into it"
     )]
     PluginReinstalled(String),
-    #[error("another rollback is running")]
+    #[error("another rollback, or a snapshot or backup, is running")]
     Busy,
     #[error(
         "the restore failed ({restore}), and putting the app's data back failed too \
@@ -150,6 +150,7 @@ impl SnapshotError {
             Self::ToolMissing(_) | Self::ToolVersion { .. } => {
                 "the Postgres 16 client tools are missing"
             }
+            Self::Busy => "a snapshot or backup is being taken; try again in a few minutes",
             _ => "the server log and `tether doctor` say why",
         }
     }
@@ -486,7 +487,10 @@ impl Snapshots {
     }
 
     /// Dumps one kind into an encrypted snapshot, then drops the oldest of
-    /// that kind beyond what's kept.
+    /// that kind beyond what's kept. Waits for a restore running meanwhile
+    /// (a plugin's rollback runs with Tether up): a dump taken halfway
+    /// through one would hold half-restored data, and would block its
+    /// last step.
     pub async fn take(
         &self,
         db: &PgPool,
@@ -494,6 +498,24 @@ impl Snapshots {
         reason: Reason,
     ) -> Result<Snapshot, SnapshotError> {
         kind.check()?;
+        // Shared, so snapshots don't wait for each other; on a connection
+        // of its own, taken before the dump's transaction starts (its view
+        // of the data must come after any restore). Closing releases it.
+        let mut lock = db.acquire().await?.detach();
+        sqlx::query!("SELECT pg_advisory_lock_shared($1)", RESTORE_LOCK)
+            .execute(&mut lock)
+            .await?;
+        let taken = self.take_unlocked(db, kind, reason).await;
+        let _ = sqlx::Connection::close(lock).await;
+        taken
+    }
+
+    async fn take_unlocked(
+        &self,
+        db: &PgPool,
+        kind: &Kind,
+        reason: Reason,
+    ) -> Result<Snapshot, SnapshotError> {
         let postgres_version = server_version(db).await?;
         self.tools.check(server_major(postgres_version)).await?;
         let dir = self.dir.join(reason.subdir());
@@ -683,10 +705,11 @@ impl Snapshots {
     /// Puts a snapshot's kind back as it was. Newer data of that kind is
     /// lost; other kinds are untouched. Checks first
     /// ([`Snapshots::check`]), reads the whole file once to be sure it
-    /// opens, and wraps the restore in TimescaleDB's pre- and post-restore
+    /// opens, and wraps a core restore in TimescaleDB's pre- and post-restore
     /// calls when it's installed. Audited as `snapshot.restored`, in the
     /// transaction that finishes the restore. Nothing else may be using
-    /// the data: stop the server first (see [`server_connections`]).
+    /// the data: stop the server first (see [`server_connections`]), or
+    /// for a plugin, at least the plugin (an upgrade's rollback does).
     ///
     /// A plugin's schema is restored as the plugin's own role, never as
     /// Tether's: the dump holds the plugin's functions, and CHECK
@@ -725,7 +748,11 @@ impl Snapshots {
     ) -> Result<(), SnapshotError> {
         self.check(db, snapshot).await?;
         self.verify(snapshot).await?;
-        let timescale = snapshot.header.timescaledb.is_some();
+        // Core only: TimescaleDB's restoring mode is database-wide, and a
+        // plugin's schema holds none of its catalog, so a plugin's restore
+        // (which may run with Tether up, its plugin stopped: an upgrade's
+        // rollback) needs none and mustn't switch it on under core.
+        let timescale = snapshot.header.timescaledb.is_some() && snapshot.header.kind == Kind::Core;
         if timescale {
             sqlx::raw_sql("SELECT public.timescaledb_pre_restore()")
                 .execute(db)

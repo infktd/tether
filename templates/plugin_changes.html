@@ -1,0 +1,51 @@
+{#- What changes in what an app asks for, from one version to another:
+    on an upgrade's review and on a rollback. -#}
+{% macro list(c) %}
+<div class="grid gap-4 text-sm">
+  {% if c.unchanged() %}
+  <p class="text-muted-foreground">It asks for nothing new, and keeps everything it had.</p>
+  {% endif %}
+  {% if c.any_added() %}
+  <dl class="grid gap-4">
+    {% for x in c.added %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge">New</span> {{ x.title }}</dt>
+      <dd class="text-muted-foreground break-words num">{{ x.detail }}</dd>
+    </div>
+    {% endfor %}
+    {% for p in c.permissions_added %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge">New</span> Permission <span class="num">{{ p.name }}</span></dt>
+      <dd class="text-muted-foreground break-words">{{ p.description }}. Nobody holds it until you grant it.</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+  {% if !c.permissions_changed.is_empty() %}
+  <dl class="grid gap-4">
+    {% for p in c.permissions_changed %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge" data-variant="secondary">Changed</span> Permission <span class="num">{{ p.name }}</span></dt>
+      <dd class="text-muted-foreground break-words">Now: {{ p.description }}. Whoever holds it keeps it.</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+  {% if c.any_removed() %}
+  <dl class="grid gap-4">
+    {% for x in c.removed %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge" data-variant="outline">No longer</span> {{ x.title }}</dt>
+      <dd class="text-muted-foreground break-words num">{{ x.detail }}</dd>
+    </div>
+    {% endfor %}
+    {% for p in c.permissions_removed %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge" data-variant="outline">No longer</span> Permission <span class="num">{{ p.name }}</span></dt>
+      <dd class="text-muted-foreground break-words">{{ p.description }}. It goes, with every grant of it.</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+</div>
+{% endmacro %}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at\n        FROM core.plugins WHERE id = $1\n        ",
+  "query": "\n        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,\n               previous_version, upgraded_at\n        FROM core.plugins WHERE id = $1 FOR UPDATE\n        ",
   "describe": {
     "columns": [
       {
@@ -90,6 +90,28 @@
             "name": "installed_at"
           }
         }
+      },
+      {
+        "ordinal": 8,
+        "name": "previous_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "previous_version"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "upgraded_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "upgraded_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -105,8 +127,10 @@
       false,
       false,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
-  "hash": "85e856934647617df458aab4d3944a5834846ec462861d53ea76a75af3a2bce7"
+  "hash": "c8dcf5083686f106736eb17131f3c8c6012f179ca0521d17bbb3b6cbfbf82477"
 }

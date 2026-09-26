@@ -371,6 +371,10 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
         .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))
         .route(
+            "/admin/plugins/{id}/rollback",
+            post(pages::plugins::roll_back),
+        )
+        .route(
             "/admin/plugins/{id}/uninstall",
             post(pages::plugins::uninstall),
         )

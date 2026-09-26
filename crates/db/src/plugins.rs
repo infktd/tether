@@ -138,6 +138,10 @@ pub struct Installed {
     pub package_sha256: Vec<u8>,
     pub enabled: bool,
     pub installed_at: DateTime<Utc>,
+    /// The version the last upgrade replaced, while it can be rolled back
+    /// to.
+    pub previous_version: Option<String>,
+    pub upgraded_at: Option<DateTime<Utc>>,
 }
 
 impl std::fmt::Debug for Installed {
@@ -202,13 +206,149 @@ pub async fn get<'e>(
     sqlx::query_as!(
         Installed,
         r#"
-        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at
+        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,
+               previous_version, upgraded_at
         FROM core.plugins WHERE id = $1
         "#,
         id
     )
     .fetch_optional(executor)
     .await
+}
+
+/// [`get`], locking the row for the rest of the transaction.
+pub async fn get_locked(
+    tx: &mut sqlx::PgConnection,
+    id: &str,
+) -> Result<Option<Installed>, sqlx::Error> {
+    sqlx::query_as!(
+        Installed,
+        r#"
+        SELECT id, name, version, package, signature, package_sha256, enabled, installed_at,
+               previous_version, upgraded_at
+        FROM core.plugins WHERE id = $1 FOR UPDATE
+        "#,
+        id
+    )
+    .fetch_optional(tx)
+    .await
+}
+
+/// The package an upgrade replaced.
+pub struct Previous {
+    pub version: String,
+    pub package: Vec<u8>,
+    pub signature: String,
+    pub package_sha256: Vec<u8>,
+    pub upgraded_at: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for Previous {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Previous")
+            .field("version", &self.version)
+            .field("upgraded_at", &self.upgraded_at)
+            .finish_non_exhaustive()
+    }
+}
+
+pub async fn previous<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: &str,
+) -> Result<Option<Previous>, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        SELECT previous_version, previous_package, previous_signature,
+               previous_package_sha256, upgraded_at
+        FROM core.plugins WHERE id = $1
+        "#,
+        id
+    )
+    .fetch_optional(executor)
+    .await?;
+    // The table's CHECK keeps the five together.
+    Ok(row.and_then(|r| {
+        Some(Previous {
+            version: r.previous_version?,
+            package: r.previous_package?,
+            signature: r.previous_signature?,
+            package_sha256: r.previous_package_sha256?,
+            upgraded_at: r.upgraded_at?,
+        })
+    }))
+}
+
+/// Replaces an installed plugin's package with a newer one, keeping the
+/// one it replaces as the previous package. Call with the row locked
+/// ([`get_locked`]).
+pub async fn upgrade(
+    tx: &mut sqlx::PgConnection,
+    plugin: &NewPlugin<'_>,
+) -> Result<bool, sqlx::Error> {
+    // Every right-hand side reads the row as it was.
+    let done = sqlx::query!(
+        r#"
+        UPDATE core.plugins SET
+            previous_version = version,
+            previous_package = package,
+            previous_signature = signature,
+            previous_package_sha256 = package_sha256,
+            upgraded_at = now(),
+            upgraded_by = $7,
+            name = $2,
+            version = $3,
+            package = $4,
+            signature = $5,
+            package_sha256 = $6,
+            updated_at = now()
+        WHERE id = $1
+        "#,
+        plugin.id,
+        plugin.name,
+        plugin.version,
+        plugin.package,
+        plugin.signature,
+        plugin.package_sha256,
+        plugin.installed_by.0,
+    )
+    .execute(tx)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Puts the previous package back and forgets it, if it's still the one
+/// with `previous_sha256`. `name` is from its manifest. Call with the row
+/// locked ([`get_locked`]).
+pub async fn roll_back(
+    tx: &mut sqlx::PgConnection,
+    id: &str,
+    name: &str,
+    previous_sha256: &[u8],
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        r#"
+        UPDATE core.plugins SET
+            name = $2,
+            version = previous_version,
+            package = previous_package,
+            signature = previous_signature,
+            package_sha256 = previous_package_sha256,
+            previous_version = NULL,
+            previous_package = NULL,
+            previous_signature = NULL,
+            previous_package_sha256 = NULL,
+            upgraded_at = NULL,
+            upgraded_by = NULL,
+            updated_at = now()
+        WHERE id = $1 AND previous_package_sha256 = $3
+        "#,
+        id,
+        name,
+        previous_sha256,
+    )
+    .execute(tx)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 pub async fn exists<'e>(

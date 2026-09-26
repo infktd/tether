@@ -757,7 +757,7 @@ pub async fn approve(
     plugin: &str,
     manifest: &Manifest,
     by: AccountId,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<String>, sqlx::Error> {
     db::approve(
         tx,
         plugin,
