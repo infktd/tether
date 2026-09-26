@@ -1,0 +1,56 @@
+{#- An app's owners (AA's Add Owner), on its main page: the characters
+    whose corporation data the app reads. Admins who approve sources see
+    them all, with Approve and Remove; everyone else sees their own, with
+    Withdraw. Drawn by the host: plugins never see it. -#}
+{% if let Some(o) = c.owners %}{% if o.panel %}
+<section class="card data-card" id="owners" aria-labelledby="owners-title">
+  <header>
+    <h2 id="owners-title">Owners <span class="num text-muted-foreground font-normal">{{ o.rows.len() }}</span></h2>
+    <p>Characters whose corporation's data this app reads, through the in-game role ESI asks for. {% if o.can_approve %}Approve only characters with that role: the app uses a source only once it's approved, and only while it stays in the corporation it was approved for.{% else if o.can_offer %}Add owner logs in with the character; an admin approves it before the app uses it. The app never sees its login token.{% else %}You can stop offering yours at any time.{% endif %}</p>
+    <div class="flex flex-wrap gap-2 mt-2">{% for s in o.scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
+  </header>
+  {% if o.rows.is_empty() %}
+  <p class="px-5 pb-5 text-sm text-muted-foreground">{% if o.can_approve %}No owners yet.{% else %}You haven't added a character yet.{% endif %}{% if o.can_offer %} Add owner, top right, logs in with one.{% endif %}</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Added by</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+      {% for r in o.rows %}
+      <tr>
+        <td>
+          <div class="flex items-center gap-3">
+            {% let avatar_name = r.name.as_str() %}{% let avatar_id = r.character_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-8" %}
+            {% include "avatar.html" %}
+            <span class="font-medium">{{ r.name }}</span>
+          </div>
+        </td>
+        <td>
+          <div class="flex items-center gap-2">
+            {% if let Some(src) = crate::pages::corporation_logo(r.corporation_id) %}<img src="{{ src }}" alt="" width="20" height="20" class="size-5 rounded-sm">{% endif %}
+            <span>{{ r.corporation }}</span>
+          </div>
+        </td>
+        <td><div class="text-sm">{{ r.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ r.when }} EVE</div></td>
+        <td>{% if r.state == "approved" %}<span class="badge" data-variant="secondary">approved</span>{% else if r.state == "suspended" %}<span class="badge" data-variant="destructive">account deactivated or blacklisted: not used</span>{% else if r.state == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting for an admin</span>{% endif %}</td>
+        <td class="text-right">
+          <div class="inline-flex gap-2">
+            {% if o.can_approve && r.state != "approved" %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>{% endif %}
+            {% if r.own %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/withdraw" hx-confirm="Stop offering {{ r.name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
+            {% else if o.can_approve %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/remove" hx-confirm="Remove {{ r.name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>{% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if !o.gone.is_empty() %}
+  <div class="border-t px-5 py-4">
+    <h3 class="text-[13px] font-medium text-muted-foreground">Withdrawn and removed, last 30 days</h3>
+    <ul class="mt-2 grid gap-1 text-sm" role="list">
+      {% for g in o.gone %}<li><span class="font-medium">{{ g.name }}</span> <span class="text-muted-foreground">· {{ g.what }} · <span class="num">{{ g.when }}</span> EVE</span></li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</section>
+{% endif %}{% endif %}

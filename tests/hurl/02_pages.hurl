@@ -1051,13 +1051,25 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/plugins/acme.hello/offer
+POST {{base}}/apps/acme.hello/owners/add
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/plugins/acme.hello/offer/1/withdraw
+POST {{base}}/apps/acme.hello/owners/1/withdraw
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/apps/acme.hello/owners/1/approve
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/apps/acme.hello/owners/1/remove
 Origin: {{base}}
 HTTP 303
 [Asserts]

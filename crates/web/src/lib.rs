@@ -424,13 +424,19 @@ pub fn router(state: AppState) -> Router {
             "/admin/states/{id}/scopes/remove",
             post(pages::states::remove_scope),
         )
+        // An app's owners (AA's Add Owner), on the app's own page.
+        .route("/apps/{id}/owners/add", post(pages::plugin_access::add))
         .route(
-            "/profile/plugins/{id}/offer",
-            post(pages::plugin_access::offer),
+            "/apps/{id}/owners/{character}/withdraw",
+            post(pages::plugin_access::withdraw),
         )
         .route(
-            "/profile/plugins/{id}/offer/{character}/withdraw",
-            post(pages::plugin_access::withdraw),
+            "/apps/{id}/owners/{character}/approve",
+            post(pages::plugin_access::approve),
+        )
+        .route(
+            "/apps/{id}/owners/{character}/remove",
+            post(pages::plugin_access::remove),
         )
         .route("/services", get(pages::discord::services))
         .route("/services/discord/link", post(pages::discord::link))

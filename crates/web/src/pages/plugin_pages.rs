@@ -632,6 +632,8 @@ pub struct ContentView {
     pub refresh: Option<u32>,
     /// The page's address with its query: what a reload fetches.
     pub href: String,
+    /// The app's owners (Add owner), drawn by the host.
+    pub owners: Option<super::plugin_access::Owners>,
 }
 
 #[derive(Template)]
@@ -668,6 +670,7 @@ struct Opened {
     tab: usize,
     /// The page's own address, with its query: forms post back here.
     href: String,
+    owners: Option<super::plugin_access::Owners>,
 }
 
 /// Everything before the plugin is called. Anything that doesn't pass is
@@ -692,6 +695,8 @@ async fn open(
         return Err(missing());
     }
     let viewer = viewer(state, &session, &running, &perms).await?;
+    let owners =
+        super::plugin_access::owners(state, &session, &running, &perms, path.is_empty()).await?;
     let raw = raw_query.unwrap_or("");
     if raw.len() > MAX_QUERY_BYTES {
         return Err(AppError::bad_request("That address is too long.").into());
@@ -734,6 +739,7 @@ async fn open(
             query,
             tab,
             href,
+            owners,
         },
     ))
 }
@@ -978,6 +984,7 @@ fn draw(
         error,
         watermark,
         href: opened.href.clone(),
+        owners: opened.owners,
     };
     let mut response = if reload {
         render(status, &PluginContent { c: content })

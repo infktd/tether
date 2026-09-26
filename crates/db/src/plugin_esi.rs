@@ -216,6 +216,51 @@ pub async fn character_account<'e>(
     Ok(id.map(AccountId))
 }
 
+/// A data source that went: withdrawn by its owner or removed by an
+/// admin, from the audit log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoneSource {
+    pub at: DateTime<Utc>,
+    /// The audit action (`...withdrawn` or `...removed`).
+    pub action: String,
+    /// Who did it (their main at the time).
+    pub actor_name: Option<String>,
+    pub character_id: i64,
+    pub character_name: Option<String>,
+}
+
+/// A plugin's data sources withdrawn or removed in the last 30 days,
+/// newest first (at most 20).
+pub async fn gone_data_sources(
+    pool: &PgPool,
+    plugin_id: &str,
+) -> Result<Vec<GoneSource>, sqlx::Error> {
+    sqlx::query_as!(
+        GoneSource,
+        r#"
+        WITH gone AS MATERIALIZED (
+            SELECT l.id, l.at, l.action, l.actor_name, l.details->>'character_id' AS character
+            FROM core.audit_log l
+            WHERE l.at > now() - interval '30 days'
+              AND l.target = 'plugin:' || $1
+              AND l.action IN ('plugin.data_source_withdrawn', 'plugin.data_source_removed')
+              AND l.details->>'character_id' ~ '^[0-9]{1,18}$'
+            ORDER BY l.at DESC, l.id DESC
+            LIMIT 20
+        )
+        SELECT g.at AS "at!", g.action AS "action!", g.actor_name AS "actor_name?",
+               g.character::bigint AS "character_id!",
+               c.name AS "character_name?"
+        FROM gone g
+        LEFT JOIN core.characters c ON c.id = g.character::bigint
+        ORDER BY g.at DESC, g.id DESC
+        "#,
+        plugin_id
+    )
+    .fetch_all(pool)
+    .await
+}
+
 // ---- access log ---------------------------------------------------------------
 
 pub async fn log_access(

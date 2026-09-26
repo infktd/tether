@@ -227,11 +227,7 @@ async fn mount_esi(h: &Harness, now: DateTime<Utc>, times: &Times) {
 /// Offers Chribba as a structure owner (the SSO round trip) and approves
 /// it.
 async fn approve_owner(h: &Harness, owner: &str) -> String {
-    let res = send(
-        &h.app,
-        form(&format!("/profile/plugins/{ID}/offer"), "", owner),
-    )
-    .await;
+    let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", owner)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let login = res.cookie_value(LOGIN);
     let state = query_param(res.location(), "state").to_owned();

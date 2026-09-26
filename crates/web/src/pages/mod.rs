@@ -61,6 +61,19 @@ pub fn portrait_url(character_id: impl CharacterId) -> Option<String> {
     (id > 0).then(|| format!("https://images.evetech.net/characters/{id}/portrait?size=64"))
 }
 
+/// CCP's image server URL for a corporation's logo (64px, shown at 20px).
+/// `None` for unknown and fixture ids.
+pub fn corporation_logo(id: impl CharacterId) -> Option<String> {
+    let id = id.id();
+    (id > 0).then(|| format!("https://images.evetech.net/corporations/{id}/logo?size=64"))
+}
+
+/// As [`corporation_logo`], for an alliance.
+pub fn alliance_logo(id: impl CharacterId) -> Option<String> {
+    let id = id.id();
+    (id > 0).then(|| format!("https://images.evetech.net/alliances/{id}/logo?size=64"))
+}
+
 /// Two-letter initials for characters without a portrait.
 pub fn initials(name: &str) -> String {
     name.split_whitespace()
@@ -388,7 +401,6 @@ struct ProfilePage {
     characters: Vec<CharacterRow>,
     groups: Vec<String>,
     permissions: Vec<String>,
-    plugin_access: Vec<plugin_access::PluginAccess>,
     corp_sources: Vec<compliance::OwnSource>,
     /// `admin.system` holders get the admin panels (loaded after the page).
     system_panel: bool,
@@ -569,7 +581,6 @@ pub async fn profile(
             characters: loaded.characters,
             groups,
             permissions,
-            plugin_access: plugin_access::for_profile(&state, &session).await?,
             corp_sources: compliance::own_sources(&state, session.account).await?,
             system_panel,
             widgets,

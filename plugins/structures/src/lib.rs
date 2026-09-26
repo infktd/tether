@@ -1861,10 +1861,10 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             vec![
                 Section::Table(owner_table),
                 Section::Text(
-                    "Add Structure Owner: a character with the in-game Station Manager role offers \
-                     itself on the Dashboard (Structures: corporation data), and an admin approves it. \
-                     Its corporation's structures show here within the hour; starbases, customs \
-                     offices, skyhooks and fittings need the Director role."
+                    "Add owner (top right) logs in with a character with the in-game Station \
+                     Manager role, and an admin approves it. Its corporation's structures show \
+                     here within the hour; starbases, customs offices, skyhooks and fittings need \
+                     the Director role."
                         .to_owned(),
                 ),
             ],
@@ -2092,7 +2092,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::numeric("Next try"),
         ])
         .title("Owners")
-        .empty("No owners yet: a Station Manager offers a character on the Dashboard, and an admin approves it."),
+        .empty("No owners yet: Add owner (top right) logs in with a Station Manager, and an admin approves it."),
         owner_rows,
     );
     let choices: Vec<(String, String)> = owners

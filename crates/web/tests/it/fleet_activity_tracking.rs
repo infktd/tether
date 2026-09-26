@@ -733,11 +733,7 @@ async fn approve_source(h: &Harness, owner: &str, character: i64) {
 /// Offers a character of the session's account as the app's data source
 /// (the SSO round trip); returns the session after it.
 async fn offer_source(h: &Harness, session: &str, character: i64, name: &str) -> String {
-    let res = send(
-        &h.app,
-        form(&format!("/profile/plugins/{ID}/offer"), "", session),
-    )
-    .await;
+    let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", session)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let login = res.cookie_value(LOGIN);
     let state = query_param(res.location(), "state").to_owned();
@@ -1220,7 +1216,7 @@ async fn only_your_own_approved_characters_track(db: PgPool) {
     let create = open(&h, "links/create", &line).await;
     assert_eq!(create.status, StatusCode::OK, "{}", create.body);
     assert!(!create.body.contains("Chribba"), "{}", create.body);
-    assert!(create.body.contains("Offer a character"), "{}", create.body);
+    assert!(create.body.contains("Add owner"), "{}", create.body);
     let res = post(
         &h,
         "links/create",

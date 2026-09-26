@@ -172,6 +172,8 @@ fn probe(request: Request) -> Result<Page, PageError> {
             let too_many = outcomes.iter().filter(|o| o.contains("TooMany")).count();
             format!("ok={ok} too_many={too_many}")
         }
+        // A main page, for the host's parts around it (Add owner).
+        "" => "home".to_owned(),
         "viewer" => format!("{:?}", identity::viewer()),
         "characters" => format!("{:?}", esi::characters()),
         "sources" => format!("{:?}", esi::data_sources()),

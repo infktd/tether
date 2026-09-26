@@ -57,5 +57,26 @@
     </table>
     {% endif %}
   </section>
+
+  {% if !owners.is_empty() %}
+  <section class="card data-card">
+    <header><h2>App owners</h2><p>Your characters that apps read corporation data through (their Owners, added with Add owner). Withdraw one and the app stops reading its corporation's data.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">Character</th><th scope="col">App</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for o in owners %}
+        <tr>
+          <td class="font-medium">{{ o.name }}</td>
+          <td>{{ o.plugin_name }}</td>
+          <td>{% if o.state == "approved" %}<span class="badge" data-variant="secondary">approved</span>{% else if o.state == "waiting" %}<span class="badge" data-variant="outline">waiting for an admin</span>{% else %}<span class="badge" data-variant="outline">not used</span>{% endif %}</td>
+          <td class="text-right">
+            <form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ o.character_id }}/withdraw?from=tokens" hx-confirm="Stop offering {{ o.name }} to {{ o.plugin_name }}?"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

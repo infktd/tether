@@ -33,7 +33,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Moon Mining (aa-moonmining): Moons, Extractions, Reports, Add Corporation | Moon Tracker (planned plugin) | Rename the plugin to **Moon Mining**, with AA's pages |
 | Member Audit: My Characters, Character Sheet, Character Finder, Reports, Skill Sets | Member Audit plugin, same names | done |
 | Community Apps / apps | Plugins | **Apps** in the UI; "plugin" in the SDK and code |
-| Add Refinery Owner, Add Structure Owner (apps' corp data characters) | data sources | Show as **owners** ("Add Owner"); keep "data source" in the SDK |
+| Add Refinery Owner, Add Structure Owner (apps' corp data characters) | **Add owner** on each app's own page (header button), its owners in an Owners card there | done; "data source" in the SDK |
 
 ## Core
 
@@ -174,6 +174,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 - One token per character, holding every scope granted (AA keeps one per scope set); a failed token is kept as revoked and audited, not deleted, while its effect on the account matches AA's.
 - Discord: explicit role mapping (above); OAuth state checked; the bot has only the permissions it needs, never Administrator; the member's Discord token is revoked after linking; members who leave the server stay linked (PRD).
 - Corporation Stats sources need an admin's approval, and only covered corporations are read.
+- App owners (AA's Add Owner) need an admin's approval too (PRD F16, N8): holders of the app's `manage` or an `add_…` permission offer a character from the app's page in one EVE login (AA adds it at once), and an admin with `admin.plugins` approves it on the same page.
 - Compliance is stricter than Member Audit: revoked tokens break it.
 - Evaluations run on the job queue, not inline, so a burst of changes can't stall requests.
 

@@ -200,6 +200,12 @@ Plugins never ship their own styles. They return a declarative page description 
 - **Progress**: a 4px bar, `--muted` track, `--foreground-soft` fill, `--radius-sm`, full width of its cell, with an optional 12px muted label and the percentage in Geist Mono above it. A bar between two known instants (a skill in training) fills live in the browser. Neutral, never the accent; no animation between values (it moves as time does).
 - **Live pages**: a page that says it is still filling in (a first sync) reloads its content in place every few seconds (5 to 300) while it says so, and stops once it doesn't. The content swaps without the fade and without scrolling, so the page doesn't blink; a page with a form never reloads under someone typing, and an audited page never reloads at all.
 
+**Owners** (AA's Add Owner). For an app that reads corporation data through data sources, the host adds two things around the app's own content; the app never sees either.
+
+- **Add owner**: an outline button with a plus icon at the right of the page header, on every page of the app. It shows for those who may offer a character: holders of the app's `manage` permission or of one of its `add_…` permissions, and the admins who approve sources, as long as they may open the app's main page. It is one EVE login, which comes back to that page.
+- **Owners card**: on the app's main page, after the app's content. Its header lists the scopes asked for, as outline badges. The table shows the character (portrait), the corporation (20px logo), who added it and when, and the status: approved, waiting for an admin, or changed corporation. Admins who approve sources see every source, with Approve and Remove as row buttons, and under the table the sources withdrawn or removed in the last 30 days. Everyone else sees only their own characters, with Withdraw. The card isn't shown to a viewer who can't offer or approve and has nothing offered.
+- **Token Management** lists the account's own owners in every app (an "App owners" card: character, app, status, Withdraw), so a pilot can always see and withdraw them, even without access to the app any more.
+
 ## Don't
 
 - No drop shadows, gradients, glows or glassmorphism.

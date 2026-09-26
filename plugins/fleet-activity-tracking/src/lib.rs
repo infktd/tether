@@ -737,9 +737,9 @@ fn create_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
     let trackable = trackable_characters(viewer);
     if trackable.is_empty() {
         page = page.text(
-            "To track your ESI fleet: on your Dashboard, under Fleet Activity Tracking, choose \
-             Offer a character and log in with your FC character; an admin approves it once. \
-             Then it's offered here.",
+            "To track your ESI fleet: choose Add owner at the top of Fleet Activity Tracking's \
+             main page and log in with your FC character; an admin approves it once. Then it's \
+             offered here.",
         );
     } else {
         let mut options = vec![(

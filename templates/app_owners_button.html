@@ -1,0 +1,8 @@
+{#- An app page's Add owner (AA's), for those who may offer a character as
+    the app's data source: one EVE login, then an admin approves it. -#}
+{%- import "icons.html" as icons -%}
+{% if let Some(o) = c.owners %}{% if o.can_offer %}
+<form method="post" action="/apps/{{ o.plugin_id }}/owners/add" hx-boost="false" class="shrink-0">
+  <button type="submit" class="btn" data-variant="outline">{% call icons::icon("plus") %}{% endcall %} Add owner</button>
+</form>
+{% endif %}{% endif %}

@@ -296,6 +296,11 @@ pub async fn callback(
                 "This was started from another session. Please sign in and try again.",
             ));
         };
+        // An app owner offer the account may no longer make links nothing
+        // and keeps no token.
+        if let db::Purpose::DataSource(plugin) = &attempt.purpose {
+            crate::plugin_consent::check_offer(&state, account, plugin).await?;
+        }
         let result = accounts::link(&state.db, login, account).await?;
         if result.outcome == accounts::Linked::Deactivated {
             return Err(AppError::new(

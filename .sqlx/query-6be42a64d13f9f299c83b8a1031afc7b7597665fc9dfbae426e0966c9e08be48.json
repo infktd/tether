@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH gone AS MATERIALIZED (\n            SELECT l.id, l.at, l.action, l.actor_name, l.details->>'character_id' AS character\n            FROM core.audit_log l\n            WHERE l.at > now() - interval '30 days'\n              AND l.target = 'plugin:' || $1\n              AND l.action IN ('plugin.data_source_withdrawn', 'plugin.data_source_removed')\n              AND l.details->>'character_id' ~ '^[0-9]{1,18}$'\n            ORDER BY l.at DESC, l.id DESC\n            LIMIT 20\n        )\n        SELECT g.at AS \"at!\", g.action AS \"action!\", g.actor_name AS \"actor_name?\",\n               g.character::bigint AS \"character_id!\",\n               c.name AS \"character_name?\"\n        FROM gone g\n        LEFT JOIN core.characters c ON c.id = g.character::bigint\n        ORDER BY g.at DESC, g.id DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.audit_log",
+            "name": "at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "action!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.audit_log",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.audit_log",
+            "name": "actor_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "character_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "character_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null,
+      false
+    ]
+  },
+  "hash": "6be42a64d13f9f299c83b8a1031afc7b7597665fc9dfbae426e0966c9e08be48"
+}

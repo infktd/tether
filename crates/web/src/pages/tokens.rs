@@ -32,6 +32,8 @@ pub struct TokenRow {
 struct TokensPage {
     shell: Shell,
     rows: Vec<TokenRow>,
+    /// The account's characters that apps read corporation data through.
+    owners: Vec<super::plugin_access::OwnSource>,
     notice: Option<String>,
     error: Option<String>,
 }
@@ -73,6 +75,7 @@ async fn tokens_page(
         &TokensPage {
             shell: loaded.shell,
             rows,
+            owners: super::plugin_access::own_sources(state, session.account).await?,
             notice: notice.map(str::to_owned),
             error: error.map(|e| e.message().to_owned()),
         },

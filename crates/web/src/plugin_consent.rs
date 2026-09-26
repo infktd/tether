@@ -1,5 +1,7 @@
-//! Plugin data sources (F16): users offer characters as a plugin's data
-//! source, which an admin approves, through an EVE SSO login that asks for
+//! Plugin data sources (F16): pilots with the app's add-owner permission
+//! ([`may_offer`]) offer characters as a plugin's data source (AA's Add
+//! Owner, on the app's own page), which an admin approves, through an EVE
+//! SSO login that asks for
 //! the plugin's data-source scopes plus those the account already granted
 //! (so a new grant never drops an old one). User scopes need no step here:
 //! Member requires them (see `compliance`). Also the Discord channels a
@@ -13,6 +15,7 @@ use tether_db::audit::{self, Actor};
 use tether_db::auth::Purpose;
 use tether_db::plugin_esi as db;
 use tether_esi::sso::SsoIdentity;
+use tether_plugins::manifest::Manifest;
 
 use crate::AppState;
 use crate::error::AppError;
@@ -21,7 +24,63 @@ fn target(plugin: &str) -> String {
     format!("plugin:{plugin}")
 }
 
-/// Starts the login that offers a character as `plugin`'s data source.
+/// Who may offer a character as an app's data source (AA's Add Owner):
+/// holders of the app's `manage` permission or of any of its `add_…` ones
+/// (as AA's `add_refinery_owner` and `add_structure_owner`, and aa-afat's
+/// `add_fatlink`, whose FCs add their fleet character), and the admins who
+/// approve sources (`admin.plugins`). An admin still approves every offer.
+/// Only for those who may open the app's main page, where the login comes
+/// back to and their offers are listed.
+pub fn may_offer(manifest: &Manifest, holds: impl Fn(&str) -> bool) -> bool {
+    if manifest.capabilities.esi.data_source.is_empty() {
+        return false;
+    }
+    let main_page = manifest
+        .page_permission("")
+        .unwrap_or_else(|| tether_core::permissions::ADMIN_PLUGINS.to_owned());
+    if !holds(&main_page) {
+        return false;
+    }
+    let id = &manifest.plugin.id;
+    holds(tether_core::permissions::ADMIN_PLUGINS)
+        || manifest
+            .permissions
+            .keys()
+            .filter(|name| *name == "manage" || name.starts_with("add_"))
+            .any(|name| holds(&format!("plugin.{id}.{name}")))
+}
+
+/// Whether the account may offer characters to `manifest`'s app now.
+async fn account_may_offer(
+    state: &AppState,
+    account: AccountId,
+    manifest: &Manifest,
+) -> Result<bool, AppError> {
+    let held = tether_db::permissions::effective(&state.db, account).await?;
+    Ok(may_offer(manifest, |p| held.contains(p)))
+}
+
+/// Refuses an offer the account may not make (any more): checked when the
+/// login starts, and again when it comes back, before the character is
+/// linked or its token kept.
+pub async fn check_offer(
+    state: &AppState,
+    account: AccountId,
+    plugin: &str,
+) -> Result<(), AppError> {
+    let running = state
+        .plugins
+        .running(plugin)
+        .ok_or_else(|| AppError::not_found("That app isn't running any more."))?;
+    if account_may_offer(state, account, &running.manifest).await? {
+        Ok(())
+    } else {
+        Err(AppError::forbidden())
+    }
+}
+
+/// Starts the login that offers a character as `plugin`'s data source,
+/// for an account that may (see [`may_offer`]); back to the app's page.
 pub async fn start_offer(
     state: &AppState,
     jar: CookieJar,
@@ -36,11 +95,12 @@ pub async fn start_offer(
     if wanted.is_empty() {
         return Err(AppError::bad_request("That app uses no data sources."));
     }
+    check_offer(state, account, plugin).await?;
     let scopes = crate::compliance::ask_scopes(&state.db, account, wanted.iter().cloned()).await?;
     crate::auth::start_login(
         state,
         jar,
-        "/dashboard",
+        &format!("/plugins/{plugin}"),
         Purpose::DataSource(plugin.to_owned()),
         &scopes,
         Some(account),
@@ -61,6 +121,10 @@ pub async fn finish(
         .plugins
         .running(plugin)
         .ok_or_else(|| AppError::not_found("That app isn't running any more."))?;
+    // Again: the permission may have gone while the pilot was at EVE.
+    if !account_may_offer(state, account, &running.manifest).await? {
+        return Err(AppError::forbidden());
+    }
     let needed = &running.manifest.capabilities.esi.data_source;
     let missing: Vec<&String> = needed
         .iter()
@@ -237,4 +301,50 @@ pub async fn set_channel(
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(permissions: &str, sources: bool) -> Manifest {
+        let esi = if sources {
+            "[capabilities.esi]\ndata_source = [\"esi-industry.read_corporation_mining.v1\"]\n\n"
+        } else {
+            ""
+        };
+        Manifest::parse(&format!(
+            "[plugin]\nid = \"acme.mine\"\nname = \"Mine\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+             [capabilities]\n\n{esi}[permissions]\n{permissions}\n\n\
+             [[pages]]\npath = \"\"\npermission = \"view\"\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn owners_are_added_by_manage_add_and_approving_admins() {
+        let m = manifest(
+            "view = \"v\"\nmanage = \"m\"\nadd_fatlink = \"a\"\nother = \"o\"",
+            true,
+        );
+        let with = |held: &[&str]| may_offer(&m, |p| held.contains(&p));
+        assert!(!with(&["plugin.acme.mine.view"]));
+        assert!(!with(&["plugin.acme.mine.view", "plugin.acme.mine.other"]));
+        assert!(with(&["plugin.acme.mine.view", "plugin.acme.mine.manage"]));
+        assert!(with(&[
+            "plugin.acme.mine.view",
+            "plugin.acme.mine.add_fatlink"
+        ]));
+        assert!(with(&["plugin.acme.mine.view", "admin.plugins"]));
+        // Not without the main page, where the login comes back to.
+        assert!(!with(&["plugin.acme.mine.manage"]));
+        // Another app's permission of the same name is no use.
+        assert!(!with(&[
+            "plugin.acme.mine.view",
+            "plugin.acme.other.manage"
+        ]));
+        // Nothing to offer to an app without data sources.
+        let none = manifest("view = \"v\"\nmanage = \"m\"", false);
+        assert!(!may_offer(&none, |_| true));
+    }
 }
