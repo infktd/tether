@@ -267,7 +267,7 @@ Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from AR
 None of these block the spike or milestone 0; each has a latest point where it must be decided.
 
 - [ ] Project name, before the first public repo
-- [ ] License: AGPL or MIT/Apache, before the first public repo
+- [x] License: GPL-2.0-or-later (Jay: the same family as Alliance Auth's GPLv2; "or later" because Apache-2.0 dependencies such as Wasmtime can't be combined with GPLv2 alone). `LICENSE` holds the GPLv2 text; every crate says `GPL-2.0-or-later`
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
 - [x] Whether Guests may join the Discord server through Tether: decided by permission, as in AA ("Can access the Discord service", granted to Member and Blue by default; admins may grant it to Guest). Decided 2026-09-25
 - [x] Plugin database access: raw SQL in the plugin's own schema, through a per-plugin login role Postgres confines to it (details in milestone 2)

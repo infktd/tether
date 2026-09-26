@@ -2,6 +2,7 @@
 name = "tether-plugins-test-guest-hoard"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "A guest defining its own resource type, for tether-plugins tests. Not a real plugin."
