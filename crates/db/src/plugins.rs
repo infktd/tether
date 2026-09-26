@@ -14,6 +14,8 @@ pub struct Upload {
     pub package: Vec<u8>,
     pub signature: String,
     pub uploaded_at: DateTime<Utc>,
+    /// The GitHub repository it was fetched from, `owner/name`.
+    pub source: Option<String>,
 }
 
 impl std::fmt::Debug for Upload {
@@ -49,11 +51,12 @@ pub async fn insert_upload<'e>(
     package: &[u8],
     signature: &str,
     uploaded_by: AccountId,
+    source: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.plugin_uploads (plugin_id, version, package, signature, uploaded_by)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO core.plugin_uploads (plugin_id, version, package, signature, uploaded_by, source)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id
         "#,
         plugin_id,
@@ -61,6 +64,7 @@ pub async fn insert_upload<'e>(
         package,
         signature,
         uploaded_by.0,
+        source,
     )
     .fetch_one(executor)
     .await
@@ -73,7 +77,7 @@ pub async fn get_upload<'e>(
     sqlx::query_as!(
         Upload,
         r#"
-        SELECT id, plugin_id, version, package, signature, uploaded_at
+        SELECT id, plugin_id, version, package, signature, uploaded_at, source
         FROM core.plugin_uploads WHERE id = $1
         "#,
         id
@@ -92,7 +96,7 @@ pub async fn take_upload<'e>(
         Upload,
         r#"
         DELETE FROM core.plugin_uploads WHERE id = $1
-        RETURNING id, plugin_id, version, package, signature, uploaded_at
+        RETURNING id, plugin_id, version, package, signature, uploaded_at, source
         "#,
         id
     )

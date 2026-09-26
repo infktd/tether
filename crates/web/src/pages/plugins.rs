@@ -193,6 +193,8 @@ pub struct PluginRow {
     pub status: &'static str,
     pub variant: &'static str,
     pub installed: String,
+    /// A newer version its repository publishes.
+    pub update: Option<String>,
 }
 
 pub struct UploadRow {
@@ -219,7 +221,17 @@ struct PluginsPage {
     pins: Vec<PinRow>,
     upload_hours: i32,
     max_mib: usize,
+    /// Whether installing from GitHub is set up here.
+    github: bool,
     error: Option<String>,
+}
+
+/// Whether `latest` is a newer version than `installed`.
+fn newer(latest: &str, installed: &str) -> bool {
+    matches!(
+        (manifest::parse_version(latest), manifest::parse_version(installed)),
+        (Some(l), Some(i)) if l > i
+    )
 }
 
 fn status_label(status: &Status, enabled: bool) -> (&'static str, &'static str) {
@@ -245,6 +257,7 @@ async fn list_page(
     shell: Shell,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
+    let latest = tether_db::plugin_sources::latest(&state.db).await?;
     let plugins = db::list(&state.db)
         .await?
         .into_iter()
@@ -254,6 +267,10 @@ async fn list_page(
                 status,
                 variant,
                 installed: time(p.installed_at),
+                update: latest
+                    .iter()
+                    .find(|(id, v)| *id == p.id && newer(v, &p.version))
+                    .map(|(_, v)| v.clone()),
                 id: p.id,
                 name: p.name,
                 version: p.version,
@@ -291,6 +308,7 @@ async fn list_page(
             pins,
             upload_hours: plugins::UPLOAD_HOURS,
             max_mib: package::MAX_PACKAGE_BYTES / (1024 * 1024),
+            github: state.plugins.github().is_some(),
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -414,6 +432,10 @@ struct ReviewPage {
     uploaded: String,
     /// What is installed now, sent back on approval.
     base: String,
+    /// The GitHub repository it was fetched from.
+    source: Option<String>,
+    /// Approving points the app's updates at `source` instead of here.
+    source_was: Option<String>,
     upgrade: Option<UpgradeView>,
     error: Option<String>,
 }
@@ -543,6 +565,11 @@ async fn review_page(
             trust_detail,
             uploaded: time(pending.upload.uploaded_at),
             base: pending.base,
+            source_was: match (&pending.upload.source, &pending.installed_source) {
+                (Some(new), Some(old)) if new != old => Some(old.clone()),
+                _ => None,
+            },
+            source: pending.upload.source.clone(),
             upgrade,
             error: error.map(|e| e.message().to_owned()),
         },
@@ -711,7 +738,23 @@ struct PluginPage {
     failure: Option<String>,
     installed: String,
     rollback: Option<RollbackView>,
+    updates: UpdatesView,
     error: Option<String>,
+}
+
+/// Where an app's updates come from, and the last check.
+pub struct UpdatesView {
+    /// `owner/name`.
+    pub source: Option<String>,
+    pub latest: Option<String>,
+    pub newer: bool,
+    pub release_url: Option<String>,
+    pub checked_at: Option<String>,
+    pub error: Option<String>,
+    /// Update checks are switched on.
+    pub checks_on: bool,
+    /// Installing from GitHub is set up here.
+    pub github: bool,
 }
 
 /// Going back to the version an upgrade replaced.
@@ -743,6 +786,24 @@ async fn plugin_page(
         .clone();
     let status = state.plugins.status(id);
     let (label, variant) = status_label(&status, installed.enabled);
+    let sources = tether_db::plugin_sources::status(&state.db, id).await?;
+    let release_url = match (state.plugins.github(), &sources.source, &sources.latest_url) {
+        (Some(github), Some(repo), Some(url)) => github.release_link(repo, url),
+        _ => None,
+    };
+    let updates = UpdatesView {
+        newer: sources
+            .latest_version
+            .as_deref()
+            .is_some_and(|l| newer(l, &installed.version)),
+        source: sources.source,
+        latest: sources.latest_version,
+        release_url,
+        checked_at: sources.checked_at.map(time),
+        error: sources.check_error,
+        checks_on: crate::updates::enabled(&state.db).await?,
+        github: state.plugins.github().is_some(),
+    };
     let rollback = plugins::rollback_plan(state, id)
         .await?
         .map(|plan| RollbackView {
@@ -927,6 +988,7 @@ async fn plugin_page(
             },
             installed: time(installed.installed_at),
             rollback,
+            updates,
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -1006,6 +1068,116 @@ pub async fn roll_back(
     let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
     let id = plugin_id(&id)?;
     match plugins::roll_back(&state, session.account, id, &form.confirmation).await {
+        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+// ---- GitHub -----------------------------------------------------------------
+
+/// The one upload slot, or the list page saying it's taken.
+fn busy() -> AppError {
+    AppError::new(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Another upload is being checked. Try again in a moment.",
+    )
+}
+
+#[derive(Deserialize)]
+pub struct GitHubForm {
+    #[serde(default)]
+    repo: String,
+    /// For a repository publishing several apps.
+    #[serde(default)]
+    app: String,
+}
+
+/// `POST /admin/plugin-github`: fetch an app's newest release for review.
+pub async fn install_github(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<GitHubForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let Some(_permit) = state.plugins.upload_permit() else {
+        let err = plugins::reject(&state, session.account, None, 0, busy()).await;
+        return list_page(&state, shell, Some(err)).await;
+    };
+    let app = form.app.trim();
+    let result = match crate::plugin_github::Repo::parse(&form.repo) {
+        None => Err(AppError::bad_request(
+            "That isn't a GitHub repository: use https://github.com/<owner>/<name>.",
+        )),
+        Some(_) if !app.is_empty() && manifest::check_id(app).is_err() => Err(
+            AppError::bad_request("That isn't an app id (such as nmu.moon-mining)."),
+        ),
+        Some(repo) => {
+            let app = (!app.is_empty()).then_some(app);
+            crate::plugin_github::fetch(&state, session.account, &repo, app, None).await
+        }
+    };
+    match result {
+        Ok(id) => Ok(Redirect::to(&format!("/admin/plugin-uploads/{id}")).into_response()),
+        Err(err) => list_page(&state, shell, Some(err)).await,
+    }
+}
+
+/// `POST /admin/plugins/{id}/update`: fetch the newer version its
+/// repository publishes, for review.
+pub async fn update(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<String>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    let installed = db::get(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;
+    let source = tether_db::plugin_sources::status(&state.db, id)
+        .await?
+        .source;
+    let Some(repo) = source
+        .as_deref()
+        .and_then(crate::plugin_github::Repo::parse)
+    else {
+        let err = AppError::bad_request("Set the repository its updates come from first.");
+        return plugin_page(&state, shell, id, Some(err)).await;
+    };
+    let Some(_permit) = state.plugins.upload_permit() else {
+        let err = plugins::reject(&state, session.account, Some(id), 0, busy()).await;
+        return plugin_page(&state, shell, id, Some(err)).await;
+    };
+    let fetched = crate::plugin_github::fetch(
+        &state,
+        session.account,
+        &repo,
+        Some(id),
+        Some(&installed.version),
+    )
+    .await;
+    match fetched {
+        Ok(upload) => Ok(Redirect::to(&format!("/admin/plugin-uploads/{upload}")).into_response()),
+        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SourceForm {
+    #[serde(default)]
+    source: String,
+}
+
+/// `POST /admin/plugins/{id}/source`: where its updates come from.
+pub async fn set_source(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<String>,
+    Form(form): Form<SourceForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let id = plugin_id(&id)?;
+    match crate::plugin_github::set_source(&state, session.account, id, &form.source).await {
         Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         Err(err) => plugin_page(&state, shell, id, Some(err)).await,
     }

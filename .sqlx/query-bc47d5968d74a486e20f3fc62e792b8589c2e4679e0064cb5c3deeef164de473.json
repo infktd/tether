@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO core.plugin_uploads (plugin_id, version, package, signature, uploaded_by)\n        VALUES ($1, $2, $3, $4, $5)\n        RETURNING id\n        ",
+  "query": "\n        INSERT INTO core.plugin_uploads (plugin_id, version, package, signature, uploaded_by, source)\n        VALUES ($1, $2, $3, $4, $5, $6)\n        RETURNING id\n        ",
   "describe": {
     "columns": [
       {
@@ -21,12 +21,13 @@
         "Text",
         "Bytea",
         "Text",
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "f3d3d2b2fc2ae6f432321c32e820f72ae71ea8463eb13790a241faeac3af240c"
+  "hash": "bc47d5968d74a486e20f3fc62e792b8589c2e4679e0064cb5c3deeef164de473"
 }

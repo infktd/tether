@@ -34,6 +34,7 @@ pub mod pages;
 pub mod personal_tokens;
 pub mod pings;
 pub mod plugin_consent;
+pub mod plugin_github;
 pub mod plugin_http;
 pub mod plugin_jobs;
 pub mod plugin_services;
@@ -320,6 +321,7 @@ pub fn router(state: AppState) -> Router {
                     .layer(DefaultBodyLimit::max(pages::plugins::UPLOAD_BODY_LIMIT)),
             ),
         )
+        .route("/admin/plugin-github", post(pages::plugins::install_github))
         .route("/admin/plugin-uploads/{id}", get(pages::plugins::review))
         .route(
             "/admin/plugin-uploads/{id}/approve",
@@ -370,6 +372,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/plugins/{id}/enable", post(pages::plugins::enable))
         .route("/admin/plugins/{id}/disable", post(pages::plugins::disable))
+        .route("/admin/plugins/{id}/update", post(pages::plugins::update))
+        .route(
+            "/admin/plugins/{id}/source",
+            post(pages::plugins::set_source),
+        )
         .route(
             "/admin/plugins/{id}/rollback",
             post(pages::plugins::roll_back),
@@ -642,6 +649,7 @@ mod tests {
                 key: key.clone(),
                 public_url: "https://tether.test".to_owned(),
                 snapshots: None,
+                github: None,
             },
         );
         AppState {

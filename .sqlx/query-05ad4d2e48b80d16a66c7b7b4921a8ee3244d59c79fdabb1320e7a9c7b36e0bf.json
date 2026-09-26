@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        DELETE FROM core.plugin_uploads WHERE id = $1\n        RETURNING id, plugin_id, version, package, signature, uploaded_at\n        ",
+  "query": "\n        DELETE FROM core.plugin_uploads WHERE id = $1\n        RETURNING id, plugin_id, version, package, signature, uploaded_at, source\n        ",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,17 @@
             "name": "uploaded_at"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_uploads",
+            "name": "source"
+          }
+        }
       }
     ],
     "parameters": {
@@ -81,8 +92,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "871f35359587c106096b7ad712b286a57eb76bf6e25490faced2f22ad73a4b2e"
+  "hash": "05ad4d2e48b80d16a66c7b7b4921a8ee3244d59c79fdabb1320e7a9c7b36e0bf"
 }

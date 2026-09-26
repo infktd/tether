@@ -61,6 +61,8 @@ pub struct Deps {
     /// Taken before a plugin's migrations on an upgrade. `None` (tests)
     /// migrates without one.
     pub snapshots: Option<Arc<tether_snapshots::Snapshots>>,
+    /// Apps from GitHub. `None` (tests) turns it off.
+    pub github: Option<Arc<crate::plugin_github::GitHub>>,
 }
 
 impl std::fmt::Debug for Deps {

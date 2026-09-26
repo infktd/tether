@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.plugins SET\n            source = $2,\n            latest_version = NULL,\n            latest_url = NULL,\n            checked_at = NULL,\n            check_error = NULL\n        WHERE id = $1 AND source IS DISTINCT FROM $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "633d0cfaec448aa765c2149eb898476ae2400a559bdb683b4868d0d2cb196ad2"
+}

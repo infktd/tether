@@ -212,6 +212,9 @@ pub struct Plugins {
     /// Plugins' HTTP clients and rate limit (held here for tests to route).
     #[cfg_attr(not(feature = "plugin-http-test"), allow(dead_code))]
     http: Arc<crate::plugin_http::Http>,
+    /// Installs and update checks from GitHub; `None` where it's not set
+    /// up (most tests).
+    github: Option<Arc<crate::plugin_github::GitHub>>,
 }
 
 impl std::fmt::Debug for Plugins {
@@ -224,9 +227,9 @@ impl Plugins {
     /// `deps` are what plugins reach through the host: the job queue (in
     /// `deps.db`), ESI and Discord.
     pub fn new(host: Host, deps: crate::plugin_services::Deps) -> Arc<Self> {
-        // The instance's URL stays out of the User-Agent until Jay decides
-        // whether approved hosts may learn the domain (zKillboard asks for
-        // contact details): an empty URL leaves it out.
+        // The instance's URL stays out of the User-Agent: approved hosts
+        // don't learn the domain, though zKillboard asks for contact
+        // details (Jay's call). An empty URL leaves it out.
         let http = Arc::new(crate::plugin_http::Http::new(""));
         Arc::new_cyclic(|plugins| {
             let services = crate::plugin_services::PluginServices::new(
@@ -244,6 +247,7 @@ impl Plugins {
                 lifecycle: tokio::sync::Mutex::new(()),
                 uploads: tokio::sync::Semaphore::new(1),
                 http,
+                github: deps.github.clone(),
             }
         })
     }
@@ -253,6 +257,10 @@ impl Plugins {
     #[cfg(feature = "plugin-http-test")]
     pub fn route_http_to(&self, host_port: &str) {
         self.http.route_to(host_port);
+    }
+
+    pub fn github(&self) -> Option<&crate::plugin_github::GitHub> {
+        self.github.as_deref()
     }
 
     /// Whether snapshots are taken before plugin migrations here.
@@ -769,6 +777,16 @@ fn trust_label(trust: &Trust) -> &'static str {
     }
 }
 
+/// Where a package was fetched from.
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub repo: crate::plugin_github::Repo,
+    /// The app and version its release asset is named for: the package
+    /// must be that.
+    pub plugin_id: String,
+    pub version: String,
+}
+
 /// An uploaded package, checked (signature, pinned key, component) and
 /// waiting for approval. Rejections are audited too, with the reason.
 pub async fn upload(
@@ -777,7 +795,21 @@ pub async fn upload(
     bytes: Vec<u8>,
     signature: String,
 ) -> Result<i64, AppError> {
-    let result = check_upload(state, &bytes, &signature).await;
+    upload_from(state, actor, bytes, signature, None).await
+}
+
+/// [`upload`], of a package fetched from `source`.
+pub async fn upload_from(
+    state: &crate::AppState,
+    actor: AccountId,
+    bytes: Vec<u8>,
+    signature: String,
+    source: Option<Source>,
+) -> Result<i64, AppError> {
+    let expected = source
+        .as_ref()
+        .map(|s| (s.plugin_id.as_str(), s.version.as_str()));
+    let result = check_upload(state, &bytes, &signature, expected).await;
     let (plugin_id, version, trust) = match result {
         Ok(checked) => checked,
         Err((plugin, err)) => {
@@ -792,7 +824,11 @@ pub async fn upload(
         let err = AppError::bad_request(TOO_MANY_UPLOADS);
         return Err(reject(state, actor, Some(&plugin_id), bytes.len(), err).await);
     }
-    let id = db::insert_upload(&mut *tx, &plugin_id, &version, &bytes, &signature, actor).await?;
+    let repo = source.as_ref().map(|s| s.repo.as_str());
+    let id = db::insert_upload(
+        &mut *tx, &plugin_id, &version, &bytes, &signature, actor, repo,
+    )
+    .await?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),
@@ -804,6 +840,7 @@ pub async fn upload(
             "bytes": bytes.len(),
             "sha256": hex(&sha256(&bytes)),
             "trust": trust,
+            "source": repo,
         }),
     )
     .await?;
@@ -840,9 +877,22 @@ async fn check_upload(
     state: &crate::AppState,
     bytes: &[u8],
     signature: &str,
+    expected: Option<(&str, &str)>,
 ) -> Result<(String, String, &'static str), (Option<String>, AppError)> {
     let unverified = package::read(bytes).map_err(|e| (None, package_error(e)))?;
     let id = unverified.id().to_owned();
+    if let Some((expected_id, expected_version)) = expected {
+        let version = &unverified.package().manifest.plugin.version;
+        if expected_id != id || expected_version != version {
+            return Err((
+                Some(id.clone()),
+                AppError::bad_request(format!(
+                    "The release's {expected_id}-{expected_version} package holds app {id} \
+                     version {version} instead, so it isn't installed."
+                )),
+            ));
+        }
+    }
     let fail = |err: AppError| (Some(id.clone()), err);
     let db_err = |err: sqlx::Error| (Some(id.clone()), AppError::from(err));
     if db::count_uploads(&state.db).await.map_err(db_err)? >= MAX_PENDING_UPLOADS {
@@ -892,6 +942,8 @@ pub struct Pending {
     /// What is installed now ([`base`]): approving is refused if it
     /// changes meanwhile, since the review compared against it.
     pub base: String,
+    /// For an upgrade: the repository its updates come from now.
+    pub installed_source: Option<String>,
     /// For an upgrade: how many of its migrations are new.
     pub new_migrations: usize,
 }
@@ -923,6 +975,10 @@ pub async fn pending(state: &crate::AppState, upload_id: i64) -> Result<Pending,
     } else {
         0
     };
+    let installed_source =
+        tether_db::plugin_sources::status(&state.db, &package.manifest.plugin.id)
+            .await?
+            .source;
     Ok(Pending {
         package,
         trust,
@@ -930,6 +986,7 @@ pub async fn pending(state: &crate::AppState, upload_id: i64) -> Result<Pending,
         installed_version: current.as_ref().map(|c| c.version.clone()),
         installed,
         base: base(current.as_ref()),
+        installed_source,
         new_migrations,
     })
 }
@@ -1007,6 +1064,10 @@ async fn approve_now(
             "An app with this id is already installed.",
         ));
     }
+    // Where its updates are looked for.
+    if let Some(source) = &upload.source {
+        tether_db::plugin_sources::set_source(&mut *tx, &id, Some(source)).await?;
+    }
     let declared = declared_permissions(&id, manifest);
     tether_db::permissions::add_plugin_permissions(&mut tx, &id, &declared).await?;
     // Exactly the hosts and secrets shown on the review page; nothing else
@@ -1035,6 +1096,7 @@ async fn approve_now(
         Some(&target(&id)),
         json!({
             "upload": upload_id,
+            "source": upload.source,
             "version": manifest.plugin.version,
             "key": verified.key(),
             "sha256": hex(&package_sha256),
@@ -1149,6 +1211,11 @@ async fn upgrade_now(
     if !upgraded {
         return Err(AppError::not_found("No app with that id is installed."));
     }
+    // Fetched from a repository: its updates are looked for there now. An
+    // upload by hand keeps the repository it had.
+    if let Some(source) = &upload.source {
+        tether_db::plugin_sources::set_source(&mut *tx, &id, Some(source)).await?;
+    }
     let changed = apply_manifest(state, &mut tx, &id, manifest, actor).await?;
     audit::record(
         &mut *tx,
@@ -1157,6 +1224,7 @@ async fn upgrade_now(
         Some(&target(&id)),
         json!({
             "upload": upload.id,
+            "source": upload.source,
             "from": installed.version,
             "to": manifest.plugin.version,
             "key": verified.key(),

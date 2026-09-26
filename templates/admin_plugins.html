@@ -44,7 +44,7 @@
         {% for p in plugins %}
         <tr>
           <td><div class="font-medium">{{ p.name }}</div><div class="text-xs text-muted-foreground num">{{ p.id }}</div></td>
-          <td class="num">{{ p.version }}</td>
+          <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div class="text-xs"><span class="badge" data-variant="secondary"><span class="num">{{ v }}</span> available</span></div>{% endif %}</td>
           <td><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span></td>
           <td class="num">{{ p.installed }}</td>
           <td class="text-right"><a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ p.id }}">Manage</a></td>
@@ -54,6 +54,23 @@
     </table>
     {% endif %}
   </section>
+
+  {% if github %}
+  <form class="card" method="post" action="/admin/plugin-github">
+    <header><h2>Install from GitHub</h2><p>Tether reads the repository's releases and fetches the newest <span class="num">&lt;app id&gt;-&lt;version&gt;.zip</span> with its <span class="num">.minisig</span>, then checks it like an upload. Nothing is installed until you approve it on the next page. Its updates are looked for there once a day while update checks are on.</p></header>
+    <section class="grid gap-4 max-w-md">
+      <div class="grid gap-2">
+        <label class="label" for="repo">Repository</label>
+        <input class="input" id="repo" name="repo" placeholder="https://github.com/owner/name" autocomplete="off" required>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="app">App id <span class="text-muted-foreground font-normal">(only if it publishes several)</span></label>
+        <input class="input" id="app" name="app" placeholder="nmu.moon-mining" autocomplete="off">
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Fetch and check</button></footer>
+  </form>
+  {% endif %}
 
   <form class="card" method="post" action="/admin/plugins" enctype="multipart/form-data" hx-boost="false">
     <header><h2>Upload an app</h2><p>The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig). Nothing is installed until you approve it on the next page. A newer version of an installed app upgrades it, after you review what changed.</p></header>

@@ -347,6 +347,7 @@ async fn bad_uploads_are_refused_and_audited(db: PgPool) {
             b"x",
             "x",
             tether_db::accounts::AccountId(account),
+            None,
         )
         .await
         .unwrap();
@@ -404,6 +405,7 @@ async fn startup_loads_enabled_plugins_and_checks_them(db: PgPool) {
                 key: test_key(),
                 public_url: SITE.to_owned(),
                 snapshots: None,
+                github: None,
             },
         )
     };

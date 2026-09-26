@@ -20,6 +20,7 @@ pub mod plugin_esi;
 pub mod plugin_http;
 pub mod plugin_jobs;
 pub mod plugin_keys;
+pub mod plugin_sources;
 pub mod plugin_storage;
 pub mod plugins;
 pub mod secrets;

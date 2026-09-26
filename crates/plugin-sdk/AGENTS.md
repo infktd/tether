@@ -131,6 +131,12 @@ minisign -S -s old.key -m rotation.txt      # writes rotation.txt.minisig
 
 Keep the rotation files in later packages or drop them; either works once installs have moved to the new key. If you lose your key, admins have to re-pin it by hand, so keep a backup.
 
+### Publishing on GitHub
+
+Admins can install straight from a repository, and Tether looks there once a day for newer versions. Attach the package and its signature to a GitHub release as `<plugin id>-<version>.zip` and `<plugin id>-<version>.zip.minisig`, for example `nmu.mining-ledger-1.2.0.zip`. The version in the name must match `plugin.version`. Drafts and pre-releases are skipped. Tether reads the 30 newest releases and takes the highest version of your plugin that has both files, so one repository can publish several plugins. The admin then enters the plugin id when installing.
+
+An upgrade is reviewed like an install. The admin sees what the new version asks for beyond the old one: hosts, secrets, scopes, timers, filters and permissions. A version must keep every migration already applied unchanged, and keep `storage` once it has data. A permission you drop takes its grants with it; renaming one is a drop plus an add. Admins can roll back one version: your earlier package goes back, and if your new migrations ran, so does the data (from the snapshot taken before them).
+
 ## Who sees what
 
 A plugin's pages live at `/plugins/<id>/<path>`, for signed-in users only. `plugin.toml` says who may open which:

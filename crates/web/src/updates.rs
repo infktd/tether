@@ -1,6 +1,7 @@
 //! Platform update checks (F14): once a day, ask GitHub for Tether's latest
 //! release and tell admins on the dashboard if it is newer than this build.
-//! Admins can switch it off; then Tether never contacts GitHub for this.
+//! Admins can switch it off; then Tether never contacts GitHub for this,
+//! or for apps' update checks ([`crate::plugin_github`]).
 //! Upgrading stays a manual image-tag change (N14).
 
 use std::time::Duration;
@@ -77,17 +78,26 @@ pub async fn set_enabled(state: &AppState, actor: AccountId, on: bool) -> Result
     Ok(())
 }
 
-/// Queues a check unless one is already waiting or running: repeated
-/// clicks mustn't turn into repeated calls to GitHub.
+/// Queues the platform's check and the apps' ([`crate::plugin_github`]).
 async fn queue_check(tx: &mut sqlx::PgTransaction<'_>) -> Result<(), sqlx::Error> {
+    queue_job(tx, UPDATE_JOB).await?;
+    queue_job(tx, crate::plugin_github::CHECK_JOB).await
+}
+
+/// Queues a job unless one is already waiting or running: repeated clicks
+/// mustn't turn into repeated calls to GitHub.
+pub(crate) async fn queue_job(
+    tx: &mut sqlx::PgTransaction<'_>,
+    kind: &str,
+) -> Result<(), sqlx::Error> {
     let pending: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM core.jobs WHERE kind = $1 AND state IN ('queued', 'running')"#,
-        UPDATE_JOB
+        kind
     )
     .fetch_one(&mut **tx)
     .await?;
     if pending == 0 {
-        tether_jobs::enqueue(&mut **tx, NewJob::new(UPDATE_JOB, json!({}))).await?;
+        tether_jobs::enqueue(&mut **tx, NewJob::new(kind, json!({}))).await?;
     }
     Ok(())
 }

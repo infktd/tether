@@ -822,6 +822,28 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/plugin-github
+Origin: {{base}}
+[Form]
+repo: https://github.com/nmu/apps
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/update
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/nmu.hello/source
+Origin: {{base}}
+[Form]
+source: nmu/apps
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/plugins/nmu.hello/rollback
 Origin: {{base}}
 [Form]

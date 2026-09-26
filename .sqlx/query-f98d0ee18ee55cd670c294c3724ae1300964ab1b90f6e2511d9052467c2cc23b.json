@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, plugin_id, version, package, signature, uploaded_at\n        FROM core.plugin_uploads WHERE id = $1\n        ",
+  "query": "\n        SELECT id, plugin_id, version, package, signature, uploaded_at, source\n        FROM core.plugin_uploads WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,17 @@
             "name": "uploaded_at"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_uploads",
+            "name": "source"
+          }
+        }
       }
     ],
     "parameters": {
@@ -81,8 +92,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "e4981e48804b01e0b00ea60e159e77493a077f3603b155e3b8459ececdeb31df"
+  "hash": "f98d0ee18ee55cd670c294c3724ae1300964ab1b90f6e2511d9052467c2cc23b"
 }

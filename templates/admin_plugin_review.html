@@ -26,6 +26,12 @@
     <section><strong>{{ trust_title }}.</strong> {{ trust_detail }}</section>
   </div>
 
+  {% if let Some(repo) = source %}
+  <div class="alert" role="status">
+    <section><strong>Fetched from GitHub:</strong> <span class="num">{{ repo }}</span>. {% if let Some(was) = source_was %}Approving looks for its updates there instead of in <span class="num">{{ was }}</span>.{% else %}Its updates are looked for there.{% endif %} The signature, not the repository, is what's trusted.</section>
+  </div>
+  {% endif %}
+
   {% if let Some(u) = upgrade %}
   <section class="card">
     <header><h2>What changes</h2><p>What this version asks for beyond version <span class="num">{{ u.from }}</span>, and what it no longer asks for. Approving records exactly what it asks for now.</p></header>

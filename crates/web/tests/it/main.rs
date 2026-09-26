@@ -14,6 +14,7 @@ mod dashboard;
 mod dev_login;
 mod discord;
 mod fleet_activity_tracking;
+mod github;
 mod groups;
 mod hr_applications;
 mod jobs;

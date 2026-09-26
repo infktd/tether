@@ -36,6 +36,12 @@ pub const ALLOWED: &[(&str, &str)] = &[
     ("discord.com", "Discord API"),
     ("api.github.com", "update checks and plugin installs"),
     ("github.com", "plugin downloads"),
+    // Release downloads redirect from github.com to GitHub's asset host;
+    // the second is where they went before 2025.
+    (
+        "release-assets.githubusercontent.com",
+        "plugin release assets",
+    ),
     ("objects.githubusercontent.com", "plugin release assets"),
 ];
 

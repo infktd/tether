@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT source, latest_version, latest_url, checked_at, check_error\n        FROM core.plugins WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "latest_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "latest_version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "latest_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "latest_url"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "checked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "checked_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "check_error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "check_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "eac8b808c52e3c5add630314283f3b477df6b76f3e755ad1b53f65879f9c461d"
+}

@@ -180,6 +180,9 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             .snapshots(&config.database_url, &key)
             .context("setting up snapshots")?,
     );
+    let github = std::sync::Arc::new(
+        tether_web::plugin_github::GitHub::production().context("setting up the GitHub client")?,
+    );
     if tether_snapshots::rollback_running(&db).await? {
         anyhow::bail!("`tether rollback` is restoring data; start Tether again once it's done");
     }
@@ -240,6 +243,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             key: key.clone(),
             public_url: config.public_url(),
             snapshots: Some(snapshots.clone()),
+            github: Some(github.clone()),
         },
     );
     {
@@ -252,6 +256,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     }
     let mut registry = tether_jobs::Registry::new();
     tether_web::discord::register_jobs(&mut registry, db.clone(), key.clone(), discord.clone());
+    tether_web::plugin_github::register_jobs(&mut registry, db.clone(), (*github).clone());
     tether_web::updates::register_jobs(
         &mut registry,
         db.clone(),
@@ -285,6 +290,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         .chain(tether_web::smart_groups::schedules())
         .chain(tether_web::discord_sync::schedules())
         .chain(tether_web::updates::schedules())
+        .chain(tether_web::plugin_github::schedules())
         .chain(tether_web::backups::schedules());
     for spec in schedules {
         tether_jobs::schedule::ensure(&db, &spec).await?;

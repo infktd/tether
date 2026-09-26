@@ -341,7 +341,7 @@ pub async fn harness_full(
     esi_server: MockServer,
     site: &str,
 ) -> Harness {
-    harness_parts(db, configured, esi_server, site, None).await
+    harness_parts(db, configured, esi_server, site, None, None).await
 }
 
 /// With snapshots before plugin migrations, as the server runs.
@@ -352,7 +352,32 @@ pub async fn harness_with_snapshots(
     let esi_server = MockServer::start().await;
     mount_affiliations(&esi_server).await;
     mount_universe(&esi_server).await;
-    harness_parts(db, true, esi_server, SITE, Some(snapshots)).await
+    harness_parts(db, true, esi_server, SITE, Some(snapshots), None).await
+}
+
+/// With apps from GitHub, served by `github` (a mock of its API and
+/// downloads).
+pub async fn harness_with_github(db: PgPool, github: &MockServer) -> Harness {
+    let esi_server = MockServer::start().await;
+    mount_affiliations(&esi_server).await;
+    mount_universe(&esi_server).await;
+    let allow = tether_net::Allowlist::production().with_local(&github.address().to_string());
+    let api = tether_net::Outbound::new(
+        allow.clone(),
+        "tether tests",
+        std::time::Duration::from_secs(10),
+    )
+    .unwrap();
+    let downloads = tether_net::Outbound::with_redirects(
+        allow,
+        "tether tests",
+        std::time::Duration::from_secs(10),
+        tether_net::Redirects::WithinAllowlist,
+    )
+    .unwrap();
+    let github =
+        tether_web::plugin_github::GitHub::new(api, downloads, &github.uri(), &github.uri());
+    harness_parts(db, true, esi_server, SITE, None, Some(Arc::new(github))).await
 }
 
 async fn harness_parts(
@@ -361,6 +386,7 @@ async fn harness_parts(
     esi_server: MockServer,
     site: &str,
     snapshots: Option<Arc<tether_snapshots::Snapshots>>,
+    github: Option<Arc<tether_web::plugin_github::GitHub>>,
 ) -> Harness {
     if configured {
         settings::set(&db, settings::SSO_CLIENT_ID, "client-123".into())
@@ -399,6 +425,7 @@ async fn harness_parts(
             key: test_key(),
             public_url: site.to_owned(),
             snapshots,
+            github,
         },
     );
     let app = router(AppState {
