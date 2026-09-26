@@ -45,7 +45,7 @@
               {% include "avatar.html" %}
               <div>
                 <div class="font-medium">{{ c.name }}</div>
-                <div class="text-xs text-muted-foreground">{% if c.is_main %}Main character{% else %}Alt{% endif %}</div>
+                {% if c.is_main %}<div class="text-xs text-muted-foreground">Main character</div>{% endif %}
               </div>
             </div>
           </td>

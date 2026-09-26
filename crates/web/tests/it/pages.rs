@@ -89,6 +89,9 @@ async fn profile_shows_characters_state_and_permissions(db: PgPool) {
     assert!(html.contains("<h1 class=\"page-title\">Dashboard</h1>"));
     assert!(html.contains("https://images.evetech.net/characters/196379789/portrait?size=64"));
     assert!(html.contains("The Mittani"));
+    // As AA: the main is marked, other characters carry no "Alt" label.
+    assert!(html.contains("Main character"));
+    assert!(!html.contains(">Alt<"));
     assert!(html.contains(r#"data-state="guest""#));
     assert!(
         html.contains("admin.states"),
