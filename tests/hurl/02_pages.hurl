@@ -11,7 +11,7 @@ HTTP 200
 header "Content-Type" contains "text/html"
 header "Content-Security-Policy" contains "script-src 'self'"
 header "Content-Security-Policy" contains "img-src 'self' data: https://images.evetech.net"
-header "Content-Security-Policy" contains "form-action 'self' https://discord.com;"
+header "Content-Security-Policy" contains "form-action 'self' https://login.eveonline.com https://discord.com;"
 header "X-Frame-Options" == "DENY"
 header "X-Content-Type-Options" == "nosniff"
 header "Strict-Transport-Security" exists

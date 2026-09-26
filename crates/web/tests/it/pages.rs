@@ -299,6 +299,12 @@ async fn security_headers_on_pages_errors_and_api(db: PgPool) {
             .to_str()
             .unwrap();
         assert!(csp.contains("script-src 'self'"), "{uri}");
+        // Forms that post and then 303 to EVE SSO (Add Character, Change
+        // Main with EVE login): browsers check the redirect too.
+        assert!(
+            csp.contains("form-action 'self' https://login.eveonline.com"),
+            "{uri}"
+        );
         assert!(
             csp.contains("img-src 'self' data: https://images.evetech.net"),
             "{uri}"

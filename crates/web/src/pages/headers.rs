@@ -11,12 +11,15 @@ use crate::AppState;
 /// server (the one external request browsers make, per DESIGN.md). `data:`
 /// images are allowed because Basecoat draws select chevrons as inline SVG
 /// images; images can't run script. Forms post only to us, but browsers
-/// apply form-action to the redirect after a post too, so the "Link
-/// Discord" form (post, then 303 to Discord's authorize page) needs
-/// discord.com. No inline scripts, no eval, no framing.
+/// apply form-action to the redirect after a post too, so the forms that
+/// post and then 303 to an authorize page need its host: EVE SSO for Add
+/// Character, Register Character, Change Main with EVE login and the
+/// offers; Discord for "Link Discord". No inline scripts, no eval, no
+/// framing.
 const CSP: &str = "default-src 'self'; img-src 'self' data: https://images.evetech.net; \
     script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; \
-    object-src 'none'; base-uri 'self'; form-action 'self' https://discord.com; \
+    object-src 'none'; base-uri 'self'; \
+    form-action 'self' https://login.eveonline.com https://discord.com; \
     frame-ancestors 'none'";
 
 pub async fn security_headers(
