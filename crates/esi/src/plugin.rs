@@ -1,6 +1,12 @@
 //! The ESI endpoints plugins may call (F16, N8): a fixed catalogue, each
 //! with the scope it needs and what it's about (a character, or the
-//! corporation of a data-source character).
+//! corporation of a data-source character), plus a few public endpoints
+//! read without any token ([`About::Public`]).
+//!
+//! Public endpoints take ids the plugin gives (a killmail's id and hash):
+//! they read nobody's data, so there is no token and nothing cached per
+//! character to leak. Every plugin may call them; the subject a plugin
+//! passes isn't used.
 //!
 //! The host fills in the character and corporation ids itself. A plugin
 //! names an endpoint and whose token to use; it never builds a URL. That
@@ -40,6 +46,8 @@ pub enum About {
     Character,
     /// A data-source character's corporation, with that character's token.
     Corporation,
+    /// Public data, read without a token. No scope; any subject.
+    Public,
 }
 
 /// One endpoint plugins may call.
@@ -136,6 +144,16 @@ pub const ENDPOINTS: &[Endpoint] = &[
         about: About::Corporation,
         paged: false,
         params: &[],
+    },
+    // Public: one killmail, by the id and hash a killboard link carries
+    // (Ship Replacement checks losses with it). Only the victim, ship,
+    // place and time come back, and how many attackers.
+    Endpoint {
+        name: "killmail",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["killmail_id", "killmail_hash"],
     },
     Endpoint {
         name: "character-skills",
@@ -321,6 +339,98 @@ impl Esi {
             .await?
             .into_inner()
             .0)
+    }
+
+    /// A client without the shared in-memory cache (same base URL, allow
+    /// list and User-Agent), for public endpoints whose ids plugins choose:
+    /// cached, every killmail anyone asked about would stay in memory
+    /// until it expires. Calls still go through `call_full`'s budget.
+    fn uncached(&self) -> Result<Client, EsiError> {
+        if let Some(client) = self.uncached.get() {
+            return Ok(client.clone());
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-compatibility-date",
+            HeaderValue::from_static(eve_esi_client::COMPATIBILITY_DATE),
+        );
+        let http = tether_net::Outbound::library_client(
+            self.allowlist().clone(),
+            self.user_agent(),
+            TIMEOUT,
+            headers,
+        )
+        .map_err(|e| EsiError::Config(e.to_string()))?;
+        let shared = self.client();
+        self.allowlist()
+            .check(shared.baseurl())
+            .map_err(|e| EsiError::Config(e.to_string()))?;
+        // EsiInner's default has no cache.
+        let client =
+            Client::new_with_client(shared.baseurl(), http, eve_esi_client::EsiInner::default());
+        // Two calls racing here both build one; either is fine to keep.
+        let _ = self.uncached.set(client.clone());
+        Ok(client)
+    }
+
+    /// Calls a public catalogue endpoint ([`About::Public`]), without a
+    /// token. `params` are checked here.
+    pub async fn plugin_get_public(
+        &self,
+        endpoint: &Endpoint,
+        params: &[(String, String)],
+    ) -> Result<Response, EsiError> {
+        let param = |name: &str| {
+            params
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        match endpoint.name {
+            "killmail" => {
+                let id: i64 = param("killmail_id")
+                    .and_then(|v| v.parse().ok())
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| EsiError::InvalidInput("killmail_id must be a number".into()))?;
+                let hash = param("killmail_hash")
+                    .filter(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .ok_or_else(|| {
+                        EsiError::InvalidInput("killmail_hash must be 40 hex digits".into())
+                    })?
+                    .to_ascii_lowercase();
+                let client = self.uncached()?;
+                let killmail = self
+                    .call_full(
+                        Priority::Bulk,
+                        client
+                            .get_killmails_killmail_id_killmail_hash()
+                            .killmail_id(id)
+                            .killmail_hash(hash)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                let victim = &killmail.victim;
+                Ok(Response {
+                    body: serde_json::json!({
+                        "killmail_id": killmail.killmail_id,
+                        "killmail_time": killmail.killmail_time,
+                        "solar_system_id": killmail.solar_system_id,
+                        "victim": {
+                            "character_id": victim.character_id,
+                            "corporation_id": victim.corporation_id,
+                            "alliance_id": victim.alliance_id,
+                            "ship_type_id": victim.ship_type_id,
+                        },
+                        "attackers": killmail.attackers.len(),
+                    }),
+                    pages: 1,
+                })
+            }
+            other => Err(EsiError::InvalidInput(format!(
+                "no public endpoint {other}"
+            ))),
+        }
     }
 
     /// Calls a catalogue endpoint for `target` with that character's

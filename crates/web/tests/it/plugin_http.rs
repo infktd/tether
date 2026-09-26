@@ -142,7 +142,7 @@ async fn an_approved_host_answers_and_every_request_is_logged(db: PgPool) {
     let seen = received_for(&mock, API).await;
     assert_eq!(seen.len(), 1);
     let agent = seen[0].headers.get("user-agent").unwrap().to_str().unwrap();
-    assert!(agent == "tether (app nmu.http)", "{agent}");
+    assert_eq!(agent, "tether (app nmu.http)");
     assert_eq!(seen[0].url.query(), Some("q=private"));
     assert!(seen[0].headers.get("x-api-key").is_none());
 

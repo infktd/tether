@@ -184,6 +184,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             vault: vault.clone(),
             discord: discord.clone(),
             key: key.clone(),
+            public_url: config.public_url(),
         },
     );
     {

@@ -101,6 +101,9 @@ pub struct Esi {
     /// For clients carrying a character's token (plugin calls).
     user_agent: String,
     allow: tether_net::Allowlist,
+    /// The client without a cache, for public plugin endpoints: built once,
+    /// so its connections and limiter state last.
+    pub(crate) uncached: Arc<std::sync::OnceLock<Client>>,
 }
 
 impl Esi {
@@ -124,6 +127,7 @@ impl Esi {
             bulk: Arc::new(Semaphore::new(BULK_CONCURRENCY)),
             user_agent: user_agent.to_owned(),
             allow,
+            uncached: Arc::default(),
         })
     }
 

@@ -111,15 +111,26 @@ pub fn is_core_host(host: &str) -> bool {
         || tether_net::ALLOWED.iter().any(|(h, _)| host == *h)
 }
 
-/// The User-Agent sent for a plugin: the software and the app, not the
-/// instance or its version (which would tell every approved host how up
-/// to date this server is).
-fn user_agent(plugin: &str) -> String {
-    format!("tether (app {plugin})")
+/// The User-Agent sent for a plugin: the software, the app, and the
+/// instance's public URL as a way to reach its operator (as APIs such as
+/// zKillboard ask). Not the version, which would tell every approved host
+/// how up to date this server is.
+fn user_agent(plugin: &str, public_url: &str) -> String {
+    let url: String = public_url
+        .chars()
+        .filter(|c| c.is_ascii_graphic())
+        .take(200)
+        .collect();
+    if url.is_empty() {
+        format!("tether (app {plugin})")
+    } else {
+        format!("tether (app {plugin}; +{url})")
+    }
 }
 
 /// Per-plugin clients and the rate limit.
 pub struct Http {
+    public_url: String,
     limiter: RateLimiter<String>,
     daily: RateLimiter<String>,
     /// Each plugin's client, with the hosts it was built for.
@@ -136,15 +147,11 @@ impl std::fmt::Debug for Http {
     }
 }
 
-impl Default for Http {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Http {
-    pub fn new() -> Self {
+    /// `public_url` is the instance's, for the User-Agent.
+    pub fn new(public_url: &str) -> Self {
         Self {
+            public_url: public_url.to_owned(),
             limiter: RateLimiter::new(PER_MINUTE, Duration::from_secs(60)),
             daily: RateLimiter::new(PER_DAY, Duration::from_secs(24 * 60 * 60)),
             clients: Mutex::default(),
@@ -192,10 +199,11 @@ impl Http {
         if let Some(route) = self.route() {
             allow = allow.with_local(&route);
         }
-        let client = Outbound::new(allow, &user_agent(plugin), TIMEOUT).map_err(|e| {
-            tracing::error!(plugin, error = %e, "building a plugin's HTTP client");
-            HttpError::Unavailable
-        })?;
+        let client =
+            Outbound::new(allow, &user_agent(plugin, &self.public_url), TIMEOUT).map_err(|e| {
+                tracing::error!(plugin, error = %e, "building a plugin's HTTP client");
+                HttpError::Unavailable
+            })?;
         clients.insert(plugin.to_owned(), (hosts.to_vec(), client.clone()));
         Ok(client)
     }

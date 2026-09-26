@@ -32,6 +32,7 @@ mod plugin_keys;
 mod plugin_pages;
 mod plugins;
 mod setup;
+mod ship_replacement;
 mod smart_groups;
 mod states;
 mod storage;

@@ -222,7 +222,10 @@ impl Plugins {
     /// `deps` are what plugins reach through the host: the job queue (in
     /// `deps.db`), ESI and Discord.
     pub fn new(host: Host, deps: crate::plugin_services::Deps) -> Arc<Self> {
-        let http = Arc::new(crate::plugin_http::Http::new());
+        // The instance's URL stays out of the User-Agent until Jay decides
+        // whether approved hosts may learn the domain (zKillboard asks for
+        // contact details): an empty URL leaves it out.
+        let http = Arc::new(crate::plugin_http::Http::new(""));
         Arc::new_cyclic(|plugins| {
             let services = crate::plugin_services::PluginServices::new(
                 deps.clone(),

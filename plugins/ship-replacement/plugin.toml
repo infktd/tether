@@ -1,0 +1,38 @@
+# Ship Replacement, a first-party Tether plugin (Alliance Auth's srp).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.ship-replacement"
+name = "Ship Replacement"
+version = "0.1.0"
+host_api = "1"
+description = "SRP fleets: pilots request SRP for their losses by killmail link, reviewers approve, reject or adjust payouts, with totals per fleet."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+# zKillboard (killmail values; approved by Jay as a destination). Losses
+# themselves come from ESI's public killmail endpoint through Tether.
+[capabilities]
+storage = true
+http = ["zkillboard.com"]
+
+# AA's srp permissions: access_srp for pilots (grant it to Member), the
+# rest for SRP staff.
+[permissions]
+access_srp = "Can access the SRP module: see SRP fleets and request SRP for your losses"
+add_srpfleetmain = "Can add SRP fleets"
+manage_srp = "Can manage SRP: see fleets' requests, approve, reject and mark paid, complete and remove fleets"
+change_srpuserrequest = "Can change SRP requests: see fleets' requests and adjust payouts"
+
+[[pages]]
+path = ""
+permission = "access_srp"
+
+[[pages]]
+path = "add"
+permission = "add_srpfleetmain"
+
+[[navigation]]
+label = "Ship Replacement"
+path = ""

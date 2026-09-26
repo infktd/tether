@@ -55,6 +55,9 @@ pub struct Deps {
     pub vault: Arc<TokenVault>,
     pub discord: Arc<Discord>,
     pub key: EncryptionKey,
+    /// The instance's public URL: plugins' HTTP User-Agent carries it, as
+    /// a way to reach the operator (zKillboard asks for one).
+    pub public_url: String,
 }
 
 impl std::fmt::Debug for Deps {
@@ -179,6 +182,29 @@ async fn esi_get(
     let endpoint = find_endpoint(name).ok_or_else(|| {
         EsiError::NotAllowed(format!("{name:?} isn't an endpoint plugins can call"))
     })?;
+    if endpoint.about == About::Public {
+        // No token and nobody's data: any plugin, any subject.
+        let response = deps
+            .esi
+            .plugin_get_public(endpoint, params)
+            .await
+            .map_err(|e| match e {
+                tether_esi::EsiError::Status(status) => EsiError::Status(status),
+                tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+                other => {
+                    tracing::warn!(plugin, error = %other, "plugin ESI call");
+                    EsiError::Unavailable
+                }
+            })?;
+        let body = response.body.to_string();
+        if body.len() > MAX_BODY_BYTES {
+            return Err(EsiError::TooLarge);
+        }
+        return Ok(EsiResponse {
+            body,
+            pages: response.pages,
+        });
+    }
     let approved = &running.manifest.capabilities.esi;
     let unavailable = |e: sqlx::Error| {
         tracing::error!(plugin, error = %e, "plugin ESI checks");
@@ -225,6 +251,9 @@ async fn esi_get(
                 "{} is about a character: use one of esi::characters()",
                 endpoint.name
             )));
+        }
+        (About::Public, _) => {
+            return Err(EsiError::Unavailable);
         }
         (About::Corporation, _) => {
             return Err(EsiError::NotAllowed(format!(
@@ -383,8 +412,10 @@ impl Services for PluginServices {
             self.throttle.clone(),
         );
         Box::pin(async move {
+            // Public endpoints don't read the subject: none is logged.
             let character = match subject {
-                Subject::Character(id) | Subject::DataSource(id) => id,
+                _ if find_endpoint(&endpoint).is_some_and(|e| e.about == About::Public) => None,
+                Subject::Character(id) | Subject::DataSource(id) => Some(id),
             };
             if throttle.blocked(&plugin) {
                 return Err(EsiError::Unavailable);
@@ -407,7 +438,7 @@ impl Services for PluginServices {
             if let Err(err) = db::log_access(
                 &deps.db,
                 &plugin,
-                Some(character),
+                character,
                 &logged_endpoint,
                 &outcome(&result),
             )

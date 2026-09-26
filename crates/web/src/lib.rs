@@ -635,6 +635,7 @@ mod tests {
                 vault: vault.clone(),
                 discord: discord.clone(),
                 key: key.clone(),
+                public_url: "https://tether.test".to_owned(),
             },
         );
         AppState {
