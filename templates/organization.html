@@ -1,0 +1,8 @@
+{#- A main's organization (AA's column): corporation, and alliance under
+    it, each with its 20px logo from CCP's image server. -#}
+{% macro cell(org) %}
+<div class="flex flex-col gap-1 text-sm">
+  <span class="flex items-center gap-2">{% if let Some(src) = crate::pages::corporation_logo(org.corporation_id) %}<img src="{{ src }}" alt="" width="20" height="20" class="size-5 rounded-sm">{% endif %}<span>{{ org.corporation }}</span></span>
+  {% if let Some((id, name)) = org.alliance %}<span class="flex items-center gap-2 text-muted-foreground">{% if let Some(src) = crate::pages::alliance_logo(id) %}<img src="{{ src }}" alt="" width="20" height="20" class="size-5 rounded-sm">{% endif %}<span>{{ name }}</span></span>{% endif %}
+</div>
+{% endmacro %}

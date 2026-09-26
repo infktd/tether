@@ -225,7 +225,42 @@ pub struct RequestRow {
     pub account_id: i64,
     pub main_id: i64,
     pub main_name: String,
+    pub org: Organization,
     pub requested_at: String,
+}
+
+/// A main's corporation and alliance (AA's "organization"), for leaders
+/// deciding requests.
+pub struct Organization {
+    pub corporation_id: i64,
+    pub corporation: String,
+    /// `None` outside an alliance.
+    pub alliance: Option<(i64, String)>,
+}
+
+fn organization(
+    corporation_id: Option<i64>,
+    corporation_name: Option<String>,
+    alliance_id: Option<i64>,
+    alliance_name: Option<String>,
+) -> Organization {
+    let corporation_id = corporation_id.unwrap_or(0);
+    Organization {
+        corporation: corporation_name.unwrap_or_else(|| {
+            if corporation_id > 0 {
+                format!("Corporation {corporation_id}")
+            } else {
+                "Unknown".to_owned()
+            }
+        }),
+        corporation_id,
+        alliance: alliance_id.map(|id| {
+            (
+                id,
+                alliance_name.unwrap_or_else(|| format!("Alliance {id}")),
+            )
+        }),
+    }
 }
 
 #[derive(Template)]
@@ -254,6 +289,12 @@ async fn requests_page(
         account_id: r.account_id,
         main_id: r.main_id,
         main_name: r.main_name,
+        org: organization(
+            r.corporation_id,
+            r.corporation_name,
+            r.alliance_id,
+            r.alliance_name,
+        ),
         requested_at: r.requested_at.format("%Y-%m-%d %H:%M").to_string(),
     };
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
@@ -323,6 +364,8 @@ pub struct ManagedRow {
     pub label: &'static str,
     pub members: i64,
     pub pending: i64,
+    /// A Hidden group's direct join link (its only way in), to copy.
+    pub join_link: Option<String>,
 }
 
 #[derive(Template)]
@@ -350,6 +393,11 @@ pub async fn membership(
             description: g.group.description,
             members: g.members,
             pending: g.pending,
+            join_link: g
+                .group
+                .flags
+                .hidden
+                .then(|| format!("{}/groups/{}", state.site.origin(), g.group.id.0)),
         })
         .collect();
     Ok(render(StatusCode::OK, &MembershipPage { shell, groups }))
@@ -359,6 +407,7 @@ pub struct MemberRow {
     pub account_id: i64,
     pub main_id: i64,
     pub main_name: String,
+    pub org: Organization,
     pub state: String,
     pub state_style: String,
 }
@@ -388,6 +437,12 @@ async fn members_page(
         .await?
         .into_iter()
         .map(|m| MemberRow {
+            org: organization(
+                m.corporation_id,
+                m.corporation_name,
+                m.alliance_id,
+                m.alliance_name,
+            ),
             account_id: m.account_id,
             main_id: m.main_id,
             main_name: m.main_name,

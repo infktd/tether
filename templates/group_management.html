@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{%- import "organization.html" as organization -%}
 {% macro request_table(title, rows, empty) %}
   <section class="card data-card">
     <header><h2>{{ title }} <span class="num text-muted-foreground font-normal">{{ rows.len() }}</span></h2></header>
@@ -6,7 +7,7 @@
     <p class="px-5 pb-5 text-sm text-muted-foreground">{{ empty }}</p>
     {% else %}
     <table class="table">
-      <thead><tr><th scope="col">Pilot</th><th scope="col">Group</th><th scope="col">Requested</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">Pilot</th><th scope="col">Organization</th><th scope="col">Group</th><th scope="col">Requested</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for r in rows %}
         <tr>
@@ -17,6 +18,7 @@
               <span class="font-medium">{{ r.main_name }}</span>
             </div>
           </td>
+          <td>{% call organization::cell(r.org) %}{% endcall %}</td>
           <td>{{ r.group_name }}</td>
           <td class="num text-muted-foreground">{{ r.requested_at }}</td>
           <td class="text-right">

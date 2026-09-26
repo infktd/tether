@@ -447,6 +447,12 @@ pub struct PendingRequest {
     pub account_id: i64,
     pub main_id: i64,
     pub main_name: String,
+    /// The main's corporation and alliance (AA's "organization"), with
+    /// their names where known.
+    pub corporation_id: Option<i64>,
+    pub corporation_name: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
     pub leave: bool,
     pub requested_at: DateTime<Utc>,
 }
@@ -462,11 +468,15 @@ pub async fn requests_for(
         r#"
         SELECT r.group_id, g.name AS group_name, r.account_id,
                COALESCE(c.id, 0) AS "main_id!", COALESCE(c.name, '(no main)') AS "main_name!",
+               c.corporation_id AS "corporation_id?", cn.name AS "corporation_name?",
+               c.alliance_id AS "alliance_id?", an.name AS "alliance_name?",
                r.leave, r.requested_at
         FROM core.group_requests r
         JOIN core.groups g ON g.id = r.group_id
         JOIN core.accounts a ON a.id = r.account_id
         LEFT JOIN core.characters c ON c.id = a.main_character_id
+        LEFT JOIN core.entity_names cn ON cn.id = c.corporation_id
+        LEFT JOIN core.entity_names an ON an.id = c.alliance_id
         WHERE r.group_id = ANY($1)
         ORDER BY r.requested_at
         "#,
@@ -575,6 +585,11 @@ pub struct Member {
     pub state: String,
     /// `member`, `blue`, `guest` or `custom`, for the badge.
     pub state_style: String,
+    /// The main's corporation and alliance, with their names where known.
+    pub corporation_id: Option<i64>,
+    pub corporation_name: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
 }
 
 pub async fn members(pool: &PgPool, group: GroupId) -> Result<Vec<Member>, sqlx::Error> {
@@ -583,11 +598,15 @@ pub async fn members(pool: &PgPool, group: GroupId) -> Result<Vec<Member>, sqlx:
         r#"
         SELECT a.id AS account_id, COALESCE(c.id, 0) AS "main_id!",
                COALESCE(c.name, '(no main)') AS "main_name!",
-               s.name AS state, COALESCE(s.builtin, 'custom') AS "state_style!"
+               s.name AS state, COALESCE(s.builtin, 'custom') AS "state_style!",
+               c.corporation_id AS "corporation_id?", cn.name AS "corporation_name?",
+               c.alliance_id AS "alliance_id?", an.name AS "alliance_name?"
         FROM core.group_members m
         JOIN core.accounts a ON a.id = m.account_id
         JOIN core.states s ON s.id = a.state_id
         LEFT JOIN core.characters c ON c.id = a.main_character_id
+        LEFT JOIN core.entity_names cn ON cn.id = c.corporation_id
+        LEFT JOIN core.entity_names an ON an.id = c.alliance_id
         WHERE m.group_id = $1
         ORDER BY c.name NULLS LAST
         "#,

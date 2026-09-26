@@ -294,6 +294,36 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
     assert!(requests.body.contains("The Mittani"), "{}", requests.body);
     assert!(requests.body.contains("gigX"));
     assert_no_external_urls(&requests.body);
+    // Who's asking: the requester's corporation and alliance (AA's
+    // organization), with their logos.
+    let (corporation, alliance): (Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT corporation_id, alliance_id FROM core.characters WHERE id = 443630591",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        requests.body.contains(">Organization<"),
+        "{}",
+        requests.body
+    );
+    assert!(
+        requests.body.contains(&format!(
+            "https://images.evetech.net/corporations/{}/logo",
+            corporation.unwrap()
+        )),
+        "{}",
+        requests.body
+    );
+    if let Some(alliance) = alliance {
+        assert!(
+            requests.body.contains(&format!(
+                "https://images.evetech.net/alliances/{alliance}/logo"
+            )),
+            "{}",
+            requests.body
+        );
+    }
 
     let pilot_account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
     let other_account = me(&h, &other).await["account_id"].as_i64().unwrap();
@@ -336,8 +366,33 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
     // Group Membership, the members page and the Audit Log.
     let membership = page(&h, "/group-management/membership", &owner).await;
     assert!(membership.body.contains("Capitals"));
+    // Only a Hidden group's direct join link is on the list, to copy.
+    assert!(
+        !membership.body.contains(&format!("{SITE}/groups/{id}")),
+        "{}",
+        membership.body
+    );
+    let hidden = send(
+        &h.app,
+        form(
+            "/admin/groups",
+            "name=Scouts&description=&hidden=on",
+            &owner,
+        ),
+    )
+    .await;
+    let hidden = hidden.location().rsplit('/').next().unwrap().to_owned();
+    let membership = page(&h, "/group-management/membership", &owner).await;
+    assert!(
+        membership
+            .body
+            .contains(&format!(r#"value="{SITE}/groups/{hidden}" readonly"#)),
+        "{}",
+        membership.body
+    );
     let members = page(&h, &format!("/group-management/{id}"), &owner).await;
     assert!(members.body.contains("The Mittani"));
+    assert!(members.body.contains(">Organization<"), "{}", members.body);
     assert!(members.body.contains(&format!("{SITE}/groups/{id}")));
     let log = page(&h, &format!("/group-management/{id}/audit"), &owner).await;
     assert!(

@@ -17,6 +17,12 @@
           <td>
             <div class="font-medium">{{ g.name }}</div>
             {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
+            {% if let Some(link) = g.join_link %}
+            <div class="mt-2 max-w-sm">
+              <label class="sr-only" for="join-link-{{ g.id }}">Direct join link for {{ g.name }}</label>
+              <input class="input num text-xs" id="join-link-{{ g.id }}" value="{{ link }}" readonly title="Hidden: this link is the way in. Select it to copy.">
+            </div>
+            {% endif %}
           </td>
           <td><span class="badge" data-variant="outline">{{ g.label }}</span></td>
           <td class="num">{{ g.members }}</td>
