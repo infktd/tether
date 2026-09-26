@@ -145,6 +145,7 @@ async fn doctor() -> anyhow::Result<ExitCode> {
         )?,
         domain: config.domain.clone(),
         public_url: config.public_url(),
+        proxy: tether_cli::doctor::Proxy::from_setting(config.proxy.as_deref()),
         sso_metadata_url: tether_cli::doctor::SSO_METADATA_URL.to_owned(),
         http_port: 80,
         https_port: 443,

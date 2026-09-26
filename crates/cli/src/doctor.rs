@@ -82,6 +82,44 @@ impl Check {
     }
 }
 
+/// What terminates TLS in front of the app: `TETHER_PROXY` in deploy/.env,
+/// chosen with deploy/install.sh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Proxy {
+    /// The bundled Caddy container, with Let's Encrypt certificates.
+    Caddy,
+    /// The admin's nginx on the host, proxying to 127.0.0.1.
+    Nginx,
+    /// The admin's Traefik, in Docker on a shared network.
+    Traefik,
+    /// The admin's own proxy of any kind, proxying to 127.0.0.1 (`none`).
+    Own,
+}
+
+impl Proxy {
+    /// `TETHER_PROXY`'s value; unset is Caddy, as installs before the
+    /// choice existed. `Err` holds an unknown value.
+    pub fn from_setting(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim) {
+            None | Some("" | "caddy") => Ok(Self::Caddy),
+            Some("nginx") => Ok(Self::Nginx),
+            Some("traefik") => Ok(Self::Traefik),
+            Some("none") => Ok(Self::Own),
+            Some(other) => Err(other.to_owned()),
+        }
+    }
+
+    /// For sentences: "make sure {} is running".
+    fn name(self) -> &'static str {
+        match self {
+            Self::Caddy => "Caddy",
+            Self::Nginx => "nginx",
+            Self::Traefik => "Traefik",
+            Self::Own => "your reverse proxy",
+        }
+    }
+}
+
 /// Everything the checks talk to, so tests can point them at local servers.
 pub struct Env {
     pub db: PgPool,
@@ -94,6 +132,8 @@ pub struct Env {
     pub domain: String,
     pub public_url: String,
     pub sso_metadata_url: String,
+    /// `TETHER_PROXY`; `Err` holds a value that isn't one of the choices.
+    pub proxy: Result<Proxy, String>,
     /// Normally 80 and 443.
     pub http_port: u16,
     pub https_port: u16,
@@ -130,7 +170,10 @@ pub async fn run(env: &Env, out: &mut dyn Write) -> std::io::Result<bool> {
 }
 
 pub async fn checks(env: &Env) -> Vec<Check> {
-    let mut checks = vec![database(&env.db).await];
+    let mut checks = vec![database(&env.db).await, proxy(&env.proxy)];
+    // An unknown setting fails the check above; Caddy's checks are the
+    // strictest.
+    let proxy = env.proxy.clone().unwrap_or(Proxy::Caddy);
     let ip = match dns(&env.domain).await {
         Ok((check, ip)) => {
             checks.push(check);
@@ -145,15 +188,23 @@ pub async fn checks(env: &Env) -> Vec<Check> {
         // DOMAIN=localhost is a local test install: inside the container,
         // localhost is the app itself, so these checks can't mean anything.
         Some(ip) if ip.is_loopback() => {
-            let why = "DOMAIN is a loopback name; check from the host with `curl -k https://localhost/health`";
+            let why = match proxy {
+                Proxy::Caddy | Proxy::Traefik => {
+                    "DOMAIN is a loopback name; check from the host with `curl -k https://localhost/health`"
+                }
+                Proxy::Nginx | Proxy::Own => {
+                    "DOMAIN is a loopback name; check from the host with `curl -k https://localhost/health`, \
+                     or the app itself with `curl http://127.0.0.1:TETHER_PORT/health`"
+                }
+            };
             for name in ["port 80", "port 443", "https", "public url"] {
                 checks.push(Check::skip(name, why));
             }
         }
         Some(ip) => {
-            checks.push(port("port 80", ip, env.http_port).await);
-            checks.push(port("port 443", ip, env.https_port).await);
-            checks.push(tls(&env.public_url).await);
+            checks.push(http_port(ip, env.http_port, proxy).await);
+            checks.push(port("port 443", ip, env.https_port, proxy).await);
+            checks.push(tls(&env.public_url, proxy).await);
             checks.push(reachable(&env.public_url).await);
         }
         None => {
@@ -169,7 +220,7 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(ownership(&env.db).await);
     checks.push(discord(env).await);
     checks.push(updates(&env.db, &env.github_api_url).await);
-    checks.push(outbound());
+    checks.push(outbound(proxy));
     checks.push(plugin_hosts(&env.db).await);
     checks.push(snapshots(&env.db, &env.snapshot_dir, env.pg_bin_dir.clone()).await);
     checks.push(backups(&env.snapshot_dir).await);
@@ -401,7 +452,7 @@ pub async fn dns(domain: &str) -> Result<(Check, Option<IpAddr>), Check> {
 /// Connects to `ip:port` from this server. A true outside check would need a
 /// third-party service, which the opsec rules forbid; most hosts route this
 /// through the same public path.
-pub async fn port(name: &'static str, ip: IpAddr, port: u16) -> Check {
+pub async fn port(name: &'static str, ip: IpAddr, port: u16, proxy: Proxy) -> Check {
     let addr = SocketAddr::new(ip, port);
     match tokio::time::timeout(TIMEOUT, tokio::net::TcpStream::connect(addr)).await {
         Ok(Ok(_)) => Check::ok(
@@ -414,7 +465,8 @@ pub async fn port(name: &'static str, ip: IpAddr, port: u16) -> Check {
             name,
             format!("{addr} refused: {err}"),
             format!(
-                "Open TCP {port} in every firewall in the path: the cloud provider's (Oracle security lists, Azure network security groups, AWS security groups) and the host's (iptables/nftables, ufw), and make sure Caddy is running. This check runs from the server itself, so it can pass while those still block outside traffic."
+                "Open TCP {port} in every firewall in the path: the cloud provider's (Oracle security lists, Azure network security groups, AWS security groups) and the host's (iptables/nftables, ufw), and make sure {} is running and listening on it. This check runs from the server itself, so it can pass while those still block outside traffic.",
+                proxy.name()
             ),
         ),
         Err(_) => Check::fail(
@@ -427,7 +479,59 @@ pub async fn port(name: &'static str, ip: IpAddr, port: u16) -> Check {
     }
 }
 
-pub async fn tls(public_url: &str) -> Check {
+/// The HTTP port (normally 80). Caddy needs it, for Let's Encrypt's HTTP
+/// challenge and the redirect to HTTPS. Another proxy may do without it
+/// (DNS challenges, no redirect), so there it being closed is a warning.
+pub async fn http_port(ip: IpAddr, port_number: u16, proxy: Proxy) -> Check {
+    let check = port("port 80", ip, port_number, proxy).await;
+    if check.status != Status::Fail || proxy == Proxy::Caddy {
+        return check;
+    }
+    Check::warn(
+        check.name,
+        check.detail,
+        format!(
+            "{} Port {port_number} is only needed if {} redirects HTTP to HTTPS or gets \
+             certificates with HTTP challenges (certbot's default).",
+            check.fix.unwrap_or_default(),
+            proxy.name()
+        ),
+    )
+}
+
+/// Which proxy terminates TLS, and so whose certificates they are.
+pub fn proxy(setting: &Result<Proxy, String>) -> Check {
+    const NAME: &str = "proxy";
+    match setting {
+        Ok(Proxy::Caddy) => Check::ok(
+            NAME,
+            "bundled Caddy terminates TLS, with certificates from Let's Encrypt",
+        ),
+        Ok(Proxy::Nginx) => Check::ok(
+            NAME,
+            "nginx on the host terminates TLS and proxies to the app on 127.0.0.1; its \
+             certificates (certbot's, say) are the admin's, outside Tether",
+        ),
+        Ok(Proxy::Traefik) => Check::ok(
+            NAME,
+            "the admin's Traefik terminates TLS and reaches the app over a shared Docker network; \
+             its certificates are the admin's, outside Tether",
+        ),
+        Ok(Proxy::Own) => Check::ok(
+            NAME,
+            "the admin's own reverse proxy terminates TLS and proxies to the app on 127.0.0.1; \
+             its certificates are the admin's, outside Tether",
+        ),
+        Err(value) => Check::fail(
+            NAME,
+            format!("TETHER_PROXY is {value:?}, not one of caddy, nginx, traefik or none"),
+            "Re-run deploy/install.sh with --proxy caddy, nginx, traefik or none: it keeps \
+             deploy/.env's secrets and rewrites only the proxy settings.",
+        ),
+    }
+}
+
+pub async fn tls(public_url: &str, proxy: Proxy) -> Check {
     const NAME: &str = "https";
     if !public_url.starts_with("https://") {
         return Check::warn(
@@ -445,12 +549,41 @@ pub async fn tls(public_url: &str) -> Check {
         Ok(r) => Check::fail(
             NAME,
             format!("/health answered HTTP {}", r.status()),
-            "Caddy is up but not reaching the app: check `docker compose ps` and `docker compose logs app`.",
+            match proxy {
+                Proxy::Caddy | Proxy::Traefik => format!(
+                    "{} is up but not reaching the app: check `docker compose ps` and `docker compose logs app`.",
+                    proxy.name()
+                ),
+                Proxy::Nginx | Proxy::Own => format!(
+                    "{} is up but not reaching the app, which listens on http://127.0.0.1:TETHER_PORT \
+                     (deploy/.env): check `docker compose ps` and `docker compose logs app`.",
+                    proxy.name()
+                ),
+            },
         ),
         Err(err) => Check::fail(
             NAME,
             format!("request failed: {}", chain(&err)),
-            "Caddy gets the certificate automatically once DNS points here and port 80 is open; `docker compose logs caddy` shows why it hasn't.",
+            match proxy {
+                Proxy::Caddy => {
+                    "Caddy gets the certificate automatically once DNS points here and \
+                                 port 80 is open; `docker compose logs caddy` shows why it hasn't."
+                        .to_owned()
+                }
+                Proxy::Nginx => {
+                    "The certificate is nginx's, so yours: `sudo certbot --nginx -d DOMAIN` \
+                                 gets one from Let's Encrypt and adds it to Tether's server block. \
+                                 `sudo nginx -t` and nginx's error log show other problems."
+                        .to_owned()
+                }
+                Proxy::Traefik => "The certificate is Traefik's, from the resolver named by \
+                                   TRAEFIK_CERTRESOLVER in deploy/.env; Traefik's logs show why it \
+                                   hasn't got one. The app must be on TRAEFIK_NETWORK too."
+                    .to_owned(),
+                Proxy::Own => "Your reverse proxy must serve DOMAIN over HTTPS with a valid \
+                               certificate and proxy to the app: see deploy/README.md."
+                    .to_owned(),
+            },
         ),
     }
 }
@@ -571,7 +704,7 @@ const ESI_BASE_URL: &str = "https://esi.evetech.net";
 /// The allow-list (N5): every endpoint the server is configured to call must
 /// be on it, and proxy settings that the libraries with their own HTTP
 /// clients honour are flagged.
-pub fn outbound() -> Check {
+pub fn outbound(proxy: Proxy) -> Check {
     const NAME: &str = "outbound";
     let allow = tether_net::Allowlist::production();
     let endpoints = [
@@ -605,10 +738,17 @@ pub fn outbound() -> Check {
         );
     }
     let hosts: Vec<&str> = allow.hosts().collect();
+    let certificates = match proxy {
+        Proxy::Caddy => "and Caddy talks to Let's Encrypt".to_owned(),
+        other => format!(
+            "and TLS certificates are {}'s business, outside Tether",
+            other.name()
+        ),
+    };
     Check::ok(
         NAME,
         format!(
-            "the server only contacts {}; browsers also load images.evetech.net, and Caddy talks to Let's Encrypt",
+            "the server only contacts {}; browsers also load images.evetech.net, {certificates}",
             hosts.join(", ")
         ),
     )

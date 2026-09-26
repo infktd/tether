@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use sqlx::PgPool;
-use tether_cli::doctor::{self, Status};
+use tether_cli::doctor::{self, Proxy, Status};
 use tether_cli::{Command, JobsCommand, StatesCommand, UsersCommand, run};
 use tether_core::Secret;
 use tether_core::crypto::EncryptionKey;
@@ -318,23 +318,62 @@ async fn doctor_ports() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let open = listener.local_addr().unwrap().port();
     let ip = "127.0.0.1".parse().unwrap();
-    assert_eq!(doctor::port("port 443", ip, open).await.status, Status::Ok);
-    let closed = doctor::port("port 80", ip, 1).await;
+    assert_eq!(
+        doctor::port("port 443", ip, open, Proxy::Caddy)
+            .await
+            .status,
+        Status::Ok
+    );
+    let closed = doctor::port("port 443", ip, 1, Proxy::Caddy).await;
     assert_eq!(closed.status, Status::Fail);
     let fix = closed.fix.unwrap();
     assert!(fix.contains("Open TCP 1"));
+    assert!(fix.contains("make sure Caddy is running"), "{fix}");
     for layer in ["security lists", "network security groups", "iptables"] {
         assert!(fix.contains(layer), "fix should mention {layer}: {fix}");
     }
+    // The admin's own proxy is named instead.
+    let closed = doctor::port("port 443", ip, 1, Proxy::Nginx).await;
+    assert_eq!(closed.status, Status::Fail);
+    assert!(closed.fix.unwrap().contains("make sure nginx is running"));
+}
+
+/// Port 80 is Caddy's for certificates and redirects; another proxy may
+/// not need it.
+#[tokio::test]
+async fn doctor_port_80_is_only_required_for_caddy() {
+    let ip = "127.0.0.1".parse().unwrap();
+    // Port 1 stands in for a closed port 80.
+    let caddy = doctor::http_port(ip, 1, Proxy::Caddy).await;
+    assert_eq!(caddy.status, Status::Fail);
+    assert!(!caddy.fix.unwrap().contains("only needed if"));
+    for proxy in [Proxy::Nginx, Proxy::Traefik, Proxy::Own] {
+        let check = doctor::http_port(ip, 1, proxy).await;
+        assert_eq!(check.status, Status::Warn, "{proxy:?}: {check:?}");
+        assert_eq!(check.name, "port 80");
+        let fix = check.fix.unwrap();
+        assert!(
+            fix.contains("Open TCP 1") && fix.contains("only needed if"),
+            "{fix}"
+        );
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let open = listener.local_addr().unwrap().port();
+    assert_eq!(
+        doctor::http_port(ip, open, Proxy::Nginx).await.status,
+        Status::Ok
+    );
 }
 
 #[tokio::test]
 async fn doctor_tls() {
     assert_eq!(
-        doctor::tls("http://localhost:8080").await.status,
+        doctor::tls("http://localhost:8080", Proxy::Caddy)
+            .await
+            .status,
         Status::Warn
     );
-    let unreachable = doctor::tls("https://127.0.0.1:1").await;
+    let unreachable = doctor::tls("https://127.0.0.1:1", Proxy::Caddy).await;
     assert_eq!(unreachable.status, Status::Fail);
     assert!(
         unreachable
@@ -342,6 +381,38 @@ async fn doctor_tls() {
             .unwrap()
             .contains("docker compose logs caddy")
     );
+    // With the admin's proxy, the certificate is theirs.
+    for (proxy, hint) in [
+        (Proxy::Nginx, "certbot --nginx"),
+        (Proxy::Traefik, "TRAEFIK_CERTRESOLVER"),
+        (Proxy::Own, "deploy/README.md"),
+    ] {
+        let fix = doctor::tls("https://127.0.0.1:1", proxy).await.fix.unwrap();
+        assert!(fix.contains(hint), "{proxy:?}: {fix}");
+        assert!(!fix.contains("caddy"), "{proxy:?}: {fix}");
+    }
+}
+
+#[test]
+fn doctor_names_the_proxy_and_whose_certificates_they_are() {
+    assert_eq!(Proxy::from_setting(None), Ok(Proxy::Caddy));
+    assert_eq!(Proxy::from_setting(Some("")), Ok(Proxy::Caddy));
+    assert_eq!(Proxy::from_setting(Some("nginx")), Ok(Proxy::Nginx));
+    assert_eq!(Proxy::from_setting(Some("traefik")), Ok(Proxy::Traefik));
+    assert_eq!(Proxy::from_setting(Some("none")), Ok(Proxy::Own));
+    assert_eq!(Proxy::from_setting(Some("ngnix")), Err("ngnix".to_owned()));
+
+    let caddy = doctor::proxy(&Ok(Proxy::Caddy));
+    assert_eq!(caddy.status, Status::Ok);
+    assert!(caddy.detail.contains("Let's Encrypt"));
+    for proxy in [Proxy::Nginx, Proxy::Traefik, Proxy::Own] {
+        let check = doctor::proxy(&Ok(proxy));
+        assert_eq!(check.status, Status::Ok);
+        assert!(check.detail.contains("outside Tether"), "{check:?}");
+    }
+    let unknown = doctor::proxy(&Err("ngnix".to_owned()));
+    assert_eq!(unknown.status, Status::Fail);
+    assert!(unknown.fix.unwrap().contains("--proxy"));
 }
 
 #[tokio::test]
@@ -440,6 +511,7 @@ async fn doctor_prints_fixes_and_fails_overall(db: PgPool) {
         domain: "tether-doctor-test.invalid".into(),
         public_url: "https://tether-doctor-test.invalid".into(),
         sso_metadata_url: format!("{}/.well-known/oauth-authorization-server", server.uri()),
+        proxy: Ok(Proxy::Caddy),
         http_port: 80,
         https_port: 443,
         key: None,
@@ -455,6 +527,7 @@ async fn doctor_prints_fixes_and_fails_overall(db: PgPool) {
     let out = String::from_utf8(out).unwrap();
     assert!(!healthy);
     assert!(out.contains("[  ok] database"), "{out}");
+    assert!(out.contains("[  ok] proxy: bundled Caddy"), "{out}");
     assert!(out.contains("[FAIL] dns"));
     assert!(out.contains("[skip] port 80: needs DNS"));
     assert!(out.contains("[skip] https: needs DNS"));
@@ -475,6 +548,7 @@ async fn doctor_skips_network_checks_for_localhost(db: PgPool) {
         domain: "localhost".into(),
         public_url: "https://localhost".into(),
         sso_metadata_url: format!("{}/.well-known/oauth-authorization-server", server.uri()),
+        proxy: Ok(Proxy::Caddy),
         http_port: 80,
         https_port: 443,
         key: None,
@@ -523,6 +597,7 @@ async fn discord_env(db: PgPool, key: Option<EncryptionKey>, server: &MockServer
         domain: "localhost".into(),
         public_url: "https://tether.test".into(),
         sso_metadata_url: "http://127.0.0.1:9/".into(),
+        proxy: Ok(Proxy::Caddy),
         http_port: 80,
         https_port: 443,
         key,
@@ -643,7 +718,7 @@ async fn doctor_reports_update_checks(db: PgPool) {
 
 #[test]
 fn doctor_proves_the_allow_list_holds() {
-    let check = doctor::outbound();
+    let check = doctor::outbound(Proxy::Caddy);
     // CI and dev machines normally have no proxy set; either way the
     // self-test ran.
     assert!(
@@ -653,6 +728,10 @@ fn doctor_proves_the_allow_list_holds() {
     if check.status == Status::Ok {
         assert!(check.detail.contains("esi.evetech.net"));
         assert!(check.detail.contains("Let's Encrypt"));
+        // With the admin's own proxy, Let's Encrypt isn't Tether's.
+        let nginx = doctor::outbound(Proxy::Nginx);
+        assert!(!nginx.detail.contains("Let's Encrypt"), "{nginx:?}");
+        assert!(nginx.detail.contains("nginx's business, outside Tether"));
     }
 }
 

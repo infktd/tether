@@ -1,8 +1,9 @@
 //! Configuration, read from the environment (flags work too, for local use).
 //!
 //! `.env` in a deployment holds only DOMAIN, POSTGRES_PASSWORD, SETUP_TOKEN
-//! and ENCRYPTION_KEY; compose turns those into the variables below. Everything else
-//! is configured in the browser and stored in the database.
+//! and ENCRYPTION_KEY, plus the reverse proxy choice (TETHER_PROXY and its
+//! compose settings); compose turns those into the variables below.
+//! Everything else is configured in the browser and stored in the database.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -137,6 +138,13 @@ pub struct ToolConfig {
 
     #[arg(long, env = "PUBLIC_URL", value_parser = parse_public_url)]
     pub public_url: Option<String>,
+
+    /// What terminates TLS in front of the app (caddy, nginx, traefik or
+    /// none), from deploy/.env, so `doctor` checks the right things. Read
+    /// as text: `doctor` reports a value it doesn't know rather than
+    /// refusing to run.
+    #[arg(long, env = "TETHER_PROXY")]
+    pub proxy: Option<String>,
 
     /// Lets `doctor` open the stored Discord secrets to check them, and
     /// `rollback` open snapshots.
