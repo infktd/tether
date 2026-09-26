@@ -98,6 +98,17 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["moon_id"],
     },
     Endpoint {
+        // The fleet the data-source character runs (aa-afat's ESI fleet
+        // tracking): the host finds the fleet from the character's own
+        // token and answers only when it is the fleet boss, so a plugin
+        // never names a fleet id.
+        name: "fleet-members",
+        scope: "esi-fleets.read_fleet.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
         name: "character-skills",
         scope: "esi-skills.read_skills.v1",
         about: About::Character,
@@ -341,6 +352,65 @@ impl Esi {
                 })
             }
             "universe-moon" => get!(client.get_universe_moons_moon_id().moon_id(id("moon_id")?)),
+            "fleet-members" => {
+                let fleet = match self
+                    .call_full(
+                        priority,
+                        client
+                            .get_characters_character_id_fleet()
+                            .character_id(character)
+                            .send(),
+                    )
+                    .await
+                {
+                    Ok(fleet) => fleet.into_inner(),
+                    // Not in a fleet.
+                    Err(EsiError::Status(404)) => {
+                        return Ok(Response {
+                            body: serde_json::json!({ "in_fleet": false, "boss": false }),
+                            pages: 1,
+                        });
+                    }
+                    Err(err) => return Err(err),
+                };
+                if fleet.fleet_boss_id != character {
+                    return Ok(Response {
+                        body: serde_json::json!({ "in_fleet": true, "boss": false }),
+                        pages: 1,
+                    });
+                }
+                let members = self
+                    .call_full(
+                        priority,
+                        client
+                            .get_fleets_fleet_id_members()
+                            .fleet_id(fleet.fleet_id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                // Who, in what, where, since when: what a FAT records.
+                let members: Vec<serde_json::Value> = members
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "character_id": m.character_id,
+                            "ship_type_id": m.ship_type_id,
+                            "solar_system_id": m.solar_system_id,
+                            "join_time": m.join_time,
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    body: serde_json::json!({
+                        "in_fleet": true,
+                        "boss": true,
+                        "fleet_id": fleet.fleet_id,
+                        "members": members,
+                    }),
+                    pages: 1,
+                })
+            }
             "character-skills" => get!(
                 client
                     .get_characters_character_id_skills()
