@@ -115,6 +115,7 @@ pub async fn repin_key(
     new_key: &str,
     confirmation: &str,
 ) -> Result<(), AppError> {
+    crate::sudo::check(crate::sudo::Action::AppKey)?;
     if confirmation.trim() != plugin_id {
         return Err(AppError::bad_request(
             "Type the app's id exactly to confirm replacing its key.",
@@ -1105,6 +1106,9 @@ pub async fn approve(
     upload_id: i64,
     reviewed: Option<String>,
 ) -> Result<String, AppError> {
+    // Here, not in the detached task, which runs outside this request's
+    // sudo scope.
+    crate::sudo::check(crate::sudo::Action::AppInstall)?;
     let state = state.clone();
     detached(async move { approve_now(&state, actor, upload_id, reviewed).await }).await
 }
@@ -1766,6 +1770,7 @@ pub async fn roll_back(
     id: &str,
     confirmation: &str,
 ) -> Result<(), AppError> {
+    crate::sudo::check(crate::sudo::Action::AppRollback)?;
     if confirmation.trim() != id {
         return Err(AppError::bad_request(
             "Type the app's id exactly to confirm rolling it back.",
@@ -2031,6 +2036,7 @@ pub async fn uninstall(
     id: &str,
     confirmation: &str,
 ) -> Result<(), AppError> {
+    crate::sudo::check(crate::sudo::Action::AppUninstall)?;
     if confirmation.trim() != id {
         return Err(AppError::bad_request(
             "Type the app's id exactly to confirm uninstalling it.",

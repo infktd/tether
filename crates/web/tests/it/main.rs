@@ -41,6 +41,7 @@ mod states;
 mod storage;
 mod structure_timers;
 mod structures;
+mod sudo;
 mod sync;
 mod system;
 mod theme;

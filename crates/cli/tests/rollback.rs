@@ -236,9 +236,15 @@ async fn snapshot_migrate_roll_back_and_check_the_data(db: PgPool) {
     snapshots.mark_running(&Kind::Core).await;
     let pilot = character(&db, 1001, "Before Pilot").await;
     // Signed in before the snapshot: a rollback still signs everyone out.
-    tether_db::auth::create_session(&db, &[7; 32], pilot, std::time::Duration::from_secs(3600))
-        .await
-        .unwrap();
+    tether_db::auth::create_session(
+        &db,
+        &[7; 32],
+        pilot,
+        std::time::Duration::from_secs(3600),
+        None,
+    )
+    .await
+    .unwrap();
     assert!(
         snapshots
             .before_migrations(&db, &tether_db::MIGRATOR)

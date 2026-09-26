@@ -51,6 +51,21 @@ HTTP 303
 header "Location" == "/login"
 cookie "__Host-tether_next" not exists
 
+# Sudo mode's "Confirm it's you" page and its login need a session.
+GET {{base}}/reauthenticate?action=setup&return_to=/admin
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/reauthenticate
+Origin: {{base}}
+[Form]
+action: setup
+return_to: /admin
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # The old address moved to AA's name.
 GET {{base}}/profile
 HTTP 308

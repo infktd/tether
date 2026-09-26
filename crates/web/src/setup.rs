@@ -231,6 +231,10 @@ pub async fn save_client_id(
     client_id: &str,
 ) -> Result<(), AppError> {
     let actor = setup_actor(state, jar, session).await?;
+    // Once there's an owner, only they change it, and only freshly logged in.
+    if matches!(actor, Actor::Account(_)) {
+        crate::sudo::check(crate::sudo::Action::Setup)?;
+    }
     let client_id = client_id.trim();
     let valid = (16..=64).contains(&client_id.len())
         && client_id.chars().all(|c| c.is_ascii_alphanumeric());

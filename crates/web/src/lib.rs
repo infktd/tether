@@ -52,6 +52,7 @@ pub mod smart_groups;
 mod state;
 pub mod state_admin;
 pub mod states;
+pub mod sudo;
 pub mod sync;
 pub mod theme;
 pub mod tokens;
@@ -432,6 +433,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
+        .route("/reauthenticate", get(sudo::page).post(sudo::start))
         .route("/api/me", get(api::me))
         .route("/api/me/main", post(api::set_main))
         .route("/api/tokens", get(api::tokens::list))

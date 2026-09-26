@@ -34,6 +34,7 @@ pub async fn create(
     scopes: &[String],
     days: &str,
 ) -> Result<Secret<String>, AppError> {
+    crate::sudo::check(crate::sudo::Action::AccessToken)?;
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 60 || name.chars().any(char::is_control) {
         return Err(AppError::bad_request(

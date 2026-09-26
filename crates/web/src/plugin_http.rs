@@ -782,6 +782,7 @@ pub async fn set_secret(
     name: &str,
     value: &Secret<String>,
 ) -> Result<(), AppError> {
+    crate::sudo::check(crate::sudo::Action::AppSecret)?;
     let value = Secret::new(value.expose().trim().to_owned());
     if value.expose().is_empty()
         || value.expose().len() > MAX_SECRET

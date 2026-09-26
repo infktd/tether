@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"ok!\"\n        FROM core.characters c JOIN core.accounts a ON a.id = c.account_id\n        WHERE c.id = $1 AND a.id = $2 AND a.main_character_id = c.id AND a.active\n          AND c.owner_hash = $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3fcb0249b3c6d4b4082942bdb7626f5f44ca0eb50998e5d5bbb8ecd9122613f3"
+}

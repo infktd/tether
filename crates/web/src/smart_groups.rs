@@ -499,8 +499,8 @@ async fn may_change(
     if tether_db::autogroups::is_auto(&mut *tx, group).await? {
         return Err(crate::groups::auto_group());
     }
-    if found.flags.restricted && !crate::groups::standing(&mut *tx, actor).await?.is_owner {
-        return Err(crate::groups::owner_only());
+    if found.flags.restricted {
+        crate::groups::restricted_owner(crate::groups::standing(&mut *tx, actor).await?.is_owner)?;
     }
     crate::groups::require_grants(&mut *tx, actor, group, "change who its filters let in").await?;
     Ok(found)

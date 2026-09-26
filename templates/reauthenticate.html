@@ -1,0 +1,25 @@
+{% extends "bare.html" %}
+{% block title %}Confirm it's you{% endblock %}
+{% block content %}
+<section class="card">
+  <header>
+    <h2>Confirm it's you</h2>
+    <p>Log in with EVE again to continue: <span class="font-medium text-foreground">{{ label }}</span>.</p>
+  </header>
+  <section class="flex flex-col gap-4">
+    <p class="text-sm text-muted-foreground">
+      This needs an EVE login from the last {{ minutes }} minutes.
+      {% if let Some(main) = main %}Log in with <span class="text-foreground">{{ main }}</span>, this account's main.{% else %}This account has no main character right now: log out, then log in with one of its characters, which makes it the main.{% endif %}
+      Afterwards you're back where you were: submit it again there. Nothing is sent for you.
+    </p>
+    <form method="post" action="/reauthenticate" hx-boost="false">
+      <input type="hidden" name="action" value="{{ action_key }}">
+      <input type="hidden" name="return_to" value="{{ return_to }}">
+      <button type="submit" class="btn w-full" data-variant="primary">Log in with EVE Online</button>
+    </form>
+  </section>
+  <footer>
+    <a href="{{ return_to }}" class="btn w-full" data-variant="outline">Cancel</a>
+  </footer>
+</section>
+{% endblock %}

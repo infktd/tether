@@ -70,6 +70,7 @@ const ROUTES: &[&str] = &[
     "/admin/plugins/example.hello/sources/1/approve",
     "/admin/plugins/example.hello/sources/1/remove",
     "/admin/plugins/example.hello/channels/1/remove",
+    "/reauthenticate",
 ];
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        DELETE FROM core.login_attempts\n        WHERE state = $1 AND browser_hash = $2 AND expires_at > now()\n        RETURNING pkce_verifier, return_to, purpose, plugin_id, scopes, started_by\n        ",
+  "query": "\n        DELETE FROM core.login_attempts\n        WHERE state = $1 AND browser_hash = $2 AND expires_at > now()\n        RETURNING pkce_verifier, return_to, purpose, plugin_id, scopes, started_by, reauth_action\n        ",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,17 @@
             "name": "started_by"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "reauth_action",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.login_attempts",
+            "name": "reauth_action"
+          }
+        }
       }
     ],
     "parameters": {
@@ -82,8 +93,9 @@
       false,
       true,
       false,
+      true,
       true
     ]
   },
-  "hash": "1375a79945cb7b49f2657d7f0f6f2103ff572cc6864827af9d1c11b1d3693a28"
+  "hash": "0b9e32ebd5a3ca6c060c7b154969dd61a45ed31d1ba7f7f97f93e78dd7e0d051"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT s.account_id, s.expires_at,\n               s.last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id\n        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active\n        ",
+  "query": "\n        SELECT s.account_id, s.expires_at, s.reauthenticated_at,\n               s.last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id\n        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active\n        ",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,17 @@
       },
       {
         "ordinal": 2,
+        "name": "reauthenticated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.sessions",
+            "name": "reauthenticated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "stale!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -41,8 +52,9 @@
     "nullable": [
       false,
       false,
+      true,
       null
     ]
   },
-  "hash": "d930dec7e1fe2dc661652af979fd9ec5d0d039f47b6b29d38ff1c4209de67b0b"
+  "hash": "b2b4ef42a8e1c39d0447be9f0fd83a6ce50cfa4de31f37c822e9bf204ac47332"
 }

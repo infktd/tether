@@ -93,7 +93,15 @@ pub async fn login(
         db::delete_session(&state.db, &hash_token(old.value())).await?;
     }
     let token = new_token().map_err(AppError::internal)?;
-    db::create_session(&state.db, &hash_token(token.expose()), account, SESSION_TTL).await?;
+    // Fixture sessions count as freshly logged in (sudo mode).
+    db::create_session(
+        &state.db,
+        &hash_token(token.expose()),
+        account,
+        SESSION_TTL,
+        Some(chrono::Utc::now()),
+    )
+    .await?;
     tracing::warn!(
         fixture = fixture.name,
         account = account.0,

@@ -77,6 +77,15 @@ pub(crate) fn owner_only() -> AppError {
     )
 }
 
+/// Only the owner changes a Restricted group (its members, leaders and
+/// settings, and the flag itself), and only freshly logged in (sudo mode).
+pub(crate) fn restricted_owner(is_owner: bool) -> Result<(), AppError> {
+    if !is_owner {
+        return Err(owner_only());
+    }
+    crate::sudo::check(crate::sudo::Action::RestrictedGroup)
+}
+
 /// Adding someone to a group hands them its permissions, and leadership
 /// of the groups it leads, so whoever does it (an admin, a leader
 /// accepting a request, an admin appointing leaders, opening it or making
@@ -98,6 +107,14 @@ pub(crate) async fn require_grants(
             StatusCode::FORBIDDEN,
             format!("This group grants {missing}, which you don't have, so you can't {doing}."),
         ));
+    }
+    // Letting people into a group that grants a sensitive permission hands
+    // it out, as granting it would (sudo mode).
+    if grants
+        .iter()
+        .any(|p| tether_core::permissions::is_sensitive(p))
+    {
+        crate::sudo::check(crate::sudo::Action::SensitivePermission)?;
     }
     Ok(())
 }
@@ -454,8 +471,8 @@ pub async fn decide(
     let mut tx = db.begin().await?;
     let group = managed(&mut tx, actor, group).await?;
     let me = standing(&mut tx, actor).await?;
-    if group.flags.restricted && decision == Decision::Accept && !me.is_owner {
-        return Err(owner_only());
+    if group.flags.restricted && decision == Decision::Accept {
+        restricted_owner(me.is_owner)?;
     }
     let Some(leave) = groups::remove_request(&mut *tx, group.id, requester).await? else {
         return Err(AppError::not_found("No pending request from that account."));
@@ -528,8 +545,8 @@ async fn remove_in(
     if tether_db::autogroups::is_auto(&mut *tx, group.id).await? {
         return Err(auto_group());
     }
-    if group.flags.restricted && !standing(&mut *tx, actor).await?.is_owner {
-        return Err(owner_only());
+    if group.flags.restricted {
+        restricted_owner(standing(&mut *tx, actor).await?.is_owner)?;
     }
     if !groups::remove_member(&mut *tx, group.id, member).await? {
         return Err(AppError::not_found("That account isn't in this group."));
@@ -600,8 +617,8 @@ pub async fn create(
     let name = check_name(name)?;
     let description = check_description(description)?;
     let mut tx = db.begin().await?;
-    if flags.restricted && !standing(&mut tx, actor).await?.is_owner {
-        return Err(owner_only());
+    if flags.restricted {
+        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     if groups::is_reserved(&mut *tx, name).await? {
         return Err(AppError::bad_request(
@@ -667,8 +684,8 @@ pub async fn update(
     let owner = standing(&mut tx, actor).await?.is_owner;
     let membership_moves = states != old_states || new.compliance != old.compliance;
     // A Restricted group's settings are the owner's alone, as is the flag.
-    if (old.flags.restricted || new.flags.restricted) && !owner {
-        return Err(owner_only());
+    if old.flags.restricted || new.flags.restricted {
+        restricted_owner(owner)?;
     }
     if new.compliance
         && tether_db::smart_groups::settings(&mut *tx, group)
@@ -770,8 +787,8 @@ pub async fn delete(db: &PgPool, actor: AccountId, group: GroupId) -> Result<(),
     if tether_db::autogroups::is_auto(&mut *tx, group).await? {
         return Err(auto_group());
     }
-    if found.flags.restricted && !standing(&mut tx, actor).await?.is_owner {
-        return Err(owner_only());
+    if found.flags.restricted {
+        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     groups::delete(&mut *tx, group).await?;
     audit::record(
@@ -803,8 +820,8 @@ pub async fn add_member(
     if tether_db::autogroups::is_auto(&mut *tx, group).await? {
         return Err(auto_group());
     }
-    if found.flags.restricted && !standing(&mut tx, actor).await?.is_owner {
-        return Err(owner_only());
+    if found.flags.restricted {
+        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     let them = standing(&mut tx, account).await?;
     if !them.active {
@@ -867,8 +884,8 @@ pub async fn set_leader(
     if on {
         refuse_blacklisted(&mut tx, account).await?;
     }
-    if found.flags.restricted && !standing(&mut tx, actor).await?.is_owner {
-        return Err(owner_only());
+    if found.flags.restricted {
+        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     if on {
         if !standing(&mut tx, account).await?.active {
@@ -916,8 +933,8 @@ pub async fn set_leader_group(
     let mut tx = db.begin().await?;
     let found = load_locked(&mut tx, group, false).await?;
     let leading = load_locked(&mut tx, leader_group, false).await?;
-    if found.flags.restricted && !standing(&mut tx, actor).await?.is_owner {
-        return Err(owner_only());
+    if found.flags.restricted {
+        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     if on {
         // Leading a group is Group Management over it: never for anyone

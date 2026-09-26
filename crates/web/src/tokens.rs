@@ -91,6 +91,13 @@ pub async fn delete(
     character: i64,
 ) -> Result<(), AppError> {
     own(db, account, character).await?;
+    let main = tether_db::accounts::get(db, account)
+        .await?
+        .and_then(|a| a.main)
+        .map(|m| m.id);
+    if main == Some(character) {
+        crate::sudo::check_privileged(db, account, crate::sudo::Action::MainToken).await?;
+    }
     let mut tx = db.begin().await?;
     if !tokens::wipe(&mut *tx, account, character).await? {
         return Err(AppError::not_found("That token is already deleted."));

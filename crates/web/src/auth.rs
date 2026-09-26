@@ -78,6 +78,19 @@ pub(crate) async fn start_login(
     scopes: &[String],
     started_by: Option<AccountId>,
 ) -> Result<Response, AppError> {
+    // Anything a signed-in account starts links the character that logs in
+    // (Add Character, registering, offers, Change Main): a candidate main,
+    // so gated for accounts with powers (sudo mode).
+    if let Some(account) = started_by
+        && !matches!(purpose, db::Purpose::Reauth(_))
+    {
+        let action = if purpose == db::Purpose::ChangeMain {
+            crate::sudo::Action::ChangeMain
+        } else {
+            crate::sudo::Action::AddCharacter
+        };
+        crate::sudo::check_privileged(&state.db, account, action).await?;
+    }
     let config = sso_config(state).await?;
     let pending = state
         .sso
@@ -185,12 +198,12 @@ pub async fn callback(
     };
 
     // Signed in already?
-    let current = match jar.get(SESSION_COOKIE) {
-        Some(cookie) => find_session(&state, cookie.value())
-            .await?
-            .map(|s| s.account),
+    let current_session = match jar.get(SESSION_COOKIE) {
+        Some(cookie) => find_session(&state, cookie.value()).await?,
         None => None,
     };
+    let current = current_session.as_ref().map(|s| s.account);
+    let reauth = matches!(attempt.purpose, db::Purpose::Reauth(_));
     let login = accounts::Login {
         character_id: identity.character_id,
         character_name: &identity.character_name,
@@ -200,6 +213,8 @@ pub async fn callback(
     // with the main); anything a signed-in account started (Add Character,
     // offers) links the character to that account, moving it from another
     // account if need be: SSO just proved control of it.
+    // Whether this login proved the account's main as it stood (sudo mode).
+    let mut proved_main = reauth;
     let (account, became_owner, lost) = if attempt.purpose == db::Purpose::Login {
         // The browser that entered the setup token claims ownership (F3).
         let claim_owner = setup::has_setup_session(&state, &jar).await?;
@@ -231,7 +246,48 @@ pub async fn callback(
             | accounts::SignIn::Reattached(a)
             | accounts::SignIn::Created(a) => a,
         };
+        // Taking over a main-less account proves a character, not the main
+        // it had: no fresh sudo time from that.
+        proved_main = !result.took_main;
         (account, result.became_owner, None)
+    } else if reauth {
+        // Sudo mode: the account that started it, still signed in here,
+        // logging in with its own main. Nothing is linked or changed.
+        let Some(account) = current.filter(|c| Some(*c) == attempt.started_by) else {
+            return Err(AppError::new(
+                StatusCode::BAD_REQUEST,
+                "This was started from another session. Please sign in and try again.",
+            ));
+        };
+        if !accounts::confirms_main(&state.db, account, login).await? {
+            tracing::info!(
+                account = account.0,
+                character_id = identity.character_id,
+                "re-authentication with another character refused"
+            );
+            // A stale session confirming with some other character looks
+            // like a stolen one: on the record.
+            audit::record(
+                &state.db,
+                Actor::Account(account),
+                "session.reauth_refused",
+                Some(&format!("account:{}", account.0)),
+                serde_json::json!({
+                    "character_id": identity.character_id,
+                    "action": match &attempt.purpose {
+                        db::Purpose::Reauth(action) => action.clone(),
+                        _ => None,
+                    },
+                }),
+            )
+            .await?;
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                "That isn't this account's main. To confirm it's you, log in with the main \
+                 character of the account you're signed in to.",
+            ));
+        }
+        (account, false, None)
     } else {
         // Only for the account that started it, still signed in here.
         let Some(account) = current.filter(|c| Some(*c) == attempt.started_by) else {
@@ -259,10 +315,12 @@ pub async fn callback(
         record_lost(&state, lost).await?;
     }
 
-    if let Err(err) = state
-        .vault
-        .store(identity.character_id, &identity.tokens, &identity.scopes)
-        .await
+    // A re-authentication only proves who's there: its token isn't kept.
+    if !reauth
+        && let Err(err) = state
+            .vault
+            .store(identity.character_id, &identity.tokens, &identity.scopes)
+            .await
     {
         return Err(AppError::internal(err));
     }
@@ -303,6 +361,24 @@ pub async fn callback(
                 ),
             }
         }
+        db::Purpose::Reauth(action) => {
+            audit::record(
+                &state.db,
+                Actor::Account(account),
+                "session.reauth",
+                Some(&format!("account:{}", account.0)),
+                serde_json::json!({
+                    "character_id": identity.character_id,
+                    "action": action,
+                }),
+            )
+            .await?;
+            tracing::info!(
+                account = account.0,
+                action = action.as_deref().unwrap_or(""),
+                "re-authenticated"
+            );
+        }
         db::Purpose::Login | db::Purpose::Register => {}
     }
 
@@ -323,15 +399,17 @@ pub async fn callback(
         jar = jar.remove(removal(setup::SETUP_COOKIE));
     }
 
-    // State from the main's current affiliation. An ESI outage must not
+    // State from the main's current affiliation (not for a
+    // re-authentication, which changes nothing). An ESI outage must not
     // block login: keep the stored state and retry in the background.
-    if let Err(err) = states::refresh_account(
-        &state.db,
-        &state.esi,
-        account,
-        tether_esi::Priority::Interactive,
-    )
-    .await
+    if !reauth
+        && let Err(err) = states::refresh_account(
+            &state.db,
+            &state.esi,
+            account,
+            tether_esi::Priority::Interactive,
+        )
+        .await
     {
         tracing::warn!(account = account.0, error = %err, "state refresh at login failed; queued a retry");
         states::enqueue_refresh(&state.db, account).await?;
@@ -345,15 +423,34 @@ pub async fn callback(
     if let Some(old) = jar.get(SESSION_COOKIE) {
         db::delete_session(&state.db, &hash_token(old.value())).await?;
     }
+    // Sudo mode: a plain login with the main or a re-authentication just
+    // proved the main; anything else (Add Character, offers, Change Main, a
+    // login that made a character the main) proves only some character, so
+    // the new session keeps the old one's time.
+    let reauthenticated_at = if proved_main {
+        Some(chrono::Utc::now())
+    } else {
+        current_session
+            .filter(|s| s.account == account)
+            .and_then(|s| s.reauthenticated_at)
+    };
     let token = new_token().map_err(AppError::internal)?;
-    db::create_session(&state.db, &hash_token(token.expose()), account, SESSION_TTL).await?;
+    db::create_session(
+        &state.db,
+        &hash_token(token.expose()),
+        account,
+        SESSION_TTL,
+        reauthenticated_at,
+    )
+    .await?;
 
     let jar = jar.add(cookie(SESSION_COOKIE, &token, SESSION_TTL)?);
     // Not every character registered with the state's scopes yet: show
-    // what to do (F11).
-    let return_to = if tether_db::compliance::not_compliant_state(&state.db, account)
-        .await?
-        .is_some()
+    // what to do (F11). A re-authentication goes back where it came from.
+    let return_to = if !reauth
+        && tether_db::compliance::not_compliant_state(&state.db, account)
+            .await?
+            .is_some()
     {
         "/register"
     } else {
@@ -379,6 +476,9 @@ pub struct CurrentSession {
     pub account: AccountId,
     /// A personal access token's scopes; `None` for a browser session.
     pub token_scopes: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+    /// A browser session's last login with the account's main (sudo
+    /// mode); `None` for a token.
+    pub reauthenticated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Personal access tokens start with this.
@@ -465,6 +565,7 @@ impl FromRequestParts<AppState> for CurrentSession {
             return Ok(Self {
                 account: scope.account,
                 token_scopes: Some(scope.scopes),
+                reauthenticated_at: None,
             });
         }
         let jar = CookieJar::from_headers(&parts.headers);
@@ -475,6 +576,7 @@ impl FromRequestParts<AppState> for CurrentSession {
         Ok(Self {
             account: record.account,
             token_scopes: None,
+            reauthenticated_at: record.reauthenticated_at,
         })
     }
 }
@@ -611,6 +713,10 @@ pub async fn sign_in_first(
         .any(|prefix| path.starts_with(prefix));
     if request.method() == axum::http::Method::POST && session.is_none() && !open {
         return Redirect::to("/login").into_response();
+    }
+    // Signed in from a browser: in its sudo scope.
+    if let Some(session) = session.as_ref().filter(|s| s.token_scopes.is_none()) {
+        return crate::sudo::layer(&state, session, request, next).await;
     }
     if session.is_some() || bearer(request.headers()).is_some() {
         return next.run(request).await;

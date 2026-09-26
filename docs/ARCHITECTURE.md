@@ -168,6 +168,17 @@ EVE SSO is the only login. No email.
 - Groups add access on top of states, with Alliance Auth's flags (Internal, Hidden, Open, Public, Restricted) and allowed states. Pilots join and leave on the Groups page; Group Leaders (and holders of `group_management`) decide requests in Group Management, and each group keeps an Audit Log. Compliance groups are Internal groups Tether fills with the compliant accounts of their allowed states. The rules live in `tether_core::groups` and `tether_web::groups`.
 - Permissions come from the core and from plugin manifests, and are assigned to states or groups only. Every change is audit-logged.
 - Personal access tokens with explicit scopes and expiry, for bots and scripts.
+- Sudo mode (`crates/web/src/sudo.rs`), as GitHub's: owner-only and especially sensitive actions need an EVE login with the account's main in the last 15 minutes. The session records when that last happened (`core.sessions.reauthenticated_at`): a plain login with the main sets it, and so does re-authenticating; Add Character, offers, Change Main and a login that makes a character the main of a main-less account prove only some character, so their new session keeps the old one's time. Otherwise the action is refused before anything changes, and the browser goes to "Confirm it's you" (`/reauthenticate`), which names the action; its button starts an EVE login (purpose `reauth`) that must be the signed-in account's main with its recorded owner hash (nothing is linked, moved or stored), audited as `session.reauth` with the action. Afterwards the browser is back on the page it posted from (its same-site Referer, else the Dashboard), where the admin submits again: nothing is replayed, and a POST never is. htmx requests are sent there with `HX-Redirect`; the JSON API answers 403. The gated actions, each checked where the action happens so pages and the API share it:
+  - granting or revoking a sensitive permission (`tether_core::permissions::is_sensitive`), and letting anyone into a group that grants one (adding members, accepting requests, appointing leaders or leader groups, opening it, making it a compliance group, changing its smart filters or Auto Groups);
+  - approving an app's install or upgrade, rolling an app back, uninstalling it, re-pinning its publisher key, and setting its secrets;
+  - deactivating or reactivating an account;
+  - creating a personal access token;
+  - changing setup (the EVE application) once an owner exists;
+  - the Discord settings (application, bot token and client secret);
+  - anything only the owner may do to a Restricted group (its members, leaders, settings and the flag);
+  - for the owner and accounts holding a sensitive permission only: Change Main (picking a character or logging in with one), linking a character (Add Character, registering, offers) and deleting the main's token. The main is what confirms it's them, so a stolen session mustn't plant a character of its own and make it the main. Everyone else does these freely.
+  States aren't gated: an admin who changes who a state covers moves accounts in and out of its grants without a fresh login, so keep sensitive permissions on groups rather than states.
+  Everyday admin work (states, ordinary groups, pings, the menu, enabling or disabling an app) isn't gated. Personal access tokens aren't browsers and can't log in again, so they're let through, as GitHub's are: making one is gated, each carries the permissions it uses explicitly, and a token never counts as the owner, so owner-only actions refuse it anyway. The CLI (run on the host) and background jobs aren't gated either. `tether rollback` is CLI-only.
 
 ## UI
 
@@ -231,7 +242,7 @@ volumes:
 - `doctor` checks DNS, external reachability of 80 and 443, TLS, database, ESI credentials and callback match, and the Discord token, printing a fix for each failure. It reads `TETHER_PROXY`: it says who terminates TLS, requires port 80 only with Caddy, and points its TLS fixes at Caddy's logs, certbot, Traefik's resolver or the admin's proxy.
 - Upgrades: `install.sh --version X.Y.Z` (or edit `TETHER_IMAGE`, then `docker compose pull && docker compose up -d`). Migrations run after an automatic snapshot. Rollback is the previous tag plus that snapshot: `docker compose stop app`, `docker compose run --rm app rollback`, then `install.sh --version <previous>`. Skip the `rollback` step if the upgrade ran no migrations: it took no snapshot, and `rollback` would restore an older one.
 - Volumes: `pgdata` (Postgres), `snapshots` (encrypted snapshots and backups, `/var/lib/tether/snapshots` in the app), and Caddy's two (unused with another proxy). Snapshots are only as safe as `ENCRYPTION_KEY`: keep a copy of it apart from the backups.
-- Admins sign in like everyone else, through EVE SSO on the public domain (N6). There is no separate admin login, listener or private network: admin pages and API endpoints check permissions on the server for every request.
+- Admins sign in like everyone else, through EVE SSO on the public domain (N6). There is no separate admin login, listener or private network: admin pages and API endpoints check permissions on the server for every request, and owner-only and sensitive actions need a recent EVE login (sudo mode, above).
 
 ## Testing without a frontend
 

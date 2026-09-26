@@ -22,6 +22,11 @@ pub async fn set_active(
     account: AccountId,
     active: bool,
 ) -> Result<(), AppError> {
+    crate::sudo::check(if active {
+        crate::sudo::Action::AccountReactivate
+    } else {
+        crate::sudo::Action::AccountDeactivate
+    })?;
     let mut tx = db.begin().await?;
     // The same lock order as every evaluation: the states first.
     tether_db::states::lock_shared(&mut tx).await?;
@@ -132,6 +137,10 @@ pub async fn grant(
     permission: &str,
     grantee: Grantee,
 ) -> Result<i64, AppError> {
+    let sensitive = tether_core::permissions::is_sensitive(permission);
+    if sensitive {
+        crate::sudo::check(crate::sudo::Action::SensitivePermission)?;
+    }
     let mut tx = state.db.begin().await?;
     // In the grant's transaction: a plugin's permission stays locked until
     // the grant is in, so a racing uninstall can't leave it behind.
@@ -142,7 +151,6 @@ pub async fn grant(
     }
     // Anyone who logs in with EVE is Guest, and anyone signed in can join an
     // Open group: admin rights there would be admin rights for strangers.
-    let sensitive = tether_core::permissions::is_sensitive(permission);
     match grantee {
         Grantee::State(id) => {
             let target = tether_db::states::get(&mut *tx, id)
@@ -193,6 +201,10 @@ pub async fn revoke(state: &AppState, actor: AccountId, id: i64) -> Result<(), A
     let grant = permissions::revoke(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No such grant."))?;
+    // Refusing drops the transaction, so the grant stays.
+    if tether_core::permissions::is_sensitive(&grant.permission) {
+        crate::sudo::check(crate::sudo::Action::SensitivePermission)?;
+    }
     audit::record(
         &mut *tx,
         Actor::Account(actor),

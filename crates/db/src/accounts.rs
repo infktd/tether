@@ -73,6 +73,10 @@ pub struct SignInResult {
     pub became_owner: bool,
     /// The character was sold: its old account lost it.
     pub lost: Option<Lost>,
+    /// It became the main of an account that had none (signing in to a
+    /// main-less account, or a returning owner re-attached): proof of a
+    /// character, but not of the account's main as it was.
+    pub took_main: bool,
 }
 
 /// Handles a verified SSO login with no account to link it to, as Alliance
@@ -98,6 +102,7 @@ pub async fn sign_in(
     let mut tx = pool.begin().await?;
     lock(&mut tx).await?;
     let mut lost = None;
+    let mut took_main = false;
     let row = sqlx::query!(
         r#"
         SELECT c.account_id, c.owner_hash, a.main_character_id, a.active
@@ -129,6 +134,7 @@ pub async fn sign_in(
                         if main.is_none() {
                             set_main_in(&mut tx, account, login.character_id).await?;
                             audit_main(&mut tx, account, login, "signed in").await?;
+                            took_main = true;
                         }
                         SignIn::Existing(account)
                     }
@@ -160,6 +166,7 @@ pub async fn sign_in(
                     attach(&mut tx, account, login).await?;
                     set_main_in(&mut tx, account, login.character_id).await?;
                     audit_main(&mut tx, account, login, "returning owner").await?;
+                    took_main = true;
                     if r.active {
                         SignIn::Reattached(account)
                     } else {
@@ -200,6 +207,7 @@ pub async fn sign_in(
         outcome,
         became_owner,
         lost,
+        took_main,
     })
 }
 
@@ -616,6 +624,31 @@ pub async fn main_name<'e>(
     )
     .fetch_optional(executor)
     .await
+}
+
+/// Whether a verified SSO login is the main of `account`, an active
+/// account, with the owner hash recorded for it (a sold character, or one
+/// from before hashes were recorded, doesn't count). Sudo mode's
+/// re-authentication: nothing is changed.
+pub async fn confirms_main(
+    pool: &PgPool,
+    account: AccountId,
+    login: Login<'_>,
+) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        r#"
+        SELECT true AS "ok!"
+        FROM core.characters c JOIN core.accounts a ON a.id = c.account_id
+        WHERE c.id = $1 AND a.id = $2 AND a.main_character_id = c.id AND a.active
+          AND c.owner_hash = $3
+        "#,
+        login.character_id,
+        account.0,
+        login.owner_hash,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
 }
 
 /// What group rules look at: whether the account is the owner, is

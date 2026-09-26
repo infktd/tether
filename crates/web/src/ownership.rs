@@ -96,6 +96,7 @@ pub async fn change_main(
     character_id: i64,
 ) -> Result<ChangeMain, crate::error::AppError> {
     let db = &state.db;
+    crate::sudo::check_privileged(db, account, crate::sudo::Action::ChangeMain).await?;
     let Some(current) = accounts::get(db, account).await? else {
         return Ok(ChangeMain::NotOnAccount);
     };

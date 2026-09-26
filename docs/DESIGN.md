@@ -138,6 +138,15 @@ Admin pages live in one place instead of filling the sidebar. The sidebar's Admi
 - **Rail**: every admin page (not the overview) shows a 208px second column right of the sidebar, cascading out of it: the same fill, a right border, its own 64px header ("Administration") in line with the top bar, then an Overview link and the groups under nav headings, each page a 32px link. The current page is marked like the sidebar's. Like the sidebar it is window-tall and stays put while the page scrolls. It shows from 1280px; narrower, the sidebar item and the overview are the way around.
 - The sidebar's Administration item stays marked on every page in the hub.
 
+## Confirm it's you
+
+Sudo mode's interstitial (`/reauthenticate`), shown when an owner-only or sensitive action needs a fresh EVE login. It uses the bare layout of the login page (no sidebar): one card, 400px wide.
+
+- **Header**: h2 "Confirm it's you", then "Log in with EVE again to continue: **<action>**", the action named in plain words ("Uninstall an app"), in `--foreground` at 500.
+- **Body**: one muted 14px paragraph: the login must be from the last 15 minutes, with which character (the account's main, by name), and that the admin comes back to the page they were on to submit again. Nothing is sent for them.
+- **Actions**: the primary full-width button "Log in with EVE Online" (a form post), and under it a full-width outline "Cancel" back to that page.
+- No countdowns, warnings or accent: it's a routine step, not an error.
+
 ## Motion
 
 Motion says something arrived or is on its way; it never decorates. Everything moves for 200ms or less (the progress line, which grows for as long as a request takes, aside), eases out, and uses opacity and at most a 4px rise: no scaling, bouncing, sliding panels or parallax. Under `prefers-reduced-motion: reduce`, none of it happens.

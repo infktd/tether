@@ -35,6 +35,9 @@ pub enum Purpose {
     /// Change Main): linked to the account like Add Character, then made
     /// its main.
     ChangeMain,
+    /// Sudo mode: confirming it's the account's owner (a login with its
+    /// main) before a sensitive action, named here for the audit log.
+    Reauth(Option<String>),
 }
 
 impl Purpose {
@@ -45,11 +48,20 @@ impl Purpose {
             Self::DataSource(plugin) => ("data_source", Some(plugin)),
             Self::CorpSource => ("corp_source", None),
             Self::ChangeMain => ("change_main", None),
+            Self::Reauth(_) => ("reauth", None),
         }
     }
 
-    fn from_columns(purpose: &str, plugin: Option<String>) -> Self {
+    fn reauth_action(&self) -> Option<&str> {
+        match self {
+            Self::Reauth(action) => action.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn from_columns(purpose: &str, plugin: Option<String>, action: Option<String>) -> Self {
         match (purpose, plugin) {
+            ("reauth", _) => Self::Reauth(action),
             ("register", _) => Self::Register,
             ("data_source", Some(plugin)) => Self::DataSource(plugin),
             ("corp_source", _) => Self::CorpSource,
@@ -80,8 +92,8 @@ pub async fn insert_login_attempt(
         r#"
         INSERT INTO core.login_attempts
             (state, browser_hash, pkce_verifier, return_to, expires_at, purpose, plugin_id, scopes,
-             started_by)
-        VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6, $7, $8, $9)
+             started_by, reauth_action)
+        VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6, $7, $8, $9, $10)
         "#,
         attempt.state,
         attempt.browser_hash,
@@ -92,6 +104,7 @@ pub async fn insert_login_attempt(
         attempt.purpose.columns().1,
         attempt.scopes,
         attempt.started_by.map(|a| a.0),
+        attempt.purpose.reauth_action(),
     )
     .execute(pool)
     .await?;
@@ -109,7 +122,7 @@ pub async fn take_login_attempt(
         r#"
         DELETE FROM core.login_attempts
         WHERE state = $1 AND browser_hash = $2 AND expires_at > now()
-        RETURNING pkce_verifier, return_to, purpose, plugin_id, scopes, started_by
+        RETURNING pkce_verifier, return_to, purpose, plugin_id, scopes, started_by, reauth_action
         "#,
         state,
         browser_hash,
@@ -119,7 +132,7 @@ pub async fn take_login_attempt(
     Ok(row.map(|r| LoginAttempt {
         pkce_verifier: Secret::new(r.pkce_verifier),
         return_to: r.return_to,
-        purpose: Purpose::from_columns(&r.purpose, r.plugin_id),
+        purpose: Purpose::from_columns(&r.purpose, r.plugin_id, r.reauth_action),
         scopes: r.scopes,
         started_by: r.started_by.map(AccountId),
     }))
@@ -129,25 +142,32 @@ pub async fn take_login_attempt(
 pub struct SessionRecord {
     pub account: AccountId,
     pub expires_at: DateTime<Utc>,
+    /// When it last logged in with EVE SSO with the account's main (a
+    /// plain login or a re-authentication), for sudo mode.
+    pub reauthenticated_at: Option<DateTime<Utc>>,
 }
 
+/// Starts a session. `reauthenticated_at`: when the browser last proved
+/// it holds the account's main, if it did (sudo mode).
 pub async fn create_session(
     pool: &PgPool,
     token_hash: &[u8],
     account: AccountId,
     ttl: Duration,
+    reauthenticated_at: Option<DateTime<Utc>>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!("DELETE FROM core.sessions WHERE expires_at < now()")
         .execute(pool)
         .await?;
     sqlx::query!(
         r#"
-        INSERT INTO core.sessions (token_hash, account_id, expires_at)
-        VALUES ($1, $2, now() + make_interval(secs => $3))
+        INSERT INTO core.sessions (token_hash, account_id, expires_at, reauthenticated_at)
+        VALUES ($1, $2, now() + make_interval(secs => $3), $4)
         "#,
         token_hash,
         account.0,
         ttl.as_secs_f64(),
+        reauthenticated_at,
     )
     .execute(pool)
     .await?;
@@ -180,7 +200,7 @@ pub async fn find_session(
 ) -> Result<Option<SessionRecord>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT s.account_id, s.expires_at,
+        SELECT s.account_id, s.expires_at, s.reauthenticated_at,
                s.last_seen_at < now() - make_interval(secs => $2) AS "stale!"
         FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id
         WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active
@@ -208,6 +228,7 @@ pub async fn find_session(
     Ok(Some(SessionRecord {
         account: AccountId(row.account_id),
         expires_at,
+        reauthenticated_at: row.reauthenticated_at,
     }))
 }
 

@@ -134,6 +134,7 @@ pub async fn save_settings(
     actor: AccountId,
     input: &SettingsInput,
 ) -> Result<GuildCheck, AppError> {
+    crate::sudo::check(crate::sudo::Action::DiscordSettings)?;
     let application_id = parse_id(&input.application_id, "application id")?;
     let guild_id = parse_id(&input.guild_id, "server id")?;
     let saved = stored(state).await?;
