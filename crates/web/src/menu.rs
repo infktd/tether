@@ -64,8 +64,8 @@ pub const BUILTINS: &[Builtin] = &[
         "account",
         "profile",
     ),
-    // Services, Token Management and access tokens are in the account
-    // menu (the signed-in character, bottom of the sidebar), not here.
+    // Token Management and access tokens are in the account menu (the
+    // signed-in character, bottom of the sidebar), not here.
     b("groups", "Groups", "/groups", "users", "account", "groups"),
     b(
         "group_management",
@@ -74,6 +74,15 @@ pub const BUILTINS: &[Builtin] = &[
         "users",
         "account",
         "group_management",
+    ),
+    // AA's sidebar has Services, for those with a service to link.
+    b(
+        "services",
+        "Services",
+        "/services",
+        "message",
+        "account",
+        "services",
     ),
     b(
         "pings",

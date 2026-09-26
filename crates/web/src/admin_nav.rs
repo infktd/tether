@@ -282,6 +282,7 @@ mod tests {
             users: true,
             blacklist: true,
             pings: true,
+            services: true,
         };
         for page in PAGES {
             assert!(GROUPS.iter().any(|g| g.key == page.group), "{}", page.label);

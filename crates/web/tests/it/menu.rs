@@ -236,23 +236,39 @@ async fn links_and_names_are_checked(db: PgPool) {
 async fn account_pages_are_in_the_account_menu_only(db: PgPool) {
     let h = harness(db, true).await;
     let pilot = log_in_as(&h, GIGX, None).await;
+    // Services is a sidebar item, as AA's, for those with a service.
+    let body = page(&h, "/dashboard", &pilot).await.body;
+    assert!(!sidebar(&body).contains(r#"href="/services""#));
+    grant_to_state_of(&h, 1887431749, "discord.access_discord").await;
     for uri in ["/dashboard", "/groups", "/services", "/tokens"] {
         let body = page(&h, uri, &pilot).await.body;
         let nav = sidebar(&body);
-        for link in ["/services", "/tokens", "/dashboard/access-tokens"] {
+        for link in ["/tokens", "/dashboard/access-tokens"] {
             assert!(
                 !nav.contains(&format!(r#"href="{link}""#)),
                 "{uri}: {link} in the sidebar"
             );
         }
+        let account = nav.find(">Account<").unwrap();
+        let services = nav.find(r#"href="/services""#).expect("Services");
+        assert!(account < services, "{uri}: {nav}");
+        assert_eq!(
+            nav.contains(r#"href="/services" class="nav-item" aria-current="page""#),
+            uri == "/services",
+            "{uri}"
+        );
         let menu = body.split(r#"id="user-menu""#).nth(1).unwrap();
         let menu = &menu[..menu.find("</nav>").unwrap()];
-        for link in ["/services", "/tokens", "/dashboard/access-tokens"] {
+        for link in ["/tokens", "/dashboard/access-tokens"] {
             assert!(
                 menu.contains(&format!(r#"href="{link}""#)),
                 "{uri}: {link} in the menu"
             );
         }
+        assert!(
+            !menu.contains(r#"href="/services""#),
+            "{uri}: Services in one place"
+        );
         assert!(menu.contains(r#"action="/auth/logout""#), "{uri}");
         assert_eq!(
             body.matches(r#"action="/auth/logout""#).count(),

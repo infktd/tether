@@ -190,6 +190,7 @@ pub(crate) fn menu_items(
         "dashboard" | "groups" => true,
         "group_management" => group_management.is_some(),
         "pings" => nav.pings,
+        "services" => nav.services,
         "administration" => nav.any(),
         "system" => nav.system,
         "plugins" => nav.plugins,
@@ -249,6 +250,9 @@ pub struct AdminNav {
     pub blacklist: bool,
     /// Not an admin page: fleet pings, for FCs.
     pub pings: bool,
+    /// Not an admin page: Services, for those with a service to link
+    /// (Discord's access permission), as AA shows it.
+    pub services: bool,
 }
 
 impl AdminNav {
@@ -461,6 +465,7 @@ pub(crate) async fn load(
         blacklist: perms.contains(tether_core::permissions::BLACKLIST_VIEW),
         permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEET_PING),
+        services: perms.contains(tether_core::permissions::DISCORD_ACCESS),
         setup: account.is_owner,
     };
     let managed = crate::groups::managed_by(&state.db, session.account).await?;

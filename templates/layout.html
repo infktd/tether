@@ -50,7 +50,6 @@
         {% call icons::icon("chevrons") %}{% endcall %}
       </button>
       <nav id="user-menu" class="user-menu" popover aria-label="Account">
-        <a href="/services" class="user-menu-item"{% if shell.active == "services" %} aria-current="page"{% endif %}>{% call icons::icon("message") %}{% endcall %} Services</a>
         <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
         <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
         <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">

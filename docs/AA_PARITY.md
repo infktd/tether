@@ -24,7 +24,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Permissions; Permissions Audit | Permissions; **Permissions Audit** | done |
 | Token Management | **Token Management** | done |
 | Notifications | same | done |
-| Services, Services Management; "Can access the Discord service" | **Services** page; `discord.access_discord` | done |
+| Services, Services Management; "Can access the Discord service" | **Services** page, a sidebar item (Account) for holders of `discord.access_discord`, as AA shows it to users with a service | done |
 | Name format config, `{character_name}`, `{corp_ticker}` ... | **Name Formatter**, AA's fields | done |
 | Corporation Stats: Mains, Members, Unregistered, Update Now | **Corporation Stats** | done |
 | Member Audit → Reports → User Compliance; Compliance Groups; Register Character | Compliance page, Compliant group, Register your characters | **Compliance Report**, **Compliance Group**, **Register Character** |
