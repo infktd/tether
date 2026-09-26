@@ -201,10 +201,12 @@ HTTP 403
 [Asserts]
 body contains "Cross-site request blocked"
 
-# The SSO endpoints before setup: login isn't configured yet, and a bare
-# callback is rejected.
+# The SSO endpoints before setup: login isn't configured yet (the login
+# page explains and links to the wizard), and a bare callback is rejected.
 GET {{base}}/auth/login
-HTTP 503
+HTTP 303
+[Asserts]
+header "Location" == "/login"
 
 GET {{base}}/auth/callback
 HTTP 400

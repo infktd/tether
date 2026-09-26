@@ -18,11 +18,12 @@ header "Strict-Transport-Security" exists
 body contains "Enter the setup token"
 body contains "action=\"/setup/unlock\""
 
+# Before the wizard has an EVE application, the login page points to it.
 GET {{base}}/login
 HTTP 200
 [Asserts]
-body contains "Log in with EVE Online"
-body contains "href=\"/auth/login\""
+body contains "isn't set up on this instance yet"
+body contains "href=\"/setup\""
 
 # Signed out: the Dashboard sends you to log in.
 GET {{base}}/dashboard

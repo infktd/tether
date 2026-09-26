@@ -95,7 +95,7 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 | N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure, fitted to the reverse proxy in use (port 80 is required only with Caddy) |
 | N4 | Platforms | Images for amd64 and arm64 |
 | N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only, when Caddy is the proxy; no other CA. With the admin's own nginx, Traefik or other proxy, certificates are that proxy's business, outside Tether), plus the hosts an instance's admin approves for each plugin (never these core ones). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
-| N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
+| N6 | Opsec | Admins sign in like everyone else: EVE SSO on the public domain, with no separate admin login, listener or private network. Admin pages and API endpoints are gated by permissions, checked on the server for every request |
 | N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (milestone 2, with the snapshots) |
 | N8 | Security | Plugins never receive tokens; on every ESI call the host checks the plugin's approved scopes and either that the character is a Member's, registered with the scope (user scopes), or an admin-approved data source |
 | N9 | Security | Each plugin's database role is limited to its own schema, with a statement timeout |
@@ -204,7 +204,7 @@ Plugin crates (`plugin-host`, `plugin-sdk`, `wit/`) are added in milestone 2. Th
 - [x] Discord role sync for tiers and groups, and the nickname template, through the job queue with retries (including taking back a role whose mapping was removed)
 - [x] Fleet pings to Discord channels with role targeting
 - [x] Admin dashboard: ESI health, job queue, error budget, audit log, available platform updates (switchable off)
-- [x] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor` (admin routes on a separate listener, N6, moved to the pre-launch checklist)
+- [x] Opsec: one outbound HTTP client enforcing the allowed destinations, checked by `doctor` (N6 later changed: admins sign in through EVE SSO like everyone else, with admin pages gated by permissions; no separate admin listener)
 
 **Milestone 2 tasks, in order**
 
@@ -261,7 +261,6 @@ Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from AR
 - [ ] Caddy obtains a Let's Encrypt certificate for the domain (or, with `--proxy nginx`/`traefik`, the admin's proxy serves one)
 - [ ] `doctor` passes on the VPS, including DNS, ports 80 and 443, TLS and the public URL checks; confirm ports from outside too, since `doctor` checks from the server itself
 - [ ] Milestone 1's "ESI error budget never exceeded in a week of staging": run a staging instance for a week and review the dashboard
-- [ ] Admin routes on a private interface such as Tailscale (N6), deferred from milestone 1 until the VPS and Tailscale setup are real. The catch: EVE SSO only returns to the one registered callback on the public domain, and session cookies are per host. Options: a separate admin listener with a one-time login hand-off from the public site, or admin pages refusing clients outside configured private networks (admins reach the normal domain over Tailscale)
 
 ## Open questions
 

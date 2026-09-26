@@ -66,3 +66,12 @@ GET {{base}}/setup
 HTTP 200
 [Asserts]
 body contains "Log in as the owner"
+
+# With an EVE application saved, the login page offers EVE login: the one
+# way in, for members and admins alike.
+GET {{base}}/login
+HTTP 200
+[Asserts]
+body contains "Log in with EVE Online"
+body contains "href=\"/auth/login\""
+body contains "Admins log in here too"

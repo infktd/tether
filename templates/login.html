@@ -1,6 +1,7 @@
 {% extends "bare.html" %}
 {% block title %}Log in{% endblock %}
 {% block content %}
+{% if sso_ready %}
 <section class="card">
   <header>
     <h2>Log in</h2>
@@ -9,8 +10,24 @@
   <section>
     <a href="/auth/login" class="btn w-full" data-variant="primary">Log in with EVE Online</a>
   </section>
+  <footer class="text-xs text-muted-foreground">Admins log in here too. Admin pages appear in the sidebar for whoever holds their permissions.</footer>
 </section>
 {% if !setup_complete %}
 <p class="text-xs text-muted-foreground">Setting up this instance? <a href="/setup" class="underline underline-offset-4">Open the setup wizard</a>.</p>
+{% endif %}
+{% else %}
+<section class="card">
+  <header>
+    <h2>Log in</h2>
+    <p>EVE Online login isn't set up on this instance yet.</p>
+  </header>
+  <section>
+    {% if setup_complete %}
+    <p class="text-sm text-muted-foreground">The instance's owner needs to connect its EVE application again.</p>
+    {% else %}
+    <a href="/setup" class="btn w-full" data-variant="primary">Open the setup wizard</a>
+    {% endif %}
+  </section>
+</section>
 {% endif %}
 {% endblock %}

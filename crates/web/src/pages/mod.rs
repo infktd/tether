@@ -272,6 +272,9 @@ pub async fn home(
 #[template(path = "login.html")]
 struct LoginPage {
     setup_complete: bool,
+    /// EVE SSO has a client id: until then the page points to the setup
+    /// wizard instead of a login that can't work.
+    sso_ready: bool,
 }
 
 /// `GET /login`
@@ -283,7 +286,16 @@ pub async fn login(
         return Ok(Redirect::to("/dashboard").into_response());
     }
     let setup_complete = accounts::owner_exists(&state.db).await?;
-    Ok(render(StatusCode::OK, &LoginPage { setup_complete }))
+    let sso_ready = tether_db::settings::get_string(&state.db, tether_db::settings::SSO_CLIENT_ID)
+        .await?
+        .is_some();
+    Ok(render(
+        StatusCode::OK,
+        &LoginPage {
+            setup_complete,
+            sso_ready,
+        },
+    ))
 }
 
 pub struct CharacterRow {

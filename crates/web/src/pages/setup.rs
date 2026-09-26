@@ -48,6 +48,12 @@ struct SetupPage {
     client_id: String,
     suggested: Option<Suggestion>,
     error: Option<String>,
+    /// This browser is signed in (the token step then explains why it
+    /// isn't the owner yet; the last step links onwards).
+    signed_in: bool,
+    /// Signed in with `admin.states` (the owner has it): the last step
+    /// links to Administration.
+    can_admin: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -98,6 +104,8 @@ async fn render_page(
         client_id,
         suggested: s.suggested,
         error: error.map(|e| e.message().to_owned()),
+        signed_in: session.is_some(),
+        can_admin: can_manage_states,
     };
     Ok(render(status, &page))
 }

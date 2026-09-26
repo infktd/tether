@@ -3,10 +3,19 @@ use axum::http::StatusCode;
 use sqlx::PgPool;
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn login_is_unavailable_until_sso_is_configured(db: PgPool) {
+async fn login_points_to_setup_until_sso_is_configured(db: PgPool) {
     let h = harness(db, false).await;
+    // No bare error: the login page explains, and links to the wizard
+    // instead of a login that can't work.
     let res = send(&h.app, get("/auth/login", &[])).await;
-    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(res.location(), "/login");
+    assert!(res.headers.get(axum::http::header::SET_COOKIE).is_none());
+    let page = send(&h.app, get("/login", &[])).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("isn't set up on this instance yet"));
+    assert!(page.body.contains(r#"href="/setup""#));
+    assert!(!page.body.contains(r#"href="/auth/login""#));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

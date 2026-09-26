@@ -27,6 +27,7 @@
   <header>
     <h2>Enter the setup token</h2>
     <p>It proves you run this server. It's <span class="num">SETUP_TOKEN</span> in <span class="num">deploy/.env</span>, and it's printed in the app's startup logs.</p>
+    {% if signed_in %}<p>You're signed in, but nobody owns this instance yet: the owner is whoever logs in from a browser that entered the token. Enter it, then log in again on the next step.</p>{% endif %}
   </header>
   <section class="grid gap-2">
     <label class="label" for="token">Setup token</label>
@@ -117,9 +118,18 @@
 <section class="card">
   <header>
     <h2>Setup is complete</h2>
-    <p>Members can log in now. States, groups and permissions are managed by admins.</p>
+    <p>Members can log in now. Admins log in the same way, with EVE Online, and find the admin pages in the sidebar; who sees them is set by permissions.</p>
   </header>
-  <footer><a href="/" class="btn" data-variant="primary">Continue</a></footer>
+  <footer class="gap-2">
+    {% if can_admin %}
+    <a href="/admin" class="btn" data-variant="primary">Open Administration</a>
+    <a href="/dashboard" class="btn" data-variant="outline">Dashboard</a>
+    {% else if signed_in %}
+    <a href="/dashboard" class="btn" data-variant="primary">Continue</a>
+    {% else %}
+    <a href="/auth/login" class="btn" data-variant="primary">Log in with EVE Online</a>
+    {% endif %}
+  </footer>
 </section>
 {% endmatch %}
 {% endblock %}

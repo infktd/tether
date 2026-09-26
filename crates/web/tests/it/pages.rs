@@ -60,6 +60,7 @@ async fn login_page(db: PgPool) {
     assert_eq!(res.status, StatusCode::OK);
     assert!(res.body.contains(r#"href="/auth/login""#));
     assert!(res.body.contains("Log in with EVE Online"));
+    assert!(res.body.contains("Admins log in here too"));
     assert_only_allowed_external_urls(&res.body);
 
     let token = log_in_owner(&h, "196379789:Chribba").await;
@@ -241,6 +242,32 @@ async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
     assert_eq!(chosen.location(), "/setup");
     let page = send(&h.app, get("/setup", &[(SESSION, &owner)])).await;
     assert!(page.body.contains("Setup is complete"));
+    // Onwards: the owner to Administration; anyone signed out to the same
+    // EVE login everyone uses (no separate admin login).
+    assert!(page.body.contains(r#"href="/admin""#), "{}", page.body);
+    let page = send(&h.app, get("/setup", &[])).await;
+    assert!(page.body.contains("Setup is complete"));
+    assert!(page.body.contains(r#"href="/auth/login""#), "{}", page.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_login_without_the_setup_token_is_told_how_to_become_owner(db: PgPool) {
+    let h = harness(db, true).await;
+    // Logged in from a browser that never entered the setup token (or
+    // whose setup session ended): a plain account, not the owner.
+    let token = log_in_as(&h, "196379789:Chribba", None).await;
+    assert_eq!(me(&h, &token).await["is_owner"], false);
+    let page = send(&h.app, get("/setup", &[(SESSION, &token)])).await;
+    assert!(page.body.contains("Enter the setup token"));
+    assert!(
+        page.body.contains("nobody owns this instance yet"),
+        "{}",
+        page.body
+    );
+
+    // With the token entered, logging in again claims it.
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    assert_eq!(me(&h, &owner).await["is_owner"], true);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

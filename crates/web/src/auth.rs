@@ -33,12 +33,21 @@ pub struct LoginQuery {
     return_to: Option<String>,
 }
 
-/// `GET /auth/login`: start an EVE SSO login.
+/// `GET /auth/login`: start an EVE SSO login (to the login page while EVE
+/// SSO isn't configured yet).
 pub async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
     Query(query): Query<LoginQuery>,
 ) -> Result<Response, AppError> {
+    // Nothing to log in with yet: the login page says so and points to
+    // the setup wizard, rather than a bare error.
+    if settings::get_string(&state.db, settings::SSO_CLIENT_ID)
+        .await?
+        .is_none()
+    {
+        return Ok(Redirect::to("/login").into_response());
+    }
     let return_to = safe_return_to(query.return_to.as_deref());
     start_login(&state, jar, &return_to, db::Purpose::Login, &[], None).await
 }
