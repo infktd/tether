@@ -2,6 +2,8 @@
 
 This is the guide for anyone (person or AI agent) building a plugin with `tether-plugin-sdk`. The machine-readable contract is `wit/plugin.wit` in the Tether repository; this file explains how to use it.
 
+The SDK and the app interface (`wit/plugin.wit`) are licensed under MIT or Apache-2.0, at your option, so your app can use any license you choose. Tether itself is GPL-2.0-or-later.
+
 ## What a plugin is
 
 A Rust library compiled to a WebAssembly component. Tether loads it at runtime, with no restart, and calls it inside a sandbox. A plugin:

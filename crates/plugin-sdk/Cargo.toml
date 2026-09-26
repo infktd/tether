@@ -2,7 +2,9 @@
 name = "tether-plugin-sdk"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+# The SDK and the app interface (wit/) are permissive, so apps can use any
+# license; Tether itself is GPL-2.0-or-later.
+license = "MIT OR Apache-2.0"
 rust-version.workspace = true
 publish.workspace = true
 description = "Build Tether plugins: the host API bindings, page builders and logging."

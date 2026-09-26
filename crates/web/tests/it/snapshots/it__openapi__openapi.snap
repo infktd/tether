@@ -8,7 +8,8 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
     "title": "Tether API",
     "description": "JSON API for bots, scripts and testing. The browser UI uses HTML over htmx instead.",
     "license": {
-      "name": ""
+      "name": "GPL-2.0-or-later",
+      "identifier": "GPL-2.0-or-later"
     },
     "version": "0.1.0"
   },
