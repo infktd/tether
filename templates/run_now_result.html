@@ -1,0 +1,2 @@
+{#- What Run now did, swapped in place of its button (htmx). -#}
+{% if queued %}<span class="text-sm text-muted-foreground" role="status">Queued</span>{% else %}<span class="text-sm text-destructive" role="status">{{ message }}</span>{% endif %}

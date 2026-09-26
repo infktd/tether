@@ -418,4 +418,18 @@ async fn schedules_run_now_from_the_system_page(db: PgPool) {
     assert_eq!(audited, 1);
     let page = page(&h, "/admin/system", &owner).await.body;
     assert!(page.contains("/admin/system/schedules/affiliation.sync/run"));
+    assert!(page.contains(r#"hx-target="this" hx-swap="outerHTML""#));
+
+    // From the page (htmx): a fragment for the button's place, no reload.
+    let mut req = form("/admin/system/schedules/affiliation.sync/run", "", &owner);
+    req.headers_mut()
+        .insert("hx-request", "true".parse().unwrap());
+    let swapped = send(&h.app, req).await;
+    assert_eq!(swapped.status, StatusCode::OK);
+    assert!(!swapped.body.contains("<html"), "{}", swapped.body);
+    assert!(
+        swapped.body.contains("still queued or running"),
+        "{}",
+        swapped.body
+    );
 }

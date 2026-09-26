@@ -276,19 +276,43 @@ pub(crate) async fn run_schedule(
     Ok(())
 }
 
+#[derive(askama::Template)]
+#[template(path = "run_now_result.html")]
+struct RunNowResult<'a> {
+    queued: bool,
+    message: &'a str,
+}
+
+/// Run now's answer to htmx: swapped in place of the button, so the page
+/// isn't reloaded.
+pub(crate) fn run_now_fragment(result: &Result<(), AppError>) -> Response {
+    let (queued, message) = match result {
+        Ok(()) => (true, ""),
+        Err(err) => (false, err.message()),
+    };
+    super::render(StatusCode::OK, &RunNowResult { queued, message })
+}
+
 /// `POST /admin/system/schedules/{name}/run`: one of Tether's own
 /// schedules (apps' are run from their pages).
 pub async fn run_now(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    headers: axum::http::HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
-    if name.starts_with("plugin:") {
-        let err = AppError::bad_request("Run an app's schedules from its page.");
-        return system_page(&state, shell, Some(err)).await;
+    let result = if name.starts_with("plugin:") {
+        Err(AppError::bad_request(
+            "Run an app's schedules from its page.",
+        ))
+    } else {
+        run_schedule(&state, session.account, &name).await
+    };
+    if super::is_htmx(&headers) {
+        return Ok(run_now_fragment(&result));
     }
-    match run_schedule(&state, session.account, &name).await {
+    match result {
         Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
         Err(err) => system_page(&state, shell, Some(err)).await,
     }

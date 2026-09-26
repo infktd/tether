@@ -1229,12 +1229,17 @@ pub async fn uninstall(
 pub async fn run_schedule(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    headers: axum::http::HeaderMap,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
     let id = plugin_id(&id)?;
     let full = tether_db::plugin_jobs::schedule_name(id, &name);
-    match super::system::run_schedule(&state, session.account, &full).await {
+    let result = super::system::run_schedule(&state, session.account, &full).await;
+    if super::is_htmx(&headers) {
+        return Ok(super::system::run_now_fragment(&result));
+    }
+    match result {
         Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         Err(err) => plugin_page(&state, shell, id, Some(err)).await,
     }
