@@ -10,6 +10,7 @@ members = [
     "examples/hello-plugin",
     "plugins/moon-mining",
     "plugins/member-audit",
+    "plugins/fleet-activity-tracking",
 ]
 
 [workspace.package]

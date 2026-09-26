@@ -1223,6 +1223,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fleet-activity-tracking"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tether-plugin-sdk",
+]
+
+[[package]]
 name = "flume"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

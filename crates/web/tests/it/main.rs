@@ -11,6 +11,7 @@ mod compliance;
 mod dashboard;
 mod dev_login;
 mod discord;
+mod fleet_activity_tracking;
 mod groups;
 mod jobs;
 mod maintenance;

@@ -1,0 +1,45 @@
+# Fleet Activity Tracking, a first-party Tether plugin. `scripts/package-plugin.sh`
+# builds, zips and signs it, putting the publisher's key in below.
+[plugin]
+id = "tether.fleet-activity-tracking"
+name = "Fleet Activity Tracking"
+version = "0.1.0"
+host_api = "1"
+description = "FAT links for fleets, with fleet types and expiry; attendance statistics per alliance, corporation, pilot and month."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# Clears out old logs.
+[[capabilities.schedules]]
+name = "housekeeping"
+every = "1d"
+
+# aa-afat's permissions. Grant Member basic_access; FCs add_fatlink;
+# fleet officers manage_afat; leadership the statistics and logs.
+[permissions]
+basic_access = "Can access Fleet Activity Tracking: register FATs and see your own"
+add_fatlink = "Can create FAT links, and change the ones you created"
+manage_afat = "Can manage Fleet Activity Tracking: every FAT link, manual FATs, deleting, fleet types"
+stats_corporation_own = "Can see own corporation statistics"
+stats_corporation_other = "Can see statistics of other corporations and of alliances"
+logs_view = "Can view the app's logs"
+
+[[pages]]
+path = ""
+permission = "basic_access"
+
+[[pages]]
+path = "fleet-types"
+permission = "manage_afat"
+
+[[pages]]
+path = "logs"
+permission = "logs_view"
+
+[[navigation]]
+label = "Fleet Activity Tracking"
+path = ""
