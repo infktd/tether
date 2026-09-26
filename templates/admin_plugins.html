@@ -33,10 +33,27 @@
   </section>
   {% endif %}
 
+  {% if github %}
+  <form class="card" method="post" action="/admin/plugin-github">
+    <header><h2>Install from GitHub</h2><p>Tether reads the repository's releases and fetches the newest <span class="num">&lt;app id&gt;-&lt;version&gt;.zip</span> with its <span class="num">.minisig</span>, then checks it like an upload. Nothing is installed until you approve it on the next page. Its updates are looked for there once a day while update checks are on.</p></header>
+    <section class="grid gap-4 max-w-md">
+      <div class="grid gap-2">
+        <label class="label" for="repo">Repository</label>
+        <input class="input" id="repo" name="repo" placeholder="https://github.com/owner/name" autocomplete="off" required>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="app">App id <span class="text-muted-foreground font-normal">(only if it publishes several)</span></label>
+        <input class="input" id="app" name="app" placeholder="nmu.moon-mining" autocomplete="off">
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Fetch and check</button></footer>
+  </form>
+  {% endif %}
+
   <section class="card data-card">
     <header><h2>Installed <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2></header>
     {% if plugins.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet. Upload one below.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet. {% if github %}Install one from GitHub below.{% else %}Upload one below.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Installed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
@@ -55,37 +72,25 @@
     {% endif %}
   </section>
 
-  {% if github %}
-  <form class="card" method="post" action="/admin/plugin-github">
-    <header><h2>Install from GitHub</h2><p>Tether reads the repository's releases and fetches the newest <span class="num">&lt;app id&gt;-&lt;version&gt;.zip</span> with its <span class="num">.minisig</span>, then checks it like an upload. Nothing is installed until you approve it on the next page. Its updates are looked for there once a day while update checks are on.</p></header>
-    <section class="grid gap-4 max-w-md">
-      <div class="grid gap-2">
-        <label class="label" for="repo">Repository</label>
-        <input class="input" id="repo" name="repo" placeholder="https://github.com/owner/name" autocomplete="off" required>
-      </div>
-      <div class="grid gap-2">
-        <label class="label" for="app">App id <span class="text-muted-foreground font-normal">(only if it publishes several)</span></label>
-        <input class="input" id="app" name="app" placeholder="nmu.moon-mining" autocomplete="off">
-      </div>
-    </section>
-    <footer><button type="submit" class="btn" data-variant="primary">Fetch and check</button></footer>
-  </form>
-  {% endif %}
 
-  <form class="card" method="post" action="/admin/plugins" enctype="multipart/form-data" hx-boost="false">
-    <header><h2>Upload an app</h2><p>The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig). Nothing is installed until you approve it on the next page. A newer version of an installed app upgrades it, after you review what changed.</p></header>
-    <section class="grid gap-4 max-w-md">
-      <div class="grid gap-2">
-        <label class="label" for="package">Package</label>
-        <input class="input" id="package" name="package" type="file" accept=".zip,application/zip" required>
+
+  <details class="card install-file"{% if !github %} open{% endif %}>
+    <summary>Install from a file <span class="text-muted-foreground font-normal">(for app developers)</span></summary>
+    <form method="post" action="/admin/plugins" enctype="multipart/form-data" hx-boost="false" class="grid gap-4 px-5 pb-5">
+      <p class="text-sm text-muted-foreground">The package (.zip, at most {{ max_mib }} MiB) and its minisign signature (.minisig), for a build that isn't published yet. Nothing is installed until you approve it on the next page. A newer version of an installed app upgrades it, after you review what changed.</p>
+      <div class="grid gap-4 max-w-md">
+        <div class="grid gap-2">
+          <label class="label" for="package">Package</label>
+          <input class="input" id="package" name="package" type="file" accept=".zip,application/zip" required>
+        </div>
+        <div class="grid gap-2">
+          <label class="label" for="signature">Signature</label>
+          <input class="input" id="signature" name="signature" type="file" accept=".minisig" required>
+        </div>
       </div>
-      <div class="grid gap-2">
-        <label class="label" for="signature">Signature</label>
-        <input class="input" id="signature" name="signature" type="file" accept=".minisig" required>
-      </div>
-    </section>
-    <footer><button type="submit" class="btn" data-variant="primary">Upload and check</button></footer>
-  </form>
+      <div><button type="submit" class="btn" data-variant="{% if github %}outline{% else %}primary{% endif %}">Upload and check</button></div>
+    </form>
+  </details>
 
   {% if !pins.is_empty() %}
   <section class="card data-card">

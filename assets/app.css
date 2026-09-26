@@ -330,6 +330,22 @@
     @apply inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-foreground-soft;
   }
 
+  /* A card that opens: its summary is the header. */
+  .install-file > summary {
+    @apply flex cursor-pointer list-none items-center gap-1 px-5 py-4 text-[15px] font-semibold;
+  }
+  .install-file > summary::-webkit-details-marker {
+    display: none;
+  }
+  .install-file > summary::before {
+    content: "";
+    @apply mr-2 size-2 border-r border-b border-muted-foreground transition-transform duration-150;
+    transform: rotate(-45deg);
+  }
+  .install-file[open] > summary::before {
+    transform: rotate(45deg);
+  }
+
   /* A thin neutral line across the top of the page while a request runs:
      shown only after 150ms, so quick ones don't flicker. */
   .page-progress {
