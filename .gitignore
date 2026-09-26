@@ -5,3 +5,7 @@
 /dist
 # minisign secret keys never belong here
 *.key
+# Server blocks deploy/install.sh --proxy nginx writes for a domain
+/deploy/nginx-*.conf
+# install.sh rewriting .env (a copy of every secret while it runs)
+.env.??????

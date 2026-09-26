@@ -14,6 +14,12 @@ hurl --test --insecure --jobs 1 --variable base=https://localhost \
   --variable setup_token="$(sed -n 's/^SETUP_TOKEN=//p' deploy/.env)" tests/hurl/*.hurl
 ```
 
+Behind another proxy (`deploy/install.sh --proxy none|nginx|traefik`),
+point `base` at the domain that proxy serves; the tests send
+`Origin: {{base}}`, so it must match `https://DOMAIN`. For a proxy on
+another local port, keep `base=https://localhost` and add
+`--connect-to localhost:443:127.0.0.1:<port>`.
+
 Setup unlock is rate-limited to 5 attempts a minute per IP and the suite
 makes two, so a quick third run in the same minute hits a 429.
 

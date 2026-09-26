@@ -2,3 +2,5 @@ target
 tools
 .git
 **/.env
+deploy/nginx-*.conf
+**/.env.??????

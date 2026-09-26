@@ -6,7 +6,7 @@ A single Rust binary renders the web UI on the server, runs the ESI scheduler an
 
 ```mermaid
 flowchart LR
-    U[Browser] --> C[Caddy<br/>auto HTTPS]
+    U[Browser] --> C[Caddy, or the admin's<br/>nginx / Traefik<br/>HTTPS]
     C --> H[Host binary<br/>Rust + axum]
     H --> P[(Postgres<br/>+ TimescaleDB)]
     H --> W[Wasmtime<br/>plugins]
@@ -28,7 +28,7 @@ Plugins reach ESI, storage and Discord only through host functions, never direct
 | Job workers | ESI syncs and plugin background tasks | tokio tasks on a Postgres queue |
 | UI | Server-rendered pages, navigation, plugin pages | askama templates, Basecoat, htmx |
 | Database | Core data, per-plugin schemas, time series | Postgres 16+, TimescaleDB |
-| Reverse proxy | TLS, HTTP/2; certificates from Let's Encrypt only | Caddy |
+| Reverse proxy | TLS, HTTP/2; Caddy's certificates from Let's Encrypt only | Caddy by default; or the admin's nginx, Traefik or other proxy |
 
 ## Plugin model
 
@@ -192,7 +192,7 @@ Built into the host, not a plugin. REST only (twilight-http): no gateway connect
 
 ## Deployment
 
-Three containers: host, Postgres, Caddy. Images for amd64 and arm64.
+Host and Postgres containers, plus Caddy by default. Images for amd64 and arm64. `deploy/install.sh` writes `.env` and starts the stack; `deploy/README.md` walks through each proxy.
 
 ```yaml
 services:
@@ -215,11 +215,17 @@ volumes:
   pgdata:
 ```
 
-- `.env` holds only the domain, a generated database password, a generated setup token and a generated encryption key (for tokens and secrets at rest; it never enters the database). Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
+- Reverse proxy, chosen at install (`install.sh --proxy`, stored as `TETHER_PROXY` in `.env`):
+  - `caddy` (default): the file above on its own. Caddy terminates TLS with Let's Encrypt certificates and is the only way in; the app's port isn't published.
+  - `nginx`: the admin's nginx on the host. `COMPOSE_FILE` in `.env` adds `docker-compose.host-proxy.yml`, which publishes the app on `127.0.0.1:TETHER_PORT` and gives Caddy a profile nobody enables. install.sh writes a server block for the domain (forwarded headers, unbuffered server-sent events, a 41 MiB body limit, no security headers since the app sends them) and, as root, installs it, runs `nginx -t` and reloads. Certificates are the admin's (certbot).
+  - `traefik`: the admin's Traefik in Docker. `docker-compose.traefik.yml` attaches the app to Traefik's external network with router labels (domain, entry point, certificate resolver) and turns Caddy off. Nothing is published on the host.
+  - `none`: the admin's own proxy, pointed at `127.0.0.1:TETHER_PORT` (the host-proxy override), with the requirements listed in `deploy/README.md`.
+- Behind any of them, the public URL is `https://DOMAIN` (fixed, not taken from request headers), so cookies, the SSO callback and the same-origin check don't depend on the proxy. The client's address, used to rate-limit the setup wizard, is the last `X-Forwarded-For` entry, believed only when the connection comes from a loopback or private address: the proxy on Caddy's or Traefik's network, or through Docker's forwarding of the 127.0.0.1 port. A public peer is a client reaching the app directly, and its own address is used.
+- `.env` holds only the domain, a generated database password, a generated setup token, a generated encryption key (for tokens and secrets at rest; it never enters the database) and the proxy settings. Everything else is set in the first-run web wizard, which shows the exact EVE callback URL to register and tests it.
 - The wizard's first step requires the setup token, which is also printed to the logs at startup as a fallback. Once an owner exists the wizard is disabled permanently and the token is ignored.
-- `doctor` checks DNS, external reachability of 80 and 443, TLS, database, ESI credentials and callback match, and the Discord token, printing a fix for each failure.
+- `doctor` checks DNS, external reachability of 80 and 443, TLS, database, ESI credentials and callback match, and the Discord token, printing a fix for each failure. It reads `TETHER_PROXY`: it says who terminates TLS, requires port 80 only with Caddy, and points its TLS fixes at Caddy's logs, certbot, Traefik's resolver or the admin's proxy.
 - Upgrades: change the image tag and restart. Migrations run after an automatic snapshot; rollback is the previous tag plus that snapshot: `docker compose stop app`, `docker compose run --rm app rollback`, set the tag back, `docker compose up -d`.
-- Volumes: `pgdata` (Postgres), `snapshots` (encrypted snapshots and backups, `/var/lib/tether/snapshots` in the app), and Caddy's two. Snapshots are only as safe as `ENCRYPTION_KEY`: keep a copy of it apart from the backups.
+- Volumes: `pgdata` (Postgres), `snapshots` (encrypted snapshots and backups, `/var/lib/tether/snapshots` in the app), and Caddy's two (unused with another proxy). Snapshots are only as safe as `ENCRYPTION_KEY`: keep a copy of it apart from the backups.
 - Admin routes can be bound to a private interface such as Tailscale.
 
 ## Testing without a frontend

@@ -1,0 +1,44 @@
+# Override for the Traefik you already run in Docker (TETHER_PROXY=traefik),
+# instead of the bundled Caddy. deploy/install.sh adds it through
+# COMPOSE_FILE in deploy/.env; see the top of docker-compose.yml.
+#
+# Traefik terminates TLS with its own certificate resolver (outside
+# Tether) and reaches the app over a Docker network they share. Nothing is
+# published on the host. Set in deploy/.env:
+#
+#   TRAEFIK_NETWORK       the external network Traefik is attached to
+#   TRAEFIK_CERTRESOLVER  the certificate resolver's name in Traefik's
+#                         static configuration
+#   TRAEFIK_ENTRYPOINT    the HTTPS entry point (default websecure)
+#
+# Traefik needs its Docker provider on, watching this network. With
+# `exposedByDefault=false` the traefik.enable label below opts the app in.
+services:
+  app:
+    networks:
+      - default
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:?TRAEFIK_NETWORK must be set in .env}
+      traefik.http.routers.tether.rule: "Host(`${DOMAIN}`)"
+      traefik.http.routers.tether.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.tether.tls: "true"
+      traefik.http.routers.tether.tls.certresolver: ${TRAEFIK_CERTRESOLVER:?TRAEFIK_CERTRESOLVER must be set in .env}
+      traefik.http.services.tether.loadbalancer.server.port: "8080"
+      # Traefik streams server-sent events (/notifications/stream) as they
+      # come and has no request body limit (app uploads are up to 41 MiB;
+      # the entry point's respondingTimeouts.readTimeout bounds how long
+      # one may take). It replaces a client's own X-Forwarded-For unless
+      # forwardedHeaders.trustedIPs trusts that client. Tether sends its
+      # own security headers; add no headers middleware for them. A second
+      # Tether behind the same Traefik needs other router and service names.
+
+  # Off: a profile nobody enables.
+  caddy:
+    profiles: [caddy]
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:?TRAEFIK_NETWORK must be set in .env}

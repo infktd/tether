@@ -1,6 +1,27 @@
 name: tether
 
 # Variables come from deploy/.env, written by deploy/install.sh.
+#
+# Reverse proxy. This file on its own is the default: the bundled Caddy
+# container below terminates TLS with Let's Encrypt certificates and is the
+# only way in (the app's port isn't published). To use a proxy you already
+# run instead, deploy/install.sh --proxy nginx|traefik|none sets these in
+# deploy/.env (or set them yourself):
+#
+#   TETHER_PROXY=nginx     # or none: any proxy of yours on this host
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.host-proxy.yml
+#   TETHER_PORT=8080       # the app on 127.0.0.1:8080 only; Caddy off
+#
+#   TETHER_PROXY=traefik   # your Traefik, in Docker
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml
+#   TRAEFIK_NETWORK=...    # see docker-compose.traefik.yml; Caddy off
+#
+# COMPOSE_FILE only applies when docker compose runs in this directory, as
+# install.sh does: `up` with `-f docker-compose.yml` would leave the
+# override out (exec, logs and the like are fine either way). After
+# switching away from Caddy, `docker compose --profile caddy rm -sf caddy`
+# removes its container (install.sh does that). deploy/README.md has each
+# option.
 services:
   app:
     build:
@@ -9,6 +30,8 @@ services:
     image: ${TETHER_IMAGE:-tether:local}
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN must be set in .env}
+      # For `tether doctor`: which proxy's checks and fixes apply.
+      TETHER_PROXY: ${TETHER_PROXY:-caddy}
       SETUP_TOKEN: ${SETUP_TOKEN:?SETUP_TOKEN must be set in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env; re-run deploy/install.sh to add it}
       DATABASE_URL: postgres://tether:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/tether
@@ -46,6 +69,8 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # The default proxy. The override files for the other choices give it a
+  # profile nobody enables, which turns it off.
   caddy:
     image: caddy:2.11
     ports:

@@ -90,11 +90,11 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 
 | ID | Area | Requirement |
 | --- | --- | --- |
-| N1 | Install | Three containers: host, Postgres, Caddy. `.env` holds only the domain, a generated database password, a generated setup token and a generated encryption key |
+| N1 | Install | Two containers, host and Postgres, plus Caddy unless the admin chose their own reverse proxy (nginx on the host, Traefik in Docker, or any other) at install. `.env` holds only the domain, a generated database password, a generated setup token, a generated encryption key and the reverse proxy choice |
 | N2 | Install | Core migrations run automatically on startup; no manual migrate, collect or create-user steps |
-| N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure |
+| N3 | Install | `doctor` checks DNS, ports 80 and 443 from outside, TLS, database, ESI credentials and callback, Discord token, and prints a fix for each failure, fitted to the reverse proxy in use (port 80 is required only with Caddy) |
 | N4 | Platforms | Images for amd64 and arm64 |
-| N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only; no other CA), plus the hosts an instance's admin approves for each plugin (never these core ones). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
+| N5 | Opsec | Outbound calls only to ESI, EVE SSO, CCP's image server, Discord, GitHub (plugin installs and update checks) and Let's Encrypt (Caddy's certificates only, when Caddy is the proxy; no other CA. With the admin's own nginx, Traefik or other proxy, certificates are that proxy's business, outside Tether), plus the hosts an instance's admin approves for each plugin (never these core ones). No telemetry or CDNs; fonts and assets are bundled; update checks can be turned off. Exception: dev-only tooling (such as Scalar at `/docs`) may load from a CDN, because it is compiled out of release builds |
 | N6 | Opsec | Admin routes can be bound to a separate private interface, such as Tailscale |
 | N7 | Security | Refresh tokens and secrets encrypted at rest (key from `.env`, never stored in the database); backups encrypted (milestone 2, with the snapshots) |
 | N8 | Security | Plugins never receive tokens; on every ESI call the host checks the plugin's approved scopes and either that the character is a Member's, registered with the scope (user scopes), or an admin-approved data source |
@@ -121,7 +121,7 @@ Rust for the host and the server-rendered UI, WASM for v1 plugins. The plugin ru
 | API spec | OpenAPI generated with utoipa, served with Scalar in dev | Documents the JSON API for bots, scripts and testing |
 | Frontend | Server-rendered Rust templates (askama) with Basecoat components and htmx; CSS built with Tailwind's standalone CLI | One binary, no JS framework or npm, shadcn look per docs/DESIGN.md |
 | Discord | In-process, REST only (twilight-http); no gateway connection | One process, retries through the job queue; members join through OAuth linking, and ESI alone drives role changes |
-| TLS | Caddy with automatic certificates | Zero-config HTTPS |
+| TLS | Caddy with automatic certificates by default; the admin's nginx, Traefik or other proxy instead, chosen at install | Zero-config HTTPS, without a second proxy where one already runs |
 | Build speed | Cargo workspace split by crate, mold linker on Linux, sccache; Cranelift only as an optional nightly extra | Keeps incremental builds fast as the codebase grows |
 
 ## Milestones and acceptance criteria
@@ -160,7 +160,7 @@ alliance-platform/
   migrations/
   templates/  # askama templates: Basecoat markup + htmx
   assets/     # Tailwind input, vendored Basecoat CSS, htmx, fonts, icons
-  deploy/     # Dockerfile, docker-compose.yml, Caddyfile
+  deploy/     # Dockerfile, docker-compose.yml (+ proxy overrides), Caddyfile, install.sh
   tests/hurl/ # API smoke tests
   docs/       # PRD, architecture, spike report
   CLAUDE.md
@@ -255,9 +255,10 @@ Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from AR
 
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
 
+- [x] Reverse proxy choice at install (N1): `deploy/install.sh --proxy caddy|nginx|traefik|none`, asked interactively. Caddy stays the default; nginx gets a generated server block (installed and reloaded when run as root), Traefik gets labels on its network, `none` publishes the app on 127.0.0.1 with documented requirements (`deploy/README.md`). X-Forwarded-For is believed only from loopback and private peers; `doctor` fits its checks to the proxy; CI starts the image through compose without Caddy and checks `/health`
 - [ ] Fresh VPS with a real domain: `deploy/install.sh <domain>`, then only the browser wizard; no other shell commands
 - [ ] Register the production callback URL (`https://<domain>/auth/callback`) on the EVE application
-- [ ] Caddy obtains a Let's Encrypt certificate for the domain
+- [ ] Caddy obtains a Let's Encrypt certificate for the domain (or, with `--proxy nginx`/`traefik`, the admin's proxy serves one)
 - [ ] `doctor` passes on the VPS, including DNS, ports 80 and 443, TLS and the public URL checks; confirm ports from outside too, since `doctor` checks from the server itself
 - [ ] Milestone 1's "ESI error budget never exceeded in a week of staging": run a staging instance for a week and review the dashboard
 - [ ] Admin routes on a private interface such as Tailscale (N6), deferred from milestone 1 until the VPS and Tailscale setup are real. The catch: EVE SSO only returns to the one registered callback on the public domain, and session cookies are per host. Options: a separate admin listener with a one-time login hand-off from the public site, or admin pages refusing clients outside configured private networks (admins reach the normal domain over Tailscale)

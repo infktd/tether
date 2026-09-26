@@ -1,0 +1,20 @@
+# Override for a reverse proxy of your own on this host (TETHER_PROXY=nginx
+# or none), instead of the bundled Caddy. deploy/install.sh adds it through
+# COMPOSE_FILE in deploy/.env; see the top of docker-compose.yml.
+#
+# Your proxy terminates TLS for https://DOMAIN (its certificates are yours,
+# outside Tether) and forwards to http://127.0.0.1:TETHER_PORT.
+# deploy/README.md lists what it must pass on; install.sh --proxy nginx
+# writes a ready nginx server block.
+services:
+  app:
+    ports:
+      # Loopback only: nothing but this host reaches the app directly.
+      # Tether believes X-Forwarded-For only from loopback and private
+      # addresses (your proxy, through Docker's bridge), never from a
+      # public one.
+      - "127.0.0.1:${TETHER_PORT:-8080}:8080"
+
+  # Off: a profile nobody enables.
+  caddy:
+    profiles: [caddy]
