@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.group_id, a.config_id, a.kind, a.entity_id\n        FROM core.autogroup_groups a\n        JOIN core.group_members m ON m.group_id = a.group_id\n        WHERE m.account_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_groups",
+            "name": "group_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "config_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_groups",
+            "name": "config_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_groups",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "entity_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_groups",
+            "name": "entity_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9210eda49cc88a5bed05a5a44dac2db942ff1b04c0261a275307016e60604b5c"
+}

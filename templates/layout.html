@@ -68,6 +68,9 @@
         <a href="/admin/groups" class="nav-item"{% if shell.active == "admin_groups" %} aria-current="page"{% endif %}>
           {% call icons::icon("users") %}{% endcall %} Groups
         </a>
+        <a href="/admin/autogroups" class="nav-item"{% if shell.active == "autogroups" %} aria-current="page"{% endif %}>
+          {% call icons::icon("layers") %}{% endcall %} Auto Groups
+        </a>
         {% endif %}
         {% if shell.nav.permissions %}
         <a href="/admin/permissions" class="nav-item"{% if shell.active == "permissions" %} aria-current="page"{% endif %}>

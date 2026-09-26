@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod assets;
+pub mod autogroups;
 pub mod compliance;
 pub mod discord;
 pub mod groups;

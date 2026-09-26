@@ -159,6 +159,11 @@ pub(crate) async fn evaluate_in(
         )
         .await?;
     }
+    // Auto Groups: the main's corporation and alliance groups, for the
+    // states a config covers. One that doesn't exist yet waits for the
+    // hourly sync, which creates it (never queued from here: one missing
+    // group mustn't keep full syncs running).
+    crate::autogroups::reconcile_in(&mut *tx, account, state, main, active).await?;
     // Compliance groups (Member Audit's): the compliant accounts of their
     // allowed states, never Guest.
     for (group, allowed) in tether_db::groups::compliance_groups(&mut *tx).await? {

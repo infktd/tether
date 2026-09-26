@@ -28,7 +28,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Name format config, `{character_name}`, `{corp_ticker}` ... | **Name Formatter**, AA's fields | done |
 | Corporation Stats: Mains, Members, Unregistered, Update Now | Corp Stats, inside Compliance | Own page **Corporation Stats**, AA's tabs |
 | Member Audit → Reports → User Compliance; Compliance Groups; Register Character | Compliance page, Compliant group, Register your characters | **Compliance Report**, **Compliance Group**, **Register Character** |
-| Auto Groups | none | Build |
+| Auto Groups | **Auto Groups** (Admin) | done |
 | Fleet Pings (aa-fleetpings) | Pings | Rename to **Fleet Pings** |
 | Moon Mining (aa-moonmining): Moons, Extractions, Reports, Add Corporation | Moon Tracker (planned plugin) | Rename the plugin to **Moon Mining**, with AA's pages |
 | Member Audit: My Characters, Character Sheet, Character Finder, Reports, Skill Sets | Member Audit plugin, same names | done |
@@ -72,7 +72,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 
 | AA app | Tether | Status |
 | --- | --- | --- |
-| Auto Groups | none | missing: core |
+| Auto Groups | Admin → Auto Groups: per-state configs, corporation and alliance groups, prefix, name or ticker, space replacement; groups are Internal and kept by Tether; a config's groups go with it | done; stricter than AA, it never takes over an existing group of the same name |
 | Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corp Stats: unregistered members per corporation, daily | partial: core |
 | Permissions Audit | Permissions page lists grants | missing: core ("who has this permission") |
 | Fleet Activity Tracking | none | planned: first-party plugin |

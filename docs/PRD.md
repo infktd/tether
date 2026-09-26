@@ -227,7 +227,7 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 - [x] Services and Name Formatter (F12, F23): a Services page; Discord access by permission (granted to Member and Blue by default), re-checked on state, permission and group changes; losing access kicks the member from the server and unlinks them (bot gains Kick Members), as does unlinking; an optional setting removes every unmapped role except Discord-managed roles and reserved names; the stored username refreshes daily; one name format per state with AA's fields and format specs, default `{character_name}`
 - [x] Moon Mining plugin (F21), brought forward from milestone 3 at Jay's request, with the Station Manager extraction planner
 - [x] Member Audit plugin (F20), brought forward from milestone 3 at Jay's request, under AA's page names
-- [ ] Auto Groups (F23): automatic corporation and alliance groups for chosen states (prefix, full name or ticker, space replacement)
+- [x] Auto Groups (F23): automatic corporation and alliance groups for chosen states (prefix, full name or ticker, space replacement)
 - [ ] Corporation Stats, AA parity (F11, F23): its own page with Mains, Members and Unregistered tabs, search, Update Now (checking the viewer may see that corporation), view permissions per corporation, alliance or state, and the source's owner notified when it stops working
 - [ ] Permissions Audit (F23): every permission with counts of states, groups and accounts holding it, and who
 - [ ] Users (F23), as AA's admin site Users: an admin page to find any account by character, see its characters, state, groups and permissions, and Deactivate or Reactivate it (`admin.users`; the API and CLI came with the login task)

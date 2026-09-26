@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Auto Groups{% endblock %}
+{% block breadcrumb %}Admin&nbsp;/&nbsp;<span class="text-foreground">Auto Groups</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Auto Groups</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">For the states you choose, a group for every main's corporation and alliance, kept up to date as pilots move. The groups are Internal: grant them permissions or Discord roles like any other. New groups appear within the hour.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% for c in configs %}
+  <form class="card" method="post" action="/admin/autogroups/{{ c.id }}">
+    <header><h2>Config {{ c.id }}</h2>{% if !c.groups.is_empty() %}<p>{{ c.groups.len() }} groups: {% for g in c.groups %}{{ g }}{% if !loop.last %}, {% endif %}{% endfor %}</p>{% endif %}</header>
+    <section class="grid gap-4">
+      {% let choices = &c.states %}{% let form_id = c.id.to_string() %}
+      {% let corp_groups = c.settings.corp_groups %}{% let corp_prefix = c.settings.corp_prefix.as_str() %}{% let corp_source = c.settings.corp_source.as_str() %}
+      {% let alliance_groups = c.settings.alliance_groups %}{% let alliance_prefix = c.settings.alliance_prefix.as_str() %}{% let alliance_source = c.settings.alliance_source.as_str() %}
+      {% let replace_spaces = c.settings.replace_spaces %}{% let replace_with = c.settings.replace_with.as_str() %}
+      {% include "admin_autogroups_form.html" %}
+    </section>
+    <footer class="flex justify-between">
+      <button type="submit" class="btn" data-variant="primary">Save</button>
+      <button type="submit" class="btn btn-destructive-outline" data-variant="outline" formaction="/admin/autogroups/{{ c.id }}/delete" hx-confirm="Delete this config and its {{ c.groups.len() }} groups? Their members lose what the groups granted.">{% call icons::icon("trash") %}{% endcall %} Delete</button>
+    </footer>
+  </form>
+  {% endfor %}
+
+  <form class="card" method="post" action="/admin/autogroups">
+    <header><h2>New config</h2></header>
+    <section class="grid gap-4">
+      {% let choices = &new_states %}{% let form_id = "new" %}
+      {% let corp_groups = true %}{% let corp_prefix = "Corp " %}{% let corp_source = "name" %}
+      {% let alliance_groups = false %}{% let alliance_prefix = "Alliance " %}{% let alliance_source = "name" %}
+      {% let replace_spaces = false %}{% let replace_with = "" %}
+      {% include "admin_autogroups_form.html" %}
+    </section>
+    <footer><button type="submit" class="btn" data-variant="primary">Add config</button></footer>
+  </form>
+</div>
+{% endblock %}

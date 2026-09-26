@@ -10,6 +10,7 @@ compile_error!("the dev-docs feature must never be enabled in release builds");
 pub mod admin;
 mod api;
 pub mod auth;
+pub mod autogroups;
 pub mod compliance;
 mod csrf;
 #[cfg(feature = "dev-login")]
@@ -119,6 +120,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/admin/groups",
             get(pages::admin::groups).post(pages::admin::create_group),
+        )
+        .route(
+            "/admin/autogroups",
+            get(pages::autogroups::index).post(pages::autogroups::create),
+        )
+        .route("/admin/autogroups/{id}", post(pages::autogroups::update))
+        .route(
+            "/admin/autogroups/{id}/delete",
+            post(pages::autogroups::delete),
         )
         .route("/admin/groups/settings", post(pages::admin::group_options))
         .route("/admin/groups/reserved", post(pages::admin::reserve))

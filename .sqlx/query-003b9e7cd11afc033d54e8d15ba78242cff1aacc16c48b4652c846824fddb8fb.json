@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.autogroup_config_states WHERE config_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "003b9e7cd11afc033d54e8d15ba78242cff1aacc16c48b4652c846824fddb8fb"
+}

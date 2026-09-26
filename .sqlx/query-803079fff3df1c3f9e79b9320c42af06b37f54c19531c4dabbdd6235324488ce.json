@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH gone AS (\n            DELETE FROM core.autogroup_groups a\n            WHERE NOT EXISTS (SELECT 1 FROM core.group_members m WHERE m.group_id = a.group_id)\n              AND NOT EXISTS (SELECT 1 FROM core.permission_grants p WHERE p.group_id = a.group_id)\n              AND NOT EXISTS (SELECT 1 FROM core.discord_role_mappings d WHERE d.group_id = a.group_id)\n              AND NOT EXISTS (SELECT 1 FROM core.group_leaders l WHERE l.group_id = a.group_id)\n              AND NOT EXISTS (\n                  SELECT 1 FROM core.group_leader_groups lg\n                  WHERE lg.group_id = a.group_id OR lg.leader_group_id = a.group_id\n              )\n            RETURNING a.group_id\n        )\n        SELECT g.id, g.name FROM gone JOIN core.groups g ON g.id = gone.group_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.groups",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.groups",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "803079fff3df1c3f9e79b9320c42af06b37f54c19531c4dabbdd6235324488ce"
+}

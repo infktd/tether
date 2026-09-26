@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.autogroup_configs SET corp_groups = $2, corp_prefix = $3, corp_source = $4,\n            alliance_groups = $5, alliance_prefix = $6, alliance_source = $7,\n            replace_spaces = $8, replace_with = $9\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9291cd93509bf77b093e70765da174ad390bde9c51750ea3e3d04f0bd029961c"
+}

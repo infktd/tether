@@ -105,6 +105,43 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/autogroups
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/autogroups
+Origin: {{base}}
+[Form]
+states: 1
+corp_groups: on
+corp_prefix: Corp
+corp_source: name
+alliance_prefix: Alliance
+alliance_source: name
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/autogroups/1
+Origin: {{base}}
+[Form]
+states: 1
+corp_groups: on
+corp_prefix: Corp
+corp_source: name
+alliance_prefix: Alliance
+alliance_source: name
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/autogroups/1/delete
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/groups
 HTTP 303
 [Asserts]

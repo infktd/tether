@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.jobs (kind, payload, max_attempts)\n        SELECT 'autogroups.sync', '{}', 5\n        WHERE NOT EXISTS (SELECT 1 FROM core.jobs WHERE kind = 'autogroups.sync' AND state = 'queued')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "7d24e0e51778176eeb3fa9055a5e908e24205ef8fca451a371306178b949e96b"
+}

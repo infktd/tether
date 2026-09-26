@@ -1,0 +1,33 @@
+{#- One config's fields: `s` (Settings, or none for a new one), `choices`. -#}
+<fieldset class="grid gap-2">
+  <legend class="label mb-1">States</legend>
+  <div class="flex flex-wrap gap-4">
+    {% for c in choices %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="states" value="{{ c.id }}"{% if c.checked %} checked{% endif %}> {{ c.name }}</label>{% endfor %}
+  </div>
+</fieldset>
+<div class="grid grid-cols-2 gap-6">
+  <fieldset class="grid gap-2">
+    <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="corp_groups" value="on"{% if corp_groups %} checked{% endif %}> <span class="font-medium">Corporation groups</span></label>
+    <label class="label" for="corp_prefix-{{ form_id }}">Prefix</label>
+    <input class="input" id="corp_prefix-{{ form_id }}" name="corp_prefix" value="{{ corp_prefix }}" maxlength="30">
+    <label class="label" for="corp_source-{{ form_id }}">Named by</label>
+    <select class="select input" id="corp_source-{{ form_id }}" name="corp_source">
+      <option value="name"{% if corp_source == "name" %} selected{% endif %}>Name</option>
+      <option value="ticker"{% if corp_source == "ticker" %} selected{% endif %}>Ticker</option>
+    </select>
+  </fieldset>
+  <fieldset class="grid gap-2">
+    <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="alliance_groups" value="on"{% if alliance_groups %} checked{% endif %}> <span class="font-medium">Alliance groups</span></label>
+    <label class="label" for="alliance_prefix-{{ form_id }}">Prefix</label>
+    <input class="input" id="alliance_prefix-{{ form_id }}" name="alliance_prefix" value="{{ alliance_prefix }}" maxlength="30">
+    <label class="label" for="alliance_source-{{ form_id }}">Named by</label>
+    <select class="select input" id="alliance_source-{{ form_id }}" name="alliance_source">
+      <option value="name"{% if alliance_source == "name" %} selected{% endif %}>Name</option>
+      <option value="ticker"{% if alliance_source == "ticker" %} selected{% endif %}>Ticker</option>
+    </select>
+  </fieldset>
+</div>
+<div class="flex items-end gap-3">
+  <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="replace_spaces" value="on"{% if replace_spaces %} checked{% endif %}> Replace spaces with</label>
+  <input class="input w-20" name="replace_with" value="{{ replace_with }}" maxlength="5" aria-label="Replace spaces with">
+</div>

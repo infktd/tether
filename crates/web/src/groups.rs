@@ -59,6 +59,14 @@ pub fn managed_group() -> AppError {
     )
 }
 
+/// Refusal for editing an Auto Group's members or settings by hand.
+pub fn auto_group() -> AppError {
+    AppError::bad_request(
+        "This is an Auto Group: Tether keeps it from its members' corporations and alliances. \
+         Change the Auto Groups settings instead.",
+    )
+}
+
 fn owner_only() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
@@ -71,7 +79,7 @@ fn owner_only() -> AppError {
 /// accepting a request, an admin appointing leaders, opening it or making
 /// it a compliance group) must already hold all of those permissions:
 /// group rights mustn't be a path to more.
-async fn require_grants(
+pub(crate) async fn require_grants(
     tx: &mut sqlx::PgConnection,
     actor: AccountId,
     group: GroupId,
@@ -216,6 +224,9 @@ pub async fn leave(db: &PgPool, account: AccountId, group: GroupId) -> Result<Le
         // Internal groups don't exist for those outside them.
         Leave::Internal if !is_member => return Err(AppError::not_found("No such group.")),
         Leave::Internal if group.compliance => return Err(managed_group()),
+        Leave::Internal if tether_db::autogroups::is_auto(&mut *tx, group.id).await? => {
+            return Err(auto_group());
+        }
         Leave::Internal => {
             return Err(AppError::new(
                 StatusCode::FORBIDDEN,
@@ -492,6 +503,9 @@ async fn remove_in(
     if group.compliance {
         return Err(managed_group());
     }
+    if tether_db::autogroups::is_auto(&mut *tx, group.id).await? {
+        return Err(auto_group());
+    }
     if group.flags.restricted && !standing(&mut *tx, actor).await?.is_owner {
         return Err(owner_only());
     }
@@ -622,6 +636,12 @@ pub async fn update(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    // An Auto Group keeps its settings; only the description changes.
+    if tether_db::autogroups::is_auto(&mut *tx, group).await?
+        && (new.flags != old.flags || states != old_states || new.compliance != old.compliance)
+    {
+        return Err(auto_group());
+    }
     let owner = standing(&mut tx, actor).await?.is_owner;
     let membership_moves = states != old_states || new.compliance != old.compliance;
     // A Restricted group's settings are the owner's alone, as is the flag.
@@ -715,6 +735,9 @@ pub async fn delete(db: &PgPool, actor: AccountId, group: GroupId) -> Result<(),
             "This is a compliance group: untick Compliance group in its settings first.",
         ));
     }
+    if tether_db::autogroups::is_auto(&mut *tx, group).await? {
+        return Err(auto_group());
+    }
     if found.flags.restricted && !standing(&mut tx, actor).await?.is_owner {
         return Err(owner_only());
     }
@@ -742,6 +765,9 @@ pub async fn add_member(
     let found = load_locked(&mut tx, group, false).await?;
     if found.compliance {
         return Err(managed_group());
+    }
+    if tether_db::autogroups::is_auto(&mut *tx, group).await? {
+        return Err(auto_group());
     }
     if found.flags.restricted && !standing(&mut tx, actor).await?.is_owner {
         return Err(owner_only());
@@ -859,7 +885,10 @@ pub async fn set_leader_group(
     if on {
         // Leading a group is Group Management over it: never for anyone
         // who can walk in, nor for everyone compliant.
-        if leading.flags.anyone_can_join() || leading.compliance {
+        if leading.flags.anyone_can_join()
+            || leading.compliance
+            || tether_db::autogroups::is_auto(&mut *tx, leading.id).await?
+        {
             return Err(AppError::bad_request(
                 "An Open group or a compliance group can't lead others: anyone could get in.",
             ));

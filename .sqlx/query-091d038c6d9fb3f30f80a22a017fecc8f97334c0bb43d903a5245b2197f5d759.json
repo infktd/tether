@@ -1,0 +1,129 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id, c.corp_groups, c.corp_prefix, c.corp_source, c.alliance_groups,\n               c.alliance_prefix, c.alliance_source, c.replace_spaces, c.replace_with,\n               COALESCE((SELECT array_agg(s.state_id) FROM core.autogroup_config_states s\n                         WHERE s.config_id = c.id), '{}') AS \"states!\"\n        FROM core.autogroup_configs c ORDER BY c.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "corp_groups",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "corp_groups"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "corp_prefix",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "corp_prefix"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "corp_source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "corp_source"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "alliance_groups",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "alliance_groups"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "alliance_prefix",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "alliance_prefix"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "alliance_source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "alliance_source"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "replace_spaces",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "replace_spaces"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "replace_with",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.autogroup_configs",
+            "name": "replace_with"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "states!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "091d038c6d9fb3f30f80a22a017fecc8f97334c0bb43d903a5245b2197f5d759"
+}
