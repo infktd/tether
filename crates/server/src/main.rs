@@ -56,10 +56,35 @@ async fn main() -> anyhow::Result<ExitCode> {
         Some(Command::Doctor) => doctor().await,
         Some(Command::Rollback(args)) => rollback(args).await.map(|()| ExitCode::SUCCESS),
         Some(Command::Admin(command)) => admin(command).await.map(|()| ExitCode::SUCCESS),
-        None => match cli.serve {
-            Some(config) => serve(config).await.map(|()| ExitCode::SUCCESS),
-            None => anyhow::bail!("missing configuration; see `tether --help`"),
+        None => match serve_config(cli.serve, std::env::args_os()) {
+            Ok(config) => serve(config).await.map(|()| ExitCode::SUCCESS),
+            // Clap's own message (what's missing), and its exit code.
+            Err(err) => err.exit(),
         },
+    }
+}
+
+/// `tether` with no subcommand: the server's settings on their own.
+#[derive(Parser)]
+#[command(name = "tether", version, about = "EVE Online alliance platform")]
+struct ServeOnly {
+    #[command(flatten)]
+    config: ServeConfig,
+}
+
+/// The server's settings when no subcommand was given (the image's
+/// entrypoint is plain `tether`). Clap leaves the optional flattened
+/// settings `None` since they hold a flattened group of their own
+/// (snapshots), however they were given, so they're parsed again on
+/// their own: from flags and the environment, with clap's errors.
+fn serve_config<I, T>(parsed: Option<ServeConfig>, args: I) -> Result<ServeConfig, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match parsed {
+        Some(config) => Ok(config),
+        None => ServeOnly::try_parse_from(args).map(|s| s.config),
     }
 }
 
@@ -400,5 +425,32 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+        ServeOnly::command().debug_assert();
+    }
+
+    /// Plain `tether` runs the server, as the image's entrypoint does.
+    #[test]
+    fn no_subcommand_serves() {
+        let args = [
+            "tether",
+            "--database-url",
+            "postgres://tether:tether@db:5432/tether",
+            "--domain",
+            "alliance.example",
+            "--encryption-key",
+            "4a6ce56a99485bfc45465510d7be27661adb8e9bd8dcff833b762de25bc7d45e",
+            "--snapshot-dir",
+            "/tmp/snapshots",
+        ];
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(cli.command.is_none());
+        let config = serve_config(cli.serve, args).unwrap();
+        assert_eq!(
+            config.snapshots.snapshot_dir,
+            std::path::PathBuf::from("/tmp/snapshots")
+        );
+        // Missing settings are clap's error, not a silent exit.
+        let err = serve_config(None, ["tether"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 }
