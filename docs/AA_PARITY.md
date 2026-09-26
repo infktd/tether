@@ -43,7 +43,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Email step | asks for and verifies an email | none | skip: no email, ever (PRD non-goal) |
 | Characters, Add Character | alts join the account through SSO | same | done |
 | Change Main | switch the main; state re-evaluated | picks from linked characters | partial: valid token required (see Behaviour) |
-| Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | partial: add to the daily token check |
+| Character ownership check (every 4 h) | owner hash re-checked; sold characters removed | checked at each login and on transfer | planned: every 4 hours, with the daily token check (PRD) |
 | States | Name, Permissions, Priority, Member Characters/Corporations/Alliances/**Factions**, **Public** | all, factions included (the main's militia, from ESI's affiliation endpoint); Guest covers everyone, which is what Public is for | done |
 | State changes | re-evaluated on affiliation updates; "State changed to: X" notification | same, and audited | done |
 | Groups: Internal, Hidden (direct join link), Open, Public, Restricted, States (only these states may join; removed on state change), Description | | same | done |
@@ -87,12 +87,12 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | --- | --- | --- |
 | Member Audit (My Characters, Character Sheet, Character Finder, Reports: User Compliance, Corporation Compliance, Skill Sets; Compliance Groups; sharing) | compliance, Compliance Groups and Register Character are core; the Member Audit plugin (`plugins/member-audit`) has My Characters (with combined totals and queues for multiboxers), the Character Sheet (skills, queue, assets, wallet journal, clones, implants, location, ship), Character Finder, Skill Sets and the Skill Sets report | done, except mail, contacts, contracts, loyalty, planets and character sharing (more scopes every Member would need; on request) |
 | Moon Mining (Moons, Extractions, Reports, Add Corporation, surveys, ledgers) | Moon Mining plugin (`plugins/moon-mining`): extractions, pop pings, fresh moons for Members and old ones for Blue, mining totals by pilot and ore, and an extraction planner for Station Managers; corporations come from approved data sources (AA's Add Corporation) | done, except moon surveys (ore composition) and ISK values, which need prices |
-| Structures (fuel, notifications to Discord, timers) | none | not planned: NMU doesn't use it |
+| Structures (fuel, notifications to Discord, timers) | none | planned: first-party plugin (PRD), Jay's call for the NMU release |
 | Fleet Pings | Pings: channel, target, message | partial: add fleet type, formup, comms, doctrine |
-| Secure Groups (Smart Groups, filters, grace) | the Compliance Group is one fixed filter | after v1 |
+| Secure Groups (Smart Groups, filters, grace) | the Compliance Group is one fixed filter | planned: core, with app-provided filters (PRD) |
 | AA SRP, AFAT | none | not planned: NMU doesn't use them |
 | AA-Discordbot | none | skip: Tether's Discord is REST only |
-| Blacklist ("Pilot Log", Blacklist state) | a high-priority state can already act as a blacklist | notes: after v1 |
+| Blacklist ("Pilot Log", Blacklist state) | a high-priority state can already act as a blacklist | planned: core Blacklist and Pilot Log (PRD) |
 | Corp Tools, CorpStats 2.0 | overlap with Member Audit and Corporation Stats | skip |
 
 ## Behaviour
