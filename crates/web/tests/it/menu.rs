@@ -81,14 +81,14 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
         &h,
         &owner,
         "change",
-        "reference=tokens&label=My+Tokens&parent=section%3Aaccount",
+        "reference=groups&label=My+Groups&parent=section%3Aaccount",
     )
     .await;
     edit(
         &h,
         &owner,
         "change",
-        "reference=services&label=&parent=section%3Aaccount&hidden=on",
+        "reference=pings&label=&parent=section%3Afleet&hidden=on",
     )
     .await;
 
@@ -97,8 +97,8 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
     assert!(nav.contains(">Leadership<"), "{nav}");
     assert!(nav.contains("<details class=\"nav-folder\""), "{nav}");
     assert!(nav.contains(r#"href="https://wiki.example/nmu" class="nav-item" target="_blank" rel="noopener noreferrer""#), "{nav}");
-    assert!(nav.contains("My Tokens"), "{nav}");
-    assert!(!nav.contains(r#"href="/services""#), "hidden: {nav}");
+    assert!(nav.contains("My Groups"), "{nav}");
+    assert!(!nav.contains(r#"href="/pings""#), "hidden: {nav}");
     // Editing saved every item's place, but admin pages nobody pinned
     // stay hidden; pinned ones (states, in the folder) show.
     assert!(!nav.contains(r#"href="/admin/users""#), "{nav}");
@@ -157,7 +157,7 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
     let res = edit(&h, &owner, "reset", "").await;
     assert_eq!(res.location(), "/admin/menu");
     let reset = page(&h, "/dashboard", &owner).await.body;
-    assert!(sidebar(&reset).contains(r#"href="/services""#));
+    assert!(sidebar(&reset).contains(r#"href="/pings""#));
     assert!(
         !sidebar(&reset).contains(r#"href="/admin/states""#),
         "hidden again"
@@ -230,4 +230,41 @@ async fn links_and_names_are_checked(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn account_pages_are_in_the_account_menu_only(db: PgPool) {
+    let h = harness(db, true).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    for uri in ["/dashboard", "/groups", "/services", "/tokens"] {
+        let body = page(&h, uri, &pilot).await.body;
+        let nav = sidebar(&body);
+        for link in ["/services", "/tokens", "/dashboard/access-tokens"] {
+            assert!(
+                !nav.contains(&format!(r#"href="{link}""#)),
+                "{uri}: {link} in the sidebar"
+            );
+        }
+        let menu = body.split(r#"id="user-menu""#).nth(1).unwrap();
+        let menu = &menu[..menu.find("</nav>").unwrap()];
+        for link in ["/services", "/tokens", "/dashboard/access-tokens"] {
+            assert!(
+                menu.contains(&format!(r#"href="{link}""#)),
+                "{uri}: {link} in the menu"
+            );
+        }
+        assert!(menu.contains(r#"action="/auth/logout""#), "{uri}");
+        assert_eq!(
+            body.matches(r#"action="/auth/logout""#).count(),
+            1,
+            "{uri}: one way out"
+        );
+    }
+    let tokens = page(&h, "/tokens", &pilot).await.body;
+    assert!(tokens.contains(r#"<a href="/tokens" class="user-menu-item" aria-current="page">"#));
+    let dashboard = page(&h, "/dashboard", &pilot).await.body;
+    assert!(
+        !dashboard.contains("Manage tokens"),
+        "no second way to access tokens"
+    );
 }

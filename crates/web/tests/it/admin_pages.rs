@@ -660,8 +660,10 @@ async fn states_are_created_ordered_renamed_and_deleted(db: PgPool) {
 
     let created = send(&h.app, form("/admin/states", "name=Trial", &owner)).await;
     assert_eq!(created.location(), "/admin/states");
+    // In the page, not the sidebar (which shows the viewer's state).
     let order = |body: &str| {
-        ["Member", "Blue", "Trial", "Guest"].map(|n| body.find(&format!(">{n}</span>")).unwrap())
+        let main = body.split("<main").nth(1).unwrap();
+        ["Member", "Blue", "Trial", "Guest"].map(|n| main.find(&format!(">{n}</span>")).unwrap())
     };
     let o = order(&page(&h, "/admin/states", &owner).await.body);
     assert!(

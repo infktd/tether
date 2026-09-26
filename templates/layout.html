@@ -12,12 +12,12 @@
 <title>{% block title %}{% endblock %} · Tether</title>
 </head>
 <body hx-indicator="#page-progress">
-<div class="grid min-h-screen grid-cols-[256px_minmax(0,1fr)]">
-  <aside class="bg-sidebar border-r flex flex-col">
+<div class="app-shell{% if shell.admin_rail.is_some() %} has-rail{% endif %}">
+  <aside class="app-sidebar">
     <div class="h-16 flex items-center px-5 border-b">
       <a href="/" class="text-[15px] font-semibold tracking-tight">Tether</a>
     </div>
-    <nav class="flex-1 px-3 py-5 flex flex-col gap-6" aria-label="Main">
+    <nav class="flex-1 overflow-y-auto px-3 py-5 flex flex-col gap-6" aria-label="Main">
       {% for section in shell.menu %}
       <div class="flex flex-col gap-1">
         <div class="nav-heading">{{ section.label }}</div>
@@ -36,20 +36,44 @@
       </div>
       {% endfor %}
     </nav>
-    <div class="border-t p-3 flex items-center gap-3">
-      {% let avatar_name = shell.user.name.as_str() %}{% let avatar_id = shell.user.character_id %}{% let avatar_size = 36 %}{% let avatar_class = "size-9" %}
-      {% include "avatar.html" %}
-      <div class="min-w-0 flex-1">
-        <div class="truncate text-sm font-medium">{{ shell.user.name }}</div>
-        <div class="text-xs text-muted-foreground">{{ shell.user.state_name }}</div>
-      </div>
-      <form method="post" action="/auth/logout">
-        <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Log out" title="Log out">
-          {% call icons::icon("log-out") %}{% endcall %}
-        </button>
-      </form>
+    <div class="border-t p-2">
+      {#- The account menu: the browser's own popover, so it needs no
+          script, and Escape or a click outside closes it. -#}
+      <button type="button" class="user-button" popovertarget="user-menu" aria-label="Account menu for {{ shell.user.name }}">
+        {% let avatar_name = shell.user.name.as_str() %}{% let avatar_id = shell.user.character_id %}{% let avatar_size = 36 %}{% let avatar_class = "size-9" %}
+        {% include "avatar.html" %}
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm font-medium">{{ shell.user.name }}</span>
+          <span class="block text-xs text-muted-foreground">{{ shell.user.state_name }}</span>
+        </span>
+        {% call icons::icon("chevrons") %}{% endcall %}
+      </button>
+      <nav id="user-menu" class="user-menu" popover aria-label="Account">
+        <a href="/services" class="user-menu-item"{% if shell.active == "services" %} aria-current="page"{% endif %}>{% call icons::icon("message") %}{% endcall %} Services</a>
+        <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
+        <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
+        <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">
+          <button type="submit" class="user-menu-item w-full">{% call icons::icon("log-out") %}{% endcall %} Log out</button>
+        </form>
+      </nav>
     </div>
   </aside>
+  {% if let Some(rail) = shell.admin_rail %}
+  <nav class="admin-rail" aria-label="Administration">
+    <div class="h-16 shrink-0 flex items-center px-5 border-b text-sm font-semibold">Administration</div>
+    <div class="flex flex-col gap-5 overflow-y-auto px-3 py-5">
+      <a href="/admin" class="admin-rail-item">Overview</a>
+      {% for g in rail %}
+      <div class="flex flex-col gap-0.5">
+        <div class="nav-heading">{{ g.label }}</div>
+        {% for p in g.pages %}
+        <a href="{{ p.href }}" class="admin-rail-item"{% if p.current %} aria-current="page"{% endif %}>{{ p.label }}</a>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </nav>
+  {% endif %}
   <div class="flex flex-col min-w-0 relative">
     <div id="page-progress" class="page-progress htmx-indicator" aria-hidden="true"></div>
     <header class="h-16 border-b flex items-center gap-4 px-8 text-sm text-muted-foreground">
@@ -73,26 +97,7 @@
         </section>
       </div>
       {% endif %}
-      {% if let Some(rail) = shell.admin_rail %}
-      <div class="admin-layout">
-        <nav class="admin-rail" aria-label="Administration">
-          <a href="/admin" class="admin-rail-item">Overview</a>
-          {% for g in rail %}
-          <div class="flex flex-col gap-0.5">
-            <div class="nav-heading">{{ g.label }}</div>
-            {% for p in g.pages %}
-            <a href="{{ p.href }}" class="admin-rail-item"{% if p.current %} aria-current="page"{% endif %}>{{ p.label }}</a>
-            {% endfor %}
-          </div>
-          {% endfor %}
-        </nav>
-        <div class="admin-main">
-      {% endif %}
       {% block content %}{% endblock %}
-      {% if shell.admin_rail.is_some() %}
-        </div>
-      </div>
-      {% endif %}
     </main>
   </div>
 </div>

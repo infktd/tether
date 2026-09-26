@@ -60,22 +60,8 @@ pub const BUILTINS: &[Builtin] = &[
         "account",
         "profile",
     ),
-    b(
-        "services",
-        "Services",
-        "/services",
-        "message",
-        "account",
-        "services",
-    ),
-    b(
-        "tokens",
-        "Token Management",
-        "/tokens",
-        "lock",
-        "account",
-        "tokens",
-    ),
+    // Services, Token Management and access tokens are in the account
+    // menu (the signed-in character, bottom of the sidebar), not here.
     b("groups", "Groups", "/groups", "users", "account", "groups"),
     b(
         "group_management",

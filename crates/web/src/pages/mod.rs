@@ -174,7 +174,7 @@ pub(crate) fn menu_items(
     plugin_nav: &[PluginNavLink],
 ) -> Vec<crate::menu::Available> {
     let may = |key: &str| match key {
-        "dashboard" | "services" | "tokens" | "groups" => true,
+        "dashboard" | "groups" => true,
         "group_management" => group_management.is_some(),
         "pings" => nav.pings,
         "administration" => nav.any(),

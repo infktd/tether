@@ -304,24 +304,50 @@
   }
 }
 
-/* Administration (DESIGN.md): the overview's tiles and the rail beside
-   every admin page. The rail shows from 1280px; narrower, the sidebar's
-   Administration item and the overview do its job. */
+/* The shell (DESIGN.md): the sidebar, and on admin pages the rail beside
+   it, stay put while the page scrolls. The rail shows from 1280px;
+   narrower, the sidebar's Administration item and the overview do its
+   job. */
 @layer components {
-  .admin-layout {
-    @apply grid items-start gap-6 xl:grid-cols-[184px_minmax(0,1fr)];
+  .app-shell {
+    @apply grid min-h-screen grid-cols-[256px_minmax(0,1fr)];
+  }
+  .app-shell.has-rail {
+    @apply xl:grid-cols-[256px_208px_minmax(0,1fr)];
+  }
+  .app-sidebar {
+    @apply sticky top-0 flex h-screen flex-col self-start border-r bg-sidebar;
   }
   .admin-rail {
-    @apply sticky top-6 hidden flex-col gap-5 xl:flex;
+    @apply sticky top-0 hidden h-screen flex-col self-start border-r bg-sidebar xl:flex;
+  }
+
+  /* The account menu: the signed-in character opens it. */
+  .user-button {
+    @apply flex w-full items-center gap-3 rounded-sm p-2 text-left transition-colors duration-150 hover:bg-accent;
+  }
+  .user-button > svg {
+    @apply text-muted-foreground;
+  }
+  .user-menu {
+    @apply m-0 w-[232px] flex-col gap-0.5 rounded-lg border bg-card p-1 text-foreground;
+    position: fixed;
+    inset: auto auto 72px 12px;
+  }
+  .user-menu:popover-open {
+    display: flex;
+  }
+  .user-menu-item {
+    @apply flex h-9 items-center gap-2 rounded-sm px-3 text-sm text-foreground-soft transition-colors duration-150 hover:bg-accent hover:text-foreground;
+  }
+  .user-menu-item[aria-current="page"] {
+    @apply bg-accent text-foreground;
   }
   .admin-rail-item {
     @apply flex h-8 items-center rounded-sm px-3 text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground;
   }
   .admin-rail-item[aria-current="page"] {
     @apply bg-accent font-medium text-foreground;
-  }
-  .admin-main {
-    @apply flex min-w-0 flex-col gap-6;
   }
   .admin-tile {
     @apply flex items-start gap-3 rounded-lg border bg-card p-4 transition-colors duration-150 hover:bg-accent;
@@ -366,9 +392,11 @@
 @media (prefers-reduced-motion: no-preference) {
   /* A page's content rises 4px into place as it arrives. The rail and the
      sidebar stay put. */
-  main > :not(.admin-layout),
-  .admin-main > * {
+  main > * {
     animation: tether-enter 180ms cubic-bezier(0.2, 0, 0, 1) backwards;
+  }
+  .user-menu:popover-open {
+    animation: tether-enter 120ms cubic-bezier(0.2, 0, 0, 1) backwards;
   }
   .admin-tile {
     animation: tether-enter 180ms cubic-bezier(0.2, 0, 0, 1) backwards;
