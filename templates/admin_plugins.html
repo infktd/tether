@@ -33,27 +33,33 @@
   </section>
   {% endif %}
 
-  {% if !bundled.is_empty() %}
   <section class="card data-card">
-    <header><h2>Included with Tether</h2><p>Apps that come with Tether itself. They need no signing: review what each asks for, then approve it. A newer version of Tether can bring newer versions of them, which you review the same way.</p></header>
+    <header><h2>Apps <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2><p>Apps included with Tether need no signing: review what each asks for, then install it. Newer versions of them come with newer versions of Tether, reviewed the same way.</p></header>
+    {% if plugins.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet.{% if github %} Install one from GitHub below.{% endif %}</p>
+    {% else %}
     <table class="table">
-      <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
-        {% for b in bundled %}
+        {% for p in plugins %}
         <tr>
-          <td class="w-full whitespace-normal"><div class="font-medium">{{ b.name }}</div>{% if let Some(d) = b.description %}<div class="text-xs text-muted-foreground">{{ d }}</div>{% endif %}</td>
-          <td><span class="num">{{ b.version }}</span>{% if let Some(v) = b.installed %}{% if b.update %}<div class="text-xs text-muted-foreground">Installed: <span class="num">{{ v }}</span></div>{% endif %}{% endif %}</td>
+          <td class="w-full whitespace-normal">
+            <div class="font-medium flex items-center gap-2">{% if p.is_installed %}<a href="/admin/plugins/{{ p.id }}" class="hover:underline">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}{% if p.included %} <span class="badge" data-variant="outline">Included</span>{% endif %}</div>
+            {% if let Some(d) = p.description %}<div class="text-xs text-muted-foreground">{{ d }}</div>{% else %}<div class="text-xs text-muted-foreground num">{{ p.id }}</div>{% endif %}
+          </td>
+          <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div class="text-xs"><span class="badge" data-variant="secondary"><span class="num">{{ v }}</span> available</span></div>{% endif %}</td>
+          <td><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span></td>
           <td class="text-right">
-            {% if b.installed.is_none() %}<a class="btn" data-variant="primary" data-size="sm" href="/admin/plugin-bundled/{{ b.id }}">Review and install</a>
-            {% else if b.update %}<a class="btn" data-variant="primary" data-size="sm" href="/admin/plugin-bundled/{{ b.id }}">Review update</a>
-            {% else %}<a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ b.id }}">Installed</a>{% endif %}
+            {% if !p.is_installed %}{% if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">Review and install</a>{% endif %}
+            {% else if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">Review update</a>
+            {% else %}<a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ p.id }}">Manage</a>{% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% endif %}
   </section>
-  {% endif %}
 
   {% if github %}
   <form class="card" method="post" action="/admin/plugin-github">
@@ -72,27 +78,7 @@
   </form>
   {% endif %}
 
-  <section class="card data-card">
-    <header><h2>Installed <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2></header>
-    {% if plugins.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet.{% if !bundled.is_empty() %} Install one that comes with Tether above.{% else if github %} Install one from GitHub above.{% endif %}</p>
-    {% else %}
-    <table class="table">
-      <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Installed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>
-        {% for p in plugins %}
-        <tr>
-          <td><div class="font-medium">{{ p.name }}</div><div class="text-xs text-muted-foreground num">{{ p.id }}</div></td>
-          <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div class="text-xs"><span class="badge" data-variant="secondary"><span class="num">{{ v }}</span> available</span></div>{% endif %}</td>
-          <td><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span></td>
-          <td class="num">{{ p.installed }}</td>
-          <td class="text-right"><a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ p.id }}">Manage</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-  </section>
+
 
   {% if upload_form %}
   <details class="card install-file"{% if !github %} open{% endif %}>

@@ -86,7 +86,7 @@ async fn a_bundled_app_installs_after_review_with_no_signature(db: PgPool) {
 
     let res = page(&h, "/admin/plugins", &owner).await;
     assert_eq!(res.status, StatusCode::OK);
-    assert!(res.body.contains("Included with Tether"), "{}", res.body);
+    assert!(res.body.contains("Not installed"), "{}", res.body);
     assert!(res.body.contains(&format!("/admin/plugin-bundled/{ID}")));
     assert!(res.body.contains("Review and install"));
 

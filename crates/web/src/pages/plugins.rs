@@ -196,16 +196,24 @@ impl About {
 
 // ---- the list ---------------------------------------------------------------
 
+/// One app on the Apps page: installed, or included with Tether and not
+/// yet installed. Each app appears once.
 pub struct PluginRow {
     pub id: String,
     pub name: String,
+    pub description: Option<String>,
     pub version: String,
     pub status: &'static str,
     pub variant: &'static str,
-    pub installed: String,
+    /// It comes with Tether.
+    pub included: bool,
+    pub is_installed: bool,
     /// A newer version its repository publishes, or that comes with this
     /// Tether.
     pub update: Option<String>,
+    /// Where reviewing the install or the update happens, for an app
+    /// included with Tether.
+    pub review: Option<String>,
 }
 
 /// An app that comes with Tether, and whether it's installed.
@@ -239,7 +247,6 @@ pub struct PinRow {
 #[template(path = "admin_plugins.html")]
 struct PluginsPage {
     shell: Shell,
-    bundled: Vec<BundledRow>,
     plugins: Vec<PluginRow>,
     uploads: Vec<UploadRow>,
     pins: Vec<PinRow>,
@@ -286,7 +293,7 @@ async fn list_page(
     let latest = tether_db::plugin_sources::latest(&state.db).await?;
     let installed = db::list(&state.db).await?;
     let included = state.plugins.bundled();
-    let bundled = included
+    let bundled: Vec<BundledRow> = included
         .all()
         .into_iter()
         .map(|app| {
@@ -302,12 +309,13 @@ async fn list_page(
             }
         })
         .collect();
-    let plugins = installed
-        .into_iter()
+    let mut plugins: Vec<PluginRow> = installed
+        .iter()
         .map(|p| {
             let (status, variant) = status_label(&state.plugins.status(&p.id), p.enabled);
+            let bundled_app = included.get(&p.id);
             // A bundled app's updates come with Tether, never from GitHub.
-            let update = match included.get(&p.id) {
+            let update = match bundled_app {
                 Some(app) => Some(app.package.manifest.plugin.version.clone())
                     .filter(|v| newer(v, &p.version)),
                 None => latest
@@ -318,14 +326,37 @@ async fn list_page(
             PluginRow {
                 status,
                 variant,
-                installed: time(p.installed_at),
+                included: bundled_app.is_some(),
+                is_installed: true,
+                description: bundled_app.and_then(|a| a.package.manifest.plugin.description.clone()),
+                review: bundled_app
+                    .filter(|_| update.is_some())
+                    .map(|_| format!("/admin/plugin-bundled/{}", p.id)),
                 update,
-                id: p.id,
-                name: p.name,
-                version: p.version,
+                id: p.id.clone(),
+                name: p.name.clone(),
+                version: p.version.clone(),
             }
         })
         .collect();
+    // Included with Tether but not installed: after the installed ones.
+    for b in &bundled {
+        if b.installed.is_none() {
+            plugins.push(PluginRow {
+                id: b.id.clone(),
+                name: b.name.clone(),
+                description: b.description.clone(),
+                version: b.version.clone(),
+                status: "Not installed",
+                variant: "outline",
+                included: true,
+                is_installed: false,
+                update: None,
+                review: Some(format!("/admin/plugin-bundled/{}", b.id)),
+            });
+        }
+    }
+    plugins.sort_by(|a, b| (!a.is_installed, &a.name).cmp(&(!b.is_installed, &b.name)));
     let uploads = db::list_uploads(&state.db)
         .await?
         .into_iter()
@@ -352,7 +383,6 @@ async fn list_page(
         code,
         &PluginsPage {
             shell,
-            bundled,
             plugins,
             uploads,
             pins,
