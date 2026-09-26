@@ -19,7 +19,11 @@
 //!   structures every hour (their cache times), and an owner ESI answers
 //!   403 for (a lost role) is left alone for an hour, doubling to a day.
 
+mod detail;
 mod notification;
+mod orbitals;
+mod routing;
+mod tags;
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::Deserialize;
@@ -34,6 +38,7 @@ use tether_plugin_sdk::{
 };
 
 use crate::notification::{Category, Context, Fields};
+use crate::routing::Routes;
 
 /// Notifications older than this aren't sent (aa-structures' default).
 const RELAY_WITHIN: Duration = Duration::hours(24);
@@ -47,9 +52,15 @@ const ESI_BUDGET: usize = 90;
 /// relay runs so 20 a minute isn't passed.
 const SENDS_PER_RUN: usize = 5;
 const RELAY_GAP: Duration = Duration::seconds(15);
-/// Rows per table on a page (the host caps values per page).
-const LIST_ROWS: i64 = 400;
-const SHORT_ROWS: i64 = 100;
+/// Rows per table on a page (the host caps values per page at 10,000:
+/// 13 columns of Upwell structures, 11 of starbases, 10 of orbitals, and
+/// the short tables).
+const LIST_ROWS: i64 = 250;
+const STARBASE_ROWS: i64 = 120;
+const ORBITAL_ROWS: i64 = 150;
+const SHORT_ROWS: i64 = 60;
+const TIMER_ROWS: i64 = 80;
+const OWNER_ROWS: i64 = 60;
 /// Low-fuel thresholds: hours, at most this many.
 const MAX_THRESHOLDS: usize = 5;
 const MAX_THRESHOLD_HOURS: i64 = 2160;
@@ -65,23 +76,75 @@ impl Plugin for Structures {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let path = request.path.as_str();
         if path.is_empty() {
-            return list_page(&viewer, None);
+            return list_page(&viewer, Filter::default());
         }
         if let Some(corp) = path.strip_prefix("owner/") {
             let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
-            return list_page(&viewer, Some(corp));
+            return list_page(
+                &viewer,
+                Filter {
+                    owner: Some(corp),
+                    tags: None,
+                },
+            );
+        }
+        if let Some(ids) = path.strip_prefix("tags/") {
+            let ids = tags::parse_filter(ids).ok_or(PageError::NotFound)?;
+            return list_page(
+                &viewer,
+                Filter {
+                    owner: None,
+                    tags: Some(ids),
+                },
+            );
+        }
+        if let Some(id) = path.strip_prefix("structure/") {
+            let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
+            return detail::page(&viewer, id);
+        }
+        if let Some(corp) = path.strip_prefix("settings/owner/") {
+            let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
+            return owner_settings_page(corp);
         }
         match path {
             "settings" => settings_page(None),
+            "settings/tags" => tags::settings_page(None),
+            "pocos" => pocos_page(&viewer),
             _ => Err(PageError::NotFound),
         }
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        match (submission.request.path.as_str(), submission.form.as_str()) {
+        let path = submission.request.path.as_str();
+        // Every form's page checks the viewer may open it (the host), and
+        // managers' forms need manage (the host, for settings pages; here,
+        // for the structure page's tags).
+        if submission.form == "filter_tags" {
+            return Ok(tags::submit_filter(&submission));
+        }
+        if let Some(id) = path.strip_prefix("structure/") {
+            let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
+            if submission.form != "structure_tags"
+                || !viewer.can("manage")
+                || !detail::visible_structure(&viewer, id)?
+            {
+                return Err(PageError::NotFound);
+            }
+            return tags::save_structure_tags(&viewer, id, &submission);
+        }
+        if let Some(corp) = path.strip_prefix("settings/owner/") {
+            let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
+            if submission.form != "owner_routes" {
+                return Err(PageError::NotFound);
+            }
+            return save_owner_settings(&viewer, corp, &submission);
+        }
+        match (path, submission.form.as_str()) {
             ("settings", "settings") => save_settings(&viewer, &submission),
             ("settings", "retry") => retry_owner(&viewer, &submission),
+            ("settings/tags", "save_tag") => tags::save_tag(&viewer, &submission),
+            ("settings/tags", "delete_tag") => tags::delete_tag(&viewer, &submission),
             _ => Err(PageError::NotFound),
         }
     }
@@ -176,6 +239,8 @@ struct Settings {
     mention: bool,
     /// Published timers are seen only by the owning corporation.
     timers_corporation_only: bool,
+    /// The list shows structures with a default tag unless filtered.
+    default_tags_filter: bool,
 }
 
 impl Settings {
@@ -207,7 +272,7 @@ fn parse_thresholds(text: &str) -> Option<Vec<i64>> {
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
         "SELECT attack_channel, fuel_channel, state_channel, moon_channel, fuel_thresholds, mention_members, \
-                timers_corporation_only \
+                timers_corporation_only, default_tags_filter \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -236,6 +301,10 @@ fn settings() -> Result<Settings, storage::Error> {
             .and_then(|r| r.get(6))
             .and_then(Db::as_bool)
             .unwrap_or(false),
+        default_tags_filter: row
+            .and_then(|r| r.get(7))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -246,11 +315,24 @@ struct Budget(usize);
 
 impl Budget {
     fn take(&mut self) -> bool {
-        if self.0 == 0 {
+        self.take_n(1)
+    }
+
+    fn take_n(&mut self, n: usize) -> bool {
+        if self.0 < n {
             return false;
         }
-        self.0 -= 1;
+        self.0 -= n;
         true
+    }
+}
+
+/// What a call costs of the host's per-run limit: the structure assets
+/// check each page against the structures list (the host's `esi_cost`).
+fn esi_cost(endpoint: &str) -> usize {
+    match endpoint {
+        "corporation-structure-assets" | "universe-system" => 2,
+        _ => 1,
     }
 }
 
@@ -270,22 +352,24 @@ fn call(
     params: &[(String, String)],
     paged: bool,
 ) -> Outcome {
-    let describe = |err: esi::Error| {
-        match err {
+    let describe = |err: esi::Error| match err {
         esi::Error::Status(403) => Outcome::BackOff(
-            "ESI said 403: the character has lost the in-game role (Station Manager) or left the corporation"
+            "ESI said 403: the character lacks the in-game role (Station Manager for structures, \
+             Director for starbases, customs offices and assets) or left the corporation"
                 .to_owned(),
         ),
         esi::Error::Token => Outcome::BackOff(
-            "the character's token is gone: its owner must log in with it again".to_owned(),
+            "the character's token is gone or lacks this read's scope: its owner must offer it \
+             again (log in with it)"
+                .to_owned(),
         ),
         esi::Error::NotADataSource => {
             Outcome::BackOff("no longer an approved data source".to_owned())
         }
         other => Outcome::Later(format!("{other:?}")),
-    }
     };
-    if !budget.take() {
+    let cost = esi_cost(endpoint);
+    if !budget.take_n(cost) {
         return Outcome::Later("out of ESI calls this run".to_owned());
     }
     let first = match esi::get(endpoint, subject, params, paged.then_some(1)) {
@@ -295,7 +379,7 @@ fn call(
     let mut bodies = vec![first.body];
     if paged {
         for page in 2..=first.pages {
-            if !budget.take() {
+            if !budget.take_n(cost) {
                 return Outcome::Later("out of ESI calls this run".to_owned());
             }
             match esi::get(endpoint, subject, params, Some(page)) {
@@ -322,6 +406,12 @@ fn concat(bodies: &[String]) -> String {
 enum Read {
     Structures,
     Notifications,
+    /// Starbases and their fuel (Director).
+    Starbases,
+    /// Customs offices (Director).
+    Offices,
+    /// What's in structures' slots and bays, and skyhooks (Director).
+    Assets,
 }
 
 impl Read {
@@ -330,13 +420,17 @@ impl Read {
         match self {
             Read::Structures => "structures",
             Read::Notifications => "notifications",
+            Read::Starbases => "starbases",
+            Read::Offices => "offices",
+            Read::Assets => "assets",
         }
     }
 
     fn every(self) -> &'static str {
         match self {
-            Read::Structures => STRUCTURES_EVERY,
             Read::Notifications => NOTIFICATIONS_EVERY,
+            // ESI caches all of these for an hour.
+            Read::Structures | Read::Starbases | Read::Offices | Read::Assets => STRUCTURES_EVERY,
         }
     }
 }
@@ -439,10 +533,29 @@ fn sync_steps() -> Result<(), JobError> {
             }
             record(owner, Read::Structures, &outcome)?;
         }
+        if let Some(owner) = pick_owner(corp, Read::Starbases)? {
+            let outcome = orbitals::read_starbases(&mut budget, corp, owner)?;
+            record(owner, Read::Starbases, &outcome)?;
+        }
+        if let Some(owner) = pick_owner(corp, Read::Offices)? {
+            let outcome = orbitals::read_offices(&mut budget, corp, owner)?;
+            record(owner, Read::Offices, &outcome)?;
+        }
+        if let Some(owner) = pick_owner(corp, Read::Assets)? {
+            let outcome = orbitals::read_assets(&mut budget, corp, owner)?;
+            record(owner, Read::Assets, &outcome)?;
+        }
     }
+    orbitals::learn_sovereignty(&mut budget)?;
     learn_systems(&mut budget)?;
+    orbitals::learn_planets(&mut budget)?;
+    orbitals::learn_moons(&mut budget)?;
+    orbitals::resolve_orbitals()?;
     learn_names(&mut budget)?;
+    orbitals::compute_fuel()?;
+    tags::apply_generated()?;
     handle_notifications()?;
+    orbitals::starbase_reinforcements()?;
     fuel_alerts()?;
     storage::execute(
         "DELETE FROM timers WHERE at < now() - interval '7 days'",
@@ -464,6 +577,19 @@ fn sync_steps() -> Result<(), JobError> {
         &[],
     )
     .map_err(|e| retry("expiring sent messages", e))?;
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM structure_tags t WHERE NOT EXISTS \
+             (SELECT 1 FROM structures s WHERE s.structure_id = t.structure_id)",
+            vec![],
+        ),
+        Statement::new(
+            "DELETE FROM structure_items i WHERE NOT EXISTS \
+             (SELECT 1 FROM structures s WHERE s.structure_id = i.structure_id)",
+            vec![],
+        ),
+    ])
+    .map_err(|e| retry("expiring tags and items", e))?;
     Ok(())
 }
 
@@ -567,12 +693,17 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
             };
             let text = n.text.unwrap_or_default();
             let fields = Fields::parse(&text);
-            let about = fields.structure_id().or_else(|| fields.int("moonID"));
+            let about = fields
+                .structure_id()
+                .or_else(|| fields.moon_id())
+                .or_else(|| fields.planet_id());
             rows.push(serde_json::json!({
                 "notification_id": n.notification_id,
                 "type": n.kind,
                 "at": rfc3339(at),
                 "structure_id": fields.structure_id(),
+                "moon_id": fields.moon_id(),
+                "planet_id": fields.planet_id(),
                 "event_key": format!("{}:{}:{}", n.kind, about.unwrap_or_default(), at.timestamp()),
                 "text": text,
             }));
@@ -582,10 +713,11 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
         return Ok(());
     }
     storage::execute(
-        "INSERT INTO notifications (notification_id, corporation_id, type, at, structure_id, event_key, text) \
-         SELECT notification_id, $2, type, at, structure_id, event_key, text \
+        "INSERT INTO notifications (notification_id, corporation_id, type, at, structure_id, moon_id, \
+             planet_id, event_key, text) \
+         SELECT notification_id, $2, type, at, structure_id, moon_id, planet_id, event_key, text \
          FROM json_to_recordset($1::json) AS x(notification_id bigint, type text, at timestamptz, \
-              structure_id bigint, event_key text, text text) \
+              structure_id bigint, moon_id bigint, planet_id bigint, event_key text, text text) \
          ON CONFLICT DO NOTHING",
         &[
             Db::json(serde_json::Value::Array(rows).to_string()),
@@ -596,24 +728,28 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
     Ok(())
 }
 
-/// The corporation's structures, replaced whole (gone ones were
-/// destroyed or unanchored), and timers from their states.
+/// The corporation's Upwell structures, replaced whole (gone ones were
+/// destroyed or unanchored), and timers from their states. A Metenox's
+/// fuel is the earlier of its blocks (ESI's) and its magmatic gas (from
+/// the assets).
 fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
-    storage::transaction(&[
+    let mut statements = vec![
         Statement::new(
-            "INSERT INTO structures (structure_id, corporation_id, name, type_id, system_id, fuel_expires, \
-                 state, state_timer_start, state_timer_end, unanchors_at, reinforce_hour, \
+            "INSERT INTO structures (structure_id, corporation_id, kind, name, type_id, system_id, fuel_expires, \
+                 blocks_expires, state, state_timer_start, state_timer_end, unanchors_at, reinforce_hour, \
                  next_reinforce_hour, next_reinforce_apply, services, updated_at) \
-             SELECT structure_id, $2, coalesce(name, 'Structure ' || structure_id::text), type_id, system_id, \
-                 fuel_expires, coalesce(state, 'unknown'), state_timer_start, state_timer_end, unanchors_at, \
-                 reinforce_hour, next_reinforce_hour, next_reinforce_apply, coalesce(services, '[]'::jsonb), now() \
+             SELECT structure_id, $2, 'upwell', coalesce(name, 'Structure ' || structure_id::text), type_id, \
+                 system_id, fuel_expires, fuel_expires, coalesce(state, 'unknown'), state_timer_start, \
+                 state_timer_end, unanchors_at, reinforce_hour, next_reinforce_hour, next_reinforce_apply, \
+                 coalesce(services, '[]'::jsonb), now() \
              FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, type_id bigint, \
                  system_id bigint, fuel_expires timestamptz, state text, state_timer_start timestamptz, \
                  state_timer_end timestamptz, unanchors_at timestamptz, reinforce_hour integer, \
                  next_reinforce_hour integer, next_reinforce_apply timestamptz, services jsonb) \
              ON CONFLICT (structure_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, \
-                 name = EXCLUDED.name, type_id = EXCLUDED.type_id, system_id = EXCLUDED.system_id, \
-                 fuel_expires = EXCLUDED.fuel_expires, state = EXCLUDED.state, \
+                 kind = 'upwell', name = EXCLUDED.name, type_id = EXCLUDED.type_id, system_id = EXCLUDED.system_id, \
+                 blocks_expires = EXCLUDED.fuel_expires, \
+                 fuel_expires = least(EXCLUDED.fuel_expires, structures.gas_expires), state = EXCLUDED.state, \
                  state_timer_start = EXCLUDED.state_timer_start, state_timer_end = EXCLUDED.state_timer_end, \
                  unanchors_at = EXCLUDED.unanchors_at, reinforce_hour = EXCLUDED.reinforce_hour, \
                  next_reinforce_hour = EXCLUDED.next_reinforce_hour, \
@@ -622,25 +758,34 @@ fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
             vec![Db::json(concat(bodies)), corp.into()],
         ),
         Statement::new(
-            "DELETE FROM structures WHERE corporation_id = $1 AND updated_at < now()",
+            "DELETE FROM structures WHERE corporation_id = $1 AND kind = 'upwell' AND updated_at < now()",
             vec![corp.into()],
         ),
-        // Which corporation each structure was seen in, kept a while after
-        // it's gone: notifications are relayed only for these.
+    ];
+    statements.extend(seen_and_timers(corp));
+    storage::transaction(&statements).map_err(|e| retry("storing structures", e))?;
+    Ok(())
+}
+
+/// After a corporation's structures (of any kind) are stored: which
+/// corporation each was seen in, kept a while after it's gone
+/// (notifications are relayed only for these), and the timers their
+/// states show (reinforced until, anchoring until, unanchoring), unless a
+/// notification gave the same one.
+fn seen_and_timers(corp: i64) -> Vec<Statement> {
+    vec![
         Statement::new(
             "INSERT INTO structure_owners (structure_id, corporation_id, seen_at) \
              SELECT structure_id, corporation_id, now() FROM structures WHERE corporation_id = $1 \
              ON CONFLICT (structure_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, seen_at = now()",
             vec![corp.into()],
         ),
-        // Timers the states show: reinforced until, anchoring until, and
-        // unanchoring, unless a notification gave the same one.
         Statement::new(
             "INSERT INTO timers (structure_id, kind, at, corporation_id) \
              SELECT s.structure_id, k.kind, k.at, s.corporation_id FROM structures s \
              CROSS JOIN LATERAL (VALUES \
                  (CASE s.state WHEN 'armor_reinforce' THEN 'Armor' WHEN 'hull_reinforce' THEN 'Hull' \
-                      WHEN 'anchoring' THEN 'Anchoring' END, s.state_timer_end), \
+                      WHEN 'anchoring' THEN 'Anchoring' WHEN 'reinforced' THEN 'Final' END, s.state_timer_end), \
                  ('Unanchoring', s.unanchors_at)) AS k(kind, at) \
              WHERE s.corporation_id = $1 AND k.kind IS NOT NULL AND k.at > now() \
                AND NOT EXISTS (SELECT 1 FROM timers t WHERE t.structure_id = s.structure_id \
@@ -648,9 +793,7 @@ fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
              ON CONFLICT DO NOTHING",
             vec![corp.into()],
         ),
-    ])
-    .map_err(|e| retry("storing structures", e))?;
-    Ok(())
+    ]
 }
 
 #[derive(Deserialize)]
@@ -659,13 +802,18 @@ struct System {
     name: String,
     security_status: f64,
     region_id: i64,
+    #[serde(default)]
+    planets: Option<Vec<i64>>,
 }
 
-/// Security and region for systems with structures (once each).
+/// Security, region (and, where a customs office or skyhook is, the
+/// planets) for systems with structures, once each.
 fn learn_systems(budget: &mut Budget) -> Result<(), JobError> {
     let missing = storage::query(
-        "SELECT DISTINCT s.system_id, s.corporation_id FROM structures s \
-         WHERE NOT EXISTS (SELECT 1 FROM systems y WHERE y.system_id = s.system_id) LIMIT 30",
+        "SELECT DISTINCT ON (s.system_id) s.system_id, s.corporation_id FROM structures s \
+         WHERE NOT EXISTS (SELECT 1 FROM systems y WHERE y.system_id = s.system_id \
+             AND (y.planet_ids IS NOT NULL OR s.kind NOT IN ('customs_office', 'skyhook'))) \
+         ORDER BY s.system_id LIMIT 30",
         &[],
     )
     .map_err(|e| retry("finding systems", e))?;
@@ -695,13 +843,15 @@ fn learn_systems(budget: &mut Budget) -> Result<(), JobError> {
                     continue;
                 };
                 storage::execute(
-                    "INSERT INTO systems (system_id, name, security_status, region_id) VALUES ($1, $2, $3, $4) \
-                     ON CONFLICT (system_id) DO NOTHING",
+                    "INSERT INTO systems (system_id, name, security_status, region_id, planet_ids) \
+                     VALUES ($1, $2, $3, $4, $5) \
+                     ON CONFLICT (system_id) DO UPDATE SET planet_ids = coalesce(EXCLUDED.planet_ids, systems.planet_ids)",
                     &[
                         s.system_id.into(),
                         s.name.into(),
                         s.security_status.into(),
                         s.region_id.into(),
+                        s.planets.as_deref().map(id_list).into(),
                     ],
                 )
                 .map_err(|e| retry("storing a system", e))?;
@@ -718,7 +868,12 @@ fn learn_names(budget: &mut Budget) -> Result<(), JobError> {
         "SELECT DISTINCT id FROM ( \
              SELECT type_id AS id FROM structures UNION SELECT system_id FROM structures \
              UNION SELECT region_id FROM systems UNION SELECT corporation_id FROM owners \
-             UNION SELECT alliance_id FROM owners WHERE alliance_id IS NOT NULL) i \
+             UNION SELECT alliance_id FROM owners WHERE alliance_id IS NOT NULL \
+             UNION SELECT type_id FROM structure_items \
+             UNION SELECT (f ->> 'type_id')::bigint FROM structures, \
+                 jsonb_array_elements(CASE WHEN jsonb_typeof(details -> 'fuels') = 'array' \
+                     THEN details -> 'fuels' ELSE '[]'::jsonb END) f \
+                 WHERE kind = 'starbase') i \
          WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = i.id)",
         &[],
     )
@@ -788,7 +943,19 @@ fn names_for(ids: &[i64]) -> Result<Vec<(i64, String)>, storage::Error> {
 /// channel) and timers; each once.
 fn handle_notifications() -> Result<(), JobError> {
     let settings = settings().map_err(|e| retry("reading settings", e))?;
+    let routes = Routes::load(&settings).map_err(|e| retry("reading routes", e))?;
     let now = Utc::now();
+    // Starbase notifications name the moon, customs offices' and
+    // skyhooks' the planet: which of the corporation's is it.
+    storage::execute(
+        "UPDATE notifications n SET structure_id = s.structure_id FROM structures s \
+         WHERE NOT n.handled AND n.structure_id IS NULL AND s.corporation_id = n.corporation_id \
+           AND ((n.type LIKE 'Tower%' AND s.kind = 'starbase' AND s.moon_id = n.moon_id) \
+             OR (n.type LIKE 'Orbital%' AND s.kind = 'customs_office' AND s.planet_id = n.planet_id) \
+             OR (n.type LIKE 'Skyhook%' AND s.kind = 'skyhook' AND s.planet_id = n.planet_id))",
+        &[],
+    )
+    .map_err(|e| retry("matching notifications", e))?;
     let rows = storage::query(
         "SELECT n.notification_id, n.type, n.at, n.text, n.structure_id, n.corporation_id, s.name, \
                 so.structure_id IS NOT NULL \
@@ -807,6 +974,9 @@ fn handle_notifications() -> Result<(), JobError> {
         .map(|r| {
             let fields = Fields::parse(&text(r, 3));
             ids.extend(fields.ids());
+            // Moons and planets Structures named itself.
+            ids.extend(fields.moon_id());
+            ids.extend(fields.planet_id());
             fields
         })
         .collect();
@@ -845,7 +1015,7 @@ fn handle_notifications() -> Result<(), JobError> {
             ));
         }
         let category = notification::category(&kind);
-        let channel = category.and_then(|c| settings.channel(c));
+        let channel = category.and_then(|c| routes.channel(corp, c));
         if let (Some(category), Some(channel)) = (category, channel)
             && ours
             && now - at <= RELAY_WITHIN
@@ -862,7 +1032,7 @@ fn handle_notifications() -> Result<(), JobError> {
                         format!("notification:{id}").into(),
                         channel.into(),
                         message.into(),
-                        (settings.mention && category == Category::Attack).into(),
+                        (routes.mention(corp) && category == Category::Attack).into(),
                     ],
                 ));
             }
@@ -872,10 +1042,14 @@ fn handle_notifications() -> Result<(), JobError> {
     Ok(())
 }
 
-/// Tether's low-fuel alerts: one per structure as its fuel falls under
-/// each threshold, again after it's refuelled above it.
+/// Tether's low-fuel alerts (aa-structures' fuel alerts), for Upwell
+/// structures (a Metenox's gas counted) and starbases: one per structure
+/// as its fuel falls under each threshold, again after it's refuelled
+/// above it. A structure whose owner sends fuel alerts nowhere isn't
+/// marked, so it's alerted once a channel is picked.
 fn fuel_alerts() -> Result<(), JobError> {
     let settings = settings().map_err(|e| retry("reading settings", e))?;
+    let routes = Routes::load(&settings).map_err(|e| retry("reading routes", e))?;
     // Refuelled (or gone): the alerts reset.
     storage::execute(
         "DELETE FROM fuel_alerts f WHERE NOT EXISTS (SELECT 1 FROM structures s \
@@ -884,32 +1058,47 @@ fn fuel_alerts() -> Result<(), JobError> {
         &[],
     )
     .map_err(|e| retry("resetting fuel alerts", e))?;
-    let Some(channel) = settings.fuel.clone() else {
-        return Ok(());
-    };
     let now = Utc::now();
     // Largest first: a structure under several thresholds at once gets
     // one alert, for the smallest.
-    let mut alerts: Vec<(i64, i64)> = Vec::new();
+    let mut alerts: Vec<(i64, i64, i64)> = Vec::new();
     for hours in &settings.thresholds {
         let crossed = storage::query(
-            "INSERT INTO fuel_alerts (structure_id, hours) \
-             SELECT structure_id, $1 FROM structures \
-             WHERE fuel_expires IS NOT NULL AND fuel_expires > now() \
+            "SELECT structure_id, corporation_id FROM structures s \
+             WHERE kind IN ('upwell', 'starbase') AND fuel_expires IS NOT NULL AND fuel_expires > now() \
                AND fuel_expires <= now() + make_interval(hours => $1::integer) \
-             ON CONFLICT DO NOTHING RETURNING structure_id",
+               AND NOT EXISTS (SELECT 1 FROM fuel_alerts f WHERE f.structure_id = s.structure_id AND f.hours = $1)",
             &[(*hours).into()],
         )
-        .map_err(|e| retry("recording fuel alerts", e))?;
+        .map_err(|e| retry("finding low fuel", e))?;
         for row in &crossed.rows {
-            let structure = int(row, 0);
-            alerts.retain(|(s, _)| *s != structure);
-            alerts.push((structure, *hours));
+            let (structure, corp) = (int(row, 0), int(row, 1));
+            if routes.channel(corp, Category::Fuel).is_none() {
+                continue;
+            }
+            alerts.retain(|(s, _, _)| *s != structure);
+            alerts.push((structure, corp, *hours));
         }
     }
-    for (structure, hours) in alerts {
+    for &(structure, _, _) in &alerts {
+        // Every threshold it's under now is marked, the smallest alerted.
+        storage::execute(
+            "INSERT INTO fuel_alerts (structure_id, hours) \
+             SELECT $1, h FROM unnest(string_to_array($2, ',')::integer[]) AS h \
+             WHERE EXISTS (SELECT 1 FROM structures s WHERE s.structure_id = $1 \
+                 AND s.fuel_expires <= now() + make_interval(hours => h)) \
+             ON CONFLICT DO NOTHING",
+            &[structure.into(), id_list(&settings.thresholds).into()],
+        )
+        .map_err(|e| retry("recording fuel alerts", e))?;
+    }
+    for (structure, corp, hours) in alerts {
+        let Some(channel) = routes.channel(corp, Category::Fuel) else {
+            continue;
+        };
         let rows = storage::query(
-            "SELECT s.name, coalesce(t.name, ''), coalesce(y.name, n.name, ''), s.fuel_expires \
+            "SELECT s.name, coalesce(t.name, ''), coalesce(y.name, n.name, ''), s.fuel_expires, s.kind, \
+                 s.gas_expires IS NOT NULL AND s.gas_expires < coalesce(s.blocks_expires, 'infinity') \
              FROM structures s LEFT JOIN names t ON t.id = s.type_id \
              LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names n ON n.id = s.system_id \
              WHERE s.structure_id = $1",
@@ -930,8 +1119,13 @@ fn fuel_alerts() -> Result<(), JobError> {
         if !system.is_empty() {
             place.push_str(&format!(" in {system}"));
         }
+        let what = if row.get(5).and_then(Db::as_bool).unwrap_or(false) {
+            "magmatic gas"
+        } else {
+            "fuel"
+        };
         let message = format!(
-            "Low fuel: {place} runs out of fuel in {} ({} EVE), under the {hours}-hour alert.",
+            "Low fuel: {place} runs out of {what} in {} ({} EVE), under the {hours}-hour alert.",
             left(expires - now),
             expires.format("%Y-%m-%d %H:%M")
         );
@@ -939,7 +1133,7 @@ fn fuel_alerts() -> Result<(), JobError> {
             "INSERT INTO outbox (key, channel, message) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING",
             &[
                 format!("fuel:{structure}:{hours}:{}", expires.timestamp()).into(),
-                channel.as_str().into(),
+                channel.into(),
                 message.into(),
             ],
         )
@@ -1142,9 +1336,27 @@ fn state_badge(state: &str) -> Value {
         "fitting_invulnerable" => ("Fitting invulnerable", Tone::Neutral),
         "online_deprecated" => ("Online", Tone::Neutral),
         "unanchored" => ("Unanchored", Tone::Neutral),
+        // Starbases.
+        "online" => ("Online", Tone::Success),
+        "onlining" => ("Onlining", Tone::Warning),
+        "offline" => ("Offline", Tone::Warning),
+        "reinforced" => ("Reinforced", Tone::Danger),
+        "unanchoring" => ("Unanchoring", Tone::Warning),
+        // Customs offices and skyhooks: ESI gives none.
+        "none" => return "".into(),
         _ => ("Unknown", Tone::Neutral),
     };
     badge(label, tone).into()
+}
+
+/// What a structure is, for people.
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "starbase" => "Starbase",
+        "customs_office" => "Customs office",
+        "skyhook" => "Orbital Skyhook",
+        _ => "Upwell structure",
+    }
 }
 
 #[derive(Deserialize)]
@@ -1175,20 +1387,34 @@ fn services_text(json: &str) -> String {
 const STRUCTURE_ROW: &str = "SELECT s.structure_id, s.name, coalesce(t.name, 'Type ' || s.type_id::text), \
         coalesce(y.name, sn.name, 'System ' || s.system_id::text), y.security_status, coalesce(r.name, ''), \
         s.fuel_expires, s.services::text, s.state, s.state_timer_end, s.reinforce_hour, \
-        s.next_reinforce_hour, s.next_reinforce_apply, coalesce(o.name, 'Corporation ' || s.corporation_id::text) \
+        s.next_reinforce_hour, s.next_reinforce_apply, coalesce(o.name, 'Corporation ' || s.corporation_id::text), \
+        s.kind, s.has_core, \
+        coalesce((SELECT string_agg(g.name, ', ' ORDER BY g.sort_order, g.name) FROM structure_tags st \
+            JOIN tags g ON g.id = st.tag_id WHERE st.structure_id = s.structure_id), ''), \
+        coalesce(m.name, s.planet_name, pl.name, ''), s.strontium, s.details::text, s.unanchors_at \
      FROM structures s \
      LEFT JOIN names t ON t.id = s.type_id \
      LEFT JOIN systems y ON y.system_id = s.system_id \
      LEFT JOIN names sn ON sn.id = s.system_id \
      LEFT JOIN names r ON r.id = y.region_id \
-     LEFT JOIN names o ON o.id = s.corporation_id";
+     LEFT JOIN names o ON o.id = s.corporation_id \
+     LEFT JOIN names m ON m.id = s.moon_id \
+     LEFT JOIN names pl ON pl.id = s.planet_id";
 
-fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
-    let system = match row.get(4).and_then(Db::as_float) {
+fn system_text(row: &[Db]) -> String {
+    match row.get(4).and_then(Db::as_float) {
         Some(sec) => format!("{} ({sec:.1})", text(row, 3)),
         None => text(row, 3),
-    };
-    let (expires, remaining): (Value, Value) = match when(row, 6) {
+    }
+}
+
+fn name_link(row: &[Db]) -> Value {
+    link(text(row, 1), format!("structure/{}", int(row, 0))).into()
+}
+
+/// Fuel expiry and time left, toned by the first alert.
+fn fuel_cells(row: &[Db], now: DateTime<Utc>, alert: i64) -> (Value, Value) {
+    match when(row, 6) {
         Some(t) => {
             let d = t - now;
             let tone = if d < Duration::hours(24) {
@@ -1200,8 +1426,13 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
             };
             (time(rfc3339(t)), badge(left(d), tone).into())
         }
-        None => ("".into(), badge("Low power", Tone::Warning).into()),
-    };
+        None if text(row, 14) == "upwell" => ("".into(), badge("Low power", Tone::Warning).into()),
+        None => ("".into(), "Unknown".into()),
+    }
+}
+
+fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
+    let (expires, remaining) = fuel_cells(row, now, alert);
     let reinforce = match (opt_int(row, 10), opt_int(row, 11), when(row, 12)) {
         (Some(h), Some(next), Some(from)) => format!(
             "{h:02}:00 ({next:02}:00 from {})",
@@ -1210,18 +1441,29 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
         (Some(h), _, _) => format!("{h:02}:00"),
         _ => String::new(),
     };
+    let upwell = text(row, 14) == "upwell";
     vec![
         text(row, 13).into(),
-        text(row, 1).into(),
+        name_link(row),
         text(row, 2).into(),
-        system.into(),
+        system_text(row).into(),
         text(row, 5).into(),
         expires,
         remaining,
-        services_text(&text(row, 7)).into(),
+        if upwell {
+            services_text(&text(row, 7)).into()
+        } else {
+            "".into()
+        },
         state_badge(&text(row, 8)),
         when(row, 9).map_or_else(|| "".into(), |t| time(rfc3339(t))),
         reinforce.into(),
+        if upwell {
+            detail::core_badge(row.get(15).and_then(Db::as_bool))
+        } else {
+            "".into()
+        },
+        text(row, 16).into(),
     ]
 }
 
@@ -1239,6 +1481,8 @@ fn structure_table(title: &str, empty: &str, rows: Vec<Vec<Value>>) -> Table {
             Column::text("State"),
             Column::numeric("State timer"),
             Column::text("Reinforce hour"),
+            Column::text("Core"),
+            Column::text("Tags"),
         ])
         .title(title)
         .empty(empty),
@@ -1246,22 +1490,135 @@ fn structure_table(title: &str, empty: &str, rows: Vec<Vec<Value>>) -> Table {
     )
 }
 
-fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
-    let Some(mut params) = visibility(viewer) else {
+fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
+    let (expires, remaining) = fuel_cells(row, now, alert);
+    // Reinforced until, or unanchoring at.
+    let timer = when(row, 9).or_else(|| when(row, 20));
+    vec![
+        text(row, 13).into(),
+        name_link(row),
+        text(row, 2).into(),
+        system_text(row).into(),
+        text(row, 17).into(),
+        expires,
+        remaining,
+        opt_int(row, 18).map_or_else(|| "".into(), Value::from),
+        state_badge(&text(row, 8)),
+        timer.map_or_else(|| "".into(), |t| time(rfc3339(t))),
+        text(row, 16).into(),
+    ]
+}
+
+fn starbase_table(rows: Vec<Vec<Value>>) -> Table {
+    with_rows(
+        Table::new(vec![
+            Column::text("Owner"),
+            Column::text("Name"),
+            Column::text("Type"),
+            Column::text("System"),
+            Column::text("Moon"),
+            Column::numeric("Fuel expires"),
+            Column::text("Fuel left"),
+            Column::numeric("Strontium"),
+            Column::text("State"),
+            Column::numeric("State timer"),
+            Column::text("Tags"),
+        ])
+        .title("Starbases")
+        .empty("No starbases. They're read with the owner's Director role."),
+        rows,
+    )
+}
+
+fn rate(details: &serde_json::Value, key: &str) -> Value {
+    details[key]
+        .as_f64()
+        .map_or_else(|| "".into(), |v| format!("{:.1}%", v * 100.0).into())
+}
+
+fn orbital_row(row: &[Db]) -> Vec<Value> {
+    let details: serde_json::Value = serde_json::from_str(&text(row, 19)).unwrap_or_default();
+    let window = match (
+        details["reinforce_exit_start"].as_i64(),
+        details["reinforce_exit_end"].as_i64(),
+    ) {
+        (Some(a), Some(b)) => format!("{a:02}:00 to {b:02}:00"),
+        _ => String::new(),
+    };
+    vec![
+        text(row, 13).into(),
+        name_link(row),
+        text(row, 2).into(),
+        system_text(row).into(),
+        text(row, 5).into(),
+        text(row, 17).into(),
+        window.into(),
+        rate(&details, "corporation_tax_rate"),
+        rate(&details, "alliance_tax_rate"),
+        text(row, 16).into(),
+    ]
+}
+
+fn orbital_table(rows: Vec<Vec<Value>>) -> Table {
+    with_rows(
+        Table::new(vec![
+            Column::text("Owner"),
+            Column::text("Name"),
+            Column::text("Type"),
+            Column::text("System"),
+            Column::text("Region"),
+            Column::text("Planet"),
+            Column::text("Reinforcement exit"),
+            Column::numeric("Corporation tax"),
+            Column::numeric("Alliance tax"),
+            Column::text("Tags"),
+        ])
+        .title("Customs offices and skyhooks")
+        .empty("No customs offices or skyhooks. They're read with the owner's Director role."),
+        rows,
+    )
+}
+
+/// What the list shows: an owner's, or those with any of some tags.
+#[derive(Default)]
+struct Filter {
+    owner: Option<i64>,
+    tags: Option<Vec<i64>>,
+}
+
+const LOW_FUEL: &str = "((s.kind = 'upwell' AND (s.fuel_expires IS NULL OR s.fuel_expires <= now() + make_interval(hours => $6::integer))) \
+     OR (s.kind = 'starbase' AND s.fuel_expires <= now() + make_interval(hours => $6::integer)))";
+const REINFORCED: &str = "s.state IN ('armor_reinforce', 'armor_vulnerable', 'hull_reinforce', 'hull_vulnerable', 'reinforced')";
+
+fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
+    let Some(visible) = visibility(viewer) else {
         return Ok(Page::new("Structures").text(
             "You can open Structures but may not see any structures. An admin grants \
              view_corporation_structures, view_alliance_structures or view_all_structures.",
         ));
     };
-    params.push(owner.into());
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let alert = settings.thresholds.first().copied().unwrap_or(72);
+    let all_tags = tags::all_visible(&visible).map_err(|e| failed("reading tags", e))?;
+    let default_filter = settings.default_tags_filter && filter.tags.is_none();
+    let mut params = visible.clone();
+    params.push(filter.owner.into());
+    params.push(id_list(filter.tags.as_deref().unwrap_or_default()).into());
+    params.push(alert.into());
+    params.push(default_filter.into());
     let now = Utc::now();
-    let scope = format!("WHERE {VISIBLE} AND ($4::bigint IS NULL OR s.corporation_id = $4)");
-    let owner_name = match owner {
+    let scope = format!(
+        "WHERE {VISIBLE} AND ($4::bigint IS NULL OR s.corporation_id = $4) \
+           AND ($5::text = '' OR EXISTS (SELECT 1 FROM structure_tags g WHERE g.structure_id = s.structure_id \
+               AND g.tag_id = ANY(string_to_array($5, ',')::integer[]))) \
+           AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM structure_tags g JOIN tags d ON d.id = g.tag_id \
+               WHERE g.structure_id = s.structure_id AND d.is_default)) \
+           AND $6::integer > 0"
+    );
+    let owner_name = match filter.owner {
         Some(corp) => {
             // Only an owner the viewer may see.
-            let mut p = params[..3].to_vec();
+            let mut p = visible.clone();
             p.push(corp.into());
             let rows = storage::query(
                 &format!(
@@ -1281,33 +1638,30 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
         }
         None => None,
     };
-    let query = |filter: &str, order: &str, limit: i64| {
+    let query = |condition: &str, order: &str, limit: i64| {
         let mut p = params.clone();
         p.push(limit.into());
         storage::query(
-            &format!("{STRUCTURE_ROW} {scope} {filter} ORDER BY {order} LIMIT $5"),
+            &format!("{STRUCTURE_ROW} {scope} AND {condition} ORDER BY {order} LIMIT $8"),
             &p,
         )
         .map_err(|e| failed("reading structures", e))
     };
-    let all = query("", "o.name, s.name", LIST_ROWS)?;
-    let low = query(
-        &format!(
-            "AND (s.fuel_expires IS NULL OR s.fuel_expires <= now() + interval '{alert} hours')"
-        ),
-        "s.fuel_expires NULLS FIRST",
-        SHORT_ROWS,
+    let upwell = query("s.kind = 'upwell'", "o.name, s.name", LIST_ROWS)?;
+    let starbases = query("s.kind = 'starbase'", "o.name, s.name", STARBASE_ROWS)?;
+    let orbitals = query(
+        "s.kind IN ('customs_office', 'skyhook')",
+        "o.name, s.name",
+        ORBITAL_ROWS,
     )?;
-    let reinforced = query(
-        "AND s.state IN ('armor_reinforce', 'armor_vulnerable', 'hull_reinforce', 'hull_vulnerable')",
-        "s.state_timer_end NULLS LAST",
-        SHORT_ROWS,
-    )?;
+    let low = query(LOW_FUEL, "s.fuel_expires NULLS FIRST", SHORT_ROWS)?;
+    let reinforced = query(REINFORCED, "s.state_timer_end NULLS LAST", SHORT_ROWS)?;
     let counts = storage::query(
         &format!(
-            "SELECT count(*), \
-                 count(*) FILTER (WHERE s.fuel_expires IS NULL OR s.fuel_expires <= now() + interval '{alert} hours'), \
-                 count(*) FILTER (WHERE s.state IN ('armor_reinforce', 'armor_vulnerable', 'hull_reinforce', 'hull_vulnerable')) \
+            "SELECT count(*) FILTER (WHERE s.kind = 'upwell'), \
+                 count(*) FILTER (WHERE s.kind = 'starbase'), \
+                 count(*) FILTER (WHERE s.kind IN ('customs_office', 'skyhook')), \
+                 count(*) FILTER (WHERE {LOW_FUEL}), count(*) FILTER (WHERE {REINFORCED}) \
              FROM structures s {scope}"
         ),
         &params,
@@ -1319,7 +1673,7 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
              FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
              LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
              LEFT JOIN names o ON o.id = s.corporation_id \
-             {scope} AND t.at > now() ORDER BY t.at LIMIT {SHORT_ROWS}"
+             {scope} AND t.at > now() ORDER BY t.at LIMIT {TIMER_ROWS}"
         ),
         &params,
     )
@@ -1332,31 +1686,39 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
                  max(o.structures_at), bool_and(o.structures_retry_at > now()) \
              FROM owners o LEFT JOIN names n ON n.id = o.corporation_id LEFT JOIN names a ON a.id = o.alliance_id \
              WHERE {} \
-             GROUP BY o.corporation_id, n.name, a.name ORDER BY 2 LIMIT {SHORT_ROWS}",
+             GROUP BY o.corporation_id, n.name, a.name ORDER BY 2 LIMIT {OWNER_ROWS}",
             VISIBLE.replace("s.corporation_id", "o.corporation_id")
         ),
-        &params[..3],
+        &visible,
     )
     .map_err(|e| failed("reading owners", e))?;
 
     let row = counts.rows.first();
-    let total = row.map_or(0, |r| int(r, 0));
-    let (low_count, reinforced_count) =
-        (row.map_or(0, |r| int(r, 1)), row.map_or(0, |r| int(r, 2)));
+    let count_of = |i: usize| row.map_or(0, |r| int(r, i));
+    let (total, starbase_count, orbital_count) = (count_of(0), count_of(1), count_of(2));
+    let (low_count, reinforced_count) = (count_of(3), count_of(4));
     let next = timers.rows.first().and_then(|r| when(r, 1));
-    let structures = all
-        .rows
-        .iter()
-        .map(|r| structure_row(r, now, alert))
-        .collect();
-    let mut list = vec![Section::Table(structure_table(
+    let rows_of = |rows: &storage::Rows| -> Vec<Vec<Value>> {
+        rows.rows
+            .iter()
+            .map(|r| structure_row(r, now, alert))
+            .collect()
+    };
+    let mut list = Vec::new();
+    if default_filter {
+        list.push(Section::Text(
+            "Showing structures with a default tag: pick tags on the Tags tab to see others."
+                .to_owned(),
+        ));
+    }
+    list.push(Section::Table(structure_table(
         "Structures",
         "No structures yet. Owners' structures appear within the hour.",
-        structures,
-    ))];
+        rows_of(&upwell),
+    )));
     if total > LIST_ROWS {
         list.push(Section::Text(format!(
-            "Showing the first {LIST_ROWS} of {total}: pick an owner on the Owners tab to see theirs."
+            "Showing the first {LIST_ROWS} of {total}: pick an owner on the Owners tab, or tags, to see theirs."
         )));
     }
     let timer_table = with_rows(
@@ -1404,14 +1766,29 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
             ]
         }),
     );
-    let title = match &owner_name {
-        Some(name) => format!("Structures: {name}"),
-        None => "Structures".to_owned(),
+    let tag_names: Vec<String> = filter
+        .tags
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|id| {
+            all_tags
+                .iter()
+                .find(|t| t.id == *id)
+                .map(|t| t.name.clone())
+        })
+        .collect();
+    let title = match (&owner_name, tag_names.is_empty()) {
+        (Some(name), _) => format!("Structures: {name}"),
+        (None, false) => format!("Structures tagged {}", tag_names.join(" or ")),
+        (None, true) => "Structures".to_owned(),
     };
     let mut page = Page::new(title)
-        .description("Owners' Upwell structures, from ESI hourly; timers and alerts from their notifications")
+        .description("Owners' Upwell structures, starbases, customs offices and skyhooks, from ESI hourly; timers and alerts from their notifications")
         .stats(vec![
             Stat::new("Structures", total),
+            Stat::new("Starbases", starbase_count),
+            Stat::new("Orbitals", orbital_count).caption("customs offices and skyhooks"),
             Stat::new("Low fuel", low_count).caption(format!("under {alert} hours, or low power")),
             Stat::new("Reinforced", reinforced_count),
             match next {
@@ -1426,7 +1803,7 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
             vec![Section::Table(structure_table(
                 &format!("Under {alert} hours of fuel, or low power"),
                 "No structure is low on fuel.",
-                low.rows.iter().map(|r| structure_row(r, now, alert)).collect(),
+                rows_of(&low),
             ))],
         )
         .tab(
@@ -1434,11 +1811,7 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
             vec![Section::Table(structure_table(
                 "Reinforced or vulnerable",
                 "No structure is reinforced.",
-                reinforced
-                    .rows
-                    .iter()
-                    .map(|r| structure_row(r, now, alert))
-                    .collect(),
+                rows_of(&reinforced),
             ))],
         )
         .tab(
@@ -1451,8 +1824,38 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
                         .to_owned(),
                 ),
             ],
+        )
+        .tab(
+            "Starbases",
+            vec![Section::Table(starbase_table(
+                starbases
+                    .rows
+                    .iter()
+                    .map(|r| starbase_row(r, now, alert))
+                    .collect(),
+            ))],
+        )
+        .tab(
+            "Orbitals",
+            vec![
+                Section::Table(orbital_table(orbitals.rows.iter().map(|r| orbital_row(r)).collect())),
+                Section::Card(
+                    tether_plugin_sdk::Card::new("Customs offices")
+                        .field("Public list", link("Customs offices open to you", "pocos")),
+                ),
+            ],
+        )
+        .tab(
+            "Tags",
+            vec![
+                Section::Form(tags::filter_form(
+                    &all_tags,
+                    filter.tags.as_deref().unwrap_or_default(),
+                )),
+                Section::Table(tags::tag_table(&all_tags)),
+            ],
         );
-    if owner.is_none() {
+    if filter.owner.is_none() && filter.tags.is_none() {
         page = page.tab(
             "Owners",
             vec![
@@ -1460,18 +1863,100 @@ fn list_page(viewer: &Viewer, owner: Option<i64>) -> Result<Page, PageError> {
                 Section::Text(
                     "Add Structure Owner: a character with the in-game Station Manager role offers \
                      itself on the Dashboard (Structures: corporation data), and an admin approves it. \
-                     Its corporation's structures show here within the hour."
+                     Its corporation's structures show here within the hour; starbases, customs \
+                     offices, skyhooks and fittings need the Director role."
                         .to_owned(),
                 ),
             ],
         );
     } else {
         page = page.card(
-            tether_plugin_sdk::Card::new("Owner")
-                .field("All owners", link("Back to every owner", "")),
+            tether_plugin_sdk::Card::new("Filter")
+                .field("All structures", link("Back to every structure", "")),
         );
     }
     Ok(page)
+}
+
+/// aa-structures' public customs office list: every customs office of
+/// owners that made theirs public, with whether the viewer's main may use
+/// it and at what tax (by corporation and alliance; standings aren't
+/// known to Tether).
+fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
+    let rows = storage::query(
+        "SELECT coalesce(o.name, 'Corporation ' || s.corporation_id::text), \
+             coalesce(y.name, sn.name, 'System ' || s.system_id::text), y.security_status, \
+             coalesce(r.name, ''), coalesce(s.planet_name, p.name, ''), s.details::text, s.corporation_id, \
+             (SELECT a.alliance_id FROM owners a WHERE a.corporation_id = s.corporation_id LIMIT 1) \
+         FROM structures s JOIN owner_settings w ON w.corporation_id = s.corporation_id AND w.pocos_public \
+         LEFT JOIN names o ON o.id = s.corporation_id \
+         LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
+         LEFT JOIN names r ON r.id = y.region_id LEFT JOIN names p ON p.id = s.planet_id \
+         WHERE s.kind = 'customs_office' ORDER BY 4, 2, 5 LIMIT 500",
+        &[],
+    )
+    .map_err(|e| failed("reading customs offices", e))?;
+    let (corp, alliance) = (viewer.main.corporation_id, viewer.main.alliance_id);
+    let table = with_rows(
+        Table::new(vec![
+            Column::text("Owner"),
+            Column::text("System"),
+            Column::text("Region"),
+            Column::text("Planet"),
+            Column::text("Your access"),
+            Column::numeric("Your tax"),
+        ])
+        .title("Customs offices")
+        .empty("No owner has made its customs offices public."),
+        rows.rows.iter().map(|r| {
+            let details: serde_json::Value = serde_json::from_str(&text(r, 5)).unwrap_or_default();
+            let (owner_corp, owner_alliance) = (int(r, 6), opt_int(r, 7));
+            let (access, tax): (Value, Value) = if owner_corp == corp {
+                (
+                    badge("Yes", Tone::Success).into(),
+                    rate(&details, "corporation_tax_rate"),
+                )
+            } else if alliance.is_some()
+                && alliance == owner_alliance
+                && details["allow_alliance_access"].as_bool().unwrap_or(false)
+            {
+                (
+                    badge("Yes", Tone::Success).into(),
+                    rate(&details, "alliance_tax_rate"),
+                )
+            } else if details["allow_access_with_standings"]
+                .as_bool()
+                .unwrap_or(false)
+            {
+                (
+                    badge("By standing", Tone::Warning).into(),
+                    rate(&details, "neutral_standing_tax_rate"),
+                )
+            } else {
+                (badge("No", Tone::Danger).into(), "".into())
+            };
+            let system = match r.get(2).and_then(Db::as_float) {
+                Some(sec) => format!("{} ({sec:.1})", text(r, 1)),
+                None => text(r, 1),
+            };
+            vec![
+                text(r, 0).into(),
+                system.into(),
+                text(r, 3).into(),
+                text(r, 4).into(),
+                access,
+                tax,
+            ]
+        }),
+    );
+    Ok(Page::new("Customs offices")
+        .description("Customs offices their owners opened to everyone who may open Structures")
+        .table(table)
+        .text(
+            "Access and tax for your main's corporation and alliance. \"By standing\" depends on \
+             the owner's standings towards you, which Tether doesn't know: the tax shown is the \
+             neutral standing rate.",
+        ))
 }
 
 fn channel_field(name: &str, label: &str, help: &str, value: Option<&str>) -> Field {
@@ -1512,9 +1997,10 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         .title("Discord")
         .description(
             "Each kind of notification goes to one of the channels an admin assigned Structures \
-             (Admin → Apps), within a day of it happening, once. Every owner's notifications and \
-             alerts go to these channels, whatever the view permissions: anyone who can read a \
-             channel sees every owner's structures named in it.",
+             (Admin → Apps), within a day of it happening, once. These are the defaults: an owner \
+             can have its own (Owners' Discord routing below), as aa-structures' webhooks per \
+             owner. Notifications and alerts go to these channels whatever the view permissions: \
+             anyone who can read a channel sees the structures named in it.",
         )
         .field(channel_field(
             "attack_channel",
@@ -1569,6 +2055,14 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                  main is in the structure's corporation. Off: everyone who may see Structure \
                  Timers sees them.",
             ),
+        )
+        .field(
+            Field::checkbox(
+                "default_tags_filter",
+                "Show structures with a default tag",
+                settings.default_tags_filter,
+            )
+            .help("The list shows only structures with a default tag until tags are picked."),
         );
     let owner_rows = owners.rows.iter().map(|r| {
         let backing_off = when(r, 6).filter(|t| *t > now);
@@ -1635,7 +2129,58 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             ]
         }),
     );
-    page = page.form(form).table(owner_table);
+    let routing = storage::query(
+        "SELECT o.corporation_id, coalesce(n.name, 'Corporation ' || o.corporation_id::text), \
+             (SELECT count(*) FROM owner_channels c WHERE c.corporation_id = o.corporation_id), \
+             coalesce(w.mention, 'default'), coalesce(w.pocos_public, false) \
+         FROM (SELECT DISTINCT corporation_id FROM owners) o \
+         LEFT JOIN names n ON n.id = o.corporation_id \
+         LEFT JOIN owner_settings w ON w.corporation_id = o.corporation_id ORDER BY 2",
+        &[],
+    )
+    .map_err(|e| failed("reading owners", e))?;
+    let routing_table = with_rows(
+        Table::new(vec![
+            Column::text("Owner"),
+            Column::text("Channels"),
+            Column::text("Mention on attacks"),
+            Column::text("Customs offices public"),
+        ])
+        .title("Owners' Discord routing")
+        .empty("No owners yet."),
+        routing.rows.iter().map(|r| {
+            let own = int(r, 2);
+            vec![
+                link(text(r, 1), format!("settings/owner/{}", int(r, 0))).into(),
+                if own == 0 {
+                    "The defaults above".to_owned()
+                } else {
+                    format!("Its own for {own} of 4 kinds")
+                }
+                .into(),
+                match text(r, 3).as_str() {
+                    "on" => "Yes",
+                    "off" => "No",
+                    _ => "The default",
+                }
+                .into(),
+                if r.get(4).and_then(Db::as_bool).unwrap_or(false) {
+                    "Yes"
+                } else {
+                    "No"
+                }
+                .into(),
+            ]
+        }),
+    );
+    page = page
+        .form(form)
+        .table(routing_table)
+        .card(tether_plugin_sdk::Card::new("Tags").field(
+            "Make and change tags",
+            link("Structures tags", "settings/tags"),
+        ))
+        .table(owner_table);
     if !choices.is_empty() {
         page = page.form(
             Form::new("retry", "Retry now")
@@ -1665,7 +2210,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     storage::execute(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
          moon_channel = $4, fuel_thresholds = $5, mention_members = $6, \
-         timers_corporation_only = $7 WHERE id = 1",
+         timers_corporation_only = $7, default_tags_filter = $8 WHERE id = 1",
         &[
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
@@ -1674,6 +2219,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             thresholds.as_str().into(),
             submission.checked("mention_members").into(),
             submission.checked("timers_corporation_only").into(),
+            submission.checked("default_tags_filter").into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
@@ -1695,6 +2241,194 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     Ok(SubmitResult::Redirect("settings".into()))
 }
 
+/// A channel choice for an owner: the default, not sent, or a channel.
+fn owner_channel_field(
+    category: Category,
+    default: Option<&str>,
+    channels: &[discord::Channel],
+    value: &str,
+) -> Field {
+    let named = |id: &str| {
+        channels.iter().find(|c| c.id == id).map_or_else(
+            || "a channel no longer assigned".to_owned(),
+            |c| format!("#{}", c.name),
+        )
+    };
+    let mut options: Vec<(String, String)> = vec![
+        (
+            "default".to_owned(),
+            match default {
+                Some(id) => format!("Default ({})", named(id)),
+                None => "Default (not sent)".to_owned(),
+            },
+        ),
+        ("none".to_owned(), "Not sent".to_owned()),
+    ];
+    options.extend(
+        channels
+            .iter()
+            .map(|c| (c.id.clone(), format!("#{}", c.name))),
+    );
+    Field::select(
+        format!("{}_channel", category.name()),
+        category.label(),
+        options,
+    )
+    .value(value)
+    .required()
+}
+
+/// An owner corporation's name: one the sync knows, or one an approved
+/// data source is in (routing can be set before the first sync).
+fn owner_name(corp: i64) -> Result<Option<String>, PageError> {
+    let known = storage::query(
+        "SELECT coalesce(n.name, 'Corporation ' || o.corporation_id::text) FROM owners o \
+         LEFT JOIN names n ON n.id = o.corporation_id WHERE o.corporation_id = $1 LIMIT 1",
+        &[corp.into()],
+    )
+    .map_err(|e| failed("reading owners", e))?;
+    if let Some(row) = known.rows.first() {
+        return Ok(Some(text(row, 0)));
+    }
+    Ok(esi::data_sources()
+        .iter()
+        .any(|s| s.corporation_id == corp)
+        .then(|| format!("Corporation {corp}")))
+}
+
+/// An owner's own Discord routing (aa-structures' webhooks per owner),
+/// mentions, and whether its customs offices are on the public list.
+fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
+    let settings = settings().map_err(|e| failed("reading settings", e))?;
+    let name = owner_name(corp)?.ok_or(PageError::NotFound)?;
+    let routes = storage::query(
+        "SELECT category, channel FROM owner_channels WHERE corporation_id = $1",
+        &[corp.into()],
+    )
+    .map_err(|e| failed("reading routes", e))?;
+    let own = storage::query(
+        "SELECT mention, pocos_public FROM owner_settings WHERE corporation_id = $1",
+        &[corp.into()],
+    )
+    .map_err(|e| failed("reading owner settings", e))?;
+    let mention = own
+        .rows
+        .first()
+        .map_or_else(|| "default".to_owned(), |r| text(r, 0));
+    let public = own
+        .rows
+        .first()
+        .and_then(|r| r.get(1))
+        .and_then(Db::as_bool)
+        .unwrap_or(false);
+    let channels = discord::channels();
+    let mut form = Form::new("owner_routes", "Save")
+        .title("Discord")
+        .description(
+            "Where this owner's notifications and alerts go. Default follows the settings' \
+         channels; pick another channel, or Not sent, to route this owner on its own.",
+        );
+    for category in Category::ALL {
+        let value = match routes.rows.iter().find(|r| text(r, 0) == category.name()) {
+            None => "default".to_owned(),
+            Some(r) => r
+                .get(1)
+                .and_then(Db::as_text)
+                .filter(|c| !c.is_empty())
+                .map_or_else(|| "none".to_owned(), str::to_owned),
+        };
+        form = form.field(owner_channel_field(
+            category,
+            settings.channel(category),
+            &channels,
+            &value,
+        ));
+    }
+    form = form
+        .field(
+            Field::select(
+                "mention",
+                "Mention Members on attacks",
+                vec![
+                    (
+                        "default".to_owned(),
+                        format!("Default ({})", if settings.mention { "yes" } else { "no" }),
+                    ),
+                    ("on".to_owned(), "Yes".to_owned()),
+                    ("off".to_owned(), "No".to_owned()),
+                ],
+            )
+            .value(mention)
+            .required(),
+        )
+        .field(
+            Field::checkbox("pocos_public", "Customs offices are public", public).help(
+                "List this owner's customs offices, with access and tax, for everyone who may \
+                 open Structures (aa-structures' public customs offices).",
+            ),
+        );
+    Ok(Page::new(format!("Structures owner: {name}"))
+        .description("Discord routing for one owner")
+        .form(form)
+        .card(
+            tether_plugin_sdk::Card::new("Structures").field("Back", link("Settings", "settings")),
+        ))
+}
+
+fn save_owner_settings(
+    viewer: &Viewer,
+    corp: i64,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    if owner_name(corp)?.is_none() {
+        return Err(PageError::NotFound);
+    }
+    let mut statements = vec![Statement::new(
+        "DELETE FROM owner_channels WHERE corporation_id = $1",
+        vec![corp.into()],
+    )];
+    let mut summary = Vec::new();
+    for category in Category::ALL {
+        let value = submission.value(&format!("{}_channel", category.name()));
+        let channel: Option<&str> = match value {
+            "default" => {
+                summary.push(format!("{} default", category.name()));
+                continue;
+            }
+            "none" => None,
+            id => Some(id),
+        };
+        summary.push(format!("{} {channel:?}", category.name()));
+        statements.push(Statement::new(
+            "INSERT INTO owner_channels (corporation_id, category, channel) VALUES ($1, $2, $3)",
+            vec![corp.into(), category.name().into(), channel.into()],
+        ));
+    }
+    let mention = submission.value("mention");
+    if !matches!(mention, "default" | "on" | "off") {
+        return Err(PageError::NotFound);
+    }
+    statements.push(Statement::new(
+        "INSERT INTO owner_settings (corporation_id, mention, pocos_public) VALUES ($1, $2, $3) \
+         ON CONFLICT (corporation_id) DO UPDATE SET mention = EXCLUDED.mention, \
+             pocos_public = EXCLUDED.pocos_public",
+        vec![
+            corp.into(),
+            mention.into(),
+            submission.checked("pocos_public").into(),
+        ],
+    ));
+    storage::transaction(&statements).map_err(|e| failed("saving the owner", e))?;
+    log::info(format!(
+        "owner {corp} routing set by {} ({}): {}, mention {mention}, customs offices public {}",
+        viewer.main.name,
+        viewer.main.id,
+        summary.join(", "),
+        submission.checked("pocos_public"),
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
 fn retry_owner(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
     let owner: i64 = submission
         .value("owner")
@@ -1702,7 +2436,9 @@ fn retry_owner(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
         .map_err(|_| PageError::NotFound)?;
     storage::execute(
         "UPDATE owners SET structures_failures = 0, structures_retry_at = NULL, \
-         notifications_failures = 0, notifications_retry_at = NULL, last_error = NULL \
+         notifications_failures = 0, notifications_retry_at = NULL, \
+         starbases_failures = 0, starbases_retry_at = NULL, offices_failures = 0, \
+         offices_retry_at = NULL, assets_failures = 0, assets_retry_at = NULL, last_error = NULL \
          WHERE character_id = $1",
         &[owner.into()],
     )

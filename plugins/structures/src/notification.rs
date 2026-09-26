@@ -107,13 +107,32 @@ impl Fields {
             .or_else(|| self.int("solarSystemID"))
     }
 
-    /// Every id worth a name: the system, the structure's type, the
-    /// attacker, and the services that went offline.
+    /// A starbase's moon (starbase notifications name no starbase).
+    pub fn moon_id(&self) -> Option<i64> {
+        self.int("moonID")
+    }
+
+    /// A customs office's or skyhook's planet.
+    pub fn planet_id(&self) -> Option<i64> {
+        self.int("planetID")
+    }
+
+    /// The structure's type (EVE spells the key two ways).
+    pub fn type_id(&self) -> Option<i64> {
+        self.int("structureTypeID").or_else(|| self.int("typeID"))
+    }
+
+    /// Every id `/universe/names` can name: the system, the structure's
+    /// type, the attacker, and the services that went offline. Moons and
+    /// planets aren't among them (Structures names those itself).
     pub fn ids(&self) -> Vec<i64> {
         let mut ids: Vec<i64> = [
             self.system_id(),
-            self.int("structureTypeID"),
+            self.type_id(),
             self.int("charID"),
+            self.int("aggressorID"),
+            self.int("aggressorCorpID"),
+            self.int("aggressorAllianceID"),
         ]
         .into_iter()
         .flatten()
@@ -160,19 +179,55 @@ pub enum Category {
     Moon,
 }
 
+impl Category {
+    pub const ALL: [Category; 4] = [
+        Category::Attack,
+        Category::Fuel,
+        Category::State,
+        Category::Moon,
+    ];
+
+    /// Its name in storage (`owner_channels.category`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Category::Attack => "attack",
+            Category::Fuel => "fuel",
+            Category::State => "state",
+            Category::Moon => "moon",
+        }
+    }
+
+    /// What a manager sees.
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::Attack => "Attacks",
+            Category::Fuel => "Fuel and services",
+            Category::State => "State changes",
+            Category::Moon => "Moon extractions",
+        }
+    }
+}
+
 pub fn category(kind: &str) -> Option<Category> {
     Some(match kind {
         "StructureUnderAttack"
         | "StructureLostShields"
         | "StructureLostArmor"
         | "StructureDestroyed" => Category::Attack,
-        "StructureFuelAlert" | "StructureServicesOffline" | "StructureWentLowPower" => {
-            Category::Fuel
-        }
+        "TowerAlertMsg" | "OrbitalAttacked" | "OrbitalReinforced" | "SkyhookUnderAttack"
+        | "SkyhookLostShields" | "SkyhookDestroyed" => Category::Attack,
+        "StructureFuelAlert"
+        | "StructureServicesOffline"
+        | "StructureWentLowPower"
+        | "StructureLowReagentsAlert"
+        | "StructureNoReagentsAlert"
+        | "TowerResourceAlertMsg" => Category::Fuel,
         "StructureWentHighPower"
         | "StructureOnline"
         | "StructureAnchoring"
-        | "StructureUnanchoring" => Category::State,
+        | "StructureUnanchoring"
+        | "SkyhookDeployed"
+        | "SkyhookOnline" => Category::State,
         "MoonminingExtractionStarted"
         | "MoonminingExtractionFinished"
         | "MoonminingAutomaticFracture"
@@ -185,12 +240,30 @@ pub fn category(kind: &str) -> Option<Category> {
 /// A timer a notification announces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Timer {
-    /// Structure Timers' names: Armor, Hull, Anchoring, Unanchoring.
+    /// Structure Timers' names: Armor, Hull, Final, Anchoring,
+    /// Unanchoring.
     pub kind: &'static str,
     pub at: DateTime<Utc>,
 }
 
 pub fn timer(kind: &str, fields: &Fields, at: DateTime<Utc>) -> Option<Timer> {
+    // A customs office out of reinforcement, and a skyhook's (as
+    // aa-structures reads them): absolute file times.
+    match kind {
+        "OrbitalReinforced" => {
+            return Some(Timer {
+                kind: "Final",
+                at: fields.filetime("reinforceExitTime")?,
+            });
+        }
+        "SkyhookLostShields" => {
+            return Some(Timer {
+                kind: "Final",
+                at: fields.filetime("timestamp")?,
+            });
+        }
+        _ => {}
+    }
     let (kind, key) = match kind {
         "StructureLostShields" => ("Armor", "timeLeft"),
         "StructureLostArmor" => ("Hull", "timeLeft"),
@@ -233,6 +306,34 @@ fn percent(value: Option<f64>) -> String {
     value.map_or_else(|| "?".to_owned(), |v| format!("{v:.0}%"))
 }
 
+/// Shield, armor and hull left, as far as the notification says: in
+/// percent (`shieldPercentage`) or as a fraction (`shieldValue`,
+/// `shieldLevel`).
+fn damage(fields: &Fields) -> String {
+    let part = |name: &str| {
+        fields
+            .float(&format!("{name}Percentage"))
+            .or_else(|| fields.float(&format!("{name}Value")).map(|v| v * 100.0))
+            .or_else(|| fields.float(&format!("{name}Level")).map(|v| v * 100.0))
+            .map(|v| format!("{name} {v:.0}%"))
+    };
+    let parts: Vec<String> = ["shield", "armor", "hull"]
+        .into_iter()
+        .filter_map(part)
+        .collect();
+    let Some((first, rest)) = parts.split_first() else {
+        return String::new();
+    };
+    let mut first = first.clone();
+    // Sentence case.
+    if let Some(c) = first.get(..1) {
+        first = c.to_uppercase() + first.get(1..).unwrap_or_default();
+    }
+    let mut text = vec![first];
+    text.extend(rest.iter().cloned());
+    format!(" {}.", text.join(", "))
+}
+
 /// The Discord message for a notification.
 pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>) -> Option<String> {
     let name = |id: Option<i64>| id.and_then(|id| (cx.name)(id));
@@ -243,15 +344,44 @@ pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>)
         .or_else(|| fields.structure_id().map(|id| format!("Structure {id}")))
         .unwrap_or_else(|| "A structure".to_owned());
     let structure = escape(&structure);
-    let type_name = name(fields.int("structureTypeID"));
+    let type_name = name(fields.type_id());
     let system = name(fields.system_id());
+    // Starbases and orbitals: at their moon or planet.
+    let at_body = fields
+        .moon_id()
+        .filter(|_| kind.starts_with("Tower"))
+        .or_else(|| {
+            fields
+                .planet_id()
+                .filter(|_| kind.starts_with("Orbital") || kind.starts_with("Skyhook"))
+        })
+        .map(|id| name(Some(id)).map_or_else(|| format!("celestial {id}"), |n| escape(&n)));
     let mut place = structure.clone();
     if let Some(t) = &type_name {
         place.push_str(&format!(" ({t})"));
     }
+    if let Some(b) = &at_body {
+        place.push_str(&format!(" at {b}"));
+    }
     if let Some(s) = &system {
         place.push_str(&format!(" in {s}"));
     }
+    // Who, for starbases and customs offices.
+    let aggressor: Vec<String> = [
+        name(fields.int("aggressorID")),
+        name(fields.int("aggressorCorpID")),
+        name(fields.int("aggressorAllianceID")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|s| !s.is_empty())
+    .map(|s| escape(&s))
+    .collect();
+    let aggressor = if aggressor.is_empty() {
+        String::new()
+    } else {
+        format!(" by {}", aggressor.join(", "))
+    };
     let timer = timer(kind, fields, at).map(|t| eve(t.at));
     let text = match kind {
         "StructureUnderAttack" => {
@@ -286,6 +416,52 @@ pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>)
             timer.unwrap_or_else(|| "at an unknown time".to_owned())
         ),
         "StructureDestroyed" => format!("Destroyed: {place}."),
+        "StructureLowReagentsAlert" => {
+            format!("Low reagents: {place} has magmatic gas for about a day more.")
+        }
+        "StructureNoReagentsAlert" => {
+            format!("Out of reagents: {place} has run out of magmatic gas.")
+        }
+        "TowerAlertMsg" => format!(
+            "Starbase under attack: {place}{aggressor}.{}",
+            damage(fields)
+        ),
+        "TowerResourceAlertMsg" => {
+            format!("Starbase fuel alert: {place} is running low on fuel or strontium.")
+        }
+        "OrbitalAttacked" => format!(
+            "Customs office under attack: {place}{aggressor}.{}",
+            damage(fields)
+        ),
+        "OrbitalReinforced" => format!(
+            "Customs office reinforced: {place}{aggressor}. It comes out of reinforcement {} EVE.",
+            timer.unwrap_or_else(|| "at an unknown time".to_owned())
+        ),
+        "SkyhookUnderAttack" => {
+            let attacker: Vec<String> = [
+                name(fields.int("charID")),
+                fields.text("corpName").map(str::to_owned),
+                fields.text("allianceName").map(str::to_owned),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .map(|s| escape(&s))
+            .collect();
+            let by = if attacker.is_empty() {
+                aggressor
+            } else {
+                format!(" by {}", attacker.join(", "))
+            };
+            format!("Skyhook under attack: {place}{by}.{}", damage(fields))
+        }
+        "SkyhookLostShields" => format!(
+            "Skyhook reinforced: {place} lost its shields. It comes out of reinforcement {} EVE.",
+            timer.unwrap_or_else(|| "at an unknown time".to_owned())
+        ),
+        "SkyhookDestroyed" => format!("Skyhook destroyed: {place}."),
+        "SkyhookDeployed" => format!("Skyhook deployed: {place} started onlining."),
+        "SkyhookOnline" => format!("Skyhook online: {place} is online."),
         "StructureFuelAlert" => format!("Fuel alert: {place} is running low on fuel."),
         "StructureServicesOffline" => {
             let services: Vec<String> = fields
@@ -469,6 +645,77 @@ mod tests {
         assert!(
             text.starts_with("Destroyed: \\[Keep\\]\\(https://evil.example\\) (Astrahus)"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn starbase_and_orbital_messages_name_the_moon_or_planet() {
+        let lookup = |id: i64| match id {
+            40009081 => Some("Jita IV - Moon 4".to_owned()),
+            40009077 => Some("Jita IV".to_owned()),
+            16213 => Some("Caldari Control Tower".to_owned()),
+            2233 => Some("Customs Office".to_owned()),
+            other => names(other),
+        };
+        let tower = Fields::parse(
+            "aggressorAllianceID: null\naggressorCorpID: null\naggressorID: 2112625428\n\
+             armorValue: 1.0\nhullValue: 1.0\nmoonID: 40009081\nshieldValue: 0.4999\n\
+             solarSystemID: 30000142\ntypeID: 16213\n",
+        );
+        assert_eq!(tower.moon_id(), Some(40009081));
+        let cx = Context {
+            structure: Some("Home Tower".into()),
+            name: &lookup,
+        };
+        let text = message("TowerAlertMsg", &tower, Utc::now(), &cx).unwrap();
+        assert_eq!(
+            text,
+            "Starbase under attack: Home Tower (Caldari Control Tower) at Jita IV - Moon 4 in Jita \
+             by Some Pilot. Shield 50%, armor 100%, hull 100%."
+        );
+        assert_eq!(category("TowerAlertMsg"), Some(Category::Attack));
+        assert_eq!(category("TowerResourceAlertMsg"), Some(Category::Fuel));
+
+        // 133090848000000000 is 2022-10-01 08:00.
+        let reinforced = Fields::parse(
+            "aggressorAllianceID: 99005338\naggressorCorpID: 98388312\naggressorID: 2112625428\n\
+             planetID: 40009077\nplanetTypeID: 2016\nreinforceExitTime: 133090848000000000\n\
+             solarSystemID: 30000142\ntypeID: 2233\n",
+        );
+        let t = timer("OrbitalReinforced", &reinforced, Utc::now()).unwrap();
+        assert_eq!(t.kind, "Final");
+        assert_eq!(t.at, at("2022-10-01T08:00:00Z"));
+        let cx = Context {
+            structure: Some("Customs Office (Jita IV)".into()),
+            name: &lookup,
+        };
+        let text = message("OrbitalReinforced", &reinforced, Utc::now(), &cx).unwrap();
+        assert!(
+            text.starts_with(
+                "Customs office reinforced: Customs Office \\(Jita IV\\) (Customs Office) at Jita IV in Jita by Some Pilot."
+            ),
+            "{text}"
+        );
+        assert!(text.ends_with("2022-10-01 08:00 EVE."), "{text}");
+        assert!(reinforced.ids().contains(&2112625428));
+        assert!(!reinforced.ids().contains(&40009077));
+    }
+
+    #[test]
+    fn metenox_reagents_are_fuel() {
+        assert_eq!(category("StructureLowReagentsAlert"), Some(Category::Fuel));
+        assert_eq!(category("StructureNoReagentsAlert"), Some(Category::Fuel));
+        assert_eq!(category("SkyhookOnline"), Some(Category::State));
+        assert_eq!(category("SkyhookLostShields"), Some(Category::Attack));
+        let f = Fields::parse(OFFLINE);
+        let cx = Context {
+            structure: Some("Drill".into()),
+            name: &names,
+        };
+        let text = message("StructureNoReagentsAlert", &f, Utc::now(), &cx).unwrap();
+        assert_eq!(
+            text,
+            "Out of reagents: Drill (Astrahus) in Jita has run out of magmatic gas."
         );
     }
 

@@ -4,9 +4,9 @@
 [plugin]
 id = "tether.structures"
 name = "Structures"
-version = "0.1.0"
+version = "0.2.0"
 host_api = "1"
-description = "Owners' structures with fuel, services, state and timers; attacks, reinforcements, fuel and state notifications relayed to Discord, and low-fuel alerts."
+description = "Owners' Upwell structures, starbases, customs offices and skyhooks with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner, and low-fuel alerts."
 
 [publisher]
 key = "PUBLISHER_KEY"
@@ -21,10 +21,15 @@ timers = "publish"
 [capabilities.esi]
 # Through each approved data-source character (AA's structure owner): its
 # corporation's structures (needs the in-game Station Manager role) and
-# its own structure notifications.
+# its own structure notifications; starbases, customs offices and assets
+# (fittings, Metenox fuel, skyhooks) need the Director role, and are
+# skipped for an owner without it.
 data_source = [
     "esi-corporations.read_structures.v1",
     "esi-characters.read_notifications.v1",
+    "esi-corporations.read_starbases.v1",
+    "esi-planets.read_customs_offices.v1",
+    "esi-assets.read_corporation_assets.v1",
 ]
 
 # Notifications cache for 10 minutes at ESI, structures for an hour: the
@@ -35,13 +40,14 @@ every = "10m"
 
 # aa-structures' names. Grant Member basic_access and
 # view_corporation_structures (or view_alliance_structures); leadership
-# view_all_structures and manage.
+# view_all_structures, view_structure_fit and manage.
 [permissions]
 basic_access = "Open Structures (it shows the structures the view permissions allow)"
 view_corporation_structures = "See the structures of your main's corporation"
 view_alliance_structures = "See the structures of every corporation in your main's alliance"
 view_all_structures = "See every owner's structures"
-manage = "Manage Structures: Discord channels, low-fuel alerts and owners' syncing"
+view_structure_fit = "See structures' fittings"
+manage = "Manage Structures: Discord channels, low-fuel alerts, tags and owners' syncing"
 
 [[pages]]
 path = ""
