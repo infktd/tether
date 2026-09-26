@@ -20,6 +20,9 @@ pub const DISCORD_SYNC_NAMES: &str = "discord.sync_names";
 /// own (integration) roles and reserved group names. Off unless set.
 pub const DISCORD_STRIP_UNMAPPED: &str = "discord.strip_unmapped";
 
+/// The accent colour (DESIGN.md), `#rrggbb`. Amber unless set.
+pub const THEME_ACCENT: &str = "theme.accent";
+
 /// aa-fleetpings: whether pings may target @here and @everyone. On unless
 /// set.
 pub const PINGS_MASS_MENTIONS: &str = "pings.mass_mentions";

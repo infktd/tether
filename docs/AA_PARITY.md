@@ -60,7 +60,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | Dashboard | Characters and Membership widgets; admin panels: Software Version, Task Queue, ESI status, Announcements; apps add widgets | **Dashboard**: summary (state, characters, groups, permissions) and characters; for `admin.system`, System panels (Software Version, Task Queue, ESI, error budget); apps add up to 3 `[[widgets]]` each (a page's sections, shown to whoever may open the page) | done, except Announcements (Fleet Pings and Discord cover them) |
 | Admin site | Django admin for every model | purpose-built admin pages, API and CLI; **Users** (Admin → Users): find any account by any character (or id), filter by state and status, see its characters (corporation, token, added, last login), state, groups and permissions, Deactivate or Reactivate | done, deliberately different |
 | Menu (reorder, hide, folders, custom links) | | fixed sidebar | missing: milestone 2 |
-| Themes, Custom CSS | | dark theme; accent colour setting designed but not built | partial: build the accent setting; no custom CSS (plugins never ship CSS) |
+| Themes, Custom CSS | | dark theme; the accent colour (Admin → System → Appearance) | done; no custom CSS (plugins never ship CSS) |
 | Analytics | opt-out telemetry to Google Analytics | none | skip: no telemetry (N5) |
 | Services framework | per-service access permission; access removed when the permission goes | same, for Discord | done |
 | Discord | Link Discord Server, roles mirror groups, nickname sync, kicked on losing access | explicit role mapping (plus an option to strip unmapped roles), nickname sync, kicked on losing access or unlinking, fleet pings | done (mapping deliberately explicit) |

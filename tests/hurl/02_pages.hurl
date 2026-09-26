@@ -392,6 +392,18 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/theme.css
+HTTP 200
+[Asserts]
+header "Content-Type" contains "text/css"
+body contains "--accent:"
+
+POST {{base}}/admin/system/theme
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/dashboard/system
 HTTP 303
 [Asserts]

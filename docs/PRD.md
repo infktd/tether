@@ -234,7 +234,7 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 - [x] Dashboard (F14, F23): admin panels on the Dashboard (version, task queue, ESI status) and widgets plugins can add
 - [x] States cover factions (F4, F23), as AA's Member Factions
 - [x] Fleet Pings, AA parity (F13, F23): aa-fleetpings' fields (target, pre-ping, fleet type, FC, fleet name, formup location and time, comms, doctrine, SRP, additional information) and copy-paste text; channels, targets, fleet types and doctrines limited to groups or states, checked on the server; a setting to turn off @here and @everyone
-- [ ] The accent colour setting from DESIGN.md
+- [x] The accent colour setting from DESIGN.md
 - [ ] Menu customization (F23), as AA's Menu: admins reorder and hide sidebar items, group them in folders and add custom links; apps' links included
 - [ ] Structure Timers plugin (F23), as AA's timerboard: timers with structure type, objective (friendly, hostile, neutral), system, planet or moon, EVE time and details, important and corporation-only flags, visible and editable by permission
 - [ ] Fleet Activity Tracking plugin (F23), as AA's fleetactivitytracking with aa-afat's additions (Jay: alliances track FATs): FCs create a FAT link for a fleet with a fleet type and an expiry, members click it to record their character's attendance, or the FC's ESI fleet is tracked while it runs and everyone who joins gets a FAT; stats per alliance, corporation, pilot and month

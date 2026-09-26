@@ -30,6 +30,7 @@ mod states;
 mod storage;
 mod sync;
 mod system;
+mod theme;
 mod tokens;
 mod transfers;
 mod users;

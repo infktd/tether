@@ -35,6 +35,7 @@ mod state;
 pub mod state_admin;
 pub mod states;
 pub mod sync;
+pub mod theme;
 pub mod tokens;
 pub mod updates;
 
@@ -76,6 +77,7 @@ pub fn router(state: AppState) -> Router {
         .route("/setup/alliance", post(pages::setup::choose_alliance))
         .route("/setup/alliance/search", post(pages::setup::search))
         .route("/static/{*path}", get(pages::assets::serve))
+        .route("/theme.css", get(theme::stylesheet))
         .route("/admin", get(pages::admin::index))
         .route("/tokens", get(pages::tokens::index))
         .route(
@@ -250,6 +252,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/system", get(pages::system::system))
         .route("/admin/system/updates", post(pages::system::set_updates))
+        .route("/admin/system/theme", post(pages::system::set_theme))
         .route(
             "/admin/system/updates/check",
             post(pages::system::check_updates),

@@ -53,7 +53,17 @@ struct SystemPage {
     dead: Vec<DeadJob>,
     schedules: Vec<ScheduleView>,
     updates: updates::Status,
+    accent: String,
+    presets: Vec<Preset>,
+    /// The accent isn't one of the presets.
+    custom: bool,
     error: Option<String>,
+}
+
+pub struct Preset {
+    pub name: &'static str,
+    pub value: &'static str,
+    pub checked: bool,
 }
 
 fn every(secs: i32) -> String {
@@ -125,6 +135,7 @@ async fn system_page(
         })
         .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let accent = crate::theme::accent(&state.db).await?;
     Ok(render(
         code,
         &SystemPage {
@@ -137,6 +148,16 @@ async fn system_page(
             dead,
             schedules,
             updates: updates::status(&state.db).await?,
+            custom: !crate::theme::PRESETS.iter().any(|(_, v)| *v == accent),
+            presets: crate::theme::PRESETS
+                .iter()
+                .map(|(name, value)| Preset {
+                    name,
+                    value,
+                    checked: *value == accent,
+                })
+                .collect(),
+            accent,
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -235,6 +256,32 @@ pub async fn set_updates(
     let (session, _) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
     updates::set_enabled(&state, session.account, form.enabled.is_some()).await?;
     Ok(Redirect::to("/admin/system").into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThemeForm {
+    /// A preset's value, or `custom` for `custom_accent`.
+    accent: String,
+    #[serde(default)]
+    custom_accent: String,
+}
+
+/// `POST /admin/system/theme`: the accent colour.
+pub async fn set_theme(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<ThemeForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
+    let chosen = if form.accent == "custom" {
+        &form.custom_accent
+    } else {
+        &form.accent
+    };
+    match crate::theme::set_accent(&state, session.account, chosen).await {
+        Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
+        Err(err) => system_page(&state, shell, Some(err)).await,
+    }
 }
 
 /// `POST /admin/system/updates/check`

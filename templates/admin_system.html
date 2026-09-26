@@ -103,6 +103,25 @@
     </table>
   </section>
 
+  <form class="card" method="post" action="/admin/system/theme">
+    <header><h2>Appearance</h2><p>The accent colour marks the one thing that matters most on each screen: unread counts, the next countdown, Member badges.</p></header>
+    <section class="flex flex-wrap items-center gap-4 text-sm">
+      {% for p in presets %}
+      <label class="label gap-2 font-normal">
+        <input type="radio" class="input" name="accent" value="{{ p.value }}"{% if p.checked %} checked{% endif %}>
+        <svg class="size-4" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="{{ p.value }}"/></svg>
+        {{ p.name }}
+      </label>
+      {% endfor %}
+      <label class="label gap-2 font-normal">
+        <input type="radio" class="input" name="accent" value="custom"{% if custom %} checked{% endif %}>
+        Custom
+        <input type="color" class="h-8 w-12 rounded-sm border bg-background" name="custom_accent" value="{{ accent }}" aria-label="Custom accent colour">
+      </label>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
   <section class="card">
     <header><h2>Platform updates</h2><p>Once a day, Tether asks GitHub whether a newer release exists. Upgrading is still yours to do: change the image tag.</p></header>
     <section class="flex flex-col gap-3 text-sm">
