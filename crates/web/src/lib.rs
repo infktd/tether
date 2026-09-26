@@ -548,6 +548,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/setup/probe", get(setup::probe))
         .route("/api/setup/callback-check", post(setup::callback_check))
         .fallback(pages::not_found)
+        // Inside the origin check: a cross-site post is refused first.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::sign_in_first,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf::verify_origin,

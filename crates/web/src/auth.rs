@@ -533,6 +533,26 @@ fn safe_return_to(value: Option<&str>) -> String {
     }
 }
 
+/// Signed out, a form post to a signed-in page goes to log in before its
+/// body is read. Handlers check the session themselves, but their form
+/// extractor runs first, so a missing or empty body used to answer 415 or
+/// 422 instead. The API (its own 401s), setup, login and the dev fixtures
+/// are left alone.
+pub async fn sign_in_first(
+    session: Option<CurrentSession>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let path = request.uri().path();
+    let open = ["/api/", "/setup", "/auth/", "/dev/"]
+        .iter()
+        .any(|prefix| path.starts_with(prefix));
+    if request.method() == axum::http::Method::POST && session.is_none() && !open {
+        return Redirect::to("/login").into_response();
+    }
+    next.run(request).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::safe_return_to;
