@@ -76,7 +76,9 @@ POST {{base}}/profile/main
 Origin: {{base}}
 [Form]
 character_id: 1
-HTTP 401
+HTTP 303
+[Asserts]
+header "Location" == "/login"
 
 # Change Main through EVE SSO needs a session too.
 POST {{base}}/profile/main/login
@@ -530,11 +532,15 @@ header "Location" == "/login"
 
 POST {{base}}/dashboard/access-tokens
 Origin: {{base}}
-HTTP 401
+HTTP 303
+[Asserts]
+header "Location" == "/login"
 
 POST {{base}}/dashboard/access-tokens/1/revoke
 Origin: {{base}}
-HTTP 401
+HTTP 303
+[Asserts]
+header "Location" == "/login"
 
 POST {{base}}/admin/groups/1/smart
 Origin: {{base}}
@@ -676,7 +682,9 @@ Origin: {{base}}
 [Form]
 state_id: 1
 name: Goonswarm Federation
-HTTP 401
+HTTP 303
+[Asserts]
+header "Location" == "/login"
 
 # Discord: the admin page and linking need a session.
 GET {{base}}/admin/discord
@@ -853,7 +861,11 @@ Origin: {{base}}
 [MultipartFormData]
 package: not a package
 signature: not a signature
-HTTP 405
+# Signed out, a post goes to log in before any route is looked at; that
+# release builds have no upload route is CI's dev-features guard.
+HTTP 303
+[Asserts]
+header "Location" == "/login"
 
 POST {{base}}/admin/plugin-uploads/1/approve
 Origin: {{base}}

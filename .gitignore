@@ -9,3 +9,6 @@
 /deploy/nginx-*.conf
 # install.sh rewriting .env (a copy of every secret while it runs)
 .env.??????
+# Claude Code agent worktrees and local launch settings (.claude/agents is tracked)
+/.claude/worktrees/
+/.claude/launch.json

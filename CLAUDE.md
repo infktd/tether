@@ -114,7 +114,7 @@ docker compose -f deploy/docker-compose.dev.yml up -d   # dev/test database on 1
 echo DATABASE_URL=postgres://tether:tether@127.0.0.1:5433/tether > .env
 cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,rustls --root tools
 tools/bin/sqlx migrate run
-tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; commit .sqlx/
+tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; commit .sqlx/. Run it against a freshly created and migrated database, as CI's check does: a long-lived dev database can infer different nullability
 cargo check --workspace
 cargo run -p tether-server --features dev   # /dev/login fixtures, Scalar at /docs and installing apps from a .zip (debug builds only)
 cargo test --workspace
