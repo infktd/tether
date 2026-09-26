@@ -116,6 +116,7 @@ impl Esi {
     /// `user_agent` identifies this instance to CCP. `base_url` overrides
     /// ESI's address (tests point it at a mock server).
     pub fn new(user_agent: &str, base_url: Option<&str>) -> Result<Self, EsiError> {
+        tether_net::install_crypto_provider();
         let mut builder = Client::builder().user_agent(user_agent);
         if let Some(url) = base_url {
             builder = builder.base_url(url);

@@ -259,6 +259,20 @@ pub fn is_public(ip: std::net::IpAddr) -> bool {
     }
 }
 
+/// Makes ring the process-wide rustls crypto provider, unless one is
+/// already installed. reqwest (built without a provider, so there is no
+/// aws-lc-sys C build) and twilight both panic building a client without
+/// one. The binaries call this first thing; the client constructors here
+/// call it too, so tests and any other entry point are covered. Cheap and
+/// idempotent.
+pub fn install_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // Losing a race to another thread installing it is fine: either way
+        // a provider is installed, and ring is the only one in the build.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 /// Whether a client follows redirects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Redirects {
@@ -301,6 +315,7 @@ impl Outbound {
         timeout: Duration,
         redirects: Redirects,
     ) -> Result<Self, OutboundError> {
+        install_crypto_provider();
         let allow = Arc::new(allow);
         let policy = match redirects {
             Redirects::Refuse => reqwest::redirect::Policy::none(),
@@ -346,6 +361,7 @@ impl Outbound {
         timeout: Duration,
         headers: reqwest::header::HeaderMap,
     ) -> Result<reqwest::Client, OutboundError> {
+        install_crypto_provider();
         let allow = Arc::new(allow);
         reqwest::Client::builder()
             .user_agent(user_agent)
@@ -464,6 +480,32 @@ mod tests {
                 "{blocked}"
             );
         }
+    }
+
+    #[test]
+    fn ring_is_the_crypto_provider() {
+        install_crypto_provider();
+        install_crypto_provider(); // idempotent
+        let provider = rustls::crypto::CryptoProvider::get_default().unwrap();
+        let ring = rustls::crypto::ring::default_provider();
+        assert_eq!(
+            format!("{:?}", provider.cipher_suites),
+            format!("{:?}", ring.cipher_suites)
+        );
+        // Every client builder here works with it.
+        Outbound::new(
+            Allowlist::production(),
+            "tether tests",
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        Outbound::library_client(
+            Allowlist::production(),
+            "tether tests",
+            Duration::from_secs(1),
+            reqwest::header::HeaderMap::new(),
+        )
+        .unwrap();
     }
 
     #[test]

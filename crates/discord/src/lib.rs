@@ -106,6 +106,8 @@ impl Endpoints {
     }
 
     fn builder(&self) -> ClientBuilder {
+        // twilight's rustls panics without a process-wide crypto provider.
+        tether_net::install_crypto_provider();
         // Don't let one 401 poison the client for good: the admin may fix
         // the token and try again.
         let builder = Client::builder()

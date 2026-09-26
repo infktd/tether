@@ -27,6 +27,14 @@ jobs:
       # rustup installs them on first use.
       - run: rustup show
       - run: cargo fmt --all --check
+      # TLS is rustls with ring: aws-lc (a C build) must not come back
+      # through a dependency's default features.
+      - name: No aws-lc in the build
+        run: |
+          if grep -q '^name = "aws-lc' Cargo.lock; then
+            cargo tree -i aws-lc-rs -e features --target all
+            exit 1
+          fi
 
   clippy:
     runs-on: ubuntu-latest

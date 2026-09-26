@@ -272,7 +272,7 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [x] Discord library: twilight (REST only). Members are added to the server with their roles when they link; leaving the server isn't tracked, only ESI affiliation drives changes
 - [x] Whether Guests may join the Discord server through Tether: decided by permission, as in AA ("Can access the Discord service", granted to Member and Blue by default; admins may grant it to Guest). Decided 2026-09-25
 - [x] Plugin database access: raw SQL in the plugin's own schema, through a per-plugin login role Postgres confines to it (details in milestone 2)
-- [ ] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay). Accepted as a build-time cost until then; CI builds each architecture natively
+- [x] Make reqwest's TLS backend a feature in `eve-esi-client` so the host can drop `aws-lc-sys` (Jay): done in 0.6.0. Tether uses rustls with ring, installed as the process-wide provider at startup, and CI fails if aws-lc returns to `Cargo.lock`
 - [ ] `eve-esi-client` follow-ups (Jay): re-export its oauth2 types and allow overriding SSO URLs (so `EveSso` can be tested against wiremock), and a pluggable cache hook plus public budget accessors, so the host can back ESI responses with a shared Postgres cache that survives restarts
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
 - [x] Which AA apps to port first: Member Audit and Moon Mining, then (for 1:1 parity with AA core) Structure Timers, Fleet Activity Tracking, SRP and HR Applications; Structures and other community apps stay off the plan until asked. Decided 2026-09-25

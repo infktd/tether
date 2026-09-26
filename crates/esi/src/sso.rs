@@ -133,6 +133,7 @@ impl EveSso {
     }
 
     fn client(config: &SsoConfig) -> Result<SsoClient, SsoError> {
+        tether_net::install_crypto_provider();
         SsoClient::new(config.client_id.clone(), &config.redirect_uri)
             .map_err(|err| SsoError::Config(err.to_string()))
     }

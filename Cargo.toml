@@ -68,29 +68,31 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
 insta = { version = "1", features = ["json"] }
-# Verifying CCP's SSO tokens. rust_crypto keeps the path open to dropping
-# aws-lc-sys (see the eve-esi-client follow-up); PEM only in tests.
+# Verifying CCP's SSO tokens with pure-Rust crypto (no aws-lc-rs); PEM only
+# in tests.
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 wiremock = "0.6"
 tracing = "0.1"
 utoipa = { version = "6", features = ["chrono", "axum_extras"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Pulls in aws-lc-sys (a C build) through reqwest's default TLS backend.
-# Accepted as a build-time cost; follow-up: make reqwest's TLS backend a
-# feature in eve-esi-client so the host can drop it (see PRD open questions).
-eve-esi-client = "0.5"
+# TLS everywhere is rustls with ring as its crypto provider, installed by
+# `tether_net::install_crypto_provider` before any client is built: no
+# aws-lc-sys (a C build) anywhere in the tree.
+eve-esi-client = { version = "0.6", default-features = false, features = ["rustls-no-provider"] }
 # Only to rebuild a PKCE verifier stored in Postgres for SsoClient::exchange.
 # Pinned to the exact version eve-esi-client resolves (one copy in the
 # build); default features off so it can't pull in another reqwest.
 oauth2 = { version = "=5.0.0", default-features = false }
-# Same version and features as eve-esi-client's, so no second copy. Used for
-# the wizard's callback check and `doctor`.
-reqwest = "0.13"
+# Same version as eve-esi-client's, so no second copy. Default features off
+# (they bring aws-lc-rs). Proxies are refused per client by Outbound.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
+# The process-wide rustls CryptoProvider: ring. Approved by Jay.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # Discord REST only (no gateway). Default features off: no brotli
 # decompression; certificates are verified with the platform verifier, the
-# same one reqwest already uses. rustls picks up the aws-lc-rs provider
-# already in the build, so there is no second crypto backend.
+# same one reqwest uses, and rustls takes the process-wide ring provider,
+# so there is no second crypto backend.
 twilight-http = { version = "0.17", default-features = false, features = ["rustls-platform-verifier"] }
 twilight-model = "0.17"
 

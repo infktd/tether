@@ -38,6 +38,9 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
+    // Before any HTTP client (reqwest's or twilight's) is built: TLS is
+    // rustls with ring, and neither library brings a provider of its own.
+    tether_net::install_crypto_provider();
     tracing_subscriber::fmt()
         .with_env_filter(
             // Postgres notices are off: plugins run their own SQL, and a

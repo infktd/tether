@@ -243,6 +243,7 @@ volumes:
 - Upgrades: `install.sh --version X.Y.Z` (or edit `TETHER_IMAGE`, then `docker compose pull && docker compose up -d`). Migrations run after an automatic snapshot. Rollback is the previous tag plus that snapshot: `docker compose stop app`, `docker compose run --rm app rollback`, then `install.sh --version <previous>`. Skip the `rollback` step if the upgrade ran no migrations: it took no snapshot, and `rollback` would restore an older one.
 - Volumes: `pgdata` (Postgres), `snapshots` (encrypted snapshots and backups, `/var/lib/tether/snapshots` in the app), and Caddy's two (unused with another proxy). Snapshots are only as safe as `ENCRYPTION_KEY`: keep a copy of it apart from the backups.
 - Admins sign in like everyone else, through EVE SSO on the public domain (N6). There is no separate admin login, listener or private network: admin pages and API endpoints check permissions on the server for every request, and owner-only and sensitive actions need a recent EVE login (sudo mode, above).
+- The host's TLS (reqwest, eve-esi-client and twilight alike) is rustls with ring as the crypto provider, installed process-wide before any client is built (`tether_net::install_crypto_provider`). Nothing builds aws-lc-sys (a cmake C build), which keeps the multi-arch image builds light; CI fails if it comes back into `Cargo.lock`. The cost: ring has no post-quantum key exchange (X25519MLKEM768), so TLS uses classical ECDHE until it does.
 
 ## Testing without a frontend
 

@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 reqwest = { workspace = true, features = ["form"] }
+rustls.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
