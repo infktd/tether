@@ -525,8 +525,8 @@ mod tests {
     fn names_follow_aas_settings() {
         let mut s = settings();
         assert_eq!(
-            group_name(&s, Kind::Corporation, "New Miners Union", "NMU"),
-            "Corp New Miners Union"
+            group_name(&s, Kind::Corporation, "Acme Mining Corp", "ACME"),
+            "Corp Acme Mining Corp"
         );
         assert_eq!(
             group_name(&s, Kind::Alliance, "Goonswarm", "CONDI"),
@@ -535,8 +535,8 @@ mod tests {
         s.replace_spaces = true;
         s.replace_with = "_".into();
         assert_eq!(
-            group_name(&s, Kind::Corporation, "New Miners Union", "NMU"),
-            "Corp New_Miners_Union"
+            group_name(&s, Kind::Corporation, "Acme Mining Corp", "ACME"),
+            "Corp Acme_Mining_Corp"
         );
     }
 

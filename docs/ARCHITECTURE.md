@@ -51,7 +51,7 @@ Everything else in a package is refused, as are symlinks, encrypted entries, rep
 
 ```toml
 [plugin]
-id = "nmu.mining-ledger"          # up to 50 lowercase letters, digits, single . - _
+id = "acme.mining-ledger"          # up to 50 lowercase letters, digits, single . - _
 name = "Mining ledger"
 version = "0.3.1"
 host_api = "1"
@@ -253,4 +253,4 @@ volumes:
 - Real SSO works with no frontend: visit `/auth/login`, the backend handles redirect and callback.
 - `dev-login` feature for fixture sessions, compiled out of release builds.
 - wiremock with recorded ESI fixtures, `#[sqlx::test]`, `tokio::time::pause`, insta snapshots, Hurl smoke tests.
-- A staging instance on the Oracle box with real characters before anything reaches NMU.
+- A staging instance on the Oracle box with real characters before anything reaches a live alliance.

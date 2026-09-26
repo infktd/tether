@@ -14,8 +14,8 @@ use tether_plugins::testing::{self, Key};
 use tether_snapshots::{Config, Snapshots, Tools};
 use tether_web::plugins::Status;
 
-const HELLO: &str = "nmu.hello";
-const NOTES: &str = "nmu.notes";
+const HELLO: &str = "acme.hello";
+const NOTES: &str = "acme.notes";
 
 fn hello_component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -145,7 +145,7 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
         &[("view", "See the hello page"), ("report", "Read reports")],
     );
     install_package(&h, &owner, &bytes, &signature).await;
-    for permission in ["plugin.nmu.hello.view", "plugin.nmu.hello.report"] {
+    for permission in ["plugin.acme.hello.view", "plugin.acme.hello.report"] {
         sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ($1, $2)")
             .bind(permission)
             .bind(GUEST_STATE)
@@ -154,7 +154,7 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
             .unwrap();
     }
     // Nothing to roll back to yet.
-    let shown = page(&h, "/admin/plugins/nmu.hello", &owner).await;
+    let shown = page(&h, "/admin/plugins/acme.hello", &owner).await;
     assert!(!shown.body.contains("Roll back to"), "{}", shown.body);
 
     // 1.1.0 calls another host, adds a permission and drops one.
@@ -182,8 +182,8 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
         .unwrap();
     for part in [
         "zkillboard.com, which sees this server",
-        "plugin.nmu.hello.manage",
-        "plugin.nmu.hello.report",
+        "plugin.acme.hello.manage",
+        "plugin.acme.hello.report",
         "every grant of it",
         "no new database migrations",
     ] {
@@ -219,7 +219,7 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
 
     let res = send(&h.app, form(&format!("{review_at}/approve"), "", &owner)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), "/admin/plugins/nmu.hello");
+    assert_eq!(res.location(), "/admin/plugins/acme.hello");
     assert_eq!(h.plugins.status(HELLO), Status::Running);
     assert_eq!(running_version(&h, HELLO), "1.1.0");
     let approved = tether_db::plugin_http::approved(&h.db, HELLO)
@@ -227,16 +227,16 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
         .unwrap();
     assert_eq!(approved.hosts, ["janice.e-351.com", "zkillboard.com"]);
     // The kept permission keeps its grant; the dropped one's goes.
-    assert_eq!(grants(&h.db).await, ["plugin.nmu.hello.view"]);
+    assert_eq!(grants(&h.db).await, ["plugin.acme.hello.view"]);
     assert_eq!(
         declared(&h.db).await,
         [
             (
-                "plugin.nmu.hello.manage".to_owned(),
+                "plugin.acme.hello.manage".to_owned(),
                 "Change settings".to_owned()
             ),
             (
-                "plugin.nmu.hello.view".to_owned(),
+                "plugin.acme.hello.view".to_owned(),
                 "See the hello page, now in colour".to_owned()
             ),
         ]
@@ -250,10 +250,10 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
     assert_eq!(upgraded["to"], "1.1.0");
     assert_eq!(
         upgraded["grants_removed"][0]["permission"],
-        "plugin.nmu.hello.report"
+        "plugin.acme.hello.report"
     );
 
-    let shown = page(&h, "/admin/plugins/nmu.hello", &owner).await;
+    let shown = page(&h, "/admin/plugins/acme.hello", &owner).await;
     assert!(shown.body.contains("Roll back to"), "{}", shown.body);
     assert!(!shown.body.contains("its data goes back"), "{}", shown.body);
     // What going back changes: zkillboard.com and manage go, report returns.
@@ -261,8 +261,8 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
     for part in [
         "No longer",
         "zkillboard.com",
-        "plugin.nmu.hello.manage",
-        "plugin.nmu.hello.report",
+        "plugin.acme.hello.manage",
+        "plugin.acme.hello.report",
     ] {
         assert!(card.contains(part), "{part}: {card}");
     }
@@ -281,16 +281,16 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
         .unwrap();
     assert_eq!(approved.hosts, ["janice.e-351.com"]);
     // Back to 1.0.0's permissions: report is back, ungranted; manage goes.
-    assert_eq!(grants(&h.db).await, ["plugin.nmu.hello.view"]);
+    assert_eq!(grants(&h.db).await, ["plugin.acme.hello.view"]);
     assert_eq!(
         declared(&h.db).await,
         [
             (
-                "plugin.nmu.hello.report".to_owned(),
+                "plugin.acme.hello.report".to_owned(),
                 "Read reports".to_owned()
             ),
             (
-                "plugin.nmu.hello.view".to_owned(),
+                "plugin.acme.hello.view".to_owned(),
                 "See the hello page".to_owned()
             ),
         ]
@@ -302,7 +302,7 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
     assert_eq!(installed.version, "1.0.0");
     assert_eq!(installed.previous_version, None);
     // One step only.
-    let shown = page(&h, "/admin/plugins/nmu.hello", &owner).await;
+    let shown = page(&h, "/admin/plugins/acme.hello", &owner).await;
     assert!(!shown.body.contains("Roll back to"), "{}", shown.body);
     let res = roll_back(&h, &owner, HELLO, HELLO).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
@@ -413,7 +413,7 @@ async fn without_snapshots_a_data_change_cant_be_rolled_back(db: PgPool) {
     install_package(&h, &owner, &bytes, &signature).await;
     assert_eq!(running_version(&h, NOTES), "1.1.0");
 
-    let shown = page(&h, "/admin/plugins/nmu.notes", &owner).await;
+    let shown = page(&h, "/admin/plugins/acme.notes", &owner).await;
     assert!(
         shown.body.contains("snapshots are off here"),
         "{}",
@@ -609,7 +609,7 @@ async fn rolling_back_puts_its_data_back_from_the_snapshot(db: PgPool) {
     add_note(&h, "after").await;
     assert!(notes(&h).await.contains("after"));
 
-    let shown = page(&h, "/admin/plugins/nmu.notes", &owner).await;
+    let shown = page(&h, "/admin/plugins/acme.notes", &owner).await;
     assert!(
         shown.body.contains("its data goes back to the snapshot"),
         "{}",

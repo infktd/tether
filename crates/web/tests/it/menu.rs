@@ -71,7 +71,7 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
         &owner,
         "links",
         &format!(
-            "label=Wiki&url=https%3A%2F%2Fwiki.example%2Fnmu&new_tab=on&parent=id%3A{section}"
+            "label=Wiki&url=https%3A%2F%2Fwiki.example%2Facme&new_tab=on&parent=id%3A{section}"
         ),
     )
     .await;
@@ -96,7 +96,7 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
     let nav = sidebar(&after);
     assert!(nav.contains(">Leadership<"), "{nav}");
     assert!(nav.contains("<details class=\"nav-folder\""), "{nav}");
-    assert!(nav.contains(r#"href="https://wiki.example/nmu" class="nav-item" target="_blank" rel="noopener noreferrer""#), "{nav}");
+    assert!(nav.contains(r#"href="https://wiki.example/acme" class="nav-item" target="_blank" rel="noopener noreferrer""#), "{nav}");
     assert!(nav.contains("My Groups"), "{nav}");
     assert!(!nav.contains(r#"href="/pings""#), "hidden: {nav}");
     // Editing saved every item's place, but admin pages nobody pinned

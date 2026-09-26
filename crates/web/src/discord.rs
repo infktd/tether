@@ -778,7 +778,7 @@ async fn strip(
         .remove_roles(config, user, roles)
         .await
         .map_err(crate::discord_sync::discord_failure)?;
-    // A Tether nickname ("[NMU] Name") would still say they belong.
+    // A Tether nickname ("[ACME] Name") would still say they belong.
     let sync_names =
         tether_db::settings::get_bool_or(db_pool, tether_db::settings::DISCORD_SYNC_NAMES, true)
             .await

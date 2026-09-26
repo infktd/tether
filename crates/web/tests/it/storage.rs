@@ -124,15 +124,15 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     install(
         &h,
         &owner,
-        "nmu.notes",
+        "acme.notes",
         &[("migrations/0001_notes.sql", NOTES)],
     )
     .await;
-    assert_eq!(h.plugins.status("nmu.notes"), Status::Running);
+    assert_eq!(h.plugins.status("acme.notes"), Status::Running);
 
     let inserted = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "execute",
         &["INSERT INTO notes (body, n, f, ok, at, data, raw, d) \
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date)"],
@@ -152,7 +152,7 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     // Untyped nulls work for any column type.
     let nulls = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "execute",
         &["INSERT INTO notes (body, n, at, data) VALUES ($1, $2, $3, $4)"],
         &["t:empty", "n:", "n:", "n:"],
@@ -162,7 +162,7 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
 
     let rows = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "query",
         &["SELECT body, n, f, ok, at, data, raw, d FROM notes ORDER BY id"],
         &[],
@@ -186,7 +186,7 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     // A transaction applies all or nothing.
     let failed = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "transaction",
         &[
             "INSERT INTO notes (body) VALUES ('first')",
@@ -198,7 +198,7 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     assert!(failed.contains("23502"), "not-null violation: {failed}");
     let count = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "query",
         &["SELECT count(*) FROM notes"],
         &[],
@@ -207,14 +207,14 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     assert!(count.contains("Integer(2)"), "{count}");
 
     // Types storage can't return must be cast.
-    let numeric = probe(&h, "nmu.notes", "query", &["SELECT 1.5::numeric"], &[]).await;
+    let numeric = probe(&h, "acme.notes", "query", &["SELECT 1.5::numeric"], &[]).await;
     assert!(
         numeric.contains("Invalid") && numeric.contains("cast"),
         "{numeric}"
     );
     let cast = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "query",
         &["SELECT 1.5::numeric::text"],
         &[],
@@ -222,7 +222,7 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     .await;
     assert!(cast.contains("Text(\"1.5\")"), "{cast}");
 
-    uninstall(&h, &owner, "nmu.notes").await;
+    uninstall(&h, &owner, "acme.notes").await;
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -232,14 +232,14 @@ async fn a_plugin_role_can_reach_nothing_else(db: PgPool) {
     install(
         &h,
         &owner,
-        "nmu.alpha",
+        "acme.alpha",
         &[("migrations/0001_notes.sql", NOTES)],
     )
     .await;
     install(
         &h,
         &owner,
-        "nmu.beta",
+        "acme.beta",
         &[("migrations/0001_notes.sql", NOTES)],
     )
     .await;
@@ -250,7 +250,7 @@ async fn a_plugin_role_can_reach_nothing_else(db: PgPool) {
         "SELECT * FROM core.secrets",
         "SELECT * FROM accounts",
         // Another plugin's schema.
-        "SELECT * FROM \"plugin_nmu.beta\".notes",
+        "SELECT * FROM \"plugin_acme.beta\".notes",
         // public, new schemas, temporary tables.
         "CREATE TABLE public.leak (x int)",
         "CREATE SCHEMA mine",
@@ -266,34 +266,34 @@ async fn a_plugin_role_can_reach_nothing_else(db: PgPool) {
         "CREATE EXTENSION dblink",
     ];
     for sql in denied {
-        let out = probe(&h, "nmu.alpha", "execute", &[sql], &[]).await;
+        let out = probe(&h, "acme.alpha", "execute", &[sql], &[]).await;
         assert!(out.starts_with("err Error::Database"), "{sql}: {out}");
     }
     // Sharing with another plugin doesn't work either: alpha owns its
     // tables but not its schema, so its grants (a no-op on the schema, a
     // real one on the table) still leave beta outside.
     for sql in [
-        "GRANT USAGE ON SCHEMA \"plugin_nmu.alpha\" TO PUBLIC",
+        "GRANT USAGE ON SCHEMA \"plugin_acme.alpha\" TO PUBLIC",
         "GRANT SELECT ON notes TO PUBLIC",
     ] {
-        probe(&h, "nmu.alpha", "execute", &[sql], &[]).await;
+        probe(&h, "acme.alpha", "execute", &[sql], &[]).await;
     }
     let peek = probe(
         &h,
-        "nmu.beta",
+        "acme.beta",
         "query",
-        &["SELECT * FROM \"plugin_nmu.alpha\".notes"],
+        &["SELECT * FROM \"plugin_acme.alpha\".notes"],
         &[],
     )
     .await;
     assert!(peek.starts_with("err Error::Database"), "{peek}");
 
     // One statement per call.
-    let two = probe(&h, "nmu.alpha", "execute", &["SELECT 1; SELECT 2"], &[]).await;
+    let two = probe(&h, "acme.alpha", "execute", &["SELECT 1; SELECT 2"], &[]).await;
     assert!(two.starts_with("err Error::Database"), "{two}");
 
     // The role itself, connected directly, is just as confined.
-    let names = names(&h.db, "nmu.alpha").await;
+    let names = names(&h.db, "acme.alpha").await;
     let roles: (bool, bool, bool, bool, bool, i32) = sqlx::query_as(
         "SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit, rolconnlimit \
          FROM pg_roles WHERE rolname = $1",
@@ -303,10 +303,10 @@ async fn a_plugin_role_can_reach_nothing_else(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(roles, (false, false, false, false, false, 4));
-    let mut conn = connect_as_plugin(&h, "nmu.alpha").await;
+    let mut conn = connect_as_plugin(&h, "acme.alpha").await;
     for sql in [
         "SELECT * FROM core.accounts",
-        "SELECT * FROM \"plugin_nmu.beta\".notes",
+        "SELECT * FROM \"plugin_acme.beta\".notes",
         "SET temp_file_limit = '100GB'",
         "ALTER ROLE CURRENT_USER SET temp_file_limit = '100GB'",
         "ALTER ROLE CURRENT_USER CONNECTION LIMIT 100",
@@ -326,23 +326,23 @@ async fn a_plugin_role_can_reach_nothing_else(db: PgPool) {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(path, "\"plugin_nmu.alpha\"");
+    assert_eq!(path, "\"plugin_acme.alpha\"");
     conn.close().await.unwrap();
 
-    uninstall(&h, &owner, "nmu.alpha").await;
-    uninstall(&h, &owner, "nmu.beta").await;
+    uninstall(&h, &owner, "acme.alpha").await;
+    uninstall(&h, &owner, "acme.beta").await;
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
-    install(&h, &owner, "nmu.slow", &[]).await;
+    install(&h, &owner, "acme.slow", &[]).await;
 
     // Lifting the timeout lasts only until the next statement.
     let lifted = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "transaction",
         &["SET statement_timeout = 0", "SELECT pg_sleep(6)"],
         &[],
@@ -351,26 +351,26 @@ async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
     assert_eq!(lifted, "err Error::Timeout");
     let set = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "query",
         &["SELECT set_config('statement_timeout', '0', false)"],
         &[],
     )
     .await;
     assert!(set.starts_with("ok"), "{set}");
-    let slept = probe(&h, "nmu.slow", "query", &["SELECT pg_sleep(6)"], &[]).await;
+    let slept = probe(&h, "acme.slow", "query", &["SELECT pg_sleep(6)"], &[]).await;
     assert_eq!(slept, "err Error::Timeout");
     // A role may change its own defaults; that doesn't help either.
     let altered = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "execute",
         &["ALTER ROLE CURRENT_USER SET statement_timeout = 0"],
         &[],
     )
     .await;
     assert!(altered.starts_with("ok"), "{altered}");
-    let slept = probe(&h, "nmu.slow", "query", &["SELECT pg_sleep(6)"], &[]).await;
+    let slept = probe(&h, "acme.slow", "query", &["SELECT pg_sleep(6)"], &[]).await;
     assert_eq!(slept, "err Error::Timeout");
     // Nor does a stand-in for set_config ahead of pg_catalog on its path,
     // with its role's defaults lifted too, on fresh connections.
@@ -378,35 +378,35 @@ async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
         "CREATE FUNCTION set_config(text, text, boolean) RETURNS text \
          LANGUAGE sql AS 'SELECT ''no-op''::text'",
         "CREATE FUNCTION pg_backend_pid() RETURNS int LANGUAGE sql AS 'SELECT 1'",
-        "ALTER ROLE CURRENT_USER SET search_path = \"plugin_nmu.slow\", pg_catalog",
+        "ALTER ROLE CURRENT_USER SET search_path = \"plugin_acme.slow\", pg_catalog",
         "ALTER ROLE CURRENT_USER SET statement_timeout = 0",
     ] {
-        let out = probe(&h, "nmu.slow", "execute", &[sql], &[]).await;
+        let out = probe(&h, "acme.slow", "execute", &[sql], &[]).await;
         assert!(out.starts_with("ok"), "{sql}: {out}");
     }
     // Restarting it opens a new pool, whose sessions start from those
     // defaults.
-    send(&h.app, form("/admin/plugins/nmu.slow/disable", "", &owner)).await;
-    send(&h.app, form("/admin/plugins/nmu.slow/enable", "", &owner)).await;
-    let slept = probe(&h, "nmu.slow", "query", &["SELECT pg_sleep(6)"], &[]).await;
+    send(&h.app, form("/admin/plugins/acme.slow/disable", "", &owner)).await;
+    send(&h.app, form("/admin/plugins/acme.slow/enable", "", &owner)).await;
+    let slept = probe(&h, "acme.slow", "query", &["SELECT pg_sleep(6)"], &[]).await;
     assert_eq!(slept, "err Error::Timeout");
 
     // Nor does pointing its search path elsewhere.
-    probe(&h, "nmu.slow", "execute", &["SET search_path = core"], &[]).await;
+    probe(&h, "acme.slow", "execute", &["SET search_path = core"], &[]).await;
     let path = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "query",
         &["SELECT current_setting('search_path')"],
         &[],
     )
     .await;
-    assert!(path.contains("plugin_nmu.slow"), "{path}");
+    assert!(path.contains("plugin_acme.slow"), "{path}");
 
     // Results are capped in rows and bytes.
     let many = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "query",
         &["SELECT generate_series(1, 6000)"],
         &[],
@@ -415,7 +415,7 @@ async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
     assert_eq!(many, "err Error::TooLarge");
     let wide = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "query",
         &["SELECT repeat('x', 1024 * 1024) FROM generate_series(1, 5)"],
         &[],
@@ -425,7 +425,7 @@ async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
     // One value bigger than the whole budget, refused by its raw size.
     let huge = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "query",
         &["SELECT repeat('x', 5 * 1024 * 1024)"],
         &[],
@@ -434,7 +434,7 @@ async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
     assert_eq!(huge, "err Error::TooLarge");
     let fine = probe(
         &h,
-        "nmu.slow",
+        "acme.slow",
         "query",
         &["SELECT generate_series(1, 100)"],
         &[],
@@ -442,26 +442,26 @@ async fn limits_hold_whatever_the_plugin_sets(db: PgPool) {
     .await;
     assert!(fine.starts_with("ok rows=100"), "{fine}");
 
-    uninstall(&h, &owner, "nmu.slow").await;
+    uninstall(&h, &owner, "acme.slow").await;
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn plugins_without_storage_get_none(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
-    let (bytes, signature) = package("nmu.bare", &Key::new(1), false, &[]);
+    let (bytes, signature) = package("acme.bare", &Key::new(1), false, &[]);
     install_package(&h, &owner, &bytes, &signature).await;
-    let out = probe(&h, "nmu.bare", "query", &["SELECT 1"], &[]).await;
+    let out = probe(&h, "acme.bare", "query", &["SELECT 1"], &[]).await;
     assert_eq!(out, "err Error::NotApproved");
     assert!(
-        tether_db::plugin_storage::get(&h.db, "nmu.bare")
+        tether_db::plugin_storage::get(&h.db, "acme.bare")
             .await
             .unwrap()
             .is_none()
     );
     // Migrations without asking for storage make no sense.
     let (bytes, signature) = package(
-        "nmu.confused",
+        "acme.confused",
         &Key::new(1),
         false,
         &[("migrations/0001_notes.sql", NOTES)],
@@ -480,28 +480,28 @@ async fn migrations_run_as_the_plugin_and_are_checked(db: PgPool) {
     install(
         &h,
         &owner,
-        "nmu.sneaky",
+        "acme.sneaky",
         &[(
             "migrations/0001_steal.sql",
             "CREATE TABLE loot AS SELECT * FROM core.secrets;",
         )],
     )
     .await;
-    match h.plugins.status("nmu.sneaky") {
+    match h.plugins.status("acme.sneaky") {
         Status::Failed(why) => assert!(why.contains("0001_steal failed"), "{why}"),
         other => panic!("{other:?}"),
     }
-    uninstall(&h, &owner, "nmu.sneaky").await;
+    uninstall(&h, &owner, "acme.sneaky").await;
 
     install(
         &h,
         &owner,
-        "nmu.notes",
+        "acme.notes",
         &[("migrations/0001_notes.sql", NOTES)],
     )
     .await;
     let applied: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT version, name FROM core.plugin_migrations WHERE plugin_id = 'nmu.notes'",
+        "SELECT version, name FROM core.plugin_migrations WHERE plugin_id = 'acme.notes'",
     )
     .fetch_all(&h.db)
     .await
@@ -509,17 +509,23 @@ async fn migrations_run_as_the_plugin_and_are_checked(db: PgPool) {
     assert_eq!(applied, [(1, "notes".to_owned())]);
 
     // An applied migration that changed is refused at the next load.
-    sqlx::query("UPDATE core.plugin_migrations SET sha256 = '\\x00' WHERE plugin_id = 'nmu.notes'")
-        .execute(&h.db)
-        .await
-        .unwrap();
-    send(&h.app, form("/admin/plugins/nmu.notes/disable", "", &owner)).await;
-    send(&h.app, form("/admin/plugins/nmu.notes/enable", "", &owner)).await;
-    match h.plugins.status("nmu.notes") {
+    sqlx::query(
+        "UPDATE core.plugin_migrations SET sha256 = '\\x00' WHERE plugin_id = 'acme.notes'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    send(
+        &h.app,
+        form("/admin/plugins/acme.notes/disable", "", &owner),
+    )
+    .await;
+    send(&h.app, form("/admin/plugins/acme.notes/enable", "", &owner)).await;
+    match h.plugins.status("acme.notes") {
         Status::Failed(why) => assert!(why.contains("changed since it was applied"), "{why}"),
         other => panic!("{other:?}"),
     }
-    uninstall(&h, &owner, "nmu.notes").await;
+    uninstall(&h, &owner, "acme.notes").await;
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -529,24 +535,24 @@ async fn uninstalling_deletes_the_schema_and_role(db: PgPool) {
     install(
         &h,
         &owner,
-        "nmu.notes",
+        "acme.notes",
         &[("migrations/0001_notes.sql", NOTES)],
     )
     .await;
     probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "execute",
         &["INSERT INTO notes (body) VALUES ('keep?')"],
         &[],
     )
     .await;
-    let names = names(&h.db, "nmu.notes").await;
+    let names = names(&h.db, "acme.notes").await;
     // The page says what uninstalling does.
-    let detail = page(&h, "/admin/plugins/nmu.notes", &owner).await.body;
+    let detail = page(&h, "/admin/plugins/acme.notes", &owner).await.body;
     assert!(detail.contains("deletes its data"), "{detail}");
 
-    uninstall(&h, &owner, "nmu.notes").await;
+    uninstall(&h, &owner, "acme.notes").await;
     let role: Option<String> =
         sqlx::query_scalar("SELECT rolname::text FROM pg_roles WHERE rolname = $1")
             .bind(&names.role_name)
@@ -562,7 +568,7 @@ async fn uninstalling_deletes_the_schema_and_role(db: PgPool) {
             .unwrap();
     assert!(schema.is_none(), "the schema is gone");
     assert!(
-        tether_db::secrets::get(&h.db, "plugin.nmu.notes.db_password")
+        tether_db::secrets::get(&h.db, "plugin.acme.notes.db_password")
             .await
             .unwrap()
             .is_none()
@@ -583,7 +589,7 @@ async fn page_renders_are_read_only(db: PgPool) {
     install(
         &h,
         &owner,
-        "nmu.notes",
+        "acme.notes",
         &[("migrations/0001_notes.sql", NOTES)],
     )
     .await;
@@ -593,23 +599,23 @@ async fn page_renders_are_read_only(db: PgPool) {
         "INSERT INTO notes (body) VALUES ('from a page')",
         "SET transaction_read_only = off",
     ] {
-        let out = probe_page(&h, "nmu.notes", "execute", &[sql]).await;
+        let out = probe_page(&h, "acme.notes", "execute", &[sql]).await;
         assert!(out.starts_with("err Error::Database"), "{sql}: {out}");
     }
     let out = probe_page(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "transaction",
         &["COMMIT", "INSERT INTO notes (body) VALUES ('after commit')"],
     )
     .await;
     assert!(out.starts_with("err"), "{out}");
-    let read = probe_page(&h, "nmu.notes", "query", &["SELECT count(*) FROM notes"]).await;
+    let read = probe_page(&h, "acme.notes", "query", &["SELECT count(*) FROM notes"]).await;
     assert!(read.contains("Integer(0)"), "{read}");
     // The same statement from submit writes.
     let out = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "execute",
         &["INSERT INTO notes (body) VALUES ('from submit')"],
         &[],
@@ -617,16 +623,16 @@ async fn page_renders_are_read_only(db: PgPool) {
     .await;
     assert_eq!(out, "ok changed=1");
     // And the connection goes back read-write for the next caller.
-    let again = probe_page(&h, "nmu.notes", "query", &["SELECT count(*) FROM notes"]).await;
+    let again = probe_page(&h, "acme.notes", "query", &["SELECT count(*) FROM notes"]).await;
     assert!(again.contains("Integer(1)"), "{again}");
     let out = probe(
         &h,
-        "nmu.notes",
+        "acme.notes",
         "execute",
         &["INSERT INTO notes (body) VALUES ('again')"],
         &[],
     )
     .await;
     assert_eq!(out, "ok changed=1");
-    uninstall(&h, &owner, "nmu.notes").await;
+    uninstall(&h, &owner, "acme.notes").await;
 }

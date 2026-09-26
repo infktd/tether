@@ -1275,7 +1275,7 @@ pub async fn install_github(
             "That isn't a GitHub repository: use https://github.com/<owner>/<name>.",
         )),
         Some(_) if !app.is_empty() && manifest::check_id(app).is_err() => Err(
-            AppError::bad_request("That isn't an app id (such as nmu.moon-mining)."),
+            AppError::bad_request("That isn't an app id (such as acme.moon-mining)."),
         ),
         Some(repo) => {
             let app = (!app.is_empty()).then_some(app);

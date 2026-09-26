@@ -132,7 +132,7 @@ impl Manifest {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
-    /// e.g. `nmu.mining-ledger`.
+    /// e.g. `acme.mining-ledger`.
     pub id: String,
     pub name: String,
     pub version: String,
@@ -460,7 +460,7 @@ impl Manifest {
 /// and Postgres cuts identifiers at 63 bytes.
 pub const MAX_ID: usize = 50;
 
-/// `nmu.mining-ledger`: 3 to [`MAX_ID`] characters, lowercase letters, digits and
+/// `acme.mining-ledger`: 3 to [`MAX_ID`] characters, lowercase letters, digits and
 /// single `.`, `-` or `_` between them, starting with a letter. The same
 /// characters link paths allow, so an id is always safe in a URL.
 pub fn check_id(id: &str) -> Result<(), ManifestError> {
@@ -700,7 +700,7 @@ mod tests {
         format!(
             r#"
 [plugin]
-id = "nmu.mining-ledger"
+id = "acme.mining-ledger"
 name = "Mining ledger"
 version = "0.3.1"
 host_api = "1"
@@ -738,7 +738,7 @@ manage = "Manage the mining ledger"
 "#,
         ))
         .unwrap();
-        assert_eq!(m.plugin.id, "nmu.mining-ledger");
+        assert_eq!(m.plugin.id, "acme.mining-ledger");
         assert_eq!(
             m.capabilities.schedules[0].interval().unwrap(),
             Duration::from_secs(1800)
@@ -826,12 +826,12 @@ manage = "Manage the mining ledger"
 
     #[test]
     fn identity_rules() {
-        for id in ["abc", "nmu.mining-ledger", "a1_b2"] {
+        for id in ["abc", "acme.mining-ledger", "a1_b2"] {
             assert!(check_id(id).is_ok(), "{id}");
         }
         for id in [
             "ab",
-            "Nmu.x",
+            "Acme.x",
             "1abc",
             "a..b",
             "abc.",
@@ -876,8 +876,8 @@ manage = "Manage the mining ledger"
              [[navigation]]\nlabel = \"Moons\"\npath = \"\"\n",
         ))
         .unwrap();
-        let view = Some("plugin.nmu.mining-ledger.view".to_owned());
-        let manage = Some("plugin.nmu.mining-ledger.manage".to_owned());
+        let view = Some("plugin.acme.mining-ledger.view".to_owned());
+        let manage = Some("plugin.acme.mining-ledger.manage".to_owned());
         assert_eq!(m.page_permission(""), view);
         assert_eq!(m.page_permission("moons/1"), view);
         assert_eq!(m.page_permission("admin"), manage);

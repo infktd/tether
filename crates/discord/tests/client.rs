@@ -93,7 +93,7 @@ async fn check_reports_the_server_and_which_roles_the_bot_can_give() {
 
     let check = discord.check(&config()).await.unwrap();
     assert_eq!(check.bot_name, "Tether");
-    assert_eq!(check.guild_name, "New Miner's Union");
+    assert_eq!(check.guild_name, "Example Miner's Alliance");
     assert!(check.missing_permissions.is_empty());
     let roles: Vec<(&str, bool, bool, bool)> = check
         .roles

@@ -272,7 +272,11 @@ async fn settings_are_checked_with_discord_then_stored_encrypted(db: PgPool) {
     assert_eq!(saved.location(), "/admin/discord");
 
     let res = page(&h, "/admin/discord", &owner).await;
-    assert!(res.body.contains("New Miner&#39;s Union"), "{}", res.body);
+    assert!(
+        res.body.contains("Example Miner&#39;s Alliance"),
+        "{}",
+        res.body
+    );
     assert!(res.body.contains("Saved; leave blank to keep"));
     assert!(res.body.contains("scope=bot"), "invite link");
     assert!(!res.body.contains("bot-token-value") && !res.body.contains("client-secret-value"));

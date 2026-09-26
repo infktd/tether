@@ -461,8 +461,8 @@ async fn viewer(
         main,
         characters,
         state: state_view,
-        // Only names this plugin declares: ids can nest (nmu.esi and
-        // nmu.esi.extra), so a prefix alone could leak another plugin's.
+        // Only names this plugin declares: ids can nest (acme.esi and
+        // acme.esi.extra), so a prefix alone could leak another plugin's.
         permissions: running
             .manifest
             .permissions

@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
 use tether_plugins::testing::{self, Key};
 
-const ID: &str = "nmu.jobs";
+const ID: &str = "acme.jobs";
 
 const RUNS: &str = "CREATE TABLE runs (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -81,7 +81,7 @@ async fn work(h: &Harness) -> Vec<Outcome> {
 async fn runs(db: &PgPool) -> Vec<(String, Option<String>, String, i32)> {
     sqlx::query_as(
         "SELECT name, job_key, to_char(scheduled_at AT TIME ZONE 'UTC', \
-         'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), attempt FROM \"plugin_nmu.jobs\".runs ORDER BY id",
+         'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), attempt FROM \"plugin_acme.jobs\".runs ORDER BY id",
     )
     .fetch_all(db)
     .await
@@ -156,7 +156,7 @@ async fn one_off_jobs_run_late_with_their_scheduled_time(db: PgPool) {
     assert_eq!(queued(&h.db).await.len(), 1, "moon:2 still waits");
 
     // What it logged is kept for admins.
-    let detail = page(&h, "/admin/plugins/nmu.jobs", &owner).await.body;
+    let detail = page(&h, "/admin/plugins/acme.jobs", &owner).await.body;
     assert!(detail.contains("running ping (attempt 1)"), "{detail}");
     assert!(detail.contains("job:ping"), "{detail}");
     assert!(
@@ -267,14 +267,14 @@ async fn failures_retry_or_give_up(db: PgPool) {
         outcomes.iter().any(|o| matches!(o, Outcome::Dead(_))),
         "{outcomes:?}"
     );
-    let detail = page(&h, "/admin/plugins/nmu.jobs", &owner).await.body;
+    let detail = page(&h, "/admin/plugins/acme.jobs", &owner).await.body;
     assert!(
         detail.contains("Gave up") && detail.contains("never"),
         "{detail}"
     );
 
     // A job whose plugin isn't running waits for it.
-    send(&h.app, form("/admin/plugins/nmu.jobs/disable", "", &owner)).await;
+    send(&h.app, form("/admin/plugins/acme.jobs/disable", "", &owner)).await;
     probe_while_stopped(&h).await;
     uninstall(&h, &owner).await;
 }
@@ -400,7 +400,7 @@ async fn declared_schedules_follow_the_plugin(db: PgPool) {
     .await;
     let enabled = |db: PgPool| async move {
         sqlx::query_scalar::<_, bool>(
-            "SELECT enabled FROM core.schedules WHERE name = 'plugin:nmu.jobs:sync'",
+            "SELECT enabled FROM core.schedules WHERE name = 'plugin:acme.jobs:sync'",
         )
         .fetch_optional(&db)
         .await
@@ -415,7 +415,7 @@ async fn declared_schedules_follow_the_plugin(db: PgPool) {
         .unwrap();
     let queued = tether_jobs::schedule::run_due(&h.db).await.unwrap();
     assert!(
-        queued.contains(&"plugin:nmu.jobs:sync".to_owned()),
+        queued.contains(&"plugin:acme.jobs:sync".to_owned()),
         "{queued:?}"
     );
     work(&h).await;
@@ -423,16 +423,16 @@ async fn declared_schedules_follow_the_plugin(db: PgPool) {
     assert_eq!(ran.len(), 1);
     assert_eq!(ran[0].0, "sync");
     assert!(
-        page(&h, "/admin/plugins/nmu.jobs", &owner)
+        page(&h, "/admin/plugins/acme.jobs", &owner)
             .await
             .body
             .contains("every 30 minute(s)")
     );
 
     // Off with the plugin, back on with it, gone with it.
-    send(&h.app, form("/admin/plugins/nmu.jobs/disable", "", &owner)).await;
+    send(&h.app, form("/admin/plugins/acme.jobs/disable", "", &owner)).await;
     assert_eq!(enabled(h.db.clone()).await, Some(false));
-    send(&h.app, form("/admin/plugins/nmu.jobs/enable", "", &owner)).await;
+    send(&h.app, form("/admin/plugins/acme.jobs/enable", "", &owner)).await;
     assert_eq!(enabled(h.db.clone()).await, Some(true));
     probe(&h, "enqueue", &[("name", "ping"), ("at", later().as_str())]).await;
     uninstall(&h, &owner).await;

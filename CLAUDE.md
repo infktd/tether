@@ -4,7 +4,7 @@ Instructions for Claude Code working in this repository. Read this file first, e
 
 ## What this is
 
-A free, self-hosted EVE Online alliance platform: EVE SSO login, alliance access control, Discord role sync, and sandboxed WASM plugins that never touch ESI tokens. It replaces SeAT and Alliance Auth for New Miner's Union (NMU) and a small multiboxing corp. It will never charge real money.
+A free, self-hosted EVE Online alliance platform: EVE SSO login, alliance access control, Discord role sync, and sandboxed WASM plugins that never touch ESI tokens. It's for any alliance or corporation moving off SeAT or Alliance Auth, and it will never charge real money. Tether is for everyone: nothing in the app, the docs, examples or tests names a particular alliance.
 
 ## Sources of truth
 

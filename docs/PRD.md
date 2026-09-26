@@ -6,7 +6,7 @@ Sep 23, 2026 · Jay Nejati
 
 A free, self-hosted EVE Online alliance platform that installs with one command, looks modern, and lets plugins add features without ever touching ESI tokens. It replaces SeAT and Alliance Auth for groups that want less setup pain and better security.
 
-**v1 means** New Miner's Union and a small multiboxing corp run on it daily for login, access control, Discord role sync and member audit, with SeAT and Alliance Auth turned off.
+**v1 means** a real alliance and a small multiboxing corp run on it daily for login, access control, Discord role sync and member audit, with SeAT and Alliance Auth turned off.
 
 The detailed design lives in `docs/ARCHITECTURE.md`; this document defines what to build, in what order, and how to know it's done.
 
@@ -25,13 +25,13 @@ Four kinds of users, with members as the largest group and the instance admin as
 
 Key scenarios for v1:
 
-1. A new NMU member logs in with EVE SSO and gets Member access and Discord roles within a minute, with no officer action.
+1. A new alliance member logs in with EVE SSO and gets Member access and Discord roles within a minute, with no officer action.
 2. A member leaves the alliance; within one affiliation sync they drop to Guest and lose their Discord roles.
 3. A multiboxer links 12 characters across 4 accounts and sees a combined skills and assets view.
 4. An officer checks whether a recruit's alts are linked and what they've been flying.
 5. An admin installs the platform on a fresh VPS and has SSO working without running a shell command after `docker compose up`.
 6. An admin installs a plugin from the admin panel and its pages appear without a restart.
-7. A moon pops: NMU members get a Discord ping right away, and allies see it on the old-moon list 4 hours later, never earlier.
+7. A moon pops: members get a Discord ping right away, and allies see it on the old-moon list 4 hours later, never earlier.
 
 ## Goals and non-goals
 
@@ -126,15 +126,15 @@ Rust for the host and the server-rendered UI, WASM for v1 plugins. The plugin ru
 
 ## Milestones and acceptance criteria
 
-Five milestones to 1.0, about 510 to 870 hours in total. A short plugin-runtime spike goes first because it's the riskiest piece; NMU can switch its login over after milestone 1.
+Five milestones to 1.0, about 510 to 870 hours in total. A short plugin-runtime spike goes first because it's the riskiest piece; an alliance can switch its login over after milestone 1.
 
 | Milestone | Scope | Accepted when | Est. hours |
 | --- | --- | --- | --- |
 | S. Plugin spike | Throwaway prototype | A WASM plugin calls one host function, fetches one ESI endpoint through the host, and renders one page | 20–40 |
-| 0. Foundations | F1–F8, N1–N4 | Fresh VPS to working SSO login with no shell commands; `doctor` passes; NMU test characters land in Member. **Accepted locally** (real SSO login, owner claim, NMU in Member, `doctor` ok); the VPS parts are deferred to the pre-launch checklist below | 140–220 |
+| 0. Foundations | F1–F8, N1–N4 | Fresh VPS to working SSO login with no shell commands; `doctor` passes; the test alliance's characters land in Member. **Accepted locally** (real SSO login, owner claim, the test alliance in Member, `doctor` ok); the VPS parts are deferred to the pre-launch checklist below | 140–220 |
 | 1. ESI and Discord | F9–F14, N5–N7, N13 | A character leaving the alliance loses Member and Discord roles with no admin action; ESI error budget never exceeded in a week of staging | 80–120 |
 | 2. Plugin runtime | F15–F19, N8–N10, N14 | A signed plugin installs from GitHub, requests consent, runs jobs and renders pages with no restart; upgrade and rollback both work | 150–250 |
-| 3. First-party plugins | F20–F22, N11, N12, N15 | NMU and the multiboxing corp run on it daily; SeAT and Alliance Auth are shut down | 120–240 |
+| 3. First-party plugins | F20–F22, N11, N12, N15 | The pilot alliance and the multiboxing corp run on it daily; SeAT and Alliance Auth are shut down | 120–240 |
 | 4. App catalog (after 1.0) | F24 | An admin browses the catalog in Tether and installs a listed app in one click; a publisher gets an app listed through a reviewed pull request | not estimated |
 
 The host API is marked unstable until milestone 3 ends, then frozen as v1.
@@ -253,7 +253,7 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
 
-**Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before NMU goes live)
+**Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before the first alliance goes live)
 
 - [x] Reverse proxy choice at install (N1): `deploy/install.sh --proxy caddy|nginx|traefik|none`, asked interactively. Caddy stays the default; nginx gets a generated server block (installed and reloaded when run as root), Traefik gets labels on its network, `none` publishes the app on 127.0.0.1 with documented requirements (`deploy/README.md`). X-Forwarded-For is believed only from loopback and private peers; `doctor` fits its checks to the proxy; CI starts the image through compose without Caddy and checks `/health`
 - [ ] Published images (N1, N4, N14): CI publishes `ghcr.io/<owner>/tether` after every check passes (main as `:edge` and `:sha-<commit>`, `vX.Y.Z` tags as `:X.Y.Z`, `:X.Y`, `:latest`), amd64 and arm64 built natively and joined by digest. `docker-compose.yml` pulls `TETHER_IMAGE`, which install.sh pins (newest release, else `:edge`) and moves only on `--version` or `--build`. `docker-compose.build.yml` builds from a clone, for CI and development. Installs work from the deploy files alone. Built; tick it once the first publish from main has run and the package is public
@@ -277,5 +277,5 @@ None of these block the spike or milestone 0; each has a latest point where it m
 - [ ] Whether the WASM component model holds up, or plugins should start on Extism or Deno instead, after the spike
 - [x] Which AA apps to port first: Member Audit and Moon Mining, then (for 1:1 parity with AA core) Structure Timers, Fleet Activity Tracking, SRP and HR Applications; Structures and other community apps stay off the plan until asked. Decided 2026-09-25
 - [ ] Licenses of those AA plugins, checked before porting any code
-- [ ] Re-read CCP's current developer license for data retention and sharing rules, before NMU goes live
+- [ ] Re-read CCP's current developer license for data retention and sharing rules, before the first alliance goes live
 - [x] Plugin signing: minisign, publisher key pinned on first install, rotation endorsed by the old key, admin re-pin with confirmation

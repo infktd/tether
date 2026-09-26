@@ -264,8 +264,8 @@ pub fn impact(
 mod tests {
     use super::*;
 
-    const NMU: i64 = 99_000_001;
-    const NMU_CORP: i64 = 98_000_001;
+    const HOME: i64 = 99_000_001;
+    const HOME_CORP: i64 = 98_000_001;
     const BLUE: i64 = 99_000_002;
     const BLUE_CORP: i64 = 98_000_002;
     const PILOT: i64 = 2_100_000_001;
@@ -278,8 +278,8 @@ mod tests {
         let mut rules = StateRules::new(GUEST);
         rules.add_state(BLUE_STATE, 1);
         rules.add_state(MEMBER, 2);
-        rules.add(MEMBER, EntityKind::Alliance, NMU);
-        rules.add(MEMBER, EntityKind::Corporation, NMU_CORP);
+        rules.add(MEMBER, EntityKind::Alliance, HOME);
+        rules.add(MEMBER, EntityKind::Corporation, HOME_CORP);
         rules.add(BLUE_STATE, EntityKind::Alliance, BLUE);
         rules.add(BLUE_STATE, EntityKind::Corporation, BLUE_CORP);
         rules
@@ -314,13 +314,13 @@ mod tests {
         assert_eq!(rules.evaluate(enlisted(None)), BLUE_STATE);
         assert_eq!(rules.evaluate(main(1, None)), GUEST);
         // Priority still decides: a Member alliance in the militia is Member.
-        assert_eq!(rules.evaluate(enlisted(Some(NMU))), MEMBER);
+        assert_eq!(rules.evaluate(enlisted(Some(HOME))), MEMBER);
     }
 
     #[test]
     fn member_by_alliance_or_corporation() {
-        assert_eq!(rules().evaluate(main(1, Some(NMU))), MEMBER);
-        assert_eq!(rules().evaluate(main(NMU_CORP, None)), MEMBER);
+        assert_eq!(rules().evaluate(main(1, Some(HOME))), MEMBER);
+        assert_eq!(rules().evaluate(main(HOME_CORP, None)), MEMBER);
     }
 
     #[test]
@@ -332,10 +332,10 @@ mod tests {
     #[test]
     fn highest_priority_wins() {
         // A Member corporation inside a Blue alliance.
-        assert_eq!(rules().evaluate(main(NMU_CORP, Some(BLUE))), MEMBER);
+        assert_eq!(rules().evaluate(main(HOME_CORP, Some(BLUE))), MEMBER);
         let mut swapped = rules();
         swapped.set_priority(BLUE_STATE, 3);
-        assert_eq!(swapped.evaluate(main(NMU_CORP, Some(BLUE))), BLUE_STATE);
+        assert_eq!(swapped.evaluate(main(HOME_CORP, Some(BLUE))), BLUE_STATE);
     }
 
     #[test]
@@ -350,7 +350,7 @@ mod tests {
         });
         assert_eq!(rules.evaluate(unknown), BLUE_STATE);
         // Member still wins by priority.
-        assert_eq!(rules.evaluate(main(NMU_CORP, None)), MEMBER);
+        assert_eq!(rules.evaluate(main(HOME_CORP, None)), MEMBER);
     }
 
     #[test]
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(rules().evaluate(main(1, Some(2))), GUEST);
         assert_eq!(rules().evaluate(None), GUEST);
         assert_eq!(
-            StateRules::new(GUEST).evaluate(main(NMU_CORP, Some(NMU))),
+            StateRules::new(GUEST).evaluate(main(HOME_CORP, Some(HOME))),
             GUEST
         );
     }
@@ -388,14 +388,14 @@ mod tests {
     fn impact_counts_only_moves() {
         let before = rules();
         let mut after = rules();
-        after.remove(MEMBER, EntityKind::Corporation, NMU_CORP);
+        after.remove(MEMBER, EntityKind::Corporation, HOME_CORP);
         after.add(BLUE_STATE, EntityKind::Corporation, 7);
         let mains = [
-            main(NMU_CORP, None), // Member -> Guest
-            main(NMU_CORP, None), // Member -> Guest
-            main(1, Some(NMU)),   // stays Member
-            main(7, None),        // Guest -> Blue
-            None,                 // stays Guest
+            main(HOME_CORP, None), // Member -> Guest
+            main(HOME_CORP, None), // Member -> Guest
+            main(1, Some(HOME)),   // stays Member
+            main(7, None),         // Guest -> Blue
+            None,                  // stays Guest
         ];
         let moves = impact(&mains, &before, &after);
         assert_eq!(moves.len(), 2);
@@ -408,7 +408,7 @@ mod tests {
         let before = rules();
         let mut after = rules();
         after.remove_state(MEMBER);
-        let moves = impact(&[main(NMU_CORP, Some(BLUE))], &before, &after);
+        let moves = impact(&[main(HOME_CORP, Some(BLUE))], &before, &after);
         assert_eq!(moves[&(MEMBER, BLUE_STATE)], 1);
     }
 

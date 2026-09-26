@@ -13,7 +13,7 @@ use tether_plugins::testing::{self, Key};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const ID: &str = "nmu.http";
+const ID: &str = "acme.http";
 const API: &str = "api.example.com";
 const OTHER: &str = "other.example.com";
 const SECRET: &str = "s3cr3t-value-0123456789";
@@ -142,7 +142,7 @@ async fn an_approved_host_answers_and_every_request_is_logged(db: PgPool) {
     let seen = received_for(&mock, API).await;
     assert_eq!(seen.len(), 1);
     let agent = seen[0].headers.get("user-agent").unwrap().to_str().unwrap();
-    assert_eq!(agent, "tether (app nmu.http)");
+    assert_eq!(agent, "tether (app acme.http)");
     assert_eq!(seen[0].url.query(), Some("q=private"));
     assert!(seen[0].headers.get("x-api-key").is_none());
 
@@ -168,7 +168,7 @@ async fn an_approved_host_answers_and_every_request_is_logged(db: PgPool) {
     assert_eq!(rows[1].3, Some(404));
 
     // And shown on the app's admin page.
-    let page = page(&h, "/admin/plugins/nmu.http", &owner).await;
+    let page = page(&h, "/admin/plugins/acme.http", &owner).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(
         page.body.contains("api.example.com/v1/thing"),
@@ -325,7 +325,7 @@ async fn secrets_go_only_to_their_host_and_never_to_the_plugin(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.http/secrets/api_key",
+            "/admin/plugins/acme.http/secrets/api_key",
             &format!("value={SECRET}"),
             &pilot,
         ),
@@ -335,7 +335,7 @@ async fn secrets_go_only_to_their_host_and_never_to_the_plugin(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.http/secrets/nope",
+            "/admin/plugins/acme.http/secrets/nope",
             &format!("value={SECRET}"),
             &owner,
         ),
@@ -345,20 +345,20 @@ async fn secrets_go_only_to_their_host_and_never_to_the_plugin(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.http/secrets/api_key",
+            "/admin/plugins/acme.http/secrets/api_key",
             &format!("value=%20{SECRET}%0A"),
             &owner,
         ),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let admin = page(&h, "/admin/plugins/nmu.http", &owner).await.body;
+    let admin = page(&h, "/admin/plugins/acme.http", &owner).await.body;
     assert!(
         admin.contains("api_key") && !admin.contains(SECRET),
         "{admin}"
     );
     let sealed: Vec<u8> = sqlx::query_scalar(
-        "SELECT sealed FROM core.secrets WHERE name = 'plugin-secret:nmu.http:api_key'",
+        "SELECT sealed FROM core.secrets WHERE name = 'plugin-secret:acme.http:api_key'",
     )
     .fetch_one(&h.db)
     .await
@@ -551,7 +551,7 @@ async fn hosts_a_new_version_adds_stay_refused_until_approved(db: PgPool) {
     )
     .await;
     assert!(out.contains("approved secrets"), "{out}");
-    let admin = page(&h, "/admin/plugins/nmu.http", &owner).await.body;
+    let admin = page(&h, "/admin/plugins/acme.http", &owner).await.body;
     assert!(admin.contains("new.example.com: not approved"), "{admin}");
 }
 
@@ -566,7 +566,7 @@ async fn packages_cant_declare_tethers_own_destinations(db: PgPool) {
         "raw.githubusercontent.com",
     ] {
         let manifest = format!(
-            "[plugin]\nid = \"nmu.sneaky\"\nname = \"Sneaky\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+            "[plugin]\nid = \"acme.sneaky\"\nname = \"Sneaky\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
              [publisher]\nkey = \"{}\"\n\n[capabilities]\nhttp = [\"{host}\"]\n",
             key.public()
         );
@@ -592,7 +592,7 @@ async fn approving_again_drops_values_of_secrets_that_moved(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.http/secrets/api_key",
+            "/admin/plugins/acme.http/secrets/api_key",
             "value=abc",
             &owner,
         ),
@@ -601,7 +601,7 @@ async fn approving_again_drops_values_of_secrets_that_moved(db: PgPool) {
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let stored = || async {
         sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM core.secrets WHERE name = 'plugin-secret:nmu.http:api_key'",
+            "SELECT count(*) FROM core.secrets WHERE name = 'plugin-secret:acme.http:api_key'",
         )
         .fetch_one(&h.db)
         .await
@@ -642,7 +642,7 @@ async fn approving_again_drops_values_of_secrets_that_moved(db: PgPool) {
     send(
         &h.app,
         form(
-            "/admin/plugins/nmu.http/secrets/api_key",
+            "/admin/plugins/acme.http/secrets/api_key",
             "value=abc",
             &owner,
         ),
@@ -651,8 +651,8 @@ async fn approving_again_drops_values_of_secrets_that_moved(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.http/uninstall",
-            "confirmation=nmu.http",
+            "/admin/plugins/acme.http/uninstall",
+            "confirmation=acme.http",
             &owner,
         ),
     )

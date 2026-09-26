@@ -579,58 +579,58 @@ mod tests {
 
     #[test]
     fn finds_the_newest_signed_package() {
-        let repo = Repo::parse("nmu/apps").unwrap();
+        let repo = Repo::parse("acme/apps").unwrap();
         let web = "https://github.com";
         let releases = vec![
-            release("nmu/apps", "v3", &["nmu.moon-mining-1.10.0.zip"]),
+            release("acme/apps", "v3", &["acme.moon-mining-1.10.0.zip"]),
             release(
-                "nmu/apps",
+                "acme/apps",
                 "v2",
                 &[
-                    "nmu.moon-mining-1.9.0.zip",
-                    "nmu.moon-mining-1.9.0.zip.minisig",
+                    "acme.moon-mining-1.9.0.zip",
+                    "acme.moon-mining-1.9.0.zip.minisig",
                 ],
             ),
             release(
-                "nmu/apps",
+                "acme/apps",
                 "v1",
                 &[
-                    "nmu.moon-mining-1.2.0.zip",
-                    "nmu.moon-mining-1.2.0.zip.minisig",
-                    "nmu.srp-2.0.0.zip",
-                    "nmu.srp-2.0.0.zip.minisig",
+                    "acme.moon-mining-1.2.0.zip",
+                    "acme.moon-mining-1.2.0.zip.minisig",
+                    "acme.srp-2.0.0.zip",
+                    "acme.srp-2.0.0.zip.minisig",
                 ],
             ),
         ];
         // 1.10.0 has no signature, so 1.9.0 is the newest.
-        let found = find(&releases, &repo, web, Some("nmu.moon-mining")).unwrap();
+        let found = find(&releases, &repo, web, Some("acme.moon-mining")).unwrap();
         assert_eq!(
             (found.plugin_id.as_str(), found.version.as_str()),
-            ("nmu.moon-mining", "1.9.0")
+            ("acme.moon-mining", "1.9.0")
         );
         assert_eq!(
             found.release_url.as_deref(),
-            Some("https://github.com/nmu/apps/releases/tag/v2")
+            Some("https://github.com/acme/apps/releases/tag/v2")
         );
         // Two apps: which one must be said.
         let several = find(&releases, &repo, web, None).unwrap_err();
-        assert!(several.contains("nmu.moon-mining, nmu.srp"), "{several}");
-        assert!(find(&releases, &repo, web, Some("nmu.other")).is_err());
+        assert!(several.contains("acme.moon-mining, acme.srp"), "{several}");
+        assert!(find(&releases, &repo, web, Some("acme.other")).is_err());
     }
 
     #[test]
     fn downloads_stay_in_the_repository() {
-        let downloads = "https://github.com/nmu/apps/releases/download/";
+        let downloads = "https://github.com/acme/apps/releases/download/";
         assert!(in_downloads(
-            "https://github.com/nmu/apps/releases/download/v1/a-1.0.0.zip",
+            "https://github.com/acme/apps/releases/download/v1/a-1.0.0.zip",
             downloads
         ));
         for url in [
-            "https://github.com/nmu/apps/releases/download/../../../evil/apps/x.zip",
-            "https://github.com/nmu/apps/releases/download/%2e%2e/%2e%2e/%2e%2e/evil/x.zip",
-            "https://github.com/nmu/apps/releases/download/v1/a.zip?x=1",
-            "https://user@github.com/nmu/apps/releases/download/v1/a.zip",
-            "https://github.com.evil.com/nmu/apps/releases/download/v1/a.zip",
+            "https://github.com/acme/apps/releases/download/../../../evil/apps/x.zip",
+            "https://github.com/acme/apps/releases/download/%2e%2e/%2e%2e/%2e%2e/evil/x.zip",
+            "https://github.com/acme/apps/releases/download/v1/a.zip?x=1",
+            "https://user@github.com/acme/apps/releases/download/v1/a.zip",
+            "https://github.com.evil.com/acme/apps/releases/download/v1/a.zip",
         ] {
             assert!(!in_downloads(url, downloads), "{url}");
         }
@@ -638,29 +638,29 @@ mod tests {
 
     #[test]
     fn ignores_drafts_prereleases_and_other_hosts() {
-        let repo = Repo::parse("nmu/apps").unwrap();
+        let repo = Repo::parse("acme/apps").unwrap();
         let web = "https://github.com";
         let mut draft = release(
-            "nmu/apps",
+            "acme/apps",
             "v2",
-            &["nmu.srp-2.0.0.zip", "nmu.srp-2.0.0.zip.minisig"],
+            &["acme.srp-2.0.0.zip", "acme.srp-2.0.0.zip.minisig"],
         );
         draft.draft = true;
         let mut pre = release(
-            "nmu/apps",
+            "acme/apps",
             "v3",
-            &["nmu.srp-3.0.0.zip", "nmu.srp-3.0.0.zip.minisig"],
+            &["acme.srp-3.0.0.zip", "acme.srp-3.0.0.zip.minisig"],
         );
         pre.prerelease = true;
         let elsewhere = release(
             "evil/apps",
             "v4",
-            &["nmu.srp-4.0.0.zip", "nmu.srp-4.0.0.zip.minisig"],
+            &["acme.srp-4.0.0.zip", "acme.srp-4.0.0.zip.minisig"],
         );
         let good = release(
-            "nmu/apps",
+            "acme/apps",
             "v1",
-            &["nmu.srp-1.0.0.zip", "nmu.srp-1.0.0.zip.minisig"],
+            &["acme.srp-1.0.0.zip", "acme.srp-1.0.0.zip.minisig"],
         );
         let found = find(&[draft, pre, elsewhere, good], &repo, web, None).unwrap();
         assert_eq!(found.version, "1.0.0");

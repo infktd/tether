@@ -663,7 +663,7 @@ async fn doctor_checks_the_discord_bot(db: PgPool) {
     save_discord(&db, &key("01")).await;
     let check = doctor::discord(&discord_env(db.clone(), Some(key("01")), &server).await).await;
     assert_eq!(check.status, Status::Ok, "{check:?}");
-    assert_eq!(check.detail, "bot Tether is in New Miner's Union");
+    assert_eq!(check.detail, "bot Tether is in Example Miner's Alliance");
 
     // ENCRYPTION_KEY changed since the secrets were saved.
     let check = doctor::discord(&discord_env(db.clone(), Some(key("02")), &server).await).await;
@@ -741,7 +741,7 @@ async fn doctor_lists_the_hosts_apps_may_call(db: PgPool) {
     assert_eq!(none.status, Status::Ok, "{none:?}");
     assert!(none.detail.contains("no app"), "{none:?}");
 
-    for (id, enabled) in [("nmu.srp", true), ("nmu.off", false)] {
+    for (id, enabled) in [("acme.srp", true), ("acme.off", false)] {
         sqlx::query(
             "INSERT INTO core.plugins (id, name, version, package, signature, package_sha256, enabled) \
              VALUES ($1, $1, '1.0.0', '\\x00', 'sig', '\\x00', $2)",
@@ -753,9 +753,9 @@ async fn doctor_lists_the_hosts_apps_may_call(db: PgPool) {
         .unwrap();
     }
     for (id, host) in [
-        ("nmu.srp", "zkillboard.com"),
-        ("nmu.srp", "janice.e-351.com"),
-        ("nmu.off", "evil.example"),
+        ("acme.srp", "zkillboard.com"),
+        ("acme.srp", "janice.e-351.com"),
+        ("acme.off", "evil.example"),
     ] {
         sqlx::query("INSERT INTO core.plugin_http_hosts (plugin_id, host) VALUES ($1, $2)")
             .bind(id)
@@ -768,6 +768,6 @@ async fn doctor_lists_the_hosts_apps_may_call(db: PgPool) {
     assert_eq!(check.status, Status::Ok, "{check:?}");
     assert_eq!(
         check.detail,
-        "approved for apps: nmu.srp -> janice.e-351.com, zkillboard.com"
+        "approved for apps: acme.srp -> janice.e-351.com, zkillboard.com"
     );
 }

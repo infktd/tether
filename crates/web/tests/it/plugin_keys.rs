@@ -8,7 +8,7 @@ use tether_plugins::package::{self, Trust};
 use tether_plugins::testing::{self, Key};
 use tether_web::plugins::{record_trust, repin_key};
 
-const ID: &str = "nmu.test";
+const ID: &str = "acme.test";
 
 /// Installs a package signed by `key` as the install flow will: lock the
 /// pin, verify against it, record the trust. `pinned_seen` stands in for
@@ -150,11 +150,11 @@ async fn admins_can_repin_after_confirming(db: PgPool) {
     );
 
     for (expected_old, new, confirmation) in [
-        (a_key.as_str(), b_key.as_str(), "nmu.tes"), // confirmation doesn't match
-        (&a_key, &b_key, "NMU.TEST"),                // exactly, not case-insensitively
-        (&a_key, "not a key", ID),                   // not a key
-        (&a_key, &a_key, ID),                        // already pinned
-        (&c_key, &b_key, ID),                        // the admin looked at a different pin
+        (a_key.as_str(), b_key.as_str(), "acme.tes"), // confirmation doesn't match
+        (&a_key, &b_key, "ACME.TEST"),                // exactly, not case-insensitively
+        (&a_key, "not a key", ID),                    // not a key
+        (&a_key, &a_key, ID),                         // already pinned
+        (&c_key, &b_key, ID),                         // the admin looked at a different pin
     ] {
         let err = repin_key(&db, Actor::System, ID, expected_old, new, confirmation)
             .await

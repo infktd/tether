@@ -559,7 +559,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/dashboard/widgets/nmu.moons/0
+GET {{base}}/dashboard/widgets/acme.moons/0
 HTTP 303
 [Asserts]
 header "Location" == "/login"
@@ -821,12 +821,12 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/admin/plugins/nmu.hello
+GET {{base}}/admin/plugins/acme.hello
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/admin/plugin-keys/nmu.hello
+GET {{base}}/admin/plugin-keys/acme.hello
 HTTP 303
 [Asserts]
 header "Location" == "/login"
@@ -867,13 +867,13 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/enable
+POST {{base}}/admin/plugins/acme.hello/enable
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/disable
+POST {{base}}/admin/plugins/acme.hello/disable
 Origin: {{base}}
 HTTP 303
 [Asserts]
@@ -882,42 +882,42 @@ header "Location" == "/login"
 POST {{base}}/admin/plugin-github
 Origin: {{base}}
 [Form]
-repo: https://github.com/nmu/apps
+repo: https://github.com/acme/apps
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/update
+POST {{base}}/admin/plugins/acme.hello/update
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/source
-Origin: {{base}}
-[Form]
-source: nmu/apps
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/admin/plugins/nmu.hello/rollback
+POST {{base}}/admin/plugins/acme.hello/source
 Origin: {{base}}
 [Form]
-confirmation: nmu.hello
+source: acme/apps
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/uninstall
+POST {{base}}/admin/plugins/acme.hello/rollback
 Origin: {{base}}
 [Form]
-confirmation: nmu.hello
+confirmation: acme.hello
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/secrets/api_key
+POST {{base}}/admin/plugins/acme.hello/uninstall
+Origin: {{base}}
+[Form]
+confirmation: acme.hello
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugins/acme.hello/secrets/api_key
 Origin: {{base}}
 [Form]
 value: not-a-real-key
@@ -925,28 +925,28 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugin-keys/nmu.hello
+POST {{base}}/admin/plugin-keys/acme.hello
 Origin: {{base}}
 [Form]
 expected_old: RWQ
 new_key: RWQ
-confirmation: nmu.hello
+confirmation: acme.hello
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
 # Plugin pages need a session (then their permission).
-GET {{base}}/plugins/nmu.hello
+GET {{base}}/plugins/acme.hello
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/plugins/nmu.hello/some/page
+GET {{base}}/plugins/acme.hello/some/page
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/plugins/nmu.hello
+POST {{base}}/plugins/acme.hello
 Origin: {{base}}
 [Form]
 _form: note
@@ -954,7 +954,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/plugins/nmu.hello/some/page
+POST {{base}}/plugins/acme.hello/some/page
 Origin: {{base}}
 [Form]
 _form: note
@@ -1020,31 +1020,31 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/plugins/nmu.hello/offer
+POST {{base}}/profile/plugins/acme.hello/offer
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/plugins/nmu.hello/offer/1/withdraw
+POST {{base}}/profile/plugins/acme.hello/offer/1/withdraw
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/sources/1/approve
+POST {{base}}/admin/plugins/acme.hello/sources/1/approve
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/sources/1/remove
+POST {{base}}/admin/plugins/acme.hello/sources/1/remove
 Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/channels
+POST {{base}}/admin/plugins/acme.hello/channels
 Origin: {{base}}
 [Form]
 channel_id: 1
@@ -1052,7 +1052,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/plugins/nmu.hello/channels/1/remove
+POST {{base}}/admin/plugins/acme.hello/channels/1/remove
 Origin: {{base}}
 HTTP 303
 [Asserts]

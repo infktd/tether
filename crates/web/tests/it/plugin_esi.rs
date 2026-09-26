@@ -12,7 +12,7 @@ use tether_plugins::testing::{self, Key};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, ResponseTemplate};
 
-const ID: &str = "nmu.esi";
+const ID: &str = "acme.esi";
 /// Chribba, and his corporation in the affiliation fixture.
 const CHRIBBA: i64 = 196379789;
 const CHRIBBA_CORP: i64 = 1164409536;
@@ -148,7 +148,7 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
     let (h, owner) = member_with_plugin(db).await;
 
     // Signed out: to the login page, nothing started.
-    for uri in ["/register/start", "/profile/plugins/nmu.esi/offer"] {
+    for uri in ["/register/start", "/profile/plugins/acme.esi/offer"] {
         let res = send(&h.app, form(uri, "", "no-such-session")).await;
         assert_eq!(res.location(), "/login", "{uri}");
     }
@@ -157,7 +157,7 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            &format!("/admin/plugins/nmu.esi/sources/{CHRIBBA}/approve"),
+            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
             "",
             &pilot,
         ),
@@ -230,7 +230,7 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
         "{log:?}"
     );
     assert!(log.contains(&("character-skills".to_owned(), "not registered".to_owned())));
-    let admin = page(&h, "/admin/plugins/nmu.esi", &owner).await.body;
+    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
     assert!(
         admin.contains("Recent data access") && admin.contains(SKILLS),
         "{admin}"
@@ -268,7 +268,7 @@ async fn data_sources_are_offered_then_approved(db: PgPool) {
     let (asked, owner) = grant(
         &h,
         &owner,
-        "/profile/plugins/nmu.esi/offer",
+        "/profile/plugins/acme.esi/offer",
         "196379789:Chribba",
     )
     .await;
@@ -287,7 +287,7 @@ async fn data_sources_are_offered_then_approved(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            &format!("/admin/plugins/nmu.esi/sources/{CHRIBBA}/approve"),
+            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
             "",
             &owner,
         ),
@@ -308,7 +308,7 @@ async fn data_sources_are_offered_then_approved(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            &format!("/profile/plugins/nmu.esi/offer/{CHRIBBA}/withdraw"),
+            &format!("/profile/plugins/acme.esi/offer/{CHRIBBA}/withdraw"),
             "",
             &owner,
         ),
@@ -324,7 +324,7 @@ async fn pages_know_who_is_looking(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
-    let res = page(&h, "/plugins/nmu.esi/viewer", &owner).await;
+    let res = page(&h, "/plugins/acme.esi/viewer", &owner).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert!(res.body.contains("Chribba"), "{}", res.body);
     assert!(res.body.contains(&CHRIBBA_CORP.to_string()), "{}", res.body);
@@ -361,7 +361,7 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.esi/channels",
+            "/admin/plugins/acme.esi/channels",
             &format!("channel_id={DISCORD_PING_CHANNEL}"),
             &owner,
         ),

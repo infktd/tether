@@ -12,7 +12,7 @@ use tether_plugins::testing::{self, Key};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const HELLO: &str = "nmu.hello";
+const HELLO: &str = "acme.hello";
 
 fn hello_component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -118,9 +118,9 @@ async fn an_app_installs_from_github_and_upgrades_from_it(db: PgPool) {
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     let key = Key::new(1);
     let v1 = hello(&key, HELLO, "1.0.0");
-    publish(&github, "nmu/apps", &[("v1", "nmu.hello-1.0.0.zip", &v1)]).await;
+    publish(&github, "acme/apps", &[("v1", "acme.hello-1.0.0.zip", &v1)]).await;
 
-    let res = install_from(&h, &owner, "https://github.com/nmu/apps", "").await;
+    let res = install_from(&h, &owner, "https://github.com/acme/apps", "").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let review = res.location().to_owned();
     assert!(review.starts_with("/admin/plugin-uploads/"), "{review}");
@@ -133,13 +133,13 @@ async fn an_app_installs_from_github_and_upgrades_from_it(db: PgPool) {
     let status = tether_db::plugin_sources::status(&h.db, HELLO)
         .await
         .unwrap();
-    assert_eq!(status.source.as_deref(), Some("nmu/apps"));
+    assert_eq!(status.source.as_deref(), Some("acme/apps"));
     let uploaded: serde_json::Value =
         sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'plugin.uploaded'")
             .fetch_one(&h.db)
             .await
             .unwrap();
-    assert_eq!(uploaded["source"], "nmu/apps");
+    assert_eq!(uploaded["source"], "acme/apps");
 
     // Nothing newer yet.
     let github_client = h.plugins.github().unwrap().clone();
@@ -153,10 +153,10 @@ async fn an_app_installs_from_github_and_upgrades_from_it(db: PgPool) {
     let v2 = hello(&key, HELLO, "1.1.0");
     publish(
         &github,
-        "nmu/apps",
+        "acme/apps",
         &[
-            ("v2", "nmu.hello-1.1.0.zip", &v2),
-            ("v1", "nmu.hello-1.0.0.zip", &v1),
+            ("v2", "acme.hello-1.1.0.zip", &v2),
+            ("v1", "acme.hello-1.0.0.zip", &v1),
         ],
     )
     .await;
@@ -169,11 +169,11 @@ async fn an_app_installs_from_github_and_upgrades_from_it(db: PgPool) {
         "{}",
         list.body
     );
-    let shown = page(&h, "/admin/plugins/nmu.hello", &owner).await;
+    let shown = page(&h, "/admin/plugins/acme.hello", &owner).await;
     assert!(shown.body.contains("Review version"), "{}", shown.body);
     assert!(shown.body.contains("release notes"), "{}", shown.body);
 
-    let res = send(&h.app, form("/admin/plugins/nmu.hello/update", "", &owner)).await;
+    let res = send(&h.app, form("/admin/plugins/acme.hello/update", "", &owner)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let review = res.location().to_owned();
     let reviewed = page(&h, &review, &owner).await;
@@ -193,10 +193,10 @@ async fn an_app_installs_from_github_and_upgrades_from_it(db: PgPool) {
         "1.1.0"
     );
     // Up to date now: nothing to fetch.
-    let res = send(&h.app, form("/admin/plugins/nmu.hello/update", "", &owner)).await;
+    let res = send(&h.app, form("/admin/plugins/acme.hello/update", "", &owner)).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     assert!(
-        res.body.contains("newest nmu/apps publishes is 1.1.0"),
+        res.body.contains("newest acme/apps publishes is 1.1.0"),
         "{}",
         res.body
     );
@@ -210,40 +210,40 @@ async fn what_github_fetches_is_checked(db: PgPool) {
     let key = Key::new(1);
 
     // Not a repository.
-    let res = install_from(&h, &owner, "https://gitlab.com/nmu/apps", "").await;
+    let res = install_from(&h, &owner, "https://gitlab.com/acme/apps", "").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
 
     // Several apps: which one must be said.
     let hello_pkg = hello(&key, HELLO, "1.0.0");
-    let other = hello(&key, "nmu.other", "2.0.0");
+    let other = hello(&key, "acme.other", "2.0.0");
     publish(
         &github,
-        "nmu/apps",
+        "acme/apps",
         &[
-            ("v1", "nmu.hello-1.0.0.zip", &hello_pkg),
-            ("v2", "nmu.other-2.0.0.zip", &other),
+            ("v1", "acme.hello-1.0.0.zip", &hello_pkg),
+            ("v2", "acme.other-2.0.0.zip", &other),
         ],
     )
     .await;
-    let res = install_from(&h, &owner, "nmu/apps", "").await;
+    let res = install_from(&h, &owner, "acme/apps", "").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     assert!(res.body.contains("publishes several apps"), "{}", res.body);
-    let res = install_from(&h, &owner, "nmu/apps", "nmu.other").await;
+    let res = install_from(&h, &owner, "acme/apps", "acme.other").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
     // An asset named for one app holding another is refused.
-    let disguised = hello(&key, "nmu.other", "3.0.0");
+    let disguised = hello(&key, "acme.other", "3.0.0");
     publish(
         &github,
-        "nmu/apps",
-        &[("v3", "nmu.hello-3.0.0.zip", &disguised)],
+        "acme/apps",
+        &[("v3", "acme.hello-3.0.0.zip", &disguised)],
     )
     .await;
-    let res = install_from(&h, &owner, "nmu/apps", "nmu.hello").await;
+    let res = install_from(&h, &owner, "acme/apps", "acme.hello").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     assert!(
         res.body
-            .contains("holds app nmu.other version 3.0.0 instead"),
+            .contains("holds app acme.other version 3.0.0 instead"),
         "{}",
         res.body
     );
@@ -252,11 +252,11 @@ async fn what_github_fetches_is_checked(db: PgPool) {
     let mislabelled = hello(&key, HELLO, "1.0.0");
     publish(
         &github,
-        "nmu/apps",
-        &[("v9", "nmu.hello-9.9.9.zip", &mislabelled)],
+        "acme/apps",
+        &[("v9", "acme.hello-9.9.9.zip", &mislabelled)],
     )
     .await;
-    let res = install_from(&h, &owner, "nmu/apps", "nmu.hello").await;
+    let res = install_from(&h, &owner, "acme/apps", "acme.hello").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     assert!(res.body.contains("version 1.0.0 instead"), "{}", res.body);
 
@@ -265,19 +265,19 @@ async fn what_github_fetches_is_checked(db: PgPool) {
     let forged = (package.clone(), Key::new(2).sign(&package));
     publish(
         &github,
-        "nmu/apps",
-        &[("v1", "nmu.hello-1.0.0.zip", &forged)],
+        "acme/apps",
+        &[("v1", "acme.hello-1.0.0.zip", &forged)],
     )
     .await;
-    let res = install_from(&h, &owner, "nmu/apps", "").await;
+    let res = install_from(&h, &owner, "acme/apps", "").await;
     assert!(res.status.is_client_error(), "{}", res.status);
 
     // No repository.
     github.reset().await;
-    let res = install_from(&h, &owner, "nmu/gone", "").await;
+    let res = install_from(&h, &owner, "acme/gone", "").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     assert!(
-        res.body.contains("no public repository nmu/gone"),
+        res.body.contains("no public repository acme/gone"),
         "{}",
         res.body
     );
@@ -307,7 +307,7 @@ async fn a_repository_can_be_named_later_and_checks_can_be_off(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.hello/source",
+            "/admin/plugins/acme.hello/source",
             "source=not+a+repo",
             &owner,
         ),
@@ -317,8 +317,8 @@ async fn a_repository_can_be_named_later_and_checks_can_be_off(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.hello/source",
-            "source=https%3A%2F%2Fgithub.com%2Fnmu%2Fapps",
+            "/admin/plugins/acme.hello/source",
+            "source=https%3A%2F%2Fgithub.com%2Facme%2Fapps",
             &owner,
         ),
     )
@@ -327,7 +327,7 @@ async fn a_repository_can_be_named_later_and_checks_can_be_off(db: PgPool) {
     let status = tether_db::plugin_sources::status(&h.db, HELLO)
         .await
         .unwrap();
-    assert_eq!(status.source.as_deref(), Some("nmu/apps"));
+    assert_eq!(status.source.as_deref(), Some("acme/apps"));
     // A check is queued for it.
     let queued: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM core.jobs WHERE kind = 'plugins.update_check' AND state = 'queued'",
@@ -354,7 +354,7 @@ async fn a_repository_can_be_named_later_and_checks_can_be_off(db: PgPool) {
     // Cleared: no longer looked for.
     let res = send(
         &h.app,
-        form("/admin/plugins/nmu.hello/source", "source=", &owner),
+        form("/admin/plugins/acme.hello/source", "source=", &owner),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);

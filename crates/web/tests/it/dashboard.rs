@@ -11,7 +11,7 @@ use tether_plugins::testing::{self, Key};
 
 use crate::common::*;
 
-const ID: &str = "nmu.widgets";
+const ID: &str = "acme.widgets";
 const CHRIBBA: &str = "196379789:Chribba";
 const MITTANI: &str = "443630591:The Mittani";
 
@@ -97,7 +97,7 @@ async fn plugin_widgets_follow_their_pages(db: PgPool) {
     for state in [MEMBER_STATE, BLUE_STATE, GUEST_STATE] {
         tether_db::permissions::grant(
             &h.db,
-            "plugin.nmu.widgets.view",
+            "plugin.acme.widgets.view",
             Grantee::State(StateId(state)),
         )
         .await

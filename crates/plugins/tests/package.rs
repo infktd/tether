@@ -13,7 +13,7 @@ use zip::write::SimpleFileOptions;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n rest of the image";
 
 fn plugin_zip(key: &Key, extra: &[(&str, &[u8])]) -> Vec<u8> {
-    tether_plugins::testing::package("nmu.test", key, extra).0
+    tether_plugins::testing::package("acme.test", key, extra).0
 }
 
 /// Reads and verifies in one go, as installs do.
@@ -39,9 +39,9 @@ fn a_good_package_reads() {
         ],
     );
     let unverified = package::read(&bytes).unwrap();
-    assert_eq!(unverified.id(), "nmu.test");
+    assert_eq!(unverified.id(), "acme.test");
     let package = unverified.package();
-    assert_eq!(package.manifest.plugin.id, "nmu.test");
+    assert_eq!(package.manifest.plugin.id, "acme.test");
     assert_eq!(package.component, COMPONENT);
     let versions: Vec<_> = package
         .migrations
@@ -87,7 +87,7 @@ fn unexpected_entries_are_refused() {
 #[test]
 fn missing_or_malformed_parts_are_refused() {
     let key = Key::new(1);
-    let manifest = manifest("nmu.test", &key);
+    let manifest = manifest("acme.test", &key);
 
     let no_wasm = zip(&[("plugin.toml", manifest.as_bytes())]);
     assert_eq!(
@@ -188,7 +188,7 @@ fn sizes_are_capped_whatever_the_archive_claims() {
             )
         })
         .collect();
-    let manifest = manifest("nmu.test", &key);
+    let manifest = manifest("acme.test", &key);
     let mut files: Vec<(&str, &[u8])> = vec![("plugin.toml", manifest.as_bytes())];
     files.extend(many.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
     let err = package::read(&zip(&files)).unwrap_err().to_string();
@@ -211,10 +211,10 @@ fn tricky_archives_are_refused() {
     let key = Key::new(1);
 
     // Two entries named plugin.toml: the zip crate would keep only one.
-    let manifest = manifest("nmu.test", &key);
+    let manifest = manifest("acme.test", &key);
     let mut dup = zip(&[
         ("plugin.toml", manifest.as_bytes()),
-        ("plugin.tomX", b"[plugin]\nid = \"nmu.other\""),
+        ("plugin.tomX", b"[plugin]\nid = \"acme.other\""),
         ("plugin.wasm", COMPONENT),
     ]);
     while let Some(at) = find(&dup, b"plugin.tomX") {
@@ -358,7 +358,7 @@ fn later_packages_need_the_pinned_key() {
 fn the_pinned_key_can_endorse_a_new_one() {
     let old = Key::new(1);
     let new = Key::new(2);
-    let statement = package::rotation_statement("nmu.test", &old.public(), &new.public());
+    let statement = package::rotation_statement("acme.test", &old.public(), &new.public());
     let endorsement = old.sign(statement.as_bytes());
 
     let bytes = plugin_zip(
@@ -386,22 +386,22 @@ fn rotation_statements_are_checked_strictly() {
     let cases = [
         // Endorsed by the new key itself, not the pinned one.
         (
-            package::rotation_statement("nmu.test", &old.public(), &new.public()),
+            package::rotation_statement("acme.test", &old.public(), &new.public()),
             &new,
         ),
         // Another plugin's rotation, replayed.
         (
-            package::rotation_statement("nmu.other", &old.public(), &new.public()),
+            package::rotation_statement("acme.other", &old.public(), &new.public()),
             &old,
         ),
         // Endorses a different key than the one that signed the package.
         (
-            package::rotation_statement("nmu.test", &old.public(), &attacker.public()),
+            package::rotation_statement("acme.test", &old.public(), &attacker.public()),
             &old,
         ),
         // Extra text after the statement.
         (
-            package::rotation_statement("nmu.test", &old.public(), &new.public())
+            package::rotation_statement("acme.test", &old.public(), &new.public())
                 + "and also everything else\n",
             &old,
         ),
@@ -480,7 +480,7 @@ fn every_tool_sees_the_same_names() {
     // `notes.txt` in the headers, renamed to plugin.toml by an Info-ZIP
     // Unicode Path extra field that only some tools honour.
     let key = Key::new(1);
-    let manifest = manifest("nmu.test", &key);
+    let manifest = manifest("acme.test", &key);
     // The writer checks the field's CRC against an empty name, so write it
     // with that CRC (0) and patch in the real one below.
     let mut unicode_path = vec![1u8, 0, 0, 0, 0];

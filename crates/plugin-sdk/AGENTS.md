@@ -67,7 +67,7 @@ Every package carries a `plugin.toml`. Unknown fields are refused, so a typo fai
 
 ```toml
 [plugin]
-id = "nmu.mining-ledger"   # 3-50 lowercase letters, digits and single . - _, starting with a letter
+id = "acme.mining-ledger"   # 3-50 lowercase letters, digits and single . - _, starting with a letter
 name = "Mining ledger"     # up to 60 characters
 version = "0.3.1"          # MAJOR.MINOR.PATCH, no leading zeros
 host_api = "1"
@@ -127,7 +127,7 @@ minisign -S -s tether.key -m my-plugin.zip  # writes my-plugin.zip.minisig
 The first install pins your key for your plugin id. Every later version must be signed with the same key. To move to a new key, put the new key in `plugin.toml`, sign the package with the new key, and include a statement signed with the old key:
 
 ```bash
-printf 'tether-key-rotation v1\nplugin: %s\nold: %s\nnew: %s\n' nmu.mining-ledger "$OLD_KEY" "$NEW_KEY" > rotation.txt
+printf 'tether-key-rotation v1\nplugin: %s\nold: %s\nnew: %s\n' acme.mining-ledger "$OLD_KEY" "$NEW_KEY" > rotation.txt
 minisign -S -s old.key -m rotation.txt      # writes rotation.txt.minisig
 ```
 
@@ -135,7 +135,7 @@ Keep the rotation files in later packages or drop them; either works once instal
 
 ### Publishing on GitHub
 
-Admins can install straight from a repository, and Tether looks there once a day for newer versions. Attach the package and its signature to a GitHub release as `<plugin id>-<version>.zip` and `<plugin id>-<version>.zip.minisig`, for example `nmu.mining-ledger-1.2.0.zip`. The version in the name must match `plugin.version`. Drafts and pre-releases are skipped. Tether reads the 30 newest releases and takes the highest version of your plugin that has both files, so one repository can publish several plugins. The admin then enters the plugin id when installing.
+Admins can install straight from a repository, and Tether looks there once a day for newer versions. Attach the package and its signature to a GitHub release as `<plugin id>-<version>.zip` and `<plugin id>-<version>.zip.minisig`, for example `acme.mining-ledger-1.2.0.zip`. The version in the name must match `plugin.version`. Drafts and pre-releases are skipped. Tether reads the 30 newest releases and takes the highest version of your plugin that has both files, so one repository can publish several plugins. The admin then enters the plugin id when installing.
 
 To try a build before publishing it, run a development build of Tether (`cargo run -p tether-server --features dev`): its Apps page can also install a signed package from a file. Release builds install only from GitHub. A package under the id of an app that comes with Tether (such as `tether.moon-mining`) is always refused.
 

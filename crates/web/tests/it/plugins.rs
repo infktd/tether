@@ -11,7 +11,7 @@ use tether_plugins::host::Request as PageRequest;
 use tether_plugins::testing::{self, Key};
 use tether_web::plugins::{Plugins, Status};
 
-const ID: &str = "nmu.hello";
+const ID: &str = "acme.hello";
 
 /// The example plugin, built once per test run.
 fn hello_component() -> Vec<u8> {
@@ -87,8 +87,8 @@ async fn plugin_admin_needs_admin_plugins(db: PgPool) {
     for uri in [
         "/admin/plugins",
         "/admin/plugin-uploads/1",
-        "/admin/plugins/nmu.hello",
-        "/admin/plugin-keys/nmu.hello",
+        "/admin/plugins/acme.hello",
+        "/admin/plugin-keys/acme.hello",
     ] {
         assert_eq!(send(&h.app, get(uri, &[])).await.location(), "/login");
         assert_eq!(
@@ -100,13 +100,13 @@ async fn plugin_admin_needs_admin_plugins(db: PgPool) {
     for uri in [
         "/admin/plugin-uploads/1/approve",
         "/admin/plugin-uploads/1/discard",
-        "/admin/plugins/nmu.hello/enable",
-        "/admin/plugins/nmu.hello/disable",
-        "/admin/plugins/nmu.hello/uninstall",
-        "/admin/plugin-keys/nmu.hello",
+        "/admin/plugins/acme.hello/enable",
+        "/admin/plugins/acme.hello/disable",
+        "/admin/plugins/acme.hello/uninstall",
+        "/admin/plugin-keys/acme.hello",
     ] {
         assert_eq!(
-            send(&h.app, form(uri, "confirmation=nmu.hello", &pilot))
+            send(&h.app, form(uri, "confirmation=acme.hello", &pilot))
                 .await
                 .status,
             StatusCode::FORBIDDEN,
@@ -159,7 +159,7 @@ async fn an_approved_plugin_runs_without_a_restart(db: PgPool) {
         "Hello",
         "New publisher key",
         "janice.e-351.com",
-        "plugin.nmu.hello.view",
+        "plugin.acme.hello.view",
         "See the hello page",
         &key.public(),
     ] {
@@ -168,11 +168,11 @@ async fn an_approved_plugin_runs_without_a_restart(db: PgPool) {
 
     let res = send(&h.app, form(&format!("{review_uri}/approve"), "", &owner)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), "/admin/plugins/nmu.hello");
+    assert_eq!(res.location(), "/admin/plugins/acme.hello");
     assert_eq!(h.plugins.status(ID), Status::Running);
     assert_eq!(renders(&h.plugins).await, "Hello");
 
-    let detail = page(&h, "/admin/plugins/nmu.hello", &owner).await;
+    let detail = page(&h, "/admin/plugins/acme.hello", &owner).await;
     assert_eq!(detail.status, StatusCode::OK);
     assert!(detail.body.contains("Running"), "{}", detail.body);
     // The upload is used up.
@@ -196,7 +196,11 @@ async fn disable_enable_and_uninstall(db: PgPool) {
     let key = Key::new(1);
     install(&h, &owner, &key).await;
 
-    let res = send(&h.app, form("/admin/plugins/nmu.hello/disable", "", &owner)).await;
+    let res = send(
+        &h.app,
+        form("/admin/plugins/acme.hello/disable", "", &owner),
+    )
+    .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER);
     assert_eq!(h.plugins.status(ID), Status::Stopped);
     assert!(h.plugins.get(ID).is_none());
@@ -207,16 +211,20 @@ async fn disable_enable_and_uninstall(db: PgPool) {
             .contains("Disabled")
     );
     // Again: nothing changes, nothing more audited.
-    send(&h.app, form("/admin/plugins/nmu.hello/disable", "", &owner)).await;
+    send(
+        &h.app,
+        form("/admin/plugins/acme.hello/disable", "", &owner),
+    )
+    .await;
 
-    send(&h.app, form("/admin/plugins/nmu.hello/enable", "", &owner)).await;
+    send(&h.app, form("/admin/plugins/acme.hello/enable", "", &owner)).await;
     assert_eq!(h.plugins.status(ID), Status::Running);
 
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.hello/uninstall",
-            "confirmation=nmu.hell",
+            "/admin/plugins/acme.hello/uninstall",
+            "confirmation=acme.hell",
             &owner,
         ),
     )
@@ -227,8 +235,8 @@ async fn disable_enable_and_uninstall(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/nmu.hello/uninstall",
-            "confirmation=nmu.hello",
+            "/admin/plugins/acme.hello/uninstall",
+            "confirmation=acme.hello",
             &owner,
         ),
     )
@@ -237,13 +245,13 @@ async fn disable_enable_and_uninstall(db: PgPool) {
     assert_eq!(res.location(), "/admin/plugins");
     assert_eq!(h.plugins.status(ID), Status::Stopped);
     assert_eq!(
-        page(&h, "/admin/plugins/nmu.hello", &owner).await.status,
+        page(&h, "/admin/plugins/acme.hello", &owner).await.status,
         StatusCode::NOT_FOUND
     );
     for uri in ["enable", "disable"] {
         let res = send(
             &h.app,
-            form(&format!("/admin/plugins/nmu.hello/{uri}"), "", &owner),
+            form(&format!("/admin/plugins/acme.hello/{uri}"), "", &owner),
         )
         .await;
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{uri}");
@@ -416,7 +424,11 @@ async fn startup_loads_enabled_plugins_and_checks_them(db: PgPool) {
     assert_eq!(renders(&restarted).await, "Hello");
 
     // Disabled plugins stay off.
-    send(&h.app, form("/admin/plugins/nmu.hello/disable", "", &owner)).await;
+    send(
+        &h.app,
+        form("/admin/plugins/acme.hello/disable", "", &owner),
+    )
+    .await;
     let restarted = fresh();
     restarted.start(&h.db).await.unwrap();
     assert_eq!(restarted.status(ID), Status::Stopped);
@@ -475,14 +487,14 @@ async fn a_lost_key_is_re_pinned_on_its_page(db: PgPool) {
     send(
         &h.app,
         form(
-            "/admin/plugins/nmu.hello/uninstall",
-            "confirmation=nmu.hello",
+            "/admin/plugins/acme.hello/uninstall",
+            "confirmation=acme.hello",
             &owner,
         ),
     )
     .await;
 
-    let key_page = page(&h, "/admin/plugin-keys/nmu.hello", &owner).await;
+    let key_page = page(&h, "/admin/plugin-keys/acme.hello", &owner).await;
     assert_eq!(key_page.status, StatusCode::OK);
     assert!(key_page.body.contains(&old.public()));
     assert!(
@@ -501,14 +513,14 @@ async fn a_lost_key_is_re_pinned_on_its_page(db: PgPool) {
     };
     let res = send(
         &h.app,
-        form("/admin/plugin-keys/nmu.hello", &body("nope"), &owner),
+        form("/admin/plugin-keys/acme.hello", &body("nope"), &owner),
     )
     .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(res.body.contains(&new.public()), "keeps what was typed");
     let res = send(
         &h.app,
-        form("/admin/plugin-keys/nmu.hello", &body(ID), &owner),
+        form("/admin/plugin-keys/acme.hello", &body(ID), &owner),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -554,8 +566,12 @@ async fn a_re_pin_stops_packages_signed_with_the_old_key(db: PgPool) {
     .unwrap();
     // Still running until it is loaded again...
     assert_eq!(h.plugins.status(ID), Status::Running);
-    send(&h.app, form("/admin/plugins/nmu.hello/disable", "", &owner)).await;
-    send(&h.app, form("/admin/plugins/nmu.hello/enable", "", &owner)).await;
+    send(
+        &h.app,
+        form("/admin/plugins/acme.hello/disable", "", &owner),
+    )
+    .await;
+    send(&h.app, form("/admin/plugins/acme.hello/enable", "", &owner)).await;
     // ...then refused: it isn't signed with the pinned key any more.
     assert!(
         matches!(h.plugins.status(ID), Status::Failed(ref why) if why.contains("different key")),
