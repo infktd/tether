@@ -66,7 +66,8 @@ interactive() {
 # ask VAR "Question" default: reads an answer, or the default on Enter.
 ask() {
     printf '%s [%s]: ' "$2" "$3"
-    read -r answer || answer=
+    # shellcheck disable=SC2034 # read by the eval below
+    read -r answer || answer=''
     eval "$1=\${answer:-\$3}"
 }
 
@@ -194,8 +195,8 @@ newest_release() {
     die "api.github.com named '$tag' as the newest release, which isn't vX.Y.Z; choose with --version X.Y.Z (or edge)"
 }
 
-proxy= port= traefik_network= traefik_certresolver= traefik_entrypoint=
-install_nginx=no start=yes domain_arg= configure=no version= build_flag=no
+proxy='' port='' traefik_network='' traefik_certresolver='' traefik_entrypoint=''
+install_nginx=no start=yes domain_arg='' configure=no version='' build_flag=no
 while [ $# -gt 0 ]; do
     case $1 in
         --proxy) [ $# -ge 2 ] || die "$1 needs a value"; proxy=$2; configure=yes; shift 2 ;;
@@ -563,7 +564,7 @@ install_nginx_conf() {
         return 0
     fi
     # What this run added, so a rejected configuration can be taken out.
-    added_file= added_link=
+    added_file='' added_link=''
     if [ -f "$target" ]; then
         if cmp -s "$nginx_conf" "$target"; then
             echo "$target is already up to date."
