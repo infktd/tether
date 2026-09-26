@@ -158,6 +158,8 @@ Encrypt.
 
 Caddy gets and renews the certificate by itself.
 
+Ports 80 and 443 must be free. install.sh checks before starting and names what holds them, such as a container left over from another install (`docker rm -f <name>`) or a web server on the host (`sudo ss -ltnp 'sport = :80'` shows which).
+
 ### nginx
 
 For a server that already runs nginx on ports 80 and 443.

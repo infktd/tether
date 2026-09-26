@@ -616,7 +616,48 @@ fi
 # Only COMPOSE_FILE from .env decides which files apply.
 unset COMPOSE_FILE
 
+# Who holds a host port, other than this stack's own Caddy: a container
+# (another stack left running, e.g. an earlier auth install) or a program
+# on the host. Prints a line per holder; nothing when the port is free.
+port_holders() {
+    own=$(docker compose --profile caddy ps -q caddy 2>/dev/null || true)
+    docker ps --format '{{.ID}} {{.Names}} {{.Ports}}' 2>/dev/null |
+        while read -r id name ports; do
+            case $own in "$id"*) continue ;; esac
+            case " $ports" in *":$1->"*) echo "container $name" ;; esac
+        done
+    if [ -z "$own" ] && command -v ss >/dev/null 2>&1 &&
+        [ -n "$(ss -ltnH "( sport = :$1 )" 2>/dev/null)" ] &&
+        ! docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":$1->"; then
+        echo "program"
+    fi
+}
+
+# Caddy needs ports 80 and 443: say who has them rather than let Docker
+# fail halfway with "port is already allocated".
+check_ports() {
+    busy=no
+    for p in 80 443; do
+        for holder in $(port_holders "$p" | sed 's/ /:/'); do
+            busy=yes
+            case $holder in
+                container:*)
+                    name=${holder#container:}
+                    echo "install.sh: port $p is held by the container $name." >&2
+                    echo "  If it's left over from another install, remove it: docker rm -f $name" >&2
+                    ;;
+                *)
+                    echo "install.sh: port $p is held by a program on this server." >&2
+                    echo "  See which: sudo ss -ltnp 'sport = :$p'  (then stop it, e.g. sudo systemctl disable --now nginx)" >&2
+                    ;;
+            esac
+        done
+    done
+    [ "$busy" = no ] || die "free ports 80 and 443 for Caddy, then run install.sh again (or pick another proxy: --proxy nginx|traefik|none)"
+}
+
 if [ "$start" = yes ]; then
+    [ "$proxy" != caddy ] || check_ports
     if [ "$proxy" != caddy ]; then
         # Caddy from an earlier choice would still hold ports 80 and 443.
         docker compose --profile caddy rm -sf caddy >/dev/null 2>&1 || true
@@ -631,6 +672,14 @@ if [ "$start" = yes ]; then
             exit 1
         fi
         docker compose up -d
+    fi
+    # A Caddy container created while the ports were taken starts later
+    # without them: recreate it so it publishes 80 and 443.
+    if [ "$proxy" = caddy ]; then
+        caddy_id=$(docker compose ps -q caddy 2>/dev/null || true)
+        if [ -n "$caddy_id" ] && [ -z "$(docker port "$caddy_id" 80 2>/dev/null)" ]; then
+            docker compose up -d --force-recreate caddy
+        fi
     fi
 fi
 
