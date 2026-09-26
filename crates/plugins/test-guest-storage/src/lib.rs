@@ -107,16 +107,20 @@ fn probe(request: Request) -> Result<Page, PageError> {
             Ok(found) => format!("ok {found}"),
             Err(e) => format!("err {e:?}"),
         },
-        // esi?endpoint=&character=<id> (or source=<id>)&page=&observer_id=
+        // esi?endpoint=&character=<id> (or source=<id>)&page=&<param>=
+        // (any other argument is one of the endpoint's params)
         "esi" => {
             let subject = match (arg("character"), arg("source")) {
                 (Some(id), _) => Subject::Character(id.parse().unwrap_or_default()),
                 (None, Some(id)) => Subject::DataSource(id.parse().unwrap_or_default()),
                 (None, None) => Subject::Character(0),
             };
-            let params: Vec<(String, String)> = arg("observer_id")
-                .map(|v| vec![("observer_id".to_owned(), v)])
-                .unwrap_or_default();
+            let params: Vec<(String, String)> = request
+                .query
+                .iter()
+                .filter(|(k, _)| !["endpoint", "character", "source", "page"].contains(&k.as_str()))
+                .cloned()
+                .collect();
             let page = arg("page").and_then(|p| p.parse().ok());
             match esi::get(&arg("endpoint").unwrap_or_default(), subject, &params, page) {
                 Ok(r) => format!("ok pages={} {}", r.pages, r.body),

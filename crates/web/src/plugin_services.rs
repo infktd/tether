@@ -25,7 +25,7 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Channel, Character, DiscordError, EsiError, EsiResponse, FilterError, FilterValue,
+    Channel, Character, DiscordError, EsiError, EsiReply, EsiResponse, FilterError, FilterValue,
     FilterWanted, Fut, HttpError, HttpRequest, HttpResponse, Mention, Named, Services, SharedTimer,
     Subject, Timer, TimerError,
 };
@@ -159,7 +159,7 @@ fn character(row: db::CharacterRow) -> Character {
 }
 
 /// A short label for the access log.
-fn outcome(result: &Result<EsiResponse, EsiError>) -> String {
+fn outcome(result: &Result<EsiReply, EsiError>) -> String {
     match result {
         Ok(_) => "ok".to_owned(),
         Err(EsiError::NotAllowed(_)) => "not allowed".to_owned(),
@@ -181,7 +181,7 @@ async fn esi_get(
     subject: Subject,
     params: &[(String, String)],
     page: Option<u32>,
-) -> Result<EsiResponse, EsiError> {
+) -> Result<EsiReply, EsiError> {
     let running = plugins
         .upgrade()
         .and_then(|p| p.running(plugin))
@@ -207,10 +207,7 @@ async fn esi_get(
         if body.len() > MAX_BODY_BYTES {
             return Err(EsiError::TooLarge);
         }
-        return Ok(EsiResponse {
-            body,
-            pages: response.pages,
-        });
+        return Ok(reply(body, &response));
     }
     let approved = &running.manifest.capabilities.esi;
     let unavailable = |e: sqlx::Error| {
@@ -298,10 +295,17 @@ async fn esi_get(
     if body.len() > MAX_BODY_BYTES {
         return Err(EsiError::TooLarge);
     }
-    Ok(EsiResponse {
-        body,
-        pages: response.pages,
-    })
+    Ok(reply(body, &response))
+}
+
+fn reply(body: String, response: &tether_esi::plugin::Response) -> EsiReply {
+    EsiReply {
+        response: EsiResponse {
+            body,
+            pages: response.pages,
+        },
+        extra_calls: usize::try_from(response.refetched).unwrap_or(usize::MAX),
+    }
 }
 
 async fn discord_send(
@@ -412,7 +416,7 @@ impl Services for PluginServices {
         subject: Subject,
         params: Vec<(String, String)>,
         page: Option<u32>,
-    ) -> Fut<Result<EsiResponse, EsiError>> {
+    ) -> Fut<Result<EsiReply, EsiError>> {
         let (deps, plugins, throttle) = (
             self.deps.clone(),
             self.plugins.clone(),
@@ -432,7 +436,7 @@ impl Services for PluginServices {
             // an error ESI counted, so it counts here too.
             let not_in_fleet = endpoint == "fleet-members"
                 && result.as_ref().is_ok_and(|r| {
-                    serde_json::from_str::<serde_json::Value>(&r.body)
+                    serde_json::from_str::<serde_json::Value>(&r.response.body)
                         .is_ok_and(|v| v["in_fleet"] == serde_json::Value::Bool(false))
                 });
             if matches!(result, Err(EsiError::Status(_))) || not_in_fleet {

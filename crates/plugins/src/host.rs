@@ -117,9 +117,13 @@ impl tether::plugin::esi::Host for CallState {
         page: Option<u32>,
     ) -> Result<services::EsiResponse, services::EsiError> {
         let services = self.esi_costing(services::esi_cost(&endpoint))?;
-        services
+        let reply = services
             .esi_get(self.plugin.clone(), endpoint, subject, params, page)
-            .await
+            .await?;
+        // Requests it made beyond its cost count too: the next call over
+        // the limit is refused. This answer is already fetched.
+        self.esi_calls += reply.extra_calls;
+        Ok(reply.response)
     }
 
     async fn characters(&mut self) -> Vec<services::Character> {

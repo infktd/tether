@@ -59,6 +59,11 @@ pub struct Endpoint {
 const MINING: &str = "esi-industry.read_corporation_mining.v1";
 const STARBASES: &str = "esi-corporations.read_starbases.v1";
 const ASSETS: &str = "esi-assets.read_corporation_assets.v1";
+const WALLET: &str = "esi-wallet.read_character_wallet.v1";
+const CONTRACTS: &str = "esi-contracts.read_character_contracts.v1";
+const MAIL: &str = "esi-mail.read_mail.v1";
+const PLANETS: &str = "esi-planets.manage_planets.v1";
+const CALENDAR: &str = "esi-calendar.read_calendar_events.v1";
 
 pub const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
@@ -261,14 +266,14 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         name: "character-wallet",
-        scope: "esi-wallet.read_character_wallet.v1",
+        scope: WALLET,
         about: About::Character,
         paged: false,
         params: &[],
     },
     Endpoint {
         name: "character-wallet-journal",
-        scope: "esi-wallet.read_character_wallet.v1",
+        scope: WALLET,
         about: About::Character,
         paged: true,
         params: &[],
@@ -293,6 +298,244 @@ pub const ENDPOINTS: &[Endpoint] = &[
         about: About::Character,
         paged: false,
         params: &[],
+    },
+    // A full character viewer (SeAT's and aa-memberaudit's): everything
+    // below reads the one character the plugin names, with its own token,
+    // and passes ESI's JSON through, unless it says otherwise. Optional
+    // ids are noted; `params` lists the ones a call must give.
+    Endpoint {
+        // Optional `from_id`: transactions before that one (ESI's own
+        // stepping back; it has no pages).
+        name: "character-wallet-transactions",
+        scope: WALLET,
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-contracts",
+        scope: CONTRACTS,
+        about: About::Character,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // One of the character's own contracts' items (ESI answers only
+        // for a contract the character is party to).
+        name: "character-contract-items",
+        scope: CONTRACTS,
+        about: About::Character,
+        paged: false,
+        params: &["contract_id"],
+    },
+    Endpoint {
+        name: "character-contacts",
+        scope: "esi-characters.read_contacts.v1",
+        about: About::Character,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-standings",
+        scope: "esi-characters.read_standings.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // Mail headers (subject, sender, recipients, labels, read), newest
+        // 50; optional `last_mail_id` for the 50 before it. No bodies.
+        name: "character-mail",
+        scope: MAIL,
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // One mail's body, by the id its header gave: one mail of one
+        // character per call, only the one asked for.
+        name: "character-mail-body",
+        scope: MAIL,
+        about: About::Character,
+        paged: false,
+        params: &["mail_id"],
+    },
+    Endpoint {
+        name: "character-mail-labels",
+        scope: MAIL,
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-mailing-lists",
+        scope: MAIL,
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-loyalty-points",
+        scope: "esi-characters.read_loyalty.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // Planetary interaction colonies.
+        name: "character-planets",
+        scope: PLANETS,
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // One colony's layout (pins, links, routes), by `planet_id`.
+        name: "character-planet",
+        scope: PLANETS,
+        about: About::Character,
+        paged: false,
+        params: &["planet_id"],
+    },
+    Endpoint {
+        // Running jobs and those finished in the last 90 days.
+        name: "character-industry-jobs",
+        scope: "esi-industry.read_character_jobs.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-blueprints",
+        scope: "esi-characters.read_blueprints.v1",
+        about: About::Character,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // Open market orders.
+        name: "character-orders",
+        scope: "esi-markets.read_character_orders.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // Recent kills and losses, as ids and hashes: the killmails
+        // themselves are public (`killmail-detail`).
+        name: "character-killmails",
+        scope: "esi-killmails.read_killmails.v1",
+        about: About::Character,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // Public: one whole killmail (victim, its items, attackers), by id
+        // and hash. `killmail` is the short form.
+        name: "killmail-detail",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["killmail_id", "killmail_hash"],
+    },
+    Endpoint {
+        // Public: any character's corporations, by `character_id`.
+        name: "character-corporation-history",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["character_id"],
+    },
+    Endpoint {
+        name: "character-attributes",
+        scope: "esi-skills.read_skills.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // Jump fatigue.
+        name: "character-fatigue",
+        scope: "esi-characters.read_fatigue.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // The character's own corporation roles.
+        name: "character-roles",
+        scope: "esi-characters.read_corporation_roles.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        name: "character-titles",
+        scope: "esi-characters.read_titles.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // Every notification of the character's (the last 500 or 30
+        // days), unlike `corporation-structure-notifications`, which
+        // trims a data source's to its corporation's structures.
+        name: "character-notifications",
+        scope: "esi-characters.read_notifications.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // The next 50 calendar events; optional `from_event` for the 50
+        // after it.
+        name: "character-calendar",
+        scope: CALENDAR,
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // One event of the character's calendar, by `event_id`.
+        name: "character-calendar-event",
+        scope: CALENDAR,
+        about: About::Character,
+        paged: false,
+        params: &["event_id"],
+    },
+    Endpoint {
+        name: "character-fittings",
+        scope: "esi-fittings.read_fittings.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // The personal mining ledger (the last 30 days).
+        name: "character-mining",
+        scope: "esi-industry.read_character_mining.v1",
+        about: About::Character,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // An Upwell structure's name, system and type, by `structure_id`,
+        // as the character sees it (ESI answers only for structures the
+        // character may dock at): where a clone or an asset is, instead
+        // of a raw id. Not its owner or position.
+        name: "universe-structure",
+        scope: "esi-universe.read_structures.v1",
+        about: About::Character,
+        paged: false,
+        params: &["structure_id"],
+    },
+    Endpoint {
+        // Public: an NPC station, by `station_id`.
+        name: "universe-station",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["station_id"],
     },
 ];
 
@@ -416,6 +659,10 @@ pub struct Target {
 pub struct Response {
     pub body: serde_json::Value,
     pub pages: u32,
+    /// ESI requests made beyond what the endpoint's cost says: an answer
+    /// read a second time, raw, because its typed read failed. The host
+    /// counts them against the plugin's ESI budget.
+    pub refetched: u32,
 }
 
 /// How long one plugin ESI request may take.
@@ -467,6 +714,194 @@ fn item_ids(params: &[(String, String)]) -> Result<Vec<i64>, EsiError> {
         return Err(bad());
     }
     Ok(ids)
+}
+
+/// An optional positive id a plugin may give (`from_id` and the like).
+fn positive_id(params: &[(String, String)], name: &str) -> Result<Option<i64>, EsiError> {
+    match params.iter().find(|(k, _)| k == name) {
+        None => Ok(None),
+        Some((_, v)) => v
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .map(Some)
+            .ok_or_else(|| EsiError::InvalidInput(format!("{name} must be a number"))),
+    }
+}
+
+/// A boxed future, built in the function that returns it.
+type Pending<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// The request `send` makes, through [`Esi::call_full`], built and boxed
+/// here. A function that awaits many different requests (a match of
+/// endpoints) then holds only a request builder and a pointer for each in
+/// its stack frame, not the whole request: a debug build gives every one
+/// its own stack slot, and together they overflowed a thread's stack.
+fn fetch<'a, T, E, F, S>(esi: &'a Esi, send: S) -> Pending<'a, Result<ResponseValue<T>, EsiError>>
+where
+    T: Send + 'a,
+    E: std::fmt::Debug + Send + 'a,
+    F: std::future::Future<Output = Result<ResponseValue<T>, eve_esi_client::Error<E>>> + Send + 'a,
+    S: FnOnce() -> F + Send + 'a,
+{
+    Box::pin(async move { esi.call_full(Priority::Bulk, send()).await })
+}
+
+/// The answer as it is, with its page count (see [`fetch`]).
+fn typed<'a, T, E, F, S>(esi: &'a Esi, send: S) -> Pending<'a, Result<Response, EsiError>>
+where
+    T: serde::Serialize + Send + 'a,
+    E: std::fmt::Debug + Send + 'a,
+    F: std::future::Future<Output = Result<ResponseValue<T>, eve_esi_client::Error<E>>> + Send + 'a,
+    S: FnOnce() -> F + Send + 'a,
+{
+    Box::pin(async move {
+        let response = fetch(esi, send).await?;
+        let pages = pages(response.headers());
+        Ok(Response {
+            body: json(&response.into_inner())?,
+            pages,
+            refetched: 0,
+        })
+    })
+}
+
+/// As [`typed`], read loosely (see [`loose`]).
+fn loosely<'a, T, E, F, S>(
+    esi: &'a Esi,
+    send: S,
+    again: Again,
+) -> Pending<'a, Result<Response, EsiError>>
+where
+    T: serde::Serialize + Send + 'a,
+    E: std::fmt::Debug + Send + 'a,
+    F: std::future::Future<Output = Result<ResponseValue<T>, eve_esi_client::Error<E>>> + Send + 'a,
+    S: FnOnce() -> F + Send + 'a,
+{
+    Box::pin(async move {
+        let response = fetch(esi, move || loose(send(), again)).await?;
+        Ok(Response {
+            pages: pages(response.headers()),
+            refetched: refetched(response.headers()),
+            body: response.into_inner(),
+        })
+    })
+}
+
+/// Where [`loose`] reads an answer again: the client the typed request
+/// went through (its HTTP client, with the token if there is one, its
+/// base URL and error limiter), the endpoint's path and its query (the
+/// page, `last_mail_id` and the like).
+struct Again {
+    client: Client,
+    path: String,
+    query: Vec<(&'static str, String)>,
+}
+
+impl Again {
+    fn new(client: &Client, path: String) -> Self {
+        Self {
+            client: client.clone(),
+            path,
+            query: Vec::new(),
+        }
+    }
+
+    fn with(mut self, name: &'static str, value: impl ToString) -> Self {
+        self.query.push((name, value.to_string()));
+        self
+    }
+}
+
+/// Set on the headers of an answer read a second time, raw (see
+/// [`read_again`]): that's one more ESI request, which the plugin's
+/// budget counts ([`Response::refetched`]). Never sent anywhere.
+const REFETCHED: &str = "x-tether-refetched";
+
+/// Reads `again` as it is, when a typed read failed (`fallback`). Raw
+/// requests skip eve-esi-client's hooks, so what they add is added here:
+/// the compatibility date, and backing off while the error budget is low
+/// (the read is skipped then, and the typed read's failure stands). The
+/// status and error-limit headers reach Tether's budget through
+/// `Esi::call_full`; a failure is ESI's status, never a body passed on as
+/// data.
+// The library's own error: `Esi::call_full` reads the budget from it.
+#[allow(clippy::result_large_err)]
+async fn read_again<T, E>(
+    again: Again,
+    fallback: eve_esi_client::Error<E>,
+) -> Result<ResponseValue<T>, eve_esi_client::Error<E>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    if crate::budget::bulk_delay(again.client.error_budget()).is_some() {
+        tracing::warn!("ESI error budget low; not reading an answer again");
+        return Err(fallback);
+    }
+    let url = format!("{}{}", again.client.baseurl(), again.path);
+    let Ok(response) = again
+        .client
+        .client()
+        .get(&url)
+        .header("X-Compatibility-Date", eve_esi_client::COMPATIBILITY_DATE)
+        .query(&again.query)
+        .send()
+        .await
+    else {
+        return Err(fallback);
+    };
+    let (status, mut headers) = (response.status(), response.headers().clone());
+    if !status.is_success() {
+        return Err(eve_esi_client::Error::UnexpectedResponse(response));
+    }
+    let Ok(bytes) = response.bytes().await else {
+        return Err(fallback);
+    };
+    let Ok(body) = serde_json::from_slice::<T>(&bytes) else {
+        return Err(fallback);
+    };
+    headers.insert(REFETCHED, HeaderValue::from_static("1"));
+    Ok(ResponseValue::new(body, status, headers))
+}
+
+/// A typed request's answer, as JSON. ESI's enums (location flags, roles,
+/// notification and contract types) are closed in this client, so a value
+/// CCP adds later fails the typed read of the whole response: then it is
+/// read again as it is (`again`), as plain JSON. Read again, not from the
+/// bytes the typed read failed on: the client reports an error answer
+/// whose body doesn't read the same way, without its status, and the page
+/// count is in the headers it dropped.
+// The library's own error: `Esi::call_full` reads the budget from it.
+#[allow(clippy::result_large_err)]
+async fn loose<T, E, F>(
+    request: F,
+    again: Again,
+) -> Result<ResponseValue<serde_json::Value>, eve_esi_client::Error<E>>
+where
+    T: serde::Serialize,
+    F: std::future::Future<Output = Result<ResponseValue<T>, eve_esi_client::Error<E>>>,
+{
+    match request.await {
+        Ok(response) => {
+            let (status, headers) = (response.status(), response.headers().clone());
+            serde_json::to_value(response.into_inner())
+                .map(|body| ResponseValue::new(body, status, headers))
+                .map_err(|e| eve_esi_client::Error::Custom(e.to_string()))
+        }
+        Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
+            read_again(
+                again,
+                eve_esi_client::Error::InvalidResponsePayload(bytes, err),
+            )
+            .await
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Whether an answer was read a second time (see [`REFETCHED`]).
+fn refetched(headers: &HeaderMap) -> u32 {
+    u32::from(headers.contains_key(REFETCHED))
 }
 
 impl Esi {
@@ -623,6 +1058,7 @@ impl Esi {
                         "attackers": killmail.attackers.len(),
                     }),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "universe-moon" => {
@@ -640,6 +1076,7 @@ impl Esi {
                 Ok(Response {
                     body: json(&moon)?,
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "universe-planet" => {
@@ -667,6 +1104,7 @@ impl Esi {
                         },
                     }),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "sovereignty-systems" => {
@@ -697,7 +1135,58 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::Value::Array(claimed),
                     pages: 1,
+                    refetched: 0,
                 })
+            }
+            "killmail-detail" => {
+                let id = positive("killmail_id")?;
+                let hash = param("killmail_hash")
+                    .filter(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .ok_or_else(|| {
+                        EsiError::InvalidInput("killmail_hash must be 40 hex digits".into())
+                    })?
+                    .to_ascii_lowercase();
+                let killmail = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_killmails_killmail_id_killmail_hash()
+                            .killmail_id(id)
+                            .killmail_hash(hash)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&killmail)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "character-corporation-history" => {
+                let id = positive("character_id")?;
+                let history = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_characters_character_id_corporationhistory()
+                            .character_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&history)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "universe-station" => {
+                let id = positive("station_id")?;
+                let client = self.uncached();
+                let again = Again::new(&client, format!("/universe/stations/{id}"));
+                let request = client.get_universe_stations_station_id().station_id(id);
+                loosely(self, move || request.send(), again).await
             }
             other => Err(EsiError::InvalidInput(format!(
                 "no public endpoint {other}"
@@ -728,14 +1217,12 @@ impl Esi {
         let character = target.character_id;
         let corporation = target.corporation_id;
         let priority = Priority::Bulk;
+        // The request is built and run in `typed`, off this frame (see
+        // `fetch`).
         macro_rules! get {
             ($request:expr) => {{
-                let response = self.call_full(priority, $request.send()).await?;
-                let pages = pages(response.headers());
-                Ok(Response {
-                    body: json(&response.into_inner())?,
-                    pages,
-                })
+                let request = $request;
+                typed(self, move || request.send()).await
             }};
         }
         macro_rules! paged {
@@ -795,6 +1282,7 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::Value::Array(members),
                     pages,
+                    refetched: 0,
                 })
             }
             "corporation-starbases" => paged!(
@@ -823,6 +1311,7 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::json!({ "fuels": fuels }),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "corporation-customs-offices" => paged!(
@@ -841,8 +1330,8 @@ impl Esi {
                 // this client was generated fails the typed read of the
                 // whole page. That page is then fetched again as it is
                 // (headers included, for the page count) and read loosely.
-                let raw = client.client().clone();
-                let url = format!("{}/corporations/{corporation}/assets", client.baseurl());
+                let again = Again::new(&client, format!("/corporations/{corporation}/assets"))
+                    .with("page", page);
                 let request = async move {
                     match request.await {
                         Ok(response) => {
@@ -862,31 +1351,18 @@ impl Esi {
                             Ok(ResponseValue::new(items, status, headers))
                         }
                         Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
-                            let fallback =
-                                eve_esi_client::Error::InvalidResponsePayload(bytes, err);
-                            let Ok(response) = raw.get(&url).query(&[("page", page)]).send().await
-                            else {
-                                return Err(fallback);
-                            };
-                            let (status, headers) = (response.status(), response.headers().clone());
-                            if !status.is_success() {
-                                // Its status and error-limit headers reach
-                                // the budget.
-                                return Err(eve_esi_client::Error::UnexpectedResponse(response));
-                            }
-                            let Ok(bytes) = response.bytes().await else {
-                                return Err(fallback);
-                            };
-                            match serde_json::from_slice::<Vec<Asset>>(&bytes) {
-                                Ok(items) => Ok(ResponseValue::new(items, status, headers)),
-                                Err(_) => Err(fallback),
-                            }
+                            read_again::<Vec<Asset>, _>(
+                                again,
+                                eve_esi_client::Error::InvalidResponsePayload(bytes, err),
+                            )
+                            .await
                         }
                         Err(other) => Err(other),
                     }
                 };
                 let response = self.call_full(priority, request).await?;
                 let pages = pages(response.headers());
+                let again = refetched(response.headers());
                 // Slots and bays ships share pass only for the
                 // corporation's own Upwell structures: never its ships'
                 // fittings (nor their item ids, which asset names and
@@ -914,6 +1390,7 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::Value::Array(items),
                     pages,
+                    refetched: again,
                 })
             }
             "corporation-asset-locations" => {
@@ -941,6 +1418,7 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::Value::Array(locations),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "corporation-asset-names" => {
@@ -963,6 +1441,7 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::Value::Array(names),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "corporation-structure-notifications" => {
@@ -1023,6 +1502,7 @@ impl Esi {
                 Ok(Response {
                     body: serde_json::Value::Array(notifications),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "universe-system" => {
@@ -1056,6 +1536,7 @@ impl Esi {
                         "planets": system.planets.iter().map(|p| p.planet_id).collect::<Vec<_>>(),
                     }),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "fleet-members" => {
@@ -1075,6 +1556,7 @@ impl Esi {
                         return Ok(Response {
                             body: serde_json::json!({ "in_fleet": false, "boss": false }),
                             pages: 1,
+                            refetched: 0,
                         });
                     }
                     Err(err) => return Err(err),
@@ -1083,6 +1565,7 @@ impl Esi {
                     return Ok(Response {
                         body: serde_json::json!({ "in_fleet": true, "boss": false }),
                         pages: 1,
+                        refetched: 0,
                     });
                 }
                 let members = self
@@ -1115,6 +1598,7 @@ impl Esi {
                         "members": members,
                     }),
                     pages: 1,
+                    refetched: 0,
                 })
             }
             "character-skills" => get!(
@@ -1162,6 +1646,253 @@ impl Esi {
                     .get_characters_character_id_location()
                     .character_id(character)
             ),
+            // The character viewer's entries, in a function of their own:
+            // one match this long makes too deep a stack frame in debug
+            // builds.
+            _ => Box::pin(self.character_viewer(endpoint, &client, character, params, page)).await,
+        }
+    }
+
+    /// [`Esi::plugin_get`] for the character viewer's entries (a full
+    /// character's data, as SeAT and aa-memberaudit show it): each reads
+    /// `character`, with its own token in `client`.
+    async fn character_viewer(
+        &self,
+        endpoint: &Endpoint,
+        client: &Client,
+        character: i64,
+        params: &[(String, String)],
+        page: Option<std::num::NonZeroU32>,
+    ) -> Result<Response, EsiError> {
+        // Ids are positive: anything else is a certain ESI error, which
+        // would spend the error budget Tether shares.
+        let id = |name: &str| -> Result<i64, EsiError> {
+            positive_id(params, name)?
+                .ok_or_else(|| EsiError::InvalidInput(format!("{name} must be a number")))
+        };
+        // Each request is built and run in `typed` or `loosely`, off this
+        // frame (see `fetch`).
+        macro_rules! get {
+            ($request:expr) => {{
+                let request = $request;
+                typed(self, move || request.send()).await
+            }};
+        }
+        macro_rules! paged {
+            ($request:expr) => {{
+                let request = $request;
+                match page {
+                    Some(p) => get!(request.page(p)),
+                    None => get!(request),
+                }
+            }};
+        }
+        // As `get!`, read loosely (see `loose`): for responses with enums.
+        // `$again` is the same request, for reading it again as it is.
+        macro_rules! loose {
+            ($request:expr, $again:expr) => {{
+                let request = $request;
+                loosely(self, move || request.send(), $again).await
+            }};
+        }
+        // As `paged!`, read loosely; `$path` is the endpoint's.
+        macro_rules! loose_paged {
+            ($request:expr, $path:expr) => {{
+                let p = page.map_or(1, std::num::NonZeroU32::get);
+                let again = Again::new(client, $path).with("page", p);
+                loose!($request.page(p), again)
+            }};
+        }
+        let again = |path: String| Again::new(client, path);
+        match endpoint.name {
+            "character-wallet-transactions" => {
+                let request = client
+                    .get_characters_character_id_wallet_transactions()
+                    .character_id(character);
+                match positive_id(params, "from_id")? {
+                    Some(from) => get!(request.from_id(from)),
+                    None => get!(request),
+                }
+            }
+            "character-contracts" => loose_paged!(
+                client
+                    .get_characters_character_id_contracts()
+                    .character_id(character),
+                format!("/characters/{character}/contracts")
+            ),
+            "character-contract-items" => get!(
+                client
+                    .get_characters_character_id_contracts_contract_id_items()
+                    .character_id(character)
+                    .contract_id(id("contract_id")?)
+            ),
+            "character-contacts" => loose_paged!(
+                client
+                    .get_characters_character_id_contacts()
+                    .character_id(character),
+                format!("/characters/{character}/contacts")
+            ),
+            "character-standings" => loose!(
+                client
+                    .get_characters_character_id_standings()
+                    .character_id(character),
+                again(format!("/characters/{character}/standings"))
+            ),
+            "character-mail" => {
+                let request = client
+                    .get_characters_character_id_mail()
+                    .character_id(character);
+                let path = format!("/characters/{character}/mail");
+                match positive_id(params, "last_mail_id")? {
+                    Some(last) => loose!(
+                        request.last_mail_id(last),
+                        again(path).with("last_mail_id", last)
+                    ),
+                    None => loose!(request, again(path)),
+                }
+            }
+            "character-mail-body" => {
+                let mail = id("mail_id")?;
+                loose!(
+                    client
+                        .get_characters_character_id_mail_mail_id()
+                        .character_id(character)
+                        .mail_id(mail),
+                    again(format!("/characters/{character}/mail/{mail}"))
+                )
+            }
+            "character-mail-labels" => loose!(
+                client
+                    .get_characters_character_id_mail_labels()
+                    .character_id(character),
+                again(format!("/characters/{character}/mail/labels"))
+            ),
+            "character-mailing-lists" => get!(
+                client
+                    .get_characters_character_id_mail_lists()
+                    .character_id(character)
+            ),
+            "character-loyalty-points" => get!(
+                client
+                    .get_characters_character_id_loyalty_points()
+                    .character_id(character)
+            ),
+            "character-planets" => loose!(
+                client
+                    .get_characters_character_id_planets()
+                    .character_id(character),
+                again(format!("/characters/{character}/planets"))
+            ),
+            "character-planet" => get!(
+                client
+                    .get_characters_character_id_planets_planet_id()
+                    .character_id(character)
+                    .planet_id(id("planet_id")?)
+            ),
+            "character-industry-jobs" => loose!(
+                client
+                    .get_characters_character_id_industry_jobs()
+                    .character_id(character)
+                    .include_completed(true),
+                again(format!("/characters/{character}/industry/jobs"))
+                    .with("include_completed", true)
+            ),
+            "character-blueprints" => loose_paged!(
+                client
+                    .get_characters_character_id_blueprints()
+                    .character_id(character),
+                format!("/characters/{character}/blueprints")
+            ),
+            "character-orders" => loose!(
+                client
+                    .get_characters_character_id_orders()
+                    .character_id(character),
+                again(format!("/characters/{character}/orders"))
+            ),
+            "character-killmails" => paged!(
+                client
+                    .get_characters_character_id_killmails_recent()
+                    .character_id(character)
+            ),
+            "character-attributes" => get!(
+                client
+                    .get_characters_character_id_attributes()
+                    .character_id(character)
+            ),
+            "character-fatigue" => get!(
+                client
+                    .get_characters_character_id_fatigue()
+                    .character_id(character)
+            ),
+            "character-roles" => loose!(
+                client
+                    .get_characters_character_id_roles()
+                    .character_id(character),
+                again(format!("/characters/{character}/roles"))
+            ),
+            "character-titles" => get!(
+                client
+                    .get_characters_character_id_titles()
+                    .character_id(character)
+            ),
+            "character-notifications" => loose!(
+                client
+                    .get_characters_character_id_notifications()
+                    .character_id(character),
+                again(format!("/characters/{character}/notifications"))
+            ),
+            "character-calendar" => {
+                let request = client
+                    .get_characters_character_id_calendar()
+                    .character_id(character);
+                let path = format!("/characters/{character}/calendar");
+                match positive_id(params, "from_event")? {
+                    Some(from) => loose!(
+                        request.from_event(from),
+                        again(path).with("from_event", from)
+                    ),
+                    None => loose!(request, again(path)),
+                }
+            }
+            "character-calendar-event" => {
+                let event = id("event_id")?;
+                loose!(
+                    client
+                        .get_characters_character_id_calendar_event_id()
+                        .character_id(character)
+                        .event_id(event),
+                    again(format!("/characters/{character}/calendar/{event}"))
+                )
+            }
+            "character-fittings" => loose!(
+                client
+                    .get_characters_character_id_fittings()
+                    .character_id(character),
+                again(format!("/characters/{character}/fittings"))
+            ),
+            "character-mining" => paged!(
+                client
+                    .get_characters_character_id_mining()
+                    .character_id(character)
+            ),
+            "universe-structure" => {
+                let structure_id = id("structure_id")?;
+                let request = client
+                    .get_universe_structures_structure_id()
+                    .structure_id(structure_id);
+                let structure = fetch(self, move || request.send()).await?.into_inner();
+                // Where it is and what it is: not whose, or where in space.
+                Ok(Response {
+                    body: serde_json::json!({
+                        "structure_id": structure_id,
+                        "name": structure.name,
+                        "solar_system_id": structure.solar_system_id,
+                        "type_id": structure.type_id,
+                    }),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
             other => Err(EsiError::InvalidInput(format!("no endpoint {other}"))),
         }
     }
@@ -1257,6 +1988,34 @@ mod tests {
             .collect::<Vec<_>>()
             .join(",");
         assert!(item_ids(&p(&many)).is_err());
+    }
+
+    #[test]
+    fn scopes_are_known_read_scopes_of_the_right_kind() {
+        use tether_core::scopes::{self, ScopeKind as Kind};
+        for e in ENDPOINTS {
+            match e.about {
+                About::Public => assert_eq!(e.scope, "", "{}", e.name),
+                about => {
+                    let info = scopes::info(e.scope).unwrap_or_else(|| panic!("{}", e.name));
+                    assert!(!scopes::is_write(e.scope), "{}", e.name);
+                    // A corporation endpoint may read a data source's own
+                    // character data (its notifications), not the reverse.
+                    if about == About::Character {
+                        assert_eq!(info.kind, Kind::Character, "{}", e.name);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn optional_ids_are_positive_numbers_or_absent() {
+        let p = |v: &str| vec![("from_id".to_owned(), v.to_owned())];
+        assert_eq!(positive_id(&[], "from_id").unwrap(), None);
+        assert_eq!(positive_id(&p("12"), "from_id").unwrap(), Some(12));
+        assert!(positive_id(&p("0"), "from_id").is_err());
+        assert!(positive_id(&p("x"), "from_id").is_err());
     }
 
     #[test]

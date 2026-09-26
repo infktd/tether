@@ -422,3 +422,165 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     let out = probe(&h, "send", &[("text", "hi"), ("state", "Admirals")]).await;
     assert!(out.contains("no Discord role"), "{out}");
 }
+
+// ---- the character viewer's endpoints ------------------------------------
+
+const MAIL: &str = "esi-mail.read_mail.v1";
+const STRUCTURES: &str = "esi-universe.read_structures.v1";
+const MITTANI: i64 = 443630591;
+const KEEPSTAR: i64 = 1030000000001;
+
+/// A probe that reads members' mail and structures (as Member Audit
+/// will), has a data source (as Moon Mining does) and a schedule.
+async fn install_viewer(h: &Harness, owner: &str) {
+    let key = Key::new(1);
+    let manifest = format!(
+        "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n\
+         [capabilities.esi]\nuser = [\"{MAIL}\", \"{STRUCTURES}\"]\ndata_source = [\"{MINING}\"]\n\n\
+         [[capabilities.schedules]]\nname = \"sync\"\nevery = \"15m\"\n\n\
+         [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = probe_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
+/// Chribba's alliance is Member, Chribba is the owner, and the viewer
+/// probe is installed.
+async fn member_with_viewer(db: PgPool) -> (Harness, String) {
+    use tether_core::states::{Builtin, EntityKind};
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install_viewer(&h, &owner).await;
+    mount_esi(&h).await;
+    run_jobs(&h).await;
+    (h, owner)
+}
+
+async fn esi_with(
+    h: &Harness,
+    endpoint: &str,
+    who: (&str, i64),
+    params: &[(&str, &str)],
+) -> String {
+    let who_id = who.1.to_string();
+    let mut query = vec![("endpoint", endpoint), (who.0, who_id.as_str())];
+    query.extend_from_slice(params);
+    probe(h, "esi", &query).await
+}
+
+async fn mount_viewer_esi(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/mail/77")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "body": "Fleet at 19:00", "from": 90000001, "labels": [1], "read": true,
+            "recipients": [{"recipient_id": CHRIBBA, "recipient_type": "character"}],
+            "subject": "Ops", "timestamp": "2026-09-20T19:04:05Z"
+        })))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{KEEPSTAR}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Home Keepstar", "owner_id": 98000001, "solar_system_id": 30000142,
+            "type_id": 35834, "position": {"x": 1.0, "y": 2.0, "z": 3.0}
+        })))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/universe/stations/60003760"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "max_dockable_ship_volume": 50000000.0, "name": "Some Station",
+            "office_rental_cost": 10000.0, "owner": 1000035,
+            "position": {"x": 1.0, "y": 2.0, "z": 3.0}, "race_id": 1,
+            "reprocessing_efficiency": 0.5, "reprocessing_stations_take": 0.05,
+            "services": ["market"], "station_id": 60003760, "system_id": 30000142, "type_id": 1531
+        })))
+        .mount(&h.esi_server)
+        .await;
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_character_viewer_reads_only_registered_members_with_the_scope(db: PgPool) {
+    let (h, owner) = member_with_viewer(db).await;
+    mount_viewer_esi(&h).await;
+    let mail = |who: (&'static str, i64)| {
+        let h = &h;
+        async move { esi_with(h, "character-mail-body", who, &[("mail_id", "77")]).await }
+    };
+
+    // Member requires the app's scopes; Chribba hasn't granted them yet.
+    assert_eq!(
+        mail(("character", CHRIBBA)).await,
+        "err Error::NotRegistered"
+    );
+    let (asked, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    assert!(asked.contains(&MAIL.to_owned()), "{asked:?}");
+    assert!(asked.contains(&STRUCTURES.to_owned()), "{asked:?}");
+
+    // The one mail asked for, of the character the host names.
+    let out = mail(("character", CHRIBBA)).await;
+    assert!(out.starts_with("ok pages=1"), "{out}");
+    assert!(out.contains("Fleet at 19:00"), "{out}");
+    // A docked structure's name and system, not its owner.
+    let out = esi_with(
+        &h,
+        "universe-structure",
+        ("character", CHRIBBA),
+        &[("structure_id", &KEEPSTAR.to_string())],
+    )
+    .await;
+    assert!(
+        out.contains("Home Keepstar") && out.contains("30000142"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("owner_id") && !out.contains("position"),
+        "{out}"
+    );
+    // No mail id, no call.
+    let out = esi_with(&h, "character-mail-body", ("character", CHRIBBA), &[]).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+
+    // Not a scope this app was approved for, or not a character subject.
+    let out = esi(&h, "character-contracts", ("character", CHRIBBA)).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    let out = mail(("source", CHRIBBA)).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    // A Guest's character, even one whose token has the scope.
+    let _guest = log_in_as(&h, "443630591:The Mittani", None).await;
+    sqlx::query("UPDATE core.character_tokens SET scopes = $2 WHERE character_id = $1")
+        .bind(MITTANI)
+        .bind(vec![MAIL])
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        mail(("character", MITTANI)).await,
+        "err Error::NotRegistered"
+    );
+
+    // Public entries need no scope, and any subject will do.
+    let out = esi_with(
+        &h,
+        "universe-station",
+        ("character", 0),
+        &[("station_id", "60003760")],
+    )
+    .await;
+    assert!(out.contains("Some Station"), "{out}");
+
+    let log = access_log(&h.db).await;
+    assert!(log.contains(&("character-mail-body".to_owned(), "ok".to_owned())));
+    assert!(log.contains(&(
+        "character-mail-body".to_owned(),
+        "not registered".to_owned()
+    )));
+    let _ = owner;
+}

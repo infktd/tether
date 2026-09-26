@@ -397,6 +397,35 @@ let names = esi::names(&[40161234, 30000142])?;
 | `character-clones` | `esi-clones.read_clones.v1` | character | no | |
 | `character-implants` | `esi-clones.read_implants.v1` | character | no | |
 | `character-location` | `esi-location.read_location.v1` | character | no | |
+| `character-wallet-transactions` | `esi-wallet.read_character_wallet.v1` | character | no | optional `from_id` |
+| `character-contracts` | `esi-contracts.read_character_contracts.v1` | character | yes | |
+| `character-contract-items` | `esi-contracts.read_character_contracts.v1` | character | no | `contract_id` |
+| `character-contacts` | `esi-characters.read_contacts.v1` | character | yes | |
+| `character-standings` | `esi-characters.read_standings.v1` | character | no | |
+| `character-mail` | `esi-mail.read_mail.v1` | character | no | optional `last_mail_id` |
+| `character-mail-body` | `esi-mail.read_mail.v1` | character | no | `mail_id` |
+| `character-mail-labels` | `esi-mail.read_mail.v1` | character | no | |
+| `character-mailing-lists` | `esi-mail.read_mail.v1` | character | no | |
+| `character-loyalty-points` | `esi-characters.read_loyalty.v1` | character | no | |
+| `character-planets` | `esi-planets.manage_planets.v1` | character | no | |
+| `character-planet` | `esi-planets.manage_planets.v1` | character | no | `planet_id` |
+| `character-industry-jobs` | `esi-industry.read_character_jobs.v1` | character | no | |
+| `character-blueprints` | `esi-characters.read_blueprints.v1` | character | yes | |
+| `character-orders` | `esi-markets.read_character_orders.v1` | character | no | |
+| `character-killmails` | `esi-killmails.read_killmails.v1` | character | yes | |
+| `killmail-detail` | none (public) | any | no | `killmail_id`, `killmail_hash` |
+| `character-corporation-history` | none (public) | any | no | `character_id` |
+| `character-attributes` | `esi-skills.read_skills.v1` | character | no | |
+| `character-fatigue` | `esi-characters.read_fatigue.v1` | character | no | |
+| `character-roles` | `esi-characters.read_corporation_roles.v1` | character | no | |
+| `character-titles` | `esi-characters.read_titles.v1` | character | no | |
+| `character-notifications` | `esi-characters.read_notifications.v1` | character | no | |
+| `character-calendar` | `esi-calendar.read_calendar_events.v1` | character | no | optional `from_event` |
+| `character-calendar-event` | `esi-calendar.read_calendar_events.v1` | character | no | `event_id` |
+| `character-fittings` | `esi-fittings.read_fittings.v1` | character | no | |
+| `character-mining` | `esi-industry.read_character_mining.v1` | character | yes | |
+| `universe-structure` | `esi-universe.read_structures.v1` | character | no | `structure_id` |
+| `universe-station` | none (public) | any | no | `station_id` |
 
 - The body is ESI's JSON, at most 4 MiB; `pages` says how many pages a paged endpoint has. At most 100 ESI calls per submit or job run, 20 per page render.
 - Errors: `NotAllowed` (endpoint or scope), `NotRegistered` (not a Member's character, or its token lacks the scope), `NotADataSource`, `Token` (the character must log in again), `Status(code)` from ESI, `Invalid`, `TooLarge`, `Unavailable`. Plan for `NotRegistered` and `Token`: people leave, and revoke tokens.
@@ -407,6 +436,8 @@ let names = esi::names(&[40161234, 30000142])?;
 - `corporation-structure-notifications` is the data-source character's own notifications, only those about its corporation's structures and moon drills (`StructureUnderAttack`, `StructureLostShields`, `StructureLostArmor`, `StructureDestroyed`, `StructureFuelAlert`, `StructureServicesOffline`, `StructureWentLowPower`, `StructureWentHighPower`, `StructureOnline`, `StructureAnchoring`, `StructureUnanchoring`, the Metenox's `StructureLowReagentsAlert` and `StructureNoReagentsAlert`, starbases' `TowerAlertMsg` and `TowerResourceAlertMsg`, customs offices' `OrbitalAttacked` and `OrbitalReinforced`, the `Skyhook...` ones and the `Moonmining...` extraction ones), each with only `notification_id`, `type`, `timestamp` and `text` (EVE's YAML). Types are read as text, so one CCP adds later doesn't break the read. ESI caches them for 10 minutes.
 - `fleet-members` reads the fleet the data-source character is in, found by the host from that character's own token (a plugin never names a fleet): `{"in_fleet": false, "boss": false}` when it isn't in one, `{"in_fleet": true, "boss": false}` when it isn't the fleet boss, else `{"in_fleet": true, "boss": true, "fleet_id", "members": [{"character_id", "ship_type_id", "solar_system_id", "join_time"}]}`. FCs opt in by offering their character as the app's data source (an admin approves it once), as aa-afat asks only FCs for the scope. "Boss" is as of ESI's cached answer (a few seconds), and the members may come from Tether's shared cache, so a character that just passed boss can read them once more. It makes two ESI requests, so it counts as two of the 100 (or 20) calls. "Not in a fleet" is ESI's 404, and counts as an error toward your plugin's ESI error throttle; poll no more than once a minute.
 - `killmail` is public: no scope, no token, any plugin, and the subject you pass isn't used (`Subject::Character(0)` is fine). Give the id and 40-hex-digit hash a killmail link carries (zKillboard's API gives the hash for an id). It answers `killmail_id`, `killmail_time`, `solar_system_id`, `victim` (`character_id`, `corporation_id`, `alliance_id`, `ship_type_id`; no `character_id` for structures) and `attackers` (how many).
+- The character endpoints are a full character viewer (SeAT's, aa-memberaudit's). Each reads only the character you name, with its own token, and answers ESI's JSON as it is, except `universe-structure`. Mail comes in two steps: `character-mail` gives headers (subject, sender, recipients, labels, read; the newest 50, then the 50 before `last_mail_id`), and `character-mail-body` gives one mail's body by the `mail_id` a header gave, one mail per call. `character-wallet-transactions` steps back with `from_id` and `character-calendar` forward with `from_event`, as ESI does; they have no pages. `character-industry-jobs` includes jobs finished in the last 90 days. `character-killmails` gives `killmail_id` and `killmail_hash` pairs; read each with the public `killmail-detail` (the whole killmail: victim, its items, every attacker) or `killmail` (its short form). `character-notifications` is every notification the character has (the last 500 or 30 days), unlike `corporation-structure-notifications`. `universe-structure` answers `structure_id`, `name`, `solar_system_id` and `type_id` of an Upwell structure the character may dock at (ESI answers 403 otherwise): use it to show where a clone, asset or ship is. `universe-station` (an NPC station) and `character-corporation-history` (anyone's corporations, by `character_id`) are public.
+- Values CCP adds to ESI's lists after this Tether was built (a new location flag, role, notification or contract type) don't break a read of the endpoints from `character-wallet-transactions` on, nor of `corporation-structure-assets`: the answer is read a second time as it is, and they pass through as text. That second read counts as one more of the 100 (or 20) calls, and is skipped (`Unavailable`) while ESI's error budget is low. Ids you give are positive numbers; anything else is `Invalid`, without asking ESI.
 - Every call is recorded in your plugin's access log, which admins see. An admin must also enable your scopes on Tether's EVE application.
 
 ## Discord

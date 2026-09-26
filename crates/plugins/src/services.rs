@@ -38,6 +38,17 @@ pub fn esi_cost(endpoint: &str) -> usize {
         _ => 1,
     }
 }
+
+/// An ESI call's answer, and the ESI requests it made beyond its
+/// [`esi_cost`]: an answer read a second time, raw, when its typed read
+/// failed (a value CCP added to one of ESI's lists). The host counts
+/// those against the call's budget too.
+#[derive(Debug, Clone)]
+pub struct EsiReply {
+    pub response: EsiResponse,
+    pub extra_calls: usize,
+}
+
 /// Filter reports in one plugin call.
 pub const MAX_FILTER_REPORTS: usize = 50;
 /// Discord messages in one plugin call.
@@ -61,7 +72,7 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         subject: Subject,
         params: Vec<(String, String)>,
         page: Option<u32>,
-    ) -> Fut<Result<EsiResponse, EsiError>>;
+    ) -> Fut<Result<EsiReply, EsiError>>;
     fn esi_characters(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_data_sources(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_names(&self, plugin: String, ids: Vec<i64>) -> Fut<Result<Vec<Named>, EsiError>>;
