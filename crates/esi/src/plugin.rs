@@ -482,10 +482,8 @@ impl Esi {
             .map_err(|_| EsiError::InvalidInput("the token isn't a valid header".into()))?;
         auth.set_sensitive(true);
         headers.insert(AUTHORIZATION, auth);
-        headers.insert(
-            "x-compatibility-date",
-            HeaderValue::from_static(eve_esi_client::COMPATIBILITY_DATE),
-        );
+        // User-Agent and X-Compatibility-Date come from the shared state's
+        // default headers, added to every request.
         let http = tether_net::Outbound::library_client(
             self.allowlist().clone(),
             self.user_agent(),
@@ -553,36 +551,18 @@ impl Esi {
             .0)
     }
 
-    /// A client without the shared in-memory cache (same base URL, allow
-    /// list and User-Agent), for public endpoints whose ids plugins choose:
-    /// cached, every killmail anyone asked about would stay in memory
-    /// until it expires. Calls still go through `call_full`'s budget.
-    fn uncached(&self) -> Result<Client, EsiError> {
-        if let Some(client) = self.uncached.get() {
-            return Ok(client.clone());
-        }
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-compatibility-date",
-            HeaderValue::from_static(eve_esi_client::COMPATIBILITY_DATE),
-        );
-        let http = tether_net::Outbound::library_client(
-            self.allowlist().clone(),
-            self.user_agent(),
-            TIMEOUT,
-            headers,
-        )
-        .map_err(|e| EsiError::Config(e.to_string()))?;
+    /// The shared client without its cache, for public endpoints whose ids
+    /// plugins choose: cached, every killmail anyone asked about would stay
+    /// in the cache until it expires. Same HTTP client, base URL, rate and
+    /// error limiters (so backoff is shared) and default headers; calls
+    /// still go through `call_full`'s budget.
+    fn uncached(&self) -> Client {
         let shared = self.client();
-        self.allowlist()
-            .check(shared.baseurl())
-            .map_err(|e| EsiError::Config(e.to_string()))?;
-        // EsiInner's default has no cache.
-        let client =
-            Client::new_with_client(shared.baseurl(), http, eve_esi_client::EsiInner::default());
-        // Two calls racing here both build one; either is fine to keep.
-        let _ = self.uncached.set(client.clone());
-        Ok(client)
+        Client::new_with_client(
+            shared.baseurl(),
+            shared.client().clone(),
+            shared.inner().without_cache(),
+        )
     }
 
     /// Calls a public catalogue endpoint ([`About::Public`]), without a
@@ -616,7 +596,7 @@ impl Esi {
                         EsiError::InvalidInput("killmail_hash must be 40 hex digits".into())
                     })?
                     .to_ascii_lowercase();
-                let client = self.uncached()?;
+                let client = self.uncached();
                 let killmail = self
                     .call_full(
                         Priority::Bulk,

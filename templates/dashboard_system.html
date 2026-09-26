@@ -33,7 +33,7 @@
     <div class="card stat">
       <div class="stat-label">Error budget</div>
       <div class="stat-value num">{% if let Some(r) = budget.error_remain %}{{ r }}{% else %}—{% endif %}</div>
-      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% else %}ESI hasn't reported one yet{% endif %}</div>
+      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% else %}No errors reported this window{% endif %}</div>
     </div>
   </div>
 </section>

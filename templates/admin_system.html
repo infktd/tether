@@ -23,7 +23,7 @@
     <div class="card stat">
       <div class="stat-label">Error budget</div>
       <div class="stat-value num">{% if let Some(r) = budget.error_remain %}{{ r }}{% else %}—{% endif %}</div>
-      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% if let Some(low) = budget.lowest_error_remain %}; lowest <span class="num">{{ low }}</span>{% endif %}{% else %}ESI hasn't reported one yet{% endif %}</div>
+      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% if let Some(low) = budget.lowest_error_remain %}; lowest <span class="num">{{ low }}</span>{% endif %}{% else %}No errors reported this window{% endif %}</div>
     </div>
     <div class="card stat">
       <div class="stat-label">Budget exceeded</div>
@@ -40,19 +40,19 @@
   <section class="card data-card">
     <header><h2>ESI requests</h2></header>
     <table class="table">
-      <thead><tr><th scope="col">OK</th><th scope="col">Not modified</th><th scope="col">4xx</th><th scope="col">5xx</th><th scope="col">420 (budget)</th><th scope="col">429 (rate)</th><th scope="col">No response</th></tr></thead>
+      <thead><tr><th scope="col">OK</th><th scope="col">Cached</th><th scope="col">Not modified</th><th scope="col">4xx</th><th scope="col">5xx</th><th scope="col">420 (budget)</th><th scope="col">429 (rate)</th><th scope="col">No response</th></tr></thead>
       <tbody>
         <tr class="num">
-          <td>{{ budget.counts.ok }}</td><td>{{ budget.counts.not_modified }}</td><td>{{ budget.counts.client_errors }}</td><td>{{ budget.counts.server_errors }}</td><td>{{ budget.counts.error_limited }}</td><td>{{ budget.counts.rate_limited }}</td><td>{{ budget.counts.transport_errors }}</td>
+          <td>{{ budget.counts.ok }}</td><td>{{ budget.counts.cached }}</td><td>{{ budget.counts.not_modified }}</td><td>{{ budget.counts.client_errors }}</td><td>{{ budget.counts.server_errors }}</td><td>{{ budget.counts.error_limited }}</td><td>{{ budget.counts.rate_limited }}</td><td>{{ budget.counts.transport_errors }}</td>
         </tr>
       </tbody>
     </table>
     {% if !budget.groups.is_empty() %}
     <table class="table">
-      <thead><tr><th scope="col">Rate-limit group</th><th scope="col">Limit</th><th scope="col">Remaining</th><th scope="col">Seen</th></tr></thead>
+      <thead><tr><th scope="col">Rate-limit group</th><th scope="col">Limit</th><th scope="col">Remaining</th><th scope="col">Held</th></tr></thead>
       <tbody>
         {% for g in budget.groups %}
-        <tr><td class="num">{{ g.name }}</td><td class="num">{{ g.limit }}</td><td class="num">{% if let Some(r) = g.remaining %}{{ r }}{% else %}—{% endif %}</td><td class="num">{{ g.observed_secs_ago }} s ago</td></tr>
+        <tr><td class="num">{{ g.name }}</td><td class="num">{{ g.limit }}</td><td class="num">{{ g.remaining }}</td><td class="num">{% if let Some(h) = g.held_for_secs %}{{ h }} s{% else %}—{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>

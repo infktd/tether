@@ -49,7 +49,8 @@ async fn every_response_updates_the_budget() {
     esi.players_online().await.unwrap();
     let after_ok = esi.budget();
     assert_eq!(after_ok.error_remain, Some(99));
-    assert_eq!(after_ok.groups[0].remaining, Some(597));
+    assert_eq!(after_ok.groups[0].remaining, 597);
+    assert_eq!(after_ok.groups[0].limit, "600/15m");
     assert_eq!(after_ok.counts.ok, 1);
 
     assert!(esi.players_online().await.is_err());
@@ -59,6 +60,108 @@ async fn every_response_updates_the_budget() {
         "a 420 is what we must never see in production"
     );
     assert_eq!(after_420.lowest_error_remain, Some(0));
+}
+
+#[tokio::test]
+async fn cache_hits_are_not_fresh_observations_and_revalidations_count() {
+    let (server, esi) = esi().await;
+    let expires = (chrono::Utc::now() + chrono::Duration::hours(1))
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string();
+    Mock::given(method("GET"))
+        .and(path("/status"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(status_body())
+                .insert_header("Expires", expires.as_str())
+                .insert_header("X-ESI-Error-Limit-Remain", "99")
+                .insert_header("X-ESI-Error-Limit-Reset", "42"),
+        )
+        .mount(&server)
+        .await;
+    // ETag only: revalidated every time, and ESI says 304.
+    Mock::given(method("GET"))
+        .and(path("/alliances/99000001"))
+        .and(wiremock::matchers::header("If-None-Match", "\"a1\""))
+        .respond_with(
+            ResponseTemplate::new(304)
+                .insert_header("ETag", "\"a1\"")
+                .insert_header("X-ESI-Error-Limit-Remain", "98")
+                .insert_header("X-ESI-Error-Limit-Reset", "40"),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/alliances/99000001"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "name": "Test Alliance", "ticker": "TEST", "creator_id": 1,
+                    "creator_corporation_id": 2, "date_founded": "2020-01-01T00:00:00Z"
+                }))
+                .insert_header("ETag", "\"a1\""),
+        )
+        .with_priority(2)
+        .mount(&server)
+        .await;
+
+    esi.players_online().await.unwrap();
+    esi.players_online().await.unwrap(); // fresh in the cache
+    let s = esi.budget();
+    assert_eq!((s.counts.ok, s.counts.cached), (1, 1));
+    assert_eq!(s.error_remain, Some(99));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    esi.alliance_ticker(99000001, Priority::Bulk).await.unwrap();
+    esi.alliance_ticker(99000001, Priority::Bulk).await.unwrap(); // 304
+    let s = esi.budget();
+    assert_eq!(
+        (s.counts.ok, s.counts.cached, s.counts.not_modified),
+        (2, 1, 1)
+    );
+    // The 304's own budget headers are current.
+    assert_eq!(s.error_remain, Some(98));
+    assert_eq!(s.lowest_error_remain, Some(98));
+}
+
+#[tokio::test]
+async fn public_plugin_calls_share_backoff_but_not_the_cache() {
+    let (server, esi) = esi().await;
+    let hash = "a".repeat(40);
+    let expires = (chrono::Utc::now() + chrono::Duration::hours(1))
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string();
+    Mock::given(method("GET"))
+        .and(path(format!("/killmails/1001/{hash}")))
+        // The library adds ESI's compatibility date to every call.
+        .and(wiremock::matchers::header_exists("x-compatibility-date"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "attackers": [], "killmail_id": 1001,
+                    "killmail_time": "2026-09-20T19:04:05Z", "solar_system_id": 30000142,
+                    "victim": {"character_id": 1, "damage_taken": 1, "ship_type_id": 587}
+                }))
+                .insert_header("Expires", expires.as_str())
+                .insert_header("X-ESI-Error-Limit-Remain", "77")
+                .insert_header("X-ESI-Error-Limit-Reset", "40"),
+        )
+        .mount(&server)
+        .await;
+
+    let killmail = tether_esi::plugin::endpoint("killmail").unwrap();
+    let params = [
+        ("killmail_id".to_owned(), "1001".to_owned()),
+        ("killmail_hash".to_owned(), hash.clone()),
+    ];
+    for _ in 0..2 {
+        esi.plugin_get_public(killmail, &params).await.unwrap();
+    }
+    // Not cached: both asked ESI.
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    // The shared limiter saw them: backoff is shared with the host.
+    assert_eq!(esi.budget().error_remain, Some(77));
 }
 
 async fn slow_affiliations(server: &MockServer, delay: Duration) {

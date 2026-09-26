@@ -1,19 +1,18 @@
 //! The host's ESI client. One instance is shared by everything in the
 //! process, so eve-esi-client's rate limits, error-limit backoff and
-//! Expires/ETag cache are shared too. On top, every response feeds the
-//! [`Budget`], and bulk work goes through a gate so interactive requests
+//! Expires/ETag cache are shared too (the cache is in Postgres in the
+//! server). On top, every response is counted in the [`Budget`], and bulk work goes through a gate so interactive requests
 //! never queue behind it.
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use eve_esi_client::types::UniverseNamesPostItemCategory as Category;
 use eve_esi_client::{Client, ResponseValue};
 use tether_core::states::EntityKind;
 use tokio::sync::Semaphore;
 
-use crate::budget::{Budget, BudgetSnapshot};
+use crate::budget::{self, Budget, BudgetSnapshot};
 
 /// ESI accepts at most this many ids per affiliation or names request.
 const BATCH: usize = 1000;
@@ -107,9 +106,6 @@ pub struct Esi {
     /// For clients carrying a character's token (plugin calls).
     user_agent: String,
     allow: tether_net::Allowlist,
-    /// The client without a cache, for public plugin endpoints: built once,
-    /// so its connections and limiter state last.
-    pub(crate) uncached: Arc<std::sync::OnceLock<Client>>,
 }
 
 impl Esi {
@@ -165,12 +161,12 @@ impl Esi {
             bulk: Arc::new(Semaphore::new(BULK_CONCURRENCY)),
             user_agent: user_agent.to_owned(),
             allow,
-            uncached: Arc::default(),
         })
     }
 
     pub fn budget(&self) -> BudgetSnapshot {
-        self.budget.snapshot()
+        self.budget
+            .snapshot(self.client.error_budget(), self.client.rate_budgets())
     }
 
     pub(crate) fn client(&self) -> &Client {
@@ -214,7 +210,7 @@ impl Esi {
                     .acquire()
                     .await
                     .map_err(|_| EsiError::Unavailable("ESI client shut down".into()))?;
-                if let Some(wait) = self.budget.bulk_delay(SystemTime::now()) {
+                if let Some(wait) = budget::bulk_delay(self.client.error_budget()) {
                     tracing::warn!(
                         wait_secs = wait.as_secs(),
                         "ESI error budget low; bulk work waits for the window to reset"
@@ -226,16 +222,28 @@ impl Esi {
         };
         match request.await {
             Ok(response) => {
-                self.budget.observe(response.status(), response.headers());
+                self.budget.observe(
+                    response.status(),
+                    response.headers(),
+                    self.client.error_budget(),
+                );
                 Ok(response)
             }
             Err(err) => {
                 match &err {
                     eve_esi_client::Error::ErrorResponse(response) => {
-                        self.budget.observe(response.status(), response.headers());
+                        self.budget.observe(
+                            response.status(),
+                            response.headers(),
+                            self.client.error_budget(),
+                        );
                     }
                     eve_esi_client::Error::UnexpectedResponse(response) => {
-                        self.budget.observe(response.status(), response.headers());
+                        self.budget.observe(
+                            response.status(),
+                            response.headers(),
+                            self.client.error_budget(),
+                        );
                     }
                     _ => self.budget.observe_transport_error(),
                 }
