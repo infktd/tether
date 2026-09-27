@@ -1,0 +1,45 @@
+# Fleet Operations, a first-party Tether plugin (Alliance Auth's optimer).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.fleet-operations"
+name = "Fleet Operations"
+version = "0.1.0"
+host_api = "1"
+description = "Fleet operations in EVE time: upcoming and past ops with doctrine, form-up system, FC and type, counting down, and the next ones on the Dashboard."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# AA's permissions (auth.optimer_view, auth.optimer_management), gating
+# the same pages as AA's views. Grant Member optimer_view; FCs
+# optimer_management too.
+[permissions]
+optimer_view = "See fleet operations"
+optimer_management = "Create, edit and delete fleet operations"
+
+[[pages]]
+path = ""
+permission = "optimer_view"
+
+[[pages]]
+path = "add"
+permission = "optimer_management"
+
+[[pages]]
+path = "op"
+permission = "optimer_management"
+
+[[navigation]]
+label = "Fleet Operations"
+path = ""
+section = "fleet"
+
+# AA's "Upcoming Fleets" on the Dashboard: the next five ops, for
+# whoever holds optimer_view (the page rule for "" covers "widget").
+[[widgets]]
+title = "Upcoming Fleets"
+path = "widget"

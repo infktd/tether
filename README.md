@@ -35,6 +35,7 @@ Tether runs the day-to-day of an EVE Online alliance or corporation: who's in, w
 | Member Audit | A full character viewer (skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails), the Character Finder and skill sets, with views for multiboxers |
 | Structures | Upwell structures, starbases, customs offices, fuel alerts, fittings and tags |
 | Structure Timers | A shared timerboard, filled automatically from Structures |
+| Fleet Operations | Upcoming and past fleet operations with countdowns, and the next ones on the Dashboard |
 | Fleet Activity Tracking | FAT links, ESI-tracked fleets and participation stats |
 | Ship Replacement | SRP fleets and requests, with killmail values from zKillboard |
 | HR Applications | Application forms per corporation, and recruiter reviews |
