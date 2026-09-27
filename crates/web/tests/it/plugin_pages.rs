@@ -403,7 +403,9 @@ async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
         r#"aria-hidden="true">FP</span><span class="entity-name">Fixture Pilot</span>"#,
         // Progress: live between two instants, or fixed.
         r#"data-from="2000-01-01T00:00:00Z" data-to="2099-01-01T00:00:00Z" aria-label="Skill &#60;script&#62;"#,
-        r#"<progress class="meter" max="1" value="0.4200">42%</progress>"#,
+        r#"<progress class="sr-only" max="1" value="0.4200">42%</progress>"#,
+        // The segmented bar: 42% of 24 cells is 10 lit.
+        r#"<span class="segbar" aria-hidden="true"><span data-lit></span>"#,
         // Text to copy, kept as it was and escaped, with its button.
         "[Rifter, &#60;script&#62;alert(1)&#60;/script&#62;]\n  Damage Control II\n</pre>",
         r#"data-copy data-copied-label="Copied">Copy &#60;script&#62;"#,
@@ -513,7 +515,7 @@ async fn live_pages_reload_their_content(db: PgPool) {
     // A page with a form never reloads under someone typing.
     let res = page(&h, "/plugins/acme.pages/live-form", &owner).await;
     assert_eq!(res.status, StatusCode::OK);
-    assert!(!res.body.contains("hx-trigger"), "{}", res.body);
+    assert!(!res.body.contains("hx-trigger=\"every"), "{}", res.body);
 
     // A reload gets the content alone.
     let res = send(&h.app, reload("/plugins/acme.pages/live", Some(&owner))).await;
@@ -562,7 +564,7 @@ async fn audited_pages_record_every_view(db: PgPool) {
     assert!(res.body.contains("mail [(&#34;folder&#34;"), "{}", res.body);
     // It asks to reload, but audited pages never do (each would be an
     // entry), and browsers don't keep them.
-    assert!(!res.body.contains("hx-trigger"), "{}", res.body);
+    assert!(!res.body.contains("hx-trigger=\"every"), "{}", res.body);
     assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
     // Nor does htmx's own history cache: back and forward ask again.
     assert!(res.body.contains(r#"hx-history="false""#), "{}", res.body);

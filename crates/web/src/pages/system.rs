@@ -504,4 +504,3 @@ pub async fn strip(
         },
     ))
 }
-
