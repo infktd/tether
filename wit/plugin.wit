@@ -264,7 +264,7 @@ interface page {
     record card-grid {
         items: list<profile-card>,
         /// Start the grid with Tether's own "Register Character" card,
-        /// which opens character registration. Only for plugins with user
+        /// which opens registering characters for this plugin. Only for plugins with user
         /// scopes (`capabilities.esi.user`): elsewhere it is left out.
         register: bool,
     }
@@ -485,13 +485,13 @@ interface identity {
 /// ESI, through the host: plugins name an endpoint and whose token to use,
 /// never a URL, and never see a token. Every call is checked against what
 /// the admin approved (`capabilities.esi`) and the character's standing
-/// (a Member's, registered with the scope), and logged.
+/// (one of the plugin's characters: its account holds one of the plugin's
+/// permissions and it registered for the plugin), and logged.
 interface esi {
     use identity.{character};
 
     variant subject {
-        /// A Member's character whose token carries the endpoint's scope:
-        /// see `characters`.
+        /// One of the plugin's characters: see `characters`.
         character(s64),
         /// A data-source character (an app owner, added by a holder of the
         /// app's add permission): its corporation's
@@ -510,7 +510,8 @@ interface esi {
         /// Not an endpoint Tether offers plugins, or its scope isn't one
         /// this plugin was approved for, or the wrong kind of subject.
         not-allowed(string),
-        /// Not a Member's character, or its token lacks the scope.
+        /// Not one of the plugin's characters: its account holds none of
+        /// the plugin's permissions, or its token lacks a user scope.
         not-registered,
         /// Not a data source of this plugin (in use).
         not-a-data-source,
@@ -538,8 +539,9 @@ interface esi {
     /// Calls a catalogue endpoint (see AGENTS.md) as `subject`. `params`
     /// are the endpoint's extra ids; `page` is for paged endpoints.
     get: func(endpoint: string, subject: subject, params: list<tuple<string, string>>, page: option<u32>) -> result<response, error>;
-    /// Members' characters whose tokens carry every one of this plugin's
-    /// user scopes.
+    /// The plugin's characters: on accounts holding one of its
+    /// permissions (any state, as Alliance Auth's apps), with tokens
+    /// carrying every one of its user scopes (registered for it).
     characters: func() -> list<character>;
     /// This plugin's data-source characters in use.
     data-sources: func() -> list<character>;

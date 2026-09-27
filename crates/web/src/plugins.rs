@@ -526,8 +526,8 @@ impl Plugins {
         if crate::plugin_services::may_see_owners(&installed.id, installed.origin) {
             loaded = loaded.seeing_owners();
         }
-        // Installs from before scope compliance didn't record the user
-        // scopes Member requires; catch them up.
+        // Installs from before scope compliance didn't record their user
+        // scopes (what registering for them grants); catch them up.
         crate::compliance::sync_plugin_scopes(db, &installed.id, &manifest.capabilities.esi.user)
             .await
             .map_err(|e| {
@@ -992,8 +992,8 @@ fn package_error(err: PackageError) -> AppError {
 
 /// What a package can't ask for.
 fn unsupported(package: &Package) -> Option<&'static str> {
-    // Member requires a plugin's user scopes of every character: only ones
-    // a catalogue character endpoint can use.
+    // Registering for a plugin grants its user scopes: only ones a
+    // catalogue character endpoint can use.
     if package
         .manifest
         .capabilities
@@ -1596,12 +1596,9 @@ async fn install_or_upgrade(
     // Exactly the hosts and secrets shown on the review page; nothing else
     // is reachable at runtime.
     crate::plugin_http::approve(&mut tx, id, manifest, actor).await?;
-    // Member now requires its user scopes (F11, F16).
-    if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
-        .await?
-    {
-        crate::states::enqueue_evaluate_all(&mut *tx).await?;
-    }
+    // What registering for it grants (F16). No state requires them unless
+    // an admin says so.
+    tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user).await?;
     let storage = if manifest.capabilities.storage {
         if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
             return Err(AppError::bad_request(
@@ -1823,7 +1820,7 @@ struct Applied {
 
 /// Makes what an installed plugin may do exactly what `manifest` asks for,
 /// on an upgrade or a rollback: its permissions (grants of dropped ones go),
-/// HTTP hosts and secrets, and the user scopes Member requires. Creates its
+/// HTTP hosts and secrets, and the user scopes registering grants. Creates its
 /// storage if it asks for storage and has none. Grants of renamed
 /// permissions move to their new names (`from`, the manifest being
 /// replaced when known, lets a rollback move them back). Tether itself
@@ -1869,11 +1866,7 @@ async fn apply_manifest(
             Vec::new()
         }
     };
-    if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
-        .await?
-    {
-        crate::states::enqueue_evaluate_all(&mut *tx).await?;
-    }
+    tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user).await?;
     let storage_created =
         if manifest.capabilities.storage && plugin_storage::get(&mut *tx, id).await?.is_none() {
             if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
@@ -2421,8 +2414,8 @@ async fn uninstall_now(
     // What it reported for Secure Groups and the timers it published.
     tether_db::smart_groups::forget_plugin(&mut tx, id).await?;
     let grants = tether_db::permissions::remove_plugin_grants(&mut tx, id).await?;
-    // Member stops requiring its user scopes.
-    crate::states::enqueue_evaluate_all(&mut *tx).await?;
+    // Scopes admins required of states for it stay required: they're the
+    // admins' to drop (States page).
     let version = db::uninstall(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;

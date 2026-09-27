@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, m.id AS main_id, m.name AS main_name,\n               m.corporation_id AS main_corporation_id, m.alliance_id AS main_alliance_id,\n               s.name AS state\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE s.builtin = 'member'\n          AND t.state = 'valid' AND t.scopes @> $1\n        ORDER BY c.id\n        ",
+  "query": "\n        SELECT c.id, m.id AS main_id, m.name AS main_name,\n               m.corporation_id AS main_corporation_id, m.alliance_id AS main_alliance_id,\n               s.name AS state, s.builtin\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE core.holds_app_permission(a.id, $1)\n          AND t.state = 'valid' AND t.scopes @> $2\n        ORDER BY c.id\n        ",
   "describe": {
     "columns": [
       {
@@ -68,10 +68,22 @@
             "name": "name"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "builtin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "builtin"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
+        "Text",
         "TextArray"
       ]
     },
@@ -81,8 +93,9 @@
       false,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "e013b86d41dd088b13fe576ad97717d73b1a988948914dc903ec2314c93c8ba2"
+  "hash": "61d7d149653beb753414fc07839ff87425eedfd3212a7e477d25487b3fa251fb"
 }

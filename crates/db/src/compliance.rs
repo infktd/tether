@@ -71,7 +71,8 @@ pub async fn remove_scope<'e>(
     Ok(result.rows_affected() == 1)
 }
 
-/// An installed plugin and the user scopes Member requires for it.
+/// An installed plugin and its user scopes: what registering a character
+/// for it grants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginScopes {
     pub id: String,
@@ -90,8 +91,7 @@ pub async fn plugin_scopes<'e>(
     .await
 }
 
-/// Records a plugin's user scopes; true if they changed (so accounts must
-/// be re-evaluated).
+/// Records a plugin's user scopes; true if they changed.
 pub async fn set_plugin_scopes<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     plugin_id: &str,
@@ -113,13 +113,13 @@ pub async fn set_plugin_scopes<'e>(
     Ok(result.rows_affected() == 1)
 }
 
-/// Compliant accounts in `state` with a character whose token lacks
-/// `scope` (a revoked one counts with the scopes it carried): those a new
-/// requirement would flag.
+/// Compliant accounts in `state` with a character whose token lacks any
+/// of `scopes` (a revoked one counts with the scopes it carried): those
+/// new requirements would flag.
 pub async fn accounts_lacking(
     pool: &PgPool,
     state: StateId,
-    scope: &str,
+    scopes: &[String],
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
@@ -129,11 +129,11 @@ pub async fn accounts_lacking(
             SELECT 1 FROM core.characters c
             LEFT JOIN core.character_tokens t ON t.character_id = c.id
             WHERE c.account_id = a.id
-              AND (t.character_id IS NULL OR NOT ($2 = ANY(t.scopes)))
+              AND (t.character_id IS NULL OR NOT (t.scopes @> $2))
           )
         "#,
         state.0,
-        scope,
+        scopes,
     )
     .fetch_one(pool)
     .await
@@ -318,37 +318,39 @@ pub async fn set_group_member(
     Ok(changed.rows_affected() == 1)
 }
 
-/// Whether the character is on a Member account and registered with
-/// `scope` (a valid token carrying it): what a plugin's user-scope call
-/// needs (N8). Only Member requires plugin scopes, so only Members'
-/// characters are read.
+/// Whether the character is one of the app's characters (N8, F16): its
+/// account holds one of the app's permissions (as Alliance Auth gates
+/// apps, whatever the state) and its token is valid and carries every one
+/// of `scopes`, the app's user scopes. What an app's user-scope call
+/// needs.
 pub async fn character_may_serve(
     pool: &PgPool,
+    plugin_id: &str,
     character_id: i64,
-    scope: &str,
+    scopes: &[String],
 ) -> Result<bool, sqlx::Error> {
     let found = sqlx::query_scalar!(
         r#"
         SELECT true AS "ok!"
         FROM core.characters c
-        JOIN core.accounts a ON a.id = c.account_id
-        JOIN core.states s ON s.id = a.state_id
         JOIN core.character_tokens t ON t.character_id = c.id
-        WHERE c.id = $1 AND s.builtin = 'member'
-          AND t.state = 'valid' AND $2 = ANY(t.scopes)
+        WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)
+          AND t.state = 'valid' AND t.scopes @> $3
         "#,
         character_id,
-        scope,
+        plugin_id,
+        scopes,
     )
     .fetch_optional(pool)
     .await?;
     Ok(found.is_some())
 }
 
-/// Characters on Member accounts whose tokens carry every one of `scopes`:
-/// the characters a plugin with these user scopes may use.
+/// The app's characters: on accounts holding one of its permissions, with
+/// tokens carrying every one of `scopes` (its user scopes).
 pub async fn serving_characters(
     pool: &PgPool,
+    plugin_id: &str,
     scopes: &[String],
 ) -> Result<Vec<crate::plugin_esi::CharacterRow>, sqlx::Error> {
     sqlx::query_as!(
@@ -356,16 +358,31 @@ pub async fn serving_characters(
         r#"
         SELECT c.id, c.name, c.corporation_id, c.alliance_id
         FROM core.characters c
-        JOIN core.accounts a ON a.id = c.account_id
-        JOIN core.states s ON s.id = a.state_id
         JOIN core.character_tokens t ON t.character_id = c.id
-        WHERE s.builtin = 'member'
-          AND t.state = 'valid' AND t.scopes @> $1
+        WHERE core.holds_app_permission(c.account_id, $1)
+          AND t.state = 'valid' AND t.scopes @> $2
         ORDER BY c.name
         "#,
+        plugin_id,
         scopes,
     )
     .fetch_all(pool)
+    .await
+}
+
+/// Whether the account holds one of the app's permissions: whether it
+/// may register characters for the app.
+pub async fn holds_app_permission<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    plugin_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT core.holds_app_permission($1, $2) AS "holds!""#,
+        account.0,
+        plugin_id,
+    )
+    .fetch_one(executor)
     .await
 }
 
@@ -375,30 +392,33 @@ pub struct ServingOwner {
     pub character_id: i64,
     pub main: crate::plugin_esi::CharacterRow,
     pub state: String,
+    /// The state's `builtin` (member, blue, guest, blacklist), if any.
+    pub builtin: Option<String>,
 }
 
-/// The owners of [`serving_characters`] (the same characters: Member
-/// accounts, tokens carrying every one of `scopes`), for the one app that
-/// may know them (Member Audit, as aa-memberaudit's scopes go by the
-/// owner's main). Accounts without a main are left out.
+/// The owners of [`serving_characters`] (the same characters), for the
+/// one app that may know them (Member Audit, as aa-memberaudit's scopes
+/// go by the owner's main). Accounts without a main are left out.
 pub async fn serving_owners(
     pool: &PgPool,
+    plugin_id: &str,
     scopes: &[String],
 ) -> Result<Vec<ServingOwner>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
         SELECT c.id, m.id AS main_id, m.name AS main_name,
                m.corporation_id AS main_corporation_id, m.alliance_id AS main_alliance_id,
-               s.name AS state
+               s.name AS state, s.builtin
         FROM core.characters c
         JOIN core.accounts a ON a.id = c.account_id
         JOIN core.states s ON s.id = a.state_id
         JOIN core.character_tokens t ON t.character_id = c.id
         JOIN core.characters m ON m.id = a.main_character_id
-        WHERE s.builtin = 'member'
-          AND t.state = 'valid' AND t.scopes @> $1
+        WHERE core.holds_app_permission(a.id, $1)
+          AND t.state = 'valid' AND t.scopes @> $2
         ORDER BY c.id
         "#,
+        plugin_id,
         scopes,
     )
     .fetch_all(pool)
@@ -414,6 +434,7 @@ pub async fn serving_owners(
                 alliance_id: r.main_alliance_id,
             },
             state: r.state,
+            builtin: r.builtin,
         })
         .collect())
 }

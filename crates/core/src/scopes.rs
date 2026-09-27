@@ -1,6 +1,7 @@
 //! Every ESI scope, with a plain description for admins and pilots, and
 //! the scope compliance check (F11): every character on an account carries
-//! the scopes its state requires.
+//! the scopes its state requires. The same check tells which characters
+//! are registered for an app (F16): their tokens carry the app's scopes.
 
 use std::collections::BTreeSet;
 
@@ -381,17 +382,15 @@ pub fn check(required: &BTreeSet<String>, characters: &[(i64, Token)]) -> Vec<(i
         .collect()
 }
 
-/// A state's required scopes: for Member, Tether's own ([`CORE`]) and every
-/// installed plugin's user scopes; for any state, what admins added.
-pub fn required(
-    member: bool,
-    plugin_scopes: &[String],
-    admin_scopes: &[String],
-) -> BTreeSet<String> {
+/// A state's required scopes: what admins added, and for Member also
+/// Tether's own ([`CORE`]). Apps' user scopes aren't required by
+/// themselves: pilots register characters for an app, and admins may
+/// require an app's scopes of a state (Alliance Auth's Member Audit
+/// compliance groups).
+pub fn required(member: bool, admin_scopes: &[String]) -> BTreeSet<String> {
     let mut all: BTreeSet<String> = admin_scopes.iter().cloned().collect();
     if member {
         all.extend(CORE.iter().map(|s| (*s).to_owned()));
-        all.extend(plugin_scopes.iter().cloned());
     }
     all
 }
@@ -462,24 +461,16 @@ mod tests {
     }
 
     #[test]
-    fn member_adds_core_and_plugin_scopes_and_others_only_admin_ones() {
-        let plugins = vec!["esi-skills.read_skills.v1".to_owned()];
+    fn member_adds_core_scopes_and_others_only_admin_ones() {
         let admin = vec!["esi-clones.read_clones.v1".to_owned()];
         assert_eq!(
-            required(true, &plugins, &admin),
-            set(&[
-                "esi-clones.read_clones.v1",
-                CORP_MEMBERSHIP,
-                "esi-skills.read_skills.v1"
-            ])
+            required(true, &admin),
+            set(&["esi-clones.read_clones.v1", CORP_MEMBERSHIP])
         );
         // Member always requires the member list scope; nobody else does.
-        assert_eq!(required(true, &[], &[]), set(&[CORP_MEMBERSHIP]));
-        assert!(required(false, &[], &[]).is_empty());
-        assert_eq!(
-            required(false, &plugins, &admin),
-            set(&["esi-clones.read_clones.v1"])
-        );
+        assert_eq!(required(true, &[]), set(&[CORP_MEMBERSHIP]));
+        assert!(required(false, &[]).is_empty());
+        assert_eq!(required(false, &admin), set(&["esi-clones.read_clones.v1"]));
     }
 
     #[test]

@@ -1086,6 +1086,26 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# Registering characters for an app (AA's Member Audit Register Character).
+GET {{base}}/register?app=tether.member-audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/register/start?app=tether.member-audit
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/1/scopes/app
+Origin: {{base}}
+[Form]
+plugin: tether.member-audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/compliance
 HTTP 303
 [Asserts]

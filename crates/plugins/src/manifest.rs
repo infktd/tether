@@ -309,8 +309,8 @@ const RESERVED_HEADERS: &[&str] = &[
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EsiScopes {
-    /// Scopes read from members' own characters. Member requires them,
-    /// so every Member character is registered with them.
+    /// Scopes read from pilots' own characters: holders of one of the
+    /// plugin's permissions register characters for it, granting these.
     #[serde(default)]
     pub user: Vec<String>,
     /// Scopes linked once by characters an admin designates (such as a

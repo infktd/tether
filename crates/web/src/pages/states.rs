@@ -61,20 +61,30 @@ pub struct Card {
     pub can_down: bool,
     /// What the state means, in terms of pilots.
     pub about: String,
-    /// Required because Tether (Corporation Stats) or installed plugins
-    /// read them (Member only).
-    pub plugin_scopes: Vec<ScopeChip>,
+    /// Required because Tether itself reads them (Corporation Stats;
+    /// Member only).
+    pub core_scopes: Vec<ScopeChip>,
     /// Required because an admin added them.
     pub admin_scopes: Vec<ScopeChip>,
     /// Character scopes an admin could still add.
     pub scope_options: Vec<ScopeChip>,
+    /// Installed apps that read characters, and whether the state requires
+    /// all their scopes (AA's Member Audit compliance groups).
+    pub apps: Vec<AppChip>,
 }
 
 pub struct ScopeChip {
     pub scope: String,
     pub description: String,
-    /// Which plugins need it (plugin scopes only).
+    /// Who reads it: Corporation Stats, or the apps whose scopes it is.
     pub by: String,
+}
+
+pub struct AppChip {
+    pub id: String,
+    pub name: String,
+    /// Its scopes the state doesn't require yet.
+    pub missing: usize,
 }
 
 fn chip(scope: &str, by: String) -> ScopeChip {
@@ -172,16 +182,10 @@ async fn states_page(
                 Some(Builtin::Blacklist) => "Above every state, on the Blacklist page.".to_owned(),
                 None => format!("Pilots whose main is covered here are {}.", s.name),
             },
-            plugin_scopes: if s.builtin == Some(Builtin::Member) {
+            core_scopes: if s.builtin == Some(Builtin::Member) {
                 tether_core::scopes::CORE
                     .iter()
                     .map(|scope| chip(scope, "Corporation Stats".to_owned()))
-                    .chain(
-                        plugin_scopes
-                            .iter()
-                            .filter(|(scope, _)| !tether_core::scopes::CORE.contains(scope))
-                            .map(|(scope, by)| chip(scope, by.join(", "))),
-                    )
                     .collect()
             } else {
                 Vec::new()
@@ -189,15 +193,43 @@ async fn states_page(
             admin_scopes: admin_scopes
                 .iter()
                 .filter(|(id, _)| *id == s.id)
-                .map(|(_, scope)| chip(scope, String::new()))
+                .map(|(_, scope)| {
+                    chip(
+                        scope,
+                        plugin_scopes
+                            .get(scope.as_str())
+                            .map(|by| by.join(", "))
+                            .unwrap_or_default(),
+                    )
+                })
                 .collect(),
+            apps: if s.is_guest() {
+                Vec::new()
+            } else {
+                plugins
+                    .iter()
+                    .filter(|p| !p.scopes.is_empty())
+                    .map(|p| AppChip {
+                        id: p.id.clone(),
+                        name: p.name.clone(),
+                        missing: p
+                            .scopes
+                            .iter()
+                            .filter(|scope| {
+                                !admin_scopes.iter().any(|(id, sc)| *id == s.id && sc == *scope)
+                            })
+                            .count(),
+                    })
+                    .collect()
+            },
             scope_options: tether_core::scopes::ALL
                 .iter()
                 .filter(|info| info.kind == tether_core::scopes::ScopeKind::Character)
                 .filter(|info| !tether_core::scopes::is_write(info.scope))
                 .filter(|info| !admin_scopes.iter().any(|(id, sc)| *id == s.id && sc == info.scope))
                 .filter(|info| {
-                    s.builtin != Some(Builtin::Member) || !plugin_scopes.contains_key(info.scope)
+                    s.builtin != Some(Builtin::Member)
+                        || !tether_core::scopes::CORE.contains(&info.scope)
                 })
                 .map(|info| chip(info.scope, String::new()))
                 .collect(),
@@ -515,6 +547,30 @@ pub async fn add_scope(
     };
     let confirmed = is_confirmed(form.confirm.as_deref());
     change(&state, session, add, confirmed, action, fields).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AppForm {
+    plugin: String,
+    confirm: Option<String>,
+}
+
+/// `POST /admin/states/{id}/scopes/app`: require every scope an app reads
+/// (AA's Member Audit compliance groups). Asks first, as a scope does.
+pub async fn require_app(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<AppForm>,
+) -> Result<Response, PageError> {
+    let action = format!("/admin/states/{id}/scopes/app");
+    let fields = vec![("plugin", form.plugin.clone())];
+    let require = Change::RequireApp {
+        state: StateId(id),
+        plugin: form.plugin,
+    };
+    let confirmed = is_confirmed(form.confirm.as_deref());
+    change(&state, session, require, confirmed, action, fields).await
 }
 
 /// `POST /admin/states/{id}/scopes/remove`

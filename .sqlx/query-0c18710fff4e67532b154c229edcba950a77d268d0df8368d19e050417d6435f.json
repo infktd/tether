@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*) AS \"count!\" FROM core.accounts a\n        WHERE a.state_id = $1 AND a.compliant\n          AND EXISTS (\n            SELECT 1 FROM core.characters c\n            LEFT JOIN core.character_tokens t ON t.character_id = c.id\n            WHERE c.account_id = a.id\n              AND (t.character_id IS NULL OR NOT (t.scopes @> $2))\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0c18710fff4e67532b154c229edcba950a77d268d0df8368d19e050417d6435f"
+}

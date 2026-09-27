@@ -1,5 +1,5 @@
 //! The Member Audit plugin end to end: bundled from its real component
-//! and migrations, Member requiring its user scopes, a character synced
+//! and migrations, characters registered for it, a character synced
 //! from mocked ESI (every section of the sheet), and AA's pages: My
 //! Characters (the card grid, Register Character first), the Character
 //! Sheet's pages and tabs, mail behind `view_mail` and audited, the
@@ -415,10 +415,14 @@ async fn sync(h: &Harness) {
     work(h).await;
 }
 
-/// Registers Chribba with the plugin's scopes (the Register Character
-/// round trip); returns the new session.
+/// Registers Chribba for the app (its Register Character round trip);
+/// returns the new session.
 async fn register(h: &Harness, token: &str) -> String {
-    let res = send(&h.app, form("/register/start", "", token)).await;
+    let res = send(
+        &h.app,
+        form(&format!("/register/start?app={ID}"), "", token),
+    )
+    .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let login = res.cookie_value(LOGIN);
     let state = query_param(res.location(), "state").to_owned();
@@ -509,7 +513,9 @@ async fn member_audit_end_to_end(db: PgPool) {
     let mine = page(&h, &format!("/plugins/{ID}"), &owner).await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
     let body = &mine.body;
-    let register = body.find(r#"<a class="card grid-card grid-card-register" href="/register">"#);
+    let register = body.find(&format!(
+        r#"<a class="card grid-card grid-card-register" href="/register?app={ID}">"#
+    ));
     let card = body.find(&format!("/plugins/{ID}/character/{CHRIBBA}"));
     assert!(
         register.is_some() && card.is_some() && register < card,
@@ -784,8 +790,19 @@ const SPY_ALT: i64 = 90000031;
 
 /// A Member account (the first character its main), each character
 /// registered with Member Audit's scopes (Chribba's) and known to it.
+/// Member holds Member Audit's basic access, as admins grant it: only
+/// holders' characters are the app's.
 async fn member_account(h: &Harness, characters: &[(i64, &str, i64, Option<i64>)]) {
     let mut tx = h.db.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO core.permission_grants (permission, state_id) VALUES ($1, $2) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(format!("plugin.{ID}.basic"))
+    .bind(MEMBER_STATE)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
     let account: i64 = sqlx::query_scalar(
         "INSERT INTO core.accounts (state_id, main_character_id) VALUES ($1, $2) RETURNING id",
     )
@@ -1410,7 +1427,7 @@ async fn the_dashboard_is_the_character_audit(db: PgPool) {
     assert_eq!(cards.status, StatusCode::OK, "{}", cards.body);
     let register = cards
         .body
-        .find(r#"href="/register""#)
+        .find(&format!(r#"href="/register?app={ID}""#))
         .expect("Register Character");
     let first = cards
         .body

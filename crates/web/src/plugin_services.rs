@@ -6,8 +6,10 @@
 //! - its scope is one the admin approved for this plugin, of the right
 //!   kind (user scopes for character endpoints, data-source scopes for
 //!   corporation ones);
-//! - the subject is a Member's character registered with the scope (user;
-//!   F11), or a data source in use (corporation);
+//! - the subject is one of the plugin's characters (user; F16): its
+//!   account holds one of the plugin's permissions, whatever its state,
+//!   and it registered for the plugin (its token carries every one of the
+//!   plugin's user scopes); or a data source in use (corporation);
 //! - its token carries the scope.
 //!
 //! The host fills in the ids; the plugin only names the endpoint and the
@@ -189,6 +191,17 @@ fn character(row: db::CharacterRow) -> Character {
     }
 }
 
+/// A state's `builtin` as plugins know it: Member, Blue or Guest. The
+/// Blacklist holds nothing, so none of its characters are served anyway.
+fn builtin(builtin: Option<&str>) -> Option<Builtin> {
+    match builtin {
+        Some("member") => Some(Builtin::Member),
+        Some("blue") => Some(Builtin::Blue),
+        Some("guest" | "blacklist") => Some(Builtin::Guest),
+        _ => None,
+    }
+}
+
 /// A short label for the access log.
 fn outcome(result: &Result<EsiReply, EsiError>) -> String {
     match result {
@@ -253,8 +266,9 @@ async fn esi_get(
                     endpoint.name, endpoint.scope
                 )));
             }
+            let scopes = crate::compliance::allowed_plugin_scopes(approved.user.as_slice());
             let registered =
-                tether_db::compliance::character_may_serve(&deps.db, id, endpoint.scope)
+                tether_db::compliance::character_may_serve(&deps.db, plugin, id, &scopes)
                     .await
                     .map_err(unavailable)?;
             if !registered {
@@ -499,11 +513,12 @@ impl Services for PluginServices {
             let Some(running) = plugins.upgrade().and_then(|p| p.running(&plugin)) else {
                 return Vec::new();
             };
-            let scopes = &running.manifest.capabilities.esi.user;
+            let scopes =
+                crate::compliance::allowed_plugin_scopes(&running.manifest.capabilities.esi.user);
             if scopes.is_empty() {
                 return Vec::new();
             }
-            match tether_db::compliance::serving_characters(&db, scopes).await {
+            match tether_db::compliance::serving_characters(&db, &plugin, &scopes).await {
                 Ok(rows) => rows.into_iter().map(character).collect(),
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin characters");
@@ -526,21 +541,21 @@ impl Services for PluginServices {
             }
             // The same characters as `esi_characters`, so none it couldn't
             // already list.
-            let scopes = &running.manifest.capabilities.esi.user;
+            let scopes =
+                crate::compliance::allowed_plugin_scopes(&running.manifest.capabilities.esi.user);
             if scopes.is_empty() {
                 return Some(Vec::new());
             }
-            match tether_db::compliance::serving_owners(&db, scopes).await {
+            match tether_db::compliance::serving_owners(&db, &plugin, &scopes).await {
                 Ok(rows) => Some({
                     tracing::info!(plugin, owners = rows.len(), "plugin read character owners");
                     rows.into_iter()
                         .map(|r| Owner {
                             character_id: r.character_id,
                             main: character(r.main),
-                            // Only Member accounts' characters are served.
                             state: State {
+                                builtin: builtin(r.builtin.as_deref()),
                                 name: r.state,
-                                builtin: Some(Builtin::Member),
                             },
                         })
                         .collect()

@@ -328,16 +328,15 @@ pub async fn callback(
         record_lost(&state, lost).await?;
     }
 
-    // Whether the character was already registered as a Member's, before
-    // this login's token: if this login registers it, apps sync it now
-    // (below). Unknown counts as registered: no sync, and nothing fails.
-    let was_registered = reauth
-        || crate::compliance::registered_member(&state.db, account, identity.character_id)
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(character_id = identity.character_id, error = %err, "checking registration before login");
-                true
-            });
+    // Where the character stood before this login's token (a Member's
+    // registration, and the apps whose characters it was among): the apps
+    // this login registers it for sync it now (below). Unknown counts as
+    // registered everywhere: no sync, and nothing fails.
+    let before = if reauth {
+        crate::compliance::Before::everything()
+    } else {
+        crate::compliance::before_login(&state, account, identity.character_id).await
+    };
 
     // A re-authentication only proves who's there: its token isn't kept.
     if !reauth
@@ -442,12 +441,7 @@ pub async fn callback(
     // A character that just registered shows up in apps now, not at their
     // next scheduled sync (in the background, best effort: never fails or
     // slows the login).
-    crate::compliance::sync_if_newly_registered(
-        &state,
-        account,
-        identity.character_id,
-        was_registered,
-    );
+    crate::compliance::sync_if_newly_registered(&state, account, identity.character_id, before);
 
     // Rotate: drop any session this browser already had, then issue a new
     // token.
@@ -477,8 +471,11 @@ pub async fn callback(
 
     let jar = jar.add(cookie(SESSION_COOKIE, &token, SESSION_TTL)?);
     // Not every character registered with the state's scopes yet: show
-    // what to do (F11). A re-authentication goes back where it came from.
+    // what to do (F11). A re-authentication goes back where it came from,
+    // and registering for an app to the app's checklist (which says so).
     let return_to = if !reauth
+        && !(attempt.purpose == db::Purpose::Register
+            && attempt.return_to.starts_with("/register?app="))
         && tether_db::compliance::not_compliant_state(&state.db, account)
             .await?
             .is_some()

@@ -69,6 +69,13 @@ pub enum Change {
         state: StateId,
         scope: String,
     },
+    /// Require every one of an installed app's user scopes that the state
+    /// doesn't yet (Alliance Auth's Member Audit compliance groups: every
+    /// character registered for the app).
+    RequireApp {
+        state: StateId,
+        plugin: String,
+    },
 }
 
 /// Accounts moving between two states.
@@ -186,6 +193,39 @@ fn check_scope(s: &State, scope: &str) -> Result<(), AppError> {
     }
 }
 
+/// An installed app's name and the user scopes `state` doesn't require
+/// yet (none left is an error: there's nothing to add).
+async fn app_scopes_missing(
+    conn: &mut sqlx::PgConnection,
+    s: &State,
+    plugin: &str,
+) -> Result<(String, Vec<String>), AppError> {
+    let app = tether_db::compliance::plugin_scopes(&mut *conn)
+        .await?
+        .into_iter()
+        .find(|p| p.id == plugin && !p.scopes.is_empty())
+        .ok_or_else(|| AppError::not_found("No installed app reads characters with that id."))?;
+    let required = tether_db::compliance::admin_scopes(&mut *conn, s.id).await?;
+    let missing: Vec<String> = app
+        .scopes
+        .into_iter()
+        .filter(|scope| !required.contains(scope))
+        .collect();
+    if missing.is_empty() {
+        return Err(AppError::new(
+            axum::http::StatusCode::CONFLICT,
+            format!(
+                "{} already requires every scope {} reads.",
+                s.name, app.name
+            ),
+        ));
+    }
+    for scope in &missing {
+        check_scope(s, scope)?;
+    }
+    Ok((app.name, missing))
+}
+
 fn check_priority(s: &State, priority: i32, states: &[State]) -> Result<(), AppError> {
     if s.is_guest() {
         return Err(AppError::bad_request(
@@ -288,7 +328,8 @@ fn affected(states: &[State], change: &Change) -> Result<Vec<StateId>, AppError>
         | Change::Remove { state, .. }
         | Change::AddScope { state, .. }
         | Change::RemoveScope { state, .. }
-        | Change::SetPublic { state, .. } => vec![*state],
+        | Change::SetPublic { state, .. }
+        | Change::RequireApp { state, .. } => vec![*state],
         Change::Move { state, up, past } => {
             vec![*state, pinned_neighbour(states, *state, *up, *past)?.id]
         }
@@ -368,6 +409,8 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
     let before = db::load_rules(&mut conn).await?;
     let mut after = before.clone();
     let mut warning = None;
+    // Scopes the change would newly require.
+    let mut new_scopes: Vec<String> = Vec::new();
     let summary = match change {
         Change::Create { name } => {
             let name = core::check_name(name).map_err(AppError::bad_request)?;
@@ -469,13 +512,25 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
             let s = find(&states, *id)?;
             format!("Stop requiring {scope} for {}", s.name)
         }
+        Change::RequireApp { state: id, plugin } => {
+            let s = find(&states, *id)?;
+            let (name, missing) = app_scopes_missing(&mut conn, s, plugin).await?;
+            new_scopes = missing;
+            format!(
+                "Require {name}'s scopes for {}: every character registered for {name}",
+                s.name
+            )
+        }
     };
     let mains = db::all_mains(db).await?;
     let mut moved = moves(&mains, &states, &before, &after);
     // A new requirement flags everyone who lacks it (and takes them out of
     // the Compliant group) until they register again.
-    if let Change::AddScope { state: id, scope } = change {
-        let short = tether_db::compliance::accounts_lacking(db, *id, scope).await?;
+    if let Change::AddScope { scope, .. } = change {
+        new_scopes = vec![scope.clone()];
+    }
+    if let Change::AddScope { state: id, .. } | Change::RequireApp { state: id, .. } = change {
+        let short = tether_db::compliance::accounts_lacking(db, *id, &new_scopes).await?;
         if short > 0 {
             moved.push(Move {
                 from: format!("{}: compliant", find(&states, *id)?.name),
@@ -726,6 +781,22 @@ pub async fn apply(
                 "state.scope_remove",
                 *id,
                 json!({ "state": s.name, "scope": scope }),
+            )
+        }
+        Change::RequireApp { state: id, plugin } => {
+            let s = find(&states, *id)?;
+            let (name, missing) = app_scopes_missing(&mut tx, s, plugin).await?;
+            let by = match actor {
+                Actor::Account(account) => Some(account),
+                _ => None,
+            };
+            for scope in &missing {
+                tether_db::compliance::add_scope(&mut *tx, *id, scope, by).await?;
+            }
+            (
+                "state.scope_add",
+                *id,
+                json!({ "state": s.name, "scopes": missing, "app": plugin, "app_name": name }),
             )
         }
     };

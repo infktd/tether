@@ -1,9 +1,16 @@
 //! Scope compliance (F11, F16, N8), Alliance Auth style: each state other
 //! than Guest requires scopes on every character of the account. Accounts
 //! that fall short keep their state but are flagged: their owners get a
-//! checklist, officers a list, and they're out of the Compliant group. Also
-//! Corp Stats, which reads covered corporations' member lists with their
-//! registered members' tokens and lists members who never registered.
+//! checklist, officers a list, and they're out of the Compliant group.
+//!
+//! Registering for apps, as AA's Member Audit: whoever holds one of an
+//! app's permissions registers characters for it, granting its user
+//! scopes in one EVE login, and the app reads those characters (and no
+//! others). Admins may also require an app's scopes of a state.
+//!
+//! Also Corp Stats, which reads covered corporations' member lists with
+//! their registered members' tokens and lists members who never
+//! registered.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -51,16 +58,7 @@ pub async fn required_in(
     }
     let admin = db::admin_scopes(&mut *conn, state.id).await?;
     let member = state.builtin == Some(Builtin::Member);
-    let plugins: Vec<String> = if member {
-        db::plugin_scopes(&mut *conn)
-            .await?
-            .into_iter()
-            .flat_map(|p| p.scopes)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    Ok(scopes::required(member, &plugins, &admin))
+    Ok(scopes::required(member, &admin))
 }
 
 /// Which of the account's characters fall short of `candidate`'s
@@ -85,9 +83,10 @@ pub async fn problems(
     Ok(scopes::check(&required, &characters))
 }
 
-/// The user scopes Member may require for a plugin: only those a character
-/// endpoint in the plugin ESI catalogue uses. Anything else couldn't be
-/// used anyway, and one EVE refuses would stop every Member registering.
+/// The user scopes registering for a plugin grants: only those a
+/// character endpoint in the plugin ESI catalogue uses. Anything else
+/// couldn't be used anyway, and one EVE refuses would stop anyone
+/// registering for it.
 pub fn allowed_plugin_scopes(scopes: &[String]) -> Vec<String> {
     scopes
         .iter()
@@ -102,8 +101,8 @@ pub fn is_catalogue_character_scope(scope: &str) -> bool {
         .any(|e| e.about == tether_esi::plugin::About::Character && e.scope == scope)
 }
 
-/// Records a plugin's user scopes; re-evaluates everyone if Member's
-/// requirements changed.
+/// Records a plugin's user scopes. Nobody's compliance depends on them:
+/// states require only what admins chose.
 pub async fn sync_plugin_scopes(
     db: &PgPool,
     plugin_id: &str,
@@ -120,7 +119,6 @@ pub async fn sync_plugin_scopes(
             json!({ "scopes": scopes }),
         )
         .await?;
-        crate::states::enqueue_evaluate_all(&mut *tx).await?;
     }
     tx.commit().await
 }
@@ -193,8 +191,8 @@ pub async fn registration(db: &PgPool, account: AccountId) -> Result<Registratio
 }
 
 /// Whether `character` is registered as a Member's: the account is Member
-/// and the character's token carries every scope Member requires. Such a
-/// character is one apps' user-scope calls may read (F16).
+/// and the character's token carries every scope Member requires (the
+/// corporation member list among them, for Corp Stats).
 pub async fn registered_member(
     db: &PgPool,
     account: AccountId,
@@ -212,45 +210,121 @@ pub async fn registered_member(
             .any(|c| c.id == character && c.problem.is_none()))
 }
 
-/// After a login stored `character`'s token: if that made it a registered
-/// Member character (`was_registered` says whether it was one before),
-/// every running app with user scopes runs its schedules now, so the
-/// pilot doesn't wait for their next tick to see the character in them.
+/// The user scopes of a running app, as registering for it grants them;
+/// empty for an app that reads no pilot's characters.
+pub fn app_scopes(running: &crate::plugins::Running) -> Vec<String> {
+    let mut scopes = allowed_plugin_scopes(&running.manifest.capabilities.esi.user);
+    scopes.sort();
+    scopes.dedup();
+    scopes
+}
+
+/// The running apps whose characters `character` is among (F16): its
+/// account holds one of the app's permissions, and its token carries all
+/// of the app's user scopes.
+pub async fn apps_serving(
+    state: &AppState,
+    character: i64,
+) -> Result<BTreeSet<String>, sqlx::Error> {
+    let mut apps = BTreeSet::new();
+    for running in state.plugins.all_running() {
+        let scopes = app_scopes(&running);
+        if scopes.is_empty() {
+            continue;
+        }
+        let id = &running.manifest.plugin.id;
+        if db::character_may_serve(&state.db, id, character, &scopes).await? {
+            apps.insert(id.clone());
+        }
+    }
+    Ok(apps)
+}
+
+/// What a character was before a login stored its token, to tell what the
+/// login changed.
+#[derive(Debug, Clone, Default)]
+pub struct Before {
+    /// Registered as a Member's (see [`registered_member`]).
+    pub member: bool,
+    /// The apps it was one of the characters of (see [`apps_serving`]);
+    /// `None` when unknown, which counts as every app.
+    pub apps: Option<BTreeSet<String>>,
+}
+
+impl Before {
+    /// Nothing is new after this login: a re-authentication, or the check
+    /// failed (no sync, and nothing fails).
+    pub fn everything() -> Self {
+        Self {
+            member: true,
+            apps: None,
+        }
+    }
+
+    fn had(&self, app: &str) -> bool {
+        self.apps.as_ref().is_none_or(|apps| apps.contains(app))
+    }
+}
+
+/// Where `character` stands, before a login stores its token.
+pub async fn before_login(state: &AppState, account: AccountId, character: i64) -> Before {
+    let checked = async {
+        Ok::<_, sqlx::Error>(Before {
+            member: registered_member(&state.db, account, character).await?,
+            apps: Some(apps_serving(state, character).await?),
+        })
+    };
+    checked.await.unwrap_or_else(|err| {
+        tracing::warn!(character_id = character, error = %err, "checking registration before login");
+        Before::everything()
+    })
+}
+
+/// After a login stored `character`'s token: every running app the login
+/// made it one of the characters of runs its schedules now, so the pilot
+/// doesn't wait for their next tick to see the character in them.
 /// Audited as the system's `schedule.run_now`. Not a schedule queued in
 /// the last [`crate::plugin_jobs::TRIGGERED_GAP`]: registering alts one
-/// after another doesn't sync an app every minute. Its corporation's
-/// member list is read now too if there's none yet (Corp Stats). In the
-/// background, so the login doesn't wait for it; best effort, a failure is
-/// only logged.
+/// after another doesn't sync an app every minute. If the login made it a
+/// registered Member character, its corporation's member list is read now
+/// too if there's none yet (Corp Stats). In the background, so the login
+/// doesn't wait for it; best effort, a failure is only logged.
 pub fn sync_if_newly_registered(
     state: &AppState,
     account: AccountId,
     character: i64,
-    was_registered: bool,
+    before: Before,
 ) {
-    if was_registered {
-        return;
-    }
-    let (db, plugins) = (state.db.clone(), state.plugins.clone());
+    let state = state.clone();
     tokio::spawn(async move {
-        match registered_member(&db, account, character).await {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(err) => {
-                tracing::warn!(character, error = %err, "checking a new registration");
-                return;
+        if !before.member {
+            match registered_member(&state.db, account, character).await {
+                Ok(true) => {
+                    if let Err(err) = read_first_member_list(&state.db, character).await {
+                        tracing::warn!(character, error = %err, "queueing a first member list");
+                    }
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(character, error = %err, "checking a new registration");
+                }
             }
         }
-        if let Err(err) = read_first_member_list(&db, character).await {
-            tracing::warn!(character, error = %err, "queueing a first member list");
-        }
+        let now = match apps_serving(&state, character).await {
+            Ok(now) => now,
+            Err(err) => {
+                tracing::warn!(character, error = %err, "checking a new app registration");
+                return;
+            }
+        };
         let why = json!({ "reason": "character_registered", "character_id": character });
-        for running in plugins.all_running() {
-            if allowed_plugin_scopes(&running.manifest.capabilities.esi.user).is_empty() {
+        for running in state.plugins.all_running() {
+            let id = &running.manifest.plugin.id;
+            if !now.contains(id) || before.had(id) {
                 continue;
             }
             crate::plugin_jobs::run_app_schedules(
-                &db,
+                &state.db,
                 &running.manifest,
                 Actor::System,
                 &why,
@@ -259,6 +333,91 @@ pub fn sync_if_newly_registered(
             .await;
         }
     });
+}
+
+// ---- registering for an app --------------------------------------------------
+
+/// Where an account stands with one app: which of its characters the app
+/// reads (registered for it), and what registering grants.
+#[derive(Debug, Clone)]
+pub struct AppRegistration {
+    pub id: String,
+    pub name: String,
+    /// The app's user scopes: every one is needed.
+    pub scopes: BTreeSet<String>,
+    /// Each character, with what it still needs for the app.
+    pub characters: Vec<CharacterStatus>,
+}
+
+impl AppRegistration {
+    pub fn registered(&self) -> usize {
+        self.characters
+            .iter()
+            .filter(|c| c.problem.is_none())
+            .count()
+    }
+}
+
+/// The account's standing with the app `id`: `None` unless it's running,
+/// reads pilots' characters (user scopes), and the account holds one of
+/// its permissions (as AA gates apps, whatever the state).
+pub async fn app_registration(
+    state: &AppState,
+    account: AccountId,
+    id: &str,
+) -> Result<Option<AppRegistration>, sqlx::Error> {
+    let Some(running) = state.plugins.running(id) else {
+        return Ok(None);
+    };
+    app_registration_of(state, account, &running).await
+}
+
+async fn app_registration_of(
+    state: &AppState,
+    account: AccountId,
+    running: &crate::plugins::Running,
+) -> Result<Option<AppRegistration>, sqlx::Error> {
+    let scopes: BTreeSet<String> = app_scopes(running).into_iter().collect();
+    let id = &running.manifest.plugin.id;
+    if scopes.is_empty() || !db::holds_app_permission(&state.db, account, id).await? {
+        return Ok(None);
+    }
+    let tokens = db::account_tokens(&state.db, account).await?;
+    let pairs: Vec<(i64, scopes::Token)> = tokens.iter().map(|c| (c.id, c.token.clone())).collect();
+    let problems: BTreeMap<i64, Problem> = scopes::check(&scopes, &pairs).into_iter().collect();
+    Ok(Some(AppRegistration {
+        id: id.clone(),
+        name: running.manifest.plugin.name.clone(),
+        characters: tokens
+            .into_iter()
+            .map(|c| CharacterStatus {
+                problem: problems.get(&c.id).cloned(),
+                scopes: match c.token {
+                    scopes::Token::Valid(scopes) => scopes,
+                    _ => Vec::new(),
+                },
+                id: c.id,
+                name: c.name,
+                is_main: c.is_main,
+            })
+            .collect(),
+        scopes,
+    }))
+}
+
+/// Every app the account may register characters for, by name.
+pub async fn app_registrations(
+    state: &AppState,
+    account: AccountId,
+) -> Result<Vec<AppRegistration>, sqlx::Error> {
+    let mut apps = Vec::new();
+    for running in state.plugins.all_running() {
+        if let Some(app) = app_registration_of(state, account, &running).await? {
+            apps.push(app);
+        }
+    }
+    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(apps)
 }
 
 /// The scopes to ask SSO for: `wanted`, plus every scope the account's
@@ -277,23 +436,29 @@ pub async fn ask_scopes(
 }
 
 /// Off to EVE SSO to register (or add) a character with the scopes the
-/// account's state requires. Back to the checklist afterwards.
+/// account's state requires, and with `app`'s user scopes when registering
+/// for an app (one login does both). Back to the checklist afterwards (the
+/// app's, for an app).
 pub async fn start_register(
     state: &AppState,
     jar: CookieJar,
     account: AccountId,
+    app: Option<&str>,
 ) -> Result<Response, AppError> {
     let current = registration(&state.db, account).await?;
-    let scopes = ask_scopes(&state.db, account, current.required).await?;
-    crate::auth::start_login(
-        state,
-        jar,
-        "/register",
-        Purpose::Register,
-        &scopes,
-        Some(account),
-    )
-    .await
+    let mut wanted = current.required;
+    let back = match app {
+        Some(id) => {
+            let app = app_registration(state, account, id)
+                .await?
+                .ok_or_else(|| AppError::not_found("No app you may register characters for."))?;
+            wanted.extend(app.scopes);
+            format!("/register?app={}", app.id)
+        }
+        None => "/register".to_owned(),
+    };
+    let scopes = ask_scopes(&state.db, account, wanted).await?;
+    crate::auth::start_login(state, jar, &back, Purpose::Register, &scopes, Some(account)).await
 }
 
 // ---- jobs ------------------------------------------------------------------

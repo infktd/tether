@@ -1,10 +1,21 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
-{% block title %}Register Character{% endblock %}
-{% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;<span class="text-foreground">Register Character</span>{% endblock %}
+{% block title %}{% if let Some(a) = app %}Register for {{ a.name }}{% else %}Register Character{% endif %}{% endblock %}
+{% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;{% if let Some(a) = app %}<a href="/register">Register Character</a>&nbsp;/&nbsp;<span class="text-foreground">{{ a.name }}</span>{% else %}<span class="text-foreground">Register Character</span>{% endif %}{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
   <div>
+    {% if let Some(a) = app %}
+    <h1 class="page-title">Register for {{ a.name }}</h1>
+    {% if done %}
+    <p class="text-muted-foreground mt-1">Every character on your account is registered for {{ a.name }}: it reads them all.</p>
+    {% else %}
+    <p class="text-muted-foreground mt-1 max-w-3xl">{{ a.name }} reads each of your characters whose EVE access includes everything below. Register a character by logging in with it on EVE's site: it grants that access.</p>
+    {% endif %}
+    {% if flagged %}{% if let Some(target) = target %}
+    <p class="text-sm text-muted-foreground mt-2 max-w-3xl">Your state, <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>, also needs something from your characters: <a class="underline underline-offset-4" href="/register">see what</a>. Registering here grants that too.</p>
+    {% endif %}{% endif %}
+    {% else %}
     <h1 class="page-title">Register Character</h1>
     {% if let Some(target) = target %}
     {% if done %}
@@ -17,11 +28,12 @@
     {% else %}
     <p class="text-muted-foreground mt-1 max-w-3xl">You're Guest, which needs nothing from your characters. If your alliance or corporation is covered by a state, your main's affiliation decides it; ask an admin if that looks wrong.</p>
     {% endif %}
+    {% endif %}
   </div>
 
   {% if !required.is_empty() %}
   <section class="card">
-    <header><h2>What registering grants</h2><p>Tether keeps the token encrypted and never shows it to anyone, apps included. You can revoke it on EVE's site at any time; your account is then flagged as not compliant again.</p></header>
+    <header><h2>What registering grants</h2><p>Tether keeps the token encrypted and never shows it to anyone, apps included. {% if let Some(a) = app %}{{ a.name }} reads only what these allow, through Tether, and only while you hold one of its permissions. A character registered for another app (or your state) with all of these is read too. You can revoke access on EVE's site at any time; {{ a.name }} then stops reading that character.{% else %}You can revoke it on EVE's site at any time; your account is then flagged as not compliant again.{% endif %}</p></header>
     <section>
       <ul class="grid gap-2 text-sm" role="list">
         {% for s in required %}
@@ -51,7 +63,7 @@
           </td>
           <td>
             {% if let Some(problem) = c.problem %}
-            <span class="badge" data-variant="destructive">{{ problem }}</span>
+            <span class="badge" data-variant="{% if app.is_some() %}outline{% else %}destructive{% endif %}">{{ problem }}</span>
             {% else if required.is_empty() %}
             <span class="text-sm text-muted-foreground">Nothing needed</span>
             {% else %}
@@ -60,7 +72,7 @@
           </td>
           <td class="text-right">
             {% if c.problem.is_some() %}
-            <form method="post" action="/register/start">
+            <form method="post" action="{{ start_action }}">
               <button type="submit" class="btn" data-variant="primary" data-size="sm">Register {{ c.name }}</button>
             </form>
             {% endif %}
@@ -70,10 +82,28 @@
       </tbody>
     </table>
     <footer class="gap-3">
-      <form method="post" action="/register/start">
+      <form method="post" action="{{ start_action }}">
         <button type="submit" class="btn" data-variant="outline">{% call icons::icon("plus") %}{% endcall %} Add another character</button>
       </form>
     </footer>
   </section>
+
+  {% if !apps.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Apps</h2><p>Apps you may use that read characters: each reads your characters whose EVE access includes all of its scopes.</p></header>
+    <table class="table">
+      <thead><tr><th scope="col">App</th><th scope="col">Registered</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for a in apps %}
+        <tr>
+          <td class="font-medium">{{ a.name }}</td>
+          <td><span class="num">{{ a.registered }}</span> of <span class="num">{{ a.characters }}</span> characters</td>
+          <td class="text-right"><a class="btn" data-variant="outline" data-size="sm" href="/register?app={{ a.id }}">{% if a.registered < a.characters %}Register for {{ a.name }}{% else %}Review{% endif %}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

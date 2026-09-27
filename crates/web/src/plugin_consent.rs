@@ -5,8 +5,8 @@
 //! the account already granted (so a new grant never drops an old one).
 //! It's in use at once, with no admin approval (Jay, 2026-09-26: AA's
 //! permissions and behaviour); admins see and remove any, and owners
-//! withdraw their own. User scopes need no step here: Member requires them
-//! (see `compliance`). Also the Discord channels a plugin may post to.
+//! withdraw their own. User scopes need no step here: pilots register
+//! characters for the app (see `compliance`). Also the Discord channels a plugin may post to.
 //! Every change is audited.
 
 use axum::response::Response;

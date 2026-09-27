@@ -115,7 +115,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 
 **States**
 
-- Defaults Member 100, Blue 50, Guest 0 (priorities are editable numbers; the page keeps the up and down buttons). **Member and Blue can be renamed and deleted; only Guest is protected** (fixed name, always last, can't be deleted). **(decided)** Plugins and scopes follow the built-in role, not the name: deleting Member drops plugin scope requirements and plugins' Member characters; deleting Blue leaves Moon Mining's old-moon list with no audience. State names at most 32 characters.
+- Defaults Member 100, Blue 50, Guest 0 (priorities are editable numbers; the page keeps the up and down buttons). **Member and Blue can be renamed and deleted; only Guest is protected** (fixed name, always last, can't be deleted). **(decided)** Plugins and scopes follow the built-in role, not the name: deleting Member drops its scope requirements (apps' characters go by permission, so they stay while their accounts hold one elsewhere); deleting Blue leaves Moon Mining's old-moon list with no audience. State names at most 32 characters.
 - A state change removes the account from groups whose allowed states exclude it, re-checks services, and notifies ("State changed to: {state}" / "Your user's state is now: {state}", info). Deleting a state moves its accounts to their next state, notified the same way.
 - **Public** (AA's "Make this state available to any character"): the state covers every account with a main that no higher state covers. Never Guest or the Blacklist. Kept from Tether: like Guest, a public state can't hold a sensitive permission (making it public is refused while it does) or get a Discord role with moderation powers, fills no compliance, smart (auto join) or Auto Groups, and only someone holding everything granted to it may make it public.
 
@@ -141,6 +141,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 
 - **Compliance Groups**: admins mark Internal groups as compliance groups, each limited to its allowed states, as in Member Audit (several allowed, e.g. one per state). Replaces the single fixed Compliant group. Accounts are added and removed as compliance changes, and notified.
 - As Member Audit, compliance is registration: a character whose token was revoked still counts with the scopes it carried, and its owner is asked to log in with it again (the profile marks it). The character leaves the account a day later unless they do (the ownership check), and compliance is then worked out without it.
+- **Apps by permission (decided, 2026-09-27)**, as AA gates Member Audit: whoever holds one of an app's permissions, whatever their state, registers characters for it (**Register Character** from the app: one EVE login granting its user scopes) and the app reads those characters, and only while the account holds one of its permissions. Installing an app requires nothing of Member; an admin requires an app's scopes of a state in one click (**Require Member Audit's scopes for Member**), which is Member Audit's compliance: every character registered for it. The upgrade kept the app scopes Member required until then as Member's own requirements, so nobody's compliance changed.
 
 **Notifications** (rules the Notifications task implements)
 

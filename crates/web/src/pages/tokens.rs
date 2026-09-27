@@ -69,7 +69,17 @@ async fn tokens_page(
 ) -> Result<Response, PageError> {
     let loaded = load(state, session, "tokens").await?;
     let registration = crate::compliance::registration(&state.db, session.account).await?;
-    let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
+    // Apps read a character's scopes only for pilots holding one of their
+    // permissions (F16).
+    let mut plugins = Vec::new();
+    for p in tether_db::compliance::plugin_scopes(&state.db).await? {
+        if !p.scopes.is_empty()
+            && tether_db::compliance::holds_app_permission(&state.db, session.account, &p.id)
+                .await?
+        {
+            plugins.push(p);
+        }
+    }
     let target = registration.target.as_ref().map(|t| t.name.clone());
     // What uses a scope: the state's requirement, apps, Corporation Stats.
     let used_by = |scope: &str| {

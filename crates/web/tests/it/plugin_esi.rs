@@ -1,5 +1,6 @@
 //! Plugin ESI, identity and Discord (F16, N8, N10): user scopes only for
-//! registered characters on compliant accounts, data sources offered and
+//! characters registered for the app by holders of its permissions (any
+//! state, as Alliance Auth's apps), data sources offered and
 //! approved, every call checked and logged, the host choosing the ids,
 //! who owns a character told only to the bundled Member Audit, and Discord
 //! only to assigned channels, pinging only state roles.
@@ -132,7 +133,7 @@ async fn run_jobs(h: &Harness) {
 }
 
 /// Chribba's alliance is Member, Chribba is the owner, and the probe is
-/// installed, so Member requires its user scope.
+/// installed (which requires nothing of Member).
 async fn member_with_plugin(db: PgPool) -> (Harness, String) {
     use tether_core::states::{Builtin, EntityKind};
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
@@ -145,11 +146,12 @@ async fn member_with_plugin(db: PgPool) -> (Harness, String) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
+async fn user_scopes_need_a_character_registered_for_the_app(db: PgPool) {
     let (h, owner) = member_with_plugin(db).await;
+    const REGISTER: &str = "/register/start?app=acme.esi";
 
     // Signed out: to the login page, nothing started.
-    for uri in ["/register/start", "/apps/acme.esi/owners/add"] {
+    for uri in ["/register/start", REGISTER, "/apps/acme.esi/owners/add"] {
         let res = send(&h.app, form(uri, "", "no-such-session")).await;
         assert_eq!(res.location(), "/login", "{uri}");
     }
@@ -166,22 +168,40 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
 
-    // Installing the plugin made Member require its scope, which Chribba
-    // hasn't granted: still Member (flagged), but no data for the plugin.
+    // Installing the plugin requires nothing of Member (AA's apps are
+    // opt-in): Chribba isn't flagged, but isn't registered for the app
+    // either, so it reads nothing of his.
     assert_eq!(state_of(&h, &owner).await, "Member");
+    let state_checklist = page(&h, "/register", &owner).await.body;
+    assert!(
+        !state_checklist.contains("Read skills and attributes"),
+        "{state_checklist}"
+    );
+    // The state's checklist leads to the app's.
+    assert!(
+        state_checklist.contains("/register?app=acme.esi"),
+        "{state_checklist}"
+    );
     let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
     assert_eq!(out, "err Error::NotRegistered");
     assert_eq!(probe(&h, "characters", &[]).await, "[]");
 
-    // The checklist says what to grant; registering asks EVE for it.
-    let checklist = page(&h, "/register", &owner).await.body;
+    // The app's checklist says what to grant; registering asks EVE for it
+    // (and for what the state requires, in the same login).
+    let checklist = page(&h, "/register?app=acme.esi", &owner).await.body;
     assert!(checklist.contains("Register Chribba"), "{checklist}");
+    assert!(checklist.contains("Register for ESI probe"), "{checklist}");
     assert!(
         checklist.contains("Read skills and attributes"),
         "{checklist}"
     );
-    let (asked, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    assert!(checklist.contains(r#"action="/register/start?app=acme.esi""#));
+    let (asked, owner) = grant(&h, &owner, REGISTER, "196379789:Chribba").await;
     assert!(asked.contains(&SKILLS.to_owned()), "{asked:?}");
+    assert!(
+        asked.contains(&tether_core::scopes::CORP_MEMBERSHIP.to_owned()),
+        "{asked:?}"
+    );
     assert_eq!(state_of(&h, &owner).await, "Member");
 
     let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
@@ -189,6 +209,8 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
     assert!(out.contains("5000000"), "{out}");
     let characters = probe(&h, "characters", &[]).await;
     assert!(characters.contains("Chribba"), "{characters}");
+    let checklist = page(&h, "/register?app=acme.esi", &owner).await.body;
+    assert!(checklist.contains("Registered"), "{checklist}");
 
     // Not approved for this plugin, or the wrong kind of subject.
     let out = esi(&h, "character-assets", ("character", CHRIBBA)).await;
@@ -197,7 +219,9 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
     assert!(out.starts_with("err Error::NotAllowed"), "{out}");
     let out = esi(&h, "no-such-endpoint", ("character", CHRIBBA)).await;
     assert!(out.starts_with("err Error::NotAllowed"), "{out}");
-    // A Guest's character, even one whose token has the scope.
+
+    // A Guest holding none of the app's permissions: not served, even with
+    // the scope, and may not register for it.
     sqlx::query("UPDATE core.character_tokens SET scopes = $2 WHERE character_id = $1")
         .bind(443630591_i64)
         .bind(vec![SKILLS])
@@ -206,8 +230,75 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
         .unwrap();
     let out = esi(&h, "character-skills", ("character", 443630591)).await;
     assert_eq!(out, "err Error::NotRegistered");
+    let res = page(&h, "/register?app=acme.esi", &pilot).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let res = send(&h.app, form(REGISTER, "", &pilot)).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(
+        !page(&h, "/register", &pilot)
+            .await
+            .body
+            .contains("acme.esi")
+    );
 
-    // A revoked token flags the account and stops the plugin at once.
+    // Given one of its permissions, whatever the state (AA's): served.
+    grant_to_guests(&h, &owner, "view").await;
+    let out = esi(&h, "character-skills", ("character", 443630591)).await;
+    assert!(!out.contains("NotRegistered"), "{out}");
+    let characters = probe(&h, "characters", &[]).await;
+    assert!(characters.contains("The Mittani"), "{characters}");
+    let checklist = page(&h, "/register?app=acme.esi", &pilot).await;
+    assert_eq!(checklist.status, StatusCode::OK, "{}", checklist.body);
+    assert!(
+        page(&h, "/register", &pilot)
+            .await
+            .body
+            .contains("/register?app=acme.esi")
+    );
+    // Only while it holds one: without it, no longer.
+    let grant_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM core.permission_grants WHERE permission = 'plugin.acme.esi.view'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM core.permission_grants WHERE id = $1")
+        .bind(grant_id)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let out = esi(&h, "character-skills", ("character", 443630591)).await;
+    assert_eq!(out, "err Error::NotRegistered");
+    // Through a group it's in, likewise.
+    let group: i64 =
+        sqlx::query_scalar("INSERT INTO core.groups (name) VALUES ('Probers') RETURNING id")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO core.group_members (group_id, account_id) \
+         SELECT $1, account_id FROM core.characters WHERE id = 443630591",
+    )
+    .bind(group)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO core.permission_grants (permission, group_id) VALUES ('plugin.acme.esi.view', $1)",
+    )
+    .bind(group)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let out = esi(&h, "character-skills", ("character", 443630591)).await;
+    assert!(!out.contains("NotRegistered"), "{out}");
+    sqlx::query("DELETE FROM core.group_members WHERE group_id = $1")
+        .bind(group)
+        .execute(&h.db)
+        .await
+        .unwrap();
+
+    // A revoked token stops the plugin at once.
     sqlx::query("UPDATE core.character_tokens SET state = 'revoked' WHERE character_id = $1")
         .bind(CHRIBBA)
         .execute(&h.db)
@@ -241,7 +332,13 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn a_plain_login_keeps_the_scopes_a_character_registered(db: PgPool) {
     let (h, owner) = member_with_plugin(db).await;
-    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
     // Signing in again asks for nothing, and mustn't replace the richer
     // token.
     let _ = owner;
@@ -254,8 +351,9 @@ async fn a_plain_login_keeps_the_scopes_a_character_registered(db: PgPool) {
     // Dashboard only whether each character is registered).
     let profile = page(&h, "/tokens", &owner).await.body;
     assert!(profile.contains("Read skills and attributes"), "{profile}");
+    assert!(profile.contains("ESI probe"), "{profile}");
     assert!(
-        profile.contains("Member requirement, ESI probe"),
+        !profile.contains("Member requirement, ESI probe"),
         "{profile}"
     );
 }
@@ -502,7 +600,13 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
     approve_bundled(&h, &owner, "tether.member-audit", &member_audit).await;
     approve_bundled(&h, &owner, "acme.bundled", &other).await;
     run_jobs(&h).await;
-    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
     assert_eq!(state_of(&h, &owner).await, "Member");
     // Everyone may list Chribba...
     for id in [ID, "acme.bundled", "tether.member-audit"] {
@@ -528,7 +632,8 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
         }
     }
     // Only the characters `esi.characters` lists: not one whose token lacks
-    // the app's scope, or was revoked, or a non-Member's.
+    // the app's scope, or was revoked, or whose account holds none of the
+    // app's permissions (here: deactivated).
     let only = |sql: &'static str| {
         let db = h.db.clone();
         async move {
@@ -551,14 +656,28 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
             .await
             .contains("Chribba")
     );
-    sqlx::query("UPDATE core.accounts SET state_id = $1")
+    // A pilot holding none of the app's permissions (it adds none: only
+    // the owner may use it), even with the scope.
+    let _pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    sqlx::query("UPDATE core.character_tokens SET scopes = $2 WHERE character_id = $1")
+        .bind(443630591_i64)
+        .bind(vec![SKILLS])
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let owners = run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await;
+    assert!(!owners.contains("The Mittani"), "{owners}");
+    // Any state, as AA's: the owner holds every app, and the owner's state
+    // is told as it is.
+    sqlx::query("UPDATE core.accounts SET state_id = $1 WHERE is_owner")
         .bind(GUEST_STATE)
         .execute(&h.db)
         .await
         .unwrap();
-    assert_eq!(
-        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
-        "Some([])"
+    let owners = run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await;
+    assert!(
+        owners.contains("Chribba") && owners.contains("name: \"Guest\""),
+        "{owners}"
     );
 }
 
@@ -582,7 +701,13 @@ async fn a_signed_app_under_member_audits_id_learns_no_owners(db: PgPool) {
     ]);
     install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
     run_jobs(&h).await;
-    grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
     let characters = run_probe(&h, "tether.member-audit", "characters", Vec::new(), false).await;
     assert!(characters.contains("Chribba"), "{characters}");
     assert_eq!(
@@ -816,7 +941,7 @@ async fn mount_viewer_esi(h: &Harness) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn the_character_viewer_reads_only_registered_members_with_the_scope(db: PgPool) {
+async fn the_character_viewer_reads_only_characters_registered_for_it(db: PgPool) {
     let (h, owner) = member_with_viewer(db).await;
     mount_viewer_esi(&h).await;
     let mail = |who: (&'static str, i64)| {
@@ -824,12 +949,18 @@ async fn the_character_viewer_reads_only_registered_members_with_the_scope(db: P
         async move { esi_with(h, "character-mail-body", who, &[("mail_id", "77")]).await }
     };
 
-    // Member requires the app's scopes; Chribba hasn't granted them yet.
+    // Chribba hasn't registered for the app yet.
     assert_eq!(
         mail(("character", CHRIBBA)).await,
         "err Error::NotRegistered"
     );
-    let (asked, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let (asked, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
     assert!(asked.contains(&MAIL.to_owned()), "{asked:?}");
     assert!(asked.contains(&STRUCTURES.to_owned()), "{asked:?}");
 
@@ -862,7 +993,7 @@ async fn the_character_viewer_reads_only_registered_members_with_the_scope(db: P
     assert!(out.starts_with("err Error::NotAllowed"), "{out}");
     let out = mail(("source", CHRIBBA)).await;
     assert!(out.starts_with("err Error::NotAllowed"), "{out}");
-    // A Guest's character, even one whose token has the scope.
+    // A Guest holding none of the app's permissions, even with the scopes.
     let _guest = log_in_as(&h, "443630591:The Mittani", None).await;
     sqlx::query("UPDATE core.character_tokens SET scopes = $2 WHERE character_id = $1")
         .bind(MITTANI)
@@ -902,7 +1033,13 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
 
     // Registering Chribba runs the app's schedules, audited as the
     // system's doing.
-    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
     await_runs(&h.db, 1).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
@@ -928,14 +1065,26 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
     // next tick: Tether's own runs are ten minutes apart at least.
     finish_runs(&h.db, "5 minutes").await;
     let owner = log_in_as(&h, "443630591:The Mittani", Some(&owner)).await;
-    let (_, owner) = grant(&h, &owner, "/register/start", "443630591:The Mittani").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "443630591:The Mittani",
+    )
+    .await;
     await_runs(&h.db, 0).await;
     assert!(queued_plugin_runs(&h.db).await.is_empty());
     assert_eq!(run_now_audits(&h.db).await.len(), 1);
     // Eleven minutes after, it would have run: another alt shows it.
     finish_runs(&h.db, "11 minutes").await;
     let owner = log_in_as(&h, "1887431749:gigX", Some(&owner)).await;
-    let (_, owner) = grant(&h, &owner, "/register/start", "1887431749:gigX").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "1887431749:gigX",
+    )
+    .await;
     await_runs(&h.db, 2).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
@@ -981,7 +1130,13 @@ async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_adding(db: P
     .unwrap();
 
     // Registered all the same (`grant` checks the login went through).
-    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
     let out = esi_with(
         &h,
         "character-mail-body",
@@ -1077,4 +1232,98 @@ async fn waiting_offers_are_dropped_and_owners_stay_with_their_account(db: PgPoo
         .unwrap();
     assert!(sources.iter().all(|s| !s.in_use()), "{sources:?}");
     let _ = owner;
+}
+
+/// AA's Member Audit compliance groups: an admin requires an app's scopes
+/// of a state in one click (asking first, as for a scope). And the upgrade
+/// to apps by permission keeps the app scopes Member required as its own.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
+    let (h, owner) = member_with_plugin(db).await;
+    // Chribba registered for Member (compliant), not for the app.
+    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    run_jobs(&h).await;
+    let states = page(&h, "/admin/states", &owner).await.body;
+    assert!(
+        states.contains("Require ESI probe&#39;s scopes for Member")
+            || states.contains("Require ESI probe's scopes for Member"),
+        "{states}"
+    );
+    let uri = format!("/admin/states/{MEMBER_STATE}/scopes/app");
+    // Chribba hasn't granted it: the change asks first.
+    let asked = send(&h.app, form(&uri, "plugin=acme.esi", &owner)).await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.body);
+    assert!(
+        asked
+            .body
+            .contains("every character registered for ESI probe"),
+        "{}",
+        asked.body
+    );
+    let applied = send(&h.app, form(&uri, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(applied.location(), "/admin/states", "{}", applied.body);
+    let required: Vec<String> =
+        sqlx::query_scalar("SELECT scope FROM core.state_scopes WHERE state_id = $1")
+            .bind(MEMBER_STATE)
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(required, [SKILLS]);
+    let audit: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'state.scope_add' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audit["app"], ID);
+    assert_eq!(audit["scopes"], serde_json::json!([SKILLS]));
+    let states = page(&h, "/admin/states", &owner).await.body;
+    assert!(states.contains("Requires all of ESI probe"), "{states}");
+    // Nothing left to add; an unknown app or Guest can't.
+    let again = send(&h.app, form(&uri, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.body);
+    let unknown = send(&h.app, form(&uri, "plugin=acme.none&confirm=1", &owner)).await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.body);
+    let guest = send(
+        &h.app,
+        form(
+            &format!("/admin/states/{GUEST_STATE}/scopes/app"),
+            "plugin=acme.esi&confirm=1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(guest.status, StatusCode::BAD_REQUEST, "{}", guest.body);
+    // Signed out, or without admin.states: no.
+    let res = send(&h.app, form(&uri, "plugin=acme.esi", "no-such-session")).await;
+    assert_eq!(res.location(), "/login");
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let res = send(&h.app, form(&uri, "plugin=acme.esi&confirm=1", &pilot)).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+
+    // The upgrade's step (migration 0050), again from before it: Member
+    // required the app's scopes by itself, and keeps them as its own.
+    sqlx::query("DELETE FROM core.state_scopes")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let migration = include_str!("../../../../migrations/0050_app_access_by_permission.sql");
+    let (keep, _) = migration
+        .split_once("-- Whether an account holds")
+        .expect("the function follows the upgrade step");
+    sqlx::raw_sql(keep).execute(&h.db).await.unwrap();
+    let required: Vec<(i64, String)> =
+        sqlx::query_as("SELECT state_id, scope FROM core.state_scopes")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(required, [(MEMBER_STATE, SKILLS.to_owned())]);
+    let audit: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'state.scope_add' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audit["scopes"], serde_json::json!([SKILLS]));
+    assert_eq!(audit["state"], "Member");
 }

@@ -437,6 +437,10 @@ pub fn router(state: AppState) -> Router {
             "/admin/states/{id}/scopes/remove",
             post(pages::states::remove_scope),
         )
+        .route(
+            "/admin/states/{id}/scopes/app",
+            post(pages::states::require_app),
+        )
         // An app's owners (AA's Add Owner), on the app's own page.
         .route("/apps/{id}/owners/add", post(pages::plugin_access::add))
         .route(

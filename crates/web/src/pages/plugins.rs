@@ -69,12 +69,20 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
     }
     if !c.esi.user.is_empty() {
         add(
-            "ESI access to every Member's characters",
+            "ESI access to the characters registered for it",
             format!(
-                "{}. Member will require these of every character: Members who haven't \
-                 granted them are flagged as not compliant (and leave the Compliance Group) \
-                 until they register again.",
-                c.esi.user.join(", ")
+                "{}. Whoever holds one of its permissions (below), whatever their state, may \
+                 register characters for it: one EVE login from the app grants these. It reads \
+                 every character of theirs whose EVE access includes all of them, and no one \
+                 else's. {}No state requires them unless you choose to (States: Require {}'s \
+                 scopes).",
+                c.esi.user.join(", "),
+                if manifest.permissions.is_empty() {
+                    "It adds no permissions, so only the owner can. "
+                } else {
+                    ""
+                },
+                manifest.plugin.name
             ),
         );
     }
@@ -933,8 +941,9 @@ fn bundled_trust(id: &str) -> String {
         .to_owned();
     if id == crate::plugin_services::OWNERS_APP {
         text.push_str(
-            " Unlike any other app, it learns which characters share an account: each member \
-             character's main and state, for its scopes by the owner's main.",
+            " Unlike any other app, it learns which characters share an account: for each \
+             character it reads (of pilots holding one of its permissions, in any state), the \
+             owner's main and state, for its scopes by the owner's main.",
         );
     }
     text

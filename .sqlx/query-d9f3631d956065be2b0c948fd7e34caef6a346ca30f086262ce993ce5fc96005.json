@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE s.builtin = 'member'\n          AND t.state = 'valid' AND t.scopes @> $1\n        ORDER BY c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c\n        JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE core.holds_app_permission(c.account_id, $1)\n          AND t.state = 'valid' AND t.scopes @> $2\n        ORDER BY c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -50,6 +50,7 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
         "TextArray"
       ]
     },
@@ -60,5 +61,5 @@
       true
     ]
   },
-  "hash": "a29044b95770cffc8236fc9d8bc70ab0a26f2d0aef15e24618dbe294783ec85c"
+  "hash": "d9f3631d956065be2b0c948fd7e34caef6a346ca30f086262ce993ce5fc96005"
 }

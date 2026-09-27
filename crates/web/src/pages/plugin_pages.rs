@@ -167,8 +167,8 @@ pub struct CardFoot {
 
 pub struct CardsView {
     /// Tether's Register Character card first, for an app with user
-    /// scopes that asks for it.
-    pub register: bool,
+    /// scopes that asks for it: where it leads (registering for the app).
+    pub register: Option<String>,
     pub items: Vec<CardItemView>,
 }
 
@@ -406,8 +406,9 @@ pub struct Ctx<'a> {
     pub action: &'a str,
     /// Starts every popover id drawn with this context.
     pub prefix: String,
-    /// Whether the app reads members' characters (user scopes), so its
-    /// card grids may start with Tether's Register Character card.
+    /// Whether the app reads the characters pilots register for it (user
+    /// scopes), so its card grids may start with Tether's Register
+    /// Character card.
     pub registers: bool,
     /// The site's origin (as the direct join link's): links to share start
     /// with it.
@@ -647,7 +648,8 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
         Section::Text(text) => SectionView::Text(text.clone()),
         Section::Profile(p) => SectionView::Profile(profile(ctx, p)),
         Section::Cards(grid) => SectionView::Cards(CardsView {
-            register: grid.register && ctx.registers,
+            register: (grid.register && ctx.registers)
+                .then(|| format!("/register?app={}", ctx.plugin)),
             items: grid
                 .items
                 .iter()
@@ -1697,8 +1699,8 @@ mod tests {
                 _ => panic!("not a card grid"),
             }
         };
-        assert!(drawn(true));
-        assert!(!drawn(false));
+        assert_eq!(drawn(true).as_deref(), Some("/register?app=acme.x"));
+        assert_eq!(drawn(false), None);
     }
 
     #[test]

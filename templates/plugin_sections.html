@@ -127,8 +127,8 @@
 </section>
 {% when SectionView::Cards(grid) %}
 <section class="card-grid">
-  {% if grid.register %}
-  <a class="card grid-card grid-card-register" href="/register">
+  {% if let Some(register_href) = grid.register %}
+  <a class="card grid-card grid-card-register" href="{{ register_href }}">
     <span class="grid-card-plus" aria-hidden="true"><svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
     <span class="grid-card-name">Register another character</span>
     <span class="text-[13px] text-muted-foreground">Log in with EVE to add one, or renew one's access.</span>
