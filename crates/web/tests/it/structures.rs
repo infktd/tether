@@ -1,8 +1,9 @@
 //! The Structures plugin end to end: installed from its real component
 //! and migrations, fed by mocked ESI through an approved owner (data
-//! source), listing structures with fuel, relaying notifications and
-//! low-fuel alerts to Discord once, seen by permission, and backing off
-//! an owner ESI answers 403 for.
+//! source), listing structures with fuel, relaying notifications (by
+//! type, pinging by severity) and aa-structures' fuel alerts to Discord
+//! once, seen by permission (unanchoring by its own), rotating an owner's
+//! sync characters, and backing off an owner ESI answers 403 for.
 
 use std::sync::OnceLock;
 
@@ -55,6 +56,7 @@ async fn install(h: &Harness, owner: &str) {
     let first = plugin_file("migrations/0001_structures.sql");
     let second = plugin_file("migrations/0002_timers_corporation_only.sql");
     let third = plugin_file("migrations/0003_starbases_orbitals_tags.sql");
+    let fourth = plugin_file("migrations/0004_aa_routing_fuel_alerts_sync.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -67,6 +69,10 @@ async fn install(h: &Harness, owner: &str) {
         (
             "migrations/0003_starbases_orbitals_tags.sql",
             third.as_bytes(),
+        ),
+        (
+            "migrations/0004_aa_routing_fuel_alerts_sync.sql",
+            fourth.as_bytes(),
         ),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
@@ -308,6 +314,16 @@ async fn count(h: &Harness, table: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(&h.db).await.unwrap()
 }
 
+/// The fuel alert configs: (start, end) hours.
+async fn fuel_configs(h: &Harness) -> Vec<(i32, i32)> {
+    sqlx::query_as(
+        r#"SELECT start_hours, end_hours FROM "plugin_tether.structures".fuel_alert_configs ORDER BY start_hours DESC"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
 async fn grant(h: &Harness, owner: &str, permission: &str) {
     let res = send(
         &h.app,
@@ -393,7 +409,9 @@ async fn structures_end_to_end(db: PgPool) {
     let owner = approve_owner(&h, &owner).await;
 
     // Discord: the plugin gets the ping channel; everything goes there,
-    // with alerts at 72, 24 and 6 hours and Members mentioned on attacks.
+    // with the fuel alerts at 72, 24 and 6 hours (0.3's thresholds, as
+    // aa-structures' configs) and default pings: danger and warning
+    // notifications mention Member's role.
     discord_ready(&h, &owner).await;
     let res = send(
         &h.app,
@@ -413,27 +431,27 @@ async fn structures_end_to_end(db: PgPool) {
         &h.app,
         form(
             &format!("/plugins/{ID}/settings"),
-            &format!(
-                "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}\
-                 &moon_channel={c}&fuel_thresholds=72%2C+0&mention_members=on"
-            ),
+            "_form=add_fuel_alert&start_hours=6&end_hours=6&repeat_hours=0&ping=none",
             &owner,
         ),
     )
     .await;
     assert_eq!(bad.status, StatusCode::OK, "{}", bad.body);
     assert!(
-        bad.body.contains("Write the low-fuel alerts"),
+        bad.body.contains("End must be less than its Start"),
         "{}",
         bad.body
     );
+    // 0.3's thresholds became aa-structures' fuel alert configs.
+    assert!(settings.body.contains("Fuel alerts"), "{}", settings.body);
+    assert_eq!(fuel_configs(&h).await, vec![(72, 24), (24, 6), (6, 0)]);
     let res = send(
         &h.app,
         form(
             &format!("/plugins/{ID}/settings"),
             &format!(
                 "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}\
-                 &moon_channel={c}&fuel_thresholds=6%2C+72%2C+24&mention_members=on"
+                 &moon_channel={c}&default_pings=on&danger_ping=Member&warning_ping=Member"
             ),
             &owner,
         ),
@@ -516,9 +534,9 @@ async fn structures_end_to_end(db: PgPool) {
         StatusCode::NOT_FOUND
     );
 
-    // Discord: the attack and the shields with the
-    // timer (both mentioning Members), the moon drill and Tether's
-    // low-fuel alert; not the old one.
+    // Discord: the attack (danger) and the shields with the timer
+    // (warning), both mentioning Member's role, the moon drill (info, no
+    // ping) and the 6-hour fuel alert; not the old one.
     let sent = discord_messages(&h).await;
     assert_eq!(sent.len(), 4, "{sent:?}");
     assert!(
@@ -823,7 +841,7 @@ async fn structures_feed_structure_timers(db: PgPool) {
         form(
             &format!("/plugins/{ID}/settings"),
             "_form=settings&attack_channel=&fuel_channel=&state_channel=&moon_channel=\
-             &fuel_thresholds=72&timers_corporation_only=on",
+             &timers_corporation_only=on",
             &owner,
         ),
     )
@@ -1129,7 +1147,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
             &format!("/plugins/{ID}/settings"),
             &format!(
                 "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}\
-                 &moon_channel={c}&fuel_thresholds=72"
+                 &moon_channel={c}"
             ),
             &owner,
         ),
@@ -1500,4 +1518,275 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
         "{}",
         pocos.body
     );
+}
+
+/// A second Station Manager of Chribba's corporation, on his account.
+const ALT: i64 = 90000050;
+
+/// The affiliation fixture's characters, and the alt in Chribba's
+/// corporation.
+struct AltAffiliation;
+
+impl wiremock::Respond for AltAffiliation {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let ids: Vec<i64> = serde_json::from_slice(&request.body).unwrap();
+        let known = [
+            serde_json::json!({ "character_id": CHRIBBA, "corporation_id": CHRIBBA_CORP, "alliance_id": ALLIANCE }),
+            serde_json::json!({ "character_id": ALT, "corporation_id": CHRIBBA_CORP, "alliance_id": ALLIANCE }),
+            serde_json::json!({ "character_id": 1887431749, "corporation_id": GIGX_CORP, "alliance_id": 1695357456 }),
+        ];
+        let items: Vec<&serde_json::Value> = known
+            .iter()
+            .filter(|v| ids.contains(&v["character_id"].as_i64().unwrap()))
+            .collect();
+        ResponseTemplate::new(200).set_body_json(items)
+    }
+}
+
+/// Posts a form to one of the plugin's pages.
+async fn post(h: &Harness, token: &str, at: &str, body: &str) -> Res {
+    send(&h.app, form(&format!("/plugins/{ID}/{at}"), body, token)).await
+}
+
+/// aa-structures' rules: notification types per owner, fuel alert configs
+/// (any number, with repeat and ping), unanchoring for
+/// view_all_unanchoring_status only, and up to 10 sync characters per
+/// owner taking turns at the notifications.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn aa_structures_rules(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    cover(&db, Builtin::Member, EntityKind::Corporation, GIGX_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([
+            notification(1001, "StructureUnderAttack", times.attacked, &attack_text()),
+            notification(1002, "StructureLostShields", times.shields, &shields_text()),
+        ])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(&h, &owner).await;
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+    let c = DISCORD_PING_CHANNEL;
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        &format!(
+            "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}&moon_channel={c}"
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // This owner sends only lost shields (and fuel alerts), its own types.
+    let res = post(
+        &h,
+        &owner,
+        &format!("settings/owner/{CHRIBBA_CORP}"),
+        "_form=owner_types&types_from=own&t_structurelostshields=on&t_structurefuelalert=on",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Another fuel alert: under 100 hours, every hour, pinging danger.
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        "_form=add_fuel_alert&start_hours=100&end_hours=0&repeat_hours=1&ping=danger",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let sent = discord_messages(&h).await;
+    assert!(
+        sent.iter().any(|m| m.contains("lost its shields")),
+        "{sent:?}"
+    );
+    assert!(!sent.iter().any(|m| m.contains("Under attack")), "{sent:?}");
+    // The Keep (5 hours left) is in both alerts' ranges; pings are off.
+    for hours in [6, 100] {
+        assert_eq!(
+            sent.iter()
+                .filter(|m| m.contains(&format!("under the {hours}-hour alert")))
+                .count(),
+            1,
+            "{hours}: {sent:?}"
+        );
+    }
+    assert!(sent.iter().all(|m| !m.contains("<@&")), "{sent:?}");
+    // An hour on, the repeating alert goes again; the other doesn't.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".fuel_alerts_sent SET sent_at = now() - interval '2 hours'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let sent = discord_messages(&h).await;
+    assert_eq!(
+        sent.iter()
+            .filter(|m| m.contains("under the 100-hour alert"))
+            .count(),
+        2,
+        "{sent:?}"
+    );
+    assert_eq!(
+        sent.iter()
+            .filter(|m| m.contains("under the 6-hour alert"))
+            .count(),
+        1,
+        "{sent:?}"
+    );
+
+    // Unanchoring: only for view_all_unanchoring_status.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".structures SET unanchors_at = now() + interval '2 days'
+           WHERE structure_id = $1"#,
+    )
+    .bind(DRILL)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".timers (structure_id, kind, at, corporation_id)
+           VALUES ($1, 'Unanchoring', now() + interval '2 days', $2)"#,
+    )
+    .bind(DRILL)
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let gigx = log_in_as(&h, "1887431749:gigX", None).await;
+    for permission in ["basic_access", "view_all_structures"] {
+        grant(&h, &owner, permission).await;
+    }
+    let drill = format!("/plugins/{ID}/structure/{DRILL}");
+    let timers = format!("/plugins/{ID}?_tab=3");
+    let seen = page(&h, &drill, &gigx).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert!(!seen.body.contains("Unanchors"), "{}", seen.body);
+    let seen = page(&h, &timers, &gigx).await;
+    assert!(!seen.body.contains("Unanchoring"), "{}", seen.body);
+    let seen = page(&h, &drill, &owner).await;
+    assert!(seen.body.contains("Unanchors"), "{}", seen.body);
+    let seen = page(&h, &timers, &owner).await;
+    assert!(seen.body.contains("Unanchoring"), "{}", seen.body);
+    // Nor are they given to Structure Timers (aa-structures makes none).
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(
+        shared_timers(&h)
+            .await
+            .iter()
+            .all(|t| !t.title.contains("unanchoring")),
+        "unanchoring published"
+    );
+
+    // A second sync character for the corporation (aa-structures' up to
+    // 10), added with Add owner like the first: the two take turns, so
+    // notifications are read between syncs.
+    Mock::given(method("POST"))
+        .and(path("/characters/affiliation"))
+        .respond_with(AltAffiliation)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    // Twice: the first login brings the new character (its corporation
+    // arrives after), the second adds it for that corporation.
+    let mut owner = owner;
+    for _ in 0..2 {
+        let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", &owner)).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+        let login = res.cookie_value(LOGIN);
+        let state = query_param(res.location(), "state").to_owned();
+        let res = send(
+            &h.app,
+            get(
+                &format!("/auth/callback?code=ok:{ALT}:Chribba+Alt&state={state}"),
+                &[(LOGIN, &login), (SESSION, &owner)],
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+        owner = res.cookie_value(SESSION);
+    }
+    let alt_path = format!("/characters/{ALT}/notifications");
+    Mock::given(method("GET"))
+        .and(path(alt_path.clone()))
+        .respond_with(json(serde_json::json!([notification(
+            3001,
+            "StructureLostShields",
+            now - Duration::minutes(1),
+            &shields_text()
+        )])))
+        .mount(&h.esi_server)
+        .await;
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'notifications' \
+         AND state = 'queued'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+    assert_eq!(reads(&h, &alt_path).await, 0);
+    // Chribba read them a while ago: the alt's turn, between syncs.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".owners SET notifications_at = now() - interval '5 minutes'
+           WHERE character_id = $1"#,
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let before = discord_messages(&h).await.len();
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'notifications' \
+         AND state = 'queued'",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(&h).await;
+    assert_eq!(reads(&h, &alt_path).await, 1);
+    assert_eq!(
+        reads(&h, &format!("/characters/{CHRIBBA}/notifications")).await,
+        1
+    );
+    assert_eq!(discord_messages(&h).await.len(), before + 1);
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(settings.body.contains("Chribba Alt"), "{}", settings.body);
 }

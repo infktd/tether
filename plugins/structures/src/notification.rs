@@ -208,6 +208,144 @@ impl Category {
     }
 }
 
+/// aa-structures' severity of a notification (its embed colour): with
+/// default pings on, danger pings @everyone and warning @here. Tether's
+/// bot mentions the roles of the states the settings name instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Danger,
+    Warning,
+    Info,
+}
+
+/// aa-structures' own "starbase reinforced", from the starbase's state.
+pub const STARBASE_REINFORCED: &str = "TowerReinforcedExtra";
+
+/// Every notification type Structures sends, as aa-structures' webhook
+/// filters list them: its type, what a manager sees, and its severity.
+pub const TYPES: [(&str, &str, Severity); 28] = [
+    (
+        "StructureUnderAttack",
+        "Upwell structure under attack",
+        Severity::Danger,
+    ),
+    (
+        "StructureLostShields",
+        "Upwell structure lost shields",
+        Severity::Warning,
+    ),
+    (
+        "StructureLostArmor",
+        "Upwell structure lost armor",
+        Severity::Danger,
+    ),
+    (
+        "StructureDestroyed",
+        "Upwell structure destroyed",
+        Severity::Danger,
+    ),
+    ("TowerAlertMsg", "Starbase under attack", Severity::Danger),
+    (STARBASE_REINFORCED, "Starbase reinforced", Severity::Danger),
+    (
+        "OrbitalAttacked",
+        "Customs office under attack",
+        Severity::Warning,
+    ),
+    (
+        "OrbitalReinforced",
+        "Customs office reinforced",
+        Severity::Danger,
+    ),
+    (
+        "SkyhookUnderAttack",
+        "Skyhook under attack",
+        Severity::Danger,
+    ),
+    (
+        "SkyhookLostShields",
+        "Skyhook lost shields",
+        Severity::Warning,
+    ),
+    ("SkyhookDestroyed", "Skyhook destroyed", Severity::Danger),
+    (
+        "StructureFuelAlert",
+        "Upwell structure fuel alert",
+        Severity::Warning,
+    ),
+    (
+        "StructureServicesOffline",
+        "Upwell structure services went offline",
+        Severity::Danger,
+    ),
+    (
+        "StructureWentLowPower",
+        "Upwell structure went low power",
+        Severity::Warning,
+    ),
+    (
+        "StructureLowReagentsAlert",
+        "Metenox low on reagents",
+        Severity::Warning,
+    ),
+    (
+        "StructureNoReagentsAlert",
+        "Metenox out of reagents",
+        Severity::Danger,
+    ),
+    (
+        "TowerResourceAlertMsg",
+        "Starbase fuel alert",
+        Severity::Warning,
+    ),
+    (
+        "StructureWentHighPower",
+        "Upwell structure went high power",
+        Severity::Info,
+    ),
+    ("StructureOnline", "Upwell structure online", Severity::Info),
+    (
+        "StructureAnchoring",
+        "Upwell structure anchoring",
+        Severity::Info,
+    ),
+    (
+        "StructureUnanchoring",
+        "Upwell structure unanchoring",
+        Severity::Info,
+    ),
+    ("SkyhookDeployed", "Skyhook deployed", Severity::Info),
+    ("SkyhookOnline", "Skyhook online", Severity::Info),
+    (
+        "MoonminingExtractionStarted",
+        "Moon extraction started",
+        Severity::Info,
+    ),
+    (
+        "MoonminingExtractionFinished",
+        "Moon extraction finished",
+        Severity::Info,
+    ),
+    (
+        "MoonminingAutomaticFracture",
+        "Moon automatic fracture",
+        Severity::Info,
+    ),
+    ("MoonminingLaserFired", "Moon laser fired", Severity::Info),
+    (
+        "MoonminingExtractionCancelled",
+        "Moon extraction cancelled",
+        Severity::Warning,
+    ),
+];
+
+/// A type's severity (info for any not listed).
+pub fn severity(kind: &str) -> Severity {
+    TYPES
+        .iter()
+        .find(|(k, _, _)| *k == kind)
+        .map_or(Severity::Info, |(_, _, s)| *s)
+}
+
 pub fn category(kind: &str) -> Option<Category> {
     Some(match kind {
         "StructureUnderAttack"
@@ -215,7 +353,7 @@ pub fn category(kind: &str) -> Option<Category> {
         | "StructureLostArmor"
         | "StructureDestroyed" => Category::Attack,
         "TowerAlertMsg" | "OrbitalAttacked" | "OrbitalReinforced" | "SkyhookUnderAttack"
-        | "SkyhookLostShields" | "SkyhookDestroyed" => Category::Attack,
+        | "SkyhookLostShields" | "SkyhookDestroyed" | STARBASE_REINFORCED => Category::Attack,
         "StructureFuelAlert"
         | "StructureServicesOffline"
         | "StructureWentLowPower"
@@ -674,6 +812,13 @@ mod tests {
              by Some Pilot. Shield 50%, armor 100%, hull 100%."
         );
         assert_eq!(category("TowerAlertMsg"), Some(Category::Attack));
+        // Every type the settings list is one Structures sends, once.
+        for (i, (kind, _, _)) in TYPES.iter().enumerate() {
+            assert!(category(kind).is_some(), "{kind}");
+            assert!(!TYPES[..i].iter().any(|(k, _, _)| k == kind), "{kind}");
+        }
+        assert_eq!(severity("StructureLostArmor"), Severity::Danger);
+        assert_eq!(severity("StructureOnline"), Severity::Info);
         assert_eq!(category("TowerResourceAlertMsg"), Some(Category::Fuel));
 
         // 133090848000000000 is 2022-10-01 08:00.

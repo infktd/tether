@@ -9,8 +9,15 @@
 //!   corporation, alliance, or all).
 //! - Owners' structure notifications (attacks, reinforcements, fuel,
 //!   services, power, anchoring, moon drills) go to the Discord channels a
-//!   manager picks, once each; Tether adds its own low-fuel alerts at
-//!   chosen thresholds.
+//!   manager picks, once each, filtered by type and pinging by severity as
+//!   aa-structures' webhooks do (danger and warning pings mention the
+//!   Discord roles of the states the settings name, standing in for
+//!   @everyone and @here); aa-structures' fuel alert configs add low-fuel
+//!   alerts, any number, each with its range, repeat and ping.
+//! - Unanchoring times only for `view_all_unanchoring_status`, as
+//!   aa-structures.
+//! - Up to 10 sync characters per owner, rotated, cut the notification
+//!   delay from ten minutes to about one (aa-structures').
 //! - Timers from notifications and structures' states are listed here and
 //!   published for Structure Timers after every sync (friendly, and
 //!   corporation-only if a manager says so, as aa-structures'
@@ -62,9 +69,18 @@ const ORBITAL_ROWS: i64 = 150;
 const SHORT_ROWS: i64 = 60;
 const TIMER_ROWS: i64 = 80;
 const OWNER_ROWS: i64 = 60;
-/// Low-fuel thresholds: hours, at most this many.
-const MAX_THRESHOLDS: usize = 5;
-const MAX_THRESHOLD_HOURS: i64 = 2160;
+/// Fuel alert configs' hours: a year at most.
+const MAX_ALERT_HOURS: i64 = 8760;
+/// Fuel alert configs a page lists (aa-structures has no limit; this is
+/// the page's).
+const MAX_FUEL_CONFIGS: i64 = 100;
+/// Sync characters used per owner, rotated (aa-structures').
+const MAX_SYNC_CHARACTERS: i64 = 10;
+/// The job that reads notifications between syncs while an owner has more
+/// than one sync character, keyed so there's only ever one.
+const NOTIFICATIONS_JOB: &str = "notifications";
+/// How often it runs: about aa-structures' one-minute delay.
+const NOTIFICATIONS_GAP: Duration = Duration::seconds(60);
 /// Timers published for Structure Timers (the host's limit).
 const MAX_PUBLISHED: i64 = 500;
 /// The one-off job that publishes timers at once (after a settings change).
@@ -90,6 +106,7 @@ impl Plugin for Structures {
         match job.name.as_str() {
             "sync" => sync(),
             "relay" => relay(),
+            NOTIFICATIONS_JOB => notifications_between_syncs(),
             PUBLISH_JOB => publish_timers(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
@@ -175,10 +192,11 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
     }
     if let Some(corp) = path.strip_prefix("settings/owner/") {
         let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
-        if submission.form != "owner_routes" {
-            return Err(PageError::NotFound);
-        }
-        return save_owner_settings(viewer, corp, submission);
+        return match submission.form.as_str() {
+            "owner_routes" => save_owner_settings(viewer, corp, submission),
+            "owner_types" => save_owner_types(viewer, corp, submission),
+            _ => Err(PageError::NotFound),
+        };
     }
     // The settings pages' forms and row buttons are managers': checked
     // here too, not only by the host's page rule.
@@ -187,6 +205,9 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
     }
     match (path, submission.form.as_str()) {
         ("settings", "settings") => save_settings(viewer, submission),
+        ("settings", "types") => save_types(viewer, submission),
+        ("settings", "add_fuel_alert") => add_fuel_alert(viewer, submission),
+        ("settings", "delete_fuel_alert") => delete_fuel_alert(viewer, submission),
         // A row's Retry now, in the settings' owner table.
         ("settings", "retry") => retry_owner(viewer, submission),
         ("settings/tags", "save_tag") => tags::save_tag(viewer, submission),
@@ -295,13 +316,21 @@ struct Settings {
     fuel: Option<String>,
     state: Option<String>,
     moon: Option<String>,
-    /// Largest first.
-    thresholds: Vec<i64>,
-    mention: bool,
+    /// aa-structures' default pings: danger and warning notifications
+    /// mention the roles below.
+    default_pings: bool,
+    /// The states whose Discord roles stand in for @everyone (danger) and
+    /// @here (warning).
+    danger_ping: Option<String>,
+    warning_ping: Option<String>,
+    /// The types sent; none: every type.
+    notification_types: Option<Vec<String>>,
     /// Published timers are seen only by the owning corporation.
     timers_corporation_only: bool,
     /// The list shows structures with a default tag unless filtered.
     default_tags_filter: bool,
+    /// The largest enabled fuel alert's start: the Low fuel tab's hours.
+    low_fuel_hours: i64,
 }
 
 impl Settings {
@@ -315,25 +344,12 @@ impl Settings {
     }
 }
 
-/// "72, 24,6" into [72, 24, 6]: whole hours, 1 to 2160, at most 5.
-fn parse_thresholds(text: &str) -> Option<Vec<i64>> {
-    let mut hours = Vec::new();
-    for part in text.split(',') {
-        let h: i64 = part.trim().parse().ok()?;
-        if !(1..=MAX_THRESHOLD_HOURS).contains(&h) {
-            return None;
-        }
-        hours.push(h);
-    }
-    hours.sort_unstable_by(|a, b| b.cmp(a));
-    hours.dedup();
-    (!hours.is_empty() && hours.len() <= MAX_THRESHOLDS).then_some(hours)
-}
-
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
-        "SELECT attack_channel, fuel_channel, state_channel, moon_channel, fuel_thresholds, mention_members, \
-                timers_corporation_only, default_tags_filter \
+        "SELECT attack_channel, fuel_channel, state_channel, moon_channel, danger_ping, default_pings, \
+                timers_corporation_only, default_tags_filter, warning_ping, \
+                array_to_string(notification_types, ','), \
+                coalesce((SELECT max(start_hours) FROM fuel_alert_configs WHERE enabled), 72)::bigint \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -349,12 +365,11 @@ fn settings() -> Result<Settings, storage::Error> {
         fuel: channel(1),
         state: channel(2),
         moon: channel(3),
-        thresholds: row
-            .and_then(|r| r.get(4))
-            .and_then(Db::as_text)
-            .and_then(parse_thresholds)
-            .unwrap_or_else(|| vec![72, 24, 6]),
-        mention: row
+        danger_ping: channel(4),
+        warning_ping: channel(8),
+        notification_types: routing::type_list(row.and_then(|r| r.get(9))),
+        low_fuel_hours: row.map_or(72, |r| int(r, 10)),
+        default_pings: row
             .and_then(|r| r.get(5))
             .and_then(Db::as_bool)
             .unwrap_or(false),
@@ -494,23 +509,116 @@ impl Read {
     }
 }
 
+/// An owner's sync characters: the first [`MAX_SYNC_CHARACTERS`] added
+/// (aa-structures uses up to 10). Takes `$1`, the corporation.
+fn sync_characters() -> String {
+    format!(
+        "(SELECT character_id FROM (SELECT character_id, row_number() \
+         OVER (ORDER BY added_at, character_id) AS n FROM owners WHERE corporation_id = $1) x \
+         WHERE n <= {MAX_SYNC_CHARACTERS})"
+    )
+}
+
 /// The owner character to read a corporation with now, if its last read
 /// is old enough (the ESI cache) and one isn't backing off.
+///
+/// Notifications rotate through the owner's sync characters, as
+/// aa-structures': ESI caches each character's for ten minutes, so with N
+/// of them the corporation is read every 9/N minutes, each character
+/// still at most every 9.
 fn pick_owner(corp: i64, read: Read) -> Result<Option<i64>, JobError> {
     let c = read.column();
+    let sc = sync_characters();
+    let (gap, own) = match read {
+        Read::Notifications => (
+            format!(
+                "make_interval(secs => 540.0 / greatest(1, (SELECT count(*) FROM owners u \
+                 WHERE u.corporation_id = $1 AND u.character_id IN {sc} \
+                   AND (u.{c}_retry_at IS NULL OR u.{c}_retry_at <= now()))))"
+            ),
+            format!(
+                "AND (o.{c}_at IS NULL OR o.{c}_at <= now() - interval '{}')",
+                read.every()
+            ),
+        ),
+        _ => (format!("interval '{}'", read.every()), String::new()),
+    };
     let rows = storage::query(
         &format!(
             "SELECT character_id FROM owners o \
-             WHERE corporation_id = $1 AND ({c}_retry_at IS NULL OR {c}_retry_at <= now()) \
+             WHERE corporation_id = $1 AND character_id IN {sc} \
+               AND ({c}_retry_at IS NULL OR {c}_retry_at <= now()) {own} \
                AND NOT EXISTS (SELECT 1 FROM owners f WHERE f.corporation_id = $1 \
-                   AND f.{c}_at > now() - interval '{}') \
-             ORDER BY {c}_failures, character_id LIMIT 1",
-            read.every()
+                   AND f.{c}_at > now() - {gap}) \
+             ORDER BY {c}_failures, {c}_at NULLS FIRST, character_id LIMIT 1"
         ),
         &[corp.into()],
     )
     .map_err(|e| retry("picking an owner", e))?;
     Ok(rows.rows.first().map(|r| int(r, 0)))
+}
+
+/// Reads one corporation's notifications if one of its sync characters
+/// is due. Whether any were read.
+fn read_notifications(budget: &mut Budget, corp: i64) -> Result<bool, JobError> {
+    let Some(owner) = pick_owner(corp, Read::Notifications)? else {
+        return Ok(false);
+    };
+    let outcome = call(
+        budget,
+        "corporation-structure-notifications",
+        Subject::DataSource(owner),
+        &[],
+        false,
+    );
+    if let Outcome::Ok(bodies) = &outcome {
+        store_notifications(corp, bodies)?;
+    }
+    record(owner, Read::Notifications, &outcome)?;
+    Ok(matches!(outcome, Outcome::Ok(_)))
+}
+
+/// Owners with more than one usable sync character: those whose
+/// notifications are read between syncs.
+fn rotating_owners() -> Result<Vec<i64>, JobError> {
+    let rows = storage::query(
+        "SELECT corporation_id FROM owners \
+         WHERE notifications_retry_at IS NULL OR notifications_retry_at <= now() \
+         GROUP BY corporation_id HAVING count(*) > 1",
+        &[],
+    )
+    .map_err(|e| retry("reading owners", e))?;
+    Ok(rows.rows.iter().map(|r| int(r, 0)).collect())
+}
+
+/// Queues the between-syncs notification reads in a minute while an owner
+/// has more than one sync character.
+fn queue_notifications() -> Result<(), JobError> {
+    if rotating_owners()?.is_empty() {
+        return Ok(());
+    }
+    jobs::enqueue(
+        NewJob::new(NOTIFICATIONS_JOB)
+            .key(NOTIFICATIONS_JOB)
+            .at(rfc3339(Utc::now() + NOTIFICATIONS_GAP)),
+    )
+    .map_err(|e| retry("queuing notification reads", e))
+}
+
+/// Between syncs: notifications of owners with several sync characters,
+/// relayed at once (aa-structures' rotation, about a minute's delay).
+/// Structures, timers and alerts wait for the sync.
+fn notifications_between_syncs() -> Result<(), JobError> {
+    let mut budget = Budget(ESI_BUDGET);
+    let mut read = false;
+    for corp in rotating_owners()? {
+        read |= read_notifications(&mut budget, corp)?;
+    }
+    if read {
+        handle_notifications()?;
+        queue_relay(None)?;
+    }
+    queue_notifications()
 }
 
 fn record(owner: i64, read: Read, outcome: &Outcome) -> Result<(), JobError> {
@@ -555,6 +663,7 @@ fn sync() -> Result<(), JobError> {
     let published = publish_timers();
     synced?;
     published?;
+    queue_notifications()?;
     queue_relay(None)
 }
 
@@ -566,19 +675,7 @@ fn sync_steps() -> Result<(), JobError> {
     }
     let mut budget = Budget(ESI_BUDGET);
     for &corp in &corporations {
-        if let Some(owner) = pick_owner(corp, Read::Notifications)? {
-            let outcome = call(
-                &mut budget,
-                "corporation-structure-notifications",
-                Subject::DataSource(owner),
-                &[],
-                false,
-            );
-            if let Outcome::Ok(bodies) = &outcome {
-                store_notifications(corp, bodies)?;
-            }
-            record(owner, Read::Notifications, &outcome)?;
-        }
+        read_notifications(&mut budget, corp)?;
         if let Some(owner) = pick_owner(corp, Read::Structures)? {
             let outcome = call(
                 &mut budget,
@@ -1075,9 +1172,10 @@ fn handle_notifications() -> Result<(), JobError> {
         }
         let category = notification::category(&kind);
         let channel = category.and_then(|c| routes.channel(corp, c));
-        if let (Some(category), Some(channel)) = (category, channel)
+        if let (Some(_), Some(channel)) = (category, channel)
             && ours
             && now - at <= RELAY_WITHIN
+            && routes.sends(corp, &kind)
         {
             let cx = Context {
                 structure: row.get(6).and_then(Db::as_text).map(str::to_owned),
@@ -1085,13 +1183,16 @@ fn handle_notifications() -> Result<(), JobError> {
             };
             if let Some(message) = notification::message(&kind, fields, at, &cx) {
                 statements.push(Statement::new(
-                    "INSERT INTO outbox (key, channel, message, mention) VALUES ($1, $2, $3, $4) \
+                    "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
                      ON CONFLICT (key) DO NOTHING",
                     vec![
                         format!("notification:{id}").into(),
                         channel.into(),
                         message.into(),
-                        (routes.mention(corp) && category == Category::Attack).into(),
+                        routes
+                            .ping(corp, notification::severity(&kind))
+                            .map(str::to_owned)
+                            .into(),
                     ],
                 ));
             }
@@ -1101,59 +1202,59 @@ fn handle_notifications() -> Result<(), JobError> {
     Ok(())
 }
 
-/// Tether's low-fuel alerts (aa-structures' fuel alerts), for Upwell
-/// structures (a Metenox's gas counted) and starbases: one per structure
-/// as its fuel falls under each threshold, again after it's refuelled
-/// above it. A structure whose owner sends fuel alerts nowhere isn't
-/// marked, so it's alerted once a channel is picked.
+/// aa-structures' fuel alert configs, for Upwell structures (a Metenox's
+/// gas counted) and starbases: an alert when a structure's fuel runs out
+/// within a config's range, again every `repeat` hours while it stays
+/// there (never if 0), pinging at the config's level (with the owner's
+/// pings on). Out of the range (refuelled, or burnt past it), the config
+/// may alert again later. Sent to the owner's fuel channel, if it sends
+/// fuel alerts (the StructureFuelAlert or TowerResourceAlertMsg type); a
+/// structure alerted nowhere isn't marked, so it's alerted once a channel
+/// is picked.
 fn fuel_alerts() -> Result<(), JobError> {
     let settings = settings().map_err(|e| retry("reading settings", e))?;
     let routes = Routes::load(&settings).map_err(|e| retry("reading routes", e))?;
-    // Refuelled (or gone): the alerts reset.
     storage::execute(
-        "DELETE FROM fuel_alerts f WHERE NOT EXISTS (SELECT 1 FROM structures s \
-             WHERE s.structure_id = f.structure_id AND s.fuel_expires IS NOT NULL \
-               AND s.fuel_expires <= now() + make_interval(hours => f.hours))",
+        "DELETE FROM fuel_alerts_sent a WHERE NOT EXISTS (SELECT 1 FROM structures s \
+             JOIN fuel_alert_configs c ON c.id = a.config_id \
+             WHERE s.structure_id = a.structure_id AND s.fuel_expires IS NOT NULL \
+               AND s.fuel_expires <= now() + make_interval(hours => c.start_hours) \
+               AND s.fuel_expires > now() + make_interval(hours => c.end_hours))",
         &[],
     )
     .map_err(|e| retry("resetting fuel alerts", e))?;
+    let due = storage::query(
+        "SELECT s.structure_id, s.corporation_id, c.id, c.start_hours, c.ping, s.kind, \
+                coalesce(extract(epoch FROM a.sent_at)::bigint, 0) \
+         FROM structures s JOIN fuel_alert_configs c ON c.enabled \
+         LEFT JOIN fuel_alerts_sent a ON a.structure_id = s.structure_id AND a.config_id = c.id \
+         WHERE s.kind IN ('upwell', 'starbase') AND s.fuel_expires IS NOT NULL AND s.fuel_expires > now() \
+           AND s.fuel_expires <= now() + make_interval(hours => c.start_hours) \
+           AND s.fuel_expires > now() + make_interval(hours => c.end_hours) \
+           AND (a.sent_at IS NULL OR (c.repeat_hours > 0 \
+               AND a.sent_at <= now() - make_interval(hours => c.repeat_hours))) \
+         ORDER BY s.fuel_expires, c.id LIMIT 200",
+        &[],
+    )
+    .map_err(|e| retry("finding low fuel", e))?;
     let now = Utc::now();
-    // Largest first: a structure under several thresholds at once gets
-    // one alert, for the smallest.
-    let mut alerts: Vec<(i64, i64, i64)> = Vec::new();
-    for hours in &settings.thresholds {
-        let crossed = storage::query(
-            "SELECT structure_id, corporation_id FROM structures s \
-             WHERE kind IN ('upwell', 'starbase') AND fuel_expires IS NOT NULL AND fuel_expires > now() \
-               AND fuel_expires <= now() + make_interval(hours => $1::integer) \
-               AND NOT EXISTS (SELECT 1 FROM fuel_alerts f WHERE f.structure_id = s.structure_id AND f.hours = $1)",
-            &[(*hours).into()],
-        )
-        .map_err(|e| retry("finding low fuel", e))?;
-        for row in &crossed.rows {
-            let (structure, corp) = (int(row, 0), int(row, 1));
-            if routes.channel(corp, Category::Fuel).is_none() {
-                continue;
-            }
-            alerts.retain(|(s, _, _)| *s != structure);
-            alerts.push((structure, corp, *hours));
-        }
-    }
-    for &(structure, _, _) in &alerts {
-        // Every threshold it's under now is marked, the smallest alerted.
-        storage::execute(
-            "INSERT INTO fuel_alerts (structure_id, hours) \
-             SELECT $1, h FROM unnest(string_to_array($2, ',')::integer[]) AS h \
-             WHERE EXISTS (SELECT 1 FROM structures s WHERE s.structure_id = $1 \
-                 AND s.fuel_expires <= now() + make_interval(hours => h)) \
-             ON CONFLICT DO NOTHING",
-            &[structure.into(), id_list(&settings.thresholds).into()],
-        )
-        .map_err(|e| retry("recording fuel alerts", e))?;
-    }
-    for (structure, corp, hours) in alerts {
+    for alert in &due.rows {
+        let (structure, corp, config) = (int(alert, 0), int(alert, 1), int(alert, 2));
+        let kind = if text(alert, 5) == "starbase" {
+            "TowerResourceAlertMsg"
+        } else {
+            "StructureFuelAlert"
+        };
         let Some(channel) = routes.channel(corp, Category::Fuel) else {
             continue;
+        };
+        if !routes.sends(corp, kind) {
+            continue;
+        }
+        let ping = match text(alert, 4).as_str() {
+            "danger" => routes.ping(corp, notification::Severity::Danger),
+            "warning" => routes.ping(corp, notification::Severity::Warning),
+            _ => None,
         };
         let rows = storage::query(
             "SELECT s.name, coalesce(t.name, ''), coalesce(y.name, n.name, ''), s.fuel_expires, s.kind, \
@@ -1184,18 +1285,29 @@ fn fuel_alerts() -> Result<(), JobError> {
             "fuel"
         };
         let message = format!(
-            "Low fuel: {place} runs out of {what} in {} ({} EVE), under the {hours}-hour alert.",
+            "Low fuel: {place} runs out of {what} in {} ({} EVE), under the {}-hour alert.",
             left(expires - now),
-            expires.format("%Y-%m-%d %H:%M")
+            expires.format("%Y-%m-%d %H:%M"),
+            int(alert, 3)
         );
-        storage::execute(
-            "INSERT INTO outbox (key, channel, message) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING",
-            &[
-                format!("fuel:{structure}:{hours}:{}", expires.timestamp()).into(),
-                channel.into(),
-                message.into(),
-            ],
-        )
+        storage::transaction(&[
+            Statement::new(
+                "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (key) DO NOTHING",
+                vec![
+                    // Once per alert and repeat: after the last one sent.
+                    format!("fuel:{structure}:{config}:{}", int(alert, 6)).into(),
+                    channel.into(),
+                    message.into(),
+                    ping.map(str::to_owned).into(),
+                ],
+            ),
+            Statement::new(
+                "INSERT INTO fuel_alerts_sent (structure_id, config_id) VALUES ($1, $2) \
+                 ON CONFLICT (structure_id, config_id) DO UPDATE SET sent_at = now()",
+                vec![structure.into(), config.into()],
+            ),
+        ])
         .map_err(|e| retry("queuing a fuel alert", e))?;
     }
     Ok(())
@@ -1229,7 +1341,7 @@ fn publish_timers() -> Result<(), JobError> {
                  LEFT JOIN names tn ON tn.id = s.type_id \
                  LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
                  LEFT JOIN names o ON o.id = s.corporation_id \
-                 WHERE t.at > now() - interval '1 day' \
+                 WHERE t.at > now() - interval '1 day' AND t.kind <> 'Unanchoring' \
                  ORDER BY t.structure_id, t.kind, t.at DESC) latest \
              ORDER BY 3, 1, 2 LIMIT {MAX_PUBLISHED}"
         ),
@@ -1295,8 +1407,8 @@ fn relay() -> Result<(), JobError> {
     )
     .map_err(|e| retry("expiring messages", e))?;
     let waiting = storage::query(
-        "SELECT id, channel, message, mention FROM outbox WHERE sent_at IS NULL AND failed IS NULL \
-         ORDER BY id LIMIT $1",
+        "SELECT id, channel, message, coalesce(mention_state, CASE WHEN mention THEN 'Member' END) \
+         FROM outbox WHERE sent_at IS NULL AND failed IS NULL ORDER BY id LIMIT $1",
         &[count(SENDS_PER_RUN).into()],
     )
     .map_err(|e| retry("reading the outbox", e))?;
@@ -1316,19 +1428,20 @@ fn relay() -> Result<(), JobError> {
             continue;
         }
         let (channel, message) = (text(row, 1), text(row, 2));
-        let mention = row.get(3).and_then(Db::as_bool).unwrap_or(false);
+        let mention = row.get(3).and_then(Db::as_text).map(str::to_owned);
         sends += 1;
         let mut result = discord::send(
             &channel,
             &message,
-            if mention {
-                Mention::State("Member".into())
-            } else {
-                Mention::None
+            match &mention {
+                Some(state) => Mention::State(state.clone()),
+                None => Mention::None,
             },
         );
-        // No role mapped to Member: send it without the mention.
-        if mention && matches!(result, Err(discord::Error::NotAllowed(_))) && sends < SENDS_PER_RUN
+        // No role mapped to that state: send it without the mention.
+        if mention.is_some()
+            && matches!(result, Err(discord::Error::NotAllowed(_)))
+            && sends < SENDS_PER_RUN
         {
             sends += 1;
             result = discord::send(&channel, &message, Mention::None);
@@ -1491,7 +1604,9 @@ fn fuel_cells(row: &[Db], now: DateTime<Utc>, alert: i64) -> (Value, Value) {
     }
 }
 
-fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
+/// A structure's row. `unanchoring`: the viewer holds
+/// view_all_unanchoring_status (aa-structures' Unanchoring until).
+fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) -> Vec<Value> {
     let (expires, remaining) = fuel_cells(row, now, alert);
     let reinforce = match (opt_int(row, 10), opt_int(row, 11), when(row, 12)) {
         (Some(h), Some(next), Some(from)) => format!(
@@ -1515,8 +1630,13 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
         } else {
             "".into()
         },
-        state_badge(&text(row, 8)),
-        when(row, 9).map_or_else(|| "".into(), |t| upcoming(t, now)),
+        match when(row, 20).filter(|_| unanchoring) {
+            Some(_) => badge("Unanchoring", Tone::Warning).into(),
+            None => state_badge(&text(row, 8)),
+        },
+        when(row, 9)
+            .or_else(|| when(row, 20).filter(|_| unanchoring))
+            .map_or_else(|| "".into(), |t| upcoming(t, now)),
         reinforce.into(),
         if upwell {
             detail::core_badge(row.get(15).and_then(Db::as_bool))
@@ -1550,10 +1670,10 @@ fn structure_table(title: &str, empty: &str, rows: Vec<Vec<Value>>) -> Table {
     )
 }
 
-fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
+fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) -> Vec<Value> {
     let (expires, remaining) = fuel_cells(row, now, alert);
-    // Reinforced until, or unanchoring at.
-    let timer = when(row, 9).or_else(|| when(row, 20));
+    // Reinforced until, or (with view_all_unanchoring_status) unanchoring at.
+    let timer = when(row, 9).or_else(|| when(row, 20).filter(|_| unanchoring));
     vec![
         owner_value(int(row, 21), text(row, 13)),
         name_link(row),
@@ -1658,7 +1778,9 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         ));
     };
     let settings = settings().map_err(|e| failed("reading settings", e))?;
-    let alert = settings.thresholds.first().copied().unwrap_or(72);
+    let alert = settings.low_fuel_hours;
+    // aa-structures shows unanchoring only with this permission.
+    let unanchoring = viewer.can("view_all_unanchoring_status");
     let all_tags = tags::all_visible(&visible).map_err(|e| failed("reading tags", e))?;
     let default_filter = settings.default_tags_filter && filter.tags.is_none();
     let mut params = visible.clone();
@@ -1734,9 +1856,10 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
              FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
              LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
              LEFT JOIN names o ON o.id = s.corporation_id \
-             {scope} AND t.at > now() ORDER BY t.at LIMIT {TIMER_ROWS}"
+             {scope} AND t.at > now() AND ($8 OR t.kind <> 'Unanchoring') \
+             ORDER BY t.at LIMIT {TIMER_ROWS}"
         ),
-        &params,
+        &[params.clone(), vec![unanchoring.into()]].concat(),
     )
     .map_err(|e| failed("reading timers", e))?;
     let owners = storage::query(
@@ -1763,7 +1886,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
     let rows_of = |rows: &storage::Rows| -> Vec<Vec<Value>> {
         rows.rows
             .iter()
-            .map(|r| structure_row(r, now, alert))
+            .map(|r| structure_row(r, now, alert, unanchoring))
             .collect()
     };
     let mut list = Vec::new();
@@ -1899,7 +2022,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
                 starbases
                     .rows
                     .iter()
-                    .map(|r| starbase_row(r, now, alert))
+                    .map(|r| starbase_row(r, now, alert, unanchoring))
                     .collect(),
             ))],
         )
@@ -2070,7 +2193,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         .field(channel_field(
             "fuel_channel",
             "Fuel and services",
-            "EVE's fuel alerts, services offline, low power, and Tether's low-fuel alerts below.",
+            "EVE's fuel alerts, services offline, low power, and the fuel alerts below.",
             settings.fuel.as_deref(),
         ))
         .field(channel_field(
@@ -2086,23 +2209,25 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             settings.moon.as_deref(),
         ))
         .field(
-            Field::text("fuel_thresholds", "Low-fuel alerts (hours left)", 40)
-                .value(
-                    settings
-                        .thresholds
-                        .iter()
-                        .map(i64::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                )
-                .help("Tether posts once as a structure's fuel falls under each, e.g. 72, 24, 6 (at most 5, up to 2160).")
-                .required(),
+            Field::checkbox("default_pings", "Default pings", settings.default_pings).help(
+                "aa-structures' default pings: danger notifications ping @everyone and warnings \
+                 @here. Tether's bot mentions the Discord roles of these states instead.",
+            ),
         )
-        .field(Field::checkbox(
-            "mention_members",
-            "Mention Members on attacks (the Discord role mapped to Member)",
-            settings.mention,
-        ))
+        .field(
+            Field::text("danger_ping", "Danger pings mention the role of state", 64)
+                .value(settings.danger_ping.clone().unwrap_or_default())
+                .help("aa-structures' @everyone, e.g. Member. Empty: no mention."),
+        )
+        .field(
+            Field::text(
+                "warning_ping",
+                "Warning pings mention the role of state",
+                64,
+            )
+            .value(settings.warning_ping.clone().unwrap_or_default())
+            .help("aa-structures' @here. Empty: no mention."),
+        )
         .field(
             Field::checkbox(
                 "timers_corporation_only",
@@ -2157,7 +2282,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::numeric("Next try"),
             Column::text(""),
         ])
-        .title("Owners")
+        .title("Owners' sync characters")
         .empty("No owners yet: Add owner (top right) logs in with a Station Manager."),
         owner_rows,
     );
@@ -2188,7 +2313,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     let routing = storage::query(
         "SELECT o.corporation_id, coalesce(n.name, 'Corporation ' || o.corporation_id::text), \
              (SELECT count(*) FROM owner_channels c WHERE c.corporation_id = o.corporation_id), \
-             coalesce(w.mention, 'default'), coalesce(w.pocos_public, false) \
+             coalesce(w.mention, 'default'), coalesce(w.pocos_public, false), \
+             cardinality(w.notification_types) \
          FROM (SELECT DISTINCT corporation_id FROM owners) o \
          LEFT JOIN names n ON n.id = o.corporation_id \
          LEFT JOIN owner_settings w ON w.corporation_id = o.corporation_id ORDER BY 2",
@@ -2199,7 +2325,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         Table::new(vec![
             Column::text("Owner"),
             Column::text("Channels"),
-            Column::text("Mention on attacks"),
+            Column::text("Types"),
+            Column::text("Pings"),
             Column::text("Customs offices public"),
         ])
         .title("Owners' Discord routing")
@@ -2214,9 +2341,14 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                     format!("Its own for {own} of 4 kinds")
                 }
                 .into(),
+                match opt_int(r, 5) {
+                    Some(n) => format!("Its own: {n}"),
+                    None => "The defaults".to_owned(),
+                }
+                .into(),
                 match text(r, 3).as_str() {
-                    "on" => "Yes",
-                    "off" => "No",
+                    "on" => "On",
+                    "off" => "Off",
                     _ => "The default",
                 }
                 .into(),
@@ -2229,42 +2361,58 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             ]
         }),
     );
+    let mut types = Form::new("types", "Save types")
+        .title("Notification types")
+        .description(
+            "Which notification types are sent (aa-structures' webhook filters), with their \
+             severity. These are the defaults; an owner can pick its own.",
+        );
+    for (kind, label, severity) in notification::TYPES {
+        types = types.field(Field::checkbox(
+            type_field(kind),
+            format!("{label} ({})", severity_name(severity)),
+            settings
+                .notification_types
+                .as_ref()
+                .is_none_or(|t| t.iter().any(|k| k == kind)),
+        ));
+    }
     Ok(page
         .form(form)
+        .form(types)
+        .table(fuel_alert_table()?)
+        .form(fuel_alert_form())
         .table(routing_table)
         .table(owner_table)
         .text(
             "An owner ESI refused (a lost role or token) is left alone for an hour, doubling up \
-             to a day. Once it's fixed in game, Retry now reads it again.",
+             to a day. Once it's fixed in game, Retry now reads it again. As aa-structures, an \
+             owner can have up to 10 sync characters (Add owner with another of its Station \
+             Managers): they take turns reading notifications, cutting the delay from about ten \
+             minutes to one.",
         )
         .table(sent_table))
 }
 
 fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
-    let Some(thresholds) = parse_thresholds(submission.value("fuel_thresholds")) else {
-        return Ok(SubmitResult::Page(settings_page(Some(
-            "Write the low-fuel alerts as hours separated by commas, e.g. 72, 24, 6: whole \
-             numbers from 1 to 2160, at most 5.",
-        ))?));
-    };
-    let thresholds = id_list(&thresholds);
     let channel = |name: &str| {
-        let c = submission.value(name);
+        let c = submission.value(name).trim();
         (!c.is_empty()).then(|| c.to_owned())
     };
     storage::execute(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
-         moon_channel = $4, fuel_thresholds = $5, mention_members = $6, \
+         moon_channel = $4, default_pings = $5, danger_ping = $6, warning_ping = $9, \
          timers_corporation_only = $7, default_tags_filter = $8 WHERE id = 1",
         &[
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
             channel("state_channel").into(),
             channel("moon_channel").into(),
-            thresholds.as_str().into(),
-            submission.checked("mention_members").into(),
+            submission.checked("default_pings").into(),
+            channel("danger_ping").into(),
             submission.checked("timers_corporation_only").into(),
             submission.checked("default_tags_filter").into(),
+            channel("warning_ping").into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
@@ -2272,16 +2420,207 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     jobs::enqueue(NewJob::new(PUBLISH_JOB).key(PUBLISH_JOB))
         .map_err(|e| failed("queuing the timers", e))?;
     log::info(format!(
-        "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, alerts at {thresholds}h, mention {}, \
-         timers corporation-only {}",
+        "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, \
+         default pings {} (danger {:?}, warning {:?}), timers corporation-only {}",
         viewer.main.name,
         viewer.main.id,
         channel("attack_channel"),
         channel("fuel_channel"),
         channel("state_channel"),
         channel("moon_channel"),
-        submission.checked("mention_members"),
+        submission.checked("default_pings"),
+        channel("danger_ping"),
+        channel("warning_ping"),
         submission.checked("timers_corporation_only"),
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// A notification type's checkbox name.
+fn type_field(kind: &str) -> String {
+    format!("t_{}", kind.to_ascii_lowercase())
+}
+
+fn severity_name(severity: notification::Severity) -> &'static str {
+    match severity {
+        notification::Severity::Danger => "danger",
+        notification::Severity::Warning => "warning",
+        notification::Severity::Info => "info",
+    }
+}
+
+/// The types ticked on a types form, as stored (a comma list; all of
+/// them is stored as none, meaning every type, new ones included).
+fn ticked_types(submission: &Submission) -> Option<String> {
+    let ticked: Vec<&str> = notification::TYPES
+        .iter()
+        .map(|(kind, _, _)| *kind)
+        .filter(|kind| submission.checked(&type_field(kind)))
+        .collect();
+    (ticked.len() < notification::TYPES.len()).then(|| ticked.join(","))
+}
+
+fn save_types(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let types = ticked_types(submission);
+    storage::execute(
+        "UPDATE settings SET notification_types = string_to_array($1, ',') WHERE id = 1",
+        &[types.clone().into()],
+    )
+    .map_err(|e| failed("saving the types", e))?;
+    log::info(format!(
+        "notification types set by {} ({}): {}",
+        viewer.main.name,
+        viewer.main.id,
+        types.as_deref().unwrap_or("every type")
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+// ---- fuel alert configs ------------------------------------------------------
+
+/// aa-structures' fuel alert configs, each with Delete.
+fn fuel_alert_table() -> Result<Table, PageError> {
+    let rows = storage::query(
+        &format!(
+            "SELECT id, start_hours, end_hours, repeat_hours, ping, enabled FROM fuel_alert_configs \
+             ORDER BY start_hours DESC, id LIMIT {MAX_FUEL_CONFIGS}"
+        ),
+        &[],
+    )
+    .map_err(|e| failed("reading fuel alerts", e))?;
+    Ok(with_rows(
+        Table::new(vec![
+            Column::numeric("Start (hours left)"),
+            Column::numeric("End (hours left)"),
+            Column::numeric("Repeat (hours)"),
+            Column::text("Ping"),
+            Column::text(""),
+        ])
+        .title("Fuel alerts")
+        .empty("No fuel alerts: add one below."),
+        rows.rows.iter().map(|r| {
+            let (start, end) = (int(r, 1), int(r, 2));
+            vec![
+                start.into(),
+                end.into(),
+                match int(r, 3) {
+                    0 => "Once".into(),
+                    h => h.into(),
+                },
+                match text(r, 4).as_str() {
+                    "danger" => "Danger role",
+                    "warning" => "Warning role",
+                    _ => "None",
+                }
+                .into(),
+                action("Delete", "delete_fuel_alert")
+                    .field("config", int(r, 0).to_string())
+                    .tone(Tone::Danger)
+                    .confirm(format!(
+                        "The alert between {start} and {end} hours of fuel left is deleted."
+                    ))
+                    .into(),
+            ]
+        }),
+    ))
+}
+
+fn fuel_alert_form() -> Form {
+    let hours = |name: &str, label: &str, min: f64, help: &str| {
+        Field::number(name, label)
+            .range(Some(min), Some(MAX_ALERT_HOURS as f64), true)
+            .help(help)
+            .required()
+    };
+    Form::new("add_fuel_alert", "Add fuel alert")
+        .description(
+            "aa-structures' fuel alert configs, any number: an alert on the owner's fuel channel \
+             when a structure (Upwell or starbase) has at most Start and more than End hours of \
+             fuel left, again every Repeat hours while it stays there.",
+        )
+        .field(hours("start_hours", "Start (hours left)", 1.0, "e.g. 48"))
+        .field(hours(
+            "end_hours",
+            "End (hours left)",
+            0.0,
+            "Less than Start, e.g. 0",
+        ))
+        .field(
+            Field::number("repeat_hours", "Repeat (hours)")
+                .range(Some(0.0), Some(MAX_ALERT_HOURS as f64), true)
+                .value("0")
+                .help("0: once in the range.")
+                .required(),
+        )
+        .field(
+            Field::select(
+                "ping",
+                "Ping",
+                vec![
+                    ("none".to_owned(), "None".to_owned()),
+                    ("warning".to_owned(), "Warning role (@here)".to_owned()),
+                    ("danger".to_owned(), "Danger role (@everyone)".to_owned()),
+                ],
+            )
+            .value("none")
+            .required(),
+        )
+}
+
+fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let number = |name: &str| -> Result<i64, PageError> {
+        submission
+            .value(name)
+            .parse()
+            .map_err(|_| PageError::Failed(format!("{name} wasn't a whole number")))
+    };
+    let (start, end, repeat) = (
+        number("start_hours")?,
+        number("end_hours")?,
+        number("repeat_hours")?,
+    );
+    let ping = submission.value("ping");
+    if !matches!(ping, "none" | "warning" | "danger") {
+        return Err(PageError::NotFound);
+    }
+    if end >= start {
+        return Ok(SubmitResult::Page(settings_page(Some(
+            "A fuel alert's End must be less than its Start: it alerts between them.",
+        ))?));
+    }
+    let added = storage::execute(
+        &format!(
+            "INSERT INTO fuel_alert_configs (start_hours, end_hours, repeat_hours, ping) \
+             SELECT $1, $2, $3, $4 WHERE (SELECT count(*) FROM fuel_alert_configs) < {MAX_FUEL_CONFIGS}"
+        ),
+        &[start.into(), end.into(), repeat.into(), ping.into()],
+    )
+    .map_err(|e| failed("adding the fuel alert", e))?;
+    if added == 0 {
+        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+            "At most {MAX_FUEL_CONFIGS} fuel alerts: delete one first."
+        )))?));
+    }
+    log::info(format!(
+        "fuel alert {start}h to {end}h (repeat {repeat}h, ping {ping}) added by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+fn delete_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let config: i64 = submission
+        .value("config")
+        .parse()
+        .map_err(|_| PageError::NotFound)?;
+    storage::execute(
+        "DELETE FROM fuel_alert_configs WHERE id = $1",
+        &[config.into()],
+    )
+    .map_err(|e| failed("deleting the fuel alert", e))?;
+    log::info(format!(
+        "fuel alert {config} deleted by {} ({})",
+        viewer.main.name, viewer.main.id
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }
@@ -2352,10 +2691,12 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
     )
     .map_err(|e| failed("reading routes", e))?;
     let own = storage::query(
-        "SELECT mention, pocos_public FROM owner_settings WHERE corporation_id = $1",
+        "SELECT mention, pocos_public, array_to_string(notification_types, ',') \
+         FROM owner_settings WHERE corporation_id = $1",
         &[corp.into()],
     )
     .map_err(|e| failed("reading owner settings", e))?;
+    let own_types = own.rows.first().and_then(|r| routing::type_list(r.get(2)));
     let mention = own
         .rows
         .first()
@@ -2393,17 +2734,21 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
         .field(
             Field::select(
                 "mention",
-                "Mention Members on attacks",
+                "Pings",
                 vec![
                     (
                         "default".to_owned(),
-                        format!("Default ({})", if settings.mention { "yes" } else { "no" }),
+                        format!(
+                            "Default ({})",
+                            if settings.default_pings { "on" } else { "off" }
+                        ),
                     ),
-                    ("on".to_owned(), "Yes".to_owned()),
-                    ("off".to_owned(), "No".to_owned()),
+                    ("on".to_owned(), "On".to_owned()),
+                    ("off".to_owned(), "Off".to_owned()),
                 ],
             )
             .value(mention)
+            .help("aa-structures' default pings for this owner: danger and warning notifications mention the settings' roles.")
             .required(),
         )
         .field(
@@ -2412,9 +2757,74 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
                  open Structures (aa-structures' public customs offices).",
             ),
         );
+    let mut types = Form::new("owner_types", "Save types")
+        .title("Notification types")
+        .description("Which types this owner sends: the settings' defaults, or its own.")
+        .field(
+            Field::select(
+                "types_from",
+                "Types",
+                vec![
+                    ("default".to_owned(), "The defaults".to_owned()),
+                    ("own".to_owned(), "Its own, ticked below".to_owned()),
+                ],
+            )
+            .value(if own_types.is_some() {
+                "own"
+            } else {
+                "default"
+            })
+            .required(),
+        );
+    let shown = own_types.or_else(|| settings.notification_types.clone());
+    for (kind, label, severity) in notification::TYPES {
+        types = types.field(Field::checkbox(
+            type_field(kind),
+            format!("{label} ({})", severity_name(severity)),
+            shown.as_ref().is_none_or(|t| t.iter().any(|k| k == kind)),
+        ));
+    }
     Ok(Page::new(format!("Structures owner: {name}"))
         .description("Discord routing for one owner")
-        .form(form))
+        .form(form)
+        .form(types))
+}
+
+fn save_owner_types(
+    viewer: &Viewer,
+    corp: i64,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    if owner_name(corp)?.is_none() {
+        return Err(PageError::NotFound);
+    }
+    // Its own list (every type ticked is stored as the empty-but-set
+    // list of all of them, so new types stay off for it).
+    let types = match submission.value("types_from") {
+        "default" => None,
+        "own" => Some(ticked_types(submission).unwrap_or_else(|| {
+            notification::TYPES
+                .iter()
+                .map(|(k, _, _)| *k)
+                .collect::<Vec<_>>()
+                .join(",")
+        })),
+        _ => return Err(PageError::NotFound),
+    };
+    storage::execute(
+        "INSERT INTO owner_settings (corporation_id, notification_types) \
+         VALUES ($1, string_to_array($2, ',')) \
+         ON CONFLICT (corporation_id) DO UPDATE SET notification_types = EXCLUDED.notification_types",
+        &[corp.into(), types.clone().into()],
+    )
+    .map_err(|e| failed("saving the owner's types", e))?;
+    log::info(format!(
+        "owner {corp} types set by {} ({}): {}",
+        viewer.main.name,
+        viewer.main.id,
+        types.as_deref().unwrap_or("the defaults")
+    ));
+    Ok(SubmitResult::Redirect(format!("settings/owner/{corp}")))
 }
 
 fn save_owner_settings(
@@ -2496,17 +2906,6 @@ fn retry_owner(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn thresholds_are_whole_hours_largest_first() {
-        assert_eq!(parse_thresholds("6, 72,24"), Some(vec![72, 24, 6]));
-        assert_eq!(parse_thresholds("24,24"), Some(vec![24]));
-        assert_eq!(parse_thresholds(""), None);
-        assert_eq!(parse_thresholds("0"), None);
-        assert_eq!(parse_thresholds("2161"), None);
-        assert_eq!(parse_thresholds("1,2,3,4,5,6"), None);
-        assert_eq!(parse_thresholds("1.5"), None);
-    }
 
     #[test]
     fn time_left_reads_short() {

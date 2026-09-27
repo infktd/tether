@@ -763,6 +763,9 @@ pub fn starbase_reinforcements() -> Result<(), JobError> {
         let Some(channel) = routes.channel(corp, Category::Attack) else {
             continue;
         };
+        if !routes.sends(corp, notification::STARBASE_REINFORCED) {
+            continue;
+        }
         let mut place = notification::escape(&text(row, 2));
         for (i, fmt) in [(3, " ({})"), (4, " at {}"), (5, " in {}")] {
             let value = text(row, i);
@@ -775,13 +778,19 @@ pub fn starbase_reinforcements() -> Result<(), JobError> {
             until.format("%Y-%m-%d %H:%M")
         );
         storage::execute(
-            "INSERT INTO outbox (key, channel, message, mention) VALUES ($1, $2, $3, $4) \
+            "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (key) DO NOTHING",
             &[
                 format!("pos-reinforced:{id}:{}", until.timestamp()).into(),
                 channel.into(),
                 message.into(),
-                routes.mention(corp).into(),
+                routes
+                    .ping(
+                        corp,
+                        notification::severity(notification::STARBASE_REINFORCED),
+                    )
+                    .map(str::to_owned)
+                    .into(),
             ],
         )
         .map_err(|e| retry("queuing a starbase message", e))?;

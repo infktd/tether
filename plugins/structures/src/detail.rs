@@ -99,7 +99,8 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
     if let Some(t) = when(row, 9) {
         general = general.field("State timer", upcoming(t, now));
     }
-    if let Some(t) = when(row, 10) {
+    // aa-structures' Unanchoring until, for view_all_unanchoring_status.
+    if let Some(t) = when(row, 10).filter(|_| viewer.can("view_all_unanchoring_status")) {
         general = general.field("Unanchors", upcoming(t, now));
     }
     if let Some(t) = when(row, 22) {
