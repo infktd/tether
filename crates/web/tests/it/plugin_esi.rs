@@ -812,13 +812,7 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
     // Approving a data source runs them too, as the approving admin, a
     // minute after the last run (an admin's gap).
     finish_runs(&h.db, "61 seconds").await;
-    let (_, owner) = grant(
-        &h,
-        &owner,
-        "/profile/plugins/acme.esi/offer",
-        "196379789:Chribba",
-    )
-    .await;
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     assert!(
         queued_plugin_runs(&h.db).await.is_empty(),
         "an offer isn't approval"
@@ -880,13 +874,7 @@ async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_approving(db
     assert!(page(&h, "/register", &owner).await.body.contains("Chribba"));
 
     // Approved all the same.
-    let (_, owner) = grant(
-        &h,
-        &owner,
-        "/profile/plugins/acme.esi/offer",
-        "196379789:Chribba",
-    )
-    .await;
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     let res = send(
         &h.app,
         form(
