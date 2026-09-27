@@ -597,6 +597,8 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     assert_ne!(res.status, StatusCode::SEE_OTHER);
     let home = open(&h, &pilot, "").await;
     assert!(!home.body.contains("Op Rock</a>"), "{}", home.body);
+    // View All is AA's access_srp view; only its link is for managers.
+    assert_eq!(open(&h, &pilot, "all").await.status, StatusCode::OK);
     let all = open(&h, &manager, "all").await;
     assert_eq!(all.status, StatusCode::OK, "{}", all.body);
     assert!(all.body.contains("All SRP Fleets"), "{}", all.body);
@@ -627,6 +629,21 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Losses of fleets removed before 0.3 stay claimed (legacy claims).
+    sqlx::query(
+        "INSERT INTO \"plugin_tether.ship-replacement\".legacy_claims (killmail_id) VALUES (1004)",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = post(
+        &h,
+        &pilot,
+        &format!("request/{code2}"),
+        &request("https://zkillboard.com/kill/1004/"),
+    )
+    .await;
+    assert!(res.body.contains("already been requested"), "{}", res.body);
 
     // Links that don't check out: a few, then the pilot waits (someone
     // else's loss and kills zKillboard doesn't know count).

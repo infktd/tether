@@ -8,8 +8,9 @@
 //!   mark them Completed.
 //! - Everyone with `access_srp` sees the open fleets with their Total ISK
 //!   Cost and pending requests, and opens any fleet's requests (pilots,
-//!   ships, amounts, status), as AA; `srp_management` also has View All
-//!   (completed fleets too).
+//!   ships, amounts, status), as AA. View All (completed fleets too) is
+//!   linked for `srp_management` and open to every `access_srp` holder,
+//!   as AA's view is.
 //! - **Request SRP** (`access_srp`): a pilot pastes a zKillboard link for
 //!   a loss on an open fleet. The loss comes from ESI's public killmail
 //!   endpoint (through Tether), its value from zKillboard (over the app's
@@ -94,7 +95,8 @@ impl Plugin for ShipReplacement {
 tether_plugin_sdk::export!(ShipReplacement);
 
 /// Beside the title, as AA's SRP navbar: the fleet list, View All for
-/// managers, and Add SRP Fleet for those who may add one.
+/// managers (AA's link; the page itself is `access_srp`'s, as AA's), and
+/// Add SRP Fleet for those who may add one.
 fn with_links(page: Page, viewer: &Viewer) -> Page {
     let mut page = page.link("SRP Fleets", "");
     if manager(viewer) {
@@ -709,7 +711,8 @@ fn request_srp(
     };
     // AA's duplicate check: a loss with a request (on any fleet).
     if !query(
-        "SELECT 1 FROM requests WHERE killmail_id = $1",
+        "SELECT 1 FROM requests WHERE killmail_id = $1 \
+         UNION ALL SELECT 1 FROM legacy_claims WHERE killmail_id = $1",
         &[link.id.into()],
     )?
     .is_empty()
@@ -770,6 +773,7 @@ fn request_srp(
              killmail_time, kb_total_loss, additional_info) \
          SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13 \
          WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed) \
+           AND NOT EXISTS (SELECT 1 FROM legacy_claims WHERE killmail_id = $5) \
          ON CONFLICT (killmail_id) DO NOTHING RETURNING id",
         &[
             f.id.into(),
@@ -1179,8 +1183,13 @@ fn decide(
     if changed == 0 {
         return Ok(Some("That request is gone."));
     }
-    // Every decision is on the record, with the comment if any.
-    let word = if approve { "Approved" } else { "Rejected" };
+    // Every decision is on the record, with the comment if any (and that
+    // it had been paid, if a paid request is rejected).
+    let word = match (approve, r.paid) {
+        (true, _) => "Approved",
+        (false, true) => "Rejected (it had been marked paid)",
+        (false, false) => "Rejected",
+    };
     let line = if comment.is_empty() {
         format!("{word}.")
     } else {
