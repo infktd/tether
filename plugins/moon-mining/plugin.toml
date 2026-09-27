@@ -5,7 +5,7 @@ id = "tether.moon-mining"
 name = "Moon Mining"
 version = "0.2.0"
 host_api = "1"
-description = "Moon extractions and pops, fresh moons for Members and old ones for Blue, mining totals, and an extraction planner for Station Managers."
+description = "Moon extractions, pops and their value, moons from surveys, reports, fresh moons for Members and old ones for Blue, and an extraction planner for Station Managers."
 
 [publisher]
 key = "PUBLISHER_KEY"
@@ -37,23 +37,55 @@ every = "6h"
 name = "roles"
 every = "1d"
 
+# Moon ores and CCP's prices (ESI's public /markets/prices/).
+[[capabilities.schedules]]
+name = "prices"
+every = "1d"
+
+# aa-moonmining's permissions. Grant Member basic_access,
+# extractions_access and upload_moon_scan (Blue basic_access only: the
+# old-moon list); leadership view_all_moons, reports_access,
+# view_moon_ledgers; Station Managers or Directors add_refinery_owner.
 [permissions]
-# Grant Member both view and old (old opens the main page); Blue only old.
-view = "See fresh moons, extractions, mining totals and (for Station Managers) the planner"
-old = "Open Moon Mining and see the old-moon list"
-manage = "Change Moon Mining settings"
+basic_access = "Can access the moonmining app: the old-moon list and Moons"
+extractions_access = "Can access extractions and view owned moons, with mining totals and (for Station Managers) the planner"
+reports_access = "Can access reports: moons' potential income, members' mining, uploads and ore prices"
+view_all_moons = "Can view all moons"
+upload_moon_scan = "Can upload moon scans, and see the moons they uploaded"
+add_refinery_owner = "Can add refinery owner: offer a corporation's character as a data source"
+view_moon_ledgers = "Can view moon ledgers: who mined each extraction"
+# Not in aa-moonmining (its settings live in Django's admin): nobody holds
+# it until an admin grants it.
+manage = "Change Moon Mining's settings"
+
+# What 0.1.0 called them: their grants move on upgrade.
+[renamed_permissions]
+old = "basic_access"
+view = "extractions_access"
 
 [[pages]]
 path = ""
-permission = "old"
+permission = "basic_access"
+
+[[pages]]
+path = "extraction"
+permission = "extractions_access"
+
+[[pages]]
+path = "upload"
+permission = "upload_moon_scan"
+
+[[pages]]
+path = "reports"
+permission = "reports_access"
 
 [[pages]]
 path = "totals"
-permission = "view"
+permission = "extractions_access"
 
 [[pages]]
 path = "planner"
-permission = "view"
+permission = "extractions_access"
 
 [[pages]]
 path = "settings"

@@ -10,8 +10,19 @@
 //! - Station Managers (in game, from the data sources' corporation roles)
 //!   get an extraction planner: a pop cadence turned into the duration to
 //!   set at each drill.
+//! - Moons (aa-moonmining's): owned moons, every moon, and the moons one
+//!   uploaded, from pasted moon surveys, each with its ores and value.
+//! - Values come from CCP's ore prices (ESI's `/markets/prices/`, read
+//!   daily); see `value` for how.
+//! - Reports: moons' potential income, members' mining, uploads and ore
+//!   prices.
 
+mod extraction;
+mod moons;
 mod planner;
+mod reports;
+mod survey;
+mod value;
 
 use chrono::{DateTime, Duration, NaiveTime, SecondsFormat, Utc};
 use serde::Deserialize;
@@ -22,7 +33,7 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
-    Table, Tone, Value, badge, character, countdown, item_type, log, time,
+    Table, Tone, Value, badge, character, countdown, isk, item_type, link, log, time,
 };
 
 use crate::planner::{Advice, Cadence, Drill};
@@ -43,11 +54,21 @@ struct MoonMining;
 impl Plugin for MoonMining {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        let page = match request.path.as_str() {
-            "" => moons_page(&viewer),
-            "totals" => totals_page(),
-            "planner" => planner_page(&viewer),
-            "settings" => settings_page(),
+        let segments: Vec<&str> = request.path.split('/').collect();
+        let page = match segments.as_slice() {
+            [""] => extractions_page(&viewer),
+            ["moons"] => moons::moons_page(&viewer, &moons::Filter::default()),
+            ["moon", id] => moons::moon_page(&viewer, id.parse().map_err(|_| PageError::NotFound)?),
+            ["upload"] => moons::upload_page(&viewer, None),
+            ["extraction", structure, at] => extraction::page(
+                &viewer,
+                structure.parse().map_err(|_| PageError::NotFound)?,
+                at.parse().map_err(|_| PageError::NotFound)?,
+            ),
+            ["reports"] => reports::page(&viewer),
+            ["totals"] => totals_page(),
+            ["planner"] => planner_page(&viewer),
+            ["settings"] => settings_page(),
             _ => Err(PageError::NotFound),
         }?;
         with_links(page, &viewer)
@@ -60,6 +81,14 @@ impl Plugin for MoonMining {
             ("planner", form) if form.starts_with("cadence_") => {
                 save_cadence(&viewer, form, &submission)
             }
+            ("moons", "filter") => {
+                let filter = moons::Filter::from(&submission);
+                Ok(SubmitResult::Page(with_links(
+                    moons::moons_page(&viewer, &filter)?,
+                    &viewer,
+                )?))
+            }
+            ("upload", "survey") => moons::upload(&viewer, &submission),
             _ => Err(PageError::NotFound),
         }
     }
@@ -69,6 +98,11 @@ impl Plugin for MoonMining {
             "sync" => sync(),
             "ledger" => ledger(),
             "roles" => roles(),
+            "prices" => prices(),
+            "places" => {
+                let mut budget = Budget(ESI_BUDGET);
+                places(&mut budget, &sources_by_corporation())
+            }
             "ping" => ping(&job),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
@@ -120,19 +154,63 @@ fn when(row: &[Db], i: usize) -> Option<DateTime<Utc>> {
     row.get(i).and_then(Db::as_text).and_then(parse_time)
 }
 
+fn float(row: &[Db], i: usize) -> Option<f64> {
+    row.get(i).and_then(Db::as_float)
+}
+
+/// "Jita (0.9)": a system with its security, as the game rounds it.
+fn system_label(name: &str, security: Option<f64>) -> String {
+    match security {
+        Some(sec) if !name.is_empty() => format!("{name} ({:.1})", security_shown(sec)),
+        _ => name.to_owned(),
+    }
+}
+
+/// The game shows 0.0 < sec < 0.05 as 0.1, and rounds the rest.
+fn security_shown(sec: f64) -> f64 {
+    if sec > 0.0 && sec < 0.05 {
+        0.1
+    } else {
+        (sec * 10.0).round() / 10.0
+    }
+}
+
+/// An ISK cell: the amount, or nothing when it isn't known.
+fn isk_or_blank(amount: Option<f64>) -> Value {
+    amount.map_or_else(|| "".into(), |a| isk(value::finite(a)))
+}
+
+/// A number of units or m³ as a count.
+fn count(n: f64) -> Value {
+    Value::Number(if n.is_finite() { n.round() as i64 } else { 0 })
+}
+
 struct Settings {
     fresh: Duration,
     channel: Option<String>,
     pings: bool,
+    /// aa-moonmining's volume per day and days per month.
+    rates: value::Rates,
+    /// aa-moonmining's hours until a completed extraction is stale (Past).
+    stale: Duration,
 }
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
-        "SELECT fresh_hours, ping_channel, pings FROM settings WHERE id = 1",
+        "SELECT fresh_hours, ping_channel, pings, volume_per_day, days_per_month, stale_hours \
+         FROM settings WHERE id = 1",
         &[],
     )?;
     let row = rows.rows.first();
+    let defaults = value::Rates::default();
     Ok(Settings {
+        rates: value::Rates {
+            per_day: row.and_then(|r| float(r, 3)).unwrap_or(defaults.per_day),
+            days_per_month: row
+                .and_then(|r| float(r, 4))
+                .unwrap_or(defaults.days_per_month),
+        },
+        stale: Duration::hours(row.map_or(12, |r| int(r, 5))),
         fresh: Duration::hours(row.map_or(4, |r| int(r, 0))),
         channel: row
             .and_then(|r| r.get(1))
@@ -143,6 +221,11 @@ fn settings() -> Result<Settings, storage::Error> {
             .and_then(Db::as_bool)
             .unwrap_or(true),
     })
+}
+
+/// The settings values are worked out with, for pages.
+fn rates() -> Result<value::Rates, PageError> {
+    Ok(settings().map_err(|e| failed("reading settings", e))?.rates)
 }
 
 // ---- jobs ------------------------------------------------------------------
@@ -269,19 +352,25 @@ fn sync() -> Result<(), JobError> {
                  FROM json_to_recordset($1::json) AS x(structure_id bigint, moon_id bigint, \
                       extraction_start_time timestamptz, chunk_arrival_time timestamptz, natural_decay_time timestamptz) \
                  ON CONFLICT (structure_id, chunk_arrival) DO UPDATE SET moon_id = EXCLUDED.moon_id, \
-                 natural_decay = EXCLUDED.natural_decay, seen_at = now()",
+                 natural_decay = EXCLUDED.natural_decay, seen_at = now(), cancelled_at = NULL",
                 vec![Db::json(concat(&bodies)), (*corp).into()],
+            ),
+            Statement::new(
+                "INSERT INTO moons (moon_id) SELECT DISTINCT moon_id FROM extractions ON CONFLICT DO NOTHING",
+                vec![],
             ),
         ])
         .map_err(|e| retry("storing extractions", e))?;
         // Ones that were coming but the corporation no longer has:
-        // rescheduled or cancelled. Their pings go too.
+        // cancelled (a restart shows as a new one). Kept for the Past tab;
+        // their pings go.
         let gone = storage::query(
-            "DELETE FROM extractions WHERE corporation_id = $1 AND chunk_arrival > $2 \
-             AND seen_at < now() - interval '1 minute' RETURNING structure_id, chunk_arrival",
+            "UPDATE extractions SET cancelled_at = now() WHERE corporation_id = $1 AND chunk_arrival > $2 \
+             AND cancelled_at IS NULL AND seen_at < now() - interval '1 minute' \
+             RETURNING structure_id, chunk_arrival",
             &[(*corp).into(), Db::timestamp(rfc3339(now))],
         )
-        .map_err(|e| retry("removing stale extractions", e))?;
+        .map_err(|e| retry("marking cancelled extractions", e))?;
         for row in &gone.rows {
             if queue == 0 {
                 break;
@@ -293,7 +382,7 @@ fn sync() -> Result<(), JobError> {
     // A ping at each coming pop not queued for its time yet.
     let due = storage::query(
         "SELECT structure_id, chunk_arrival, natural_decay FROM extractions \
-         WHERE natural_decay > $1 AND queued_for IS DISTINCT FROM natural_decay \
+         WHERE natural_decay > $1 AND cancelled_at IS NULL AND queued_for IS DISTINCT FROM natural_decay \
          ORDER BY natural_decay LIMIT $2",
         &[Db::timestamp(rfc3339(now)), (queue as i64).into()],
     )
@@ -349,49 +438,245 @@ fn sync() -> Result<(), JobError> {
         )])
         .map_err(|e| retry("storing structures", e))?;
     }
-    // Moon names, one call each, with what's left of the budget.
-    let unnamed = storage::query(
-        "SELECT DISTINCT e.moon_id, e.corporation_id FROM extractions e \
-         WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = e.moon_id) LIMIT $1",
-        &[(budget.0 as i64).into()],
+    places(&mut budget, &sources)
+}
+
+/// Moons checked with ESI at most per run (one call each), well under the
+/// host's ESI error throttle (30 in 5 minutes), and unknown moons (ESI's
+/// 404s) a run stops after.
+const MOONS_PER_RUN: i64 = 10;
+const UNKNOWN_MOONS_PER_RUN: usize = 3;
+/// Systems looked up per run (two calls each).
+const SYSTEMS_PER_RUN: i64 = 15;
+
+#[derive(Deserialize)]
+struct SystemInfo {
+    security_status: f64,
+    constellation_id: i64,
+    region_id: i64,
+}
+
+/// Names and places, with what's left of the budget: each moon's name and
+/// system from ESI (a surveyed moon ESI doesn't know is dropped), systems'
+/// security, constellation and region, then the names of everything
+/// shown.
+fn places(budget: &mut Budget, sources: &[(i64, Subject)]) -> Result<(), JobError> {
+    let unchecked = storage::query(
+        "SELECT moon_id FROM moons WHERE checked_at IS NULL ORDER BY moon_id LIMIT $1",
+        &[MOONS_PER_RUN.into()],
     )
-    .map_err(|e| retry("finding unnamed moons", e))?;
-    let mut systems = Vec::new();
-    for row in &unnamed.rows {
-        let (moon_id, corp) = (int(row, 0), int(row, 1));
-        let Some((_, subject)) = sources.iter().find(|(c, _)| *c == corp) else {
-            continue;
-        };
+    .map_err(|e| retry("finding moons to check", e))?;
+    let mut unknown = 0;
+    for row in &unchecked.rows {
+        if unknown >= UNKNOWN_MOONS_PER_RUN {
+            break;
+        }
+        let moon_id = int(row, 0);
         if !budget.take() {
             break;
         }
+        // Public: any subject.
         match esi::get(
             "universe-moon",
-            *subject,
+            Subject::Character(0),
             &[("moon_id".to_owned(), moon_id.to_string())],
             None,
         ) {
             Ok(response) => {
-                if let Ok(moon) = serde_json::from_str::<Moon>(&response.body) {
-                    storage::execute(
-                        "INSERT INTO names (id, name, category) VALUES ($1, $2, 'moon') ON CONFLICT (id) DO NOTHING",
-                        &[moon_id.into(), moon.name.into()],
-                    )
-                    .map_err(|e| retry("storing a moon", e))?;
-                    systems.push(moon.system_id);
-                }
+                let Ok(moon) = serde_json::from_str::<Moon>(&response.body) else {
+                    log::warn(format!("moon {moon_id}: unexpected answer"));
+                    continue;
+                };
+                storage::transaction(&[
+                    Statement::new(
+                        "INSERT INTO names (id, name, category) VALUES ($1, $2, 'moon') \
+                         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+                        vec![moon_id.into(), moon.name.into()],
+                    ),
+                    Statement::new(
+                        "UPDATE moons SET system_id = $2, checked_at = now() WHERE moon_id = $1",
+                        vec![moon_id.into(), moon.system_id.into()],
+                    ),
+                ])
+                .map_err(|e| retry("storing a moon", e))?;
+            }
+            Err(esi::Error::Status(404)) => {
+                unknown += 1;
+                // Not a moon: a survey with a made-up id.
+                log::warn(format!(
+                    "moon {moon_id}: ESI doesn't know it; its survey is dropped"
+                ));
+                storage::transaction(&[
+                    Statement::new(
+                        "DELETE FROM surveys WHERE moon_id = $1",
+                        vec![moon_id.into()],
+                    ),
+                    Statement::new(
+                        "DELETE FROM moons m WHERE moon_id = $1 \
+                         AND NOT EXISTS (SELECT 1 FROM extractions e WHERE e.moon_id = m.moon_id)",
+                        vec![moon_id.into()],
+                    ),
+                ])
+                .map_err(|e| retry("dropping an unknown moon", e))?;
             }
             Err(err) => log::warn(format!("moon {moon_id}: {err:?}")),
         }
     }
-    let known = storage::query(
-        "SELECT DISTINCT system_id FROM structures WHERE system_id IS NOT NULL",
+    // Security and place: public data, read through any data source
+    // (`names` doesn't say where a system is).
+    if let Some((_, subject)) = sources.first() {
+        let missing = storage::query(
+            "SELECT DISTINCT s.system_id FROM (SELECT system_id FROM moons UNION SELECT system_id FROM structures) s \
+             WHERE s.system_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM systems y WHERE y.system_id = s.system_id) \
+             ORDER BY s.system_id LIMIT $1",
+            &[SYSTEMS_PER_RUN.into()],
+        )
+        .map_err(|e| retry("finding systems", e))?;
+        for row in &missing.rows {
+            let system = int(row, 0);
+            // Two ESI requests behind one call.
+            if !(budget.take() && budget.take()) {
+                break;
+            }
+            match esi::get(
+                "universe-system",
+                *subject,
+                &[("system_id".to_owned(), system.to_string())],
+                None,
+            ) {
+                Ok(response) => {
+                    let Ok(s) = serde_json::from_str::<SystemInfo>(&response.body) else {
+                        log::warn(format!("system {system}: unexpected answer"));
+                        continue;
+                    };
+                    storage::execute(
+                        "INSERT INTO systems (system_id, security, constellation_id, region_id) \
+                         VALUES ($1, $2, $3, $4) ON CONFLICT (system_id) DO UPDATE SET \
+                         security = EXCLUDED.security, constellation_id = EXCLUDED.constellation_id, \
+                         region_id = EXCLUDED.region_id",
+                        &[
+                            system.into(),
+                            s.security_status.into(),
+                            s.constellation_id.into(),
+                            s.region_id.into(),
+                        ],
+                    )
+                    .map_err(|e| retry("storing a system", e))?;
+                }
+                Err(err) => log::warn(format!("system {system}: {err:?}")),
+            }
+        }
+    }
+    let shown = storage::query(
+        "SELECT DISTINCT id FROM ( \
+             SELECT system_id AS id FROM moons UNION SELECT system_id FROM structures \
+             UNION SELECT constellation_id FROM systems UNION SELECT region_id FROM systems \
+             UNION SELECT corporation_id FROM extractions UNION SELECT type_id FROM ore_types) x \
+             WHERE id IS NOT NULL AND id > 0",
         &[],
     )
-    .map_err(|e| retry("reading systems", e))?;
-    systems.extend(known.rows.iter().map(|r| int(r, 0)));
-    learn_names(&mut budget, &systems)
+    .map_err(|e| retry("reading ids to name", e))?;
+    let ids: Vec<i64> = shown.rows.iter().map(|r| int(r, 0)).collect();
+    learn_names(budget, &ids)
 }
+
+/// Moon ores' item groups and their rarity class.
+const ORE_GROUPS: [(i64, i64); 5] = [(1884, 4), (1920, 8), (1921, 16), (1922, 32), (1923, 64)];
+
+#[derive(Deserialize)]
+struct Group {
+    #[serde(default)]
+    types: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct Price {
+    type_id: i64,
+    average_price: Option<f64>,
+    adjusted_price: Option<f64>,
+}
+
+/// Daily: moon ores and their rarity (ESI's item groups), then CCP's
+/// prices of the ores Moon Mining values: moon ores, surveyed ores and
+/// whatever the ledgers show was mined.
+fn prices() -> Result<(), JobError> {
+    let mut budget = Budget(ESI_BUDGET);
+    let mut ores: Vec<serde_json::Value> = Vec::new();
+    for (group, rarity) in ORE_GROUPS {
+        if !budget.take() {
+            break;
+        }
+        match esi::get(
+            "universe-group",
+            Subject::Character(0),
+            &[("group_id".to_owned(), group.to_string())],
+            None,
+        ) {
+            Ok(response) => match serde_json::from_str::<Group>(&response.body) {
+                Ok(g) => ores.extend(
+                    g.types
+                        .into_iter()
+                        .map(|t| serde_json::json!({ "type_id": t, "rarity": rarity })),
+                ),
+                Err(_) => log::warn(format!("item group {group}: unexpected answer")),
+            },
+            Err(err) => log::warn(format!("item group {group}: {err:?}")),
+        }
+    }
+    if !ores.is_empty() {
+        storage::execute(
+            "INSERT INTO ore_types (type_id, rarity) \
+             SELECT type_id, rarity FROM json_to_recordset($1::json) AS x(type_id bigint, rarity integer) \
+             ON CONFLICT (type_id) DO UPDATE SET rarity = EXCLUDED.rarity",
+            &[Db::json(serde_json::Value::Array(ores).to_string())],
+        )
+        .map_err(|e| retry("storing ore types", e))?;
+    }
+    if !budget.take() {
+        return Ok(());
+    }
+    let body = match esi::get("markets-prices", Subject::Character(0), &[], None) {
+        Ok(response) => response.body,
+        Err(err) => return Err(retry("reading market prices", err)),
+    };
+    let all: Vec<Price> = serde_json::from_str(&body)
+        .map_err(|e| JobError::Retry(format!("market prices: unexpected answer: {e}")))?;
+    // Ids from ESI only (moon ores, and what the ledgers say was mined):
+    // surveys hold only moon ores, checked at upload.
+    let wanted = storage::query(
+        "SELECT type_id FROM ore_types UNION SELECT DISTINCT type_id FROM ledger",
+        &[],
+    )
+    .map_err(|e| retry("reading ore types", e))?;
+    let wanted: std::collections::BTreeSet<i64> = wanted.rows.iter().map(|r| int(r, 0)).collect();
+    let rows: Vec<serde_json::Value> = all
+        .into_iter()
+        .filter(|p| wanted.contains(&p.type_id))
+        .map(|p| {
+            serde_json::json!({
+                "type_id": p.type_id,
+                "average_price": p.average_price.filter(|v| v.is_finite()),
+                "adjusted_price": p.adjusted_price.filter(|v| v.is_finite()),
+            })
+        })
+        .collect();
+    let stored = rows.len();
+    storage::execute(
+        "INSERT INTO prices (type_id, average_price, adjusted_price, updated_at) \
+         SELECT type_id, average_price, adjusted_price, now() \
+         FROM json_to_recordset($1::json) AS x(type_id bigint, average_price float8, adjusted_price float8) \
+         ON CONFLICT (type_id) DO UPDATE SET average_price = EXCLUDED.average_price, \
+         adjusted_price = EXCLUDED.adjusted_price, updated_at = now()",
+        &[Db::json(serde_json::Value::Array(rows).to_string())],
+    )
+    .map_err(|e| retry("storing prices", e))?;
+    log::info(format!("prices of {stored} ore types updated"));
+    let types: Vec<i64> = wanted.into_iter().collect();
+    learn_names(&mut budget, &types)
+}
+
+/// Refused name look-ups a run tolerates.
+const NAME_REFUSALS: usize = 4;
 
 /// Names for ids we don't have yet, stored.
 fn learn_names(budget: &mut Budget, ids: &[i64]) -> Result<(), JobError> {
@@ -409,16 +694,32 @@ fn learn_names(budget: &mut Budget, ids: &[i64]) -> Result<(), JobError> {
     .map_err(|e| retry("reading names", e))?;
     let known: Vec<i64> = known.rows.iter().map(|r| int(r, 0)).collect();
     let missing: Vec<i64> = ids.into_iter().filter(|id| !known.contains(id)).collect();
-    for chunk in missing.chunks(1000) {
+    // ESI refuses a whole batch for one id it doesn't know: halve a
+    // refused batch to name the rest, but give up after a few refusals
+    // (each is an ESI error).
+    let mut todo: Vec<Vec<i64>> = missing.chunks(1000).map(<[i64]>::to_vec).collect();
+    let mut refused = 0;
+    while let Some(chunk) = todo.pop() {
         if !budget.take() {
             log::info("names: out of ESI calls this run");
             return Ok(());
         }
-        let named = match esi::names(chunk) {
+        let named = match esi::names(&chunk) {
             Ok(named) => named,
+            Err(esi::Error::Status(404)) if chunk.len() > 1 && refused < NAME_REFUSALS => {
+                refused += 1;
+                let (a, b) = chunk.split_at(chunk.len() / 2);
+                todo.push(a.to_vec());
+                todo.push(b.to_vec());
+                continue;
+            }
             Err(err) => {
-                log::warn(format!("names: {err:?}"));
-                return Ok(());
+                log::warn(format!("names of {} ids: {err:?}", chunk.len()));
+                refused += 1;
+                if refused >= NAME_REFUSALS {
+                    return Ok(());
+                }
+                continue;
             }
         };
         let rows: Vec<serde_json::Value> = named
@@ -503,7 +804,7 @@ fn ledger() -> Result<(), JobError> {
         {
             for item in items {
                 people.extend(
-                    ["character_id", "type_id"]
+                    ["character_id", "type_id", "recorded_corporation_id"]
                         .iter()
                         .filter_map(|k| item[k].as_i64()),
                 );
@@ -593,7 +894,7 @@ fn ping(job: &Job) -> Result<(), JobError> {
          LEFT JOIN names m ON m.id = x.moon_id \
          LEFT JOIN structures s ON s.structure_id = x.structure_id \
          LEFT JOIN names y ON y.id = s.system_id \
-         WHERE e.structure_id = $1 AND e.chunk_arrival = $2 AND NOT e.pinged \
+         WHERE e.structure_id = $1 AND e.chunk_arrival = $2 AND NOT e.pinged AND e.cancelled_at IS NULL \
            AND x.structure_id = e.structure_id AND x.chunk_arrival = e.chunk_arrival \
          RETURNING coalesce(m.name, 'Moon ' || x.moon_id::text), \
                    coalesce(s.name, 'Structure ' || x.structure_id::text), \
@@ -640,18 +941,40 @@ fn ping(job: &Job) -> Result<(), JobError> {
 // ---- pages -----------------------------------------------------------------
 
 /// The app's pages beside the title, as aa-moonmining's navbar: those the
-/// viewer may open (the planner for Station Managers). Nothing for someone
-/// who sees only the old-moon list.
+/// viewer may open (the planner for Station Managers), and Upload moon
+/// surveys as the button. Someone without `extractions_access` gets the
+/// old-moon list in the Extractions' place.
 fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
-    if !viewer.can("view") {
-        return Ok(page);
+    let mut links: Vec<(&str, &str)> = Vec::new();
+    if viewer.can("extractions_access") {
+        links.push(("Extractions", ""));
     }
-    let mut page = page.link("Moons", "").link("Mining totals", "totals");
-    if !station_manager_corporations(viewer)?.is_empty() {
-        page = page.link("Planner", "planner");
+    // As aa-moonmining's navbar: Moons for everyone who opens the app.
+    links.push(("Moons", "moons"));
+    if viewer.can("reports_access") {
+        links.push(("Reports", "reports"));
+    }
+    if viewer.can("extractions_access") {
+        links.push(("Mining totals", "totals"));
+        if !station_manager_corporations(viewer)?.is_empty() {
+            links.push(("Planner", "planner"));
+        }
     }
     if viewer.can("manage") {
-        page = page.link("Settings", "settings");
+        links.push(("Settings", "settings"));
+    }
+    let upload = viewer.can("upload_moon_scan");
+    // The old-moon list, for someone who sees it but not the extractions.
+    let mut page = if viewer.can("extractions_access") {
+        page
+    } else {
+        page.link("Old moons", "")
+    };
+    for (label, path) in links {
+        page = page.link(label, path);
+    }
+    if upload {
+        page = page.button("Upload moon surveys", "upload");
     }
     Ok(page)
 }
@@ -665,27 +988,121 @@ fn refinery(name: &str, type_id: i64) -> Value {
     }
 }
 
-/// A row of the moon lists: moon, place, and the pop.
+/// The ledger rows that belong to an extraction (`e`): mined at its
+/// refinery from the day the chunk arrived until two days after it
+/// fractured, when the field is gone.
+const LEDGER_WINDOW: &str = "l.observer_id = e.structure_id \
+     AND l.day >= (e.chunk_arrival AT TIME ZONE 'UTC')::date \
+     AND l.day <= ((e.natural_decay + interval '2 days') AT TIME ZONE 'UTC')::date";
+
+/// An ore's unit price: CCP's average, else its adjusted price.
+const PRICE: &str = "coalesce(pr.average_price, pr.adjusted_price, 0)";
+
+/// One extraction, with its moon, place and value.
 struct Pop {
+    structure_id: i64,
+    moon_id: i64,
     moon: String,
     structure: String,
     structure_type: i64,
     system: String,
+    start: DateTime<Utc>,
     arrival: DateTime<Utc>,
     decay: DateTime<Utc>,
+    cancelled: Option<DateTime<Utc>>,
+    /// Σ share × unit price of the moon's survey (none without one).
+    worth: Option<f64>,
+    /// What the ledger says was mined from it, in ISK (none without
+    /// ledger rows).
+    mined: Option<f64>,
+    /// The settings its value is worked out with.
+    rates: value::Rates,
 }
 
-fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
+impl Pop {
+    /// The chunk's estimated value, from the moon's survey.
+    fn value(&self) -> Option<f64> {
+        self.worth.map(|w| value::chunk(self.volume(), w))
+    }
+
+    /// The chunk's estimated volume, m³.
+    fn volume(&self) -> f64 {
+        self.rates.chunk_volume(self.start, self.arrival)
+    }
+
+    /// Its details page.
+    fn details(&self) -> Value {
+        link(
+            "Details",
+            format!(
+                "extraction/{}/{}",
+                self.structure_id,
+                self.arrival.timestamp()
+            ),
+        )
+        .into()
+    }
+
+    fn status(&self, now: DateTime<Utc>) -> Value {
+        if self.cancelled.is_some() {
+            badge("Cancelled", Tone::Neutral)
+        } else if self.decay <= now {
+            badge("Completed", Tone::Neutral)
+        } else if self.arrival <= now {
+            badge("Ready", Tone::Accent)
+        } else {
+            badge("Extracting", Tone::Neutral)
+        }
+        .into()
+    }
+}
+
+/// Which extractions to read. Each is fixed SQL (never data).
+#[derive(Clone, Copy)]
+enum Which {
+    /// Not cancelled, fracturing between two instants.
+    Decaying,
+    /// Cancelled, or ready more than 12 hours ago (AA's Past).
+    Past,
+    /// Every one at a moon.
+    AtMoon,
+    /// One, by refinery and chunk arrival.
+    One,
+}
+
+fn extractions(which: Which, params: &[Db]) -> Result<Vec<Pop>, PageError> {
+    let rates = rates()?;
+    let filter = match which {
+        Which::Decaying => {
+            "e.cancelled_at IS NULL AND e.natural_decay > $1 AND e.natural_decay <= $2 \
+             ORDER BY e.natural_decay LIMIT 500"
+        }
+        Which::Past => {
+            "(e.cancelled_at IS NOT NULL OR e.chunk_arrival < $1) ORDER BY e.chunk_arrival DESC LIMIT 200"
+        }
+        Which::AtMoon => "e.moon_id = $1 ORDER BY e.chunk_arrival DESC LIMIT 20",
+        Which::One => "e.structure_id = $1 AND e.chunk_arrival = $2",
+    };
     let rows = storage::query(
-        "SELECT coalesce(m.name, 'Moon ' || e.moon_id::text), coalesce(s.name, 'Structure ' || e.structure_id::text), \
-                coalesce(y.name, ''), e.chunk_arrival, e.natural_decay, coalesce(s.type_id, 0) \
-         FROM extractions e \
-         LEFT JOIN names m ON m.id = e.moon_id \
-         LEFT JOIN structures s ON s.structure_id = e.structure_id \
-         LEFT JOIN names y ON y.id = s.system_id \
-         WHERE e.natural_decay > $1 AND e.natural_decay <= $2 \
-         ORDER BY e.natural_decay LIMIT 500",
-        &[Db::timestamp(rfc3339(from)), Db::timestamp(rfc3339(to))],
+        &format!(
+            "SELECT e.structure_id, e.moon_id, coalesce(m.name, 'Moon ' || e.moon_id::text), \
+                    coalesce(s.name, 'Structure ' || e.structure_id::text), coalesce(s.type_id, 0), \
+                    coalesce(y.name, ''), e.extraction_start, e.chunk_arrival, e.natural_decay, \
+                    e.cancelled_at, v.worth, mined.isk, mined.n, sy.security \
+             FROM extractions e \
+             LEFT JOIN names m ON m.id = e.moon_id \
+             LEFT JOIN structures s ON s.structure_id = e.structure_id \
+             LEFT JOIN names y ON y.id = s.system_id \
+             LEFT JOIN systems sy ON sy.system_id = s.system_id \
+             LEFT JOIN LATERAL (SELECT sum(p.amount * {PRICE})::float8 AS worth \
+                  FROM survey_products p LEFT JOIN prices pr ON pr.type_id = p.type_id \
+                  WHERE p.moon_id = e.moon_id) v ON true \
+             LEFT JOIN LATERAL (SELECT count(*) AS n, sum(l.quantity * {PRICE})::float8 AS isk \
+                  FROM ledger l LEFT JOIN prices pr ON pr.type_id = l.type_id \
+                  WHERE {LEDGER_WINDOW}) mined ON true \
+             WHERE {filter}"
+        ),
+        params,
     )
     .map_err(|e| failed("reading extractions", e))?;
     Ok(rows
@@ -693,31 +1110,43 @@ fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
         .iter()
         .filter_map(|r| {
             Some(Pop {
-                moon: text(r, 0),
-                structure: text(r, 1),
-                structure_type: int(r, 5),
-                system: text(r, 2),
-                arrival: when(r, 3)?,
-                decay: when(r, 4)?,
+                structure_id: int(r, 0),
+                moon_id: int(r, 1),
+                moon: text(r, 2),
+                structure: text(r, 3),
+                structure_type: int(r, 4),
+                system: system_label(&text(r, 5), float(r, 13)),
+                start: when(r, 6)?,
+                arrival: when(r, 7)?,
+                decay: when(r, 8)?,
+                cancelled: when(r, 9),
+                worth: float(r, 10),
+                mined: (int(r, 12) > 0).then(|| float(r, 11).unwrap_or_default()),
+                rates,
             })
         })
         .collect())
 }
 
-fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
-    let now = Utc::now();
-    let settings = settings().map_err(|e| failed("reading settings", e))?;
-    let old = pops(now - OLD_FOR, now - settings.fresh)?;
-    let old_table = with_rows(
+fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
+    extractions(
+        Which::Decaying,
+        &[Db::timestamp(rfc3339(from)), Db::timestamp(rfc3339(to))],
+    )
+}
+
+/// The pops tables: moon, place and when it popped.
+fn popped_table(title: &str, empty: &str, pops: &[Pop]) -> Table {
+    with_rows(
         Table::new(vec![
             Column::text("Moon"),
             Column::text("System"),
             Column::text("Structure"),
             Column::numeric("Popped"),
         ])
-        .title("Old moons")
-        .empty("No moons popped in the last two days."),
-        old.iter().rev().map(|p| {
+        .title(title)
+        .empty(empty),
+        pops.iter().rev().map(|p| {
             vec![
                 p.moon.clone().into(),
                 p.system.clone().into(),
@@ -725,32 +1154,30 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
                 time(rfc3339(p.decay)),
             ]
         }),
-    );
-    if !viewer.can("view") {
+    )
+}
+
+/// aa-moonmining's Extractions (Upcoming and Past), with Tether's fresh
+/// and old moons: the app's main page. Blue see only the old moons.
+fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
+    let now = Utc::now();
+    let settings = settings().map_err(|e| failed("reading settings", e))?;
+    let old = pops(now - OLD_FOR, now - settings.fresh)?;
+    let old_table = popped_table("Old moons", "No moons popped in the last two days.", &old);
+    if !viewer.can("extractions_access") {
         return Ok(Page::new("Moon Mining")
             .description("Moons popped a while ago, still worth a visit")
             .table(old_table));
     }
     let fresh = pops(now - settings.fresh, now)?;
     let upcoming = pops(now, now + Duration::days(60))?;
+    let past = extractions(Which::Past, &[Db::timestamp(rfc3339(now - settings.stale))])?;
     let ready = upcoming.iter().filter(|p| p.arrival <= now).count();
-    let fresh_table = with_rows(
-        Table::new(vec![
-            Column::text("Moon"),
-            Column::text("System"),
-            Column::text("Structure"),
-            Column::numeric("Popped"),
-        ])
-        .title("Fresh moons")
-        .empty("Nothing popped in the Members-only window."),
-        fresh.iter().rev().map(|p| {
-            vec![
-                p.moon.clone().into(),
-                p.system.clone().into(),
-                refinery(&p.structure, p.structure_type),
-                time(rfc3339(p.decay)),
-            ]
-        }),
+    let coming_value: f64 = upcoming.iter().filter_map(Pop::value).sum();
+    let fresh_table = popped_table(
+        "Fresh moons",
+        "Nothing popped in the Members-only window.",
+        &fresh,
     );
     let upcoming_table = with_rows(
         Table::new(vec![
@@ -760,28 +1187,56 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
             Column::text("Status"),
             Column::numeric("Chunk arrives"),
             Column::numeric("Auto-fracture"),
+            Column::numeric("Value (est.)"),
+            Column::numeric("Mined"),
+            Column::numeric(""),
         ])
         .title("Extractions")
         .empty("No extractions running. Is a data source approved?"),
         upcoming.iter().map(|p| {
-            let status = if p.arrival <= now {
-                badge("Ready", Tone::Accent)
-            } else {
-                badge("Extracting", Tone::Neutral)
-            };
             vec![
                 p.moon.clone().into(),
                 p.system.clone().into(),
                 refinery(&p.structure, p.structure_type),
-                status.into(),
+                p.status(now),
                 countdown(rfc3339(p.arrival)),
                 time(rfc3339(p.decay)),
+                isk_or_blank(p.value()),
+                isk_or_blank(p.mined),
+                p.details(),
+            ]
+        }),
+    );
+    let past_table = with_rows(
+        Table::new(vec![
+            Column::text("Moon"),
+            Column::text("System"),
+            Column::text("Structure"),
+            Column::text("Status"),
+            Column::numeric("Chunk arrived"),
+            Column::numeric("Value (est.)"),
+            Column::numeric("Mined"),
+            Column::numeric(""),
+        ])
+        .title("Past extractions")
+        .empty("No past extractions yet."),
+        past.iter().map(|p| {
+            vec![
+                p.moon.clone().into(),
+                p.system.clone().into(),
+                refinery(&p.structure, p.structure_type),
+                p.status(now),
+                time(rfc3339(p.arrival)),
+                isk_or_blank(p.value()),
+                isk_or_blank(p.mined),
+                p.details(),
             ]
         }),
     );
     Ok(Page::new("Moon Mining")
         .description(format!(
-            "Fresh moons are for Members for {} hours after they pop, then Blue see them too.",
+            "Fresh moons are for Members for {} hours after they pop, then Blue see them too. \
+             Values are estimates from moon surveys and CCP's ore prices.",
             settings.fresh.num_hours()
         ))
         .stats(vec![
@@ -794,28 +1249,39 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
                 "Extracting",
                 i64::try_from(upcoming.len() - ready).unwrap_or(i64::MAX),
             ),
+            Stat::new("Coming (est.)", isk(value::finite(coming_value)))
+                .caption("chunks of surveyed moons"),
         ])
         .table(fresh_table)
         .tab("Extractions", vec![Section::Table(upcoming_table)])
+        .tab("Past", vec![Section::Table(past_table)])
         .tab("Old moons", vec![Section::Table(old_table)]))
 }
 
 fn totals_page() -> Result<Page, PageError> {
     let rows = storage::query(
-        "SELECT l.character_id, coalesce(n.name, 'Character ' || l.character_id::text), \
-                coalesce(sum(l.quantity) FILTER (WHERE l.day >= date_trunc('month', now())::date), 0)::bigint, \
-                coalesce(sum(l.quantity) FILTER (WHERE l.day >= (now() - interval '30 days')::date), 0)::bigint, \
-                sum(l.quantity)::bigint \
-         FROM ledger l LEFT JOIN names n ON n.id = l.character_id \
-         GROUP BY l.character_id, n.name ORDER BY 4 DESC, 5 DESC LIMIT 500",
+        &format!(
+            "SELECT l.character_id, coalesce(n.name, 'Character ' || l.character_id::text), \
+                    coalesce(sum(l.quantity) FILTER (WHERE l.day >= date_trunc('month', now())::date), 0)::bigint, \
+                    coalesce(sum(l.quantity) FILTER (WHERE l.day >= (now() - interval '30 days')::date), 0)::bigint, \
+                    sum(l.quantity)::bigint, \
+                    coalesce(sum(l.quantity * {PRICE}) FILTER (WHERE l.day >= (now() - interval '30 days')::date), 0)::float8 \
+             FROM ledger l LEFT JOIN names n ON n.id = l.character_id \
+             LEFT JOIN prices pr ON pr.type_id = l.type_id \
+             GROUP BY l.character_id, n.name ORDER BY 4 DESC, 5 DESC LIMIT 500"
+        ),
         &[],
     )
     .map_err(|e| failed("reading the ledger", e))?;
     let ores = storage::query(
-        "SELECT coalesce(n.name, 'Type ' || l.type_id::text), sum(l.quantity)::bigint, l.type_id \
-         FROM ledger l LEFT JOIN names n ON n.id = l.type_id \
-         WHERE l.day >= (now() - interval '30 days')::date \
-         GROUP BY l.type_id, n.name ORDER BY 2 DESC LIMIT 100",
+        &format!(
+            "SELECT coalesce(n.name, 'Type ' || l.type_id::text), sum(l.quantity)::bigint, l.type_id, \
+                    sum(l.quantity * {PRICE})::float8 \
+             FROM ledger l LEFT JOIN names n ON n.id = l.type_id \
+             LEFT JOIN prices pr ON pr.type_id = l.type_id \
+             WHERE l.day >= (now() - interval '30 days')::date \
+             GROUP BY l.type_id, n.name ORDER BY 2 DESC LIMIT 100"
+        ),
         &[],
     )
     .map_err(|e| failed("reading the ledger", e))?;
@@ -825,6 +1291,7 @@ fn totals_page() -> Result<Page, PageError> {
             Column::numeric("This month"),
             Column::numeric("Last 30 days"),
             Column::numeric("All time"),
+            Column::numeric("Value, last 30 days"),
         ])
         .title("By pilot (units)")
         .empty("Nothing mined yet, or no observers readable."),
@@ -834,19 +1301,31 @@ fn totals_page() -> Result<Page, PageError> {
                 int(r, 2).into(),
                 int(r, 3).into(),
                 int(r, 4).into(),
+                isk(value::finite(float(r, 5).unwrap_or_default())),
             ]
         }),
     );
     let ore_table = with_rows(
-        Table::new(vec![Column::text("Ore"), Column::numeric("Last 30 days")])
-            .title("By ore (units)")
-            .empty("Nothing mined in the last 30 days."),
-        ores.rows
-            .iter()
-            .map(|r| vec![item_type(int(r, 2), text(r, 0)).into(), int(r, 1).into()]),
+        Table::new(vec![
+            Column::text("Ore"),
+            Column::numeric("Last 30 days"),
+            Column::numeric("Value"),
+        ])
+        .title("By ore (units)")
+        .empty("Nothing mined in the last 30 days."),
+        ores.rows.iter().map(|r| {
+            vec![
+                item_type(int(r, 2), text(r, 0)).into(),
+                int(r, 1).into(),
+                isk(value::finite(float(r, 3).unwrap_or_default())),
+            ]
+        }),
     );
     Ok(Page::new("Mining totals")
-        .description("From the corporations' mining observers, refreshed every 6 hours")
+        .description(
+            "From the corporations' mining observers, refreshed every 6 hours; values at CCP's \
+             average ore prices",
+        )
         .table(pilots)
         .table(ore_table))
 }
@@ -946,7 +1425,8 @@ fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
         };
         let rows = storage::query(
             "SELECT s.structure_id, s.name, \
-                    (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id AND e.natural_decay > $2) \
+                    (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id \
+                     AND e.natural_decay > $2 AND e.cancelled_at IS NULL) \
              FROM structures s WHERE s.corporation_id = $1 ORDER BY s.name",
             &[corp.into(), Db::timestamp(rfc3339(now))],
         )
@@ -1025,7 +1505,28 @@ fn settings_page() -> Result<Page, PageError> {
                 "pings",
                 "Ping Members at each pop",
                 settings.pings,
-            )),
+            ))
+            .field(
+                Field::number("volume_per_day", "Ore a drill pulls a day (m³)")
+                    .range(Some(1.0), Some(10_000_000.0), true)
+                    .value(format!("{:.0}", settings.rates.per_day))
+                    .help("aa-moonmining's MOONMINING_VOLUME_PER_DAY: 960400 unless CCP changes it")
+                    .required(),
+            )
+            .field(
+                Field::number("days_per_month", "Days in a month")
+                    .range(Some(28.0), Some(31.0), false)
+                    .value(settings.rates.days_per_month.to_string())
+                    .help("aa-moonmining's MOONMINING_DAYS_PER_MONTH: 30.4. Moons' monthly value uses both")
+                    .required(),
+            )
+            .field(
+                Field::number("stale_hours", "Hours after the chunk arrives until an extraction is Past")
+                    .range(Some(1.0), Some(168.0), true)
+                    .value(settings.stale.num_hours().to_string())
+                    .help("aa-moonmining's MOONMINING_COMPLETED_EXTRACTIONS_HOURS_UNTIL_STALE: 12")
+                    .required(),
+            ),
     ))
 }
 
@@ -1035,18 +1536,37 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         .parse()
         .map_err(|_| PageError::Failed("fresh_hours wasn't a number".into()))?;
     let channel = submission.value("ping_channel");
+    // Checked against the form's ranges by the host.
+    let number = |name: &str| -> Result<f64, PageError> {
+        submission
+            .value(name)
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())
+            .ok_or_else(|| PageError::Failed(format!("{name} wasn't a number")))
+    };
+    let (per_day, days) = (number("volume_per_day")?, number("days_per_month")?);
+    let stale: i64 = submission
+        .value("stale_hours")
+        .parse()
+        .map_err(|_| PageError::Failed("stale_hours wasn't a number".into()))?;
     storage::execute(
-        "UPDATE settings SET fresh_hours = $1, ping_channel = $2, pings = $3 WHERE id = 1",
+        "UPDATE settings SET fresh_hours = $1, ping_channel = $2, pings = $3, volume_per_day = $4, \
+         days_per_month = $5, stale_hours = $6 WHERE id = 1",
         &[
             hours.into(),
             (!channel.is_empty()).then(|| channel.to_owned()).into(),
             submission.checked("pings").into(),
+            per_day.into(),
+            days.into(),
+            stale.into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
     // Admins see who changed what in the plugin's log.
     log::info(format!(
-        "settings changed by {} ({}): members-only {hours}h, channel {channel:?}, pings {}",
+        "settings changed by {} ({}): members-only {hours}h, channel {channel:?}, pings {}, \
+         {per_day} m³ a day, {days} days a month, past after {stale}h",
         viewer.main.name,
         viewer.main.id,
         submission.checked("pings")
