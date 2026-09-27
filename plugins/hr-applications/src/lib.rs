@@ -24,8 +24,9 @@ use tether_plugin_sdk::esi;
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, badge, link, log, time,
+    Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat,
+    Submission, SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character,
+    corporation, link, log, time,
 };
 
 /// The host's fields per form; one is the applicant's consent.
@@ -55,8 +56,9 @@ impl Plugin for HrApplications {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let parts: Vec<&str> = request.path.split('/').collect();
-        match parts.as_slice() {
+        let page = match parts.as_slice() {
             [""] => my_applications(&viewer),
+            ["create"] => create_page(&viewer),
             ["apply", form] => apply_page(&viewer, id(form)?, None),
             ["view", app] => personal_view(&viewer, id(app)?),
             ["review"] => review_page(&viewer, None),
@@ -65,7 +67,8 @@ impl Plugin for HrApplications {
             ["forms", form] => form_page(id(form)?, None),
             ["forms", form, "question", question] => question_page(id(form)?, id(question)?, None),
             _ => Err(PageError::NotFound),
-        }
+        }?;
+        Ok(with_links(page, &viewer))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
@@ -81,25 +84,77 @@ impl Plugin for HrApplications {
             return Err(PageError::Forbidden);
         }
         let form = submission.form.as_str();
-        match (parts.as_slice(), form) {
+        let result = match (parts.as_slice(), form) {
             (["apply", f], "apply") => apply(&viewer, id(f)?, &submission),
+            // Delete, from the application's row or its page.
+            ([""], "delete") => delete_own(&viewer, id(submission.value("application"))?),
             (["view", app], "delete") => delete_own(&viewer, id(app)?),
             (["review"], "search") => Ok(SubmitResult::Page(review_page(
                 &viewer,
                 Some(submission.value("q").trim()),
             )?)),
-            (["review", app], _) => review_action(&viewer, id(app)?, &submission),
+            // A queue row's buttons.
+            (["review"], "claim" | "decide" | "delete") => review_action(
+                &viewer,
+                id(submission.value("application"))?,
+                &submission,
+                true,
+            ),
+            (["review", app], _) => review_action(&viewer, id(app)?, &submission, false),
             (["forms"], "add_form") => add_form(&viewer, &submission),
             (["forms", f], _) => form_action(&viewer, id(f)?, &submission),
             (["forms", f, "question", q], "edit_question") => {
                 edit_question(&viewer, id(f)?, id(q)?, &submission)
             }
             _ => Err(PageError::NotFound),
-        }
+        }?;
+        Ok(match result {
+            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            other => other,
+        })
     }
 }
 
 tether_plugin_sdk::export!(HrApplications);
+
+/// Beside the title, as AA's HR pages: the pilot's applications, the
+/// reviewers' management page and the forms (for those who may open
+/// them), and Create Application as the button.
+fn with_links(page: Page, viewer: &Viewer) -> Page {
+    let basic = viewer.can("basic");
+    let mut page = page;
+    if basic {
+        page = page.link("My Applications", "");
+    }
+    if viewer.can("human_resources") {
+        page = page.link("HR Application Management", "review");
+    }
+    if viewer.can("manage") {
+        page = page.link("Application Forms", "forms");
+    }
+    if basic {
+        page = page.button("Create Application", "create");
+    }
+    page
+}
+
+/// 1 to 4 buttons side by side, or an empty cell.
+fn buttons(list: Vec<Action>) -> Value {
+    if list.is_empty() {
+        "".into()
+    } else {
+        actions(list)
+    }
+}
+
+/// A corporation's logo and name.
+fn corp(names: &HashMap<i64, String>, id: i64) -> Value {
+    if id > 0 {
+        corporation(id, name_of(names, id)).into()
+    } else {
+        name_of(names, id).into()
+    }
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -196,6 +251,7 @@ fn name_of(names: &HashMap<i64, String>, id: i64) -> String {
 // ---- applications ------------------------------------------------------------
 
 struct Character {
+    id: i64,
     name: String,
     corporation_id: i64,
     alliance_id: Option<i64>,
@@ -204,19 +260,24 @@ struct Character {
 struct Application {
     id: i64,
     corporation_name: String,
+    /// The corporation applied to.
+    corporation_id: i64,
     main_name: String,
+    main_id: i64,
     main_corporation_id: i64,
     characters: Vec<Character>,
     approved: Option<bool>,
     reviewer_account_id: Option<i64>,
     reviewer_name: String,
+    reviewer_id: i64,
     created_at: Option<DateTime<Utc>>,
     decided_at: Option<DateTime<Utc>>,
 }
 
 const APP_SELECT: &str = "SELECT a.id, f.corporation_name, a.main_name, a.main_corporation_id, \
      a.characters::text, a.approved, a.reviewer_account_id, coalesce(a.reviewer_name, ''), \
-     a.created_at, a.decided_at \
+     a.created_at, a.decided_at, a.main_character_id, f.corporation_id, \
+     coalesce(a.reviewer_character_id, 0) \
      FROM applications a JOIN forms f ON f.id = a.form_id";
 
 fn application(row: &[Db]) -> Application {
@@ -224,6 +285,7 @@ fn application(row: &[Db]) -> Application {
         .unwrap_or_default()
         .iter()
         .map(|c| Character {
+            id: c["id"].as_i64().unwrap_or_default(),
             name: c["name"].as_str().unwrap_or_default().to_owned(),
             corporation_id: c["corporation_id"].as_i64().unwrap_or_default(),
             alliance_id: c["alliance_id"].as_i64(),
@@ -240,6 +302,9 @@ fn application(row: &[Db]) -> Application {
         reviewer_name: text(row, 7),
         created_at: when(row, 8),
         decided_at: when(row, 9),
+        main_id: int(row, 10),
+        corporation_id: int(row, 11),
+        reviewer_id: int(row, 12),
     }
 }
 
@@ -310,51 +375,63 @@ fn my_applications(viewer: &Viewer) -> Result<Page, PageError> {
     .iter()
     .map(|r| application(r))
     .collect();
-    let open = query(
-        "SELECT f.id, f.corporation_name FROM forms f WHERE NOT EXISTS ( \
-           SELECT 1 FROM applications a WHERE a.form_id = f.id AND a.account_id = $1) \
-         ORDER BY f.corporation_name LIMIT 500",
-        &[viewer.account_id.into()],
-    )?;
     let mut mine = Table::new(vec![
         Column::text("Corporation"),
         Column::numeric("Applied"),
         Column::text("Status"),
+        Column::text(""),
     ])
     .title("My Applications")
-    .empty("You haven't applied anywhere yet.");
+    .empty("You haven't applied anywhere yet: Create Application (top right) lists the corporations taking applications.");
     for a in &apps {
         mine = mine.row(vec![
             link(a.corporation_name.clone(), format!("view/{}", a.id)).into(),
             time_or(a.created_at, ""),
             a.status().into(),
+            own_delete(a).map_or_else(|| "".into(), Value::from),
         ]);
     }
+    Ok(Page::new("My Applications")
+        .description("Apply to a corporation and follow your applications")
+        .table(mine))
+}
+
+/// AA's Create Application: the corporations taking applications that the
+/// pilot hasn't applied to.
+fn create_page(viewer: &Viewer) -> Result<Page, PageError> {
+    let open = query(
+        "SELECT f.id, f.corporation_name, f.corporation_id FROM forms f WHERE NOT EXISTS ( \
+           SELECT 1 FROM applications a WHERE a.form_id = f.id AND a.account_id = $1) \
+         ORDER BY f.corporation_name LIMIT 500",
+        &[viewer.account_id.into()],
+    )?;
     let mut create = Table::new(vec![Column::text("Corporation"), Column::text("")])
-        .title("Create Application")
+        .title("Choose a Corporation")
         .empty("No other corporation is taking applications right now.");
     for r in &open {
         let name = text(r, 1);
         create = create.row(vec![
-            name.clone().into(),
+            corporation(int(r, 2), name.clone()).into(),
             link(format!("Apply to {name}"), format!("apply/{}", int(r, 0))).into(),
         ]);
     }
-    let mut page = Page::new("My Applications")
-        .description("Apply to a corporation and follow your applications")
-        .table(mine)
-        .table(create);
-    let mut more = Card::new("Recruiters");
-    if viewer.can("human_resources") {
-        more = more.field("Review", link("HR Application Management", "review"));
-    }
-    if viewer.can("manage") {
-        more = more.field("Forms", link("Application Forms", "forms"));
-    }
-    if viewer.can("human_resources") || viewer.can("manage") {
-        page = page.card(more);
-    }
-    Ok(page)
+    Ok(Page::new("Create Application")
+        .description("The corporations taking applications")
+        .table(create))
+}
+
+/// The applicant's Delete: only until a recruiter takes it up (withdrawing
+/// then would take their notes with it).
+fn own_delete(a: &Application) -> Option<Action> {
+    (a.pending() && a.reviewer_account_id.is_none()).then(|| {
+        action("Delete", "delete")
+            .field("application", a.id.to_string())
+            .tone(Tone::Danger)
+            .confirm(format!(
+                "Your application to {} is deleted; you can apply again afterwards.",
+                a.corporation_name
+            ))
+    })
 }
 
 // ---- applying ----------------------------------------------------------------
@@ -569,26 +646,23 @@ fn personal_view(viewer: &Viewer, app: i64) -> Result<Page, PageError> {
     .map(|r| application(r))
     .ok_or(PageError::NotFound)?;
     let mut about = Card::new("Application")
-        .field("Corporation", a.corporation_name.clone())
+        .field(
+            "Corporation",
+            corporation(a.corporation_id, a.corporation_name.clone()),
+        )
         .field("Applied", time_or(a.created_at, ""))
         .field("Status", a.status());
     if let Some(decided) = a.decided_at {
         about = about.field("Decided", time(rfc3339(decided)));
+    }
+    if let Some(delete) = own_delete(&a) {
+        about = about.field("Delete", delete);
     }
     let mut page = Page::new("View Application")
         .description(format!("Your application to {}", a.corporation_name))
         .card(about);
     for section in answer_cards(a.id)? {
         page = page.section(section);
-    }
-    // Only until a recruiter takes it up: withdrawing then would take
-    // their notes with it.
-    if a.pending() && a.reviewer_account_id.is_none() {
-        page = page.form(
-            Form::new("delete", "Delete Application")
-                .description("You can apply again afterwards.")
-                .field(Field::checkbox("confirm", "Yes, delete my application", false).required()),
-        );
     }
     Ok(page)
 }
@@ -638,7 +712,12 @@ fn reviewable(viewer: &Viewer, app: i64) -> Result<Application, PageError> {
     .ok_or(PageError::NotFound)
 }
 
-fn queue_table(apps: &[Application], names: &HashMap<i64, String>, empty: &str) -> Table {
+fn queue_table(
+    viewer: &Viewer,
+    apps: &[Application],
+    names: &HashMap<i64, String>,
+    empty: &str,
+) -> Table {
     let mut table = Table::new(vec![
         Column::numeric("Applied"),
         Column::text("Main Character"),
@@ -647,20 +726,73 @@ fn queue_table(apps: &[Application], names: &HashMap<i64, String>, empty: &str) 
         Column::numeric("Characters"),
         Column::text("Status"),
         Column::text("Reviewer"),
+        Column::text(""),
     ])
     .empty(empty);
     for a in apps {
         table = table.row(vec![
             time_or(a.created_at, ""),
             link(a.main_name.clone(), format!("review/{}", a.id)).into(),
-            name_of(names, a.main_corporation_id).into(),
-            a.corporation_name.clone().into(),
+            corp(names, a.main_corporation_id),
+            corporation(a.corporation_id, a.corporation_name.clone()).into(),
             count(a.characters.len()).into(),
             a.status().into(),
-            a.reviewer_name.clone().into(),
+            reviewer(a),
+            buttons(review_buttons(viewer, a)),
         ]);
     }
     table
+}
+
+/// Who's reviewing it: their main's portrait and name, or nothing.
+fn reviewer(a: &Application) -> Value {
+    match (a.reviewer_id, a.reviewer_name.is_empty()) {
+        (_, true) => "".into(),
+        (0, false) => a.reviewer_name.clone().into(),
+        (id, false) => character(id, a.reviewer_name.clone()).into(),
+    }
+}
+
+/// A reviewer's buttons on an application, as AA's: Mark in Progress while
+/// nobody reviews it; Approve and Reject for its reviewer (anyone with
+/// `all_corporations`) with those permissions, while it's pending; Delete
+/// with `delete_application`. Each posts the application's id.
+fn review_buttons(viewer: &Viewer, a: &Application) -> Vec<Action> {
+    let on = |label: &str, form: &str| action(label, form).field("application", a.id.to_string());
+    let mine = a.reviewer_account_id == Some(viewer.account_id);
+    let decides = a.pending() && (mine || viewer.can("all_corporations"));
+    let mut list = Vec::new();
+    if a.pending() && a.reviewer_account_id.is_none() {
+        list.push(on("Mark in Progress", "claim"));
+    }
+    if decides && viewer.can("approve_application") {
+        list.push(
+            on("Approve", "decide")
+                .field("decision", "approve")
+                .confirm(format!(
+                    "{} is approved; they see it on their applications page.",
+                    a.main_name
+                )),
+        );
+    }
+    if decides && viewer.can("reject_application") {
+        list.push(
+            on("Reject", "decide")
+                .field("decision", "reject")
+                .tone(Tone::Danger)
+                .confirm(format!(
+                    "{} is rejected; they see it on their applications page.",
+                    a.main_name
+                )),
+        );
+    }
+    if viewer.can("delete_application") {
+        list.push(on("Delete", "delete").tone(Tone::Danger).confirm(format!(
+            "Its answers and comments go with it, and {} can apply again.",
+            a.main_name
+        )));
+    }
+    list
 }
 
 fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError> {
@@ -724,16 +856,11 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
         search_field = search_field.value(q.clone());
     }
     page = page.form(Form::new("search", "Search Applications").field(search_field));
-    if viewer.can("manage") {
-        page = page.card(Card::new("Forms").field(
-            "Questions and corporations",
-            link("Application Forms", "forms"),
-        ));
-    }
     Ok(page
         .tab(
             "Pending",
             vec![Section::Table(queue_table(
+                viewer,
                 &pending,
                 &names,
                 "No applications waiting.",
@@ -742,7 +869,7 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
         .tab(
             "Reviewed",
             vec![Section::Table(
-                queue_table(&reviewed, &names, "None reviewed yet.")
+                queue_table(viewer, &reviewed, &names, "None reviewed yet.")
                     .title(format!("The latest {REVIEWED_ROWS}")),
             )],
         ))
@@ -758,21 +885,28 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
             .chain([a.main_corporation_id]),
     );
     let mut about = Card::new("Application")
-        .field("Main Character", a.main_name.clone())
-        .field("Main's corporation", name_of(&names, a.main_corporation_id))
-        .field("Applying to", a.corporation_name.clone())
+        .field("Main Character", character(a.main_id, a.main_name.clone()))
+        .field("Main's corporation", corp(&names, a.main_corporation_id))
+        .field(
+            "Applying to",
+            corporation(a.corporation_id, a.corporation_name.clone()),
+        )
         .field("Applied", time_or(a.created_at, ""))
         .field("Status", a.status())
         .field(
             "Reviewer",
             if a.reviewer_name.is_empty() {
-                "Nobody yet".to_owned()
+                "Nobody yet".into()
             } else {
-                a.reviewer_name.clone()
+                reviewer(&a)
             },
         );
     if let Some(decided) = a.decided_at {
         about = about.field("Decided", time(rfc3339(decided)));
+    }
+    let list = review_buttons(viewer, &a);
+    if !list.is_empty() {
+        about = about.field("Actions", actions(list));
     }
     let mut characters = Table::new(vec![
         Column::text("Character"),
@@ -789,11 +923,16 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
     }
     for c in a.characters.iter().take(MAX_CHARACTERS_SHOWN) {
         characters = characters.row(vec![
-            c.name.clone().into(),
-            name_of(&names, c.corporation_id).into(),
-            c.alliance_id
-                .map_or_else(String::new, |id| name_of(&names, id))
-                .into(),
+            if c.id > 0 {
+                character(c.id, c.name.clone()).into()
+            } else {
+                c.name.clone().into()
+            },
+            corp(&names, c.corporation_id),
+            match c.alliance_id {
+                Some(id) if id > 0 => alliance(id, name_of(&names, id)).into(),
+                _ => "".into(),
+            },
         ]);
     }
     let mut page = Page::new("View Application").description(format!(
@@ -808,8 +947,8 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
         page = page.section(section);
     }
     let comments = query(
-        "SELECT created_at, author_name, body FROM comments WHERE application_id = $1 \
-         ORDER BY created_at, id LIMIT $2",
+        "SELECT created_at, author_name, body, author_character_id FROM comments \
+         WHERE application_id = $1 ORDER BY created_at, id LIMIT $2",
         &[a.id.into(), MAX_COMMENTS.into()],
     )?;
     let mut table = Table::new(vec![
@@ -822,64 +961,29 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
     for c in &comments {
         table = table.row(vec![
             time_or(when(c, 0), ""),
-            text(c, 1).into(),
+            character(int(c, 3), text(c, 1)).into(),
             clip(&text(c, 2)).into(),
         ]);
     }
-    page = page.table(table);
-
-    let mine = a.reviewer_account_id == Some(viewer.account_id);
-    let all = viewer.can("all_corporations");
     if a.pending() && a.reviewer_account_id.is_none() {
-        page = page.form(
-            Form::new("claim", "Mark in Progress")
-                .description("You become its reviewer: only you can then approve or reject it.")
-                .field(
-                    Field::checkbox("confirm", "I'm reviewing this application", true).required(),
-                ),
+        page = page.text(
+            "Mark in Progress makes you its reviewer: only you can then approve or reject it.",
         );
     }
-    let mut decisions = Vec::new();
-    if viewer.can("approve_application") {
-        decisions.push(("approve".to_owned(), "Approve".to_owned()));
-    }
-    if viewer.can("reject_application") {
-        decisions.push(("reject".to_owned(), "Reject".to_owned()));
-    }
-    if a.pending() && (mine || all) && !decisions.is_empty() {
-        page = page.form(
-            Form::new("decide", "Save Decision")
-                .description(format!(
-                    "{} sees the decision on their applications page.",
-                    a.main_name
-                ))
-                .field(Field::select("decision", "Decision", decisions).required()),
-        );
-    }
-    page = page.form(
+    Ok(page.table(table).form(
         Form::new("comment", "Add Comment")
             .description("Only reviewers see comments.")
             .field(Field::textarea("comment", "Comment", MAX_COMMENT).required()),
-    );
-    if viewer.can("delete_application") {
-        page = page.form(
-            Form::new("delete", "Delete Application")
-                .description(format!(
-                    "Its answers and comments go with it, and {} can apply again.",
-                    a.main_name
-                ))
-                .field(
-                    Field::checkbox("confirm", "Yes, delete this application", false).required(),
-                ),
-        );
-    }
-    Ok(page)
+    ))
 }
 
+/// An application's action, from its page or (`from_list`) its row in
+/// the queue, which it goes back to.
 fn review_action(
     viewer: &Viewer,
     app: i64,
     submission: &Submission,
+    from_list: bool,
 ) -> Result<SubmitResult, PageError> {
     let a = reviewable(viewer, app)?;
     let me: [Db; 3] = [
@@ -887,8 +991,20 @@ fn review_action(
         viewer.main.id.into(),
         viewer.main.name.clone().into(),
     ];
-    let back = || Ok(SubmitResult::Redirect(format!("review/{app}")));
-    let note = |text: &str| Ok(SubmitResult::Page(review_view(viewer, app, Some(text))?));
+    let back = || {
+        Ok(SubmitResult::Redirect(if from_list {
+            "review".to_owned()
+        } else {
+            format!("review/{app}")
+        }))
+    };
+    let note = |text: &str| {
+        Ok(SubmitResult::Page(if from_list {
+            review_page(viewer, None)?.text(text)
+        } else {
+            review_view(viewer, app, Some(text))?
+        }))
+    };
     match submission.form.as_str() {
         "claim" => {
             let [account, character, name] = me;
@@ -1093,16 +1209,6 @@ fn add_form(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, Pa
     Ok(SubmitResult::Redirect(format!("forms/{form}")))
 }
 
-fn question_options(list: &[Question]) -> Vec<(String, String)> {
-    list.iter()
-        .enumerate()
-        .map(|(i, q)| {
-            let title: String = q.title.chars().take(80).collect();
-            (q.id.to_string(), format!("{}. {title}", i + 1))
-        })
-        .collect()
-}
-
 fn question_fields(form: Form, current: Option<&Question>) -> Form {
     let title = Field::text("title", "Question", MAX_TITLE).required();
     let help = Field::text("help_text", "Help text", MAX_HELP).help("Shown under the question.");
@@ -1142,16 +1248,37 @@ fn form_page(form: i64, note: Option<&str>) -> Result<Page, PageError> {
         Column::text("Answer"),
         Column::text("Choices"),
         Column::text("Help text"),
+        Column::text(""),
     ])
     .title("Questions")
     .empty("No questions yet: add the first below.");
     for (i, q) in list.iter().enumerate() {
+        // Up and Down (not past either end), and Delete.
+        let moved = |label: &str, direction: &str| {
+            action(label, "move_question")
+                .field("question", q.id.to_string())
+                .field("direction", direction)
+        };
+        let mut row_buttons = Vec::new();
+        if i > 0 {
+            row_buttons.push(moved("Up", "up"));
+        }
+        if i + 1 < list.len() {
+            row_buttons.push(moved("Down", "down"));
+        }
+        row_buttons.push(
+            action("Delete", "delete_question")
+                .field("question", q.id.to_string())
+                .tone(Tone::Danger)
+                .confirm("The question is deleted. Applications already made keep their answers."),
+        );
         table = table.row(vec![
             count(i + 1).into(),
             link(q.title.clone(), format!("forms/{form}/question/{}", q.id)).into(),
             q.kind().into(),
             clip(&q.choices.join(", ")).into(),
             q.help.clone().into(),
+            actions(row_buttons),
         ]);
     }
     let mut page = Page::new(corporation.clone()).description(format!(
@@ -1160,50 +1287,22 @@ fn form_page(form: i64, note: Option<&str>) -> Result<Page, PageError> {
     if let Some(note) = note {
         page = page.text(note);
     }
-    page = page.table(table).form(question_fields(
+    let about = Card::new("Form")
+        .field("Corporation", corporation.clone())
+        .field("Applications", applications)
+        .field(
+            "Delete",
+            action("Delete Form", "delete_form")
+                .tone(Tone::Danger)
+                .confirm(format!(
+                    "{corporation}'s form, its questions and its {applications} applications, \
+                     answers and comments are deleted."
+                )),
+        );
+    Ok(page.card(about).table(table).form(question_fields(
         Form::new("add_question", "Add Question").title("New question"),
         None,
-    ));
-    if list.len() > 1 {
-        page = page.form(
-            Form::new("move_question", "Move")
-                .title("Reorder")
-                .field(Field::select("question", "Question", question_options(&list)).required())
-                .field(
-                    Field::select(
-                        "direction",
-                        "Direction",
-                        vec![
-                            ("up".to_owned(), "Up".to_owned()),
-                            ("down".to_owned(), "Down".to_owned()),
-                        ],
-                    )
-                    .required(),
-                ),
-        );
-    }
-    if !list.is_empty() {
-        page = page.form(
-            Form::new("delete_question", "Delete Question")
-                .description("Applications already made keep their answers.")
-                .field(Field::select("question", "Question", question_options(&list)).required())
-                .field(Field::checkbox("confirm", "Yes, delete this question", false).required()),
-        );
-    }
-    Ok(page.form(
-        Form::new("delete_form", "Delete Form")
-            .description(format!(
-                "Its questions and its {applications} applications, answers and comments are deleted too."
-            ))
-            .field(
-                Field::checkbox(
-                    "confirm",
-                    format!("Yes, delete {corporation}'s form"),
-                    false,
-                )
-                .required(),
-            ),
-    ))
+    )))
 }
 
 fn question_page(form: i64, question: i64, note: Option<&str>) -> Result<Page, PageError> {
@@ -1219,12 +1318,13 @@ fn question_page(form: i64, question: i64, note: Option<&str>) -> Result<Page, P
     if let Some(note) = note {
         page = page.text(note);
     }
+    // Back to its form, beside the title.
     Ok(page
+        .link(format!("{corporation}'s form"), format!("forms/{form}"))
         .form(question_fields(
             Form::new("edit_question", "Save Question"),
             Some(q),
-        ))
-        .card(Card::new("Form").field("Back to", link(corporation, format!("forms/{form}")))))
+        )))
 }
 
 /// A question as posted, checked: its title, help, choices and whether

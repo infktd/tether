@@ -235,7 +235,7 @@ async fn hr_applications_end_to_end(db: PgPool) {
         &h,
         &owner,
         &questions,
-        &format!("_form=delete_question&question={skills}&confirm=on"),
+        &format!("_form=delete_question&question={skills}"),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -260,6 +260,29 @@ async fn hr_applications_end_to_end(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let form_page = open(&h, &owner, &questions).await;
+    // Each question's row: Up and Down (not past the ends) and Delete.
+    assert!(
+        form_page.body.contains(&format!(
+            "name=\"question\" value=\"{fly}\"><input type=\"hidden\" name=\"direction\" value=\"up\">"
+        )),
+        "{}",
+        form_page.body
+    );
+    assert!(
+        !form_page.body.contains(&format!(
+            "name=\"question\" value=\"{fly}\"><input type=\"hidden\" name=\"direction\" value=\"down\">"
+        )),
+        "{}",
+        form_page.body
+    );
+    let res = post(
+        &h,
+        &owner,
+        &questions,
+        &format!("_form=move_question&question={fly}&direction=down"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     let (why, tz, fly_at) = (
         form_page.body.find("Why us?").unwrap(),
         form_page.body.find("Timezone").unwrap(),
@@ -281,10 +304,35 @@ async fn hr_applications_end_to_end(db: PgPool) {
     }
     let mine = open(&h, &pilot, "").await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    // Create Application is the header's button; it lists the
+    // corporations taking applications, with their logos.
     assert!(
-        mine.body.contains("Apply to Science and Trade Institute"),
+        mine.body.contains(&format!(
+            "href=\"/plugins/{ID}/create\">Create Application</a>"
+        )),
         "{}",
         mine.body
+    );
+    assert!(
+        !mine
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/review\"")),
+        "{}",
+        mine.body
+    );
+    let create = open(&h, &pilot, "create").await;
+    assert_eq!(create.status, StatusCode::OK, "{}", create.body);
+    assert!(
+        create.body.contains("Apply to Science and Trade Institute"),
+        "{}",
+        create.body
+    );
+    assert!(
+        create
+            .body
+            .contains(&format!("images.evetech.net/corporations/{NPC_CORP}/logo")),
+        "{}",
+        create.body
     );
     let apply = open(&h, &pilot, &format!("apply/{npc_form}")).await;
     assert!(apply.body.contains("Why us?"), "{}", apply.body);
@@ -337,12 +385,12 @@ async fn hr_applications_end_to_end(db: PgPool) {
     }
     let blue_owner_app = application_of(&h, "gigX", owner_form).await;
     let blue_npc_app = application_of(&h, "gigX", npc_form).await;
-    // ...and withdraws one while it's pending.
+    // ...and withdraws one while it's pending, from its row.
     let res = post(
         &h,
         &blue,
-        &format!("view/{blue_npc_app}"),
-        "_form=delete&confirm=on",
+        "",
+        &format!("_form=delete&application={blue_npc_app}"),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -371,6 +419,14 @@ async fn hr_applications_end_to_end(db: PgPool) {
     }
     let queue = open(&h, &a, "review").await;
     assert_eq!(queue.status, StatusCode::OK, "{}", queue.body);
+    // Reviewers get the management page beside the title.
+    assert!(
+        queue.body.contains(&format!(
+            "href=\"/plugins/{ID}/review\" aria-current=\"page\""
+        )),
+        "{}",
+        queue.body
+    );
     assert!(
         queue.body.contains(&format!("review/{pilot_app}")),
         "{}",
@@ -396,22 +452,25 @@ async fn hr_applications_end_to_end(db: PgPool) {
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(seen.body.contains("Rocks are great"));
     assert!(seen.body.contains("Characters"));
-    assert!(seen.body.contains("<td>Pilot</td>"), "{}", seen.body);
-    assert!(seen.body.contains("Mark in Progress"));
-    assert!(!seen.body.contains("Save Decision"), "{}", seen.body);
-    assert!(!seen.body.contains("Delete Application"));
+    assert!(seen.body.contains(">Pilot</span>"), "{}", seen.body);
+    assert!(seen.body.contains(">Mark in Progress</button>"));
+    assert!(!seen.body.contains(">Approve</button>"), "{}", seen.body);
+    assert!(!seen.body.contains("can apply again"));
 
     // Nobody decides before marking it in progress; then only its reviewer.
-    let res = post(&h, &b, &review, "_form=decide&decision=approve").await;
+    let decide =
+        |decision: &str| format!("_form=decide&application={pilot_app}&decision={decision}");
+    let claim = format!("_form=claim&application={pilot_app}");
+    let res = post(&h, &b, &review, &decide("approve")).await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    let res = post(&h, &a, &review, "_form=claim&confirm=on").await;
+    let res = post(&h, &a, &review, &claim).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let for_b = open(&h, &b, &review).await;
     assert!(for_b.body.contains("In Progress"), "{}", for_b.body);
     assert!(for_b.body.contains("Pilot A"));
     assert!(!for_b.body.contains("Mark in Progress"));
-    for body in ["_form=claim&confirm=on", "_form=decide&decision=reject"] {
-        let res = post(&h, &b, &review, body).await;
+    for body in [claim.clone(), decide("reject")] {
+        let res = post(&h, &b, &review, &body).await;
         assert_eq!(res.status, StatusCode::CONFLICT, "{body}: {}", res.body);
     }
     let res = post(&h, &b, &review, "_form=comment&comment=Knows+his+rocks").await;
@@ -422,12 +481,16 @@ async fn hr_applications_end_to_end(db: PgPool) {
     assert!(view.body.contains("In Progress"), "{}", view.body);
     assert!(!view.body.contains("Knows his rocks"));
     // ...and can't withdraw it now it's being reviewed (the notes stay).
-    assert!(!view.body.contains("Delete Application"), "{}", view.body);
+    assert!(
+        !view.body.contains("apply again afterwards"),
+        "{}",
+        view.body
+    );
     let res = post(
         &h,
         &pilot,
         &format!("view/{pilot_app}"),
-        "_form=delete&confirm=on",
+        &format!("_form=delete&application={pilot_app}"),
     )
     .await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
@@ -445,41 +508,56 @@ async fn hr_applications_end_to_end(db: PgPool) {
     assert!(full.body.contains("at most 200 comments"), "{}", full.body);
     assert_eq!(open(&h, &a, &review).await.status, StatusCode::OK);
     // Deleting needs delete_application.
-    let res = post(&h, &a, &review, "_form=delete&confirm=on").await;
+    let res = post(
+        &h,
+        &a,
+        &review,
+        &format!("_form=delete&application={pilot_app}"),
+    )
+    .await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
 
-    let res = post(&h, &a, &review, "_form=decide&decision=approve").await;
+    let res = post(&h, &a, &review, &decide("approve")).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let view = open(&h, &pilot, &format!("view/{pilot_app}")).await;
     assert!(view.body.contains("Approved"), "{}", view.body);
-    assert!(!view.body.contains("Delete Application"));
+    assert!(!view.body.contains("apply again afterwards"));
     let res = post(
         &h,
         &pilot,
         &format!("view/{pilot_app}"),
-        "_form=delete&confirm=on",
+        &format!("_form=delete&application={pilot_app}"),
     )
     .await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    let res = post(&h, &a, &review, "_form=decide&decision=reject").await;
+    let res = post(&h, &a, &review, &decide("reject")).await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     let reviewed = open(&h, &a, "review?_tab=1").await;
     assert!(reviewed.body.contains("Approved"), "{}", reviewed.body);
 
     // The owner (every permission, all corporations): search, reject
-    // without marking in progress first, delete; never their own.
+    // without marking in progress first, delete, from the queue's rows as
+    // AA; never their own.
     let found = post(&h, &owner, "review", "_form=search&q=GIGX").await;
     assert_eq!(found.status, StatusCode::OK, "{}", found.body);
     assert!(found.body.contains(&format!("review/{blue_owner_app}")));
     assert!(!found.body.contains(&format!("review/{pilot_app}")));
+    assert!(
+        found
+            .body
+            .contains("gigX is rejected; they see it on their applications page."),
+        "{}",
+        found.body
+    );
     let res = post(
         &h,
         &owner,
-        &format!("review/{blue_owner_app}"),
-        "_form=decide&decision=reject",
+        "review",
+        &format!("_form=decide&application={blue_owner_app}&decision=reject"),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), format!("/plugins/{ID}/review"));
     assert!(
         open(&h, &blue, &format!("view/{blue_owner_app}"))
             .await
@@ -489,8 +567,8 @@ async fn hr_applications_end_to_end(db: PgPool) {
     let res = post(
         &h,
         &owner,
-        &format!("review/{blue_owner_app}"),
-        "_form=delete&confirm=on",
+        "review",
+        &format!("_form=delete&application={blue_owner_app}"),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -519,7 +597,7 @@ async fn hr_applications_end_to_end(db: PgPool) {
         &h,
         &owner,
         &format!("forms/{blue_form}"),
-        "_form=delete_form&confirm=on",
+        "_form=delete_form",
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
