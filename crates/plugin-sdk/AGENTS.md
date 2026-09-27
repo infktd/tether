@@ -246,6 +246,30 @@ Page::new("Moons")
     .code(CodeBlock::new("[Rifter, Example]\nDamage Control II\n").title("Doctrine fit").copy_label("Copy fit"))
 ```
 
+Instruments and timelines (EVE's own shapes; the host draws them in Tether's style):
+
+```rust
+use tether_plugin_sdk::{Lane, LaneItem, Timeline, Tone, composition, composition_large, defenses, levels, part};
+
+// A skill in the queue: four levels trained, the fifth in training.
+let level = levels(4, Some(5));
+// A moon's ores as a small ring (grade 0 = R4 ... 4 = R64), or large with its value.
+let ores = composition(vec![part("Xenotime", 0.31, 4), part("Sylvite", 0.69, 0)]);
+let big = composition_large(vec![part("Chromite", 0.34, 2), part("Bitumens", 0.66, 0)], "1.84B");
+// A structure in its armor timer: shield gone, core pulsing.
+let hull = defenses(0.0, 1.0, 1.0, true);
+// The next days on lanes, prime time shaded, a proposal dashed.
+let week = Timeline::new("2026-09-27T00:00:00Z", "2026-10-01T00:00:00Z")
+    .title("The next days")
+    .window("2026-09-27T18:00:00Z", "2026-09-27T21:00:00Z")
+    .lane(
+        Lane::new("Fleets")
+            .item(LaneItem::new("Stratop", "2026-09-28T07:00:00Z").until("2026-09-28T10:00:00Z").tone(Tone::Warning).link("op/7"))
+            .item(LaneItem::new("Start the drill", "2026-09-29T19:00:00Z").planned()),
+    );
+page = page.timeline(week);
+```
+
 The host refuses a page (and logs why, for admins) if it breaks these rules:
 
 | Rule | Limit |
@@ -264,6 +288,10 @@ The host refuses a page (and logs why, for admins) if it breaks these rules:
 | Progress | fraction 0 to 1; `from` and `to` both or neither, real instants, `to` after `from` |
 | Code blocks | 16 KiB of text |
 | Links to share | a link path, as for links |
+| Skill levels | 0 to 5 trained; the level in training above that, at most 5 |
+| Compositions | 1 to 8 parts, each amount above 0 and grade 0 to 4 |
+| Defenses | shield, armor and hull each 0 to 1 |
+| Timelines | a span of at most 60 days (`to` after `from`); 1 to 20 lanes, 50 events a lane, 60 windows; every time a real instant, an event's end after its start, links as link paths |
 | Values (stats, cells, card fields) on a page | 10,000 |
 | Any one piece of text | 2 KiB |
 | The whole page: all text, link paths and times, plus 16 bytes per value | 1 MiB |
