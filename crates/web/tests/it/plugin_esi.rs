@@ -1892,3 +1892,123 @@ async fn a_new_write_scope_asks_pilots_again_and_no_state_may_require_it(db: PgP
     let states = page(&h, "/admin/states", &owner).await.body;
     assert!(!states.contains("Require ESI probe"), "{states}");
 }
+
+/// aa-memberaudit's removal notices: dropping a character from Member Audit
+/// (as bundled) tells the holders of `notified_on_character_removal` whose
+/// view scope covers the pilot.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_character_dropped_from_member_audit_notifies_holders_in_scope(db: PgPool) {
+    use tether_core::states::{Builtin, EntityKind};
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let manifest = format!(
+        "[plugin]\nid = \"tether.member-audit\"\nname = \"Member Audit\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[capabilities.esi]\nuser = [\"{SKILLS}\"]\n\n[permissions]\n\
+         basic_access = \"Use it\"\nview_same_corporation = \"Corporation\"\n\
+         view_everything = \"Everything\"\nnotified_on_character_removal = \"Notified\"\n"
+    );
+    let package = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &probe_component()),
+    ]);
+    let h = harness_with_bundled(db, vec![package.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    approve_bundled(&h, &owner, "tether.member-audit", &package).await;
+    run_jobs(&h).await;
+    // The Mittani (another corporation) may see his own corporation only.
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let pilot_account: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+            .bind(MITTANI)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    for permission in [
+        "notified_on_character_removal",
+        "view_same_corporation",
+        "basic_access",
+    ] {
+        sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+            .bind(format!("plugin.tether.member-audit.{permission}"))
+            .bind(pilot_account)
+            .execute(&h.db)
+            .await
+            .unwrap();
+    }
+    let _ = pilot;
+
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
+    let res = send(
+        &h.app,
+        form(
+            "/register/unregister?app=tether.member-audit",
+            &format!("character_id={CHRIBBA}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let notices: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT account_id, title, message FROM core.notifications \
+         WHERE title = 'Member Audit: Character has been removed!' ORDER BY id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    // The superuser (view_everything, as AA's) is told; the Mittani's
+    // corporation isn't Chribba's.
+    let owner_account: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+            .bind(CHRIBBA)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        notices,
+        vec![(
+            owner_account,
+            "Member Audit: Character has been removed!".to_owned(),
+            "Chribba has removed character Chribba".to_owned()
+        )]
+    );
+
+    // With view_everything, the Mittani is told too.
+    sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+        .bind("plugin.tether.member-audit.view_everything")
+        .bind(pilot_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
+    let res = send(
+        &h.app,
+        form(
+            "/register/unregister?app=tether.member-audit",
+            &format!("character_id={CHRIBBA}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let told: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.notifications WHERE account_id = $1 \
+         AND title = 'Member Audit: Character has been removed!'",
+    )
+    .bind(pilot_account)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(told, 1);
+}

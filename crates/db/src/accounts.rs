@@ -1345,3 +1345,38 @@ mod tests {
         assert!(result.lost.is_none());
     }
 }
+
+/// An account's main and where it is, for rules that go by the main.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainAffiliation {
+    pub account_id: i64,
+    pub name: String,
+    pub corporation_id: Option<i64>,
+    pub alliance_id: Option<i64>,
+}
+
+/// The mains of `accounts` (those that have one), with their corporation
+/// and alliance.
+pub async fn main_affiliations(
+    pool: &PgPool,
+    accounts: &[i64],
+) -> Result<Vec<MainAffiliation>, sqlx::Error> {
+    sqlx::query_as!(
+        MainAffiliation,
+        r#"
+        SELECT a.id AS account_id, c.name, c.corporation_id, c.alliance_id
+        FROM core.accounts a JOIN core.characters c ON c.id = a.main_character_id
+        WHERE a.id = ANY($1)
+        "#,
+        accounts
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// A character's name, if Tether knows it.
+pub async fn character_name(pool: &PgPool, character: i64) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT name FROM core.characters WHERE id = $1", character)
+        .fetch_optional(pool)
+        .await
+}

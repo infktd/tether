@@ -77,6 +77,9 @@ view_same_corporation = "Can view corporation characters (pilots whose main is i
 view_same_alliance = "Can view alliance characters (pilots whose main is in your main's alliance)"
 view_everything = "Can view all characters"
 view_skill_sets = "Can view skill sets for a character"
+# aa-memberaudit's: told when a pilot in your view scope drops a character
+# (Tether sends the notice when a character is unregistered).
+notified_on_character_removal = "Notified when member drops character"
 manage = "Create and delete skill sets, and change Member Audit's settings"
 
 # What 0.2 called them: their grants move on upgrade. view_mail is gone

@@ -614,7 +614,84 @@ pub async fn unregister_app_character(
         .await?;
     }
     tx.commit().await?;
+    if removed && let Err(err) = notify_removal(db, account, plugin, character).await {
+        // The character is unregistered either way.
+        tracing::error!(plugin, error = %err, "removal notices");
+    }
     Ok(removed)
+}
+
+/// aa-memberaudit's removal notice (`notified_on_character_removal`): when
+/// a pilot drops a character from Member Audit, as bundled with Tether,
+/// each holder of that permission whose view scope covers the pilot is
+/// told (AA's `user_has_scope`: `view_everything`; else, by mains, the
+/// same alliance with `view_same_alliance`, or the same corporation with
+/// `view_same_corporation`; and their own).
+async fn notify_removal(
+    db: &PgPool,
+    account: AccountId,
+    plugin: &str,
+    character: i64,
+) -> Result<(), sqlx::Error> {
+    let first_party = tether_db::plugins::get(db, plugin)
+        .await?
+        .is_some_and(|p| crate::plugin_services::may_see_owners(plugin, p.origin));
+    if !first_party {
+        return Ok(());
+    }
+    let permission = |name: &str| format!("plugin.{plugin}.{name}");
+    let holders =
+        tether_db::permissions_audit::holders(db, &permission("notified_on_character_removal"))
+            .await?;
+    if holders.is_empty() {
+        return Ok(());
+    }
+    let mut ids: Vec<i64> = holders.iter().map(|h| h.account_id).collect();
+    ids.push(account.0);
+    let mains = tether_db::accounts::main_affiliations(db, &ids).await?;
+    let main_of = |id: i64| mains.iter().find(|m| m.account_id == id);
+    let pilot = main_of(account.0);
+    let character_name = tether_db::accounts::character_name(db, character)
+        .await?
+        .unwrap_or_else(|| format!("Character {character}"));
+    let title = "Member Audit: Character has been removed!";
+    let message = format!(
+        "{} has removed character {character_name}",
+        pilot.map_or("A pilot", |m| m.name.as_str())
+    );
+    for holder in &holders {
+        let held = tether_db::permissions::effective(db, AccountId(holder.account_id)).await?;
+        let has = |name: &str| held.contains(&permission(name));
+        let theirs = main_of(holder.account_id);
+        let in_scope = holder.account_id == account.0
+            || has("view_everything")
+            || match (theirs, pilot) {
+                (Some(theirs), Some(pilot)) => {
+                    if has("view_same_alliance") && theirs.alliance_id.is_some() {
+                        theirs.alliance_id == pilot.alliance_id
+                    } else if has("view_same_corporation") {
+                        theirs.corporation_id.is_some()
+                            && theirs.corporation_id == pilot.corporation_id
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+        if in_scope {
+            let mut tx = db.begin().await?;
+            tether_db::notifications::notify(
+                &mut tx,
+                AccountId(holder.account_id),
+                tether_db::notifications::Level::Info,
+                title,
+                Some(&message),
+            )
+            .await?;
+            tx.commit().await?;
+        }
+    }
+    Ok(())
 }
 
 // ---- jobs ------------------------------------------------------------------
