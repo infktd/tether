@@ -109,6 +109,44 @@ interface page {
         label: option<string>,
     }
 
+    /// A skill's level as EVE's five squares.
+    record levels {
+        /// 0 to 5: levels trained, drawn filled.
+        trained: u8,
+        /// The level in training (above `trained`, at most 5), outlined in
+        /// the signal colour.
+        training: option<u8>,
+    }
+
+    /// One part of a whole, such as an ore in a moon.
+    record share {
+        label: string,
+        /// Above 0: the host draws each part's amount against the sum.
+        amount: f64,
+        /// 0 to 4: how valuable, drawn darker to brighter (a moon's ores:
+        /// R4, R8, R16, R32, R64).
+        grade: u8,
+    }
+
+    /// What something is made of, drawn as a ring of its parts: small in a
+    /// table, large with `center` in its middle (e.g. a moon's value).
+    record composition {
+        /// 1 to 8.
+        parts: list<share>,
+        /// A few words in the middle; given, the ring is drawn large.
+        center: option<string>,
+    }
+
+    /// A structure's defenses as EVE's three rings: shield outside, then
+    /// armor, then hull. Each 0 to 1.
+    record defenses {
+        shield: f64,
+        armor: f64,
+        hull: f64,
+        /// Under attack or reinforced: the core pulses.
+        alarm: bool,
+    }
+
     /// A value, typed so the host formats it the same way everywhere.
     variant value {
         text(string),
@@ -147,6 +185,12 @@ interface page {
         /// admins), with the host's own words and the scopes beside it;
         /// nothing for anyone else.
         add-owner(string),
+        /// A skill's level (see `levels`).
+        levels(levels),
+        /// What something is made of, as a ring (see `composition`).
+        composition(composition),
+        /// Shield, armor and hull (see `defenses`).
+        defenses(defenses),
     }
 
     record stat {
@@ -279,6 +323,51 @@ interface page {
         copy-label: option<string>,
     }
 
+    /// One event in a timeline's lane.
+    record lane-item {
+        label: string,
+        /// When it happens, RFC 3339.
+        at: string,
+        /// With an end (RFC 3339, after `at`): drawn as a bar.
+        until: option<string>,
+        /// `warning` for what needs attention soon, `danger` for hostile,
+        /// `success` for friendly, else neutral.
+        tone: tone,
+        /// A proposal rather than something that will happen (a planner's
+        /// suggestion): drawn dashed.
+        planned: bool,
+        /// One of the plugin's pages about it, as for `link`.
+        link: option<string>,
+    }
+
+    /// A row of a timeline.
+    record lane {
+        label: string,
+        /// A few words under the label.
+        caption: option<string>,
+        /// At most 50.
+        items: list<lane-item>,
+    }
+
+    /// A shaded stretch across every lane (e.g. prime time).
+    record window {
+        %from: string,
+        to: string,
+    }
+
+    /// Events laid out on lanes across a span of time, with day ticks and a
+    /// "now" line: fleets, timers, moon chunks, a planner's proposals.
+    record timeline {
+        title: option<string>,
+        /// The span shown, RFC 3339; at most 60 days.
+        %from: string,
+        to: string,
+        /// 1 to 20.
+        lanes: list<lane>,
+        /// At most 60.
+        windows: list<window>,
+    }
+
     variant section {
         stats(list<stat>),
         table(table),
@@ -290,6 +379,8 @@ interface page {
         code(code-block),
         /// A grid of profile cards (My Characters).
         cards(card-grid),
+        /// Events on lanes across time (see `timeline`).
+        timeline(timeline),
     }
 
     record tab {

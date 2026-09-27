@@ -39,6 +39,15 @@
 {%- endif -%}
 {%- endmacro %}
 
+{#- A composition as a ring of its parts, darker to brighter by value;
+    large with its center words and a legend beside it. -#}
+{% macro ring(c) -%}
+<span class="composition{% if c.large %} composition-large{% endif %}">
+<svg width="{{ c.size }}" height="{{ c.size }}" viewBox="0 0 {{ c.size }} {{ c.size }}" fill="none" role="img" aria-label="{{ c.label }}"><title>{{ c.label }}</title>{% for a in c.arcs %}<circle cx="{{ c.mid }}" cy="{{ c.mid }}" r="{{ c.radius }}" class="{{ a.color }}" stroke-width="{{ c.stroke }}" stroke-dasharray="{{ a.dash }}" stroke-dashoffset="{{ a.offset }}" transform="rotate(-90 {{ c.mid }} {{ c.mid }})"/>{% endfor %}<circle cx="{{ c.mid }}" cy="{{ c.mid }}" r="{{ c.disc }}" class="composition-disc"/>{% if let Some(center) = c.center %}<text x="{{ c.mid }}" y="{{ c.mid }}" dy="0.35em" text-anchor="middle" class="composition-center">{{ center }}</text>{% endif %}</svg>
+{%- if c.large -%}<span class="composition-legend">{% for (name, pct, color) in c.parts %}<span><span class="mark {{ color }}"></span><span>{{ name }}</span><span class="num">{{ pct }}%</span></span>{% endfor %}</span>{%- endif -%}
+</span>
+{%- endmacro %}
+
 {% macro value(v, mono_already) -%}
 {%- if !v.actions.is_empty() -%}<span class="row-actions">{% for a in v.actions %}{% call action(a) %}{% endcall %}{% endfor %}</span>
 {%- else if let Some(o) = v.add_owner -%}<form method="post" action="/apps/{{ o.plugin }}/owners/add" hx-boost="false" class="flex flex-wrap items-center gap-2"><input type="hidden" name="back" value="{{ o.back }}"><button type="submit" class="btn" data-variant="outline" data-size="sm">{{ o.label }}</button><span class="text-xs text-muted-foreground">Adds one of your characters as this app's owner, used at once · EVE asks for:</span>{% for s in o.scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</form>
@@ -50,6 +59,9 @@
 <progress class="sr-only" max="1" value="{{ p.value }}"{% if let Some(from) = p.from %} data-from="{{ from }}"{% endif %}{% if let Some(to) = p.to %} data-to="{{ to }}"{% endif %}{% if let Some(label) = p.label %} aria-label="{{ label }}"{% endif %}>{{ p.percent }}%</progress>
 <span class="segbar" aria-hidden="true">{% for lit in p.cells %}<span{% if *lit %} data-lit{% endif %}></span>{% endfor %}</span>
 </span>
+{%- else if let Some(l) = v.levels -%}<span class="levels" role="img" aria-label="{{ l.label }}" title="{{ l.label }}">{% for c in l.cells %}<span{% if *c == "trained" %} data-trained{% else if *c == "training" %} data-training{% endif %}></span>{% endfor %}</span>
+{%- else if let Some(c) = v.composition -%}{% call ring(c) %}{% endcall %}
+{%- else if let Some(d) = v.defenses -%}<svg class="defenses" width="44" height="44" viewBox="0 0 44 44" fill="none" role="img" aria-label="{{ d.label }}"><title>{{ d.label }}</title>{% for (r, track, part) in d.rings %}<circle cx="22" cy="22" r="{{ r }}" class="{{ track.color }}" stroke-width="3" stroke-dasharray="{{ track.dash }}" transform="rotate(135 22 22)"/><circle cx="22" cy="22" r="{{ r }}" class="{{ part.color }}" stroke-width="3" stroke-dasharray="{{ part.dash }}" transform="rotate(135 22 22)"/>{% endfor %}<rect x="19" y="19" width="6" height="6" fill="none" class="{% if d.alarm %}arc-danger alarm{% else %}arc-bracket{% endif %}"/></svg>
 {%- else if let Some(href) = v.href -%}{% if v.primary %}<a class="btn" data-variant="primary" data-size="sm" href="{{ href }}">{{ v.text }}</a>{% else %}<a class="underline underline-offset-4" href="{{ href }}">{{ v.text }}</a>{% endif %}
 {%- else if let Some(variant) = v.badge -%}<span class="badge"{% if !variant.is_empty() %} data-variant="{{ variant }}"{% endif %}>{{ v.text }}</span>
 {%- else if (v.mono && !mono_already) || v.title.is_some() -%}<span{% if v.mono && !mono_already %} class="num"{% endif %}{% if let Some(title) = v.title %} title="{{ title }}"{% endif %}>{{ v.text }}</span>
@@ -175,6 +187,33 @@
     {% endif %}
   </article>
   {% endfor %}
+</section>
+{% when SectionView::Timeline(t) %}
+<section class="card timeline">
+  {% if let Some(title) = t.title %}<header><h2>{{ title }}</h2></header>{% endif %}
+  <div class="timeline-body">
+    <div class="timeline-axis"><div class="timeline-track">{% for (left, label) in t.ticks %}<span class="timeline-tick num {{ left }}">{{ label }}</span>{% endfor %}</div></div>
+    <div class="timeline-lanes">
+      <div class="timeline-overlay" aria-hidden="true">
+        {% for (left, width) in t.windows %}<span class="timeline-window {{ left }} {{ width }}"></span>{% endfor %}
+        {% for (left, _) in t.ticks %}<span class="timeline-day {{ left }}"></span>{% endfor %}
+        {% if let Some(now) = t.now %}<span class="timeline-now {{ now }}"><span class="num">NOW</span></span>{% endif %}
+      </div>
+      {% for lane in t.lanes %}
+      <div class="timeline-lane">
+        <div class="timeline-label"><span class="ov">{{ lane.label }}</span>{% if let Some(c) = lane.caption %}<span class="num text-[11px] text-muted-foreground">{{ c }}</span>{% endif %}</div>
+        <div class="timeline-track">
+          {% for i in lane.items %}
+          {% if let Some(href) = i.href %}<a href="{{ href }}"{% else %}<span{% endif %} class="timeline-item {{ i.left }}{% if let Some(w) = i.width %} {{ w }}{% endif %}" data-row="{{ i.row }}" data-tone="{{ i.tone }}"{% if i.planned %} data-planned{% endif %}{% if i.width.is_some() %} data-bar{% endif %} title="{{ i.label }} · {{ i.when }}">
+            <span class="timeline-glyph" aria-hidden="true"></span>
+            <span class="flex min-w-0 flex-col"><span class="timeline-item-label">{{ i.label }}</span><span class="num timeline-item-when">{{ i.left_text }}</span></span>
+          {% if i.href.is_some() %}</a>{% else %}</span>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
 </section>
 {% when SectionView::Code(code) %}
 <section class="card code-block" data-code>

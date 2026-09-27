@@ -98,9 +98,10 @@ macro_rules! export {
     };
 }
 pub use bindings::tether::plugin::page::{
-    Action, Badge, Card, CardGrid, Choice, CodeBlock, Column, Entity, EntityKind, Field, FieldKind,
-    Form, Link, NumberInput, Profile, ProfileCard, Progress, Section, SelectInput, Stat, Tab,
-    Table, TextInput, Tone, Value,
+    Action, Badge, Card, CardGrid, Choice, CodeBlock, Column, Composition, Defenses, Entity,
+    EntityKind, Field, FieldKind, Form, Lane, LaneItem, Levels, Link, NumberInput, Profile,
+    ProfileCard, Progress, Section, SelectInput, Share, Stat, Tab, Table, TextInput, Timeline,
+    Tone, Value, Window,
 };
 pub use bindings::{Page, PageError, Request, Submission, SubmitResult};
 
@@ -667,6 +668,11 @@ impl Page {
     /// Copy button. See [`CodeBlock::new`].
     pub fn code(self, code: CodeBlock) -> Self {
         self.section(Section::Code(code))
+    }
+
+    /// Events on lanes across a span of time. See [`Timeline::new`].
+    pub fn timeline(self, timeline: Timeline) -> Self {
+        self.section(Section::Timeline(timeline))
     }
 
     /// The one-line description under the title.
@@ -1248,5 +1254,142 @@ impl Action {
 impl From<Action> for Value {
     fn from(action: Action) -> Self {
         Value::Action(action)
+    }
+}
+
+/// A skill's level as EVE's five squares: `trained` filled (0 to 5), and
+/// the level in training, if any, outlined.
+pub fn levels(trained: u8, training: Option<u8>) -> Value {
+    Value::Levels(Levels { trained, training })
+}
+
+/// One part of a composition: its label, amount (above 0) and grade, 0 to
+/// 4, darker to brighter by value (a moon's ores: R4 = 0 to R64 = 4).
+pub fn part(label: impl Into<String>, amount: f64, grade: u8) -> Share {
+    Share {
+        label: label.into(),
+        amount,
+        grade,
+    }
+}
+
+/// What something is made of, as a small ring (1 to 8 parts).
+pub fn composition(parts: Vec<Share>) -> Value {
+    Value::Composition(Composition {
+        parts,
+        center: None,
+    })
+}
+
+/// The same ring drawn large, with a few words in its middle and a legend
+/// beside it (a moon's page: its value).
+pub fn composition_large(parts: Vec<Share>, center: impl Into<String>) -> Value {
+    Value::Composition(Composition {
+        parts,
+        center: Some(center.into()),
+    })
+}
+
+/// Shield, armor and hull (each 0 to 1) as EVE's three rings; `alarm`
+/// makes the core pulse (under attack, reinforced).
+pub fn defenses(shield: f64, armor: f64, hull: f64, alarm: bool) -> Value {
+    Value::Defenses(Defenses {
+        shield,
+        armor,
+        hull,
+        alarm,
+    })
+}
+
+impl Timeline {
+    /// A timeline over `from` to `to` (RFC 3339, at most 60 days).
+    pub fn new(from: impl Into<String>, to: impl Into<String>) -> Self {
+        Timeline {
+            title: None,
+            from: from.into(),
+            to: to.into(),
+            lanes: Vec::new(),
+            windows: Vec::new(),
+        }
+    }
+
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// A lane (at most 20), with its events (at most 50).
+    pub fn lane(mut self, lane: Lane) -> Self {
+        self.lanes.push(lane);
+        self
+    }
+
+    /// A shaded stretch across every lane, e.g. prime time.
+    pub fn window(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
+        self.windows.push(Window {
+            from: from.into(),
+            to: to.into(),
+        });
+        self
+    }
+}
+
+impl Lane {
+    pub fn new(label: impl Into<String>) -> Self {
+        Lane {
+            label: label.into(),
+            caption: None,
+            items: Vec::new(),
+        }
+    }
+
+    /// A few words under the label.
+    pub fn caption(mut self, caption: impl Into<String>) -> Self {
+        self.caption = Some(caption.into());
+        self
+    }
+
+    pub fn item(mut self, item: LaneItem) -> Self {
+        self.items.push(item);
+        self
+    }
+}
+
+impl LaneItem {
+    /// An event at `at` (RFC 3339).
+    pub fn new(label: impl Into<String>, at: impl Into<String>) -> Self {
+        LaneItem {
+            label: label.into(),
+            at: at.into(),
+            until: None,
+            tone: Tone::Neutral,
+            planned: false,
+            link: None,
+        }
+    }
+
+    /// With an end: drawn as a bar.
+    pub fn until(mut self, until: impl Into<String>) -> Self {
+        self.until = Some(until.into());
+        self
+    }
+
+    /// `Warning` for what needs attention soon, `Danger` for hostile,
+    /// `Success` for friendly.
+    pub fn tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    /// A proposal, not something that happens yet: drawn dashed.
+    pub fn planned(mut self) -> Self {
+        self.planned = true;
+        self
+    }
+
+    /// One of the plugin's pages about it.
+    pub fn link(mut self, path: impl Into<String>) -> Self {
+        self.link = Some(path.into());
+        self
     }
 }

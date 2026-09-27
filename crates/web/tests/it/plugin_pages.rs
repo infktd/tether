@@ -367,6 +367,43 @@ fn reload(uri: &str, token: Option<&str>) -> Request<Body> {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn instruments_are_drawn_without_inline_styles(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let res = page(&h, "/plugins/acme.pages/instruments", &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let body = &res.body;
+    // Escaped everywhere, and no inline styles: the CSP allows none, so
+    // colours and positions are the stylesheet's classes.
+    assert!(!body.contains("<script>alert"), "{body}");
+    assert!(!body.contains("style="), "{body}");
+    for part in [
+        // Five squares: four trained, the fifth in training.
+        r#"<span class="levels" role="img" aria-label="Level 4 of 5, training 5" title="Level 4 of 5, training 5"><span data-trained></span><span data-trained></span><span data-trained></span><span data-trained></span><span data-training></span></span>"#,
+        // A small ring, its parts by grade class, labelled for readers.
+        r#"aria-label="Xenotime &#60;script&#62;alert(1)&#60;/script&#62; 31%, Sylvite 69%""#,
+        r#"class="grade-4""#,
+        r#"class="grade-0""#,
+        // The large one: its center words and a legend.
+        r#"class="composition composition-large""#,
+        "1.84B &#60;script&#62;",
+        r#"<span class="mark grade-2"></span><span>Chromite</span><span class="num">34%</span>"#,
+        // Shield gone and armor hit show red; the core pulses.
+        r#"aria-label="Shield 0%, armor 62%, hull 100%, alarm""#,
+        r#"class="arc-danger alarm""#,
+        // The timeline: title, a lane, a window, day ticks, a linked bar
+        // that needs attention, and a dashed proposal.
+        "Next days &#60;script&#62;",
+        "Fleets &#60;script&#62;",
+        r#"<span class="timeline-window tl-l38 tl-w6"></span>"#,
+        r#"<span class="timeline-tick num tl-l50">MON 28</span>"#,
+        r#"<a href="/plugins/acme.pages/values" class="timeline-item tl-l65 tl-w6" data-row="0" data-tone="signal" data-bar"#,
+        r#"data-tone="" data-planned"#,
+    ] {
+        assert!(body.contains(part), "{part}\n\n{body}");
+    }
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
     let (h, owner, _) = setup(db).await;
     let res = page(&h, "/plugins/acme.pages/blocks", &owner).await;

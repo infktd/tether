@@ -17,6 +17,7 @@ pub mod permissions_audit;
 pub mod pings;
 pub mod plugin_access;
 pub mod plugin_pages;
+pub mod plugin_visuals;
 pub mod plugins;
 pub mod securegroups;
 pub mod setup;

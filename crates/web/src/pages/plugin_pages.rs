@@ -72,6 +72,11 @@ pub struct ValueView {
     /// A link to share: one of the plugin's pages as its full address,
     /// which the host builds from the site's origin.
     pub share: Option<String>,
+    /// Instruments (DESIGN.md): skill levels, a composition ring, shield,
+    /// armor and hull.
+    pub levels: Option<super::plugin_visuals::LevelsView>,
+    pub composition: Option<super::plugin_visuals::CompositionView>,
+    pub defenses: Option<super::plugin_visuals::DefensesView>,
 }
 
 /// Tether's own Add owner form, posting to the host: the login comes back
@@ -243,6 +248,7 @@ pub enum SectionView {
     Profile(ProfileView),
     Code(CodeView),
     Cards(CardsView),
+    Timeline(super::plugin_visuals::TimelineView),
 }
 
 pub struct CodeView {
@@ -506,6 +512,9 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         actions: Vec::new(),
         share: None,
         add_owner: None,
+        levels: None,
+        composition: None,
+        defenses: None,
     };
     let mono = |text: String| ValueView {
         mono: true,
@@ -590,6 +599,21 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
                 ..plain(String::new())
             }
         }
+        Value::Levels(l) => {
+            let view = super::plugin_visuals::levels(l);
+            ValueView {
+                levels: Some(view),
+                ..plain(String::new())
+            }
+        }
+        Value::Composition(c) => ValueView {
+            composition: Some(super::plugin_visuals::composition(c)),
+            ..plain(String::new())
+        },
+        Value::Defenses(d) => ValueView {
+            defenses: Some(super::plugin_visuals::defenses(d)),
+            ..plain(String::new())
+        },
     }
 }
 
@@ -676,6 +700,11 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
                 })
                 .collect(),
         }),
+        Section::Timeline(t) => SectionView::Timeline(super::plugin_visuals::timeline(
+            ctx.plugin,
+            t,
+            chrono::Utc::now(),
+        )),
         Section::Code(code) => SectionView::Code(CodeView {
             title: code.title.clone(),
             text: code.text.clone(),
@@ -1088,7 +1117,7 @@ fn each_entity(page: &mut Page, f: &mut impl FnMut(&mut Entity)) {
                 .items
                 .iter_mut()
                 .for_each(|c| profile(&mut c.profile, f)),
-            Section::Text(_) | Section::Form(_) | Section::Code(_) => {}
+            Section::Text(_) | Section::Form(_) | Section::Code(_) | Section::Timeline(_) => {}
         }
     }
 }

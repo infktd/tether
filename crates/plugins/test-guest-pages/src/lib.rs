@@ -1,9 +1,10 @@
 //! A plugin whose pages misbehave on request, for the host's page checks.
 
 use tether_plugin_sdk::{
-    Card, CardGrid, CodeBlock, Column, Field, Form, Page, PageError, Plugin, Profile, Request,
-    Stat, Submission, SubmitResult, Table, Tone, action, actions, add_owner, alliance, badge,
-    character, corporation, countdown, faction, isk, item_type, link, log, progress, share, time,
+    Card, CardGrid, CodeBlock, Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin,
+    Profile, Request, Stat, Submission, SubmitResult, Table, Timeline, Tone, action, actions,
+    add_owner, alliance, badge, character, composition, composition_large, corporation, countdown,
+    defenses, faction, isk, item_type, levels, link, log, part, progress, share, time,
 };
 
 fn note_form() -> Form {
@@ -98,6 +99,53 @@ fn blocks() -> Page {
         )
 }
 
+/// The instruments: skill levels, composition rings, defenses and a
+/// timeline, with markup in every string the plugin gives.
+fn instruments() -> Page {
+    const EVIL: &str = "<script>alert(1)</script>";
+    Page::new("Instruments")
+        .table(
+            Table::new(vec![
+                Column::text("Skill"),
+                Column::text("Level"),
+                Column::text("Moon"),
+                Column::text("Hull"),
+            ])
+            .row(vec![
+                "Mining Foreman".into(),
+                levels(4, Some(5)),
+                composition(vec![
+                    part(format!("Xenotime {EVIL}"), 0.31, 4),
+                    part("Sylvite", 0.69, 0),
+                ]),
+                defenses(0.0, 0.62, 1.0, true),
+            ]),
+        )
+        .card(Card::new("Moon").field(
+            "Composition",
+            composition_large(
+                vec![part("Chromite", 0.34, 2), part("Bitumens", 0.66, 0)],
+                format!("1.84B {EVIL}"),
+            ),
+        ))
+        .timeline(
+            Timeline::new("2026-09-27T00:00:00Z", "2026-10-01T00:00:00Z")
+                .title(format!("Next days {EVIL}"))
+                .window("2026-09-27T18:00:00Z", "2026-09-27T21:00:00Z")
+                .lane(
+                    Lane::new(format!("Fleets {EVIL}"))
+                        .caption("02")
+                        .item(
+                            LaneItem::new(format!("Stratop {EVIL}"), "2026-09-28T07:00:00Z")
+                                .until("2026-09-28T10:00:00Z")
+                                .tone(Tone::Warning)
+                                .link("values"),
+                        )
+                        .item(LaneItem::new("Next chunk", "2026-09-29T19:00:00Z").planned()),
+                ),
+        )
+}
+
 struct Pages;
 
 impl Plugin for Pages {
@@ -165,6 +213,7 @@ impl Plugin for Pages {
                     vec![tether_plugin_sdk::Section::Text("second tab".into())],
                 )),
             "blocks" => Ok(blocks()),
+            "instruments" => Ok(instruments()),
             "live" => Ok(Page::new("Live").refresh(1).text("syncing")),
             "live-form" => Ok(Page::new("Live form").refresh(10).form(note_form())),
             "mail/1" => Ok(Page::new("Mail")

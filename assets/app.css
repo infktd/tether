@@ -1238,6 +1238,204 @@
   }
 }
 
+/* Instruments (DESIGN.md, Components). The CSP allows no inline styles,
+   so colours and positions are classes the host picks. */
+@layer components {
+  /* The rarity scale, darker to brighter by value (R4 to R64). */
+  .grade-0 { stroke: #3c4a5c; background: #3c4a5c; }
+  .grade-1 { stroke: #6b7d92; background: #6b7d92; }
+  .grade-2 { stroke: #a9afb7; background: #a9afb7; }
+  .grade-3 { stroke: #e3c08a; background: #e3c08a; }
+  .grade-4 { stroke: var(--accent); background: var(--accent); }
+  .arc-track { stroke: #161d26; }
+  .arc-info { stroke: var(--info); }
+  .arc-fog { stroke: var(--foreground-soft); }
+  .arc-bone { stroke: var(--foreground); }
+  .arc-danger { stroke: var(--destructive); }
+  .arc-bracket { stroke: var(--bracket); }
+
+  .composition {
+    display: inline-flex;
+    align-items: center;
+    gap: 18px;
+    vertical-align: middle;
+  }
+  .composition svg {
+    flex-shrink: 0;
+  }
+  .composition-disc {
+    fill: #1c2530;
+  }
+  .composition-center {
+    fill: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 15px;
+  }
+  .composition-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .composition-legend > span {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+  .composition-legend .num {
+    color: var(--foreground-soft);
+  }
+  .defenses {
+    vertical-align: middle;
+  }
+
+  /* Timeline: lanes over a span, day ticks, windows and a now line. */
+  .timeline {
+    padding-bottom: 12px;
+  }
+  .timeline-body {
+    padding: 0 18px 0 0;
+  }
+  .timeline-axis {
+    display: flex;
+    height: 26px;
+    padding-left: 140px;
+  }
+  .timeline-track {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+  .timeline-tick {
+    position: absolute;
+    top: 6px;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #5b6470;
+    white-space: nowrap;
+  }
+  .timeline-lanes {
+    position: relative;
+  }
+  .timeline-overlay {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 140px;
+    right: 0;
+    pointer-events: none;
+  }
+  .timeline-overlay > span {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+  }
+  .timeline-window {
+    background: rgba(77, 163, 255, 0.06);
+    border-left: 1px solid rgba(77, 163, 255, 0.14);
+  }
+  .timeline-day {
+    width: 1px;
+    background: #161d26;
+  }
+  .timeline-now {
+    width: 1px;
+    background: var(--accent);
+  }
+  .timeline-now > span {
+    position: absolute;
+    top: -20px;
+    left: -14px;
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--card);
+    padding: 0 3px;
+  }
+  .timeline-lane {
+    display: flex;
+    height: 88px;
+    border-top: 1px solid #161d26;
+  }
+  .timeline-label {
+    width: 140px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 12px 0 0 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .timeline-item {
+    position: absolute;
+    top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 220px;
+    padding: 4px 8px 4px 6px;
+    border: 1px solid var(--faint);
+    background: var(--card);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .timeline-item[data-row="1"] {
+    top: 46px;
+  }
+  .timeline-item[data-bar] {
+    min-width: 96px;
+    max-width: none;
+  }
+  a.timeline-item:hover {
+    background: var(--muted);
+    border-color: var(--bracket);
+  }
+  .timeline-item-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .timeline-item-when {
+    font-size: 10px;
+    color: var(--muted-foreground);
+  }
+  .timeline-glyph {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    transform: rotate(45deg);
+    border: 1px solid var(--foreground-soft);
+  }
+  .timeline-item[data-bar] .timeline-glyph {
+    width: 3px;
+    height: 22px;
+    transform: none;
+    border: 0;
+    background: var(--foreground);
+  }
+  .timeline-item[data-tone="signal"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--background)); }
+  .timeline-item[data-tone="signal"] .timeline-glyph { border-color: var(--accent); background: var(--accent); }
+  .timeline-item[data-tone="signal"] .timeline-item-when { color: var(--accent); }
+  .timeline-item[data-tone="danger"] { border-color: color-mix(in srgb, var(--destructive) 55%, var(--background)); }
+  .timeline-item[data-tone="danger"] .timeline-glyph { border-color: var(--destructive); background: var(--destructive); }
+  .timeline-item[data-tone="info"] .timeline-glyph { border-color: var(--info); background: var(--info); }
+  .timeline-item[data-planned] {
+    border-style: dashed;
+    background: rgba(231, 227, 216, 0.03);
+  }
+  .timeline-item[data-planned] .timeline-glyph {
+    background: transparent;
+  }
+}
+/* Timeline positions and widths, in half-percent steps. */
+@layer components {
+.tl-l0{left:0%}.tl-l1{left:0.5%}.tl-l2{left:1%}.tl-l3{left:1.5%}.tl-l4{left:2%}.tl-l5{left:2.5%}.tl-l6{left:3%}.tl-l7{left:3.5%}.tl-l8{left:4%}.tl-l9{left:4.5%}.tl-l10{left:5%}.tl-l11{left:5.5%}.tl-l12{left:6%}.tl-l13{left:6.5%}.tl-l14{left:7%}.tl-l15{left:7.5%}.tl-l16{left:8%}.tl-l17{left:8.5%}.tl-l18{left:9%}.tl-l19{left:9.5%}.tl-l20{left:10%}.tl-l21{left:10.5%}.tl-l22{left:11%}.tl-l23{left:11.5%}.tl-l24{left:12%}.tl-l25{left:12.5%}.tl-l26{left:13%}.tl-l27{left:13.5%}.tl-l28{left:14%}.tl-l29{left:14.5%}.tl-l30{left:15%}.tl-l31{left:15.5%}.tl-l32{left:16%}.tl-l33{left:16.5%}.tl-l34{left:17%}.tl-l35{left:17.5%}.tl-l36{left:18%}.tl-l37{left:18.5%}.tl-l38{left:19%}.tl-l39{left:19.5%}.tl-l40{left:20%}.tl-l41{left:20.5%}.tl-l42{left:21%}.tl-l43{left:21.5%}.tl-l44{left:22%}.tl-l45{left:22.5%}.tl-l46{left:23%}.tl-l47{left:23.5%}.tl-l48{left:24%}.tl-l49{left:24.5%}.tl-l50{left:25%}.tl-l51{left:25.5%}.tl-l52{left:26%}.tl-l53{left:26.5%}.tl-l54{left:27%}.tl-l55{left:27.5%}.tl-l56{left:28%}.tl-l57{left:28.5%}.tl-l58{left:29%}.tl-l59{left:29.5%}.tl-l60{left:30%}.tl-l61{left:30.5%}.tl-l62{left:31%}.tl-l63{left:31.5%}.tl-l64{left:32%}.tl-l65{left:32.5%}.tl-l66{left:33%}.tl-l67{left:33.5%}.tl-l68{left:34%}.tl-l69{left:34.5%}.tl-l70{left:35%}.tl-l71{left:35.5%}.tl-l72{left:36%}.tl-l73{left:36.5%}.tl-l74{left:37%}.tl-l75{left:37.5%}.tl-l76{left:38%}.tl-l77{left:38.5%}.tl-l78{left:39%}.tl-l79{left:39.5%}.tl-l80{left:40%}.tl-l81{left:40.5%}.tl-l82{left:41%}.tl-l83{left:41.5%}.tl-l84{left:42%}.tl-l85{left:42.5%}.tl-l86{left:43%}.tl-l87{left:43.5%}.tl-l88{left:44%}.tl-l89{left:44.5%}.tl-l90{left:45%}.tl-l91{left:45.5%}.tl-l92{left:46%}.tl-l93{left:46.5%}.tl-l94{left:47%}.tl-l95{left:47.5%}.tl-l96{left:48%}.tl-l97{left:48.5%}.tl-l98{left:49%}.tl-l99{left:49.5%}.tl-l100{left:50%}.tl-l101{left:50.5%}.tl-l102{left:51%}.tl-l103{left:51.5%}.tl-l104{left:52%}.tl-l105{left:52.5%}.tl-l106{left:53%}.tl-l107{left:53.5%}.tl-l108{left:54%}.tl-l109{left:54.5%}.tl-l110{left:55%}.tl-l111{left:55.5%}.tl-l112{left:56%}.tl-l113{left:56.5%}.tl-l114{left:57%}.tl-l115{left:57.5%}.tl-l116{left:58%}.tl-l117{left:58.5%}.tl-l118{left:59%}.tl-l119{left:59.5%}.tl-l120{left:60%}.tl-l121{left:60.5%}.tl-l122{left:61%}.tl-l123{left:61.5%}.tl-l124{left:62%}.tl-l125{left:62.5%}.tl-l126{left:63%}.tl-l127{left:63.5%}.tl-l128{left:64%}.tl-l129{left:64.5%}.tl-l130{left:65%}.tl-l131{left:65.5%}.tl-l132{left:66%}.tl-l133{left:66.5%}.tl-l134{left:67%}.tl-l135{left:67.5%}.tl-l136{left:68%}.tl-l137{left:68.5%}.tl-l138{left:69%}.tl-l139{left:69.5%}.tl-l140{left:70%}.tl-l141{left:70.5%}.tl-l142{left:71%}.tl-l143{left:71.5%}.tl-l144{left:72%}.tl-l145{left:72.5%}.tl-l146{left:73%}.tl-l147{left:73.5%}.tl-l148{left:74%}.tl-l149{left:74.5%}.tl-l150{left:75%}.tl-l151{left:75.5%}.tl-l152{left:76%}.tl-l153{left:76.5%}.tl-l154{left:77%}.tl-l155{left:77.5%}.tl-l156{left:78%}.tl-l157{left:78.5%}.tl-l158{left:79%}.tl-l159{left:79.5%}.tl-l160{left:80%}.tl-l161{left:80.5%}.tl-l162{left:81%}.tl-l163{left:81.5%}.tl-l164{left:82%}.tl-l165{left:82.5%}.tl-l166{left:83%}.tl-l167{left:83.5%}.tl-l168{left:84%}.tl-l169{left:84.5%}.tl-l170{left:85%}.tl-l171{left:85.5%}.tl-l172{left:86%}.tl-l173{left:86.5%}.tl-l174{left:87%}.tl-l175{left:87.5%}.tl-l176{left:88%}.tl-l177{left:88.5%}.tl-l178{left:89%}.tl-l179{left:89.5%}.tl-l180{left:90%}.tl-l181{left:90.5%}.tl-l182{left:91%}.tl-l183{left:91.5%}.tl-l184{left:92%}.tl-l185{left:92.5%}.tl-l186{left:93%}.tl-l187{left:93.5%}.tl-l188{left:94%}.tl-l189{left:94.5%}.tl-l190{left:95%}.tl-l191{left:95.5%}.tl-l192{left:96%}.tl-l193{left:96.5%}.tl-l194{left:97%}.tl-l195{left:97.5%}.tl-l196{left:98%}.tl-l197{left:98.5%}.tl-l198{left:99%}.tl-l199{left:99.5%}.tl-l200{left:100%}
+.tl-w1{width:0.5%}.tl-w2{width:1%}.tl-w3{width:1.5%}.tl-w4{width:2%}.tl-w5{width:2.5%}.tl-w6{width:3%}.tl-w7{width:3.5%}.tl-w8{width:4%}.tl-w9{width:4.5%}.tl-w10{width:5%}.tl-w11{width:5.5%}.tl-w12{width:6%}.tl-w13{width:6.5%}.tl-w14{width:7%}.tl-w15{width:7.5%}.tl-w16{width:8%}.tl-w17{width:8.5%}.tl-w18{width:9%}.tl-w19{width:9.5%}.tl-w20{width:10%}.tl-w21{width:10.5%}.tl-w22{width:11%}.tl-w23{width:11.5%}.tl-w24{width:12%}.tl-w25{width:12.5%}.tl-w26{width:13%}.tl-w27{width:13.5%}.tl-w28{width:14%}.tl-w29{width:14.5%}.tl-w30{width:15%}.tl-w31{width:15.5%}.tl-w32{width:16%}.tl-w33{width:16.5%}.tl-w34{width:17%}.tl-w35{width:17.5%}.tl-w36{width:18%}.tl-w37{width:18.5%}.tl-w38{width:19%}.tl-w39{width:19.5%}.tl-w40{width:20%}.tl-w41{width:20.5%}.tl-w42{width:21%}.tl-w43{width:21.5%}.tl-w44{width:22%}.tl-w45{width:22.5%}.tl-w46{width:23%}.tl-w47{width:23.5%}.tl-w48{width:24%}.tl-w49{width:24.5%}.tl-w50{width:25%}.tl-w51{width:25.5%}.tl-w52{width:26%}.tl-w53{width:26.5%}.tl-w54{width:27%}.tl-w55{width:27.5%}.tl-w56{width:28%}.tl-w57{width:28.5%}.tl-w58{width:29%}.tl-w59{width:29.5%}.tl-w60{width:30%}.tl-w61{width:30.5%}.tl-w62{width:31%}.tl-w63{width:31.5%}.tl-w64{width:32%}.tl-w65{width:32.5%}.tl-w66{width:33%}.tl-w67{width:33.5%}.tl-w68{width:34%}.tl-w69{width:34.5%}.tl-w70{width:35%}.tl-w71{width:35.5%}.tl-w72{width:36%}.tl-w73{width:36.5%}.tl-w74{width:37%}.tl-w75{width:37.5%}.tl-w76{width:38%}.tl-w77{width:38.5%}.tl-w78{width:39%}.tl-w79{width:39.5%}.tl-w80{width:40%}.tl-w81{width:40.5%}.tl-w82{width:41%}.tl-w83{width:41.5%}.tl-w84{width:42%}.tl-w85{width:42.5%}.tl-w86{width:43%}.tl-w87{width:43.5%}.tl-w88{width:44%}.tl-w89{width:44.5%}.tl-w90{width:45%}.tl-w91{width:45.5%}.tl-w92{width:46%}.tl-w93{width:46.5%}.tl-w94{width:47%}.tl-w95{width:47.5%}.tl-w96{width:48%}.tl-w97{width:48.5%}.tl-w98{width:49%}.tl-w99{width:49.5%}.tl-w100{width:50%}.tl-w101{width:50.5%}.tl-w102{width:51%}.tl-w103{width:51.5%}.tl-w104{width:52%}.tl-w105{width:52.5%}.tl-w106{width:53%}.tl-w107{width:53.5%}.tl-w108{width:54%}.tl-w109{width:54.5%}.tl-w110{width:55%}.tl-w111{width:55.5%}.tl-w112{width:56%}.tl-w113{width:56.5%}.tl-w114{width:57%}.tl-w115{width:57.5%}.tl-w116{width:58%}.tl-w117{width:58.5%}.tl-w118{width:59%}.tl-w119{width:59.5%}.tl-w120{width:60%}.tl-w121{width:60.5%}.tl-w122{width:61%}.tl-w123{width:61.5%}.tl-w124{width:62%}.tl-w125{width:62.5%}.tl-w126{width:63%}.tl-w127{width:63.5%}.tl-w128{width:64%}.tl-w129{width:64.5%}.tl-w130{width:65%}.tl-w131{width:65.5%}.tl-w132{width:66%}.tl-w133{width:66.5%}.tl-w134{width:67%}.tl-w135{width:67.5%}.tl-w136{width:68%}.tl-w137{width:68.5%}.tl-w138{width:69%}.tl-w139{width:69.5%}.tl-w140{width:70%}.tl-w141{width:70.5%}.tl-w142{width:71%}.tl-w143{width:71.5%}.tl-w144{width:72%}.tl-w145{width:72.5%}.tl-w146{width:73%}.tl-w147{width:73.5%}.tl-w148{width:74%}.tl-w149{width:74.5%}.tl-w150{width:75%}.tl-w151{width:75.5%}.tl-w152{width:76%}.tl-w153{width:76.5%}.tl-w154{width:77%}.tl-w155{width:77.5%}.tl-w156{width:78%}.tl-w157{width:78.5%}.tl-w158{width:79%}.tl-w159{width:79.5%}.tl-w160{width:80%}.tl-w161{width:80.5%}.tl-w162{width:81%}.tl-w163{width:81.5%}.tl-w164{width:82%}.tl-w165{width:82.5%}.tl-w166{width:83%}.tl-w167{width:83.5%}.tl-w168{width:84%}.tl-w169{width:84.5%}.tl-w170{width:85%}.tl-w171{width:85.5%}.tl-w172{width:86%}.tl-w173{width:86.5%}.tl-w174{width:87%}.tl-w175{width:87.5%}.tl-w176{width:88%}.tl-w177{width:88.5%}.tl-w178{width:89%}.tl-w179{width:89.5%}.tl-w180{width:90%}.tl-w181{width:90.5%}.tl-w182{width:91%}.tl-w183{width:91.5%}.tl-w184{width:92%}.tl-w185{width:92.5%}.tl-w186{width:93%}.tl-w187{width:93.5%}.tl-w188{width:94%}.tl-w189{width:94.5%}.tl-w190{width:95%}.tl-w191{width:95.5%}.tl-w192{width:96%}.tl-w193{width:96.5%}.tl-w194{width:97%}.tl-w195{width:97.5%}.tl-w196{width:98%}.tl-w197{width:98.5%}.tl-w198{width:99%}.tl-w199{width:99.5%}.tl-w200{width:100%}
+}
+@media (prefers-reduced-motion: no-preference) {
+  .timeline-item[data-planned] { animation: breathe 3s ease-in-out infinite; }
+}
+
 /* Sign in (the canvas's Sign in artboard). */
 @layer components {
   .signin {

@@ -6,7 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use crate::host::{Action, Entity, FieldKind, Form, Profile, Progress};
+use crate::host::Timeline;
+use crate::host::{
+    Action, Composition, Defenses, Entity, FieldKind, Form, Levels, Profile, Progress,
+};
 use crate::host::{Page, Section, Value};
 
 pub const MAX_SECTIONS: usize = 40;
@@ -57,6 +60,14 @@ pub const MAX_OPTIONS: usize = 100;
 pub const MAX_ACTIONS: usize = 4;
 /// Hidden values one action posts.
 pub const MAX_ACTION_FIELDS: usize = 10;
+/// Parts of a composition ring.
+pub const MAX_SHARES: usize = 8;
+/// Lanes in a timeline, events in a lane, and shaded windows.
+pub const MAX_LANES: usize = 20;
+pub const MAX_LANE_ITEMS: usize = 50;
+pub const MAX_WINDOWS: usize = 60;
+/// The longest span a timeline shows.
+pub const MAX_TIMELINE_DAYS: i64 = 60;
 
 struct Budget {
     bytes: usize,
@@ -202,7 +213,7 @@ fn page_values(page: &Page) -> impl Iterator<Item = &Value> {
                         .iter()
                         .flat_map(|card| card.profile.facts.iter().map(|(_, v)| v)),
                 ),
-                Section::Text(_) | Section::Form(_) | Section::Code(_) => {
+                Section::Text(_) | Section::Form(_) | Section::Code(_) | Section::Timeline(_) => {
                     Box::new(std::iter::empty())
                 }
             }
@@ -322,6 +333,7 @@ fn check_section(section: &Section, budget: &mut Budget) -> Result<(), PageProbl
             budget.bytes(code.text.len())?;
         }
         Section::Profile(profile) => check_profile(profile, budget)?,
+        Section::Timeline(timeline) => check_timeline(timeline, budget)?,
         Section::Cards(grid) => {
             if grid.items.len() > MAX_CARDS {
                 return Err(problem(format!(
@@ -390,6 +402,116 @@ fn check_time(time: &str, budget: &mut Budget) -> Result<(), PageProblem> {
             printable_prefix(time)
         )))
     }
+}
+
+fn check_levels(levels: &Levels) -> Result<(), PageProblem> {
+    if levels.trained > 5 {
+        return Err(problem("a skill has more than 5 levels trained"));
+    }
+    match levels.training {
+        Some(training) if training <= levels.trained || training > 5 => Err(problem(
+            "a skill's level in training must be above the levels trained, at most 5",
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn check_composition(composition: &Composition, budget: &mut Budget) -> Result<(), PageProblem> {
+    if composition.parts.is_empty() || composition.parts.len() > MAX_SHARES {
+        return Err(problem(format!(
+            "a composition has {} parts; between 1 and {MAX_SHARES} are allowed",
+            composition.parts.len()
+        )));
+    }
+    for part in &composition.parts {
+        budget.text("a composition part's label", &part.label)?;
+        if !(part.amount.is_finite() && part.amount > 0.0) {
+            return Err(problem("a composition part's amount isn't above 0"));
+        }
+        if part.grade > 4 {
+            return Err(problem("a composition part's grade isn't 0 to 4"));
+        }
+    }
+    if let Some(center) = &composition.center {
+        budget.text("a composition's center", center)?;
+    }
+    Ok(())
+}
+
+fn check_defenses(defenses: &Defenses) -> Result<(), PageProblem> {
+    let fine = |x: f64| x.is_finite() && (0.0..=1.0).contains(&x);
+    if fine(defenses.shield) && fine(defenses.armor) && fine(defenses.hull) {
+        Ok(())
+    } else {
+        Err(problem(
+            "shield, armor and hull must each be between 0 and 1",
+        ))
+    }
+}
+
+fn check_timeline(timeline: &Timeline, budget: &mut Budget) -> Result<(), PageProblem> {
+    let at = |t: &str| chrono::DateTime::parse_from_rfc3339(t).ok();
+    if let Some(title) = &timeline.title {
+        budget.text("a timeline title", title)?;
+    }
+    check_time(&timeline.from, budget)?;
+    check_time(&timeline.to, budget)?;
+    let (Some(from), Some(to)) = (at(&timeline.from), at(&timeline.to)) else {
+        return Err(problem("a timeline's span isn't two RFC 3339 times"));
+    };
+    if to <= from || (to - from).num_days() > MAX_TIMELINE_DAYS {
+        return Err(problem(format!(
+            "a timeline must end after it starts and span at most {MAX_TIMELINE_DAYS} days"
+        )));
+    }
+    if timeline.lanes.is_empty() || timeline.lanes.len() > MAX_LANES {
+        return Err(problem(format!(
+            "a timeline has {} lanes; between 1 and {MAX_LANES} are allowed",
+            timeline.lanes.len()
+        )));
+    }
+    if timeline.windows.len() > MAX_WINDOWS {
+        return Err(problem(format!(
+            "a timeline has {} windows; the limit is {MAX_WINDOWS}",
+            timeline.windows.len()
+        )));
+    }
+    for window in &timeline.windows {
+        check_time(&window.from, budget)?;
+        check_time(&window.to, budget)?;
+        if at(&window.to) <= at(&window.from) {
+            return Err(problem("a timeline window must end after it starts"));
+        }
+    }
+    for lane in &timeline.lanes {
+        budget.value()?;
+        budget.text("a lane label", &lane.label)?;
+        if let Some(caption) = &lane.caption {
+            budget.text("a lane caption", caption)?;
+        }
+        if lane.items.len() > MAX_LANE_ITEMS {
+            return Err(problem(format!(
+                "a lane has {} events; the limit is {MAX_LANE_ITEMS}",
+                lane.items.len()
+            )));
+        }
+        for item in &lane.items {
+            budget.value()?;
+            budget.text("an event's label", &item.label)?;
+            check_time(&item.at, budget)?;
+            if let Some(until) = &item.until {
+                check_time(until, budget)?;
+                if at(until) <= at(&item.at) {
+                    return Err(problem("an event's end must be after its start"));
+                }
+            }
+            if let Some(path) = &item.link {
+                check_link_path(path)?;
+                budget.bytes(path.len())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_progress(progress: &Progress, budget: &mut Budget) -> Result<(), PageProblem> {
@@ -682,6 +804,9 @@ fn check_value(value: &Value, budget: &mut Budget) -> Result<(), PageProblem> {
         // plugin's.
         Value::AddOwner(label) => budget.text("an add-owner label", label),
         Value::Progress(progress) => check_progress(progress, budget),
+        Value::Levels(levels) => check_levels(levels),
+        Value::Composition(composition) => check_composition(composition, budget),
+        Value::Defenses(defenses) => check_defenses(defenses),
         Value::Action(action) => check_action(action, budget),
         Value::Actions(actions) => {
             if actions.is_empty() || actions.len() > MAX_ACTIONS {
@@ -762,6 +887,158 @@ mod tests {
             tone: Tone::Neutral,
             confirm: None,
         }
+    }
+
+    #[test]
+    fn skill_levels_are_checked() {
+        let at = |trained, training| {
+            let mut p = page();
+            p.sections
+                .push(card(Value::Levels(Levels { trained, training })));
+            check(&p)
+        };
+        assert_eq!(at(4, Some(5)), Ok(()));
+        assert_eq!(at(0, None), Ok(()));
+        assert_eq!(at(5, None), Ok(()));
+        assert!(at(6, None).is_err());
+        assert!(at(4, Some(4)).is_err());
+        assert!(at(4, Some(6)).is_err());
+    }
+
+    #[test]
+    fn compositions_are_checked() {
+        use crate::host::Share;
+        let at = |parts: Vec<(f64, u8)>| {
+            let mut p = page();
+            p.sections.push(card(Value::Composition(Composition {
+                parts: parts
+                    .into_iter()
+                    .map(|(amount, grade)| Share {
+                        label: "Xenotime".to_owned(),
+                        amount,
+                        grade,
+                    })
+                    .collect(),
+                center: Some("1.84B".to_owned()),
+            })));
+            check(&p)
+        };
+        assert_eq!(at(vec![(0.31, 4), (0.69, 0)]), Ok(()));
+        assert!(at(vec![]).is_err());
+        assert!(at(vec![(0.5, 5)]).is_err());
+        assert!(at(vec![(0.0, 1)]).is_err());
+        assert!(at(vec![(f64::NAN, 1)]).is_err());
+        assert!(at(vec![(1.0, 0); MAX_SHARES + 1]).is_err());
+    }
+
+    #[test]
+    fn defenses_are_checked() {
+        let at = |shield, armor, hull| {
+            let mut p = page();
+            p.sections.push(card(Value::Defenses(Defenses {
+                shield,
+                armor,
+                hull,
+                alarm: false,
+            })));
+            check(&p)
+        };
+        assert_eq!(at(1.0, 0.62, 1.0), Ok(()));
+        assert!(at(1.2, 1.0, 1.0).is_err());
+        assert!(at(1.0, -0.1, 1.0).is_err());
+        assert!(at(1.0, 1.0, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn timelines_are_checked() {
+        use crate::host::{Lane, LaneItem, Window};
+        let item = |at: &str, until: Option<&str>, link: Option<&str>| LaneItem {
+            label: "Home defence".to_owned(),
+            at: at.to_owned(),
+            until: until.map(str::to_owned),
+            tone: Tone::Warning,
+            planned: false,
+            link: link.map(str::to_owned),
+        };
+        let timeline = |from: &str, to: &str, items: Vec<LaneItem>, windows: Vec<(&str, &str)>| {
+            let mut p = page();
+            p.sections.push(Section::Timeline(Timeline {
+                title: None,
+                from: from.to_owned(),
+                to: to.to_owned(),
+                lanes: vec![Lane {
+                    label: "Fleets".to_owned(),
+                    caption: None,
+                    items,
+                }],
+                windows: windows
+                    .into_iter()
+                    .map(|(from, to)| Window {
+                        from: from.to_owned(),
+                        to: to.to_owned(),
+                    })
+                    .collect(),
+            }));
+            check(&p)
+        };
+        let (a, b) = ("2026-09-27T00:00:00Z", "2026-09-30T00:00:00Z");
+        let fleet = || {
+            item(
+                "2026-09-27T07:00:00Z",
+                Some("2026-09-27T10:00:00Z"),
+                Some("op/1"),
+            )
+        };
+        assert_eq!(timeline(a, b, vec![fleet()], vec![]), Ok(()));
+        assert_eq!(
+            timeline(
+                a,
+                b,
+                vec![],
+                vec![("2026-09-27T18:00:00Z", "2026-09-27T21:00:00Z")]
+            ),
+            Ok(())
+        );
+        // Backwards spans, too long a span, bad ends, links out, bad windows.
+        assert!(timeline(b, a, vec![], vec![]).is_err());
+        assert!(timeline(a, "2026-12-30T00:00:00Z", vec![], vec![]).is_err());
+        assert!(
+            timeline(
+                a,
+                b,
+                vec![item(
+                    "2026-09-27T07:00:00Z",
+                    Some("2026-09-27T06:00:00Z"),
+                    None
+                )],
+                vec![]
+            )
+            .is_err()
+        );
+        assert!(
+            timeline(
+                a,
+                b,
+                vec![item(
+                    "2026-09-27T07:00:00Z",
+                    None,
+                    Some("https://evil.test")
+                )],
+                vec![]
+            )
+            .is_err()
+        );
+        assert!(timeline(a, b, vec![item("tomorrow", None, None)], vec![]).is_err());
+        assert!(
+            timeline(
+                a,
+                b,
+                vec![],
+                vec![("2026-09-27T21:00:00Z", "2026-09-27T18:00:00Z")]
+            )
+            .is_err()
+        );
+        assert!(timeline(a, b, vec![fleet(); MAX_LANE_ITEMS + 1], vec![]).is_err());
     }
 
     #[test]
