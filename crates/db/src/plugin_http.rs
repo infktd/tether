@@ -109,11 +109,20 @@ pub async fn approve(
 
 /// What was approved for a plugin.
 pub async fn approved(pool: &PgPool, plugin_id: &str) -> Result<Approved, sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    approved_in(&mut conn, plugin_id).await
+}
+
+/// [`approved`], on a connection (in a transaction).
+pub async fn approved_in(
+    conn: &mut sqlx::PgConnection,
+    plugin_id: &str,
+) -> Result<Approved, sqlx::Error> {
     let hosts = sqlx::query_scalar!(
         "SELECT host FROM core.plugin_http_hosts WHERE plugin_id = $1 ORDER BY host",
         plugin_id
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let secrets = sqlx::query_as!(
         SecretSpec,
@@ -123,7 +132,7 @@ pub async fn approved(pool: &PgPool, plugin_id: &str) -> Result<Approved, sqlx::
         "#,
         plugin_id
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     Ok(Approved { hosts, secrets })
 }

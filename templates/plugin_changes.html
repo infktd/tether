@@ -19,6 +19,12 @@
       <dd class="text-muted-foreground break-words">{{ p.description }}. Nobody holds it until you grant it.</dd>
     </div>
     {% endfor %}
+    {% for r in c.pages_added %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge">New</span> Page access</dt>
+      <dd class="text-muted-foreground break-words">{{ r.pages }}: whoever holds <span class="num">{{ r.permission }}</span> may open them{% if r.audited %}, and every view is audited{% endif %}.</dd>
+    </div>
+    {% endfor %}
   </dl>
   {% endif %}
   {% if !c.permissions_renamed.is_empty() %}
@@ -53,6 +59,12 @@
     <div class="grid gap-1">
       <dt class="font-medium flex items-center gap-2"><span class="badge" data-variant="outline">No longer</span> Permission <span class="num">{{ p.name }}</span></dt>
       <dd class="text-muted-foreground break-words">{{ p.description }}. It goes, with every grant of it.</dd>
+    </div>
+    {% endfor %}
+    {% for r in c.pages_removed %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex items-center gap-2"><span class="badge" data-variant="outline">No longer</span> Page access</dt>
+      <dd class="text-muted-foreground break-words">{{ r.pages }}: whoever holds <span class="num">{{ r.permission }}</span> may open them{% if r.audited %}, every view audited{% endif %}.</dd>
     </div>
     {% endfor %}
   </dl>

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT action FROM core.audit_log\n        WHERE target = 'plugin:' || $1::text\n          AND action IN ('plugin.installed', 'plugin.upgraded', 'plugin.rolled_back')\n        ORDER BY id DESC LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "action",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.audit_log",
+            "name": "action"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d7eea683b6859c753b9892a03bcfaa4092b8a5e53115aa97f0fbea0df7ac3a2a"
+}

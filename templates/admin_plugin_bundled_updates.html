@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{%- import "plugin_changes.html" as changes -%}
+{% block title %}Included updates{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/plugins">Apps</a>&nbsp;/&nbsp;<span class="text-foreground">Included updates</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title">Included updates</h1>
+      <p class="text-muted-foreground mt-1">Updates and rebuilds of apps included with Tether, waiting for review. Approving upgrades each in turn, exactly as its own review would, and stops at the first that fails.</p>
+    </div>
+    {% if bulk > 0 %}
+    <form method="post" action="/admin/plugin-bundled-updates/approve">
+      {% for a in apps %}{% if a.changes.is_some() %}<input type="hidden" name="app" value="{{ a.token }}">{% endif %}{% endfor %}
+      <button type="submit" class="btn" data-variant="primary">Approve and upgrade all <span class="num">{{ bulk }}</span></button>
+    </form>
+    {% endif %}
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if apps.is_empty() %}
+  <p class="text-sm text-muted-foreground">Nothing is waiting for review. <a class="underline" href="/admin/plugins">Back to Apps</a></p>
+  {% endif %}
+
+  {% for a in apps %}
+  <section class="card">
+    <header class="flex items-start justify-between gap-4">
+      <div>
+        <h2>{{ a.name }}</h2>
+        <p>{% if a.rebuilt %}Rebuilt with this Tether: version <span class="num">{{ a.to }}</span> again, another package.{% else %}Version <span class="num">{{ a.from }}</span> to <span class="num">{{ a.to }}</span>.{% endif %} {% if a.new_migrations > 0 %}{% if snapshots %}Its <span class="num">{{ a.new_migrations }}</span> new database migration(s) run after a snapshot of its data.{% else %}Its <span class="num">{{ a.new_migrations }}</span> new database migration(s) run with no snapshot: snapshots are off here.{% endif %}{% else %}Its data stays as it is.{% endif %}</p>
+      </div>
+      <a class="btn shrink-0" data-variant="outline" data-size="sm" href="/admin/plugin-bundled/{{ a.id }}">Review on its own</a>
+    </header>
+    <section>
+      {% if let Some(c) = a.changes %}{% call changes::list(c) %}{% endcall %}{% else %}<p class="text-sm text-muted-foreground">The installed version's package can't be read any more, so what changes can't be shown here and it isn't approved with the others. Review it on its own page.</p>{% endif %}
+    </section>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

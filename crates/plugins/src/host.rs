@@ -617,8 +617,9 @@ impl Host {
     }
 
     /// Compiles, vets and links a plugin. A plugin importing anything the
-    /// host doesn't provide (another API version, the filesystem) fails
-    /// here, naming the import. `storage` is its database access, for
+    /// host doesn't provide (another API version, the filesystem), or
+    /// exporting something of another type, fails here, naming it
+    /// ([`RuntimeError::Interface`]). `storage` is its database access, for
     /// plugins approved for it; without, storage calls answer
     /// `not-approved`.
     pub async fn load(
@@ -631,8 +632,8 @@ impl Host {
         let pre = self
             .linker
             .instantiate_pre(&component)
-            .map_err(|e| RuntimeError::Rejected(e.to_string()))?;
-        let pre = PluginPre::new(pre).map_err(|e| RuntimeError::Rejected(e.to_string()))?;
+            .map_err(|e| RuntimeError::Interface(e.to_string()))?;
+        let pre = PluginPre::new(pre).map_err(|e| RuntimeError::Interface(e.to_string()))?;
         Ok(LoadedPlugin {
             id: id.to_owned(),
             pre,

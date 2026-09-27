@@ -196,6 +196,9 @@ pub struct Summary {
     pub id: String,
     pub name: String,
     pub version: String,
+    pub origin: Origin,
+    /// SHA-256 of the package the admin approved.
+    pub package_sha256: Vec<u8>,
     pub enabled: bool,
     pub installed_at: DateTime<Utc>,
 }
@@ -209,7 +212,8 @@ pub struct NewPlugin<'a> {
     pub signature: Option<&'a str>,
     pub origin: Origin,
     pub package_sha256: &'a [u8],
-    pub installed_by: AccountId,
+    /// `None` when Tether itself applies it (a bundled rebuild).
+    pub installed_by: Option<AccountId>,
 }
 
 /// Installs a plugin, enabled. False if one with that id is installed.
@@ -230,7 +234,7 @@ pub async fn install<'e>(
         plugin.package,
         plugin.signature,
         plugin.package_sha256,
-        plugin.installed_by.0,
+        plugin.installed_by.map(|a| a.0),
         plugin.origin.as_str(),
     )
     .execute(executor)
@@ -397,7 +401,7 @@ pub async fn upgrade(
         plugin.package,
         plugin.signature,
         plugin.package_sha256,
-        plugin.installed_by.0,
+        plugin.installed_by.map(|a| a.0),
         plugin.origin.as_str(),
     )
     .execute(tx)
@@ -467,12 +471,27 @@ pub async fn exists<'e>(
 
 /// By name.
 pub async fn list(pool: &PgPool) -> Result<Vec<Summary>, sqlx::Error> {
-    sqlx::query_as!(
-        Summary,
-        "SELECT id, name, version, enabled, installed_at FROM core.plugins ORDER BY name, id"
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, name, version, origin, package_sha256, enabled, installed_at
+        FROM core.plugins ORDER BY name, id
+        "#
     )
     .fetch_all(pool)
-    .await
+    .await?;
+    rows.into_iter()
+        .map(|r| {
+            Ok(Summary {
+                origin: Origin::parse(&r.origin)?,
+                id: r.id,
+                name: r.name,
+                version: r.version,
+                package_sha256: r.package_sha256,
+                enabled: r.enabled,
+                installed_at: r.installed_at,
+            })
+        })
+        .collect()
 }
 
 /// Ids of enabled plugins, for loading at startup.
@@ -512,4 +531,25 @@ pub async fn uninstall<'e>(
     )
     .fetch_optional(executor)
     .await
+}
+
+/// Whether the last change to which package a plugin runs (installed,
+/// upgraded or rolled back, from the audit log) was a rollback: an admin
+/// turned the newer package down.
+pub async fn last_change_was_rollback<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: &str,
+) -> Result<bool, sqlx::Error> {
+    let action = sqlx::query_scalar!(
+        r#"
+        SELECT action FROM core.audit_log
+        WHERE target = 'plugin:' || $1::text
+          AND action IN ('plugin.installed', 'plugin.upgraded', 'plugin.rolled_back')
+        ORDER BY id DESC LIMIT 1
+        "#,
+        id
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(action.as_deref() == Some("plugin.rolled_back"))
 }

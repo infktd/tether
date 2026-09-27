@@ -7,8 +7,17 @@
 //! in the same image: it has no signature and pins no key. It is still
 //! reviewed and approved like any other install (what it asks for, its
 //! permissions, hosts, secrets and scopes), from "Included with Tether" on
-//! the Apps page. A newer image carrying a newer version shows it as an
-//! update, reviewed and rolled back like any other.
+//! the Apps page. A newer image carrying a newer version, or the same
+//! version rebuilt (another package: "Rebuilt with this Tether", only for
+//! an app installed from the bundle), shows it as an update, reviewed and
+//! rolled back like any other ([`crate::plugins::bundled_offer`]).
+//!
+//! An image upgrade never leaves a bundled app waiting when it asks for
+//! nothing new: at startup, under the lifecycle lock and before apps load,
+//! Tether applies such an update or rebuild itself, as the system and
+//! through the approval's own upgrade path, when the review's comparison
+//! ([`crate::pages::plugins::Changes`]) finds nothing to list. Anything
+//! else waits for the admin's review ([`crate::plugins::Plugins::start`]).
 //!
 //! The ids of bundled apps are reserved: no package from anywhere else
 //! (a file, GitHub) can install or upgrade them.

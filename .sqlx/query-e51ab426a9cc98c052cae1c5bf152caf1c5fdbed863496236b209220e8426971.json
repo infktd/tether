@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, version, enabled, installed_at FROM core.plugins ORDER BY name, id",
+  "query": "\n        SELECT id, name, version, origin, package_sha256, enabled, installed_at\n        FROM core.plugins ORDER BY name, id\n        ",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,28 @@
       },
       {
         "ordinal": 3,
+        "name": "origin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "origin"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "package_sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "package_sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -48,7 +70,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "installed_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -67,8 +89,10 @@
       false,
       false,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "d4beadb76030e71e6e368d871bdfe17736dd88cff40df2e3dc24f7d22619e133"
+  "hash": "e51ab426a9cc98c052cae1c5bf152caf1c5fdbed863496236b209220e8426971"
 }

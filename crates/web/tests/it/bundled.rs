@@ -477,3 +477,384 @@ fn bundled_apps_are_read_from_their_directory() {
     let none = tether_web::bundled::Bundled::read_dir(&dir);
     assert!(none.all().is_empty());
 }
+
+// ---- rebuilds: the same version, another package ---------------------------
+
+/// A component built for another version of the app interface: the limits
+/// test guest exports its own world, not `render`.
+fn mismatched_component() -> Vec<u8> {
+    static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
+    COMPONENT
+        .get_or_init(|| build_guest("tether-plugins-test-guest"))
+        .clone()
+}
+
+/// A bundled package of app `id` with `extra` manifest lines and this
+/// component.
+fn package_of(id: &str, version: &str, permissions: &str, extra: &str, wasm: &[u8]) -> Vec<u8> {
+    let manifest = format!(
+        "[plugin]\nid = \"{id}\"\nname = \"Hello {id}\"\nversion = \"{version}\"\n\
+         host_api = \"1\"\n\n[permissions]\n{permissions}\n{extra}"
+    );
+    testing::zip(&[("plugin.toml", manifest.as_bytes()), ("plugin.wasm", wasm)])
+}
+
+async fn sha_of(db: &PgPool, id: &str) -> String {
+    let sha: Vec<u8> = sqlx::query_scalar("SELECT package_sha256 FROM core.plugins WHERE id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .unwrap();
+    sha.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `plugin.upgraded` entries: (actor account, details), oldest first.
+async fn upgrades(db: &PgPool) -> Vec<(Option<i64>, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT actor_account_id, details FROM core.audit_log \
+         WHERE action = 'plugin.upgraded' ORDER BY id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap()
+}
+
+const VIEW: &str = "view = \"See the hello page\"\n";
+const VIEW_RULE: &str = "[[pages]]\npath = \"\"\npermission = \"view\"\n";
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_rebuild_that_asks_for_nothing_new_is_applied_at_startup(db: PgPool) {
+    // Approved from one image, whose build doesn't fit this Tether's app
+    // interface any more.
+    let broken = package_of(ID, "1.0.0", VIEW, VIEW_RULE, &mismatched_component());
+    let h = harness_with_bundled(db.clone(), vec![broken.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let res = approve(&h, &owner, &broken, "none").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(matches!(h.plugins.status(ID), Status::Incompatible(_)));
+
+    // Said plainly, with nothing to review: install a version built for
+    // this Tether. The error itself is there for admins; uninstalling
+    // isn't the fix.
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(
+        res.body.contains("Built for a different version of Tether"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("Install a version built for this Tether"));
+    assert!(res.body.contains("The error</summary>"));
+    let res = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(
+        res.body.contains("Built for a different version of Tether"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("Install a version built for this Tether"));
+    assert!(res.body.contains("The error</summary>"));
+    assert!(res.body.contains("Uninstalling doesn"));
+
+    // The next image rebuilt it, at the same version, asking for exactly
+    // the same: offered as a rebuild until Tether starts...
+    let rebuilt = package_of(ID, "1.0.0", VIEW, VIEW_RULE, &hello_component());
+    let h = harness_with_bundled(db.clone(), vec![rebuilt.clone()]).await;
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(
+        res.body.contains("Rebuilt with this Tether"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("Review rebuild"));
+    let res = page(&h, &format!("/admin/plugin-bundled/{ID}"), &owner).await;
+    assert!(
+        res.body.contains("rebuilt with this Tether"),
+        "{}",
+        res.body
+    );
+
+    // ...which applies it, as the system, and runs it.
+    h.plugins.start(&h.db).await.unwrap();
+    assert_eq!(h.plugins.status(ID), Status::Running);
+    assert_eq!(sha_of(&h.db, ID).await, sha256_hex(&rebuilt));
+    assert_eq!(
+        stored(&h.db).await,
+        (
+            "bundled".to_owned(),
+            None,
+            Some("bundled".to_owned()),
+            "1.0.0".to_owned()
+        )
+    );
+    let audited = upgrades(&h.db).await;
+    assert_eq!(audited.len(), 1);
+    let (actor, details) = &audited[0];
+    assert_eq!(*actor, None);
+    assert_eq!(details["reason"], "bundled_rebuild");
+    assert_eq!(details["from"], "1.0.0");
+    assert_eq!(details["to"], "1.0.0");
+    assert_eq!(details["sha256"], sha256_hex(&rebuilt));
+    let declared: Vec<String> =
+        sqlx::query_scalar("SELECT permission FROM core.plugin_permissions ORDER BY 1")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(declared, ["plugin.tether.hello.view"]);
+
+    // Nothing left to offer; starting again changes nothing.
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(
+        !res.body.contains("Rebuilt with this Tether"),
+        "{}",
+        res.body
+    );
+    let h = harness_with_bundled(db.clone(), vec![rebuilt.clone()]).await;
+    h.plugins.start(&h.db).await.unwrap();
+    assert_eq!(upgrades(&h.db).await.len(), 1);
+
+    // An admin rolling back from it is a choice a restart doesn't undo:
+    // offered, not applied.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/rollback"),
+            &format!("confirmation={ID}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(sha_of(&h.db, ID).await, sha256_hex(&broken));
+    let h = harness_with_bundled(db, vec![rebuilt.clone()]).await;
+    h.plugins.start(&h.db).await.unwrap();
+    assert_eq!(sha_of(&h.db, ID).await, sha256_hex(&broken));
+    assert_eq!(upgrades(&h.db).await.len(), 1);
+    let res = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(res.body.contains("Review the rebuild"), "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_rebuild_that_asks_for_more_waits_for_review(db: PgPool) {
+    let v1 = package_of(ID, "1.0.0", VIEW, "", &hello_component());
+    let h = harness_with_bundled(db.clone(), vec![v1.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let res = approve(&h, &owner, &v1, "none").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let base = sha256_hex(&v1);
+
+    // Rebuilt at the same version but opening its pages to whoever holds
+    // `view` (admins only before): the review would list that, so Tether
+    // doesn't apply it itself. Nor one with a new permission, nor a newer
+    // version with a new scope.
+    let rebuilds = [
+        package_of(ID, "1.0.0", VIEW, VIEW_RULE, &hello_component()),
+        package_of(
+            ID,
+            "1.0.0",
+            "view = \"See the hello page\"\nwave = \"Wave back\"\n",
+            "",
+            &hello_component(),
+        ),
+        package_of(
+            ID,
+            "1.1.0",
+            VIEW,
+            "[capabilities.esi]\ndata_source = [\"esi-industry.read_corporation_mining.v1\"]\n",
+            &hello_component(),
+        ),
+    ];
+    for rebuilt in &rebuilds {
+        let h = harness_with_bundled(db.clone(), vec![rebuilt.clone()]).await;
+        h.plugins.start(&h.db).await.unwrap();
+        assert_eq!(h.plugins.status(ID), Status::Running);
+        assert_eq!(sha_of(&h.db, ID).await, base);
+        assert!(upgrades(&h.db).await.is_empty());
+        let res = page(&h, "/admin/plugins", &owner).await;
+        assert!(
+            res.body.contains("Rebuilt with this Tether")
+                || res.body.contains("1.1.0</span> available"),
+            "{}",
+            res.body
+        );
+    }
+
+    // Reviewed and approved by an admin, at the same version.
+    let rebuilt = rebuilds[1].clone();
+    let h = harness_with_bundled(db, vec![rebuilt.clone()]).await;
+    h.plugins.start(&h.db).await.unwrap();
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(res.body.contains("Review rebuild"), "{}", res.body);
+    let res = page(&h, &format!("/admin/plugin-bundled/{ID}"), &owner).await;
+    assert!(
+        res.body.contains("rebuilt with this Tether"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("plugin.tether.hello.wave"));
+    let res = approve(&h, &owner, &rebuilt, &base).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(sha_of(&h.db, ID).await, sha256_hex(&rebuilt));
+    assert_eq!(stored(&h.db).await.3, "1.0.0");
+    let audited = upgrades(&h.db).await;
+    assert_eq!(audited.len(), 1);
+    assert!(audited[0].0.is_some());
+    assert_eq!(audited[0].1["reason"], "bundled_rebuild");
+    // The package it replaced can be put back.
+    let res = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(res.body.contains("Roll back to"), "{}", res.body);
+    // The same package again is nothing to install.
+    let res = approve(&h, &owner, &rebuilt, &sha256_hex(&rebuilt)).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_signed_install_of_a_bundled_id_is_never_touched(db: PgPool) {
+    // Installed from a publisher's signed package before this Tether
+    // bundled the id.
+    let h = harness(db.clone(), true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let (bytes, signature) = signed(&Key::new(7));
+    install_package(&h, &owner, &bytes, &signature).await;
+    let before = sha_of(&h.db, ID).await;
+
+    // Bundled at the same version, asking for the same: not a rebuild of
+    // it, so it's neither offered as one nor applied.
+    let twin = package_of(ID, "9.0.0", "", "", &hello_component());
+    let h = harness_with_bundled(db, vec![twin]).await;
+    h.plugins.start(&h.db).await.unwrap();
+    assert_eq!(sha_of(&h.db, ID).await, before);
+    assert_eq!(stored(&h.db).await.0, "signed");
+    assert!(upgrades(&h.db).await.is_empty());
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(
+        !res.body.contains("Rebuilt with this Tether"),
+        "{}",
+        res.body
+    );
+    assert!(!res.body.contains("Review rebuild"));
+    let res = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(!res.body.contains("Review the rebuild"), "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn approve_all_applies_each_in_turn_and_stops_at_a_failure(db: PgPool) {
+    const A: &str = "tether.hello-a";
+    const B: &str = "tether.hello-b";
+    const C: &str = "tether.hello-c";
+    let wasm = hello_component();
+    let v1: Vec<Vec<u8>> = [A, B, C]
+        .iter()
+        .map(|id| package_of(id, "1.0.0", "", "", &wasm))
+        .collect();
+    let h = harness_with_bundled(db.clone(), v1.clone()).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    for (id, bytes) in [A, B, C].iter().zip(&v1) {
+        let res = send(
+            &h.app,
+            form(
+                &format!("/admin/plugin-bundled/{id}/approve"),
+                &format!("package={}&reviewed=none", sha256_hex(bytes)),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let wave = "wave = \"Wave back\"\n";
+    let next = vec![
+        package_of(A, "1.0.0", wave, "", &wasm),
+        package_of(B, "2.0.0", wave, "", &wasm),
+        package_of(C, "2.0.0", wave, "", &wasm),
+    ];
+    let h = harness_with_bundled(db, next.clone()).await;
+    h.plugins.start(&h.db).await.unwrap();
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(
+        res.body.contains("Approve all included updates"),
+        "{}",
+        res.body
+    );
+    // Each app's own review stays.
+    assert!(res.body.contains(&format!("/admin/plugin-bundled/{A}")));
+
+    // One page, each app's changes.
+    let res = page(&h, "/admin/plugin-bundled-updates", &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for id in [A, B, C] {
+        assert!(
+            res.body.contains(&format!("plugin.{id}.wave")),
+            "{}",
+            res.body
+        );
+    }
+    assert!(res.body.contains("Rebuilt with this Tether"));
+    let token = |id: &str, bytes: &[u8], v1: &[u8]| {
+        format!("app={id}%3A{}%3A{}", sha256_hex(bytes), sha256_hex(v1))
+    };
+
+    // Only what the page offers: not an app it doesn't list, nor one twice.
+    for body in [
+        format!(
+            "{}&app={ID}%3A{}%3Anone",
+            token(A, &next[0], &v1[0]),
+            "0".repeat(64)
+        ),
+        [token(A, &next[0], &v1[0]), token(A, &next[0], &v1[0])].join("&"),
+    ] {
+        let res = send(
+            &h.app,
+            form("/admin/plugin-bundled-updates/approve", &body, &owner),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+        assert_eq!(sha_of(&h.db, A).await, sha256_hex(&v1[0]));
+    }
+
+    // B's review is stale (it showed another package): A is upgraded, B
+    // isn't, and C after it isn't tried.
+    let body = [
+        token(A, &next[0], &v1[0]),
+        format!("app={B}%3A{}%3A{}", "0".repeat(64), sha256_hex(&v1[1])),
+        token(C, &next[2], &v1[2]),
+    ]
+    .join("&");
+    let res = send(
+        &h.app,
+        form("/admin/plugin-bundled-updates/approve", &body, &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(
+        res.body.contains("Upgraded: Hello tether.hello-a."),
+        "{}",
+        res.body
+    );
+    assert!(
+        res.body.contains("Hello tether.hello-b wasn"),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("The ones after it weren"), "{}", res.body);
+    assert_eq!(sha_of(&h.db, A).await, sha256_hex(&next[0]));
+    assert_eq!(sha_of(&h.db, B).await, sha256_hex(&v1[1]));
+    assert_eq!(sha_of(&h.db, C).await, sha256_hex(&v1[2]));
+
+    // The rest, as shown again.
+    let body = [token(B, &next[1], &v1[1]), token(C, &next[2], &v1[2])].join("&");
+    let res = send(
+        &h.app,
+        form("/admin/plugin-bundled-updates/approve", &body, &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), "/admin/plugins");
+    for (id, bytes) in [A, B, C].iter().zip(&next) {
+        assert_eq!(sha_of(&h.db, id).await, sha256_hex(bytes));
+        assert_eq!(h.plugins.status(id), Status::Running);
+    }
+    // One audited upgrade each, by the admin.
+    let audited = upgrades(&h.db).await;
+    assert_eq!(audited.len(), 3);
+    assert!(audited.iter().all(|(actor, _)| actor.is_some()));
+    let res = page(&h, "/admin/plugins", &owner).await;
+    assert!(!res.body.contains("Approve all included updates"));
+}

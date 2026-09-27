@@ -153,7 +153,7 @@ async fn a_component_that_isnt_a_plugin_is_refused_at_load() {
         .load("not-a-plugin", component("tether-plugins-test-guest"), None)
         .await
         .unwrap_err();
-    assert!(matches!(err, RuntimeError::Rejected(_)), "{err}");
+    assert!(matches!(err, RuntimeError::Interface(_)), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

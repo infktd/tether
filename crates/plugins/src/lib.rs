@@ -98,6 +98,12 @@ pub enum RuntimeError {
     TooLarge(usize),
     #[error("the plugin can't be loaded: {0}")]
     Rejected(String),
+    /// It doesn't fit the host API: it imports something the host doesn't
+    /// provide, or exports something of another type than the host calls
+    /// (a component type-check or link error). Usually built against
+    /// another version of the WIT.
+    #[error("the plugin can't be loaded: {0}")]
+    Interface(String),
     #[error("linking the host API: {0}")]
     Link(String),
 }

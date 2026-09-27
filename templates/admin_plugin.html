@@ -21,7 +21,16 @@
     {% endif %}
   </div>
   {% include "admin_error.html" %}
-  {% if let Some(why) = failure %}<div class="alert" data-variant="destructive" role="alert"><section><strong>It couldn't be loaded.</strong> <span class="break-words">{{ why }}</span></section></div>{% endif %}
+  {% if let Some(why) = failure %}<div class="alert" data-variant="destructive" role="alert"><section><strong>It couldn't be loaded.</strong> <span class="break-words">{{ why }}</span> Its data and settings are kept.</section></div>{% endif %}
+  {% if let Some(why) = incompatible %}
+  <div class="alert" data-variant="destructive" role="alert">
+    <section class="grid gap-3">
+      <p><strong>It couldn't be loaded. Built for a different version of Tether's app interface.</strong> {% if let Some(inc) = included %}{% if inc.newer || inc.rebuilt %}This Tether includes {% if inc.rebuilt %}a rebuild of it{% else %}version <span class="num">{{ inc.version }}</span>{% endif %}: review it to run it again.{% else %}Install a version built for this Tether.{% endif %}{% else if updates.newer && updates.github %}Version {% if let Some(v) = updates.latest %}<span class="num">{{ v }}</span> {% endif %}is published: review it to run it again.{% else %}Install a version built for this Tether.{% endif %} Its data and settings are kept meanwhile.</p>
+      {% if let Some(inc) = included %}{% if inc.newer || inc.rebuilt %}<div><a class="btn" data-variant="primary" href="/admin/plugin-bundled/{{ about.id }}">{% if inc.rebuilt %}Review the rebuild{% else %}Review version <span class="num">{{ inc.version }}</span>{% endif %}</a></div>{% endif %}{% else if updates.newer && updates.github %}<form method="post" action="/admin/plugins/{{ about.id }}/update"><button type="submit" class="btn" data-variant="primary">Review version {% if let Some(v) = updates.latest %}<span class="num">{{ v }}</span>{% endif %}</button></form>{% endif %}
+      <details><summary class="text-sm">The error</summary><p class="mt-2 text-xs break-words num">{{ why }}</p></details>
+    </section>
+  </div>
+  {% endif %}
 
   {% if !esi_scopes.is_empty() %}
   <section class="card">
@@ -212,13 +221,15 @@
 
   {% if let Some(inc) = included %}
   <section class="card">
-    <header><h2>Updates</h2><p>This app comes with Tether: newer versions arrive with newer versions of Tether, never from GitHub or a file. A newer version is installed only after you review it.</p></header>
+    <header><h2>Updates</h2><p>This app comes with Tether: newer versions and rebuilds arrive with newer versions of Tether, never from GitHub or a file. One that asks for nothing new is applied when Tether starts (unless you rolled back from it); the rest only after you review them.</p></header>
     <section class="grid gap-4">
       <dl class="grid gap-4 text-sm">
-        <div class="grid gap-1"><dt class="font-medium">Included with this Tether</dt><dd class="text-muted-foreground"><span class="num">{{ inc.version }}</span>{% if inc.newer %} <span class="badge" data-variant="secondary">Newer than {{ about.version }}</span>{% endif %}</dd></div>
+        <div class="grid gap-1"><dt class="font-medium">Included with this Tether</dt><dd class="text-muted-foreground"><span class="num">{{ inc.version }}</span>{% if inc.newer %} <span class="badge" data-variant="secondary">Newer than {{ about.version }}</span>{% else if inc.rebuilt %} <span class="badge" data-variant="secondary">Rebuilt with this Tether</span>{% endif %}</dd></div>
       </dl>
       {% if inc.newer %}
       <div><a class="btn" data-variant="primary" href="/admin/plugin-bundled/{{ about.id }}">Review version <span class="num">{{ inc.version }}</span></a></div>
+      {% else if inc.rebuilt %}
+      <div><a class="btn" data-variant="primary" href="/admin/plugin-bundled/{{ about.id }}">Review the rebuild</a></div>
       {% endif %}
     </section>
   </section>
@@ -270,7 +281,8 @@
   {% endif %}
 
   <form class="card" method="post" action="/admin/plugins/{{ about.id }}/uninstall">
-    <header><h2>Uninstall</h2><p>Stops the app and removes it{% if about.storage %}, and deletes its data: its database schema and everything in it{% endif %}. Its pinned key stays, so a later package under this id must still be signed with it.</p></header>
+    <header><h2>Uninstall</h2><p>Stops the app and removes it{% if about.storage %}, and deletes its data: its database schema and everything in it{% endif %}. Its pinned key stays, so a later package under this id must still be signed with it.{% if failure.is_some() || incompatible.is_some() %} Uninstalling doesn't fix an app that won't load: install a version that does instead, and its data stays.{% endif %}</p></header>
+    {% if about.storage %}<section><div class="alert" data-variant="destructive" role="alert"><section><strong>This deletes all of {{ about.name }}'s data.</strong> It can't be undone from here.</section></div></section>{% endif %}
     <section class="grid gap-2 max-w-md">
       <label class="label" for="confirmation">Type <span class="num">{{ about.id }}</span> to confirm</label>
       <input class="input" id="confirmation" name="confirmation" autocomplete="off" required>

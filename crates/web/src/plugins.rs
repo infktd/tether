@@ -160,12 +160,38 @@ pub enum Status {
     Running,
     /// Enabled, but it couldn't be loaded; why, for admins.
     Failed(String),
+    /// Enabled, but it doesn't fit this Tether's app interface (a component
+    /// type-check or link error): built for another version of it. The
+    /// error, for admins.
+    Incompatible(String),
     Stopped,
 }
 
 enum Slot {
     Running(Running),
-    Failed(String),
+    Failed(LoadError),
+}
+
+/// Why a plugin couldn't be loaded.
+struct LoadError {
+    why: String,
+    /// It doesn't fit the host API ([`tether_plugins::RuntimeError::Interface`]).
+    interface: bool,
+}
+
+impl From<String> for LoadError {
+    fn from(why: String) -> Self {
+        Self {
+            why,
+            interface: false,
+        }
+    }
+}
+
+impl From<&str> for LoadError {
+    fn from(why: &str) -> Self {
+        why.to_owned().into()
+    }
 }
 
 /// A running plugin, the manifest it was approved with, and where its
@@ -302,7 +328,8 @@ impl Plugins {
         let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());
         match slots.get(id) {
             Some(Slot::Running(_)) => Status::Running,
-            Some(Slot::Failed(why)) => Status::Failed(why.clone()),
+            Some(Slot::Failed(e)) if e.interface => Status::Incompatible(e.why.clone()),
+            Some(Slot::Failed(e)) => Status::Failed(e.why.clone()),
             None => Status::Stopped,
         }
     }
@@ -400,17 +427,22 @@ impl Plugins {
                 }
                 Slot::Running(running)
             }
-            Err(why) => {
-                tracing::error!(plugin = installed.id, error = %why, "plugin failed to load");
-                Slot::Failed(why)
+            Err(e) => {
+                tracing::error!(
+                    plugin = installed.id,
+                    error = %e.why,
+                    interface = e.interface,
+                    "plugin failed to load"
+                );
+                Slot::Failed(e)
             }
         };
         self.slots().insert(installed.id.clone(), slot);
     }
 
-    async fn load(&self, db: &PgPool, installed: &db::Installed) -> Result<Running, String> {
+    async fn load(&self, db: &PgPool, installed: &db::Installed) -> Result<Running, LoadError> {
         if sha256(&installed.package) != installed.package_sha256 {
-            return Err("the stored package isn't the one that was approved".to_owned());
+            return Err("the stored package isn't the one that was approved".into());
         }
         // A rollback cut short left its data set aside; running against
         // the half-restored schema would split its data in two.
@@ -421,16 +453,17 @@ impl Plugins {
                     "a rollback of its data was cut short: run `tether rollback --plugin {}` \
                      again (with Tether stopped) to finish it",
                     installed.id
-                ));
+                )
+                .into());
             }
             Err(e) => {
                 tracing::error!(plugin = installed.id, error = %e, "checking for a cut-short rollback");
-                return Err("its storage couldn't be checked".to_owned());
+                return Err("its storage couldn't be checked".into());
             }
         }
         if let Err(e) = tether_snapshots::reset_restore_limits(db, &installed.id).await {
             tracing::error!(plugin = installed.id, error = %e, "resetting a rollback's temp file cap");
-            return Err("its database limits couldn't be checked".to_owned());
+            return Err("its database limits couldn't be checked".into());
         }
         let package = match installed.origin {
             // Shipped in Tether's image, so as trusted as the binary: the
@@ -456,26 +489,26 @@ impl Plugins {
                     .map_err(|e| format!("the stored package doesn't check out: {e}"))?;
                 if *verified.trust() != Trust::Pinned {
                     return Err(
-                        "the stored package isn't signed with the pinned key; install a version \
-                         signed with it"
-                            .to_owned(),
+                        "the stored package isn't signed with the pinned key; install a \
+                                version signed with it"
+                            .into(),
                     );
                 }
                 verified.into_package()
             }
         };
         if package.manifest.plugin.id != installed.id {
-            return Err("the stored package is for another plugin".to_owned());
+            return Err("the stored package is for another plugin".into());
         }
         let storage = match plugin_storage::get(db, &installed.id).await {
             Ok(Some(names)) => Some(self.storage(db, &installed.id, &names, &package).await?),
             Ok(None) if package.manifest.capabilities.storage => {
-                return Err("its database storage is missing".to_owned());
+                return Err("its database storage is missing".into());
             }
             Ok(None) => None,
             Err(e) => {
                 tracing::error!(plugin = installed.id, error = %e, "reading plugin storage");
-                return Err("its database storage couldn't be read".to_owned());
+                return Err("its database storage couldn't be read".into());
             }
         };
         let schedules = crate::plugin_jobs::declared(&package.manifest);
@@ -484,7 +517,10 @@ impl Plugins {
             .host
             .load(&installed.id, package.component, storage)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| LoadError {
+                interface: matches!(e, tether_plugins::RuntimeError::Interface(_)),
+                why: e.to_string(),
+            })?;
         // Decided now, for this component and the origin recorded with its
         // package: a call still running after an upgrade keeps this answer.
         if crate::plugin_services::may_see_owners(&installed.id, installed.origin) {
@@ -496,14 +532,14 @@ impl Plugins {
             .await
             .map_err(|e| {
                 tracing::error!(plugin = installed.id, error = %e, "recording plugin scopes");
-                "its scopes couldn't be recorded".to_owned()
+                LoadError::from("its scopes couldn't be recorded")
             })?;
         // Its schedules run only while it does.
         plugin_jobs::sync_schedules(db, &installed.id, &schedules)
             .await
             .map_err(|e| {
                 tracing::error!(plugin = installed.id, error = %e, "syncing plugin schedules");
-                "its schedules couldn't be set up".to_owned()
+                LoadError::from("its schedules couldn't be set up")
             })?;
         Ok(Running {
             plugin: loaded,
@@ -581,16 +617,198 @@ impl Plugins {
     }
 
     /// Loads every enabled plugin. Run once at startup; one plugin failing
-    /// doesn't stop the others.
+    /// doesn't stop the others. First, under the same lock, applies the
+    /// bundled packages that ask for nothing new
+    /// ([`Self::apply_bundled_updates`]).
     pub async fn start(&self, db: &PgPool) -> Result<(), sqlx::Error> {
         let _lifecycle = self.lifecycle.lock().await;
+        self.apply_bundled_updates(db).await;
         for id in db::enabled_ids(db).await? {
+            // Loaded already: upgraded just now.
+            if self.status(&id) != Status::Stopped {
+                continue;
+            }
             if let Some(installed) = db::get(db, &id).await? {
                 self.activate(db, &installed).await;
             }
         }
         Ok(())
     }
+
+    /// A newer image can carry a bundled app's package rebuilt (another
+    /// SHA-256) at the same version, or a newer version. For each app
+    /// installed from Tether's bundle, it's applied here, as the system,
+    /// exactly as an admin's approval would be (its migrations run after
+    /// a snapshot), when the admin already approved everything it asks for
+    /// ([`Self::needs_review`]). The package is as trusted as the binary,
+    /// so no approval is lost. Anything else, and anything that fails, is
+    /// logged and left for review on the Apps page; startup goes on.
+    async fn apply_bundled_updates(&self, db: &PgPool) {
+        for app in self.bundled.all() {
+            let id = app.package.manifest.plugin.id.as_str();
+            match self.apply_bundled_update(db, app).await {
+                Ok(Some(version)) => {
+                    tracing::info!(
+                        plugin = id,
+                        version,
+                        "bundled app updated: it asks for nothing new"
+                    );
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = id,
+                        error = %e.message(),
+                        "bundled app not updated; left for review"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Applies one bundled package if it needs no review. The version
+    /// applied, or `None` when there's nothing to apply or it's left for
+    /// review.
+    async fn apply_bundled_update(
+        &self,
+        db: &PgPool,
+        app: &crate::bundled::BundledApp,
+    ) -> Result<Option<String>, AppError> {
+        let id = app.package.manifest.plugin.id.as_str();
+        let Some(installed) = db::get(db, id).await? else {
+            return Ok(None);
+        };
+        // Only an install from Tether's bundle; never one signed by a
+        // publisher, even under a bundled app's id.
+        if installed.origin != db::Origin::Bundled {
+            return Ok(None);
+        }
+        // Nothing new, or an older version (rolled back to, or an older
+        // image): left as it is.
+        if bundled_offer(
+            &installed.version,
+            installed.origin,
+            &installed.package_sha256,
+            app,
+        )
+        .is_none()
+        {
+            return Ok(None);
+        }
+        if let Some(why) = self.needs_review(db, &installed, &app.package).await? {
+            tracing::info!(
+                plugin = id,
+                from = installed.version,
+                to = app.package.manifest.plugin.version,
+                why,
+                "bundled app update left for review"
+            );
+            return Ok(None);
+        }
+        // One that can't run either is no better: the admin decides.
+        self.host
+            .load(id, app.package.component.clone(), None)
+            .await
+            .map_err(|e| AppError::bad_request(format!("its component can't be loaded: {e}")))?;
+        let mut tx = db.begin().await?;
+        let locked = db::get_locked(&mut tx, id)
+            .await?
+            .filter(|now| now.package_sha256 == installed.package_sha256)
+            .ok_or_else(|| AppError::bad_request("it changed while it was being checked"))?;
+        upgrade_now(
+            db,
+            self,
+            Approver::System,
+            tx,
+            Candidate::Bundled(app),
+            locked,
+        )
+        .await?;
+        Ok(Some(app.package.manifest.plugin.version.clone()))
+    }
+
+    /// Why replacing `installed` with the bundled `package` needs an
+    /// admin's review, if it does: what the review would list changes (the
+    /// review's own comparison, [`crate::pages::plugins::Changes`]), or it
+    /// can't be compared, or it can't be installed at all, or an admin
+    /// rolled back to the installed package, or its new migrations would
+    /// run with no snapshot to go back to.
+    async fn needs_review(
+        &self,
+        db: &PgPool,
+        installed: &db::Installed,
+        package: &Package,
+    ) -> Result<Option<&'static str>, AppError> {
+        let Ok(old) = package::read(&installed.package) else {
+            return Ok(Some("the installed package can't be read to compare"));
+        };
+        let changes =
+            crate::pages::plugins::Changes::new(&old.package().manifest, &package.manifest);
+        if !changes.unchanged() {
+            return Ok(Some("it asks for something new or different"));
+        }
+        if unsupported(package).is_some() {
+            return Ok(Some("it asks for something Tether doesn't allow"));
+        }
+        // An admin went back to this package: a restart mustn't undo that.
+        if db::last_change_was_rollback(db, &installed.id).await? {
+            return Ok(Some("an admin rolled it back to the installed package"));
+        }
+        if self.snapshots.is_none() {
+            let applied = plugin_storage::applied(db, &installed.id).await?;
+            if package.migrations.len() > applied.len() {
+                return Ok(Some("it has new migrations and snapshots are off"));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// What a bundled package offers the installed app with its id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offer {
+    /// A newer version.
+    Newer,
+    /// The same version, rebuilt (another package): only to an app
+    /// installed from Tether's bundle.
+    Rebuilt,
+}
+
+/// What the bundled `app` offers an installed app with its id, version
+/// `installed_version`, `origin` and package `installed_sha256`, if
+/// anything.
+pub fn bundled_offer(
+    installed_version: &str,
+    origin: db::Origin,
+    installed_sha256: &[u8],
+    app: &crate::bundled::BundledApp,
+) -> Option<Offer> {
+    let version = &app.package.manifest.plugin.version;
+    if newer(version, installed_version) {
+        Some(Offer::Newer)
+    } else if origin == db::Origin::Bundled
+        && same_version(version, installed_version)
+        && app.sha256 != installed_sha256
+    {
+        Some(Offer::Rebuilt)
+    } else {
+        None
+    }
+}
+
+/// Whether `latest` is a newer version than `installed`.
+pub fn newer(latest: &str, installed: &str) -> bool {
+    matches!(
+        (manifest::parse_version(latest), manifest::parse_version(installed)),
+        (Some(l), Some(i)) if l > i
+    )
+}
+
+fn same_version(a: &str, b: &str) -> bool {
+    matches!(
+        (manifest::parse_version(a), manifest::parse_version(b)),
+        (Some(a), Some(b)) if a == b
+    )
 }
 
 /// Where a plugin page lives: `/plugins/<id>` or `/plugins/<id>/<path>`.
@@ -953,7 +1171,7 @@ async fn check_upload(
         if installed.origin == db::Origin::Bundled {
             return Err(fail(reserved(&id)));
         }
-        check_upgrade(&state.db, &installed.version, unverified.package())
+        check_upgrade(&state.db, &installed.version, unverified.package(), false)
             .await
             .map_err(fail)?;
     }
@@ -1198,6 +1416,31 @@ async fn approve_bundled_now(
     .await
 }
 
+/// Who approves an install or upgrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Approver {
+    Admin(AccountId),
+    /// Tether, at startup: a bundled package asking for nothing an admin
+    /// didn't approve already ([`Plugins::apply_bundled_updates`]).
+    System,
+}
+
+impl Approver {
+    fn actor(self) -> Actor {
+        match self {
+            Self::Admin(account) => Actor::Account(account),
+            Self::System => Actor::System,
+        }
+    }
+
+    fn account(self) -> Option<AccountId> {
+        match self {
+            Self::Admin(account) => Some(account),
+            Self::System => None,
+        }
+    }
+}
+
 /// A package being installed, or upgraded to, and why it's trusted.
 #[derive(Clone, Copy)]
 enum Candidate<'a> {
@@ -1265,12 +1508,16 @@ impl Candidate<'_> {
     }
 
     /// Records the key it was trusted with; a bundled package pins none.
-    async fn record_trust(&self, tx: &mut PgConnection, actor: AccountId) -> Result<(), AppError> {
-        match self {
-            Self::Signed { verified, .. } => {
-                record_trust(tx, Actor::Account(actor), verified).await
+    /// Only an admin trusts a signed one.
+    async fn record_trust(&self, tx: &mut PgConnection, by: Approver) -> Result<(), AppError> {
+        match (self, by) {
+            (Self::Signed { verified, .. }, Approver::Admin(account)) => {
+                record_trust(tx, Actor::Account(account), verified).await
             }
-            Self::Bundled(_) => Ok(()),
+            (Self::Signed { .. }, Approver::System) => Err(AppError::bad_request(
+                "Only an admin can approve a signed package.",
+            )),
+            (Self::Bundled(_), _) => Ok(()),
         }
     }
 
@@ -1278,7 +1525,7 @@ impl Candidate<'_> {
         &'a self,
         id: &'a str,
         package_sha256: &'a [u8],
-        actor: AccountId,
+        by: Approver,
     ) -> db::NewPlugin<'a> {
         let manifest = &self.package().manifest;
         db::NewPlugin {
@@ -1289,7 +1536,7 @@ impl Candidate<'_> {
             signature: self.signature(),
             origin: self.origin(),
             package_sha256,
-            installed_by: actor,
+            installed_by: by.account(),
         }
     }
 }
@@ -1320,13 +1567,21 @@ async fn install_or_upgrade(
         if installed.origin == db::Origin::Bundled && candidate.origin() == db::Origin::Signed {
             return Err(reserved(id));
         }
-        return upgrade_now(state, actor, tx, candidate, installed).await;
+        return upgrade_now(
+            &state.db,
+            &state.plugins,
+            Approver::Admin(actor),
+            tx,
+            candidate,
+            installed,
+        )
+        .await;
     }
-    candidate.record_trust(&mut tx, actor).await?;
+    let by = Approver::Admin(actor);
+    candidate.record_trust(&mut tx, by).await?;
     let manifest = &candidate.package().manifest;
     let package_sha256 = sha256(candidate.bytes());
-    let installed =
-        db::install(&mut *tx, &candidate.new_plugin(id, &package_sha256, actor)).await?;
+    let installed = db::install(&mut *tx, &candidate.new_plugin(id, &package_sha256, by)).await?;
     if !installed {
         return Err(AppError::bad_request(
             "An app with this id is already installed.",
@@ -1353,7 +1608,7 @@ async fn install_or_upgrade(
                 "Too many apps have database storage already. Uninstall one first.",
             ));
         }
-        Some(create_storage(state, &mut tx, id).await?)
+        Some(create_storage(&state.plugins.key, &mut tx, id).await?)
     } else {
         None
     };
@@ -1424,19 +1679,18 @@ fn grants_json(grants: &[tether_db::permissions::Grant]) -> Vec<serde_json::Valu
 }
 
 /// Whether `package` can replace the installed version of its plugin: it
-/// must be newer, keep its storage if it had some, and carry every
-/// migration already applied, unchanged.
-async fn check_upgrade(db: &PgPool, installed: &str, package: &Package) -> Result<(), AppError> {
+/// must be newer (or the same version, for a `rebuild` of a bundled app),
+/// keep its storage if it had some, and carry every migration already
+/// applied, unchanged.
+async fn check_upgrade(
+    db: &PgPool,
+    installed: &str,
+    package: &Package,
+    rebuild: bool,
+) -> Result<(), AppError> {
     let id = package.manifest.plugin.id.as_str();
     let new = &package.manifest.plugin.version;
-    let newer = match (
-        manifest::parse_version(new),
-        manifest::parse_version(installed),
-    ) {
-        (Some(new), Some(old)) => new > old,
-        _ => false,
-    };
-    if !newer {
+    if !newer(new, installed) && !(rebuild && same_version(new, installed)) {
         return Err(AppError::bad_request(format!(
             "Version {installed} of this app is installed and this package is version {new}. \
              Only a newer version can be installed over it; to go back to the version before \
@@ -1457,14 +1711,16 @@ async fn check_upgrade(db: &PgPool, installed: &str, package: &Package) -> Resul
     })
 }
 
-/// Replaces an installed plugin with a newer version, keeping the one it
-/// replaces for a rollback. Its permissions, HTTP hosts, secrets and scopes
-/// become the new version's (the review showed what changed); storage is
-/// created if it asks for it now. The plugin restarts; its new migrations
-/// run after a snapshot of its data (see [`migrate`]).
+/// Replaces an installed plugin with a newer version (or a bundled app with
+/// its rebuild), keeping the one it replaces for a rollback. Its
+/// permissions, HTTP hosts, secrets and scopes become the new version's
+/// (the review showed what changed); storage is created if it asks for it
+/// now. The plugin restarts; its new migrations run after a snapshot of its
+/// data (see [`migrate`]).
 async fn upgrade_now(
-    state: &crate::AppState,
-    actor: AccountId,
+    db: &PgPool,
+    plugins: &Plugins,
+    by: Approver,
     mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
     candidate: Candidate<'_>,
     installed: db::Installed,
@@ -1472,11 +1728,16 @@ async fn upgrade_now(
     let id = installed.id.clone();
     let package = candidate.package();
     let manifest = &package.manifest;
-    // Checked at upload; again now the row is locked.
-    check_upgrade(&state.db, &installed.version, package).await?;
-    candidate.record_trust(&mut tx, actor).await?;
     let package_sha256 = sha256(candidate.bytes());
-    let upgraded = db::upgrade(&mut tx, &candidate.new_plugin(&id, &package_sha256, actor)).await?;
+    // The same version rebuilt: only a bundled package over a bundled
+    // install, and only another package.
+    let rebuild = candidate.origin() == db::Origin::Bundled
+        && installed.origin == db::Origin::Bundled
+        && package_sha256 != installed.package_sha256;
+    // Checked at upload; again now the row is locked.
+    check_upgrade(db, &installed.version, package, rebuild).await?;
+    candidate.record_trust(&mut tx, by).await?;
+    let upgraded = db::upgrade(&mut tx, &candidate.new_plugin(&id, &package_sha256, by)).await?;
     // The row is locked (get_locked), so it's there.
     if !upgraded {
         return Err(AppError::not_found("No app with that id is installed."));
@@ -1491,7 +1752,7 @@ async fn upgrade_now(
             if tether_db::plugin_sources::set_source(&mut *tx, &id, None).await? {
                 audit::record(
                     &mut *tx,
-                    Actor::Account(actor),
+                    by.actor(),
                     "plugin.source_set",
                     Some(&target(&id)),
                     json!({ "source": null, "why": "bundled" }),
@@ -1502,13 +1763,21 @@ async fn upgrade_now(
         // An upload by hand keeps the repository it had.
         (None, db::Origin::Signed) => {}
     }
-    let changed = apply_manifest(state, &mut tx, &id, None, manifest, actor).await?;
+    let changed = apply_manifest(plugins, &mut tx, &id, None, manifest, by).await?;
+    let reason = match by {
+        _ if rebuild && same_version(&manifest.plugin.version, &installed.version) => {
+            Some("bundled_rebuild")
+        }
+        Approver::System => Some("bundled_update"),
+        Approver::Admin(_) => None,
+    };
     audit::record(
         &mut *tx,
-        Actor::Account(actor),
+        by.actor(),
         "plugin.upgraded",
         Some(&target(&id)),
         json!({
+            "reason": reason,
             "origin": candidate.origin().as_str(),
             "upload": candidate.upload_id(),
             "source": candidate.source(),
@@ -1529,12 +1798,11 @@ async fn upgrade_now(
     )
     .await?;
     tx.commit().await?;
-    let plugins = &state.plugins;
     plugins.deactivate(&id).await;
     if installed.enabled
-        && let Some(upgraded) = db::get(&state.db, &id).await?
+        && let Some(upgraded) = db::get(db, &id).await?
     {
-        plugins.activate(&state.db, &upgraded).await;
+        plugins.activate(db, &upgraded).await;
     }
     Ok(id)
 }
@@ -1555,14 +1823,16 @@ struct Applied {
 /// HTTP hosts and secrets, and the user scopes Member requires. Creates its
 /// storage if it asks for storage and has none. Grants of renamed
 /// permissions move to their new names (`from`, the manifest being
-/// replaced when known, lets a rollback move them back).
+/// replaced when known, lets a rollback move them back). Tether itself
+/// ([`Approver::System`]) approves no HTTP hosts or secrets: they must be
+/// exactly the ones an admin approved already.
 async fn apply_manifest(
-    state: &crate::AppState,
+    plugins: &Plugins,
     tx: &mut PgConnection,
     id: &str,
     from: Option<&manifest::Manifest>,
     manifest: &manifest::Manifest,
-    actor: AccountId,
+    by: Approver,
 ) -> Result<Applied, AppError> {
     let declared = declared_permissions(id, manifest);
     let renames: Vec<(String, String)> = manifest::permission_renames(from, manifest)
@@ -1572,7 +1842,30 @@ async fn apply_manifest(
     let synced =
         tether_db::permissions::sync_plugin_permissions(tx, id, &declared, &renames).await?;
     let (grants_removed, grants_moved) = (synced.removed, synced.moved);
-    let secrets_deleted = crate::plugin_http::approve(tx, id, manifest, actor).await?;
+    let secrets_deleted = match by {
+        Approver::Admin(account) => crate::plugin_http::approve(tx, id, manifest, account).await?,
+        Approver::System => {
+            let approved = tether_db::plugin_http::approved_in(&mut *tx, id).await?;
+            let asked = crate::plugin_http::declared_secrets(manifest);
+            let same_hosts = approved
+                .hosts
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                == manifest
+                    .capabilities
+                    .http
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>();
+            let same_secrets = approved.secrets.len() == asked.len()
+                && asked.iter().all(|s| approved.secrets.contains(s));
+            if !same_hosts || !same_secrets {
+                return Err(AppError::bad_request(
+                    "It asks for HTTPS hosts or secrets other than the ones approved.",
+                ));
+            }
+            Vec::new()
+        }
+    };
     if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
         .await?
     {
@@ -1585,7 +1878,7 @@ async fn apply_manifest(
                     "Too many apps have database storage already. Uninstall one first.",
                 ));
             }
-            Some(create_storage(state, tx, id).await?)
+            Some(create_storage(&plugins.key, tx, id).await?)
         } else {
             None
         };
@@ -1901,12 +2194,12 @@ async fn roll_back_now(
             false
         };
         let changed = apply_manifest(
-            state,
+            &state.plugins,
             &mut tx,
             id,
             plan.current.as_ref().map(|p| &p.manifest),
             &old.manifest,
-            actor,
+            Approver::Admin(actor),
         )
         .await?;
         audit::record(
@@ -1968,7 +2261,7 @@ async fn roll_back_now(
 /// schema in the install's transaction. Returns the names, for the audit
 /// log.
 async fn create_storage(
-    state: &crate::AppState,
+    key: &EncryptionKey,
     tx: &mut PgConnection,
     id: &str,
 ) -> Result<plugin_storage::Names, AppError> {
@@ -1991,8 +2284,7 @@ async fn create_storage(
     .await
     .map_err(AppError::internal)?;
     let name = password_secret(id);
-    let sealed = state
-        .key
+    let sealed = key
         .seal(&password, &secrets::context(&name))
         .map_err(AppError::internal)?;
     secrets::put(&mut *tx, &name, &sealed).await?;

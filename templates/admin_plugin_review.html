@@ -8,7 +8,7 @@
   <div class="flex items-end justify-between gap-4">
     <div>
       <h1 class="page-title">{{ about.name }}</h1>
-      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}{% if let Some(u) = upgrade %}Version <span class="num">{{ u.from }}</span> to <span class="num">{{ about.version }}</span>{% else %}Version <span class="num">{{ about.version }}</span>{% endif %}{% if let Some(at) = uploaded %}, uploaded {{ at }} EVE{% else %}, included with Tether{% endif %}</p>
+      <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}{% if let Some(u) = upgrade %}{% if u.from == about.version %}Version <span class="num">{{ about.version }}</span>, rebuilt with this Tether{% else %}Version <span class="num">{{ u.from }}</span> to <span class="num">{{ about.version }}</span>{% endif %}{% else %}Version <span class="num">{{ about.version }}</span>{% endif %}{% if let Some(at) = uploaded %}, uploaded {{ at }} EVE{% else %}, included with Tether{% endif %}</p>
     </div>
     <div class="flex gap-2">
       {% if let Some(action) = discard_action %}
@@ -46,7 +46,7 @@
   <div class="alert" role="status">
     <section>
       {% if u.new_migrations > 0 %}{% if u.snapshots %}<strong>A snapshot comes first.</strong> Its <span class="num">{{ u.new_migrations }}</span> new database migration(s) run when it restarts, after a snapshot of its data.{% else %}<strong>Snapshots are off here.</strong> Its <span class="num">{{ u.new_migrations }}</span> new database migration(s) run when it restarts, with no snapshot to go back to.{% endif %}{% else %}<strong>Its data stays as it is.</strong> This version has no new database migrations.{% endif %}
-      Version <span class="num">{{ u.from }}</span> is kept: you can roll back to it in one step on the app's page.
+      {% if u.from == about.version %}The package it replaces is kept{% else %}Version <span class="num">{{ u.from }}</span> is kept{% endif %}: you can roll back to it in one step on the app's page.
     </section>
   </div>
   {% endif %}

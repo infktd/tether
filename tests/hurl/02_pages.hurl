@@ -865,6 +865,19 @@ HTTP 303
 header "Location" == "/login"
 
 # Apps that come with Tether (the image bundles them).
+GET {{base}}/admin/plugin-bundled-updates
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/plugin-bundled-updates/approve
+Origin: {{base}}
+[Form]
+app: tether.moon-mining:0000000000000000000000000000000000000000000000000000000000000000:none
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/plugin-bundled/tether.moon-mining
 HTTP 303
 [Asserts]

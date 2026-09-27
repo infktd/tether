@@ -120,10 +120,16 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
     for (name, secret) in &c.secrets {
         add(
             "A secret you enter",
-            format!(
-                "{name}, sent only to {} in the {} header",
-                secret.host, secret.header
-            ),
+            match &secret.prefix {
+                Some(prefix) => format!(
+                    "{name}, sent only to {} in the {} header, after \"{prefix}\"",
+                    secret.host, secret.header
+                ),
+                None => format!(
+                    "{name}, sent only to {} in the {} header",
+                    secret.host, secret.header
+                ),
+            },
         );
     }
     match c.timers {
@@ -146,11 +152,27 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         );
     }
     for filter in &manifest.filters {
+        let combine = match filter.combine {
+            tether_plugins::manifest::Combine::Any => "passes if any character does",
+            tether_plugins::manifest::Combine::Sum => "adds characters' values up",
+        };
+        let fields: Vec<String> = filter
+            .fields
+            .iter()
+            .map(|f| match f.kind {
+                tether_plugins::manifest::FieldKind::Text => format!("{} (text)", f.name),
+                tether_plugins::manifest::FieldKind::Number => format!("{} (number)", f.name),
+            })
+            .collect();
         add(
             "Secure Groups filter",
             format!(
-                "{}: its answers decide who is in any smart group an admin uses it for",
-                filter.label
+                "{} ({}; {combine}{}{}): its answers decide who is in any smart group an admin \
+                 uses it for",
+                filter.label,
+                filter.name,
+                if fields.is_empty() { "" } else { "; settings " },
+                fields.join(", "),
             ),
         );
     }
@@ -180,6 +202,33 @@ fn permissions(manifest: &Manifest) -> Vec<PermissionRow> {
         .collect()
 }
 
+/// A `[[pages]]` rule: who may open which of its pages.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PageRuleRow {
+    /// "All its pages", or "Pages under <path>".
+    pub pages: String,
+    /// The permission they need, by its full name.
+    pub permission: String,
+    /// Every view is written to the audit log.
+    pub audited: bool,
+}
+
+fn page_rules(manifest: &Manifest) -> Vec<PageRuleRow> {
+    manifest
+        .pages
+        .iter()
+        .map(|rule| PageRuleRow {
+            pages: if rule.path.is_empty() {
+                "All its pages".to_owned()
+            } else {
+                format!("Pages under {}", rule.path)
+            },
+            permission: format!("plugin.{}.{}", manifest.plugin.id, rule.permission),
+            audited: rule.audit,
+        })
+        .collect()
+}
+
 /// A package's identity, for the approval screen and the plugin's page.
 pub struct About {
     pub id: String,
@@ -195,6 +244,8 @@ pub struct About {
     pub assets: usize,
     pub capabilities: Vec<Capability>,
     pub permissions: Vec<PermissionRow>,
+    /// Who may open which pages; the rest are for admins only.
+    pub pages: Vec<PageRuleRow>,
 }
 
 impl About {
@@ -216,6 +267,7 @@ impl About {
             assets: package.assets.len(),
             capabilities: capabilities(m),
             permissions: permissions(m),
+            pages: page_rules(m),
         }
     }
 }
@@ -237,9 +289,14 @@ pub struct PluginRow {
     /// A newer version its repository publishes, or that comes with this
     /// Tether.
     pub update: Option<String>,
+    /// This Tether carries its package rebuilt, at the same version.
+    pub rebuilt: bool,
     /// Where reviewing the install or the update happens, for an app
     /// included with Tether.
     pub review: Option<String>,
+    /// It failed to load because it doesn't fit this Tether's app
+    /// interface; the error, for admins.
+    pub incompatible: Option<String>,
 }
 
 /// An app that comes with Tether, and whether it's installed.
@@ -250,8 +307,6 @@ pub struct BundledRow {
     pub description: Option<String>,
     /// The version installed, if any.
     pub installed: Option<String>,
-    /// This Tether's version is newer than the one installed.
-    pub update: bool,
 }
 
 pub struct UploadRow {
@@ -282,21 +337,17 @@ struct PluginsPage {
     github: bool,
     /// Whether this is a development build that installs from a file.
     upload_form: bool,
+    /// Updates and rebuilds of included apps waiting for review.
+    included_updates: usize,
     error: Option<String>,
 }
 
-/// Whether `latest` is a newer version than `installed`.
-fn newer(latest: &str, installed: &str) -> bool {
-    matches!(
-        (manifest::parse_version(latest), manifest::parse_version(installed)),
-        (Some(l), Some(i)) if l > i
-    )
-}
+use plugins::newer;
 
 fn status_label(status: &Status, enabled: bool) -> (&'static str, &'static str) {
     match (status, enabled) {
         (Status::Running, _) => ("Running", "secondary"),
-        (Status::Failed(_), _) => ("Failed to load", "destructive"),
+        (Status::Failed(_) | Status::Incompatible(_), _) => ("Failed to load", "destructive"),
         (Status::Stopped, true) => ("Starting", "outline"),
         (Status::Stopped, false) => ("Disabled", "outline"),
     }
@@ -331,34 +382,42 @@ async fn list_page(
                 version: plugin.version.clone(),
                 description: plugin.description.clone(),
                 installed: current.map(|p| p.version.clone()),
-                update: current.is_some_and(|p| newer(&plugin.version, &p.version)),
             }
         })
         .collect();
     let mut plugins: Vec<PluginRow> = installed
         .iter()
         .map(|p| {
-            let (status, variant) = status_label(&state.plugins.status(&p.id), p.enabled);
+            let status = state.plugins.status(&p.id);
+            let (label, variant) = status_label(&status, p.enabled);
             let bundled_app = included.get(&p.id);
             // A bundled app's updates come with Tether, never from GitHub.
-            let update = match bundled_app {
-                Some(app) => Some(app.package.manifest.plugin.version.clone())
-                    .filter(|v| newer(v, &p.version)),
-                None => latest
+            let offer = bundled_app.and_then(|app| {
+                plugins::bundled_offer(&p.version, p.origin, &p.package_sha256, app)
+            });
+            let update = match (bundled_app, offer) {
+                (Some(app), Some(plugins::Offer::Newer)) => {
+                    Some(app.package.manifest.plugin.version.clone())
+                }
+                (Some(_), _) => None,
+                (None, _) => latest
                     .iter()
                     .find(|(id, v)| *id == p.id && newer(v, &p.version))
                     .map(|(_, v)| v.clone()),
             };
             PluginRow {
-                status,
+                status: label,
                 variant,
                 included: bundled_app.is_some(),
                 is_installed: true,
                 description: bundled_app
                     .and_then(|a| a.package.manifest.plugin.description.clone()),
-                review: bundled_app
-                    .filter(|_| update.is_some())
-                    .map(|_| format!("/admin/plugin-bundled/{}", p.id)),
+                review: offer.map(|_| format!("/admin/plugin-bundled/{}", p.id)),
+                rebuilt: offer == Some(plugins::Offer::Rebuilt),
+                incompatible: match status {
+                    Status::Incompatible(why) => Some(why),
+                    _ => None,
+                },
                 update,
                 id: p.id.clone(),
                 name: p.name.clone(),
@@ -366,6 +425,17 @@ async fn list_page(
             }
         })
         .collect();
+    // What "Approve all included updates" would take: updates of apps
+    // installed from the bundle.
+    let included_updates = installed
+        .iter()
+        .filter(|p| p.origin == db::Origin::Bundled)
+        .filter(|p| {
+            included.get(&p.id).is_some_and(|app| {
+                plugins::bundled_offer(&p.version, p.origin, &p.package_sha256, app).is_some()
+            })
+        })
+        .count();
     // Included with Tether but not installed: after the installed ones.
     for b in &bundled {
         if b.installed.is_none() {
@@ -379,7 +449,9 @@ async fn list_page(
                 included: true,
                 is_installed: false,
                 update: None,
+                rebuilt: false,
                 review: Some(format!("/admin/plugin-bundled/{}", b.id)),
+                incompatible: None,
             });
         }
     }
@@ -417,6 +489,7 @@ async fn list_page(
             max_mib: package::MAX_PACKAGE_BYTES / (1024 * 1024),
             github: state.plugins.github().is_some(),
             upload_form: cfg!(feature = "dev-upload"),
+            included_updates,
             error: error.map(|e| e.message().to_owned()),
         },
     ))
@@ -581,6 +654,10 @@ pub struct Changes {
     pub permissions_changed: Vec<PermissionRow>,
     /// Renamed: their grants move to the new name.
     pub permissions_renamed: Vec<RenameRow>,
+    /// Who may open which pages: rules it has now and didn't, and the
+    /// reverse (a changed rule is both).
+    pub pages_added: Vec<PageRuleRow>,
+    pub pages_removed: Vec<PageRuleRow>,
 }
 
 /// A permission renamed, and how many grants move with it.
@@ -613,8 +690,13 @@ impl Changes {
         Ok(changes)
     }
 
-    fn new(old: &Manifest, new: &Manifest) -> Self {
+    /// What changes from `old` to `new`: everything the review lists. An
+    /// update that changes nothing here asks for nothing an admin didn't
+    /// approve already, which is what lets Tether apply a bundled one
+    /// itself ([`crate::plugins::Plugins::start`]).
+    pub(crate) fn new(old: &Manifest, new: &Manifest) -> Self {
         let (before, after) = (capabilities(old), capabilities(new));
+        let (rules_before, rules_after) = (page_rules(old), page_rules(new));
         let id = &new.plugin.id;
         let full = |name: &str| format!("plugin.{id}.{name}");
         let renames = tether_plugins::manifest::permission_renames(Some(old), new);
@@ -667,24 +749,38 @@ impl Changes {
                 .cloned()
                 .collect(),
             permissions_renamed,
+            pages_added: rules_after
+                .iter()
+                .filter(|r| !rules_before.contains(r))
+                .cloned()
+                .collect(),
+            pages_removed: rules_before
+                .iter()
+                .filter(|r| !rules_after.contains(r))
+                .cloned()
+                .collect(),
         }
     }
 
-    fn unchanged(&self) -> bool {
+    pub(crate) fn unchanged(&self) -> bool {
         self.permissions_renamed.is_empty()
             && self.added.is_empty()
             && self.removed.is_empty()
             && self.permissions_added.is_empty()
             && self.permissions_removed.is_empty()
             && self.permissions_changed.is_empty()
+            && self.pages_added.is_empty()
+            && self.pages_removed.is_empty()
     }
 
     fn any_added(&self) -> bool {
-        !self.added.is_empty() || !self.permissions_added.is_empty()
+        !self.added.is_empty() || !self.permissions_added.is_empty() || !self.pages_added.is_empty()
     }
 
     fn any_removed(&self) -> bool {
-        !self.removed.is_empty() || !self.permissions_removed.is_empty()
+        !self.removed.is_empty()
+            || !self.permissions_removed.is_empty()
+            || !self.pages_removed.is_empty()
     }
 }
 
@@ -886,6 +982,167 @@ pub async fn approve_bundled(
     }
 }
 
+// ---- every included update at once ------------------------------------------
+
+#[derive(Template)]
+#[template(path = "admin_plugin_bundled_updates.html")]
+struct IncludedUpdatesPage {
+    shell: Shell,
+    apps: Vec<IncludedUpdate>,
+    /// How many are approved together: those whose changes are shown.
+    bulk: usize,
+    snapshots: bool,
+    error: Option<String>,
+}
+
+/// An included app's update or rebuild waiting for review.
+pub struct IncludedUpdate {
+    pub id: String,
+    pub name: String,
+    pub from: String,
+    pub to: String,
+    /// The same version, rebuilt with this Tether.
+    pub rebuilt: bool,
+    /// `None` when the installed version's package can't be read: then it
+    /// isn't approved with the others, only on its own review, which shows
+    /// everything it asks for.
+    pub changes: Option<Changes>,
+    pub new_migrations: usize,
+    /// `<id>:<package SHA-256>:<what is installed>`: what its own review
+    /// sends back on approval.
+    pub token: String,
+}
+
+/// Every app installed from Tether's bundle that this Tether carries an
+/// update or rebuild of, by name, with what its own review would show. An
+/// app installed from a signed package under a bundled id isn't one: moving
+/// it to the bundle changes what it's trusted as, which only its own review
+/// shows.
+async fn included_updates(state: &AppState) -> Result<Vec<IncludedUpdate>, AppError> {
+    let mut apps = Vec::new();
+    for p in db::list(&state.db).await? {
+        if p.origin != db::Origin::Bundled {
+            continue;
+        }
+        let Some(app) = state.plugins.bundled().get(&p.id) else {
+            continue;
+        };
+        let Some(offer) = plugins::bundled_offer(&p.version, p.origin, &p.package_sha256, app)
+        else {
+            continue;
+        };
+        let review = plugins::bundled_review(state, &p.id).await?;
+        let changes = match &review.installed {
+            Some(old) => {
+                Some(Changes::counted(state, &old.manifest, &review.package.manifest).await?)
+            }
+            None => None,
+        };
+        apps.push(IncludedUpdate {
+            token: format!("{}:{}:{}", p.id, review.sha256, review.base),
+            name: review.package.manifest.plugin.name.clone(),
+            from: review.installed_version.unwrap_or(p.version),
+            to: review.package.manifest.plugin.version.clone(),
+            rebuilt: offer == plugins::Offer::Rebuilt,
+            changes,
+            new_migrations: review.new_migrations,
+            id: p.id,
+        });
+    }
+    Ok(apps)
+}
+
+async fn included_updates_page(
+    state: &AppState,
+    shell: Shell,
+    error: Option<AppError>,
+) -> Result<Response, PageError> {
+    let apps = included_updates(state).await?;
+    let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    Ok(render(
+        code,
+        &IncludedUpdatesPage {
+            shell,
+            bulk: apps.iter().filter(|a| a.changes.is_some()).count(),
+            apps,
+            snapshots: state.plugins.snapshots_on(),
+            error: error.map(|e| e.message().to_owned()),
+        },
+    ))
+}
+
+/// `GET /admin/plugin-bundled-updates`: every update and rebuild of an
+/// included app waiting for review, on one page.
+pub async fn review_included_updates(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let (_, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    included_updates_page(&state, shell, None).await
+}
+
+/// `POST /admin/plugin-bundled-updates/approve` (`app` repeated, each an
+/// [`IncludedUpdate::token`]): approves each in turn exactly as its own
+/// review's Approve would, stopping at the first that fails.
+pub async fn approve_included_updates(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
+    let chosen: Vec<(&str, &str, &str)> = fields
+        .iter()
+        .filter(|(key, _)| key == "app")
+        .filter_map(|(_, token)| {
+            let mut parts = token.splitn(3, ':');
+            Some((parts.next()?, parts.next()?, parts.next()?))
+        })
+        .collect();
+    if chosen.is_empty() {
+        let err = AppError::bad_request("Nothing was chosen to approve. Look again.");
+        return included_updates_page(&state, shell, Some(err)).await;
+    }
+    // Only what this page offers now, each once, all checked before any
+    // is approved: updates of apps installed from the bundle whose changes
+    // it can show. Anything else has its own review.
+    let offered = included_updates(&state).await?;
+    let mut seen: Vec<&str> = Vec::new();
+    for (id, _, _) in &chosen {
+        let fits = offered.iter().any(|a| a.id == *id && a.changes.is_some());
+        if !fits || seen.contains(id) {
+            let err = AppError::bad_request(
+                "What's waiting changed since this page was shown. Look again before approving.",
+            );
+            return included_updates_page(&state, shell, Some(err)).await;
+        }
+        seen.push(id);
+    }
+    let mut done: Vec<String> = Vec::new();
+    for (i, (id, sha256, reviewed)) in chosen.iter().enumerate() {
+        let name = offered
+            .iter()
+            .find(|a| a.id == *id)
+            .map_or_else(|| (*id).to_owned(), |a| a.name.clone());
+        let result =
+            plugins::approve_bundled(&state, session.account, id, sha256, (*reviewed).to_owned())
+                .await;
+        if let Err(err) = result {
+            let mut message = String::new();
+            if !done.is_empty() {
+                message.push_str(&format!("Upgraded: {}. ", done.join(", ")));
+            }
+            message.push_str(&format!("{name} wasn't: {}", err.message()));
+            if i + 1 < chosen.len() {
+                message.push_str(" The ones after it weren't approved.");
+            }
+            let err = AppError::new(err.status(), message);
+            return included_updates_page(&state, shell, Some(err)).await;
+        }
+        done.push(name);
+    }
+    Ok(Redirect::to("/admin/plugins").into_response())
+}
+
 /// `POST /admin/plugin-uploads/{id}/discard`
 pub async fn discard(
     State(state): State<AppState>,
@@ -1011,6 +1268,9 @@ struct PluginPage {
     status: &'static str,
     variant: &'static str,
     failure: Option<String>,
+    /// It failed to load because it doesn't fit this Tether's app
+    /// interface; the error, for admins.
+    incompatible: Option<String>,
     installed: String,
     rollback: Option<RollbackView>,
     updates: UpdatesView,
@@ -1024,6 +1284,8 @@ pub struct IncludedView {
     pub version: String,
     /// Newer than the one installed.
     pub newer: bool,
+    /// The same version, rebuilt with this Tether.
+    pub rebuilt: bool,
 }
 
 /// Where an app's updates come from, and the last check.
@@ -1089,10 +1351,16 @@ async fn plugin_page(
         github: state.plugins.github().is_some(),
     };
     let included = state.plugins.bundled().get(id).map(|app| {
-        let version = app.package.manifest.plugin.version.clone();
+        let offer = plugins::bundled_offer(
+            &installed.version,
+            installed.origin,
+            &installed.package_sha256,
+            app,
+        );
         IncludedView {
-            newer: newer(&version, &installed.version),
-            version,
+            newer: offer == Some(plugins::Offer::Newer),
+            rebuilt: offer == Some(plugins::Offer::Rebuilt),
+            version: app.package.manifest.plugin.version.clone(),
         }
     });
     let plan = plugins::rollback_plan(state, id).await?;
@@ -1264,10 +1532,14 @@ async fn plugin_page(
                         .to_owned(),
                 )
             } else {
-                match status {
-                    Status::Failed(why) => Some(why),
+                match &status {
+                    Status::Failed(why) => Some(why.clone()),
                     _ => None,
                 }
+            },
+            incompatible: match status {
+                Status::Incompatible(why) => Some(why),
+                _ => None,
             },
             installed: time(installed.installed_at),
             rollback,

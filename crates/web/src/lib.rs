@@ -333,6 +333,14 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/plugins", admin_plugins_route())
         .route("/admin/plugin-github", post(pages::plugins::install_github))
         .route(
+            "/admin/plugin-bundled-updates",
+            get(pages::plugins::review_included_updates),
+        )
+        .route(
+            "/admin/plugin-bundled-updates/approve",
+            post(pages::plugins::approve_included_updates),
+        )
+        .route(
             "/admin/plugin-bundled/{id}",
             get(pages::plugins::review_bundled),
         )
