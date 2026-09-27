@@ -81,6 +81,7 @@ key = "RWQ..."             # the second line of your minisign .pub file; require
 storage = true
 discord = ["send_message"]
 http = ["janice.e-351.com"]         # exact HTTPS hostnames, at most 10
+groups = true                       # which groups each viewer is in (see Who's looking)
 
 [capabilities.esi]
 user = ["esi-wallet.read_character_wallet.v1"]              # Member requires these of every character
@@ -425,6 +426,8 @@ match submission.form.as_str() {
 ## Who's looking
 
 `identity::viewer()` says who is looking at a page or posting a form: their account id, main, all their characters (with corporation and alliance), access state (`viewer.state.name`, and `viewer.is_member()` / `viewer.is_guest()`; admins can add states above Member, such as a leadership state, so `is_member()` is false for them: gate on your own permissions rather than on state where you can), and which of your plugin's permissions they hold (`viewer.can("manage")`). Jobs have no viewer.
+
+Groups, to limit something to them (allianceauth-fittings' categories are), with `groups = true` in `[capabilities]` (the admin sees it at install: the app learns which groups its users are in): `identity::groups()` is the viewer's own groups (`id` and `name`), Hidden and Internal ones included, and `identity::all_groups()` the groups to offer the viewer when they pick some, as Tether shows groups: every group that is neither Hidden nor Internal, plus the viewer's own; every group but Internal ones for holders of `group_management`; every group for holders of `admin.groups`. Both are empty in jobs, like the viewer, and without the capability. Store group ids, not names (groups can be renamed), and check membership against `groups()` on every view; a group someone else picked may not be in the viewer's `all_groups()`, so keep ids you don't recognise rather than dropping them.
 
 Apps see an account only while its owner is looking: nothing else tells you which characters share an account (`esi::characters()` has no owners). `identity::owners()` is first-party only: it answers for Tether's bundled Member Audit (each member character's main and state, for aa-memberaudit's scopes by the owner's main) and returns `None` for every other app, whatever its manifest says. There is no capability to ask for it; don't build on it.
 

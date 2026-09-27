@@ -57,6 +57,9 @@ pub struct CallState {
     jobs_refused: bool,
     services: Option<services::Shared>,
     viewer: Option<services::Viewer>,
+    /// `identity.groups` and `identity.all-groups`, read once per call.
+    groups: Option<Vec<services::Group>>,
+    all_groups: Option<Vec<services::Group>>,
     /// Whether this plugin, as loaded, may learn who owns characters.
     sees_owners: bool,
     esi_calls: usize,
@@ -77,6 +80,8 @@ impl CallState {
             jobs_refused: false,
             services: None,
             viewer: None,
+            groups: None,
+            all_groups: None,
             sees_owners: false,
             esi_calls: 0,
             discord_sends: 0,
@@ -123,6 +128,40 @@ impl tether::plugin::identity::Host for CallState {
             Ok(services) => services.identity_owners(self.plugin.clone()).await,
             Err(_) => None,
         }
+    }
+
+    async fn groups(&mut self) -> Vec<services::Group> {
+        if let Some(groups) = &self.groups {
+            return groups.clone();
+        }
+        // Only the viewer's own account, as the host built it: none in a
+        // job.
+        let groups = match (&self.viewer, &self.services) {
+            (Some(viewer), Some(services)) => {
+                services
+                    .identity_groups(self.plugin.clone(), viewer.account_id)
+                    .await
+            }
+            _ => Vec::new(),
+        };
+        self.groups = Some(groups.clone());
+        groups
+    }
+
+    async fn all_groups(&mut self) -> Vec<services::Group> {
+        if let Some(groups) = &self.all_groups {
+            return groups.clone();
+        }
+        let groups = match (&self.viewer, &self.services) {
+            (Some(viewer), Some(services)) => {
+                services
+                    .identity_all_groups(self.plugin.clone(), viewer.account_id)
+                    .await
+            }
+            _ => Vec::new(),
+        };
+        self.all_groups = Some(groups.clone());
+        groups
     }
 }
 

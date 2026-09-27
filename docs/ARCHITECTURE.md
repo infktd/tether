@@ -111,7 +111,7 @@ Apps from GitHub (`crates/web/src/plugin_github.rs`): an admin names a repositor
 | --- | --- |
 | `esi` | Request ESI data for a character or corp, within approved and consented scopes |
 | `storage` | Query and write its own Postgres schema only |
-| `identity` | Read the current user, characters, corp, alliance, roles; for the bundled Member Audit only, who owns each member character |
+| `identity` | Read the current user, characters, corp, alliance, roles; the viewer's own groups (`groups`) and the groups they may be offered to pick from (`all-groups`: neither Hidden nor Internal, plus their own; every group but Internal ones for `group_management`, every group for `admin.groups`), both none in jobs and for apps not approved for the `groups` capability, which the install review names, so apps can limit things to groups as allianceauth-fittings' categories do; for the bundled Member Audit only, who owns each member character |
 | `jobs` | Enqueue background work and run declared schedules |
 | `discord` | Send messages and read role mappings, if declared |
 | `http` | HTTPS to hosts declared in the manifest and approved by the admin only; the host adds admin-entered secrets, caps and logs every request |

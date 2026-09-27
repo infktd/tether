@@ -227,6 +227,10 @@ pub struct Capabilities {
     /// `read`.
     #[serde(default)]
     pub timers: Option<TimersAccess>,
+    /// The viewer's groups and the groups to offer them (`identity.groups`,
+    /// `identity.all-groups`), to limit things to groups.
+    #[serde(default)]
+    pub groups: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

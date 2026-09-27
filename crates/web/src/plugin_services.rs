@@ -26,8 +26,8 @@ use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, EsiError, EsiReply, EsiResponse, FilterError,
-    FilterValue, FilterWanted, Fut, HttpError, HttpRequest, HttpResponse, Mention, Named, Owner,
-    Services, SharedTimer, State, Subject, Timer, TimerError,
+    FilterValue, FilterWanted, Fut, Group, HttpError, HttpRequest, HttpResponse, Mention, Named,
+    Owner, Services, SharedTimer, State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -163,6 +163,21 @@ pub const OWNERS_APP: &str = "tether.member-audit";
 /// (Tether without bundled apps) is `signed`, so it gets nothing.
 pub fn may_see_owners(id: &str, origin: tether_db::plugins::Origin) -> bool {
     id == OWNERS_APP && origin == tether_db::plugins::Origin::Bundled
+}
+
+/// Whether the running plugin `id` was approved for `groups` (the
+/// viewer's groups and the groups to offer them).
+fn sees_groups(plugins: &Weak<Plugins>, id: &str) -> bool {
+    plugins
+        .upgrade()
+        .and_then(|p| p.running(id))
+        .is_some_and(|r| r.manifest.capabilities.groups)
+}
+
+fn groups(rows: Vec<(tether_db::groups::GroupId, String)>) -> Vec<Group> {
+    rows.into_iter()
+        .map(|(id, name)| Group { id: id.0, name })
+        .collect()
 }
 
 fn character(row: db::CharacterRow) -> Character {
@@ -533,6 +548,51 @@ impl Services for PluginServices {
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin character owners");
                     None
+                }
+            }
+        })
+    }
+
+    fn identity_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            if !sees_groups(&plugins, &plugin) {
+                return Vec::new();
+            }
+            let account = tether_db::accounts::AccountId(account);
+            match tether_db::groups::of_account(&db, account).await {
+                Ok(rows) => groups(rows),
+                Err(err) => {
+                    tracing::error!(error = %err, "plugin viewer's groups");
+                    Vec::new()
+                }
+            }
+        })
+    }
+
+    fn identity_all_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            if !sees_groups(&plugins, &plugin) {
+                return Vec::new();
+            }
+            let account = tether_db::accounts::AccountId(account);
+            let offered = async {
+                // As core shows them: every group to group admins, all but
+                // Internal ones to group managers; everyone else sees
+                // Hidden and Internal groups only if they're in them.
+                let held = tether_db::permissions::effective(&db, account).await?;
+                let every = held.contains(tether_core::permissions::ADMIN_GROUPS);
+                let not_internal = held.contains(tether_core::permissions::GROUP_MANAGEMENT);
+                tether_db::groups::offered_to(&db, account, every, not_internal).await
+            };
+            match offered.await {
+                Ok(rows) => groups(rows),
+                Err(err) => {
+                    tracing::error!(error = %err, "plugin groups to offer");
+                    Vec::new()
                 }
             }
         })

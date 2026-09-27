@@ -18,7 +18,7 @@ pub use crate::host::tether::plugin::filters::{
 pub use crate::host::tether::plugin::http::{
     Error as HttpError, Method as HttpMethod, Request as HttpRequest, Response as HttpResponse,
 };
-pub use crate::host::tether::plugin::identity::{Builtin, Character, Owner, State, Viewer};
+pub use crate::host::tether::plugin::identity::{Builtin, Character, Group, Owner, State, Viewer};
 pub use crate::host::tether::plugin::timers::{Error as TimerError, Shared as SharedTimer, Timer};
 
 /// ESI calls in one job run or form submission.
@@ -79,6 +79,13 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// Who owns each of `plugin`'s [`esi_characters`](Self::esi_characters):
     /// `None` for every plugin but the first-party one allowed to know.
     fn identity_owners(&self, plugin: String) -> Fut<Option<Vec<Owner>>>;
+    /// The groups of `account` (the viewer's, as the host built it), for a
+    /// `plugin` approved for `groups`; none otherwise.
+    fn identity_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>>;
+    /// The groups `account` may be offered to pick from: neither Hidden
+    /// nor Internal, and its own; all of them for group admins. None
+    /// for a `plugin` not approved for `groups`.
+    fn identity_all_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;
     fn discord_send(
         &self,

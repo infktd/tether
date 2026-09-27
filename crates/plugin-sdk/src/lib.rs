@@ -128,11 +128,28 @@ pub mod log {
 
 /// Who is looking at a page or posting a form (none in jobs).
 pub mod identity {
-    pub use crate::bindings::tether::plugin::identity::{Builtin, Character, Owner, State, Viewer};
+    pub use crate::bindings::tether::plugin::identity::{
+        Builtin, Character, Group, Owner, State, Viewer,
+    };
 
     /// The viewer, or `None` in a job.
     pub fn viewer() -> Option<Viewer> {
         crate::bindings::tether::plugin::identity::current()
+    }
+
+    /// The viewer's own groups (none in a job): to show something only to
+    /// members of the groups it's limited to.
+    pub fn groups() -> Vec<Group> {
+        crate::bindings::tether::plugin::identity::groups()
+    }
+
+    /// Groups to offer the viewer to pick from (none in a job): every
+    /// group that is neither Hidden nor Internal, and the viewer's own; all
+    /// but Internal ones for `group_management` holders, every group for
+    /// `admin.groups` holders. Both need `groups = true` in
+    /// `[capabilities]`; without it they're empty.
+    pub fn all_groups() -> Vec<Group> {
+        crate::bindings::tether::plugin::identity::all_groups()
     }
 
     /// First-party Member Audit only: who owns each of

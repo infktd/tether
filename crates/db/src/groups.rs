@@ -512,6 +512,56 @@ pub async fn names_for(pool: &PgPool, account: AccountId) -> Result<Vec<String>,
     .await
 }
 
+/// The groups the account is in, by name: id and name (apps'
+/// `identity.groups`).
+pub async fn of_account(
+    pool: &PgPool,
+    account: AccountId,
+) -> Result<Vec<(GroupId, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT g.id, g.name FROM core.groups g
+        JOIN core.group_members m ON m.group_id = g.id
+        WHERE m.account_id = $1
+        ORDER BY g.name, g.id
+        "#,
+        account.0,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (GroupId(r.id), r.name)).collect())
+}
+
+/// Groups an app may offer the account to pick from (apps'
+/// `identity.all-groups`): those neither Hidden nor Internal, and the
+/// account's own; with `every` (`admin.groups`), all of them; with
+/// `not_internal` (`group_management`, which covers every group but
+/// Internal ones), Hidden ones too.
+pub async fn offered_to(
+    pool: &PgPool,
+    account: AccountId,
+    every: bool,
+    not_internal: bool,
+) -> Result<Vec<(GroupId, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT g.id, g.name FROM core.groups g
+        WHERE $2
+           OR ($3 AND NOT g.internal)
+           OR (NOT g.hidden AND NOT g.internal)
+           OR EXISTS (SELECT 1 FROM core.group_members m
+                      WHERE m.group_id = g.id AND m.account_id = $1)
+        ORDER BY g.name, g.id
+        "#,
+        account.0,
+        every,
+        not_internal,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (GroupId(r.id), r.name)).collect())
+}
+
 /// The groups the account is in, and its pending requests (`true`:
 /// to leave).
 pub async fn memberships(

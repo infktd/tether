@@ -42,6 +42,7 @@ async fn install(h: &Harness, owner: &str) {
         "blocks",
         "live",
         "live-form",
+        "groups",
     ] {
         manifest.push_str(&format!(
             "\n[[pages]]\npath = \"{path}\"\npermission = \"view\"\n"
@@ -625,4 +626,177 @@ async fn audited_pages_record_every_view(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(submitted, 0);
+}
+
+/// Only apps approved for `groups` learn any. `identity.groups` is the
+/// viewer's own; `identity.all-groups` offers every group but Hidden and
+/// Internal ones (unless they're the viewer's own), all but Internal ones
+/// to `group_management`, and every group to `admin.groups`.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_see_the_viewers_groups_and_only_listed_ones_to_offer(db: PgPool) {
+    use tether_core::groups::Flags;
+    let (h, owner, pilot) = setup(db).await;
+    grant_view(&h.db).await;
+    let pilot_id =
+        tether_db::accounts::AccountId(me(&h, &pilot).await["account_id"].as_i64().unwrap());
+    let group = |name: &'static str, flags: Flags| {
+        let db = h.db.clone();
+        async move {
+            tether_db::groups::create(&db, name, "", flags)
+                .await
+                .unwrap()
+        }
+    };
+    let hidden = Flags {
+        hidden: true,
+        ..Default::default()
+    };
+    let internal = Flags {
+        internal: true,
+        ..Default::default()
+    };
+    let alpha = group("Alpha", Flags::default()).await;
+    let beta = group("Beta", Flags::default()).await;
+    let crew = group("Hidden Crew", hidden).await;
+    let inner = group("Inner", internal).await;
+    let own_hidden = group("Own Hidden", hidden).await;
+    let own_internal = group("Own Internal", internal).await;
+    for g in [beta, own_hidden, own_internal] {
+        tether_db::groups::add_member(&h.db, g, pilot_id)
+            .await
+            .unwrap();
+    }
+    let list = |groups: &[(tether_db::groups::GroupId, &str)]| {
+        groups
+            .iter()
+            .map(|(id, name)| format!("{}={name}", id.0))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    // Without the `groups` capability, an app learns nothing.
+    let res = page(&h, "/plugins/acme.pages/groups", &pilot).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("mine[]"), "{}", res.body);
+    assert!(res.body.contains("offered[]"), "{}", res.body);
+
+    // The same component, approved for it (the review says so).
+    let key = Key::new(2);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.grouped\"\nname = \"Grouped\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ngroups = true\n\n\
+         [permissions]\nview = \"See the pages\"\n\n[[pages]]\npath = \"groups\"\n\
+         permission = \"view\"\n",
+        key.public()
+    );
+    let component = component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    let review = upload(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    assert_eq!(review.status, StatusCode::SEE_OTHER, "{}", review.body);
+    let shown = page(&h, review.location(), &owner).await;
+    assert!(
+        shown.body.contains("Hidden and Internal ones included"),
+        "{}",
+        shown.body
+    );
+    let res = send(
+        &h.app,
+        form(&format!("{}/approve", review.location()), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    for state in [MEMBER_STATE, BLUE_STATE, GUEST_STATE] {
+        tether_db::permissions::grant(
+            &h.db,
+            "plugin.acme.grouped.view",
+            Grantee::State(StateId(state)),
+        )
+        .await
+        .unwrap();
+    }
+    let uri = "/plugins/acme.grouped/groups";
+
+    let res = page(&h, uri, &pilot).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let mine = list(&[
+        (beta, "Beta"),
+        (own_hidden, "Own Hidden"),
+        (own_internal, "Own Internal"),
+    ]);
+    assert!(res.body.contains(&format!("mine[{mine}]")), "{}", res.body);
+    let offered = list(&[
+        (alpha, "Alpha"),
+        (beta, "Beta"),
+        (own_hidden, "Own Hidden"),
+        (own_internal, "Own Internal"),
+    ]);
+    assert!(
+        res.body.contains(&format!("offered[{offered}]")),
+        "{}",
+        res.body
+    );
+
+    // Group management (through a group) covers every group but Internal
+    // ones, as in core: Hidden ones are offered too.
+    let managing = tether_db::permissions::grant(&h.db, "group_management", Grantee::Group(beta))
+        .await
+        .unwrap()
+        .unwrap();
+    let res = page(&h, uri, &pilot).await;
+    let groups = |sql: &'static str| {
+        let db = h.db.clone();
+        async move {
+            let rows: Vec<(i64, String)> = sqlx::query_as(sql).fetch_all(&db).await.unwrap();
+            rows.iter()
+                .map(|(id, name)| format!("{id}={name}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+    };
+    let managed = groups(
+        "SELECT id, name FROM core.groups WHERE NOT internal OR name = 'Own Internal' \
+         ORDER BY name, id",
+    )
+    .await;
+    assert!(managed.contains(&format!("{}=Hidden Crew", crew.0)));
+    assert!(!managed.contains(&format!("{}=Inner", inner.0)));
+    assert!(
+        res.body.contains(&format!("offered[{managed}]")),
+        "{}",
+        res.body
+    );
+    // Every group there is, the ones Tether makes itself included.
+    let every = groups("SELECT id, name FROM core.groups ORDER BY name, id").await;
+    assert!(every.contains(&format!("{}=Inner", inner.0)));
+
+    // admin.groups offers every group.
+    tether_db::permissions::revoke(&h.db, managing)
+        .await
+        .unwrap();
+    let res = page(&h, uri, &pilot).await;
+    assert!(
+        res.body.contains(&format!("offered[{offered}]")),
+        "{}",
+        res.body
+    );
+    tether_db::permissions::grant(&h.db, "admin.groups", Grantee::Group(beta))
+        .await
+        .unwrap();
+    let res = page(&h, uri, &pilot).await;
+    assert!(
+        res.body.contains(&format!("offered[{every}]")),
+        "{}",
+        res.body
+    );
+
+    // The owner holds everything, and is in no group.
+    let res = page(&h, uri, &owner).await;
+    assert!(res.body.contains("mine[]"), "{}", res.body);
+    assert!(
+        res.body.contains(&format!("offered[{every}]")),
+        "{}",
+        res.body
+    );
 }

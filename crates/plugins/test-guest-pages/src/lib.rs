@@ -179,6 +179,24 @@ impl Plugin for Pages {
                 .form(note_form())
                 .card(Card::new("c").field("a", action("Go", "note")))),
             "form" => Ok(Page::new("Form").form(note_form())),
+            "groups" => {
+                let names = |groups: Vec<tether_plugin_sdk::identity::Group>| {
+                    groups
+                        .into_iter()
+                        .map(|g| format!("{}={}", g.id, g.name))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                // Twice each: the second answer comes from the call's own
+                // copy.
+                let mine = names(tether_plugin_sdk::identity::groups());
+                let _ = tether_plugin_sdk::identity::groups();
+                let offered = names(tether_plugin_sdk::identity::all_groups());
+                let _ = tether_plugin_sdk::identity::all_groups();
+                Ok(Page::new("Groups")
+                    .text(format!("mine[{mine}]"))
+                    .text(format!("offered[{offered}]")))
+            }
             "admin/secret" => Ok(Page::new("Secret")),
             _ => Err(PageError::NotFound),
         }

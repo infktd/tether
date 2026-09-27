@@ -119,6 +119,14 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         ),
         None => {}
     }
+    if c.groups {
+        add(
+            "Groups",
+            "Sees which groups each pilot using it is in (Hidden and Internal ones included), \
+             and the groups they may pick from, to limit things to groups"
+                .to_owned(),
+        );
+    }
     for filter in &manifest.filters {
         add(
             "Secure Groups filter",

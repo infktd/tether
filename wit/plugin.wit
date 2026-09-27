@@ -457,6 +457,26 @@ interface identity {
     /// owner's main. Every other app gets none: apps never learn which
     /// characters share an account.
     owners: func() -> option<list<owner>>;
+
+    /// A group, as Alliance Auth's: apps limit what they show to groups
+    /// (allianceauth-fittings' categories do).
+    record group {
+        id: s64,
+        name: string,
+    }
+
+    /// The viewer's own groups, or none (in a job). Only for a plugin
+    /// approved for `groups` (`[capabilities] groups = true`); none for
+    /// others.
+    groups: func() -> list<group>;
+
+    /// Groups the viewer may be offered to pick from (to limit something
+    /// to them), as core shows groups: every group that is neither Hidden
+    /// nor Internal, and the viewer's own; every group but Internal ones
+    /// for holders of `group_management`; every group for holders of
+    /// `admin.groups`. None in a job, and none for a plugin not approved
+    /// for `groups`.
+    all-groups: func() -> list<group>;
 }
 
 /// ESI, through the host: plugins name an endpoint and whose token to use,
