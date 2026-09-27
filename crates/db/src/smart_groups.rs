@@ -31,6 +31,20 @@ pub async fn settings<'e>(
     .await
 }
 
+/// When the sweep (or Check now) last judged a smart group.
+pub async fn swept_at<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    group: GroupId,
+) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    Ok(sqlx::query_scalar!(
+        "SELECT swept_at FROM core.smart_groups WHERE group_id = $1",
+        group.0
+    )
+    .fetch_optional(executor)
+    .await?
+    .flatten())
+}
+
 /// Makes a group smart with these settings, or (`None`) ordinary again,
 /// dropping its filters and grace periods.
 pub async fn set_settings<'e>(

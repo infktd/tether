@@ -4,7 +4,7 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
@@ -335,6 +335,12 @@ struct GroupPage {
     /// Filters running apps offer.
     app_filters: Vec<AppFilterView>,
     error: Option<String>,
+    /// What Check now did.
+    notice: Option<String>,
+    /// One account checked against the filters (aa-securegroups' Check).
+    check: Option<crate::smart_groups::Explained>,
+    /// The name searched for, kept in the Check field.
+    check_query: String,
 }
 
 /// An app's Secure Groups filter, for the add form.
@@ -355,14 +361,40 @@ pub struct SmartView {
     pub filters: Vec<(i64, String)>,
     /// An app filter has no fresh values: sweeps leave the group alone.
     pub frozen: bool,
+    /// When the sweep or Check now last judged it, EVE time.
+    pub checked_at: Option<String>,
+}
+
+/// What a group's page shows besides the group.
+#[derive(Default)]
+struct Extra {
+    error: Option<AppError>,
+    notice: Option<String>,
+    check: Option<crate::smart_groups::Explained>,
+    check_query: String,
+}
+
+impl Extra {
+    fn error(error: AppError) -> Self {
+        Self {
+            error: Some(error),
+            ..Self::default()
+        }
+    }
 }
 
 async fn group_page(
     state: &AppState,
     shell: Shell,
     id: i64,
-    error: Option<AppError>,
+    extra: Extra,
 ) -> Result<Response, PageError> {
+    let Extra {
+        error,
+        notice,
+        check,
+        check_query,
+    } = extra;
     let all = groups::summaries(&state.db).await?;
     let found = all
         .iter()
@@ -431,7 +463,11 @@ async fn group_page(
                 } => !known.contains(&tether_core::smart::app_key(plugin, name, config)),
                 _ => false,
             });
+            let checked_at = tether_db::smart_groups::swept_at(&state.db, GroupId(id))
+                .await?
+                .map(|at| at.format("%Y-%m-%d %H:%M").to_string());
             Some(SmartView {
+                checked_at,
                 auto_join: s.auto_join,
                 grace_days: s.grace_days,
                 notify: s.notify,
@@ -482,18 +518,98 @@ async fn group_page(
         other_groups,
         members,
         error: error.map(|e| e.message().to_owned()),
+        notice,
+        check,
+        check_query,
     };
     Ok(render(status, &page))
 }
 
-/// `GET /admin/groups/{id}`
+/// `GET /admin/groups/{id}`. With `?check=<character>` (a name or id) or
+/// `?account=<id>` (a member's row), one account checked against its
+/// filters (aa-securegroups' Check); `?checked=<n>` is what Check now
+/// just did. The query is read only once the viewer is let in.
 pub async fn group(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, PageError> {
-    let (_, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
-    group_page(&state, shell, id, None).await
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let check_query = query
+        .get("check")
+        .map(|c| c.trim().to_owned())
+        .unwrap_or_default();
+    let account = match (query.get("account"), check_query.is_empty()) {
+        (Some(account), _) => Some(
+            account
+                .parse::<i64>()
+                .map(AccountId)
+                .map_err(|_| AppError::not_found("No such account.")),
+        ),
+        (None, false) => Some(find_account(&state, &check_query).await),
+        (None, true) => None,
+    };
+    let checked = query
+        .get("checked")
+        .and_then(|n| n.parse::<usize>().ok())
+        .map(|changed| match changed {
+            0 => "Checked now: every member passes, and nobody else was due to join.".to_owned(),
+            1 => "Checked now: 1 membership changed. The Audit Log names it.".to_owned(),
+            n => format!("Checked now: {n} memberships changed. The Audit Log names each."),
+        });
+    let extra = match account {
+        None => Extra {
+            notice: checked,
+            ..Extra::default()
+        },
+        Some(Err(err)) => Extra {
+            check_query,
+            ..Extra::error(err)
+        },
+        Some(Ok(account)) => {
+            let anyone = permissions::effective(&state.db, session.account)
+                .await?
+                .contains(tether_core::permissions::ADMIN_USERS);
+            match crate::smart_groups::explain(
+                &state.db,
+                session.account,
+                GroupId(id),
+                account,
+                anyone,
+            )
+            .await
+            {
+                Ok(explained) => Extra {
+                    check: Some(explained),
+                    check_query,
+                    ..Extra::default()
+                },
+                Err(err) => Extra {
+                    check_query,
+                    ..Extra::error(err)
+                },
+            }
+        }
+    };
+    group_page(&state, shell, id, extra).await
+}
+
+/// `POST /admin/groups/{id}/smart/check`: Check now, the hourly sweep for
+/// this group alone (aa-securegroups' Run check); audited. Back to the
+/// group's page, which says what it did.
+pub async fn smart_check(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    match crate::smart_groups::check_now(&state.db, session.account, GroupId(id)).await {
+        Ok(changed) => {
+            Ok(Redirect::to(&format!("/admin/groups/{id}?checked={changed}")).into_response())
+        }
+        Err(err) => group_page(&state, shell, id, Extra::error(err)).await,
+    }
 }
 
 /// Runs a change to one group and shows its page again.
@@ -505,7 +621,7 @@ async fn on_group(
 ) -> Result<Response, PageError> {
     match result {
         Ok(()) => Ok(Redirect::to(&format!("/admin/groups/{id}")).into_response()),
-        Err(err) => group_page(state, shell, id, Some(err)).await,
+        Err(err) => group_page(state, shell, id, Extra::error(err)).await,
     }
 }
 
@@ -798,7 +914,7 @@ pub async fn delete_group(
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::groups::delete(&state.db, session.account, GroupId(id)).await {
         Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
-        Err(err) => group_page(&state, shell, id, Some(err)).await,
+        Err(err) => group_page(&state, shell, id, Extra::error(err)).await,
     }
 }
 

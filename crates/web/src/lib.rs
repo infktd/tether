@@ -303,6 +303,10 @@ pub fn router(state: AppState) -> Router {
             post(pages::admin::smart_filter),
         )
         .route(
+            "/admin/groups/{id}/smart/check",
+            post(pages::admin::smart_check),
+        )
+        .route(
             "/admin/groups/{id}/smart/filters/{filter}/delete",
             post(pages::admin::smart_filter_delete),
         )

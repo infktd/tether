@@ -567,6 +567,12 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/groups/1/smart/check
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/system/summary
 HTTP 303
 [Asserts]

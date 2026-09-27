@@ -433,3 +433,214 @@ async fn huge_app_values_never_stop_sweeps(db: PgPool) {
     assert_eq!(sweep(&h).await, 1, "other groups carry on");
     assert!(in_group(&h, miners, pilot_account).await);
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn check_now_runs_one_group_and_check_shows_each_filter(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    log_in_as(&h, MITTANI, None).await;
+    let owner_account = account_of(&h, &owner).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    let mut ids = Vec::new();
+    for name in ["Miners", "Haulers"] {
+        let id = group(
+            &h,
+            &owner,
+            &format!(r#"{{"name":"{name}","internal":false,"hidden":false}}"#),
+        )
+        .await;
+        smart(
+            &h,
+            &owner,
+            id,
+            "smart=on&auto_join=on&grace_days=0&notify=on",
+        )
+        .await;
+        filter(&h, &owner, id, &format!("kind=state&states={MEMBER_STATE}")).await;
+        ids.push(id);
+    }
+    let (miners, haulers) = (ids[0], ids[1]);
+    let check_now = format!("/admin/groups/{miners}/smart/check");
+
+    // Only group admins.
+    let res = send(&h.app, form(&check_now, "", &pilot)).await;
+    assert!(
+        matches!(res.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+        "{}",
+        res.status
+    );
+    assert!(!in_group(&h, miners, pilot_account).await);
+
+    // Check now judges this group only, at once, and is audited: the
+    // check and each change, as the admin's.
+    let res = send(&h.app, form(&check_now, "", &owner)).await;
+    assert_eq!(
+        res.location(),
+        format!("/admin/groups/{miners}?checked=1"),
+        "{}",
+        res.body
+    );
+    let shown = page(&h, res.location(), &owner).await.body;
+    assert!(
+        shown.contains("Checked now: 1 membership changed."),
+        "{shown}"
+    );
+    assert!(in_group(&h, miners, pilot_account).await);
+    assert!(!in_group(&h, haulers, pilot_account).await);
+    let audited: Vec<(Option<i64>, String, String)> = sqlx::query_as(
+        "SELECT actor_account_id, action, details::text FROM core.audit_log \
+         WHERE target = $1 AND action IN ('smart_group.check_now', 'group.member.add') \
+         ORDER BY id",
+    )
+    .bind(format!("group:{miners}"))
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audited.len(), 2, "{audited:?}");
+    assert_eq!(audited[0].0, Some(owner_account));
+    assert_eq!(audited[0].1, "group.member.add");
+    assert_eq!(audited[1].0, Some(owner_account));
+    assert_eq!(audited[1].1, "smart_group.check_now");
+    assert!(audited[1].2.contains(r#""changed": 1"#), "{}", audited[1].2);
+    // Not again straight away: each check reads every account.
+    let again = send(&h.app, form(&check_now, "", &owner)).await;
+    assert_eq!(
+        again.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        again.body
+    );
+    sqlx::query("UPDATE core.smart_groups SET swept_at = now() - interval '1 minute'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let again = send(&h.app, form(&check_now, "", &owner)).await;
+    assert_eq!(
+        again.location(),
+        format!("/admin/groups/{miners}?checked=0")
+    );
+    let shown = page(&h, again.location(), &owner).await.body;
+    assert!(shown.contains("every member passes"), "{shown}");
+
+    // The group's page: when it was last checked, and Check on each row.
+    let page_body = page(&h, &format!("/admin/groups/{miners}"), &owner)
+        .await
+        .body;
+    assert!(page_body.contains("last at"), "{page_body}");
+    assert!(
+        page_body.contains(&format!("?account={pilot_account}#check")),
+        "{page_body}"
+    );
+
+    // Check: each filter, pass or fail, for one pilot; audited.
+    let passes = page(&h, &format!("/admin/groups/{miners}?check=gigX"), &owner).await;
+    assert_eq!(passes.status, StatusCode::OK, "{}", passes.body);
+    for part in [
+        r#"<h3 class="font-medium" id="check-title">gigX</h3>"#,
+        r#"<span class="badge" data-variant="secondary">passes</span>"#,
+        r#"<span class="badge" data-variant="secondary">pass</span><span>state is Member</span>"#,
+        r#"<span class="badge" data-variant="outline">member</span>"#,
+    ] {
+        assert!(passes.body.contains(part), "{part}\n\n{}", passes.body);
+    }
+    let checks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.audit_log WHERE action = 'smart_group.check' \
+         AND actor_account_id = $1 AND (details->>'account_id')::bigint = $2",
+    )
+    .bind(owner_account)
+    .bind(pilot_account)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(checks, 1);
+    let by_row = page(
+        &h,
+        &format!("/admin/groups/{miners}?account={pilot_account}"),
+        &owner,
+    )
+    .await;
+    assert!(
+        by_row.body.contains("id=\"check-title\">gigX</h3>"),
+        "{}",
+        by_row.body
+    );
+    // Someone outside the group: for those who may look up any account.
+    let fails = page(
+        &h,
+        &format!("/admin/groups/{miners}?check=The%20Mittani"),
+        &owner,
+    )
+    .await;
+    for part in [
+        r#"<span class="badge" data-variant="destructive">doesn't pass</span>"#,
+        r#"<span class="badge" data-variant="destructive">fail</span><span>state is Member</span>"#,
+        r#"<span class="badge" data-variant="outline">not a member</span>"#,
+    ] {
+        assert!(fails.body.contains(part), "{part}\n\n{}", fails.body);
+    }
+    let nobody = page(&h, &format!("/admin/groups/{miners}?check=Nobody"), &owner).await;
+    assert!(
+        nobody
+            .body
+            .contains("No account has a character with that name."),
+        "{}",
+        nobody.body
+    );
+    // Not for pilots.
+    let res = page(&h, &format!("/admin/groups/{miners}?check=gigX"), &pilot).await;
+    assert!(!res.body.contains("check-title"), "{}", res.body);
+
+    // A group admin without admin.users checks the group's own members
+    // only: nobody else's main or standing.
+    let staff = group(&h, &owner, r#"{"name":"Group admins"}"#).await;
+    send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            &format!(r#"{{"permission":"admin.groups","group_id":{staff}}}"#),
+        ),
+    )
+    .await;
+    send(
+        &h.app,
+        post_json(
+            &format!("/api/admin/groups/{staff}/members"),
+            &owner,
+            &format!(r#"{{"account_id":{pilot_account}}}"#),
+        ),
+    )
+    .await;
+    let own = page(&h, &format!("/admin/groups/{miners}?check=gigX"), &pilot).await;
+    assert!(own.body.contains("check-title"), "{}", own.body);
+    let other = page(
+        &h,
+        &format!("/admin/groups/{miners}?check=The%20Mittani"),
+        &pilot,
+    )
+    .await;
+    assert_eq!(other.status, StatusCode::FORBIDDEN, "{}", other.body);
+    assert!(!other.body.contains("check-title"), "{}", other.body);
+    assert!(other.body.contains("admin.users"), "{}", other.body);
+
+    // An ordinary group has nothing to check.
+    let plain = group(
+        &h,
+        &owner,
+        r#"{"name":"Plain","internal":false,"hidden":false}"#,
+    )
+    .await;
+    let res = send(
+        &h.app,
+        form(&format!("/admin/groups/{plain}/smart/check"), "", &owner),
+    )
+    .await;
+    assert!(
+        res.body
+            .contains("Only a smart group has filters to check."),
+        "{}",
+        res.body
+    );
+}

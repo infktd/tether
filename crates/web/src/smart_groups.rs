@@ -306,32 +306,55 @@ pub async fn sweep(db: &PgPool, esi: &Esi) -> Result<usize, sqlx::Error> {
         .fetch_one(db)
         .await?;
     let mut changed = 0;
-    for (group, settings) in groups {
-        changed += sweep_one(db, group, settings, &facts, &known, StateId(guest)).await?;
+    for (group, _) in groups {
+        if let Swept::Changed(n) =
+            sweep_one(db, group, &facts, &known, StateId(guest), None).await?
+        {
+            changed += n;
+        }
     }
     Ok(changed)
 }
 
+/// What sweeping one group came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Swept {
+    /// Judged: this many memberships changed.
+    Changed(usize),
+    /// Left alone: gone, not smart (any more), kept another way, or with
+    /// a filter that can't be judged now.
+    Skipped,
+}
+
+/// Brings one group in line with its filters, under its lock. With an
+/// actor (Check now), the changes and the check itself are audited as
+/// theirs, in the same transaction; otherwise as the system's.
 async fn sweep_one(
     db: &PgPool,
     group: GroupId,
-    settings: Settings,
     facts: &HashMap<AccountId, Facts>,
     known: &BTreeSet<String>,
     guest: StateId,
-) -> Result<usize, sqlx::Error> {
+    actor: Option<AccountId>,
+) -> Result<Swept, sqlx::Error> {
+    let by = actor.map_or(Actor::System, Actor::Account);
     let mut tx = db.begin().await?;
     // One sweep of a group at a time, and no edits under it.
     if !groups::lock(&mut tx, group, true).await? {
-        return Ok(0);
+        return Ok(Swept::Skipped);
     }
     let Some(found) = groups::get(&mut *tx, group).await? else {
-        return Ok(0);
+        return Ok(Swept::Skipped);
     };
     // Tether keeps those groups another way.
     if found.compliance || tether_db::autogroups::is_auto(&mut *tx, group).await? {
-        return Ok(0);
+        return Ok(Swept::Skipped);
     }
+    // Read under the lock: the settings as they are now, not as they were
+    // when the sweep (or Check now) started.
+    let Some(settings) = db::settings(&mut *tx, group).await? else {
+        return Ok(Swept::Skipped);
+    };
     let (rules, broken) = db::rules(&mut *tx, group).await?;
     if !broken.is_empty() {
         tracing::warn!(
@@ -339,14 +362,14 @@ async fn sweep_one(
             ?broken,
             "smart group has filters that don't read; left alone"
         );
-        return Ok(0);
+        return Ok(Swept::Skipped);
     }
     if unknown_app(&rules, known) {
         tracing::warn!(
             group = group.0,
             "an app filter has no fresh values; left alone"
         );
-        return Ok(0);
+        return Ok(Swept::Skipped);
     }
     let allowed = groups::allowed_states(&mut *tx, group).await?;
     let members: BTreeSet<AccountId> = db::member_ids(&mut *tx, group).await?.into_iter().collect();
@@ -370,7 +393,7 @@ async fn sweep_one(
                 if db::end_grace(&mut *tx, group, *account).await? {
                     audit::record(
                         &mut *tx,
-                        Actor::System,
+                        by,
                         "smart_group.grace_end",
                         Some(&format!("group:{}", group.0)),
                         json!({ "account_id": account.0, "reason": "passes again" }),
@@ -414,7 +437,7 @@ async fn sweep_one(
                 }
                 audit::record(
                     &mut *tx,
-                    Actor::System,
+                    by,
                     "smart_group.grace",
                     Some(&format!("group:{}", group.0)),
                     json!({ "account_id": account.0, "failing": why, "days": settings.grace_days }),
@@ -428,7 +451,7 @@ async fn sweep_one(
         groups::log(&mut *tx, group, RequestType::Removed, true, *account, None).await?;
         audit::record(
             &mut *tx,
-            Actor::System,
+            by,
             "group.member.remove",
             Some(&format!("group:{}", group.0)),
             json!({ "account_id": account.0, "reason": "smart group", "failing": why }),
@@ -455,7 +478,7 @@ async fn sweep_one(
             groups::log(&mut *tx, group, RequestType::Join, true, *account, None).await?;
             audit::record(
                 &mut *tx,
-                Actor::System,
+                by,
                 "group.member.add",
                 Some(&format!("group:{}", group.0)),
                 json!({ "account_id": account.0, "reason": "smart group" }),
@@ -473,11 +496,206 @@ async fn sweep_one(
     )
     .execute(&mut *tx)
     .await?;
+    if actor.is_some() {
+        audit::record(
+            &mut *tx,
+            by,
+            "smart_group.check_now",
+            Some(&format!("group:{}", group.0)),
+            json!({ "changed": changed }),
+        )
+        .await?;
+    }
     tx.commit().await?;
-    Ok(changed)
+    Ok(Swept::Changed(changed))
 }
 
 // ---- admin (callers check admin.groups) -----------------------------------
+
+/// Check now waits this long after the group was last judged (by the
+/// sweep or a Check now): each reads every account's facts.
+const CHECK_GAP: chrono::Duration = chrono::Duration::seconds(15);
+
+/// Check now (aa-securegroups' "Run check"): brings one smart group in
+/// line with its filters at once, as the hourly sweep does, audited as the
+/// admin's (the check and every change it makes, in one transaction).
+/// Returns how many memberships changed. Birthdays ESI hasn't told Tether
+/// yet wait for the sweep (an admin's click never waits on a batch of ESI
+/// calls). Nothing about the filters changes, so it needs only
+/// `admin.groups`, like the sweep it hurries.
+pub async fn check_now(db: &PgPool, actor: AccountId, group: GroupId) -> Result<usize, AppError> {
+    if db::settings(db, group).await?.is_none() {
+        return Err(AppError::bad_request(
+            "Only a smart group has filters to check.",
+        ));
+    }
+    if db::swept_at(db, group)
+        .await?
+        .is_some_and(|at| chrono::Utc::now() - at < CHECK_GAP)
+    {
+        return Err(AppError::too_many_requests(
+            u64::try_from(CHECK_GAP.num_seconds()).unwrap_or(15),
+        ));
+    }
+    let (rules, broken) = db::rules(db, group).await?;
+    if !broken.is_empty() {
+        return Err(AppError::bad_request(
+            "A filter no longer reads, so Tether leaves this group alone: delete it, then check \
+             again.",
+        ));
+    }
+    let mut facts = db::facts(db, None).await?;
+    let known = fill_app(&mut *db.acquire().await?, &mut facts, None).await?;
+    if unknown_app(&rules, &known) {
+        return Err(AppError::bad_request(
+            "An app filter has no answers from its app in the last two days, so Tether can't \
+             judge this group now.",
+        ));
+    }
+    let guest: i64 = sqlx::query_scalar!(r#"SELECT core.guest_state() AS "g!""#)
+        .fetch_one(db)
+        .await?;
+    match sweep_one(db, group, &facts, &known, StateId(guest), Some(actor)).await? {
+        Swept::Changed(changed) => Ok(changed),
+        Swept::Skipped => Err(AppError::bad_request(
+            "Tether keeps this group's members another way, or its filters changed just now: \
+             reload the page and check again.",
+        )),
+    }
+}
+
+/// One filter as it judges one account: `None` when it can't say (an app
+/// hasn't answered lately, or the filter no longer reads).
+pub struct FilterCheck {
+    pub text: String,
+    pub passes: Option<bool>,
+}
+
+/// aa-securegroups' "Check": how a smart group's filters judge one
+/// account, for admins.
+pub struct Explained {
+    pub account: AccountId,
+    /// The account's main.
+    pub name: String,
+    pub member: bool,
+    /// In the grace period since then.
+    pub grace_since: Option<chrono::DateTime<chrono::Utc>>,
+    /// Why the account can't be in the group whatever the filters say.
+    pub blocked: Option<String>,
+    pub filters: Vec<FilterCheck>,
+    /// Blocked by nothing, and every filter passes.
+    pub passes: bool,
+}
+
+/// How `group`'s filters judge `account` now, for `actor`, audited (it
+/// shows an account's main, standing and filter results). Members and
+/// those in their grace period are anyone's with `admin.groups` to check;
+/// anyone else needs `anyone` (the checker holds `admin.users`, who can
+/// look up any account already). Changes nothing else.
+pub async fn explain(
+    db: &PgPool,
+    actor: AccountId,
+    group: GroupId,
+    account: AccountId,
+    anyone: bool,
+) -> Result<Explained, AppError> {
+    if db::settings(db, group).await?.is_none() {
+        return Err(AppError::bad_request(
+            "Only a smart group has filters to check.",
+        ));
+    }
+    let member = db::member_ids(db, group).await?.contains(&account);
+    let grace_since = db::grace(db, group).await?.get(&account).copied();
+    if !member && grace_since.is_none() && !anyone {
+        return Err(AppError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "They aren't in this group. Checking anyone else needs the Users permission \
+             (admin.users).",
+        ));
+    }
+    audit::record(
+        db,
+        Actor::Account(actor),
+        "smart_group.check",
+        Some(&format!("group:{}", group.0)),
+        json!({ "account_id": account.0 }),
+    )
+    .await?;
+    let found = tether_db::accounts::get(db, account)
+        .await?
+        .ok_or_else(|| AppError::not_found("No such account."))?;
+    let name = found
+        .main
+        .as_ref()
+        .or(found.characters.first())
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| format!("Account {}", account.0));
+    let mut conn = db.acquire().await?;
+    let (rules, broken) = db::rules(&mut *conn, group).await?;
+    let mut facts = db::facts(&mut *conn, Some(&[account])).await?;
+    let known = if uses_app(&rules) {
+        fill_app(&mut conn, &mut facts, Some(account)).await?
+    } else {
+        BTreeSet::new()
+    };
+    let names = Names::load(&mut conn, &rules, false).await?;
+    let facts = facts.get(&account);
+    let blocked = match facts {
+        None => Some(
+            "Deactivated, blacklisted or without a main character: in no smart group.".to_owned(),
+        ),
+        Some(f) => {
+            let allowed = groups::allowed_states(&mut *conn, group).await?;
+            if tether_core::groups::state_allowed(&allowed, StateId(f.state)) {
+                None
+            } else {
+                let state = tether_db::states::list(&mut *conn)
+                    .await?
+                    .into_iter()
+                    .find(|s| s.id.0 == f.state)
+                    .map_or_else(|| "theirs".to_owned(), |s| s.name);
+                Some(format!(
+                    "Their state ({state}) isn't allowed in this group."
+                ))
+            }
+        }
+    };
+    let mut filters: Vec<FilterCheck> = rules
+        .iter()
+        .map(|rule| {
+            let unanswered = match &rule.filter {
+                Filter::App {
+                    plugin,
+                    name,
+                    config,
+                    ..
+                } => !known.contains(&tether_core::smart::app_key(plugin, name, config)),
+                _ => false,
+            };
+            FilterCheck {
+                text: names.describe(rule),
+                passes: match facts {
+                    Some(f) if !unanswered => Some(rule.passes(f)),
+                    _ => None,
+                },
+            }
+        })
+        .collect();
+    filters.extend(broken.iter().map(|_| FilterCheck {
+        text: "a filter that no longer reads".to_owned(),
+        passes: None,
+    }));
+    let passes = blocked.is_none() && filters.iter().all(|f| f.passes == Some(true));
+    Ok(Explained {
+        account,
+        name,
+        member,
+        grace_since,
+        blocked,
+        filters,
+        passes,
+    })
+}
 
 /// What every smart change needs: the group, locked; the owner for a
 /// Restricted one; its grants (it decides who gets them); and never a

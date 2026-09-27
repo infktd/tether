@@ -14,6 +14,7 @@
     </form>
   </div>
   {% include "admin_error.html" %}
+  {% if let Some(n) = notice %}<div class="alert" role="status"><section>{{ n }}</section></div>{% endif %}
 
   <form class="card" method="post" action="/admin/groups/{{ group.id }}/settings">
     <header><h2>Settings</h2><p>Members whose state you untick leave the group when you save.</p></header>
@@ -102,6 +103,12 @@
         <button type="submit" class="btn" data-variant="outline">Save</button>
       </form>
       {% if let Some(sm) = smart %}
+      <div class="flex flex-wrap items-center justify-between gap-3 rounded-sm border p-3">
+        <p class="text-sm text-muted-foreground">Tether checks everyone against the filters every hour{% if let Some(at) = sm.checked_at %}; last at <span class="num">{{ at }}</span> EVE{% endif %}. Check now does it for this group at once: members who fail leave (or start their grace period){% if sm.auto_join %}, and everyone who passes joins{% endif %}.</p>
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/check">
+          <button type="submit" class="btn" data-variant="outline">Check now</button>
+        </form>
+      </div>
       {% if sm.frozen %}<div class="alert" data-variant="destructive" role="status"><section>An app filter has no answers from its app in the last two days (the app is off, gone, or hasn't run yet), so Tether leaves this group's members as they are until it answers or you remove that filter.</section></div>{% endif %}
       <div class="grid gap-2">
         <div class="label">Filters</div>
@@ -157,6 +164,34 @@
           </form>
         </div>
       </div>
+      <div class="grid gap-3 border-t pt-5" id="check">
+        <form method="get" action="/admin/groups/{{ group.id }}#check" class="flex flex-wrap items-end gap-2">
+          <div class="grid gap-1.5">
+            <label class="label" for="check-name">Check a pilot: character name</label>
+            <input class="input w-72" id="check-name" name="check" value="{{ check_query }}" maxlength="100" required>
+          </div>
+          <button type="submit" class="btn" data-variant="outline">Check</button>
+        </form>
+        <p class="text-sm text-muted-foreground">Shows which filters pass or fail for them now, as Tether would judge them. It changes nothing, and is in the audit log. Anyone outside the group needs the Users permission.</p>
+        {% if let Some(c) = check %}
+        <div class="rounded-sm border p-4 grid gap-3" role="status" aria-labelledby="check-title">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-medium" id="check-title">{{ c.name }}</h3>
+            {% if c.passes %}<span class="badge" data-variant="secondary">passes</span>{% else %}<span class="badge" data-variant="destructive">doesn't pass</span>{% endif %}
+            {% if c.member %}<span class="badge" data-variant="outline">member</span>{% else %}<span class="badge" data-variant="outline">not a member</span>{% endif %}
+            {% if let Some(since) = c.grace_since %}<span class="text-xs text-muted-foreground">in the grace period since <span class="num">{{ since.format("%Y-%m-%d %H:%M") }}</span> EVE</span>{% endif %}
+          </div>
+          {% if let Some(why) = c.blocked %}<p class="text-sm">{{ why }}</p>{% endif %}
+          {% if c.filters.is_empty() %}<p class="text-sm text-muted-foreground">No filters yet.</p>{% else %}
+          <ul class="grid gap-1.5 text-sm" role="list">
+            {% for f in c.filters %}
+            <li class="flex items-center gap-2">{% match f.passes %}{% when Some(true) %}<span class="badge" data-variant="secondary">pass</span>{% when Some(false) %}<span class="badge" data-variant="destructive">fail</span>{% when None %}<span class="badge" data-variant="outline">unknown</span>{% endmatch %}<span>{{ f.text }}</span></li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
       {% endif %}
     </section>
   </section>
@@ -180,11 +215,14 @@
           </td>
           <td><span class="state-badge" data-state="{{ m.state_style }}">{{ m.state }}</span></td>
           <td class="text-right">
+            <div class="inline-flex gap-2">
+            {% if smart.is_some() %}<a class="btn" data-variant="outline" data-size="sm" href="/admin/groups/{{ group.id }}?account={{ m.account_id }}#check" aria-label="Check {{ m.main_name }} against the filters">Check</a>{% endif %}
             {% if !group.compliance %}
             <form method="post" action="/admin/groups/{{ group.id }}/members/{{ m.account_id }}/remove" hx-confirm="Remove {{ m.main_name }} from {{ group.name }}?">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
             </form>
             {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}
