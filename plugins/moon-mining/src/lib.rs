@@ -21,8 +21,8 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, badge, link, log, time,
+    Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
+    Table, Tone, Value, badge, character, countdown, item_type, log, time,
 };
 
 use crate::planner::{Advice, Cadence, Drill};
@@ -43,13 +43,14 @@ struct MoonMining;
 impl Plugin for MoonMining {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        match request.path.as_str() {
+        let page = match request.path.as_str() {
             "" => moons_page(&viewer),
             "totals" => totals_page(),
             "planner" => planner_page(&viewer),
             "settings" => settings_page(),
             _ => Err(PageError::NotFound),
-        }
+        }?;
+        with_links(page, &viewer)
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
@@ -638,10 +639,37 @@ fn ping(job: &Job) -> Result<(), JobError> {
 
 // ---- pages -----------------------------------------------------------------
 
+/// The app's pages beside the title, as aa-moonmining's navbar: those the
+/// viewer may open (the planner for Station Managers). Nothing for someone
+/// who sees only the old-moon list.
+fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
+    if !viewer.can("view") {
+        return Ok(page);
+    }
+    let mut page = page.link("Moons", "").link("Mining totals", "totals");
+    if !station_manager_corporations(viewer)?.is_empty() {
+        page = page.link("Planner", "planner");
+    }
+    if viewer.can("manage") {
+        page = page.link("Settings", "settings");
+    }
+    Ok(page)
+}
+
+/// A refinery: its type's icon and its name, when the type is known.
+fn refinery(name: &str, type_id: i64) -> Value {
+    if type_id > 0 {
+        item_type(type_id, name).into()
+    } else {
+        name.into()
+    }
+}
+
 /// A row of the moon lists: moon, place, and the pop.
 struct Pop {
     moon: String,
     structure: String,
+    structure_type: i64,
     system: String,
     arrival: DateTime<Utc>,
     decay: DateTime<Utc>,
@@ -650,7 +678,7 @@ struct Pop {
 fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
     let rows = storage::query(
         "SELECT coalesce(m.name, 'Moon ' || e.moon_id::text), coalesce(s.name, 'Structure ' || e.structure_id::text), \
-                coalesce(y.name, ''), e.chunk_arrival, e.natural_decay \
+                coalesce(y.name, ''), e.chunk_arrival, e.natural_decay, coalesce(s.type_id, 0) \
          FROM extractions e \
          LEFT JOIN names m ON m.id = e.moon_id \
          LEFT JOIN structures s ON s.structure_id = e.structure_id \
@@ -667,6 +695,7 @@ fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
             Some(Pop {
                 moon: text(r, 0),
                 structure: text(r, 1),
+                structure_type: int(r, 5),
                 system: text(r, 2),
                 arrival: when(r, 3)?,
                 decay: when(r, 4)?,
@@ -692,7 +721,7 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
             vec![
                 p.moon.clone().into(),
                 p.system.clone().into(),
-                p.structure.clone().into(),
+                refinery(&p.structure, p.structure_type),
                 time(rfc3339(p.decay)),
             ]
         }),
@@ -718,7 +747,7 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
             vec![
                 p.moon.clone().into(),
                 p.system.clone().into(),
-                p.structure.clone().into(),
+                refinery(&p.structure, p.structure_type),
                 time(rfc3339(p.decay)),
             ]
         }),
@@ -743,17 +772,13 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
             vec![
                 p.moon.clone().into(),
                 p.system.clone().into(),
-                p.structure.clone().into(),
+                refinery(&p.structure, p.structure_type),
                 status.into(),
-                time(rfc3339(p.arrival)),
+                countdown(rfc3339(p.arrival)),
                 time(rfc3339(p.decay)),
             ]
         }),
     );
-    let mut more = Card::new("More").field("Mining totals", link("Who mined what", "totals"));
-    if !station_manager_corporations(viewer)?.is_empty() {
-        more = more.field("Extraction planner", link("Plan pops", "planner"));
-    }
     Ok(Page::new("Moon Mining")
         .description(format!(
             "Fresh moons are for Members for {} hours after they pop, then Blue see them too.",
@@ -771,7 +796,6 @@ fn moons_page(viewer: &Viewer) -> Result<Page, PageError> {
             ),
         ])
         .table(fresh_table)
-        .card(more)
         .tab("Extractions", vec![Section::Table(upcoming_table)])
         .tab("Old moons", vec![Section::Table(old_table)]))
 }
@@ -788,7 +812,7 @@ fn totals_page() -> Result<Page, PageError> {
     )
     .map_err(|e| failed("reading the ledger", e))?;
     let ores = storage::query(
-        "SELECT coalesce(n.name, 'Type ' || l.type_id::text), sum(l.quantity)::bigint \
+        "SELECT coalesce(n.name, 'Type ' || l.type_id::text), sum(l.quantity)::bigint, l.type_id \
          FROM ledger l LEFT JOIN names n ON n.id = l.type_id \
          WHERE l.day >= (now() - interval '30 days')::date \
          GROUP BY l.type_id, n.name ORDER BY 2 DESC LIMIT 100",
@@ -806,7 +830,7 @@ fn totals_page() -> Result<Page, PageError> {
         .empty("Nothing mined yet, or no observers readable."),
         rows.rows.iter().map(|r| {
             vec![
-                text(r, 1).into(),
+                character(int(r, 0), text(r, 1)).into(),
                 int(r, 2).into(),
                 int(r, 3).into(),
                 int(r, 4).into(),
@@ -819,7 +843,7 @@ fn totals_page() -> Result<Page, PageError> {
             .empty("Nothing mined in the last 30 days."),
         ores.rows
             .iter()
-            .map(|r| vec![text(r, 0).into(), int(r, 1).into()]),
+            .map(|r| vec![item_type(int(r, 2), text(r, 0)).into(), int(r, 1).into()]),
     );
     Ok(Page::new("Mining totals")
         .description("From the corporations' mining observers, refreshed every 6 hours")
@@ -1049,9 +1073,10 @@ fn save_cadence(
         .map_err(|_| PageError::Failed("every_hours wasn't a number".into()))?;
     let at = submission.value("at_time").trim();
     if NaiveTime::parse_from_str(at, "%H:%M").is_err() || at.len() != 5 {
-        return Ok(SubmitResult::Page(
+        return Ok(SubmitResult::Page(with_links(
             planner_page(viewer)?.text("Write the time as HH:MM, e.g. 19:00."),
-        ));
+            viewer,
+        )?));
     }
     storage::execute(
         "INSERT INTO cadences (corporation_id, every_hours, at_time) VALUES ($1, $2, $3) \

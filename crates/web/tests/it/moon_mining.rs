@@ -234,6 +234,29 @@ async fn moon_mining_end_to_end(db: PgPool) {
     assert!(moons.body.contains("Ready"));
     // Only refineries are kept.
     assert!(!moons.body.contains("Jita - Market"));
+    // The app's pages beside the title (the planner for a Station
+    // Manager), refineries with their type's icon, and the chunk's arrival
+    // counting down.
+    for href in ["totals", "planner", "settings"] {
+        assert!(
+            moons
+                .body
+                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
+            "{href}: {}",
+            moons.body
+        );
+    }
+    assert!(
+        moons.body.contains("aria-label=\"Pages\""),
+        "{}",
+        moons.body
+    );
+    assert!(
+        moons.body.contains("images.evetech.net/types/"),
+        "{}",
+        moons.body
+    );
+    assert!(moons.body.contains("data-countdown"), "{}", moons.body);
 
     let totals = page(&h, &format!("/plugins/{ID}/totals"), &owner).await;
     // A row with the pilot's name (not just the sidebar's).
@@ -253,6 +276,14 @@ async fn moon_mining_end_to_end(db: PgPool) {
         totals.body
     );
     assert!(totals.body.contains("Sylvite"), "{}", totals.body);
+    // Pilots with their portraits.
+    assert!(
+        totals
+            .body
+            .contains("images.evetech.net/characters/196379789/portrait"),
+        "{}",
+        totals.body
+    );
 
     // Chribba holds Station Manager: the planner advises the idle-soon
     // drills with a duration to set.
@@ -364,6 +395,8 @@ async fn moon_mining_end_to_end(db: PgPool) {
     assert!(seen.body.contains("Old moons"));
     assert!(!seen.body.contains("Jita IV - Moon 4"), "{}", seen.body);
     assert!(!seen.body.contains("Fresh moons"));
+    // Blue have one page: no links to the others.
+    assert!(!seen.body.contains("aria-label=\"Pages\""), "{}", seen.body);
     assert_eq!(
         page(&h, &format!("/plugins/{ID}/planner"), &blue)
             .await
