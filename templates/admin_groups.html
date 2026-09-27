@@ -48,7 +48,7 @@
   <form class="card" method="post" action="/admin/groups">
     <header><h2>New group</h2><p>New groups start Internal and Hidden, as in Alliance Auth: untick Internal to let pilots find and request it.</p></header>
     <section class="grid gap-4">
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="grid gap-2">
           <label class="label" for="name">Name</label>
           <input class="input" id="name" name="name" value="{{ form.name }}" maxlength="100" required>

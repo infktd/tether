@@ -5,7 +5,7 @@
     {% for c in choices %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="states" value="{{ c.id }}"{% if c.checked %} checked{% endif %}> {{ c.name }}</label>{% endfor %}
   </div>
 </fieldset>
-<div class="grid grid-cols-2 gap-6">
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
   <fieldset class="grid gap-2">
     <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="corp_groups" value="on"{% if corp_groups %} checked{% endif %}> <span class="font-medium">Corporation groups</span></label>
     <label class="label" for="corp_prefix-{{ form_id }}">Prefix</label>

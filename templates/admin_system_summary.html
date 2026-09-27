@@ -6,7 +6,7 @@
     <h2 class="widget-title"><a href="/admin/system">System {% call icons::icon("chevron-right") %}{% endcall %}</a></h2>
     <p class="text-sm text-muted-foreground">This server right now: its version, the job queue and ESI.</p>
   </div>
-  <div class="grid grid-cols-4 gap-4">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="card stat">
       <div class="stat-label">Software Version</div>
       <div class="stat-value num">{{ updates.current }}</div>

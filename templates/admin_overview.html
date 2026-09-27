@@ -19,7 +19,7 @@
       <h2 id="group-{{ loop.index }}" class="nav-heading px-0">{{ g.label }}</h2>
       <p class="text-sm text-muted-foreground">{{ g.about }}</p>
     </div>
-    <div class="grid gap-4 grid-cols-2 2xl:grid-cols-3">
+    <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3">
       {% for p in g.pages %}
       <a href="{{ p.href }}" class="admin-tile">
         <span class="admin-tile-icon">{% call icons::icon(p.icon) %}{% endcall %}</span>

@@ -368,10 +368,9 @@ fn ops_page(viewer: &Viewer) -> Result<Page, PageError> {
     let manage = viewer.can(MANAGE);
     let mut upcoming = upcoming(UPCOMING_ROWS)?;
     let mut past = past(PAST_ROWS)?;
-    let next = upcoming.first().map_or_else(
-        || Value::from("None"),
-        |op| badge(when::countdown(now, op.start), Tone::Accent).into(),
-    );
+    let next = upcoming
+        .first()
+        .map_or_else(|| Value::from("None"), |op| countdown(rfc3339(op.start)));
     let mut next_stat = Stat::new("Next operation", next);
     if let Some(op) = upcoming.first() {
         next_stat = next_stat.caption(format!("{}, from {}", op.name, op.system));

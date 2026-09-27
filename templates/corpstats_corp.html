@@ -12,7 +12,7 @@
   </div>
   {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
 
-  <div class="grid grid-cols-4 gap-4">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="card stat"><div class="stat-label">Members</div><div class="stat-value num">{{ corp.members }}</div></div>
     <div class="card stat"><div class="stat-label">Mains</div><div class="stat-value num">{{ corp.mains }}</div></div>
     <div class="card stat"><div class="stat-label">Registered</div><div class="stat-value num">{{ corp.registered }}</div></div>

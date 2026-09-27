@@ -9,7 +9,7 @@
     <p class="text-muted-foreground mt-1 max-w-3xl">Accounts whose characters aren't all registered with their state's scopes. They keep their state, as in Alliance Auth, but aren't in the Compliance Group, so anything you grant that group waits until they register. Corporation Stats compares each corporation's member list with the characters registered here.</p>
   </div>
 
-  <section class="grid grid-cols-3 gap-4" aria-label="Summary">
+  <section class="grid grid-cols-2 sm:grid-cols-3 gap-4" aria-label="Summary">
     <div class="card stat">
       <div class="stat-label">Not compliant</div>
       <div class="stat-value num">{{ not_compliant.len() }}</div>

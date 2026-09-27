@@ -38,7 +38,7 @@
         <li>Under Bot, reset and copy the <strong class="text-foreground">token</strong>. No privileged intents are needed.</li>
         <li>In Discord, turn on Developer Mode (User Settings → Advanced), then right-click your server and copy its <strong class="text-foreground">Server ID</strong>.</li>
       </ol>
-      <div class="grid grid-cols-2 gap-4 border-t pt-4 max-w-2xl">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t pt-4 max-w-2xl">
         <div class="grid gap-2">
           <label class="label" for="application_id">Application ID</label>
           <input class="input num" type="text" inputmode="numeric" id="application_id" name="application_id" value="{{ application_id }}" spellcheck="false" required>
@@ -93,7 +93,7 @@
   {% if !roles.is_empty() %}
   <form class="card" method="post" action="/admin/discord/mappings">
     <header><h2>Map a role</h2><p>The bot can only give roles below its own. Tether never gives out Administrator, and roles with moderation or server-management permissions never go to Guest or Open groups.</p></header>
-    <section class="grid grid-cols-2 gap-4 max-w-2xl">
+    <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
       <div class="grid gap-2">
         <label class="label" for="role_id">Discord role</label>
         <select class="select input" id="role_id" name="role_id">

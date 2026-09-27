@@ -517,10 +517,9 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     } else {
         format!("The latest {PAST_ROWS}, newest first")
     };
-    let next = upcoming.first().map_or_else(
-        || Value::from("None"),
-        |t| badge(when::countdown(now, t.eve_time), Tone::Accent).into(),
-    );
+    let next = upcoming
+        .first()
+        .map_or_else(|| Value::from("None"), |t| countdown(rfc3339(t.eve_time)));
     let mut next_stat = Stat::new("Next timer", next);
     if let Some(t) = upcoming.first() {
         next_stat = next_stat.caption(format!("{}, {}", t.structure, t.system));

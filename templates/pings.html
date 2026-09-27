@@ -21,7 +21,7 @@
   <form class="card" method="post" action="/pings" hx-confirm="Send this ping now?">
     <header><h2>New ping</h2></header>
     <section class="flex flex-col gap-5 max-w-3xl">
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div class="grid gap-2">
           <label class="label" for="channel_id">Channel</label>
           <select class="select input" id="channel_id" name="channel_id">
@@ -43,7 +43,7 @@
         </div>
       </div>
       <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="pre_ping" value="on"{% if form.pre_ping.is_some() %} checked{% endif %}> Pre-ping: the fleet isn't up yet</label>
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="grid gap-2">
           <label class="label" for="fc_name">FC</label>
           <input class="input" id="fc_name" name="fc_name" value="{{ form.fc_name }}" maxlength="{{ max_field }}">

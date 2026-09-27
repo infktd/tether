@@ -47,7 +47,7 @@
   <form class="card" method="post" action="/dashboard/access-tokens">
     <header><h2>New token</h2></header>
     <section class="flex flex-col gap-4 max-w-3xl">
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="grid gap-2"><label class="label" for="token-name">Name</label><input class="input" id="token-name" name="name" maxlength="60" placeholder="Recruitment bot" required></div>
         <div class="grid gap-2"><label class="label" for="token-days">Lasts (days)</label><input class="input" type="number" id="token-days" name="days" min="1" max="{{ max_days }}" value="90" required></div>
       </div>

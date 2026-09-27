@@ -2041,7 +2041,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             Stat::new("Low fuel", low_count).caption(format!("under {alert} hours, or low power")),
             Stat::new("Reinforced", reinforced_count),
             match next {
-                Some(t) => Stat::new("Next timer", badge(left(t - now), Tone::Accent))
+                Some(t) => Stat::new("Next timer", countdown(rfc3339(t)))
                     .caption(format!("{} EVE", t.format("%Y-%m-%d %H:%M"))),
                 None => Stat::new("Next timer", "none"),
             },

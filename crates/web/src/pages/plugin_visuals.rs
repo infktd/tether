@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(v.parts[0].1, 25);
         assert_eq!(v.parts[1].1, 75);
         assert_eq!(v.arcs[0].color, "grade-4");
-        assert_eq!(v.arcs[1].offset.starts_with('-'), true);
+        assert!(v.arcs[1].offset.starts_with('-'));
         let big = composition(&Composition {
             parts: vec![part(1.0, 2)],
             center: Some("1.84B".to_owned()),
