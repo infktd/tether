@@ -295,6 +295,13 @@ async fn blacklisting_goes_by_the_main(db: PgPool) {
     );
     // At once, without waiting for any sync.
     assert_eq!(state_of(&h, &pilot).await, "Blacklist");
+    // A clean alt made main would be a way out: refused.
+    let res = send(
+        &h.app,
+        form("/profile/main", "character_id=90000002", &pilot),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
     // Leading a group only needs what it always did (AA).
     assert_eq!(
         page(&h, &format!("/group-management/{group}"), &pilot)
@@ -370,6 +377,19 @@ async fn the_pilot_log_has_aa_tiers_and_comments(db: PgPool) {
     assert!(log.contains("gigX"), "{log}");
     assert!(!log.contains("Known awoxer"), "restricted: {log}");
     assert!(log.contains("Restricted: ask Chribba"), "{log}");
+    // Nor taken off the Blacklist blind (given the permission to).
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            &format!(r#"{{"permission":"blacklist.add_to_blacklist","group_id":{group}}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = send(&h.app, form("/blacklist/1887431749/remove", "", &officer)).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
     // A restricted note can't be commented on or edited blind.
     for path in [
         format!("/blacklist/notes/{}/comments", notes[1].0),
@@ -435,12 +455,12 @@ async fn the_pilot_log_has_aa_tiers_and_comments(db: PgPool) {
         assert!(log.contains(text), "{text}: {log}");
     }
 
-    // Editing keeps the flags the editor can't set.
+    // Editing keeps the flags the editor can't set (restricted here).
     let res = send(
         &h.app,
         form(
             &format!("/blacklist/notes/{}/edit", notes[1].0),
-            "reason=Known+awoxer%2C+twice",
+            "reason=Known+awoxer%2C+twice&blacklisted=on",
             &officer,
         ),
     )
@@ -566,8 +586,8 @@ async fn blacklisting_never_reaches_past_what_you_hold(db: PgPool) {
     assert!(res.body.contains("admin.states"), "{}", res.body);
     assert_eq!(state_of(&h, &admin).await, "Member");
 
-    // Nor past what the Blacklist state is granted: blacklisting would
-    // hand it out.
+    // The Blacklist state never holds a sensitive permission: anyone can
+    // walk into a blacklisted NPC corporation.
     let res = send(
         &h.app,
         post_json(
@@ -580,8 +600,23 @@ async fn blacklisting_never_reaches_past_what_you_hold(db: PgPool) {
         ),
     )
     .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    // Nor can anyone blacklist past what the Blacklist state is granted:
+    // blacklisting would hand it out.
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            &format!(
+                r#"{{"permission":"discord.access_discord","state_id":{}}}"#,
+                blacklist_state(&h).await
+            ),
+        ),
+    )
+    .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     let res = send(&h.app, form("/blacklist", "who=1000167&reason=x", &officer)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
-    assert!(res.body.contains("compliance.view"), "{}", res.body);
+    assert!(res.body.contains("discord.access_discord"), "{}", res.body);
 }

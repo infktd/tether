@@ -27,6 +27,22 @@ INSERT INTO core.pilot_notes
     (entity_id, entity_kind, name, note, added_by, added_by_name, added_at, blacklisted)
 SELECT entity_id, entity_kind, name, reason, added_by, added_by_name, added_at, true
 FROM core.blacklist;
+-- Accounts blacklisted only through an alt (the old rule: any character)
+-- stay blacklisted: a note blacklists their main, saying why.
+INSERT INTO core.pilot_notes
+    (entity_id, entity_kind, name, note, blacklisted, corporation_id, alliance_id, added_by_name)
+SELECT DISTINCT ON (a.id) m.id, 'character', m.name,
+    'Carried over: blacklisted through ' || b.name || ' (' || b.entity_kind
+        || '), an alt''s, when the Blacklist went by any character. ' || b.reason,
+    true, m.corporation_id, m.alliance_id, 'Tether'
+FROM core.accounts a
+JOIN core.characters m ON m.id = a.main_character_id
+JOIN core.characters c ON c.account_id = a.id
+JOIN core.blacklist b ON b.entity_id IN (c.id, c.corporation_id, c.alliance_id)
+WHERE NOT a.is_owner
+  AND NOT EXISTS (
+      SELECT 1 FROM core.blacklist o WHERE o.entity_id IN (m.id, m.corporation_id, m.alliance_id))
+ORDER BY a.id, b.added_at;
 DROP TABLE core.blacklist;
 UPDATE core.pilot_notes n SET corporation_id = c.corporation_id, alliance_id = c.alliance_id
 FROM core.characters c
@@ -85,9 +101,10 @@ SELECT r.new, g.state_id, g.group_id, g.account_id
 FROM core.permission_grants g JOIN blacklist_renames r ON r.old = g.permission
 ON CONFLICT DO NOTHING;
 DELETE FROM core.permission_grants WHERE permission IN (SELECT old FROM blacklist_renames);
-UPDATE core.personal_tokens t SET scopes = ARRAY(
+-- At most 100 scopes, as the table requires.
+UPDATE core.personal_tokens t SET scopes = (ARRAY(
     SELECT DISTINCT COALESCE(r.new, s.scope)
-    FROM unnest(t.scopes) AS s(scope) LEFT JOIN blacklist_renames r ON r.old = s.scope)
+    FROM unnest(t.scopes) AS s(scope) LEFT JOIN blacklist_renames r ON r.old = s.scope))[1:100]
 WHERE t.scopes && ARRAY(SELECT old FROM blacklist_renames);
 
 -- Secure Groups, as allianceauth-secure-groups: its settings per group

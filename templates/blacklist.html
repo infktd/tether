@@ -29,9 +29,11 @@
           <td><div class="num text-sm">{{ crate::pages::blacklist::when(l.note.added_at) }}</div><div class="text-xs text-muted-foreground">{{ l.note.added_by_name }}</div></td>
           {% if access.add && access.add_to_blacklist %}
           <td>
+            {% if l.reason.is_some() %}
             <form method="post" action="/blacklist/{{ l.note.entity_id }}/remove" hx-confirm="Take {{ l.note.name }} off the Blacklist? Its notes stay in the Pilot Log, and accounts it covered get their state back.">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
             </form>
+            {% endif %}
           </td>
           {% endif %}
         </tr>

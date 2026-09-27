@@ -1050,6 +1050,11 @@ pub async fn audit_group(
     actor: AccountId,
     group: GroupId,
 ) -> Result<(Vec<String>, Vec<AuditRow>), AppError> {
+    // Leaders don't learn other groups' names: Internal ones stay
+    // unnamed unless the actor sets groups up anyway.
+    let public = !tether_db::permissions::effective(db, actor)
+        .await?
+        .contains(tether_core::permissions::ADMIN_GROUPS);
     if db::active(db, group).await?.is_none() {
         return Err(AppError::not_found("No such smart group."));
     }
@@ -1065,7 +1070,7 @@ pub async fn audit_group(
     let ids: Vec<AccountId> = members.iter().map(|m| AccountId(m.account_id)).collect();
     let mut conn = db.acquire().await?;
     let (rules, broken) = db::rules(&mut *conn, group).await?;
-    let names = Names::load(&mut conn, &rules, false).await?;
+    let names = Names::load(&mut conn, &rules, public).await?;
     let mut facts = db::facts(&mut *conn, Some(&ids)).await?;
     let known = fill_app(&mut conn, &mut facts, None).await?;
     let grace = db::grace(&mut *conn, group).await?;

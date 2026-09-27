@@ -313,8 +313,9 @@ pub async fn add_mapping(
     let open = match grantee {
         Grantee::State(id) => tether_db::states::get(&mut *tx, id)
             .await?
-            .ok_or_else(|| AppError::not_found("No such state."))?
-            .open_to_anyone(),
+            .ok_or_else(|| AppError::not_found("No such state."))
+            // The Blacklist too: blacklisting hands it out.
+            .map(|s| s.open_to_anyone() || s.is_blacklist())?,
         Grantee::Group(group) => {
             groups::lock(&mut tx, group, false).await?;
             let group = groups::get(&mut *tx, group)
@@ -330,7 +331,7 @@ pub async fn add_mapping(
     };
     if role.privileged && open {
         return Err(AppError::bad_request(format!(
-            "{} has moderation or server-management permissions, so it can't go to Guest, a public state or an Open group: anyone can be in those.",
+            "{} has moderation or server-management permissions, so it can't go to Guest, a public state, the Blacklist or an Open group: anyone can be in those.",
             role.name
         )));
     }

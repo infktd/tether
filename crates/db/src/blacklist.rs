@@ -163,6 +163,20 @@ pub async fn note<'e>(
     Ok(row.and_then(Row::into_note))
 }
 
+/// A note, locked until the transaction ends.
+pub async fn note_locked(
+    tx: &mut sqlx::PgConnection,
+    id: i64,
+) -> Result<Option<Note>, sqlx::Error> {
+    sqlx::query!(
+        "SELECT id FROM core.pilot_notes WHERE id = $1 FOR UPDATE",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    note(&mut *tx, id).await
+}
+
 impl Reader {
     /// Whether the reader may see this note in the Pilot Log.
     pub fn sees(&self, note: &Note) -> bool {

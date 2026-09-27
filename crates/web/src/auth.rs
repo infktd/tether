@@ -351,6 +351,18 @@ pub async fn callback(
         db::Purpose::DataSource(plugin) => {
             crate::plugin_consent::finish(&state, account, &identity, plugin).await?;
         }
+        // The Blacklist goes by the main (AA): a blacklisted account keeps
+        // it, or a clean alt would be a way out. The character stays
+        // linked, as any Add Character.
+        db::Purpose::ChangeMain
+            if tether_db::blacklist::is_blacklisted(&state.db, account).await? =>
+        {
+            tracing::warn!(
+                account = account.0,
+                character_id = identity.character_id,
+                "change main by login refused: blacklisted"
+            );
+        }
         db::Purpose::ChangeMain => {
             // SSO just proved control, the character is on this account
             // (linked above) and its token was stored: it's the main now.

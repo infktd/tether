@@ -116,6 +116,14 @@ pub async fn change_main(
     if current.main.as_ref().is_some_and(|m| m.id == character_id) {
         return Ok(ChangeMain::Done { name });
     }
+    // The Blacklist goes by the main (AA): a clean alt made main would be
+    // a way out. Only taking them off the Blacklist is.
+    if tether_db::blacklist::is_blacklisted(db, account).await? {
+        return Err(crate::error::AppError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "Your main is blacklisted, so it can't be changed.",
+        ));
+    }
     if let Err(wait) = state
         .limits
         .token_refresh

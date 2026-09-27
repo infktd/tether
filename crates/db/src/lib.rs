@@ -218,6 +218,124 @@ mod tests {
         );
     }
 
+    /// Migration 0049 (AA's rules for the Blacklist, Secure Groups and
+    /// Fleet Pings) carries what was there over: renamed grants and token
+    /// scopes, accounts blacklisted through an alt, and grace periods.
+    #[sqlx::test(migrations = false)]
+    async fn aa_rules_migration_carries_everything_over(pool: PgPool) {
+        let before = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version < 49)
+                .cloned()
+                .collect(),
+        );
+        before.run(&pool).await.unwrap();
+        let exec = |sql: &'static str| {
+            let pool = pool.clone();
+            async move { sqlx::query(sql).execute(&pool).await.unwrap() }
+        };
+        // A spy whose alt is in a blacklisted corporation, and a clean pilot.
+        exec("INSERT INTO core.accounts (id, is_owner) OVERRIDING SYSTEM VALUE VALUES (1, false), (2, false)").await;
+        exec(
+            "INSERT INTO core.characters (id, account_id, name, corporation_id) VALUES \
+             (11, 1, 'Spy', 500), (12, 1, 'Spy Alt', 600), (21, 2, 'Clean', 500)",
+        )
+        .await;
+        exec("UPDATE core.accounts SET main_character_id = id * 10 + 1").await;
+        exec(
+            "INSERT INTO core.blacklist (entity_id, entity_kind, name, reason, added_by_name) \
+             VALUES (600, 'corporation', 'Hostiles', 'Awoxers', 'Admin')",
+        )
+        .await;
+        exec("INSERT INTO core.groups (id, name) OVERRIDING SYSTEM VALUE VALUES (7, 'Officers')")
+            .await;
+        exec(
+            "INSERT INTO core.permission_grants (permission, group_id) VALUES \
+             ('fleet.ping', 7), ('blacklist.view_blacklist', 7), ('blacklist.manage_blacklist', 7)",
+        )
+        .await;
+        exec(
+            "INSERT INTO core.personal_tokens (account_id, name, token_hash, prefix, scopes, expires_at) \
+             VALUES (2, 'bot', '\\x00', 'tp', ARRAY['fleet.ping', 'blacklist.add_notes'], now() + interval '1 day')",
+        )
+        .await;
+        // A smart group with a 3 day grace period, and a member in it.
+        exec("INSERT INTO core.smart_groups (group_id, grace_days, notify) VALUES (7, 3, false)")
+            .await;
+        exec(
+            "INSERT INTO core.smart_filters (group_id, kind, config) VALUES (7, 'compliant', '{}')",
+        )
+        .await;
+        exec("INSERT INTO core.smart_grace (group_id, account_id, since) VALUES (7, 2, now() - interval '1 day')").await;
+
+        migrate(&pool).await.unwrap();
+
+        let blacklisted: Vec<bool> =
+            sqlx::query_scalar("SELECT core.blacklisted(id) FROM core.accounts ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(blacklisted, vec![true, false], "the spy stays blacklisted");
+        let carried: String = sqlx::query_scalar(
+            "SELECT note FROM core.pilot_notes WHERE entity_id = 11 AND blacklisted",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            carried.contains("Hostiles") && carried.contains("Awoxers"),
+            "{carried}"
+        );
+        let grants: Vec<String> = sqlx::query_scalar(
+            "SELECT permission FROM core.permission_grants WHERE group_id = 7 ORDER BY permission",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            grants,
+            vec![
+                "blacklist.add_new_eve_notes",
+                "blacklist.add_to_blacklist",
+                "blacklist.view_eve_blacklist",
+                "blacklist.view_eve_note_comments",
+                "blacklist.view_eve_notes",
+                "fleetpings.basic_access",
+            ]
+        );
+        let mut scopes: Vec<String> =
+            sqlx::query_scalar("SELECT unnest(scopes) FROM core.personal_tokens")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        scopes.sort();
+        assert_eq!(
+            scopes,
+            vec![
+                "blacklist.add_new_eve_note_comments",
+                "blacklist.add_new_eve_notes",
+                "fleetpings.basic_access",
+            ]
+        );
+        let (can_grace, notify_on_remove, grace_days): (bool, bool, i32) = sqlx::query_as(
+            "SELECT s.can_grace, s.notify_on_remove, f.grace_days FROM core.smart_groups s \
+             JOIN core.smart_filters f ON f.group_id = s.group_id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(can_grace && !notify_on_remove);
+        assert_eq!(grace_days, 3);
+        let days_left: f64 = sqlx::query_scalar(
+            "SELECT EXTRACT(epoch FROM expires_at - now())::float8 / 86400 FROM core.smart_grace",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!((1.9..2.1).contains(&days_left), "{days_left}");
+    }
+
     #[sqlx::test(migrations = false)]
     async fn ping_succeeds(pool: PgPool) {
         ping(&pool).await.unwrap();

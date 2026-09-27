@@ -188,6 +188,15 @@ pub async fn grant(
                     "{permission} can't go to Guest: anyone who logs in with EVE is Guest."
                 )));
             }
+            // Anyone can walk into a blacklisted NPC corporation, and
+            // blacklisters hand the state out: as Guest.
+            if sensitive && target.is_blacklist() {
+                return Err(AppError::bad_request(format!(
+                    "{permission} can't go to {}: blacklisting someone would hand it to them, \
+                     and anyone can join a blacklisted NPC corporation.",
+                    target.name
+                )));
+            }
             if sensitive && target.public {
                 return Err(AppError::bad_request(format!(
                     "{permission} can't go to {}: it's public, so anyone who logs in with EVE \

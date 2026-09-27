@@ -6,11 +6,13 @@
 //! As AA, blacklisting goes by the main: an account whose main is, or is
 //! in, a blacklisted pilot, corporation or alliance is in the Blacklist
 //! state, above every other, and that state is all it changes. The
-//! account holds what the Blacklist state is granted (usually nothing),
-//! keeps groups that don't exclude the state, and keeps a service only if
-//! the state has access. A superuser can never be blacklisted, nor an
-//! account holding permissions the blacklister lacks, and blacklisting
-//! (either way) needs what the Blacklist state is granted.
+//! account holds what the Blacklist state is granted (never a sensitive
+//! permission) plus its own grants and those of groups that don't exclude
+//! the state, and keeps a service only while something grants it access.
+//! To strip someone completely, deactivate them. A superuser can never be
+//! blacklisted, nor an account holding permissions the blacklister lacks;
+//! blacklisting (either way) needs what the Blacklist state is granted;
+//! and a blacklisted account can't Change Main its way out.
 
 use serde_json::json;
 use tether_core::permissions as p;
@@ -347,11 +349,16 @@ pub async fn add_note(state: &AppState, actor: AccountId, new: &NewNote) -> Resu
             ));
         }
     }
-    let linked = if new.linked && found.kind == EntityKind::Character {
+    let mut linked = if new.linked && found.kind == EntityKind::Character {
         db::linked_characters(&state.db, found.id).await?
     } else {
         Vec::new()
     };
+    // Basic notes stay in the actor's own corporation, linked ones too.
+    if !access.add {
+        let mine = main_corporation(state, actor).await?;
+        linked.retain(|(_, _, corporation, _)| corporation.is_some() && *corporation == mine);
+    }
     let by = actor_name(state, actor).await?;
     let mut tx = state.db.begin().await?;
     // The same lock order as every evaluation: the states first.
@@ -412,10 +419,10 @@ pub async fn add_note(state: &AppState, actor: AccountId, new: &NewNote) -> Resu
         },
         Some(&format!("{}:{}", found.kind.as_str(), found.id)),
         // Not the reason: the audit log isn't the Pilot Log, and a
-        // restricted note stays restricted.
+        // restricted note stays restricted (not even named).
         json!({
             "note": id,
-            "name": found.name,
+            "name": (!flags.restricted && !flags.ultra_restricted).then_some(&found.name),
             "blacklisted": flags.blacklisted,
             "restricted": flags.restricted,
             "ultra_restricted": flags.ultra_restricted,
@@ -454,7 +461,15 @@ pub async fn edit_note(
         return Err(refused("edit notes"));
     }
     let reason = text("reason", reason, 2000)?;
-    let before = visible_note(state, &access, id).await?;
+    visible_note(state, &access, id).await?;
+    let mut tx = state.db.begin().await?;
+    tether_db::states::lock_shared(&mut tx).await?;
+    // Read again under the note's lock: flags the actor can't set are kept
+    // as they are now, not as they were before a concurrent change.
+    let before = db::note_locked(&mut tx, id)
+        .await?
+        .filter(|n| access.reader.sees(n))
+        .ok_or_else(|| AppError::not_found("No such note."))?;
     let blacklisted = if access.add_to_blacklist {
         flags.blacklisted
     } else {
@@ -470,8 +485,6 @@ pub async fn edit_note(
     } else {
         before.ultra_restricted
     };
-    let mut tx = state.db.begin().await?;
-    tether_db::states::lock_shared(&mut tx).await?;
     let changes_state = blacklisted != before.blacklisted;
     let covered = if changes_state {
         check_blacklisting(&mut tx, actor, &[before.entity_id], blacklisted).await?
@@ -498,7 +511,7 @@ pub async fn edit_note(
         Some(&format!("{}:{}", before.kind.as_str(), before.entity_id)),
         json!({
             "note": id,
-            "name": before.name,
+            "name": (!restricted && !ultra_restricted).then_some(&before.name),
             "blacklisted": blacklisted,
             "restricted": restricted,
             "ultra_restricted": ultra_restricted,
@@ -528,6 +541,25 @@ pub async fn unblacklist(
     tether_db::states::lock_shared(&mut tx).await?;
     if !db::entity_blacklisted(&mut *tx, entity_id).await? {
         return Err(AppError::not_found("Not blacklisted."));
+    }
+    // Only blacklistings the actor may read: a restricted one's tier
+    // decides who undoes it, as editing the note would.
+    let listed = db::notes(
+        &mut *tx,
+        &access.reader,
+        db::Filter {
+            about: Some(&[entity_id]),
+            blacklist: true,
+            ..db::Filter::default()
+        },
+        1000,
+    )
+    .await?;
+    if listed.iter().any(|n| !access.reader.reads_reason(n)) {
+        return Err(AppError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "A restricted note blacklists them: only someone who can read it can take them off.",
+        ));
     }
     let covered = check_blacklisting(&mut tx, actor, &[entity_id], false).await?;
     let (kind, name, notes) = db::unblacklist(&mut *tx, entity_id)
@@ -571,7 +603,7 @@ pub async fn delete_note(state: &AppState, actor: AccountId, id: i64) -> Result<
         Some(&format!("pilot_note:{id}")),
         // Not the text: the audit log isn't the Pilot Log.
         json!({
-            "about": note.name,
+            "about": (!note.restricted && !note.ultra_restricted).then_some(&note.name),
             "entity_id": note.entity_id,
             "author": note.added_by_name,
             "blacklisted": note.blacklisted,
@@ -626,7 +658,7 @@ pub async fn add_comment(
         Some(&format!("pilot_note:{}", found.id)),
         json!({
             "comment": id,
-            "about": found.name,
+            "about": (!found.restricted && !found.ultra_restricted).then_some(&found.name),
             "restricted": flags.restricted,
             "ultra_restricted": flags.ultra_restricted,
         }),
