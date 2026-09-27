@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.corporation_id AS \"corporation_id!\"\n        FROM core.characters c\n        WHERE c.id = $1 AND c.corporation_id IS NOT NULL\n          AND c.corporation_id NOT BETWEEN 1000000 AND 1999999\n          AND NOT EXISTS (SELECT 1 FROM core.corp_member_lists l\n                          WHERE l.corporation_id = c.corporation_id)\n          AND EXISTS (\n            SELECT 1 FROM core.accounts a\n            JOIN core.characters m ON m.id = a.main_character_id\n            JOIN core.states s ON s.id = a.state_id\n            WHERE m.corporation_id = c.corporation_id\n              AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "006f34c7c3431175633566dc5c3c9d6e2b0c47f0787b2a4374b66b4cf986a20d"
+}

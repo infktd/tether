@@ -2,7 +2,8 @@
 //! than Guest requires scopes on every character of the account. Accounts
 //! that fall short keep their state but are flagged: their owners get a
 //! checklist, officers a list, and they're out of the Compliant group. Also
-//! Corp Stats, which lists corporation members who never registered.
+//! Corp Stats, which reads covered corporations' member lists with their
+//! registered members' tokens and lists members who never registered.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -18,17 +19,16 @@ use tether_db::audit::{self, Actor};
 use tether_db::auth::Purpose;
 use tether_db::compliance as db;
 use tether_db::states as state_db;
-use tether_esi::sso::SsoIdentity;
 use tether_esi::vault::TokenVault;
 use tether_esi::{Esi, Priority};
 use tether_jobs::schedule::ScheduleSpec;
-use tether_jobs::{JobError, NewJob, Registry};
+use tether_jobs::{JobError, Registry};
 
 use crate::AppState;
 use crate::error::AppError;
 
-/// Job kind: fetch the member list of every corporation with an approved
-/// Corp Stats source.
+/// Job kind: fetch the member list of every covered corporation, with a
+/// registered Member character in it.
 pub const CORP_STATS_JOB: &str = "compliance.corp_stats";
 
 pub fn schedules() -> Vec<ScheduleSpec> {
@@ -218,8 +218,10 @@ pub async fn registered_member(
 /// pilot doesn't wait for their next tick to see the character in them.
 /// Audited as the system's `schedule.run_now`. Not a schedule queued in
 /// the last [`crate::plugin_jobs::TRIGGERED_GAP`]: registering alts one
-/// after another doesn't sync an app every minute. In the background, so
-/// the login doesn't wait for it; best effort, a failure is only logged.
+/// after another doesn't sync an app every minute. Its corporation's
+/// member list is read now too if there's none yet (Corp Stats). In the
+/// background, so the login doesn't wait for it; best effort, a failure is
+/// only logged.
 pub fn sync_if_newly_registered(
     state: &AppState,
     account: AccountId,
@@ -238,6 +240,9 @@ pub fn sync_if_newly_registered(
                 tracing::warn!(character, error = %err, "checking a new registration");
                 return;
             }
+        }
+        if let Err(err) = read_first_member_list(&db, character).await {
+            tracing::warn!(character, error = %err, "queueing a first member list");
         }
         let why = json!({ "reason": "character_registered", "character_id": character });
         for running in plugins.all_running() {
@@ -291,151 +296,23 @@ pub async fn start_register(
     .await
 }
 
-// ---- Corp Stats sources ----------------------------------------------------
-
-/// Off to EVE SSO to offer a character's corporation member list.
-pub async fn start_corp_offer(
-    state: &AppState,
-    jar: CookieJar,
-    account: AccountId,
-) -> Result<Response, AppError> {
-    let scopes = ask_scopes(&state.db, account, [scopes::CORP_MEMBERSHIP.to_owned()]).await?;
-    crate::auth::start_login(
-        state,
-        jar,
-        "/dashboard",
-        Purpose::CorpSource,
-        &scopes,
-        Some(account),
-    )
-    .await
-}
-
-/// After a Corp Stats offer login: records it if the character is the
-/// account's and SSO granted the scope.
-pub async fn finish_corp_offer(
-    state: &AppState,
-    account: AccountId,
-    identity: &SsoIdentity,
-) -> Result<(), AppError> {
-    if !identity.scopes.iter().any(|s| s == scopes::CORP_MEMBERSHIP) {
-        return Err(AppError::bad_request(format!(
-            "EVE didn't grant {}. An admin may need to enable it on Tether's EVE application \
-             (developers.eveonline.com).",
-            scopes::CORP_MEMBERSHIP
-        )));
-    }
-    if tether_db::plugin_esi::character_account(&state.db, identity.character_id).await?
-        != Some(account)
-    {
-        return Err(AppError::bad_request(
-            "That character isn't on your account.",
-        ));
-    }
-    let mut tx = state.db.begin().await?;
-    if db::offer_corp_source(&mut *tx, identity.character_id, account).await? {
-        audit::record(
-            &mut *tx,
-            Actor::Account(account),
-            "corp_stats.offered",
-            Some(&format!("character:{}", identity.character_id)),
-            json!({}),
-        )
-        .await?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
-/// The owner withdraws an offer (or an approved source).
-pub async fn withdraw_corp_source(
-    state: &AppState,
-    account: AccountId,
-    character: i64,
-) -> Result<(), AppError> {
-    if tether_db::plugin_esi::character_account(&state.db, character).await? != Some(account) {
-        return Err(AppError::not_found("That character isn't on your account."));
-    }
-    remove(state, account, character, "corp_stats.withdrawn").await
-}
-
-pub async fn remove_corp_source(
-    state: &AppState,
-    admin: AccountId,
-    character: i64,
-) -> Result<(), AppError> {
-    remove(state, admin, character, "corp_stats.removed").await
-}
-
-async fn remove(
-    state: &AppState,
-    actor: AccountId,
-    character: i64,
-    action: &str,
-) -> Result<(), AppError> {
-    let mut tx = state.db.begin().await?;
-    if !db::remove_corp_source(&mut *tx, character).await? {
-        return Err(AppError::not_found(
-            "That character isn't a Corp Stats source.",
-        ));
-    }
-    // Its list goes at once, unless another source keeps it current.
-    db::prune_member_lists(&mut *tx).await?;
-    audit::record(
-        &mut *tx,
-        Actor::Account(actor),
-        action,
-        Some(&format!("character:{character}")),
-        json!({}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(())
-}
-
-/// An admin approves an offer for the character's current corporation,
-/// and the member list is fetched straight away.
-pub async fn approve_corp_source(
-    state: &AppState,
-    admin: AccountId,
-    character: i64,
-) -> Result<(), AppError> {
-    let mut tx = state.db.begin().await?;
-    let corporation = db::approve_corp_source(&mut *tx, character, admin)
-        .await?
-        .ok_or_else(|| {
-            AppError::not_found(
-                "That character wasn't offered, or its corporation isn't known yet.",
-            )
-        })?;
-    // Corp Stats is for corporations a state covers (PRD): nobody else's
-    // roster is stored here.
-    if !db::corporation_covered(&mut *tx, corporation).await? {
-        return Err(AppError::bad_request(
-            "Nobody in that corporation is in a state other than Guest, so its member list isn't needed.",
-        ));
-    }
-    audit::record(
-        &mut *tx,
-        Actor::Account(admin),
-        "corp_stats.approved",
-        Some(&format!("character:{character}")),
-        json!({ "corporation_id": corporation }),
-    )
-    .await?;
-    tether_jobs::enqueue(&mut *tx, NewJob::new(CORP_STATS_JOB, json!({}))).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
 // ---- jobs ------------------------------------------------------------------
 
-/// Fetches every covered corporation's member list with one of its
-/// approved sources (or just `only`'s, for Update Now), and names members
-/// who never registered.
+/// Fetches every covered corporation's member list (or just `only`'s, for
+/// Update Now), and names members who never registered. As Alliance
+/// Auth's Corporation Stats: any registered Member character in the
+/// corporation reads it (Member requires the scope), the one that worked
+/// last first; one whose token or access fails is skipped for the next, up
+/// to [`MAX_READERS_TRIED`]. An SSO or ESI outage stops the run (retried
+/// later) rather than trying every member's token in turn.
 pub async fn corp_stats(db: &PgPool, esi: &Esi, vault: &TokenVault) -> Result<usize, JobError> {
     corp_stats_for(db, esi, vault, None).await
 }
+
+/// Characters tried per corporation and run: enough to get past a revoked
+/// token or two, without every member's token failing the same way
+/// spending ESI's shared error budget.
+pub const MAX_READERS_TRIED: usize = 5;
 
 pub async fn corp_stats_for(
     db: &PgPool,
@@ -443,69 +320,67 @@ pub async fn corp_stats_for(
     vault: &TokenVault,
     only: Option<i64>,
 ) -> Result<usize, JobError> {
-    let sources = db::corp_sources(db).await.map_err(JobError::retry)?;
-    let names: BTreeMap<i64, String> = sources
-        .iter()
-        .map(|s| (s.character_id, s.character_name.clone()))
-        .collect();
-    let mut by_corporation: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
-    for source in sources.iter().filter(|s| s.in_use()) {
-        if let Some(corporation) = source
-            .approved_corporation
-            .filter(|c| only.is_none_or(|o| o == *c))
-        {
-            by_corporation
-                .entry(corporation)
-                .or_default()
-                .push(source.character_id);
-        }
-    }
+    use tether_esi::EsiError;
+    use tether_esi::vault::VaultError;
+    let corporations = db::covered_corporations(db)
+        .await
+        .map_err(JobError::retry)?;
     let mut fetched = 0;
-    for (corporation, characters) in &by_corporation {
-        // Only corporations a state covers; others' lists are pruned below.
-        if !db::corporation_covered(db, *corporation)
+    for corporation in corporations
+        .into_iter()
+        .filter(|c| only.is_none_or(|o| o == *c))
+    {
+        let readers = db::member_list_readers(db, corporation, scopes::CORP_MEMBERSHIP)
             .await
-            .map_err(JobError::retry)?
-        {
-            continue;
-        }
-        for character in characters {
+            .map_err(JobError::retry)?;
+        for character in readers.into_iter().take(MAX_READERS_TRIED) {
             let token = match vault
-                .access_token(*character, &[scopes::CORP_MEMBERSHIP])
+                .access_token(character, &[scopes::CORP_MEMBERSHIP])
                 .await
             {
                 Ok(token) => token,
-                Err(err) => {
-                    tracing::warn!(character, error = %err, "Corp Stats source token");
-                    source_failed(db, *character, &names).await;
+                // This character's token: the next one may work.
+                Err(
+                    err @ (VaultError::NoToken
+                    | VaultError::MissingScopes(_)
+                    | VaultError::Revoked
+                    | VaultError::OwnerChanged),
+                ) => {
+                    tracing::warn!(corporation, character, error = %err, "Corp Stats token");
                     continue;
                 }
-            };
-            let members = match esi.corporation_members(&token, *corporation).await {
-                Ok(members) => members,
+                // SSO (or the vault) is down for everyone: try again later.
                 Err(err) => {
+                    tracing::warn!(corporation, character, error = %err, "Corp Stats stopped: token");
+                    return Err(JobError::retry(err));
+                }
+            };
+            let members = match esi.corporation_members(&token, corporation).await {
+                Ok(members) => members,
+                // Refused for this character (it left, or lost the scope).
+                Err(err @ EsiError::Status(401 | 403)) => {
                     tracing::warn!(corporation, character, error = %err, "Corp Stats member list");
-                    source_failed(db, *character, &names).await;
                     continue;
+                }
+                Err(err) => {
+                    tracing::warn!(corporation, character, error = %err, "Corp Stats stopped: member list");
+                    return Err(JobError::retry(err));
                 }
             };
             let mut tx = db.begin().await.map_err(JobError::retry)?;
-            db::store_members(&mut tx, *corporation, &members)
-                .await
-                .map_err(JobError::retry)?;
-            db::source_ok(&mut *tx, *character)
+            db::store_members(&mut tx, corporation, &members, character)
                 .await
                 .map_err(JobError::retry)?;
             tx.commit().await.map_err(JobError::retry)?;
             // Names for the page, from the cache or ESI (public).
-            let mut ids: Vec<i64> = db::unregistered(db, *corporation)
+            let mut ids: Vec<i64> = db::unregistered(db, corporation)
                 .await
                 .map_err(JobError::retry)?
                 .into_iter()
                 .filter(|(_, name)| name.is_none())
                 .map(|(id, _)| id)
                 .collect();
-            ids.push(*corporation);
+            ids.push(corporation);
             if let Err(err) = tether_esi::names::resolve(db, esi, &ids, Priority::Bulk).await {
                 tracing::warn!(corporation, error = %err, "Corp Stats names");
             }
@@ -518,21 +393,15 @@ pub async fn corp_stats_for(
     Ok(fetched)
 }
 
-/// Records a failing source and tells its owner once it has failed for a
-/// day. Errors are logged: one source mustn't stop the others.
-async fn source_failed(db: &PgPool, character: i64, names: &BTreeMap<i64, String>) {
-    let result = async {
-        let mut tx = db.begin().await?;
-        if let Some(account) = db::source_failed(&mut tx, character).await? {
-            let name = names.get(&character).map_or("a character", String::as_str);
-            crate::notifications::corp_source_failed(&mut tx, account, name).await?;
-        }
-        tx.commit().await
+/// A character just registered: if its corporation has no member list
+/// yet, reads it now rather than at the next daily run (the job checks
+/// the corporation is covered).
+async fn read_first_member_list(db: &PgPool, character: i64) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin().await?;
+    if let Some(corporation) = db::corporation_without_list(&mut *tx, character).await? {
+        tether_db::corpstats::queue_update(&mut tx, corporation).await?;
     }
-    .await;
-    if let Err(err) = result {
-        tracing::warn!(character, error = %err, "recording a failing Corp Stats source");
-    }
+    tx.commit().await
 }
 
 pub fn register_jobs(

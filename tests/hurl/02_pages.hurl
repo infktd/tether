@@ -993,8 +993,8 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-# Registering characters, Corp Stats and data sources need a session
-# (approving: admin.states or admin.plugins).
+# Registering characters, the Compliance Report, state scopes and data
+# sources need a session (then admin.states or admin.plugins).
 GET {{base}}/register
 HTTP 303
 [Asserts]
@@ -1006,31 +1006,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/profile/corp-stats/offer
-Origin: {{base}}
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/profile/corp-stats/1/withdraw
-Origin: {{base}}
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
 GET {{base}}/compliance
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/compliance/sources/1/approve
-Origin: {{base}}
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/compliance/sources/1/remove
-Origin: {{base}}
 HTTP 303
 [Asserts]
 header "Location" == "/login"

@@ -405,7 +405,6 @@ struct ProfilePage {
     characters: Vec<CharacterRow>,
     groups: Vec<String>,
     permissions: Vec<String>,
-    corp_sources: Vec<compliance::OwnSource>,
     widgets: Vec<DashboardWidget>,
     error: Option<String>,
 }
@@ -583,7 +582,6 @@ pub async fn profile(
             characters: loaded.characters,
             groups,
             permissions,
-            corp_sources: compliance::own_sources(&state, session.account).await?,
             widgets,
             error: None,
         },

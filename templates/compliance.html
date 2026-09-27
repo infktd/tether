@@ -8,7 +8,6 @@
     <h1 class="page-title">Compliance Report</h1>
     <p class="text-muted-foreground mt-1 max-w-3xl">Accounts whose characters aren't all registered with their state's scopes. They keep their state, as in Alliance Auth, but aren't in the Compliance Group, so anything you grant that group waits until they register. Corporation Stats compares each corporation's member list with the characters registered here.</p>
   </div>
-  {% include "admin_error.html" %}
 
   <section class="grid grid-cols-3 gap-4" aria-label="Summary">
     <div class="card stat">
@@ -24,7 +23,7 @@
     <div class="card stat">
       <div class="stat-label">No member list</div>
       <div class="stat-value num">{{ uncovered.len() }}</div>
-      <div class="stat-caption">Corporations nobody has shared yet</div>
+      <div class="stat-caption">Corporations with no registered member yet</div>
     </div>
   </section>
 
@@ -62,7 +61,7 @@
   <section class="flex flex-col gap-4" aria-labelledby="corp-stats">
     <div>
       <h2 id="corp-stats" class="text-[15px] font-semibold">Corporation Stats</h2>
-      <p class="text-sm text-muted-foreground">Member lists refresh daily. Any member can share their corporation's list from their Dashboard; an admin approves it below. Mains, members and who never registered are on <a href="/corpstats" class="underline">Corporation Stats</a>.</p>
+      <p class="text-sm text-muted-foreground">Member lists refresh daily, read with any registered Member character in each corporation: Member requires the member list scope, and no in-game role is needed. Mains, members and who never registered are on <a href="/corpstats" class="underline">Corporation Stats</a>.</p>
     </div>
     {% if !corporations.is_empty() %}
     <section class="card data-card">
@@ -82,7 +81,7 @@
     {% endif %}
     {% if !uncovered.is_empty() %}
     <section class="card">
-      <header><h2>No member list yet</h2><p>Corporations with pilots here but no shared member list: ask a member of each to share it from their profile.</p></header>
+      <header><h2>No member list yet</h2><p>Corporations with pilots here but no member list: none of their Member characters has registered yet, or none of their tokens could read it. The list follows once one registers.</p></header>
       <section>
         <ul class="flex flex-wrap gap-2" role="list">
           {% for c in uncovered %}
@@ -91,35 +90,6 @@
         </ul>
       </section>
     </section>
-    {% endif %}
-  </section>
-
-  <section class="card data-card">
-    <header><h2>Member list sources</h2><p>Characters whose owners shared their corporation's member list. A source is used only while it stays in the corporation it was approved for.</p></header>
-    {% if sources.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">Nobody has shared a member list yet.</p>
-    {% else %}
-    <table class="table">
-      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Shared by</th><th scope="col">Status</th>{% if can_manage %}<th scope="col" class="text-right"><span class="sr-only">Actions</span></th>{% endif %}</tr></thead>
-      <tbody>
-        {% for s in sources %}
-        <tr>
-          <td class="font-medium">{{ s.name }}</td>
-          <td>{{ s.corporation }}</td>
-          <td>{{ s.offered_by }}</td>
-          <td>{% if s.status == "approved" %}<span class="badge" data-variant="secondary">in use</span>{% else if s.status == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting</span>{% endif %}</td>
-          {% if can_manage %}
-          <td class="text-right">
-            <div class="flex justify-end gap-2">
-              {% if s.status != "approved" %}<form method="post" action="/compliance/sources/{{ s.character_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>{% endif %}
-              <form method="post" action="/compliance/sources/{{ s.character_id }}/remove" hx-confirm="Stop using {{ s.name }}'s member list?"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>
-            </div>
-          </td>
-          {% endif %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
     {% endif %}
   </section>
 </div>

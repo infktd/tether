@@ -59,7 +59,8 @@ pub struct Card {
     pub can_down: bool,
     /// What the state means, in terms of pilots.
     pub about: String,
-    /// Required because installed plugins read them (Member only).
+    /// Required because Tether (Corporation Stats) or installed plugins
+    /// read them (Member only).
     pub plugin_scopes: Vec<ScopeChip>,
     /// Required because an admin added them.
     pub admin_scopes: Vec<ScopeChip>,
@@ -118,7 +119,6 @@ async fn states_page(
         .chain(plugin_scopes.keys().map(|s| (*s).to_owned()))
         .chain(tether_core::scopes::CORE.iter().map(|s| (*s).to_owned()))
         .collect();
-    application_scopes.insert(tether_core::scopes::CORP_MEMBERSHIP.to_owned());
     for running in state.plugins.all_running() {
         application_scopes.extend(
             running
@@ -170,9 +170,15 @@ async fn states_page(
                 None => format!("Pilots whose main is covered here are {}.", s.name),
             },
             plugin_scopes: if s.builtin == Some(Builtin::Member) {
-                plugin_scopes
+                tether_core::scopes::CORE
                     .iter()
-                    .map(|(scope, by)| chip(scope, by.join(", ")))
+                    .map(|scope| chip(scope, "Corporation Stats".to_owned()))
+                    .chain(
+                        plugin_scopes
+                            .iter()
+                            .filter(|(scope, _)| !tether_core::scopes::CORE.contains(scope))
+                            .map(|(scope, by)| chip(scope, by.join(", "))),
+                    )
                     .collect()
             } else {
                 Vec::new()

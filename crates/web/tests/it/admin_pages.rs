@@ -274,6 +274,9 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
     let other = log_in_as(&h, "1887431749:gigX", None).await;
+    // Registered with Member's scopes, so compliant.
+    let pilot = log_in_as(&h, "443630591:The Mittani", Some(&pilot)).await;
+    let other = log_in_as(&h, "1887431749:gigX", Some(&other)).await;
     let group = create_group(&h, &owner, "Capitals", "request").await;
     let id = group.rsplit('/').next().unwrap();
 

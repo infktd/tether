@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id\n        FROM core.characters c\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        LEFT JOIN core.corp_member_lists l ON l.corporation_id = c.corporation_id\n        WHERE c.corporation_id = $1 AND a.active AND s.builtin = 'member'\n          AND t.state = 'valid' AND $2 = ANY(t.scopes)\n        ORDER BY c.id IS NOT DISTINCT FROM l.source_character_id DESC,\n                 t.checked_at DESC NULLS LAST, c.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "147b62b262f4511cb26d03fea625bcfb010713178ff6e780bb1312f7903fbfb5"
+}

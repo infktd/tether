@@ -115,7 +115,7 @@ pub struct MemberView {
 struct CorpPage {
     shell: Shell,
     corp: CorpRow,
-    /// May Update Now (AA: officers, or the source's owner).
+    /// May Update Now (AA: officers, or the owner of the token that read it).
     can_update: bool,
     tab: &'static str,
     mains: Vec<db::MainRow>,
@@ -201,8 +201,8 @@ pub async fn show(
     corp_page(&state, &session, id, &query.tab, None).await
 }
 
-/// AA's rule: officers (`compliance.view`) or the owner of one of the
-/// corporation's sources.
+/// AA's rule: officers (`compliance.view`) or the owner of the token that
+/// last read the corporation's member list.
 async fn may_update(state: &AppState, session: &CurrentSession, id: i64) -> Result<bool, AppError> {
     Ok(
         tether_db::permissions::effective(&state.db, session.account)
@@ -213,8 +213,8 @@ async fn may_update(state: &AppState, session: &CurrentSession, id: i64) -> Resu
 }
 
 /// `POST /corpstats/{corporation_id}/update`: AA's Update Now, for a
-/// corporation the viewer may see, by officers or its source's owner; at
-/// most every 15 minutes.
+/// corporation the viewer may see, by officers or the owner of the token
+/// that last read it; at most every 15 minutes.
 pub async fn update(
     State(state): State<AppState>,
     session: Option<CurrentSession>,

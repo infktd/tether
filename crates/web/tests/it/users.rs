@@ -220,6 +220,8 @@ async fn reactivating_counts_the_groups_the_account_rejoins(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
     let pilot = log_in_as(&h, GIGX, None).await;
+    // Registered with Member's scopes, so compliant.
+    let pilot = log_in_as(&h, GIGX, Some(&pilot)).await;
     let pilot_account = account_of(&h, &pilot).await;
     let admin = log_in_as(&h, "443630591:The Mittani", None).await;
     let admin_account = account_of(&h, &admin).await;

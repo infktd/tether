@@ -224,25 +224,6 @@ pub async fn character_lost(db: &PgPool, lost: &Lost) -> Result<(), sqlx::Error>
     .await
 }
 
-/// A Corporation Stats source that stopped working, to its owner (once).
-pub async fn corp_source_failed(
-    tx: &mut sqlx::PgConnection,
-    account: AccountId,
-    character: &str,
-) -> Result<(), sqlx::Error> {
-    notify(
-        tx,
-        account,
-        Level::Warning,
-        &format!("Corporation Stats: {character} stopped working"),
-        Some(&format!(
-            "Tether couldn't read your corporation's member list with {character}. Log in with it \
-             again through Register Character, or withdraw it on the Compliance page."
-        )),
-    )
-    .await
-}
-
 // ---- the live unread count ------------------------------------------------
 
 /// Live streams one account may hold open at once (tabs, devices); a

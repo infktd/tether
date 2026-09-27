@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"found!\" FROM core.corp_member_lists l\n        JOIN core.characters c ON c.id = l.source_character_id\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        WHERE l.corporation_id = $2 AND c.account_id = $1\n          AND c.corporation_id = l.corporation_id AND a.active AND s.builtin = 'member'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "found!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7a091d7b69eede0d0406d2895ec030f674f5fb9ac7e1d38fb14df9c5c0eeb4ce"
+}

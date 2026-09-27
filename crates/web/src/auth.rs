@@ -344,9 +344,6 @@ pub async fn callback(
         db::Purpose::DataSource(plugin) => {
             crate::plugin_consent::finish(&state, account, &identity, plugin).await?;
         }
-        db::Purpose::CorpSource => {
-            crate::compliance::finish_corp_offer(&state, account, &identity).await?;
-        }
         db::Purpose::ChangeMain => {
             // SSO just proved control, the character is on this account
             // (linked above) and its token was stored: it's the main now.

@@ -117,9 +117,14 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
-    // The Mittani is Chribba's alt.
+    // The Mittani is Chribba's alt, added (and so registered) with the
+    // scopes Member requires; Chribba only logged in.
     let owner = log_in_as(&h, MITTANI, Some(&owner)).await;
     assert_eq!(state_of(&h, &owner).await, "Member");
+    assert_eq!(compliance(&h, &owner).await, (false, false));
+    let officers = page(&h, "/compliance", &owner).await.body;
+    assert!(officers.contains("Not registered yet"), "{officers}");
+    let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
     assert_eq!(compliance(&h, &owner).await, (true, true));
 
     // Requiring a scope asks first: it would flag Chribba's account.
@@ -156,7 +161,10 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     let checklist = page(&h, "/register", &owner).await.body;
     assert!(checklist.contains("Register Chribba") && checklist.contains("Register The Mittani"));
     let officers = page(&h, "/compliance", &owner).await.body;
-    assert!(officers.contains("Not registered yet"), "{officers}");
+    assert!(
+        officers.contains("Missing Read skills and attributes"),
+        "{officers}"
+    );
 
     // One character isn't enough.
     let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
@@ -181,12 +189,14 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
             .contains("Register Character")
     );
 
-    // Both compliance changes and the scope change were audited; the state
+    // Every compliance change and the scope change were audited; the state
     // never changed.
     let changes = audit_details(&h.db, "compliance.change").await;
     assert_eq!(
         changes,
         [
+            serde_json::json!({"compliant": false}),
+            serde_json::json!({"compliant": true}),
             serde_json::json!({"compliant": false}),
             serde_json::json!({"compliant": true})
         ]
@@ -212,30 +222,82 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     );
 }
 
+/// Waits for the background work after a registration to queue a read of
+/// the corporation's member list.
+async fn wait_for_member_list_job(h: &Harness, corporation: i64) {
+    for _ in 0..200 {
+        let queued: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM core.jobs WHERE kind = 'compliance.corp_stats' \
+             AND (payload->>'corporation_id')::bigint = $1",
+        )
+        .bind(corporation)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+        if queued > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("no member list read queued for {corporation}");
+}
+
+async fn member_list_source(h: &Harness) -> Option<i64> {
+    sqlx::query_scalar(
+        "SELECT source_character_id FROM core.corp_member_lists WHERE corporation_id = $1",
+    )
+    .bind(CHRIBBA_CORP)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
+async fn member_requires_the_member_list_scope(db: PgPool) {
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
     let h = harness(db, true).await;
+    // A plain login asks EVE for nothing (as in Alliance Auth)...
     let owner = log_in_owner(&h, CHRIBBA).await;
-
-    // Chribba's corporation has pilots here but no member list yet.
-    let officers = page(&h, "/compliance", &owner).await.body;
-    assert!(officers.contains("No member list yet"), "{officers}");
-
-    // Chribba shares it from the profile; it waits for an admin.
-    let owner = round_trip(&h, &owner, "/profile/corp-stats/offer", CHRIBBA).await;
+    assert!(h.sso.last_requested.lock().unwrap().is_empty());
+    assert_eq!(state_of(&h, &owner).await, "Member");
+    // ...so a Member is flagged (not demoted) until they register.
+    assert_eq!(compliance(&h, &owner).await, (false, false));
+    let checklist = page(&h, "/register", &owner).await.body;
+    assert!(
+        checklist.contains(tether_core::scopes::CORP_MEMBERSHIP),
+        "{checklist}"
+    );
+    // Registering asks for it, and the stored token carries it.
+    let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
     let asked = h.sso.last_requested.lock().unwrap().clone();
     assert!(
         asked.contains(&tether_core::scopes::CORP_MEMBERSHIP.to_owned()),
         "{asked:?}"
     );
-    assert!(
-        page(&h, "/dashboard", &owner)
+    let scopes: Vec<String> =
+        sqlx::query_scalar("SELECT scopes FROM core.character_tokens WHERE character_id = $1")
+            .bind(CHRIBBA_ID)
+            .fetch_one(&h.db)
             .await
-            .body
-            .contains("waiting for an admin")
+            .unwrap();
+    assert!(
+        scopes.contains(&tether_core::scopes::CORP_MEMBERSHIP.to_owned()),
+        "{scopes:?}"
     );
+    assert_eq!(compliance(&h, &owner).await, (true, true));
+    // Member only: Blue and Guest require nothing of their own.
+    let guest = log_in_as(&h, "1887431749:gigX", None).await;
+    assert_eq!(state_of(&h, &guest).await, "Guest");
+    assert_eq!(compliance(&h, &guest).await, (true, false));
+    let states = page(&h, "/admin/states", &owner).await.body;
+    assert!(states.contains("needed by Corporation Stats"), "{states}");
+}
 
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
     Mock::given(method("GET"))
         .and(path(format!("/corporations/{CHRIBBA_CORP}/members")))
         .respond_with(
@@ -245,16 +307,27 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         .mount(&h.esi_server)
         .await;
 
-    // Approving needs admin.states, not just being signed in.
-    let pilot = log_in_as(&h, "1887431749:gigX", None).await;
-    let approve = format!("/compliance/sources/{CHRIBBA_ID}/approve");
+    // Chribba's corporation has pilots here but nobody registered yet, so
+    // there's nothing to read it with.
     assert_eq!(
-        send(&h.app, form(&approve, "", &pilot)).await.status,
-        StatusCode::FORBIDDEN
+        tether_web::compliance::corp_stats(&h.db, &h.esi, &h.vault)
+            .await
+            .unwrap(),
+        0
     );
-    let approved = send(&h.app, form(&approve, "", &owner)).await;
-    assert_eq!(approved.location(), "/compliance");
+    let officers = page(&h, "/compliance", &owner).await.body;
+    assert!(officers.contains("No member list yet"), "{officers}");
+    // Nothing to offer or approve any more.
+    let profile = page(&h, "/dashboard", &owner).await.body;
+    assert!(!profile.contains("Share a member list"), "{profile}");
+    assert!(!officers.contains("Member list sources"), "{officers}");
+
+    // Registering is enough: no offer, no approval. The corporation's list
+    // is read at once (and daily after that).
+    let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
+    wait_for_member_list_job(&h, CHRIBBA_CORP).await;
     run_jobs(&h).await;
+    assert_eq!(member_list_source(&h).await, Some(CHRIBBA_ID));
 
     let officers = page(&h, "/compliance", &owner).await.body;
     assert!(
@@ -265,6 +338,10 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
     // Corporation Stats: AA's tabs.
     let list = page(&h, "/corpstats", &owner).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+    let corp = page(&h, &format!("/corpstats/{CHRIBBA_CORP}"), &owner)
+        .await
+        .body;
+    assert!(corp.contains("Updated "), "{corp}");
     let unregistered = page(
         &h,
         &format!("/corpstats/{CHRIBBA_CORP}?tab=unregistered"),
@@ -290,7 +367,12 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         found.contains("Search results") && found.contains("Chribba"),
         "{found}"
     );
-    // Update Now queues one refresh of that corporation.
+    // Update Now queues one refresh of that corporation, at most every 15
+    // minutes (the read at registration was an hour ago, say).
+    sqlx::query("UPDATE core.jobs SET finished_at = now() - interval '1 hour'")
+        .execute(&h.db)
+        .await
+        .unwrap();
     let res = send(
         &h.app,
         form(&format!("/corpstats/{CHRIBBA_CORP}/update"), "", &owner),
@@ -305,6 +387,7 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
     assert!(again.body.contains("already waiting"), "{}", again.body);
     // Without a Corporation Stats permission: forbidden; with only
     // view_corp for another corporation: not listed.
+    let pilot = log_in_as(&h, "1887431749:gigX", None).await;
     assert_eq!(
         page(&h, "/corpstats", &pilot).await.status,
         StatusCode::FORBIDDEN
@@ -337,7 +420,7 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         StatusCode::NOT_FOUND
     );
     // Seeing a corporation isn't enough to refresh it (AA: officers or the
-    // source's owner).
+    // owner of the token that read it).
     sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ('corpstats.view_state_corpstats', $1)")
         .bind(GUEST_STATE)
         .execute(&h.db)
@@ -367,17 +450,17 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         .unwrap();
     assert_eq!(lists, 3);
 
-    // Withdrawing stops it; the list goes at the next run.
-    let withdrawn = send(
-        &h.app,
-        form(
-            &format!("/profile/corp-stats/{CHRIBBA_ID}/withdraw"),
-            "",
-            &owner,
-        ),
-    )
-    .await;
-    assert_eq!(withdrawn.location(), "/dashboard");
+    // Once no state covers the corporation, its list goes at the next run.
+    sqlx::query("DELETE FROM core.state_entities WHERE state_id = $1 AND entity_id = 159826257")
+        .bind(MEMBER_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE core.accounts SET state_id = $1")
+        .bind(GUEST_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
     tether_web::compliance::corp_stats(&h.db, &h.esi, &h.vault)
         .await
         .unwrap();
@@ -386,20 +469,121 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(lists, 0);
-    let actions: Vec<String> = sqlx::query_scalar(
-        "SELECT action FROM core.audit_log WHERE action LIKE 'corp_stats.%' ORDER BY id",
+}
+
+async fn list_size(h: &Harness) -> i64 {
+    sqlx::query_scalar("SELECT members::bigint FROM core.corp_member_lists")
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+async fn set_list_source(h: &Harness, character: i64) {
+    sqlx::query("UPDATE core.corp_member_lists SET source_character_id = $1")
+        .bind(character)
+        .execute(&h.db)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn corp_stats_tries_the_last_reader_first_and_skips_one_that_fails(db: PgPool) {
+    const MITTANI_ID: i64 = 443630591;
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
+    // The Mittani, an alt, registers too, and joins Chribba's corporation.
+    let owner = log_in_as(&h, MITTANI, Some(&owner)).await;
+    assert_eq!(compliance(&h, &owner).await, (true, true));
+    sqlx::query("UPDATE core.characters SET corporation_id = $1 WHERE id = $2")
+        .bind(CHRIBBA_CORP)
+        .bind(MITTANI_ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    // Each token reads a list (of a different size, to tell them apart).
+    let members = format!("/corporations/{CHRIBBA_CORP}/members");
+    let bearer = |id: i64| format!("Bearer access-{id}-login");
+    Mock::given(method("GET"))
+        .and(path(members.clone()))
+        .and(wiremock::matchers::header(
+            "authorization",
+            bearer(CHRIBBA_ID).as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([CHRIBBA_ID])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(members.clone()))
+        .and(wiremock::matchers::header(
+            "authorization",
+            bearer(MITTANI_ID).as_str(),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([CHRIBBA_ID, MITTANI_ID])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let run = || tether_web::compliance::corp_stats(&h.db, &h.esi, &h.vault);
+
+    // The first read uses one of them, and records which.
+    assert_eq!(run().await.unwrap(), 1);
+    assert_eq!(member_list_source(&h).await, Some(CHRIBBA_ID));
+    assert_eq!(list_size(&h).await, 1);
+    // Whichever read it last is tried first.
+    set_list_source(&h, MITTANI_ID).await;
+    assert_eq!(run().await.unwrap(), 1);
+    assert_eq!(member_list_source(&h).await, Some(MITTANI_ID));
+    assert_eq!(list_size(&h).await, 2);
+
+    // Chribba's stops working (ESI refuses it): skipped for The Mittani's,
+    // and nobody is told (nobody volunteered it).
+    Mock::given(method("GET"))
+        .and(path(members.clone()))
+        .and(wiremock::matchers::header(
+            "authorization",
+            bearer(CHRIBBA_ID).as_str(),
+        ))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(serde_json::json!({"error": "forbidden"})),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    set_list_source(&h, CHRIBBA_ID).await;
+    assert_eq!(run().await.unwrap(), 1);
+    assert_eq!(member_list_source(&h).await, Some(MITTANI_ID));
+    assert_eq!(list_size(&h).await, 2);
+    let told: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.notifications WHERE title LIKE 'Corporation Stats%'",
     )
-    .fetch_all(&h.db)
+    .fetch_one(&h.db)
     .await
     .unwrap();
-    assert_eq!(
-        actions,
-        [
-            "corp_stats.offered",
-            "corp_stats.approved",
-            "corp_stats.withdrawn"
-        ]
-    );
+    assert_eq!(told, 0);
+
+    // ESI down isn't a member's fault: the run stops (and is retried)
+    // rather than trying every member's token in turn.
+    let outage = Mock::given(method("GET"))
+        .and(path(members))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .expect(1)
+        .mount_as_scoped(&h.esi_server)
+        .await;
+    set_list_source(&h, MITTANI_ID).await;
+    assert!(run().await.is_err());
+    drop(outage);
+
+    // A token without the scope isn't used at all.
+    sqlx::query("UPDATE core.character_tokens SET scopes = '{}' WHERE character_id = $1")
+        .bind(MITTANI_ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(run().await.unwrap(), 0);
+    assert_eq!(member_list_source(&h).await, Some(MITTANI_ID));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -407,6 +591,7 @@ async fn tether_manages_the_compliant_group(db: PgPool) {
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
     let group: i64 = sqlx::query_scalar("SELECT id FROM core.groups WHERE compliance")
         .fetch_one(&h.db)
         .await
@@ -523,6 +708,7 @@ async fn admins_designate_compliance_groups_per_state(db: PgPool) {
     cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
     let res = send(
         &h.app,

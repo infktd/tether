@@ -386,176 +386,104 @@ pub async fn serving_characters(
 
 // ---- Corp Stats ----------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CorpSource {
-    pub character_id: i64,
-    pub character_name: String,
-    /// The character's current corporation.
-    pub corporation_id: Option<i64>,
-    pub offered_by: Option<String>,
-    pub offered_at: DateTime<Utc>,
-    pub approved: bool,
-    /// The corporation it was approved for.
-    pub approved_corporation: Option<i64>,
-}
-
-impl CorpSource {
-    /// Approved, and still in the corporation it was approved for.
-    pub fn in_use(&self) -> bool {
-        self.approved
-            && self.approved_corporation.is_some()
-            && self.approved_corporation == self.corporation_id
-    }
-}
-
-/// Returns false if it was already offered (an approval stays).
-pub async fn offer_corp_source<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    character_id: i64,
-    by: AccountId,
-) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query!(
+/// Corporations a state covers: the main of some account in a state other
+/// than Guest (or the Blacklist) is in it. Only their member lists are
+/// read and kept. Never NPC corporations (ids 1000000 to 1999999): no
+/// member reads those, and their rosters aren't anyone's to list.
+pub async fn covered_corporations(pool: &PgPool) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
         r#"
-        INSERT INTO core.corp_sources (character_id, offered_by) VALUES ($1, $2)
-        ON CONFLICT DO NOTHING
-        "#,
-        character_id,
-        by.0,
+        SELECT DISTINCT c.corporation_id AS "corporation_id!"
+        FROM core.accounts a
+        JOIN core.characters c ON c.id = a.main_character_id
+        JOIN core.states s ON s.id = a.state_id
+        WHERE c.corporation_id IS NOT NULL
+          AND c.corporation_id NOT BETWEEN 1000000 AND 1999999
+          AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'
+        ORDER BY 1
+        "#
     )
-    .execute(executor)
-    .await?;
-    Ok(result.rows_affected() == 1)
+    .fetch_all(pool)
+    .await
 }
 
-/// Approves an offer for the character's current corporation.
-pub async fn approve_corp_source<'e>(
+/// The characters whose tokens may read `corporation_id`'s member list:
+/// registered characters in it (a valid token carrying `scope`) on active
+/// Member accounts, the one that read it last first, then the tokens
+/// confirmed most recently.
+pub async fn member_list_readers(
+    pool: &PgPool,
+    corporation_id: i64,
+    scope: &str,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT c.id
+        FROM core.characters c
+        JOIN core.accounts a ON a.id = c.account_id
+        JOIN core.states s ON s.id = a.state_id
+        JOIN core.character_tokens t ON t.character_id = c.id
+        LEFT JOIN core.corp_member_lists l ON l.corporation_id = c.corporation_id
+        WHERE c.corporation_id = $1 AND a.active AND s.builtin = 'member'
+          AND t.state = 'valid' AND $2 = ANY(t.scopes)
+        ORDER BY c.id IS NOT DISTINCT FROM l.source_character_id DESC,
+                 t.checked_at DESC NULLS LAST, c.id
+        "#,
+        corporation_id,
+        scope,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// The character's corporation, if a state covers it (as
+/// [`covered_corporations`]) and it has no member list yet.
+pub async fn corporation_without_list<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     character_id: i64,
-    by: AccountId,
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
-        UPDATE core.corp_sources s
-        SET approved_by = $2, approved_at = now(), corporation_id = c.corporation_id
+        SELECT c.corporation_id AS "corporation_id!"
         FROM core.characters c
-        WHERE s.character_id = $1 AND c.id = s.character_id AND c.corporation_id IS NOT NULL
-        RETURNING s.corporation_id AS "corporation_id!"
+        WHERE c.id = $1 AND c.corporation_id IS NOT NULL
+          AND c.corporation_id NOT BETWEEN 1000000 AND 1999999
+          AND NOT EXISTS (SELECT 1 FROM core.corp_member_lists l
+                          WHERE l.corporation_id = c.corporation_id)
+          AND EXISTS (
+            SELECT 1 FROM core.accounts a
+            JOIN core.characters m ON m.id = a.main_character_id
+            JOIN core.states s ON s.id = a.state_id
+            WHERE m.corporation_id = c.corporation_id
+              AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'
+          )
         "#,
-        character_id,
-        by.0,
+        character_id
     )
     .fetch_optional(executor)
     .await
 }
 
-pub async fn remove_corp_source<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    character_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query!(
-        "DELETE FROM core.corp_sources WHERE character_id = $1",
-        character_id
-    )
-    .execute(executor)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-/// Marks a Corporation Stats source as failing. Returns the account that
-/// holds it once it has failed for most of a day (the job is daily, so on
-/// the second failed run), the first time only; else `None`.
-pub async fn source_failed(
-    tx: &mut sqlx::PgConnection,
-    character_id: i64,
-) -> Result<Option<AccountId>, sqlx::Error> {
-    let Some(row) = sqlx::query!(
-        r#"
-        SELECT s.failing_since < now() - interval '20 hours' AS "long_enough?",
-               s.failure_notified, c.account_id
-        FROM core.corp_sources s JOIN core.characters c ON c.id = s.character_id
-        WHERE s.character_id = $1
-        FOR UPDATE OF s
-        "#,
-        character_id
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    else {
-        return Ok(None);
-    };
-    let tell = row.long_enough == Some(true) && !row.failure_notified;
-    sqlx::query!(
-        r#"
-        UPDATE core.corp_sources
-        SET failing_since = COALESCE(failing_since, now()),
-            failure_notified = failure_notified OR $2
-        WHERE character_id = $1
-        "#,
-        character_id,
-        tell,
-    )
-    .execute(&mut *tx)
-    .await?;
-    Ok(tell.then_some(AccountId(row.account_id)))
-}
-
-/// Clears a source's failure once it works again.
-pub async fn source_ok<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    character_id: i64,
-) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        "UPDATE core.corp_sources SET failing_since = NULL, failure_notified = false WHERE character_id = $1 AND failing_since IS NOT NULL",
-        character_id
-    )
-    .execute(executor)
-    .await?;
-    Ok(())
-}
-
-pub async fn corp_sources(pool: &PgPool) -> Result<Vec<CorpSource>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT s.character_id, c.name AS character_name, c.corporation_id AS current,
-               m.name AS "offered_by?", s.offered_at, s.approved_at, s.corporation_id
-        FROM core.corp_sources s
-        JOIN core.characters c ON c.id = s.character_id
-        LEFT JOIN core.accounts a ON a.id = s.offered_by
-        LEFT JOIN core.characters m ON m.id = a.main_character_id
-        ORDER BY s.approved_at IS NOT NULL, c.name
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| CorpSource {
-            character_id: r.character_id,
-            character_name: r.character_name,
-            corporation_id: r.current,
-            offered_by: r.offered_by,
-            offered_at: r.offered_at,
-            approved: r.approved_at.is_some(),
-            approved_corporation: r.corporation_id,
-        })
-        .collect())
-}
-
-/// Stores a corporation's member list, replacing the last one.
+/// Stores a corporation's member list, replacing the last one, and which
+/// character's token read it.
 pub async fn store_members(
     tx: &mut sqlx::PgConnection,
     corporation_id: i64,
     members: &[i64],
+    read_by: i64,
 ) -> Result<(), sqlx::Error> {
     let count = i32::try_from(members.len()).unwrap_or(i32::MAX);
     sqlx::query!(
         r#"
-        INSERT INTO core.corp_member_lists (corporation_id, fetched_at, members)
-        VALUES ($1, now(), $2)
-        ON CONFLICT (corporation_id) DO UPDATE SET fetched_at = now(), members = EXCLUDED.members
+        INSERT INTO core.corp_member_lists (corporation_id, fetched_at, members, source_character_id)
+        VALUES ($1, now(), $2, $3)
+        ON CONFLICT (corporation_id) DO UPDATE
+        SET fetched_at = now(), members = EXCLUDED.members,
+            source_character_id = EXCLUDED.source_character_id
         "#,
         corporation_id,
         count,
+        read_by,
     )
     .execute(&mut *tx)
     .await?;
@@ -578,8 +506,8 @@ pub async fn store_members(
     Ok(())
 }
 
-/// Drops member lists no approved source, still in that corporation,
-/// keeps current any more.
+/// Drops the member lists of corporations no state covers any more
+/// (nobody's main in a state other than Guest is in them).
 pub async fn prune_member_lists<'e>(
     executor: impl sqlx::PgExecutor<'e>,
 ) -> Result<u64, sqlx::Error> {
@@ -587,13 +515,6 @@ pub async fn prune_member_lists<'e>(
         r#"
         DELETE FROM core.corp_member_lists l
         WHERE NOT EXISTS (
-            SELECT 1 FROM core.corp_sources s
-            JOIN core.characters c ON c.id = s.character_id
-            WHERE s.corporation_id = l.corporation_id AND s.approved_at IS NOT NULL
-              AND c.corporation_id = s.corporation_id
-        )
-        -- Or nobody's main is in it any more.
-        OR NOT EXISTS (
             SELECT 1 FROM core.accounts a
             JOIN core.characters m ON m.id = a.main_character_id
             JOIN core.states st ON st.id = a.state_id
@@ -654,28 +575,6 @@ pub async fn unregistered(
     Ok(rows.into_iter().map(|r| (r.character_id, r.name)).collect())
 }
 
-/// Whether the corporation is covered: the main of some account in a state
-/// other than Guest is in it.
-pub async fn corporation_covered<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    corporation_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let found = sqlx::query_scalar!(
-        r#"
-        SELECT true AS "found!"
-        FROM core.accounts a
-        JOIN core.characters c ON c.id = a.main_character_id
-        JOIN core.states s ON s.id = a.state_id
-        WHERE c.corporation_id = $1 AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'
-        LIMIT 1
-        "#,
-        corporation_id
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(found.is_some())
-}
-
 /// Names from the names cache, for display.
 pub async fn cached_names(
     pool: &PgPool,
@@ -715,42 +614,4 @@ pub async fn corporations_without_lists(
         .into_iter()
         .map(|r| (r.corporation_id, r.name))
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::accounts;
-
-    #[sqlx::test(migrator = "crate::MIGRATOR")]
-    async fn a_failing_source_is_reported_once_after_a_day(pool: PgPool) {
-        let login = accounts::Login {
-            character_id: 7,
-            character_name: "Director",
-            owner_hash: "h",
-        };
-        let account = accounts::sign_in(&pool, login, false)
-            .await
-            .unwrap()
-            .outcome
-            .account()
-            .unwrap();
-        sqlx::query("INSERT INTO core.corp_sources (character_id, offered_by) VALUES (7, $1)")
-            .bind(account.0)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-        // The first failure only starts the clock.
-        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), None);
-        sqlx::query("UPDATE core.corp_sources SET failing_since = now() - interval '1 day'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), Some(account));
-        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), None);
-        // Working again resets it.
-        source_ok(&pool, 7).await.unwrap();
-        assert_eq!(source_failed(&mut conn, 7).await.unwrap(), None);
-    }
 }

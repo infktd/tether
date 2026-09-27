@@ -73,7 +73,7 @@ Status: **done**, **partial** (exists, but short of AA), **planned** (already a 
 | AA app | Tether | Status |
 | --- | --- | --- |
 | Auto Groups | Admin → Auto Groups: per-state configs, corporation and alliance groups, prefix, name or ticker, space replacement; groups are Internal and kept by Tether; a config's groups go with it | done; stricter than AA, it never takes over an existing group of the same name |
-| Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corporation Stats, a sidebar item for its view permissions (Corporation section, with the Compliance Report for `compliance.view`) and in Administration: Mains, Members and Unregistered tabs, search, Update Now, AA's three view permissions (compliance.view sees all); sources offered by members and approved by admins | done |
+| Corporation Stats (Mains, Members, Unregistered, Search, Update Now; view_corp/alliance/state permissions) | Corporation Stats, a sidebar item for its view permissions (Corporation section, with the Compliance Report for `compliance.view`) and in Administration: Mains, Members and Unregistered tabs, search, Update Now, AA's three view permissions (compliance.view sees all); member lists read automatically with any registered Member character in each covered corporation (Member requires the member list scope), so nobody adds or approves a source | done |
 | Permissions Audit (`permissions_tool.audit_permissions`) | **Permissions Audit**, a sidebar item for its holders (Admin section) and in Administration: every permission (core and apps') with counts of states, groups and active accounts holding it; each one lists its holders and whether the owner, their state or which groups give it | done; counts follow Tether's rules (the owner holds everything, deactivated accounts nothing, groups only with a main) |
 | Fleet Activity Tracking | Fleet Activity Tracking plugin (`plugins/fleet-activity-tracking`), with aa-afat's pages and permissions (`basic_access`, `add_fatlink`, `manage_afat`, `stats_corporation_own`, `stats_corporation_other`, `logs_view`): **Dashboard** (your recent FATs, open and recent FAT links), **FAT Links**, **Create FAT Link** (fleet name, fleet type, doctrine, expiry), the link's page (register link, attendees, edit, close, reopen once or by a manager, manual FAT add, and for managers FAT removal and delete), members' register page (every character they brought, once each, only while the link is open), **Statistics** by month for your characters, your corporation, every corporation and alliance, with per-pilot, per-corporation and per-fleet-type breakdowns, **Fleet types** (admin-managed) and **Logs** (60 days); **ESI-tracked fleets**: an FC picks one of their own characters that is an approved data source of the app (they opt in by offering it, as aa-afat asks only FCs for `esi-fleets.read_fleet.v1`), and while the link is open everyone in the fleet that character is boss of gets a FAT with ship and system, read every minute; tracking stops when the fleet ends, boss passes (the FC can resume), ESI refuses, the data source goes, the link closes or after six hours, each stop logged | done; stricter than aa-afat: tracking is capped at six hours, and fleet members the app hasn't seen get their corporation when they next use it (the host offers no public affiliation lookup) |
 | Fleet Operations (optimer) | Fleet Ops plugin (F22) | planned |
@@ -142,7 +142,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 **Notifications** (rules the Notifications task implements)
 
 - Levels danger, warning, info, success; title at most 254 characters; message defaults to the title. At most 50 per account: the oldest (read or not) go first. Only the recipient sees them; opening one marks it read; delete one, mark all read, delete all read; the unread count updates live.
-- Sent for: state changes; the group decisions and (opt-in) requests above; compliance gained or lost; Discord access removed ("Discord Account Disabled", warning); a character lost to a sale ("Character {name} biomassed" is AA's for deletions); a Corporation Stats source that stopped working (to its owner). Not for member removals, open or auto join and leave, or retracts.
+- Sent for: state changes; the group decisions and (opt-in) requests above; compliance gained or lost; Discord access removed ("Discord Account Disabled", warning); a character lost to a sale ("Character {name} biomassed" is AA's for deletions). Not for member removals, open or auto join and leave, or retracts.
 
 **Services and Discord**
 
@@ -155,8 +155,8 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 **Corporation Stats**
 
 - Mains (accounts whose main is in the corporation, with their characters), Members (registered characters in it), Unregistered. View permissions per corporation, alliance or state (either grants access), plus the owner. **Update Now**, checking the viewer may see that corporation (AA doesn't).
-- A source that stops working (token, left the corporation) notifies its owner.
-- Kept from Tether: an admin approves each source, several sources per corporation as fallbacks, only covered corporations.
+- Each list is read with any registered Member character in the corporation (Member requires `esi-corporations.read_corporation_membership.v1`, so nobody adds one): the one whose token read it last first; one that fails (token, left the corporation) is skipped for the next, and nobody is notified. Update Now: officers, or the owner of the token that last read it (AA: the token's owner).
+- Kept from Tether: every registered member is a fallback, and only covered corporations are read.
 
 **Fleet Pings** (aa-fleetpings)
 
@@ -173,7 +173,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 - Discord only for v1; other services on request, as plugins.
 - One token per character, holding every scope granted (AA keeps one per scope set); a failed token is kept as revoked and audited, not deleted, while its effect on the account matches AA's.
 - Discord: explicit role mapping (above); OAuth state checked; the bot has only the permissions it needs, never Administrator; the member's Discord token is revoked after linking; members who leave the server stay linked (PRD).
-- Corporation Stats sources need an admin's approval, and only covered corporations are read.
+- Corporation Stats reads every covered corporation by itself (AA reads the corporations someone added with their token), and only covered corporations.
 - App owners (AA's Add Owner) need an admin's approval too (PRD F16, N8): holders of the app's `manage` or an `add_…` permission offer a character from the app's page in one EVE login (AA adds it at once), and an admin with `admin.plugins` approves it on the same page.
 - Compliance is stricter than Member Audit: revoked tokens break it.
 - Evaluations run on the job queue, not inline, so a burst of changes can't stall requests.

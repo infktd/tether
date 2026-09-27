@@ -280,12 +280,16 @@ pub const ALL: &[ScopeInfo] = &[
     ),
 ];
 
-/// Scopes Tether itself needs from every Member character. None yet:
-/// everything core does uses public ESI.
-pub const CORE: &[&str] = &[];
-
-/// The scope Corp Stats reads a corporation's member list with.
+/// The scope Corporation Stats reads a corporation's member list with,
+/// from any registered Member character in it (ESI needs no in-game role
+/// for the list).
 pub const CORP_MEMBERSHIP: &str = "esi-corporations.read_corporation_membership.v1";
+
+/// Scopes Tether itself needs from every Member character (and from no
+/// other state's): the corporation member list, so Corporation Stats reads
+/// every covered corporation's list, as Alliance Auth's does, without a
+/// member volunteering. Everything else core does uses public ESI.
+pub const CORE: &[&str] = &[CORP_MEMBERSHIP];
 
 /// Scopes that act as the character (send mail, change contacts, manage
 /// fleets, drive the client): never required of anyone, since nothing in
@@ -366,7 +370,7 @@ pub fn check(required: &BTreeSet<String>, characters: &[(i64, Token)]) -> Vec<(i
         .collect()
 }
 
-/// A state's required scopes: for Member, Tether's own and every
+/// A state's required scopes: for Member, Tether's own ([`CORE`]) and every
 /// installed plugin's user scopes; for any state, what admins added.
 pub fn required(
     member: bool,
@@ -430,13 +434,20 @@ mod tests {
     }
 
     #[test]
-    fn member_adds_plugin_scopes_and_others_only_admin_ones() {
+    fn member_adds_core_and_plugin_scopes_and_others_only_admin_ones() {
         let plugins = vec!["esi-skills.read_skills.v1".to_owned()];
         let admin = vec!["esi-clones.read_clones.v1".to_owned()];
         assert_eq!(
             required(true, &plugins, &admin),
-            set(&["esi-clones.read_clones.v1", "esi-skills.read_skills.v1"])
+            set(&[
+                "esi-clones.read_clones.v1",
+                CORP_MEMBERSHIP,
+                "esi-skills.read_skills.v1"
+            ])
         );
+        // Member always requires the member list scope; nobody else does.
+        assert_eq!(required(true, &[], &[]), set(&[CORP_MEMBERSHIP]));
+        assert!(required(false, &[], &[]).is_empty());
         assert_eq!(
             required(false, &plugins, &admin),
             set(&["esi-clones.read_clones.v1"])

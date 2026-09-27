@@ -1,6 +1,6 @@
 //! Corporation Stats (AA's): which corporations a viewer may see, and each
 //! corporation's mains, members and unregistered members, from the member
-//! lists Corp Stats sources provide.
+//! lists read with its registered members' tokens.
 
 use chrono::{DateTime, Utc};
 
@@ -226,8 +226,9 @@ pub async fn queue_update(
     Ok(result.rows_affected() == 1)
 }
 
-/// Whether the account owns one of the corporation's approved sources (AA:
-/// the source's owner may Update Now).
+/// Whether the account holds the character whose token last read the
+/// corporation's member list (AA: the token's owner may Update Now), still
+/// in that corporation, on an active Member account.
 pub async fn owns_source<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
@@ -235,10 +236,12 @@ pub async fn owns_source<'e>(
 ) -> Result<bool, sqlx::Error> {
     let found = sqlx::query_scalar!(
         r#"
-        SELECT true AS "found!" FROM core.corp_sources s
-        JOIN core.characters c ON c.id = s.character_id
-        WHERE s.corporation_id = $2 AND s.approved_at IS NOT NULL AND c.account_id = $1
-        LIMIT 1
+        SELECT true AS "found!" FROM core.corp_member_lists l
+        JOIN core.characters c ON c.id = l.source_character_id
+        JOIN core.accounts a ON a.id = c.account_id
+        JOIN core.states s ON s.id = a.state_id
+        WHERE l.corporation_id = $2 AND c.account_id = $1
+          AND c.corporation_id = l.corporation_id AND a.active AND s.builtin = 'member'
         "#,
         account.0,
         corporation

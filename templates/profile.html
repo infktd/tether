@@ -45,24 +45,6 @@
 </div>
 {% endfor %}
 
-
-<section class="card">
-  <header><h2>Corporation Stats</h2><p>Share your corporation's member list so officers can see who hasn't registered. Any member can share it; an admin approves it before it's used.</p></header>
-  <section class="grid gap-3 text-sm">
-    {% for c in corp_sources %}
-    <div class="flex items-center justify-between gap-3">
-      <span>{{ c.name }} {% if c.status == "approved" %}<span class="badge" data-variant="secondary">in use</span>{% else if c.status == "moved" %}<span class="badge" data-variant="outline">changed corporation: waiting for an admin</span>{% else %}<span class="badge" data-variant="outline">waiting for an admin</span>{% endif %}</span>
-      <form method="post" action="/profile/corp-stats/{{ c.character_id }}/withdraw" hx-boost="true">
-        <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Stop sharing</button>
-      </form>
-    </div>
-    {% endfor %}
-    <form method="post" action="/profile/corp-stats/offer" hx-boost="false">
-      <button type="submit" class="btn" data-variant="outline" data-size="sm">Share a member list</button>
-    </form>
-  </section>
-</section>
-
 {% if !permissions.is_empty() %}
 <section class="card">
   <header><h2>Permissions</h2></header>

@@ -3,15 +3,13 @@
 //! compliant and Corp Stats (corporation members who never registered).
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
-use tether_core::permissions::{ADMIN_STATES, COMPLIANCE_VIEW};
+use tether_core::permissions::COMPLIANCE_VIEW;
 use tether_core::scopes::Problem;
-use tether_db::accounts::AccountId;
 use tether_db::compliance as db;
-use tether_db::permissions;
 
 use super::admin::guard;
 use super::{PageError, Shell, load, render};
@@ -112,65 +110,6 @@ pub async fn start(
     Ok(compliance::start_register(&state, jar, session.account).await?)
 }
 
-// ---- Corp Stats offers, from the profile -------------------------------------
-
-/// One of the account's characters offered for Corp Stats.
-pub struct OwnSource {
-    pub character_id: i64,
-    pub name: String,
-    /// approved, moved or waiting.
-    pub status: &'static str,
-}
-
-fn source_status(source: &db::CorpSource) -> &'static str {
-    if source.in_use() {
-        "approved"
-    } else if source.approved {
-        "moved"
-    } else {
-        "waiting"
-    }
-}
-
-pub async fn own_sources(state: &AppState, account: AccountId) -> Result<Vec<OwnSource>, AppError> {
-    let mine: Vec<i64> = tether_db::plugin_esi::account_characters(&state.db, account)
-        .await?
-        .into_iter()
-        .map(|c| c.id)
-        .collect();
-    Ok(db::corp_sources(&state.db)
-        .await?
-        .into_iter()
-        .filter(|s| mine.contains(&s.character_id))
-        .map(|s| OwnSource {
-            character_id: s.character_id,
-            status: source_status(&s),
-            name: s.character_name,
-        })
-        .collect())
-}
-
-/// `POST /profile/corp-stats/offer`
-pub async fn offer(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    jar: CookieJar,
-) -> Result<Response, PageError> {
-    let session = session.ok_or_else(AppError::unauthorized)?;
-    Ok(compliance::start_corp_offer(&state, jar, session.account).await?)
-}
-
-/// `POST /profile/corp-stats/{character}/withdraw`
-pub async fn withdraw(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path(character): Path<i64>,
-) -> Result<Response, PageError> {
-    let session = session.ok_or_else(AppError::unauthorized)?;
-    compliance::withdraw_corp_source(&state, session.account, character).await?;
-    Ok(Redirect::to("/dashboard").into_response())
-}
-
 // ---- the officers' page ------------------------------------------------------
 
 pub struct Shortfall {
@@ -209,14 +148,6 @@ pub struct UncoveredCorp {
     pub name: String,
 }
 
-pub struct SourceRow {
-    pub character_id: i64,
-    pub name: String,
-    pub corporation: String,
-    pub offered_by: String,
-    pub status: &'static str,
-}
-
 #[derive(Template)]
 #[template(path = "compliance.html")]
 struct CompliancePage {
@@ -225,10 +156,6 @@ struct CompliancePage {
     corporations: Vec<CorpRow>,
     uncovered: Vec<UncoveredCorp>,
     unregistered_total: i64,
-    sources: Vec<SourceRow>,
-    /// May approve and remove Corp Stats sources.
-    can_manage: bool,
-    error: Option<String>,
 }
 
 /// Unregistered members shown per corporation; the count covers the rest.
@@ -238,12 +165,12 @@ fn when(at: chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M EVE").to_string()
 }
 
-async fn compliance_page(
-    state: &AppState,
-    session: &CurrentSession,
-    shell: Shell,
-    error: Option<AppError>,
+/// `GET /compliance`
+pub async fn page(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
+    let (_, shell) = guard(&state, session, COMPLIANCE_VIEW, "compliance").await?;
     let states = tether_db::states::list(&state.db).await?;
     let mut not_compliant = Vec::new();
     for row in db::not_compliant(&state.db).await? {
@@ -304,99 +231,14 @@ async fn compliance_page(
             name: name.unwrap_or_else(|| format!("Corporation {id}")),
         })
         .collect();
-    let all_sources = db::corp_sources(&state.db).await?;
-    let ids: Vec<i64> = all_sources
-        .iter()
-        .filter_map(|s| s.corporation_id)
-        .collect();
-    // From the names cache, or ESI (public) for corporations not seen yet.
-    let mut names = db::cached_names(&state.db, &ids).await?;
-    let missing: Vec<i64> = ids
-        .iter()
-        .filter(|id| !names.contains_key(id))
-        .copied()
-        .collect();
-    if !missing.is_empty()
-        && let Ok(found) = tether_esi::names::resolve(
-            &state.db,
-            &state.esi,
-            &missing,
-            tether_esi::Priority::Interactive,
-        )
-        .await
-    {
-        names.extend(found.into_iter().map(|(id, e)| (id, e.name)));
-    }
-    let corp_name = |id: Option<i64>| match id {
-        Some(id) => names
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| format!("Corporation {id}")),
-        None => "unknown".to_owned(),
-    };
-    let sources = all_sources
-        .into_iter()
-        .map(|s| SourceRow {
-            character_id: s.character_id,
-            corporation: corp_name(s.corporation_id),
-            offered_by: s.offered_by.clone().unwrap_or_else(|| "Someone".to_owned()),
-            status: source_status(&s),
-            name: s.character_name,
-        })
-        .collect();
-    let can_manage = permissions::effective(&state.db, session.account)
-        .await?
-        .contains(ADMIN_STATES);
-    let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
-        status,
+        StatusCode::OK,
         &CompliancePage {
             shell,
             not_compliant,
             corporations,
             uncovered,
             unregistered_total,
-            sources,
-            can_manage,
-            error: error.map(|e| e.message().to_owned()),
         },
     ))
-}
-
-/// `GET /compliance`
-pub async fn page(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, COMPLIANCE_VIEW, "compliance").await?;
-    compliance_page(&state, &session, shell, None).await
-}
-
-/// `POST /compliance/sources/{character}/approve`
-pub async fn approve_source(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path(character): Path<i64>,
-) -> Result<Response, PageError> {
-    // Both: the page shown on an error lists what compliance.view guards.
-    let (session, shell) = guard(&state, session, COMPLIANCE_VIEW, "compliance").await?;
-    session.require(&state, ADMIN_STATES).await?;
-    match compliance::approve_corp_source(&state, session.account, character).await {
-        Ok(()) => Ok(Redirect::to("/compliance").into_response()),
-        Err(err) => compliance_page(&state, &session, shell, Some(err)).await,
-    }
-}
-
-/// `POST /compliance/sources/{character}/remove`
-pub async fn remove_source(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path(character): Path<i64>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, COMPLIANCE_VIEW, "compliance").await?;
-    session.require(&state, ADMIN_STATES).await?;
-    match compliance::remove_corp_source(&state, session.account, character).await {
-        Ok(()) => Ok(Redirect::to("/compliance").into_response()),
-        Err(err) => compliance_page(&state, &session, shell, Some(err)).await,
-    }
 }

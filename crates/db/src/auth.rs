@@ -29,8 +29,6 @@ pub enum Purpose {
     Register,
     /// Offering a character as a plugin's data source.
     DataSource(String),
-    /// Offering a character's corporation member list (Corp Stats).
-    CorpSource,
     /// Change Main by logging in with the character (Alliance Auth's
     /// Change Main): linked to the account like Add Character, then made
     /// its main.
@@ -46,7 +44,6 @@ impl Purpose {
             Self::Login => ("login", None),
             Self::Register => ("register", None),
             Self::DataSource(plugin) => ("data_source", Some(plugin)),
-            Self::CorpSource => ("corp_source", None),
             Self::ChangeMain => ("change_main", None),
             Self::Reauth(_) => ("reauth", None),
         }
@@ -64,7 +61,6 @@ impl Purpose {
             ("reauth", _) => Self::Reauth(action),
             ("register", _) => Self::Register,
             ("data_source", Some(plugin)) => Self::DataSource(plugin),
-            ("corp_source", _) => Self::CorpSource,
             ("change_main", _) => Self::ChangeMain,
             _ => Self::Login,
         }

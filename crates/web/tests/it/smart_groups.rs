@@ -161,6 +161,8 @@ async fn a_grace_period_warns_before_removing(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
     let pilot = log_in_as(&h, GIGX, None).await;
+    // Registered with Member's scopes, so compliant.
+    let pilot = log_in_as(&h, GIGX, Some(&pilot)).await;
     let pilot_account = account_of(&h, &pilot).await;
     let caps = group(
         &h,

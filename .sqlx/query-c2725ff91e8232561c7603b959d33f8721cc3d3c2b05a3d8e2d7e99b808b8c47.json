@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT c.corporation_id AS \"corporation_id!\"\n        FROM core.accounts a\n        JOIN core.characters c ON c.id = a.main_character_id\n        JOIN core.states s ON s.id = a.state_id\n        WHERE c.corporation_id IS NOT NULL\n          AND c.corporation_id NOT BETWEEN 1000000 AND 1999999\n          AND s.builtin IS DISTINCT FROM 'guest' AND s.builtin IS DISTINCT FROM 'blacklist'\n        ORDER BY 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c2725ff91e8232561c7603b959d33f8721cc3d3c2b05a3d8e2d7e99b808b8c47"
+}

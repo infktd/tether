@@ -405,20 +405,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/register", get(pages::compliance::register))
         .route("/register/start", post(pages::compliance::start))
-        .route("/profile/corp-stats/offer", post(pages::compliance::offer))
-        .route(
-            "/profile/corp-stats/{character}/withdraw",
-            post(pages::compliance::withdraw),
-        )
         .route("/compliance", get(pages::compliance::page))
-        .route(
-            "/compliance/sources/{character}/approve",
-            post(pages::compliance::approve_source),
-        )
-        .route(
-            "/compliance/sources/{character}/remove",
-            post(pages::compliance::remove_source),
-        )
         .route("/admin/states/{id}/scopes", post(pages::states::add_scope))
         .route(
             "/admin/states/{id}/scopes/remove",
