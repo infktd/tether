@@ -401,3 +401,66 @@ async fn public_entries_take_ids_and_no_token() {
         assert!(!request.headers.contains_key("authorization"));
     }
 }
+
+#[tokio::test]
+async fn names_become_type_ids_and_a_type_has_its_dogma() {
+    let (server, esi) = esi().await;
+    Mock::given(method("POST"))
+        .and(path("/universe/ids"))
+        .and(wiremock::matchers::body_json(json!([
+            "Rifter",
+            "Damage Control II"
+        ])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "inventory_types": [
+                {"id": 587, "name": "Rifter"},
+                {"id": 2048, "name": "Damage Control II"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/universe/types/2048"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "type_id": 2048, "name": "Damage Control II", "description": "Hull repair",
+            "group_id": 60, "published": true,
+            "dogma_attributes": [{"attribute_id": 182, "value": 3318.0},
+                                 {"attribute_id": 277, "value": 5.0}]
+        })))
+        .mount(&server)
+        .await;
+    let public = |name: &str, pairs: &[(&str, &str)]| {
+        let endpoint = endpoint(name).unwrap();
+        let params = params(pairs);
+        let esi = esi.clone();
+        async move { esi.plugin_get_public(endpoint, &params).await }
+    };
+    // Blank lines and repeats aren't sent.
+    let ids = public(
+        "universe-ids",
+        &[("names", "Rifter\n\nDamage Control II\nRifter")],
+    )
+    .await
+    .unwrap();
+    assert_eq!(ids.body["inventory_types"][1]["id"], 2048);
+    let item = public("universe-type", &[("type_id", "2048")])
+        .await
+        .unwrap();
+    assert_eq!(item.body["group_id"], 60);
+    assert_eq!(item.body["dogma_attributes"][0]["attribute_id"], 182);
+    // Checked before ESI is asked.
+    for bad in [
+        public("universe-ids", &[("names", "")]).await,
+        public("universe-ids", &[]).await,
+        public("universe-type", &[("type_id", "-1")]).await,
+    ] {
+        assert!(matches!(bad, Err(EsiError::InvalidInput(_))), "{bad:?}");
+    }
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.headers.contains_key("authorization"))
+    );
+}

@@ -576,7 +576,74 @@ pub const ENDPOINTS: &[Endpoint] = &[
         paged: false,
         params: &[],
     },
+    Endpoint {
+        // Public: exact names to ids (`POST /universe/ids`), such as the
+        // item names of a fitting pasted as EFT text. `names` is one name
+        // per line, at most [`MAX_NAMES`].
+        name: "universe-ids",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["names"],
+    },
+    Endpoint {
+        // Public: an item type, by `type_id`: its name, group and dogma
+        // attributes (required skills among them).
+        name: "universe-type",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["type_id"],
+    },
 ];
+
+/// Names `universe-ids` takes at once (ESI's own limit).
+pub const MAX_NAMES: usize = 500;
+/// The `names` parameter, at most.
+const MAX_NAMES_BYTES: usize = 256 * 1024;
+
+/// `names`: 1 to [`MAX_NAMES`] names, one per line, each 1 to 100
+/// characters (ESI's limits), without control characters. Blank lines
+/// are skipped and repeats sent once (ESI refuses repeats).
+fn names_param(params: &[(String, String)]) -> Result<Vec<String>, EsiError> {
+    let bad = || {
+        EsiError::InvalidInput(format!(
+            "names must be 1 to {MAX_NAMES} names, one per line, each at most 100 characters"
+        ))
+    };
+    let text = params
+        .iter()
+        .find(|(k, _)| k == "names")
+        .map(|(_, v)| v.as_str())
+        .ok_or_else(bad)?;
+    // Refused before reading it: 500 names of 100 characters (4 bytes
+    // each, at most) and their line breaks, with room for blank lines.
+    if text.len() > MAX_NAMES_BYTES {
+        return Err(bad());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut names: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let name = line.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if name.chars().count() > 100 || name.chars().any(char::is_control) {
+            return Err(bad());
+        }
+        if seen.insert(name) {
+            // Refused before reading all of a long list.
+            if names.len() >= MAX_NAMES {
+                return Err(bad());
+            }
+            names.push(name.to_owned());
+        }
+    }
+    if names.is_empty() {
+        return Err(bad());
+    }
+    Ok(names)
+}
 
 /// The notification types `corporation-structure-notifications` passes
 /// on: Upwell structures' attacks, reinforcements, fuel, services, power
@@ -1302,6 +1369,43 @@ impl Esi {
                 let request = client.get_universe_stations_station_id().station_id(id);
                 loosely(self, move || request.send(), again).await
             }
+            "universe-ids" => {
+                let body = names_param(params)?
+                    .iter()
+                    .map(|n| n.parse::<eve_esi_client::types::PostUniverseIdsBodyItem>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| EsiError::InvalidInput(e.to_string()))?;
+                let ids = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached().post_universe_ids().body(body).send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&ids)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "universe-type" => {
+                let id = positive("type_id")?;
+                let item = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_universe_types_type_id()
+                            .type_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&item)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
             other => Err(EsiError::InvalidInput(format!(
                 "no public endpoint {other}"
             ))),
@@ -2024,6 +2128,32 @@ mod tests {
             // The filter compares the type's text: it must round-trip.
             assert_eq!(kind.to_string(), *name);
         }
+    }
+
+    fn names(text: &str) -> Result<Vec<String>, EsiError> {
+        names_param(&[("names".to_owned(), text.to_owned())])
+    }
+
+    #[test]
+    fn names_are_one_per_line_within_esis_limits() {
+        assert_eq!(
+            names("Rifter\n\n  Damage Control II \nRifter\r\n").unwrap(),
+            vec!["Rifter", "Damage Control II"]
+        );
+        assert!(names("").is_err());
+        assert!(names("\n \n").is_err());
+        assert!(names(&"x".repeat(101)).is_err());
+        assert!(names("Rif\tter").is_err());
+        let many: Vec<String> = (0..=MAX_NAMES).map(|i| format!("n{i}")).collect();
+        assert!(names(&many.join("\n")).is_err());
+        assert_eq!(
+            names(&many[..MAX_NAMES].join("\n")).unwrap().len(),
+            MAX_NAMES
+        );
+        assert!(names_param(&[]).is_err());
+        // Repeats are sent once, and a huge list is refused unread.
+        assert_eq!(names(&"Rifter\n".repeat(10_000)).unwrap(), vec!["Rifter"]);
+        assert!(names(&"a\n".repeat(MAX_NAMES_BYTES)).is_err());
     }
 
     fn asset(flag: &str, type_id: i64, location_type: &str) -> Asset {
