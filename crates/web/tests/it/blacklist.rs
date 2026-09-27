@@ -156,14 +156,14 @@ async fn a_blacklisted_main_gets_the_blacklist_state_and_nothing_else(db: PgPool
     .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 
-    // Never the owner.
+    // Never a superuser.
     let res = send(
         &h.app,
         form("/blacklist", "who=1164409536&reason=test", &owner),
     )
     .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(res.body.contains("owner"), "{}", res.body);
+    assert!(res.body.contains("superuser"), "{}", res.body);
     // NPC corporations can be, as in AA.
     let res = send(
         &h.app,
@@ -455,7 +455,7 @@ async fn the_pilot_log_has_aa_tiers_and_comments(db: PgPool) {
     assert_eq!(note, "Known awoxer, twice");
     assert!(blacklisted && restricted);
 
-    // Only the owner deletes (AA: the Django admin).
+    // Only superusers delete (AA: the Django admin).
     let path = format!("/blacklist/notes/{}/delete", notes[0].0);
     let res = send(&h.app, form(&path, "", &officer)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);

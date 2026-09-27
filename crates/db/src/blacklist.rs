@@ -179,7 +179,7 @@ impl Reader {
 }
 
 /// Whether an account is blacklisted: its main is, or is in a
-/// corporation or alliance that is (never the owner).
+/// corporation or alliance that is (never a superuser).
 pub async fn is_blacklisted<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
@@ -190,7 +190,7 @@ pub async fn is_blacklisted<'e>(
 }
 
 /// The accounts blacklisting these would cover (or does): their main is
-/// one of them, or is in one. Never the owner.
+/// one of them, or is in one. Never a superuser.
 pub async fn accounts_covered<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     entities: &[i64],
@@ -209,7 +209,7 @@ pub async fn accounts_covered<'e>(
     Ok(ids.into_iter().map(AccountId).collect())
 }
 
-/// Whether blacklisting any of these would cover the owner's main.
+/// Whether blacklisting any of these would cover a superuser's main.
 pub async fn covers_owner<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     entities: &[i64],

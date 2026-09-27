@@ -466,7 +466,7 @@ async fn permissions_granted_to_a_single_user(db: PgPool) {
         post_json(
             "/api/admin/permissions/grants",
             &admin,
-            &format!(r#"{{"permission":"fleet.ping","account_id":{pilot_account}}}"#),
+            &format!(r#"{{"permission":"fleetpings.basic_access","account_id":{pilot_account}}}"#),
         ),
     )
     .await;

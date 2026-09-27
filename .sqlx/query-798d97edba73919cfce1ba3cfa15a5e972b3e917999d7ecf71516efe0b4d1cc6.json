@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH g AS (SELECT state_id, group_id, account_id FROM core.permission_grants WHERE permission = $1)\n        SELECT (SELECT count(*) FROM g WHERE state_id IS NOT NULL) AS \"states!\",\n               (SELECT count(*) FROM g WHERE group_id IS NOT NULL) AS \"groups!\",\n               (SELECT count(*) FROM g WHERE account_id IS NOT NULL) AS \"users!\",\n               (SELECT count(*) FROM core.accounts a\n                WHERE a.active\n                  AND (\n                    a.is_owner\n                    OR a.id IN (SELECT account_id FROM g WHERE account_id IS NOT NULL)\n                    OR a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL)\n                    OR (a.main_character_id IS NOT NULL AND EXISTS (\n                        SELECT 1 FROM core.group_members m\n                        WHERE m.account_id = a.id\n                          AND m.group_id IN (SELECT group_id FROM g WHERE group_id IS NOT NULL)))\n                )) AS \"accounts!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "states!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "groups!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "users!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "accounts!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "798d97edba73919cfce1ba3cfa15a5e972b3e917999d7ecf71516efe0b4d1cc6"
+}

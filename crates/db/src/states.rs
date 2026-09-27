@@ -25,7 +25,7 @@ fn state(id: i64, name: String, builtin: Option<String>, priority: i32, public: 
 pub async fn all<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, name, builtin, priority FROM core.states
+        SELECT id, name, builtin, priority, public FROM core.states
         ORDER BY builtin IS DISTINCT FROM 'blacklist', priority DESC
         "#
     )
@@ -33,7 +33,7 @@ pub async fn all<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>, 
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| state(r.id, r.name, r.builtin, r.priority))
+        .map(|r| state(r.id, r.name, r.builtin, r.priority, r.public))
         .collect())
 }
 

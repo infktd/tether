@@ -8,7 +8,7 @@
 //! state, above every other, and that state is all it changes. The
 //! account holds what the Blacklist state is granted (usually nothing),
 //! keeps groups that don't exclude the state, and keeps a service only if
-//! the state has access. The owner can never be blacklisted, nor an
+//! the state has access. A superuser can never be blacklisted, nor an
 //! account holding permissions the blacklister lacks, and blacklisting
 //! (either way) needs what the Blacklist state is granted.
 
@@ -117,7 +117,7 @@ pub struct Access {
     pub comment: bool,
     pub comment_restricted: bool,
     pub comment_ultra: bool,
-    /// Deletes notes and comments (AA's Django admin).
+    /// A superuser: deletes notes and comments (AA's Django admin).
     pub owner: bool,
 }
 
@@ -208,7 +208,7 @@ pub struct NewNote {
 }
 
 /// Changing who is blacklisted is changing who is in the Blacklist state:
-/// never the owner, never past what the actor holds (as deactivating), and
+/// never a superuser, never past what the actor holds (as deactivating), and
 /// only with everything the Blacklist state is granted (as `admin.states`).
 async fn check_blacklisting(
     tx: &mut sqlx::PgConnection,
@@ -218,7 +218,7 @@ async fn check_blacklisting(
 ) -> Result<Vec<AccountId>, AppError> {
     if adding && db::covers_owner(&mut *tx, entities).await? {
         return Err(AppError::bad_request(
-            "That would blacklist the owner's main, which can't be.",
+            "That would blacklist a superuser's main, which can't be.",
         ));
     }
     let covered = db::accounts_covered(&mut *tx, entities).await?;
@@ -546,11 +546,12 @@ pub async fn unblacklist(
     Ok(())
 }
 
-/// Deletes a note and its comments: the owner only (AA: the Django admin).
+/// Deletes a note and its comments: superusers only (AA: the Django
+/// admin).
 pub async fn delete_note(state: &AppState, actor: AccountId, id: i64) -> Result<(), AppError> {
     let access = access(state, actor).await?;
     if !access.owner {
-        return Err(refused("delete notes: only the owner can"));
+        return Err(refused("delete notes: only a superuser can"));
     }
     let mut tx = state.db.begin().await?;
     tether_db::states::lock_shared(&mut tx).await?;

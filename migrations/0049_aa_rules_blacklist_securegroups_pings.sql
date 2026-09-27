@@ -56,7 +56,7 @@ CREATE INDEX pilot_note_comments_note_idx ON core.pilot_note_comments (note_id, 
 
 -- As AA, blacklisting goes by the main: the Blacklist state's member
 -- characters, corporations and alliances are the blacklisted notes', and a
--- state comes from the main. Never the owner.
+-- state comes from the main. Never a superuser.
 CREATE OR REPLACE FUNCTION core.blacklisted(account bigint) RETURNS boolean
 LANGUAGE sql STABLE AS $$
     SELECT COALESCE((
