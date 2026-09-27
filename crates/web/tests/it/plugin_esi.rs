@@ -1344,15 +1344,21 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
     );
     let applied = send(&h.app, form(&uri, "plugin=acme.esi&confirm=1", &owner)).await;
     assert_eq!(applied.location(), "/admin/states", "{}", applied.body);
-    let required: Vec<String> =
-        sqlx::query_scalar("SELECT scope FROM core.state_scopes WHERE state_id = $1")
-            .bind(MEMBER_STATE)
+    run_jobs(&h).await;
+    // Member requires the app itself, not its scopes as plain requirements.
+    let apps: Vec<(i64, String)> =
+        sqlx::query_as("SELECT state_id, plugin_id FROM core.state_apps")
             .fetch_all(&h.db)
             .await
             .unwrap();
-    assert_eq!(required, [SKILLS]);
+    assert_eq!(apps, [(MEMBER_STATE, ID.to_owned())]);
+    let scopes: i64 = sqlx::query_scalar("SELECT count(*) FROM core.state_scopes")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(scopes, 0);
     let audit: serde_json::Value = sqlx::query_scalar(
-        "SELECT details FROM core.audit_log WHERE action = 'state.scope_add' ORDER BY id DESC LIMIT 1",
+        "SELECT details FROM core.audit_log WHERE action = 'state.app_required' ORDER BY id DESC LIMIT 1",
     )
     .fetch_one(&h.db)
     .await
@@ -1360,7 +1366,93 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
     assert_eq!(audit["app"], ID);
     assert_eq!(audit["scopes"], serde_json::json!([SKILLS]));
     let states = page(&h, "/admin/states", &owner).await.body;
-    assert!(states.contains("Requires all of ESI probe"), "{states}");
+    assert!(
+        states.contains("Every character registered for ESI probe"),
+        "{states}"
+    );
+    let compliant = |h: &Harness| {
+        let db = h.db.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT compliant FROM core.accounts a JOIN core.characters c ON c.account_id = a.id \
+                 WHERE c.id = $1",
+            )
+            .bind(CHRIBBA)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    // Flagged (not demoted) until registered for the app; the state's
+    // checklist says so, and registering there registers for it too.
+    assert!(!compliant(&h).await);
+    assert_eq!(state_of(&h, &owner).await, "Member");
+    let checklist = page(&h, "/register", &owner).await.body;
+    assert!(
+        checklist.contains("It also registers each character for ESI probe"),
+        "{checklist}"
+    );
+    assert!(
+        checklist.contains(r#"action="/register/start?checklist=1""#),
+        "{checklist}"
+    );
+    // A plain Add Character (the Dashboard) registers for no app.
+    let (asked, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    assert!(asked.contains(&SKILLS.to_owned()), "{asked:?}");
+    run_jobs(&h).await;
+    assert!(!compliant(&h).await);
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?checklist=1",
+        "196379789:Chribba",
+    )
+    .await;
+    run_jobs(&h).await;
+    assert!(compliant(&h).await);
+    let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+    // The scopes without the registration aren't enough (AA: compliance is
+    // registration with Member Audit).
+    let res = send(
+        &h.app,
+        form(
+            "/register/unregister?app=acme.esi",
+            &format!("character_id={CHRIBBA}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(!compliant(&h).await);
+    let checklist = page(&h, "/register", &owner).await.body;
+    assert!(
+        checklist.contains("Not registered for ESI probe"),
+        "{checklist}"
+    );
+    // Registering for the app itself counts too.
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
+    run_jobs(&h).await;
+    assert!(compliant(&h).await);
+    // Stopping requiring it: nothing more asked of Member.
+    let stop = format!("/admin/states/{MEMBER_STATE}/scopes/app/remove");
+    let stopped = send(&h.app, form(&stop, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(stopped.location(), "/admin/states", "{}", stopped.body);
+    let apps: i64 = sqlx::query_scalar("SELECT count(*) FROM core.state_apps")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(apps, 0);
+    let again = send(&h.app, form(&stop, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.body);
+    let applied = send(&h.app, form(&uri, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(applied.location(), "/admin/states", "{}", applied.body);
     // Nothing left to add; an unknown app or Guest can't.
     let again = send(&h.app, form(&uri, "plugin=acme.esi&confirm=1", &owner)).await;
     assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.body);
@@ -1401,7 +1493,7 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
         .expect("the registration step");
     let _pilot = log_in_as(&h, "1887431749:gigX", None).await;
     sqlx::query("UPDATE core.character_tokens SET scopes = $1")
-        .bind(vec![SKILLS])
+        .bind(vec![SKILLS, tether_core::scopes::CORP_MEMBERSHIP])
         .execute(&h.db)
         .await
         .unwrap();
@@ -1424,20 +1516,63 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(audit["characters"], 1);
-    let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
-    assert!(out.starts_with("ok"), "{out}");
     let required: Vec<(i64, String)> =
         sqlx::query_as("SELECT state_id, scope FROM core.state_scopes")
             .fetch_all(&h.db)
             .await
             .unwrap();
     assert_eq!(required, [(MEMBER_STATE, SKILLS.to_owned())]);
-    let audit: serde_json::Value = sqlx::query_scalar(
-        "SELECT details FROM core.audit_log WHERE action = 'state.scope_add' ORDER BY id DESC LIMIT 1",
-    )
-    .fetch_one(&h.db)
-    .await
-    .unwrap();
-    assert_eq!(audit["scopes"], serde_json::json!([SKILLS]));
-    assert_eq!(audit["state"], "Member");
+
+    // Then 0052: a state requiring all of an app's scopes requires the app
+    // (those scope rows give way), and every character of its accounts
+    // meeting the app's scopes is registered, so nobody's compliance
+    // changes.
+    sqlx::query("DELETE FROM core.state_apps")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM core.app_characters")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    // Blue requires the same scope, added by hand: it stays a plain scope.
+    sqlx::query("INSERT INTO core.state_scopes (state_id, scope) VALUES ($1, $2)")
+        .bind(BLUE_STATE)
+        .bind(SKILLS)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let migration = include_str!("../../../../migrations/0052_state_app_requirements.sql");
+    let (_, steps) = migration
+        .split_once("-- A state whose app scopes came from the app")
+        .expect("the steps after the table");
+    let (_, steps) = steps.split_once('\n').expect("the comment's first line");
+    sqlx::raw_sql(steps).execute(&h.db).await.unwrap();
+    let apps: Vec<(i64, String)> =
+        sqlx::query_as("SELECT state_id, plugin_id FROM core.state_apps")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(apps, [(MEMBER_STATE, ID.to_owned())]);
+    let scopes: Vec<(i64, String)> =
+        sqlx::query_as("SELECT state_id, scope FROM core.state_scopes")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(scopes, [(BLUE_STATE, SKILLS.to_owned())]);
+    let registered: Vec<(String, i64)> =
+        sqlx::query_as("SELECT plugin_id, character_id FROM core.app_characters")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(registered, [(ID.to_owned(), CHRIBBA)]);
+    let account: i64 = sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+        .bind(CHRIBBA)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(account))
+        .await
+        .unwrap();
+    assert!(compliant(&h).await);
 }

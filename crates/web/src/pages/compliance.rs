@@ -25,6 +25,7 @@ fn problem_text(problem: &Problem) -> String {
     match problem {
         Problem::NotRegistered => "Not registered yet".to_owned(),
         Problem::Revoked => "EVE access was revoked".to_owned(),
+        Problem::NotRegisteredFor(apps) => format!("Not registered for {}", apps.join(", ")),
         Problem::Missing(scopes) => format!(
             "Missing {}",
             scopes
@@ -82,6 +83,8 @@ struct RegisterPage {
     app: Option<AppView>,
     /// Where the Register buttons post.
     start_action: String,
+    /// Apps the state requires registering for (the state's checklist).
+    apps_required: Vec<String>,
     /// The apps the pilot may register characters for (the state's
     /// checklist only).
     apps: Vec<AppLine>,
@@ -151,6 +154,7 @@ pub async fn register(
                     })
                     .collect(),
                 start_action: format!("/register/start?app={}", app.id),
+                apps_required: Vec::new(),
                 app: Some(AppView {
                     id: app.id,
                     name: app.name,
@@ -167,7 +171,8 @@ pub async fn register(
             required: required(&status.required),
             characters: rows(&status.characters),
             app: None,
-            start_action: "/register/start".to_owned(),
+            start_action: "/register/start?checklist=1".to_owned(),
+            apps_required: status.apps.clone(),
             apps: compliance::app_registrations(&state, session.account)
                 .await?
                 .into_iter()
@@ -187,6 +192,8 @@ pub async fn register(
 pub struct StartForm {
     /// Register for this app too.
     app: Option<String>,
+    /// From the state's checklist: register for the apps it requires.
+    checklist: Option<String>,
 }
 
 /// `POST /register/start`: off to EVE SSO with the required scopes (and an
@@ -199,7 +206,8 @@ pub async fn start(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     let app = form.app.as_deref().filter(|a| !a.is_empty());
-    Ok(compliance::start_register(&state, jar, session.account, app).await?)
+    let checklist = form.checklist.as_deref() == Some("1");
+    Ok(compliance::start_register(&state, jar, session.account, app, checklist).await?)
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,6 +237,8 @@ pub async fn unregister(
     {
         return Err(AppError::not_found("That character isn't registered for this app.").into());
     }
+    // A state may require the app (AA's Member Audit compliance).
+    crate::states::evaluate_account(&state.db, session.account).await?;
     let back = match compliance::app_registration(&state, session.account, id).await? {
         Some(app) => crate::pages::stay::back(
             &format!("/register?app={}", app.id),

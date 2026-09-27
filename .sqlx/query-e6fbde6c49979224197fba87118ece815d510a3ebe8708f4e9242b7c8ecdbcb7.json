@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.app_characters (plugin_id, character_id, registered_by)\n        SELECT sa.plugin_id, c.id, $1\n        FROM core.characters c\n        JOIN core.accounts acc ON acc.id = c.account_id\n        JOIN core.state_apps sa ON sa.state_id = acc.state_id\n        JOIN core.plugins p ON p.id = sa.plugin_id\n        JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE c.id = $2 AND c.account_id = $1 AND t.state = 'valid'\n          AND cardinality(p.user_scopes) > 0 AND t.scopes @> p.user_scopes\n          AND core.holds_app_permission($1, sa.plugin_id)\n        FOR SHARE OF c\n        ON CONFLICT DO NOTHING\n        RETURNING plugin_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.app_characters",
+            "name": "plugin_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e6fbde6c49979224197fba87118ece815d510a3ebe8708f4e9242b7c8ecdbcb7"
+}

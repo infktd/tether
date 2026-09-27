@@ -48,7 +48,8 @@ pub fn schedules() -> Vec<ScheduleSpec> {
 
 // ---- requirements ----------------------------------------------------------
 
-/// What `state` requires, read in the caller's transaction.
+/// The scopes `state` requires, read in the caller's transaction: its
+/// own, and those of the apps it requires (see [`required_apps_in`]).
 pub async fn required_in(
     conn: &mut sqlx::PgConnection,
     state: &State,
@@ -58,7 +59,41 @@ pub async fn required_in(
     }
     let admin = db::admin_scopes(&mut *conn, state.id).await?;
     let member = state.builtin == Some(Builtin::Member);
-    Ok(scopes::required(member, &admin))
+    let mut required = scopes::required(member, &admin);
+    for app in db::state_apps(&mut *conn, state.id).await? {
+        required.extend(app.scopes);
+    }
+    Ok(required)
+}
+
+/// The apps `state` requires every character of `account` to be
+/// registered for (AA's Member Audit compliance), with which of them are.
+pub async fn required_apps_in(
+    conn: &mut sqlx::PgConnection,
+    state: &State,
+    account: AccountId,
+) -> Result<Vec<scopes::RequiredApp>, sqlx::Error> {
+    if state.is_guest() {
+        return Ok(Vec::new());
+    }
+    let apps = db::state_apps(&mut *conn, state.id).await?;
+    if apps.is_empty() {
+        return Ok(Vec::new());
+    }
+    let registrations = db::account_app_registrations(&mut *conn, account).await?;
+    Ok(apps
+        .into_iter()
+        .filter(|app| !app.scopes.is_empty())
+        .map(|app| scopes::RequiredApp {
+            registered: registrations
+                .iter()
+                .filter(|(plugin, _)| *plugin == app.id)
+                .map(|(_, character)| *character)
+                .collect(),
+            name: app.name,
+            scopes: app.scopes.into_iter().collect(),
+        })
+        .collect())
 }
 
 /// Which of the account's characters fall short of `candidate`'s
@@ -75,12 +110,13 @@ pub async fn problems(
     if required.is_empty() {
         return Ok(Vec::new());
     }
+    let apps = required_apps_in(&mut *conn, &state, account).await?;
     let characters: Vec<(i64, scopes::Token)> = db::account_tokens(&mut *conn, account)
         .await?
         .into_iter()
         .map(|c| (c.id, c.token))
         .collect();
-    Ok(scopes::check(&required, &characters))
+    Ok(scopes::check_with_apps(&required, &apps, &characters))
 }
 
 /// The user scopes registering for a plugin grants: only those a
@@ -101,8 +137,8 @@ pub fn is_catalogue_character_scope(scope: &str) -> bool {
         .any(|e| e.about == tether_esi::plugin::About::Character && e.scope == scope)
 }
 
-/// Records a plugin's user scopes. Nobody's compliance depends on them:
-/// states require only what admins chose.
+/// Records a plugin's user scopes; re-evaluates everyone if they changed
+/// (a state requiring the app requires its scopes).
 pub async fn sync_plugin_scopes(
     db: &PgPool,
     plugin_id: &str,
@@ -119,6 +155,7 @@ pub async fn sync_plugin_scopes(
             json!({ "scopes": scopes }),
         )
         .await?;
+        crate::states::enqueue_evaluate_all(&mut *tx).await?;
     }
     tx.commit().await
 }
@@ -145,6 +182,9 @@ pub struct Registration {
     /// Not every character is registered with the state's scopes.
     pub flagged: bool,
     pub required: BTreeSet<String>,
+    /// The apps it requires every character to be registered for, by name
+    /// (registering for the state registers for them).
+    pub apps: Vec<String>,
     pub characters: Vec<CharacterStatus>,
 }
 
@@ -162,13 +202,18 @@ pub async fn registration(db: &PgPool, account: AccountId) -> Result<Registratio
     let target = state_db::account_state(&mut *conn, account)
         .await?
         .filter(|s| !s.is_guest());
-    let required = match &target {
-        Some(state) => required_in(&mut conn, state).await?,
-        None => BTreeSet::new(),
+    let (required, apps) = match &target {
+        Some(state) => (
+            required_in(&mut conn, state).await?,
+            required_apps_in(&mut conn, state, account).await?,
+        ),
+        None => (BTreeSet::new(), Vec::new()),
     };
     let tokens = db::account_tokens(&mut *conn, account).await?;
     let pairs: Vec<(i64, scopes::Token)> = tokens.iter().map(|c| (c.id, c.token.clone())).collect();
-    let problems: BTreeMap<i64, Problem> = scopes::check(&required, &pairs).into_iter().collect();
+    let problems: BTreeMap<i64, Problem> = scopes::check_with_apps(&required, &apps, &pairs)
+        .into_iter()
+        .collect();
     let characters = tokens
         .into_iter()
         .map(|c| CharacterStatus {
@@ -186,6 +231,7 @@ pub async fn registration(db: &PgPool, account: AccountId) -> Result<Registratio
         target,
         flagged,
         required,
+        apps: apps.into_iter().map(|a| a.name).collect(),
         characters,
     })
 }
@@ -458,6 +504,7 @@ pub async fn start_register(
     jar: CookieJar,
     account: AccountId,
     app: Option<&str>,
+    checklist: bool,
 ) -> Result<Response, AppError> {
     let current = registration(&state.db, account).await?;
     let mut wanted = current.required;
@@ -472,6 +519,9 @@ pub async fn start_register(
                 Purpose::RegisterApp(app.id),
             )
         }
+        // From the checklist, which says it registers for the apps the
+        // state requires; a plain Add Character registers for none.
+        None if checklist => ("/register".to_owned(), Purpose::RegisterForState),
         None => ("/register".to_owned(), Purpose::Register),
     };
     let scopes = ask_scopes(&state.db, account, wanted).await?;
@@ -507,6 +557,30 @@ pub async fn finish_app_registration(
             "plugin.character_registered",
             Some(&format!("plugin:{}", app.id)),
             json!({ "character_id": character }),
+        )
+        .await?;
+    }
+    tx.commit().await
+}
+
+/// After a login from the state's checklist stored the character's token:
+/// registers it for the apps the state requires, whose scopes it now
+/// carries, while the account holds one of the app's permissions (as AA's
+/// Member Audit registration needs basic_access; the checklist says so).
+/// Audited.
+pub async fn finish_state_registration(
+    db: &PgPool,
+    account: AccountId,
+    character: i64,
+) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin().await?;
+    for plugin in db::register_for_state_apps(&mut *tx, account, character).await? {
+        audit::record(
+            &mut *tx,
+            Actor::Account(account),
+            "plugin.character_registered",
+            Some(&format!("plugin:{plugin}")),
+            json!({ "character_id": character, "for_state": true }),
         )
         .await?;
     }

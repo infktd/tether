@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.state_apps WHERE plugin_id = $1 RETURNING state_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.state_apps",
+            "name": "state_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "fd8e78b8da25175fab15f57d5949c6b9de6b9a65fa79b5facda6eade5efd50ec"
+}

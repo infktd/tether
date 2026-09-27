@@ -1866,7 +1866,12 @@ async fn apply_manifest(
             Vec::new()
         }
     };
-    tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user).await?;
+    // A state requiring the app requires its new scopes: re-evaluate.
+    if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
+        .await?
+    {
+        crate::states::enqueue_evaluate_all(&mut *tx).await?;
+    }
     let storage_created =
         if manifest.capabilities.storage && plugin_storage::get(&mut *tx, id).await?.is_none() {
             if plugin_storage::count(&mut *tx).await? >= MAX_STORAGE_PLUGINS {
@@ -2414,8 +2419,11 @@ async fn uninstall_now(
     // What it reported for Secure Groups and the timers it published.
     tether_db::smart_groups::forget_plugin(&mut tx, id).await?;
     let grants = tether_db::permissions::remove_plugin_grants(&mut tx, id).await?;
-    // Scopes admins required of states for it stay required: they're the
-    // admins' to drop (States page).
+    // States requiring the app stop requiring it (recorded below), and its
+    // registrations go with its row. Plain scopes admins required stay
+    // theirs.
+    let states_required = tether_db::compliance::remove_app_from_states(&mut *tx, id).await?;
+    crate::states::enqueue_evaluate_all(&mut *tx).await?;
     let version = db::uninstall(&mut *tx, id)
         .await?
         .ok_or_else(|| AppError::not_found("No app with that id is installed."))?;
@@ -2429,6 +2437,7 @@ async fn uninstall_now(
             "data_deleted": storage.is_some(),
             "secrets_deleted": secrets_deleted,
             "grants_removed": grants_json(&grants),
+            "states_no_longer_requiring": states_required,
         }),
     )
     .await?;

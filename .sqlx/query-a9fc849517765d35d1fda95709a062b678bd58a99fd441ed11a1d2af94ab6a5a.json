@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.state_apps (state_id, plugin_id, added_by) VALUES ($1, $2, $3)\n        ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9fc849517765d35d1fda95709a062b678bd58a99fd441ed11a1d2af94ab6a5a"
+}

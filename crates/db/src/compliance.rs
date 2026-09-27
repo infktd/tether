@@ -139,6 +139,171 @@ pub async fn accounts_lacking(
     .await
 }
 
+/// Compliant accounts in `state` with a character not registered for the
+/// app, or whose token lacks one of its `scopes`: those requiring the app
+/// would flag.
+pub async fn accounts_lacking_app(
+    pool: &PgPool,
+    state: StateId,
+    plugin_id: &str,
+    scopes: &[String],
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT count(*) AS "count!" FROM core.accounts a
+        WHERE a.state_id = $1 AND a.compliant
+          AND EXISTS (
+            SELECT 1 FROM core.characters c
+            LEFT JOIN core.character_tokens t ON t.character_id = c.id
+            WHERE c.account_id = a.id
+              AND (t.character_id IS NULL OR NOT (t.scopes @> $3)
+                   OR NOT EXISTS (SELECT 1 FROM core.app_characters r
+                                  WHERE r.plugin_id = $2 AND r.character_id = c.id))
+          )
+        "#,
+        state.0,
+        plugin_id,
+        scopes,
+    )
+    .fetch_one(pool)
+    .await
+}
+
+// ---- apps a state requires ---------------------------------------------------
+
+/// The apps `state` requires every character to be registered for, with
+/// their user scopes.
+pub async fn state_apps<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    state: StateId,
+) -> Result<Vec<PluginScopes>, sqlx::Error> {
+    sqlx::query_as!(
+        PluginScopes,
+        r#"
+        SELECT p.id, p.name, p.user_scopes AS scopes
+        FROM core.state_apps a JOIN core.plugins p ON p.id = a.plugin_id
+        WHERE a.state_id = $1 ORDER BY p.name
+        "#,
+        state.0
+    )
+    .fetch_all(executor)
+    .await
+}
+
+/// Every state's required apps, as (state, app id).
+pub async fn all_state_apps(pool: &PgPool) -> Result<Vec<(StateId, String)>, sqlx::Error> {
+    let rows = sqlx::query!("SELECT state_id, plugin_id FROM core.state_apps ORDER BY state_id")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (StateId(r.state_id), r.plugin_id))
+        .collect())
+}
+
+/// False if the state already requires it.
+pub async fn add_state_app<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    state: StateId,
+    plugin_id: &str,
+    by: Option<AccountId>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO core.state_apps (state_id, plugin_id, added_by) VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+        "#,
+        state.0,
+        plugin_id,
+        by.map(|a| a.0),
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Drops every state's requirement of the app (its uninstall), returning
+/// the states, for the audit log.
+pub async fn remove_app_from_states<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "DELETE FROM core.state_apps WHERE plugin_id = $1 RETURNING state_id",
+        plugin_id
+    )
+    .fetch_all(executor)
+    .await
+}
+
+pub async fn remove_state_app<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    state: StateId,
+    plugin_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        "DELETE FROM core.state_apps WHERE state_id = $1 AND plugin_id = $2",
+        state.0,
+        plugin_id
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// The account's registrations: (app id, character id).
+pub async fn account_app_registrations<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT r.plugin_id, r.character_id FROM core.app_characters r
+        JOIN core.characters c ON c.id = r.character_id
+        WHERE c.account_id = $1
+        "#,
+        account.0
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.plugin_id, r.character_id))
+        .collect())
+}
+
+/// Registering a character for its state (the checklist) registers it for
+/// the apps the state requires, whose scopes its token now carries, while
+/// the account holds one of the app's permissions (the checklist says so).
+/// Returns the apps.
+pub async fn register_for_state_apps<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    character_id: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        INSERT INTO core.app_characters (plugin_id, character_id, registered_by)
+        SELECT sa.plugin_id, c.id, $1
+        FROM core.characters c
+        JOIN core.accounts acc ON acc.id = c.account_id
+        JOIN core.state_apps sa ON sa.state_id = acc.state_id
+        JOIN core.plugins p ON p.id = sa.plugin_id
+        JOIN core.character_tokens t ON t.character_id = c.id
+        WHERE c.id = $2 AND c.account_id = $1 AND t.state = 'valid'
+          AND cardinality(p.user_scopes) > 0 AND t.scopes @> p.user_scopes
+          AND core.holds_app_permission($1, sa.plugin_id)
+        FOR SHARE OF c
+        ON CONFLICT DO NOTHING
+        RETURNING plugin_id
+        "#,
+        account.0,
+        character_id,
+    )
+    .fetch_all(executor)
+    .await
+}
+
 // ---- tokens --------------------------------------------------------------
 
 fn token(state: Option<String>, scopes: Option<Vec<String>>) -> Token {

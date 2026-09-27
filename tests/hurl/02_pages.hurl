@@ -1114,6 +1114,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/states/1/scopes/app/remove
+Origin: {{base}}
+[Form]
+plugin: tether.member-audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/compliance
 HTTP 303
 [Asserts]

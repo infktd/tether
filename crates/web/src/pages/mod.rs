@@ -450,6 +450,9 @@ impl StatusChip {
             Some(problem) => Self {
                 label: match problem {
                     Problem::NotRegistered => "Not registered · Register".to_owned(),
+                    Problem::NotRegisteredFor(apps) => {
+                        format!("Not registered for {} · Register", apps.join(", "))
+                    }
                     Problem::Revoked => return Some(Self::ended()),
                     Problem::Missing(scopes) if scopes.len() == 1 => {
                         "Missing 1 scope · Register".to_owned()

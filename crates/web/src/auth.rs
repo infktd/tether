@@ -408,6 +408,10 @@ pub async fn callback(
             )
             .await?;
         }
+        db::Purpose::RegisterForState => {
+            crate::compliance::finish_state_registration(&state.db, account, identity.character_id)
+                .await?;
+        }
         db::Purpose::Login | db::Purpose::Register => {}
     }
 

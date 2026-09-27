@@ -83,8 +83,8 @@ pub struct ScopeChip {
 pub struct AppChip {
     pub id: String,
     pub name: String,
-    /// Its scopes the state doesn't require yet.
-    pub missing: usize,
+    /// The state requires every character registered for it.
+    pub required: bool,
 }
 
 fn chip(scope: &str, by: String) -> ScopeChip {
@@ -116,6 +116,7 @@ async fn states_page(
     let counts = db::counts(&state.db).await?;
     let admin_scopes = tether_db::compliance::all_admin_scopes(&state.db).await?;
     let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
+    let state_apps = tether_db::compliance::all_state_apps(&state.db).await?;
     let mut plugin_scopes: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
     for p in &plugins {
         for scope in &p.scopes {
@@ -212,13 +213,9 @@ async fn states_page(
                     .map(|p| AppChip {
                         id: p.id.clone(),
                         name: p.name.clone(),
-                        missing: p
-                            .scopes
+                        required: state_apps
                             .iter()
-                            .filter(|scope| {
-                                !admin_scopes.iter().any(|(id, sc)| *id == s.id && sc == *scope)
-                            })
-                            .count(),
+                            .any(|(id, plugin)| *id == s.id && *plugin == p.id),
                     })
                     .collect()
             },
@@ -555,8 +552,9 @@ pub struct AppForm {
     confirm: Option<String>,
 }
 
-/// `POST /admin/states/{id}/scopes/app`: require every scope an app reads
-/// (AA's Member Audit compliance groups). Asks first, as a scope does.
+/// `POST /admin/states/{id}/scopes/app`: require every character to be
+/// registered for an app, with its scopes (AA's Member Audit compliance
+/// groups). Asks first, as a scope does.
 pub async fn require_app(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -571,6 +569,23 @@ pub async fn require_app(
     };
     let confirmed = is_confirmed(form.confirm.as_deref());
     change(&state, session, require, confirmed, action, fields).await
+}
+
+/// `POST /admin/states/{id}/scopes/app/remove`: stop requiring an app.
+pub async fn stop_requiring_app(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<AppForm>,
+) -> Result<Response, PageError> {
+    let action = format!("/admin/states/{id}/scopes/app/remove");
+    let fields = vec![("plugin", form.plugin.clone())];
+    let stop = Change::StopRequiringApp {
+        state: StateId(id),
+        plugin: form.plugin,
+    };
+    let confirmed = is_confirmed(form.confirm.as_deref());
+    change(&state, session, stop, confirmed, action, fields).await
 }
 
 /// `POST /admin/states/{id}/scopes/remove`

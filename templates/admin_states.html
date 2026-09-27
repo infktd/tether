@@ -90,18 +90,24 @@
         <ul class="mt-3 flex flex-wrap gap-2" role="list" aria-label="Apps' scopes">
           {% for a in c.apps %}
           <li>
-            {% if a.missing > 0 %}
+            {% if a.required %}
+            <span class="entity-chip">
+              {% call icons::icon("check") %}{% endcall %}<span>Every character registered for {{ a.name }}</span>
+              <form method="post" action="/admin/states/{{ c.id }}/scopes/app/remove">
+                <input type="hidden" name="plugin" value="{{ a.id }}">
+                <button type="submit" class="btn" data-variant="ghost" data-size="icon-sm" aria-label="Stop requiring {{ a.name }} for {{ c.name }}">{% call icons::icon("x") %}{% endcall %}</button>
+              </form>
+            </span>
+            {% else %}
             <form method="post" action="/admin/states/{{ c.id }}/scopes/app">
               <input type="hidden" name="plugin" value="{{ a.id }}">
               <button type="submit" class="btn" data-variant="outline" data-size="sm">{% call icons::icon("plus") %}{% endcall %} Require {{ a.name }}'s scopes for {{ c.name }}</button>
             </form>
-            {% else %}
-            <span class="badge" data-variant="secondary">{% call icons::icon("check") %}{% endcall %} Requires all of {{ a.name }}'s scopes</span>
             {% endif %}
           </li>
           {% endfor %}
         </ul>
-        <p class="mt-2 text-xs text-muted-foreground max-w-2xl">Apps read only the characters registered for them, by pilots holding one of their permissions. Requiring an app's scopes makes every character of the state register for it, as Alliance Auth's Member Audit compliance groups do.</p>
+        <p class="mt-2 text-xs text-muted-foreground max-w-2xl">Apps read only the characters registered for them, by pilots holding one of their permissions. Requiring an app makes every character of the state register for it (with its scopes), as Alliance Auth's Member Audit compliance groups do; registering from the state's checklist does both.</p>
         {% endif %}
       </div>
       <form hx-post="/admin/states/search" hx-target="#search-{{ c.id }}" hx-swap="innerHTML" method="post" action="/admin/states/search" class="flex gap-2 max-w-xl">

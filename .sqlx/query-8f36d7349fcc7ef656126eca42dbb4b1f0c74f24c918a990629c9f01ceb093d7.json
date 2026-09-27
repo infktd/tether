@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.state_apps WHERE state_id = $1 AND plugin_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8f36d7349fcc7ef656126eca42dbb4b1f0c74f24c918a990629c9f01ceb093d7"
+}

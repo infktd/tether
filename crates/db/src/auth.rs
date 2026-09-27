@@ -27,6 +27,9 @@ pub enum Purpose {
     Login,
     /// Registering a character with its state's required scopes.
     Register,
+    /// Registering from the state's checklist, which says it registers for
+    /// the apps the state requires too.
+    RegisterForState,
     /// Registering a character for a plugin (and with its state's required
     /// scopes too).
     RegisterApp(String),
@@ -46,6 +49,7 @@ impl Purpose {
         match self {
             Self::Login => ("login", None),
             Self::Register => ("register", None),
+            Self::RegisterForState => ("register_state", None),
             Self::RegisterApp(plugin) => ("register_app", Some(plugin)),
             Self::DataSource(plugin) => ("data_source", Some(plugin)),
             Self::ChangeMain => ("change_main", None),
@@ -64,6 +68,7 @@ impl Purpose {
         match (purpose, plugin) {
             ("reauth", _) => Self::Reauth(action),
             ("register", _) => Self::Register,
+            ("register_state", _) => Self::RegisterForState,
             ("register_app", Some(plugin)) => Self::RegisterApp(plugin),
             ("data_source", Some(plugin)) => Self::DataSource(plugin),
             ("change_main", _) => Self::ChangeMain,
