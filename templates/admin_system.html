@@ -123,6 +123,17 @@
     <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
   </form>
 
+  <form class="card" method="post" action="/admin/system/notifications">
+    <header><h2>Notifications</h2><p>How many notifications each user keeps, as Alliance Auth's <span class="num">NOTIFICATIONS_MAX_PER_USER</span>: when one more arrives, the oldest goes, read or not.</p></header>
+    <section class="flex items-end gap-2">
+      <div class="grid gap-2">
+        <label class="label" for="max_per_user">Per user</label>
+        <input class="input num w-24" id="max_per_user" name="max_per_user" type="number" min="1" max="1000" value="{{ notifications_max }}" required>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
   <section class="card">
     <header><h2>Platform updates</h2><p>Once a day, Tether asks GitHub whether a newer release exists. Upgrading is still yours to do: change the image tag.</p></header>
     <section class="flex flex-col gap-3 text-sm">

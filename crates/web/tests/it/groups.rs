@@ -698,7 +698,7 @@ async fn group_leaders_manage_only_their_groups(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn restricted_groups_are_the_owners_alone(db: PgPool) {
+async fn restricted_groups_flag_and_direct_members_are_a_superusers(db: PgPool) {
     members(&db, &[PILOT, THIRD]).await;
     let h = harness(db, true).await;
     let (owner, admin) = owner_and_pilot(&h).await;
@@ -997,7 +997,7 @@ async fn deleting_a_group_is_audited_with_its_name(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn restricted_groups_stay_the_owners_even_when_open(db: PgPool) {
+async fn restricted_groups_otherwise_follow_aas_code(db: PgPool) {
     members(&db, &[PILOT, THIRD]).await;
     let h = harness(db, true).await;
     let (owner, admin) = owner_and_pilot(&h).await;
@@ -1021,13 +1021,13 @@ async fn restricted_groups_stay_the_owners_even_when_open(db: PgPool) {
     .await;
     let council = json(&res)["id"].as_i64().unwrap();
 
-    // An admin can't open it while leaving it Restricted either.
+    // As AA's code, an admin changes its other settings (the flag stays)...
     let open = r#"{"internal":false,"hidden":false,"open":true,"public":true,"restricted":true}"#;
     assert_eq!(
         settings(&h, &admin, council, open).await.status,
-        StatusCode::FORBIDDEN
+        StatusCode::NO_CONTENT
     );
-    // Nor appoint its leaders.
+    // ...and appoints its leaders.
     let admin_account = account_of(&h, &admin).await;
     assert_eq!(
         call(
@@ -1039,13 +1039,9 @@ async fn restricted_groups_stay_the_owners_even_when_open(db: PgPool) {
         )
         .await
         .status,
-        StatusCode::FORBIDDEN
-    );
-    // Opened by the owner, joining it is still a request.
-    assert_eq!(
-        settings(&h, &owner, council, open).await.status,
         StatusCode::NO_CONTENT
     );
+    // An Open Restricted group is joined at once.
     let res = call(
         &h,
         "POST",
@@ -1054,7 +1050,19 @@ async fn restricted_groups_stay_the_owners_even_when_open(db: PgPool) {
         None,
     )
     .await;
-    assert_eq!(res.status, StatusCode::ACCEPTED);
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(my_groups(&h, &third).await, vec!["Council"]);
+    // Its leader removes members in Group Management, as any group's.
+    let third_account = account_of(&h, &third).await;
+    let res = call(
+        &h,
+        "DELETE",
+        &format!("/api/group-management/groups/{council}/members/{third_account}"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     assert!(my_groups(&h, &third).await.is_empty());
 }
 
@@ -1189,7 +1197,7 @@ async fn leader_groups_are_never_open_or_compliance(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn leaders_who_become_guest_stop_leading(db: PgPool) {
+async fn leaders_lead_whatever_their_state_but_not_without_a_main(db: PgPool) {
     members(&db, &[PILOT]).await;
     let h = harness(db, true).await;
     let (owner, leader) = owner_and_pilot(&h).await;
@@ -1216,6 +1224,19 @@ async fn leaders_who_become_guest_stop_leading(db: PgPool) {
         .await
         .unwrap();
     tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(leader_account))
+        .await
+        .unwrap();
+    assert_eq!(state_of(&h, &leader).await, "Guest");
+    // AA's code: leading is enough, whatever the state (its docstring's
+    // "and is also a Member" isn't checked).
+    assert_eq!(
+        page(&h, "/group-management", &leader).await.status,
+        StatusCode::OK
+    );
+    // Group rights count only with a main.
+    sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE id = $1")
+        .bind(leader_account)
+        .execute(&h.db)
         .await
         .unwrap();
     assert_eq!(

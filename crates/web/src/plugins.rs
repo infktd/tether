@@ -1674,6 +1674,9 @@ fn grants_json(grants: &[tether_db::permissions::Grant]) -> Vec<serde_json::Valu
             tether_db::permissions::Grantee::Group(group) => {
                 json!({ "permission": g.permission, "group_id": group.0 })
             }
+            tether_db::permissions::Grantee::Account(account) => {
+                json!({ "permission": g.permission, "account_id": account.0 })
+            }
         })
         .collect()
 }

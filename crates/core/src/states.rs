@@ -1,7 +1,8 @@
 //! Access states, Alliance Auth style (F4): Member, Blue and Guest built
 //! in, plus any an admin creates. Each lists the alliances, corporations
-//! and characters it covers; an account's state is the highest-priority
-//! state that covers its main, else Guest.
+//! and characters it covers, or is public (AA's `public`: available to
+//! any character); an account's state is the highest-priority state that
+//! covers its main, else Guest.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -47,6 +48,9 @@ pub struct State {
     pub builtin: Option<Builtin>,
     /// Higher wins. Guest is always 0.
     pub priority: i32,
+    /// AA's `public`: available to any character, so any account with a
+    /// main is in it unless a higher state covers them.
+    pub public: bool,
 }
 
 impl State {
@@ -57,6 +61,13 @@ impl State {
     /// The Blacklist, which only the Blacklist page changes.
     pub fn is_blacklist(&self) -> bool {
         self.builtin == Some(Builtin::Blacklist)
+    }
+
+    /// Anyone who logs in with EVE can be in it: Guest, or a public
+    /// state. Sensitive permissions and privileged Discord roles never go
+    /// to one.
+    pub fn open_to_anyone(&self) -> bool {
+        self.is_guest() || self.public
     }
 
     /// For badges: `member`, `blue`, `guest` or `custom`.
@@ -134,6 +145,8 @@ pub struct Main {
 struct Rule {
     id: StateId,
     priority: i32,
+    /// Covers every main.
+    public: bool,
     covers: HashSet<(EntityKind, i64)>,
 }
 
@@ -182,6 +195,7 @@ impl StateRules {
         self.rules.push(Rule {
             id,
             priority,
+            public: false,
             covers: HashSet::new(),
         });
         self.sort();
@@ -196,6 +210,23 @@ impl StateRules {
             rule.priority = priority;
         }
         self.sort();
+    }
+
+    /// Makes a state added before public (it covers every main) or not.
+    /// Never the Blacklist, which only core.blacklist fills.
+    pub fn set_public(&mut self, id: StateId, public: bool) {
+        if self.is_blacklist(id) {
+            return;
+        }
+        if let Some(rule) = self.rules.iter_mut().find(|r| r.id == id) {
+            rule.public = public;
+        }
+    }
+
+    /// Whether a state is public: anyone with a main can be in it, so, as
+    /// Guest, it never fills compliance, smart or Auto Groups.
+    pub fn is_public(&self, id: StateId) -> bool {
+        self.rules.iter().any(|r| r.id == id && r.public)
     }
 
     /// Adds an entity to a state added before.
@@ -218,9 +249,9 @@ impl StateRules {
             .sort_by(|a, b| b.priority.cmp(&a.priority).then(a.id.cmp(&b.id)));
     }
 
-    /// The highest-priority state covering the main by character,
-    /// corporation, alliance or faction; Guest if none does or there's no
-    /// main.
+    /// The highest-priority state that is public or covers the main by
+    /// character, corporation, alliance or faction; Guest if none does or
+    /// there's no main (AA: states are for mains only).
     pub fn evaluate(&self, main: Option<Main>) -> StateId {
         let Some(main) = main else {
             return self.guest;
@@ -228,8 +259,10 @@ impl StateRules {
         self.rules
             .iter()
             .find(|rule| {
-                rule.covers
-                    .contains(&(EntityKind::Character, main.character_id))
+                rule.public
+                    || rule
+                        .covers
+                        .contains(&(EntityKind::Character, main.character_id))
                     || main.affiliation.is_some_and(|a| {
                         rule.covers
                             .contains(&(EntityKind::Corporation, a.corporation_id))
@@ -362,6 +395,28 @@ mod tests {
             StateRules::new(GUEST).evaluate(main(HOME_CORP, Some(HOME))),
             GUEST
         );
+    }
+
+    #[test]
+    fn a_public_state_covers_every_main_below_higher_states() {
+        let mut rules = rules();
+        rules.set_public(BLUE_STATE, true);
+        // Anyone with a main, as AA's public state...
+        assert_eq!(rules.evaluate(main(1_000_167, None)), BLUE_STATE);
+        // ...unless a higher state covers them...
+        assert_eq!(rules.evaluate(main(HOME_CORP, None)), MEMBER);
+        // ...and never without a main.
+        assert_eq!(rules.evaluate(None), GUEST);
+        rules.set_public(BLUE_STATE, false);
+        assert_eq!(rules.evaluate(main(1_000_167, None)), GUEST);
+    }
+
+    #[test]
+    fn the_blacklist_is_never_public() {
+        let mut rules = rules();
+        rules.set_blacklist(StateId(9), 10);
+        rules.set_public(StateId(9), true);
+        assert_eq!(rules.evaluate(main(1, None)), GUEST);
     }
 
     #[test]

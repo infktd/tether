@@ -27,7 +27,8 @@
           <td><span class="state-badge" data-state="{{ h.state_style }}">{{ h.state }}</span></td>
           <td>
             <div class="flex flex-wrap gap-1">
-              {% if h.owner %}<span class="badge" data-variant="outline">Owner</span>{% endif %}
+              {% if h.owner %}<span class="badge" data-variant="outline">Superuser</span>{% endif %}
+              {% if h.via_user %}<span class="badge" data-variant="outline">User</span>{% endif %}
               {% if h.via_state %}<span class="badge" data-variant="outline">State: {{ h.state }}</span>{% endif %}
               {% for g in h.via_groups %}<span class="badge" data-variant="outline">Group: {{ g }}</span>{% endfor %}
             </div>

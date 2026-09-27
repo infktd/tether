@@ -63,7 +63,7 @@
   <div class="card stat">
     <div class="stat-label">Permissions</div>
     <div class="stat-value num">{{ permissions.len() }}</div>
-    <div class="stat-caption">{% if is_owner %}Owner: everything{% else %}From your state and groups{% endif %}</div>
+    <div class="stat-caption">{% if is_owner %}Superuser: everything{% else %}From your state, groups and own grants{% endif %}</div>
   </div>
 </section>
 
@@ -81,7 +81,7 @@
 {% if !permissions.is_empty() %}
 {#- A long list, behind a disclosure (DESIGN.md, Page hygiene). -#}
 <details class="card card-disclosure">
-  <summary>Permissions <span class="num font-normal text-muted-foreground">{{ permissions.len() }}</span><span class="ml-auto text-xs font-normal text-muted-foreground">{% if is_owner %}Owner: everything{% else %}From your state and groups{% endif %}</span></summary>
+  <summary>Permissions <span class="num font-normal text-muted-foreground">{{ permissions.len() }}</span><span class="ml-auto text-xs font-normal text-muted-foreground">{% if is_owner %}Superuser: everything{% else %}From your state, groups and own grants{% endif %}</span></summary>
   <section class="flex flex-wrap gap-2">
     {% for p in permissions %}<span class="badge" data-variant="outline">{{ p }}</span>{% endfor %}
   </section>

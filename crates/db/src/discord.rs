@@ -178,7 +178,7 @@ pub async fn mappings<'e>(
                 id: r.id,
                 role_id: r.role_id,
                 role_name: r.role_name,
-                grantee: grantee_from(r.state_id, r.group_id)?,
+                grantee: grantee_from(r.state_id, r.group_id, None)?,
             })
         })
         .collect())
@@ -191,7 +191,8 @@ pub async fn add_mapping<'e>(
     role_name: &str,
     grantee: Grantee,
 ) -> Result<Option<i64>, sqlx::Error> {
-    let (state, group) = split(grantee);
+    // Roles map to states and groups only (the caller refuses users).
+    let (state, group, _) = split(grantee);
     sqlx::query_scalar!(
         r#"
         INSERT INTO core.discord_role_mappings (role_id, role_name, state_id, group_id)
@@ -226,7 +227,7 @@ pub async fn remove_mapping<'e>(
             id: r.id,
             role_id: r.role_id,
             role_name: r.role_name,
-            grantee: grantee_from(r.state_id, r.group_id)?,
+            grantee: grantee_from(r.state_id, r.group_id, None)?,
         })
     }))
 }
@@ -234,8 +235,8 @@ pub async fn remove_mapping<'e>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoleFor {
     pub role_id: i64,
-    /// Every mapping that gives it is one anyone can be in (Guest, or an
-    /// Open group).
+    /// Every mapping that gives it is one anyone can be in (Guest, a
+    /// public state, or an Open group).
     pub open_only: bool,
 }
 
@@ -249,9 +250,11 @@ pub async fn roles_for<'e>(
         r#"
         SELECT m.role_id AS "role_id!",
                bool_and(COALESCE(m.state_id = core.guest_state(), false)
+                        OR COALESCE(s.public, false)
                         OR COALESCE(g.open AND NOT g.internal, false)) AS "open_only!"
         FROM core.discord_role_mappings m
         JOIN core.accounts a ON a.id = $1
+        LEFT JOIN core.states s ON s.id = m.state_id
         LEFT JOIN core.groups g ON g.id = m.group_id
         WHERE a.active
           AND (m.state_id = a.state_id

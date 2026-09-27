@@ -176,8 +176,8 @@ pub async fn registration(db: &PgPool, account: AccountId) -> Result<Registratio
         .map(|c| CharacterStatus {
             problem: problems.get(&c.id).cloned(),
             scopes: match c.token {
-                scopes::Token::Valid(scopes) => scopes,
-                _ => Vec::new(),
+                scopes::Token::Valid(scopes) | scopes::Token::Revoked(scopes) => scopes,
+                scopes::Token::None => Vec::new(),
             },
             id: c.id,
             name: c.name,

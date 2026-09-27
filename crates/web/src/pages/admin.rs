@@ -1061,8 +1061,10 @@ pub async fn remove_leader_group(
 pub struct GrantBadge {
     pub id: i64,
     pub label: String,
-    /// `state` or `group`.
+    /// `state`, `group` or `user`.
     pub kind: &'static str,
+    /// A user grant's account, for its link.
+    pub account_id: i64,
 }
 
 pub struct PermissionRow {
@@ -1100,6 +1102,17 @@ async fn permissions_page(
             .find(|g| g.group.id == id)
             .map_or_else(|| format!("group {}", id.0), |g| g.group.name.clone())
     };
+    let mut user_names = std::collections::HashMap::new();
+    for g in &grants {
+        if let Grantee::Account(account) = g.grantee
+            && !user_names.contains_key(&account)
+        {
+            let name = tether_db::accounts::main_name(&state.db, account)
+                .await?
+                .unwrap_or_else(|| format!("account {} (no main)", account.0));
+            user_names.insert(account, name);
+        }
+    }
     let rows = permissions::available(&state.db)
         .await?
         .into_iter()
@@ -1112,11 +1125,19 @@ async fn permissions_page(
                         id: g.id,
                         label: state_name(&states, id),
                         kind: "state",
+                        account_id: 0,
                     },
                     Grantee::Group(group) => GrantBadge {
                         id: g.id,
                         label: group_name(group),
                         kind: "group",
+                        account_id: 0,
+                    },
+                    Grantee::Account(account) => GrantBadge {
+                        id: g.id,
+                        label: user_names.get(&account).cloned().unwrap_or_default(),
+                        kind: "user",
+                        account_id: account.0,
                     },
                 })
                 .collect(),
@@ -1165,11 +1186,11 @@ pub(crate) fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
         Some(("state", id)) => id
             .parse()
             .map_err(|_| choose())
-            .and_then(|id| admin::grantee(Some(id), None)),
+            .and_then(|id| admin::grantee(Some(id), None, None)),
         Some(("group", id)) => id
             .parse()
             .map_err(|_| choose())
-            .and_then(|id| admin::grantee(None, Some(id))),
+            .and_then(|id| admin::grantee(None, Some(id), None)),
         _ => Err(choose()),
     }
 }

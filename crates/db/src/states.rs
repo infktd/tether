@@ -9,12 +9,13 @@ use tether_core::states::{Affiliation, Builtin, EntityKind, Main, State, StateId
 use crate::PgPool;
 use crate::accounts::AccountId;
 
-fn state(id: i64, name: String, builtin: Option<String>, priority: i32) -> State {
+fn state(id: i64, name: String, builtin: Option<String>, priority: i32, public: bool) -> State {
     State {
         id: StateId(id),
         name,
         builtin: builtin.as_deref().and_then(Builtin::parse),
         priority,
+        public,
     }
 }
 
@@ -25,7 +26,7 @@ fn state(id: i64, name: String, builtin: Option<String>, priority: i32) -> State
 pub async fn list<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, name, builtin, priority FROM core.states
+        SELECT id, name, builtin, priority, public FROM core.states
         WHERE builtin IS DISTINCT FROM 'blacklist'
         ORDER BY priority DESC
         "#
@@ -34,7 +35,7 @@ pub async fn list<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>,
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| state(r.id, r.name, r.builtin, r.priority))
+        .map(|r| state(r.id, r.name, r.builtin, r.priority, r.public))
         .collect())
 }
 
@@ -43,12 +44,12 @@ pub async fn get<'e>(
     id: StateId,
 ) -> Result<Option<State>, sqlx::Error> {
     let row = sqlx::query!(
-        "SELECT id, name, builtin, priority FROM core.states WHERE id = $1",
+        "SELECT id, name, builtin, priority, public FROM core.states WHERE id = $1",
         id.0
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority)))
+    Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority, r.public)))
 }
 
 /// A state by name, ignoring case.
@@ -57,12 +58,12 @@ pub async fn by_name<'e>(
     name: &str,
 ) -> Result<Option<State>, sqlx::Error> {
     let row = sqlx::query!(
-        "SELECT id, name, builtin, priority FROM core.states WHERE lower(name) = lower($1)",
+        "SELECT id, name, builtin, priority, public FROM core.states WHERE lower(name) = lower($1)",
         name
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority)))
+    Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority, r.public)))
 }
 
 /// A built-in state. Member and Blue can be deleted (as in AA), so they
@@ -72,12 +73,12 @@ pub async fn builtin<'e>(
     which: Builtin,
 ) -> Result<Option<State>, sqlx::Error> {
     let r = sqlx::query!(
-        "SELECT id, name, builtin, priority FROM core.states WHERE builtin = $1",
+        "SELECT id, name, builtin, priority, public FROM core.states WHERE builtin = $1",
         which.as_str()
     )
     .fetch_optional(executor)
     .await?;
-    Ok(r.map(|r| state(r.id, r.name, r.builtin, r.priority)))
+    Ok(r.map(|r| state(r.id, r.name, r.builtin, r.priority, r.public)))
 }
 
 /// An alliance, corporation or character a state covers.
@@ -125,6 +126,7 @@ pub async fn load_rules(conn: &mut sqlx::PgConnection) -> Result<StateRules, sql
     let mut rules = StateRules::new(guest);
     for s in &states {
         rules.add_state(s.id, s.priority);
+        rules.set_public(s.id, s.public);
     }
     for c in covered(&mut *conn).await? {
         rules.add(c.state, c.kind, c.entity_id);
@@ -374,6 +376,28 @@ pub async fn set_priority(
     })
 }
 
+/// Makes a state public (AA: available to any character) or not. False
+/// if it doesn't exist, is Guest or the Blacklist, or already was.
+pub async fn set_public(
+    tx: &mut sqlx::PgConnection,
+    id: StateId,
+    public: bool,
+) -> Result<bool, sqlx::Error> {
+    lock(&mut *tx).await?;
+    let result = sqlx::query!(
+        r#"
+        UPDATE core.states SET public = $2
+        WHERE id = $1 AND public <> $2
+          AND builtin IS DISTINCT FROM 'guest' AND builtin IS DISTINCT FROM 'blacklist'
+        "#,
+        id.0,
+        public
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 /// Swaps a state with its neighbour above (`up`) or below. Guest never
 /// moves and nothing moves below it. Returns the neighbour, if any.
 pub async fn swap(
@@ -604,7 +628,7 @@ pub async fn account_state<'e>(
 ) -> Result<Option<State>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT s.id, s.name, s.builtin, s.priority
+        SELECT s.id, s.name, s.builtin, s.priority, s.public
         FROM core.accounts a JOIN core.states s ON s.id = a.state_id
         WHERE a.id = $1
         "#,
@@ -612,5 +636,5 @@ pub async fn account_state<'e>(
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority)))
+    Ok(row.map(|r| state(r.id, r.name, r.builtin, r.priority, r.public)))
 }

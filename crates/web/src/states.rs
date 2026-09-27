@@ -186,10 +186,12 @@ pub(crate) async fn evaluate_in(
     // group mustn't keep full syncs running).
     crate::autogroups::reconcile_in(&mut *tx, account, state, main, active).await?;
     // Compliance groups (Member Audit's): the compliant accounts of their
-    // allowed states, never Guest.
+    // allowed states, never Guest or a public state (anyone can be in
+    // those, and the group's grants mustn't reach them).
     for (group, allowed) in tether_db::groups::compliance_groups(&mut *tx).await? {
         let member = compliant
             && state != rules.guest()
+            && !rules.is_public(state)
             && !blacklisted
             && tether_core::groups::state_allowed(&allowed, state);
         if tether_db::compliance::set_group_member(&mut *tx, group, account, member).await? {

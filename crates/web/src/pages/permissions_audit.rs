@@ -1,5 +1,5 @@
 //! Permissions Audit (AA's permissions tool): every permission, how many
-//! states, groups and accounts hold it, and who, through what.
+//! states, groups, users and accounts hold it, and who, through what.
 
 use askama::Template;
 use axum::extract::{Path, State};
@@ -19,6 +19,7 @@ pub struct Row {
     pub description: String,
     pub states: i64,
     pub groups: i64,
+    pub users: i64,
     pub accounts: i64,
 }
 
@@ -43,6 +44,7 @@ pub async fn index(
             description,
             states: counts.states,
             groups: counts.groups,
+            users: counts.users,
             accounts: counts.accounts,
         });
     }

@@ -114,7 +114,8 @@ pub async fn set_plugin_scopes<'e>(
 }
 
 /// Compliant accounts in `state` with a character whose token lacks
-/// `scope`: those a new requirement would flag.
+/// `scope` (a revoked one counts with the scopes it carried): those a new
+/// requirement would flag.
 pub async fn accounts_lacking(
     pool: &PgPool,
     state: StateId,
@@ -128,7 +129,7 @@ pub async fn accounts_lacking(
             SELECT 1 FROM core.characters c
             LEFT JOIN core.character_tokens t ON t.character_id = c.id
             WHERE c.account_id = a.id
-              AND (t.character_id IS NULL OR t.state <> 'valid' OR NOT ($2 = ANY(t.scopes)))
+              AND (t.character_id IS NULL OR NOT ($2 = ANY(t.scopes)))
           )
         "#,
         state.0,
@@ -143,7 +144,7 @@ pub async fn accounts_lacking(
 fn token(state: Option<String>, scopes: Option<Vec<String>>) -> Token {
     match state.as_deref() {
         None => Token::None,
-        Some("revoked") => Token::Revoked,
+        Some("revoked") => Token::Revoked(scopes.unwrap_or_default()),
         Some(_) => Token::Valid(scopes.unwrap_or_default()),
     }
 }
@@ -185,22 +186,6 @@ pub async fn account_tokens<'e>(
             token: token(r.state, r.scopes),
         })
         .collect())
-}
-
-/// Accounts marked compliant that hold a revoked token (found revoked
-/// outside the daily check, e.g. during a plugin call).
-pub async fn compliant_with_revoked(pool: &PgPool) -> Result<Vec<AccountId>, sqlx::Error> {
-    let ids = sqlx::query_scalar!(
-        r#"
-        SELECT DISTINCT a.id FROM core.accounts a
-        JOIN core.characters c ON c.account_id = a.id
-        JOIN core.character_tokens t ON t.character_id = c.id
-        WHERE a.compliant AND t.state = 'revoked'
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(ids.into_iter().map(AccountId).collect())
 }
 
 /// How many tokens are stored.

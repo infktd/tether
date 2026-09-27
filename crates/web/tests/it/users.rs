@@ -1,5 +1,6 @@
 //! Users (AA's admin site Users): find accounts by any character, see
-//! everything about one, deactivate and reactivate it.
+//! everything about one, deactivate and reactivate it, grant it
+//! permissions of its own, and make it a superuser.
 
 use crate::common::*;
 use axum::http::StatusCode;
@@ -303,4 +304,197 @@ async fn reactivating_counts_the_groups_the_account_rejoins(db: PgPool) {
     )
     .await;
     assert_eq!(res.location(), format!("/admin/users/{pilot_account}"));
+}
+
+async fn is_superuser(h: &Harness, token: &str) -> bool {
+    me(h, token).await["is_owner"].as_bool().unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn superusers_make_and_unmake_superusers(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let owner_account = account_of(&h, &owner).await;
+    let pilot_account = account_of(&h, &pilot).await;
+
+    let one = page(&h, &format!("/admin/users/{pilot_account}"), &owner).await;
+    assert!(one.body.contains("Make superuser"), "{}", one.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{pilot_account}/superuser"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), format!("/admin/users/{pilot_account}"));
+    assert!(is_superuser(&h, &pilot).await, "any number, as AA's");
+    assert!(is_superuser(&h, &owner).await);
+
+    // The new superuser can unmake the first...
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{owner_account}/superuser/revoke"),
+            "",
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), format!("/admin/users/{owner_account}"));
+    assert!(!is_superuser(&h, &owner).await);
+    // ...but not themselves, the last one.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{pilot_account}/superuser/revoke"),
+            "",
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(is_superuser(&h, &pilot).await);
+
+    // A users admin who isn't a superuser can't make one.
+    grant_via_group(&h, &pilot, "User Admins", "admin.users", owner_account).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{owner_account}/superuser"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert!(!is_superuser(&h, &owner).await);
+
+    let audited: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM core.audit_log WHERE action LIKE 'account.superuser%' ORDER BY id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        audited,
+        ["account.superuser_grant", "account.superuser_revoke"]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn permissions_granted_to_a_single_user(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    let admin = log_in_as(&h, "443630591:The Mittani", None).await;
+    let admin_account = account_of(&h, &admin).await;
+
+    // A superuser grants it on the user's page.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{pilot_account}/permissions"),
+            "permission=admin.audit",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), format!("/admin/users/{pilot_account}"));
+    let audit = send(&h.app, get("/api/admin/audit", &[(SESSION, &pilot)])).await;
+    assert_eq!(audit.status, StatusCode::OK, "{}", audit.body);
+    // Listed on Permissions and in the Permissions Audit ("via user").
+    let listed = page(&h, "/admin/permissions", &owner).await;
+    assert!(
+        listed
+            .body
+            .contains(&format!(r#"href="/admin/users/{pilot_account}""#)),
+        "{}",
+        listed.body
+    );
+    let counts: serde_json::Value = serde_json::from_str(
+        &send(&h.app, get("/api/admin/permissions", &[(SESSION, &owner)]))
+            .await
+            .body,
+    )
+    .unwrap();
+    let grant = counts["grants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["account_id"] == pilot_account)
+        .unwrap()
+        .clone();
+    assert_eq!(grant["permission"], "admin.audit");
+    let holders = page(&h, "/admin/permissions/audit/admin.audit", &owner).await;
+    assert!(holders.body.contains(">User<"), "{}", holders.body);
+
+    // Nobody grants themselves.
+    let admin_self = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            &format!(
+                r#"{{"permission":"admin.audit","account_id":{}}}"#,
+                account_of(&h, &owner).await
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(
+        admin_self.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        admin_self.body
+    );
+
+    // An admin grants only what they hold.
+    grant_via_group(
+        &h,
+        &owner,
+        "Permission Admins",
+        "admin.permissions",
+        admin_account,
+    )
+    .await;
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &admin,
+            &format!(r#"{{"permission":"fleet.ping","account_id":{pilot_account}}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    // Nor revoke one they don't hold.
+    let grant_id = grant["id"].as_i64().unwrap();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{pilot_account}/permissions/{grant_id}/revoke"),
+            "",
+            &admin,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+
+    // A superuser revokes it.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{pilot_account}/permissions/{grant_id}/revoke"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), format!("/admin/users/{pilot_account}"));
+    let audit = send(&h.app, get("/api/admin/audit", &[(SESSION, &pilot)])).await;
+    assert_eq!(audit.status, StatusCode::FORBIDDEN);
 }

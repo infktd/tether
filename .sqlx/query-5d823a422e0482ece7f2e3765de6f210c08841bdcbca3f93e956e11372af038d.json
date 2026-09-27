@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        DELETE FROM core.permission_grants\n        WHERE permission IN (\n            SELECT permission FROM core.plugin_permissions\n            WHERE plugin_id = $1 AND NOT permission = ANY($2)\n        )\n        RETURNING id, permission, state_id, group_id\n        ",
+  "query": "SELECT id, permission, state_id, group_id, account_id FROM core.permission_grants ORDER BY permission, id",
   "describe": {
     "columns": [
       {
@@ -46,20 +46,29 @@
             "name": "group_id"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "account_id"
+          }
+        }
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "TextArray"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "81b0ddcc335ae729191eafe8163246009955ee5c1151eed3a30b1e2c515ce66d"
+  "hash": "5d823a422e0482ece7f2e3765de6f210c08841bdcbca3f93e956e11372af038d"
 }

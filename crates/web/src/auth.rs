@@ -236,6 +236,14 @@ pub async fn callback(
                      main character associated with this account.",
                 ));
             }
+            accounts::SignIn::NoMain => {
+                return Err(AppError::new(
+                    StatusCode::FORBIDDEN,
+                    "This character's account has no main character, so it can't be signed in \
+                     to. If a browser is still signed in to it, choose a new main there with \
+                     Change Main; otherwise ask an admin.",
+                ));
+            }
             accounts::SignIn::Deactivated => {
                 return Err(AppError::new(
                     StatusCode::FORBIDDEN,
@@ -246,8 +254,8 @@ pub async fn callback(
             | accounts::SignIn::Reattached(a)
             | accounts::SignIn::Created(a) => a,
         };
-        // Taking over a main-less account proves a character, not the main
-        // it had: no fresh sudo time from that.
+        // A returning owner re-attached to a main-less account proves a
+        // character, not the main it had: no fresh sudo time from that.
         proved_main = !result.took_main;
         (account, result.became_owner, None)
     } else if reauth {

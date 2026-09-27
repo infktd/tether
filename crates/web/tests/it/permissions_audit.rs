@@ -66,7 +66,7 @@ async fn lists_who_holds_a_permission_and_through_what(db: PgPool) {
     let one = page(&h, "/admin/permissions/audit/fleet.ping", &owner).await;
     assert_eq!(one.status, StatusCode::OK);
     assert!(one.body.contains("Group: FCs"), "{}", one.body);
-    assert!(one.body.contains(">Owner<"), "{}", one.body);
+    assert!(one.body.contains(">Superuser<"), "{}", one.body);
 
     // Deactivated accounts hold nothing.
     sqlx::query("UPDATE core.accounts SET active = false WHERE id = $1")

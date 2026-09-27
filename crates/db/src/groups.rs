@@ -760,9 +760,11 @@ pub async fn set_leader_group<'e>(
 }
 
 /// The non-Internal groups the account leads: listed as a leader, or a
-/// member of one of the group's leader groups. Only while the account is
-/// active, has a main and isn't Guest: a leader who left the alliance
-/// loses sight of the group's members at once (stricter than AA).
+/// member of one of the group's leader groups (AA's
+/// `get_group_leaders_groups`). Whatever its state, as AA's code (its
+/// docstring's "and is also a Member" isn't checked there). Only while the
+/// account is active (AA's inactive users can't sign in), has a main (group
+/// rights count only then) and isn't blacklisted.
 pub async fn led_by<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
@@ -774,8 +776,6 @@ pub async fn led_by<'e>(
           AND EXISTS (
             SELECT 1 FROM core.accounts a
             WHERE a.id = $1 AND a.active AND a.main_character_id IS NOT NULL
-              AND a.state_id <> core.guest_state()
-          AND NOT core.blacklisted(a.id)
               AND NOT core.blacklisted(a.id)
           )
           AND (
@@ -829,7 +829,6 @@ pub async fn leader_accounts<'e>(
         r#"
         SELECT a.id FROM core.accounts a
         WHERE a.active AND a.main_character_id IS NOT NULL
-          AND a.state_id <> core.guest_state()
           AND (
             a.id IN (SELECT account_id FROM core.group_leaders WHERE group_id = $1)
             OR a.id IN (

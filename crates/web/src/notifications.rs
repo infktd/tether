@@ -23,6 +23,32 @@ use tether_db::groups::GroupId;
 use tether_db::notifications::{Level, notify, notify_once};
 use tether_db::settings;
 
+/// Sets AA's `NOTIFICATIONS_MAX_PER_USER`, audited. Accounts over it lose
+/// their oldest the next time they're notified, as in AA.
+pub async fn set_max(
+    db: &PgPool,
+    actor: AccountId,
+    max: i64,
+) -> Result<(), crate::error::AppError> {
+    let mut tx = db.begin().await?;
+    settings::set(
+        &mut *tx,
+        settings::NOTIFICATIONS_MAX_PER_USER,
+        serde_json::json!(max),
+    )
+    .await?;
+    tether_db::audit::record(
+        &mut *tx,
+        tether_db::audit::Actor::Account(actor),
+        "notifications.settings",
+        None,
+        serde_json::json!({ "max_per_user": max }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// "State changed to: {state}" (AA's).
 pub async fn state_changed(
     tx: &mut sqlx::PgConnection,

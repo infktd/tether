@@ -68,10 +68,11 @@ pub(crate) async fn reconcile_in(
     active: bool,
 ) -> Result<bool, sqlx::Error> {
     let configs = db::configs(&mut *tx).await?;
-    // Guest never gets Auto Groups: anyone who signs in is Guest.
+    // Guest never gets Auto Groups: anyone who signs in is Guest. Nor does
+    // a public state, which anyone with a main can be in.
     let guest = tether_db::states::get(&mut *tx, state)
         .await?
-        .is_none_or(|s| s.is_guest());
+        .is_none_or(|s| s.open_to_anyone());
     let want = if active && !guest {
         desired(&configs, state, main)
     } else {
@@ -180,10 +181,11 @@ async fn run_sync(db_pool: &PgPool, esi: &Esi) -> Result<usize, JobError> {
         else {
             continue;
         };
+        // Guest and public states get no Auto Groups (`reconcile_in`).
         let guest = tether_db::states::get(&mut *conn, standing.state)
             .await
             .map_err(JobError::retry)?
-            .is_none_or(|s| s.is_guest());
+            .is_none_or(|s| s.open_to_anyone());
         if !standing.active || guest {
             continue;
         }
@@ -384,6 +386,12 @@ async fn check_states(tx: &mut sqlx::PgConnection, states: &[StateId]) -> Result
                 return Err(AppError::bad_request(
                     "Auto Groups can't cover Guest: anyone who signs in is Guest.",
                 ));
+            }
+            Some(k) if k.public => {
+                return Err(AppError::bad_request(format!(
+                    "Auto Groups can't cover {}: it's public, so anyone who signs in can be in it.",
+                    k.name
+                )));
             }
             Some(_) => {}
         }

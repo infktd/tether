@@ -289,7 +289,7 @@ async fn a_login_without_the_setup_token_is_told_how_to_become_owner(db: PgPool)
     let page = send(&h.app, get("/setup", &[(SESSION, &token)])).await;
     assert!(page.body.contains("Enter the setup token"));
     assert!(
-        page.body.contains("nobody owns this instance yet"),
+        page.body.contains("this instance has no superuser yet"),
         "{}",
         page.body
     );

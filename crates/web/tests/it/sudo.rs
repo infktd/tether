@@ -594,24 +594,17 @@ async fn a_stale_session_cant_plant_a_main(db: PgPool) {
     .await;
     assert!(res.location().contains("state="), "{}", res.location());
 
-    // Were the main lost anyway, signing in with the alt makes it the main
-    // without a fresh sudo time: one more EVE login, as defence in depth.
-    // The barrier is the two gates above (a stale session can't link a
-    // character or remove the main's token); once an existing alt is the
-    // main, logging in with it again does confirm, as it should.
+    // Were the main lost anyway, nobody signs in to the account with an
+    // alt (AA's backend), so there's no session to plant a main from.
     sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE is_owner")
         .execute(&h.db)
         .await
         .unwrap();
-    let session = log_in_as(&h, ALT, None).await;
-    let fresh: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT reauthenticated_at FROM core.sessions WHERE token_hash = sha256($1::bytea)",
-    )
-    .bind(session.as_bytes())
-    .fetch_one(&h.db)
-    .await
-    .unwrap();
-    assert_eq!(fresh, None);
+    let before = session_count(&h.db).await;
+    let res = callback_as(&h, ALT, None).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert!(res.body.contains("no main character"), "{}", res.body);
+    assert_eq!(session_count(&h.db).await, before);
 }
 
 /// Letting people into a group that grants a sensitive permission hands it

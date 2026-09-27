@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, permission, state_id, group_id FROM core.permission_grants ORDER BY permission, id",
+  "query": "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, state_id, group_id, account_id",
   "describe": {
     "columns": [
       {
@@ -46,17 +46,31 @@
             "name": "group_id"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "account_id"
+          }
+        }
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8"
+      ]
     },
     "nullable": [
       false,
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "8e2dac342714f085246e13201f65a0030912b3b613f9fc1f36548ab9271b5fa2"
+  "hash": "94ad92d20e9d9221c1871bd4a816d04e7077282d35ed35591ddd544d6f831add"
 }

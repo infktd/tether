@@ -32,11 +32,19 @@ pub fn schedules() -> Vec<ScheduleSpec> {
 /// transaction): logs it and re-evaluates the account.
 pub async fn after_lost(db: &PgPool, lost: &Lost) -> Result<(), sqlx::Error> {
     if lost.owner_lost {
-        tracing::warn!(
-            character_id = lost.character_id,
-            "the owner account lost its last character; first-run setup is open again to \
-             whoever holds SETUP_TOKEN"
-        );
+        if tether_db::accounts::owner_exists(db).await? {
+            tracing::warn!(
+                character_id = lost.character_id,
+                account = lost.from.0,
+                "a superuser account lost its last character and is a superuser no more"
+            );
+        } else {
+            tracing::warn!(
+                character_id = lost.character_id,
+                "the last superuser account lost its last character; first-run setup is open \
+                 again to whoever holds SETUP_TOKEN"
+            );
+        }
     }
     tracing::info!(
         character_id = lost.character_id,

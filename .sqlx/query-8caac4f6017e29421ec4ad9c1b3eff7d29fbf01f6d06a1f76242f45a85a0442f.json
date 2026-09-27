@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT s.id, s.name, s.builtin, s.priority\n        FROM core.accounts a JOIN core.states s ON s.id = a.state_id\n        WHERE a.id = $1\n        ",
+  "query": "SELECT id, name, builtin, priority, public FROM core.states WHERE lower(name) = lower($1)",
   "describe": {
     "columns": [
       {
@@ -46,19 +46,31 @@
             "name": "priority"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "public",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "public"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "a26275c58cb8cb4defdd4441efc36e283ee97ac3db6f5cee79fd1914d4afa094"
+  "hash": "8caac4f6017e29421ec4ad9c1b3eff7d29fbf01f6d06a1f76242f45a85a0442f"
 }

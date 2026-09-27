@@ -463,11 +463,20 @@ async fn sweep_one(
         changed += 1;
     }
     // Auto groups take everyone who passes; never on no filters at all
-    // (that would be everyone), and never Guest unless the group names it.
+    // (that would be everyone), never Guest unless the group names it, and
+    // never a public state (anyone with a main can be in one, and it may
+    // have become public after the group named it).
+    let public: Vec<StateId> = tether_db::states::list(&mut *tx)
+        .await?
+        .into_iter()
+        .filter(|s| s.public)
+        .map(|s| s.id)
+        .collect();
     if settings.auto_join && !rules.is_empty() {
         for (account, f) in facts {
             if members.contains(account)
                 || (StateId(f.state) == guest && !allowed.contains(&guest))
+                || public.contains(&StateId(f.state))
                 || !matches!(judge(account), Some(failed) if failed.is_empty())
             {
                 continue;

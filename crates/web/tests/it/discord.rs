@@ -1180,9 +1180,9 @@ async fn nicknames_follow_the_name_formatter(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn syncing_someone_not_in_the_server_does_nothing(db: PgPool) {
+async fn a_member_no_longer_in_the_server_is_unlinked_and_notified(db: PgPool) {
     let h = harness(db, true).await;
-    let (owner, _, account) = linked_pilot(&h).await;
+    let (owner, pilot, account) = linked_pilot(&h).await;
     map(&h, &owner, MEMBER_ROLE, "state:1").await;
     Mock::given(method("GET"))
         .and(path(format!("/api/v10/guilds/{GUILD}/members/{USER}")))
@@ -1200,6 +1200,28 @@ async fn syncing_someone_not_in_the_server_does_nothing(db: PgPool) {
     .await
     .unwrap();
     assert!(role_edits(&h).await.is_empty());
+    // As AA: unlinked, audited and notified.
+    let linked: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.discord_links WHERE account_id = $1")
+            .bind(account)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(linked, 0);
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.audit_log WHERE action = 'discord.left_server' AND target = $1",
+    )
+    .bind(format!("account:{account}"))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    let notice = send(&h.app, get("/api/notifications", &[(SESSION, &pilot)])).await;
+    assert!(
+        notice.body.contains("Discord Account Disabled"),
+        "{}",
+        notice.body
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

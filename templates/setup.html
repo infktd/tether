@@ -27,7 +27,7 @@
   <header>
     <h2>Enter the setup token</h2>
     <p>It proves you run this server. It's <span class="num">SETUP_TOKEN</span> in <span class="num">deploy/.env</span>, and it's printed in the app's startup logs.</p>
-    {% if signed_in %}<p>You're signed in, but nobody owns this instance yet: the owner is whoever logs in from a browser that entered the token. Enter it, then log in again on the next step.</p>{% endif %}
+    {% if signed_in %}<p>You're signed in, but this instance has no superuser yet: the first is whoever logs in from a browser that entered the token. Enter it, then log in again on the next step.</p>{% endif %}
   </header>
   <section class="grid gap-2">
     <label class="label" for="token">Setup token</label>
@@ -65,8 +65,8 @@
 {% when SetupView::Owner %}
 <section class="card">
   <header>
-    <h2>Log in as the owner</h2>
-    <p>The character you log in with from this browser owns the instance. You can add alts afterwards.</p>
+    <h2>Log in as the first superuser</h2>
+    <p>The account you log in with from this browser becomes the instance's first superuser: it holds every permission and can make others superusers. You can add alts afterwards.</p>
   </header>
   <section>
     <a href="/auth/login?return_to=/setup" class="btn" data-variant="primary">Log in with EVE Online</a>
@@ -108,8 +108,8 @@
 {% when SetupView::NeedOwnerLogin %}
 <section class="card">
   <header>
-    <h2>Log in as the owner to continue</h2>
-    <p>The owner chooses which alliance gets Member access.</p>
+    <h2>Log in as a superuser to continue</h2>
+    <p>A superuser chooses which alliance gets Member access.</p>
   </header>
   <section><a href="/auth/login?return_to=/setup" class="btn" data-variant="primary">Log in with EVE Online</a></section>
 </section>

@@ -322,7 +322,10 @@ pub fn describe(scope: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     None,
-    Revoked,
+    /// Revoked (by EVE, or deleted), with the scopes it carried: still a
+    /// registration, as aa-memberaudit's, until the character leaves the
+    /// account (the ownership check, a day later).
+    Revoked(Vec<String>),
     Valid(Vec<String>),
 }
 
@@ -331,14 +334,17 @@ pub enum Token {
 pub enum Problem {
     /// Never registered with scopes (a plain login).
     NotRegistered,
-    /// The token was revoked (by the player on EVE's site, or expired).
+    /// The token was revoked (by the player on EVE's site, or expired)
+    /// and didn't carry every required scope: log in again.
     Revoked,
     /// Registered, but without these.
     Missing(Vec<String>),
 }
 
 /// Which characters fall short of `required`. Empty when compliant; a
-/// state that requires nothing is met by everyone.
+/// state that requires nothing is met by everyone. A revoked token that
+/// carried every required scope still counts (aa-memberaudit: compliance
+/// is registration; a token error only asks the pilot to register again).
 pub fn check(required: &BTreeSet<String>, characters: &[(i64, Token)]) -> Vec<(i64, Problem)> {
     if required.is_empty() {
         return Vec::new();
@@ -348,7 +354,12 @@ pub fn check(required: &BTreeSet<String>, characters: &[(i64, Token)]) -> Vec<(i
         .filter_map(|(id, token)| {
             let problem = match token {
                 Token::None => Problem::NotRegistered,
-                Token::Revoked => Problem::Revoked,
+                Token::Revoked(scopes) => {
+                    if required.iter().all(|r| scopes.contains(r)) {
+                        return None;
+                    }
+                    Problem::Revoked
+                }
                 Token::Valid(scopes) => {
                     let missing: Vec<String> = required
                         .iter()
@@ -410,9 +421,20 @@ mod tests {
                 ]),
             ),
             (2, valid(&["esi-skills.read_skills.v1"])),
-            (3, Token::Revoked),
+            (
+                3,
+                Token::Revoked(vec!["esi-skills.read_skills.v1".to_owned()]),
+            ),
             (4, Token::None),
             (5, valid(&[])),
+            // Revoked, but it carried everything: still registered.
+            (
+                6,
+                Token::Revoked(vec![
+                    "esi-skills.read_skills.v1".to_owned(),
+                    "esi-assets.read_assets.v1".to_owned(),
+                ]),
+            ),
         ];
         assert_eq!(
             check(&required, &characters),
@@ -430,7 +452,13 @@ mod tests {
 
     #[test]
     fn nothing_required_is_always_met() {
-        assert!(check(&BTreeSet::new(), &[(1, Token::None), (2, Token::Revoked)]).is_empty());
+        assert!(
+            check(
+                &BTreeSet::new(),
+                &[(1, Token::None), (2, Token::Revoked(Vec::new()))]
+            )
+            .is_empty()
+        );
     }
 
     #[test]

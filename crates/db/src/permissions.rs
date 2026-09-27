@@ -14,6 +14,8 @@ use crate::groups::GroupId;
 pub enum Grantee {
     State(StateId),
     Group(GroupId),
+    /// A single user (AA's user permissions).
+    Account(AccountId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,17 +31,18 @@ pub async fn grant<'e>(
     permission: &str,
     grantee: Grantee,
 ) -> Result<Option<i64>, sqlx::Error> {
-    let (state, group) = split(grantee);
+    let (state, group, account) = split(grantee);
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.permission_grants (permission, state_id, group_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO core.permission_grants (permission, state_id, group_id, account_id)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT DO NOTHING
         RETURNING id
         "#,
         permission,
         state,
         group,
+        account,
     )
     .fetch_optional(executor)
     .await
@@ -51,23 +54,23 @@ pub async fn revoke<'e>(
     grant_id: i64,
 ) -> Result<Option<Grant>, sqlx::Error> {
     let row = sqlx::query!(
-        "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, state_id, group_id",
+        "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, state_id, group_id, account_id",
         grant_id
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.and_then(|r| to_grant(r.id, r.permission, r.state_id, r.group_id)))
+    Ok(row.and_then(|r| to_grant(r.id, r.permission, r.state_id, r.group_id, r.account_id)))
 }
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Grant>, sqlx::Error> {
     let rows = sqlx::query!(
-        "SELECT id, permission, state_id, group_id FROM core.permission_grants ORDER BY permission, id"
+        "SELECT id, permission, state_id, group_id, account_id FROM core.permission_grants ORDER BY permission, id"
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
+        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id, r.account_id))
         .collect())
 }
 
@@ -84,12 +87,25 @@ pub async fn of_group<'e>(
     .await
 }
 
-/// What the account may do: everything for the owner; otherwise the grants
-/// to its state plus the grants to its groups.
+/// Permissions granted to the account itself (AA's user permissions), as
+/// `(grant id, permission)`, by permission.
+pub async fn of_account<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<Vec<(i64, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        "SELECT id, permission FROM core.permission_grants WHERE account_id = $1 ORDER BY permission",
+        account.0
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.id, r.permission)).collect())
+}
+
 /// A request made with a personal access token: its account, the token,
 /// and the token's scopes. While it runs, that account holds only the
 /// permissions both it and the token have, in every check (grants,
-/// "you must already hold it", the owner's), and is never the owner.
+/// "you must already hold it", a superuser's), and is never a superuser.
 #[derive(Debug, Clone)]
 pub struct TokenScope {
     pub account: AccountId,
@@ -119,6 +135,9 @@ pub fn scoped_by_token(account: AccountId) -> Option<Arc<BTreeSet<String>>> {
         .map(|t| t.scopes)
 }
 
+/// What the account may do: everything for a superuser; otherwise the
+/// grants to it, to its state and to its groups (AA's user, state and
+/// group permissions).
 pub async fn effective(pool: &PgPool, account: AccountId) -> Result<BTreeSet<String>, sqlx::Error> {
     effective_in(&mut *pool.acquire().await?, account).await
 }
@@ -141,7 +160,7 @@ async fn held_in(
     account: AccountId,
 ) -> Result<BTreeSet<String>, sqlx::Error> {
     // Deactivated accounts hold nothing (AA's inactive users), nor do
-    // blacklisted ones; the owner always holds everything.
+    // blacklisted ones; superusers always hold everything.
     let owner = sqlx::query_scalar!(
         r#"
         SELECT a.is_owner AS "is_owner!" FROM core.accounts a
@@ -169,6 +188,8 @@ async fn held_in(
         FROM core.permission_grants g
         JOIN core.accounts a ON a.id = $1
         WHERE g.state_id = a.state_id
+           -- Its own grants, main or not (AA's user permissions).
+           OR g.account_id = $1
            -- Groups count only while the account has a main (AA: services
            -- off until the owner picks one).
            OR (a.main_character_id IS NOT NULL
@@ -310,8 +331,9 @@ pub async fn sync_plugin_permissions(
                   WHERE h.permission = $2
                     AND h.state_id IS NOT DISTINCT FROM g.state_id
                     AND h.group_id IS NOT DISTINCT FROM g.group_id
+                    AND h.account_id IS NOT DISTINCT FROM g.account_id
               )
-            RETURNING id, permission, state_id, group_id
+            RETURNING id, permission, state_id, group_id, account_id
             "#,
             from,
             to
@@ -319,9 +341,11 @@ pub async fn sync_plugin_permissions(
         .fetch_all(&mut *tx)
         .await?;
         moved.extend(rows.into_iter().filter_map(|r| {
-            to_grant(r.id, r.permission, r.state_id, r.group_id).map(|grant| MovedGrant {
-                grant,
-                from: from.clone(),
+            to_grant(r.id, r.permission, r.state_id, r.group_id, r.account_id).map(|grant| {
+                MovedGrant {
+                    grant,
+                    from: from.clone(),
+                }
             })
         }));
     }
@@ -332,7 +356,7 @@ pub async fn sync_plugin_permissions(
             SELECT permission FROM core.plugin_permissions
             WHERE plugin_id = $1 AND NOT permission = ANY($2)
         )
-        RETURNING id, permission, state_id, group_id
+        RETURNING id, permission, state_id, group_id, account_id
         "#,
         plugin_id,
         &names
@@ -365,7 +389,7 @@ pub async fn sync_plugin_permissions(
     Ok(PermissionsSynced {
         removed: rows
             .into_iter()
-            .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
+            .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id, r.account_id))
             .collect(),
         moved,
     })
@@ -403,7 +427,7 @@ pub async fn remove_plugin_grants(
         r#"
         DELETE FROM core.permission_grants
         WHERE permission IN (SELECT permission FROM core.plugin_permissions WHERE plugin_id = $1)
-        RETURNING id, permission, state_id, group_id
+        RETURNING id, permission, state_id, group_id, account_id
         "#,
         plugin_id
     )
@@ -411,28 +435,40 @@ pub async fn remove_plugin_grants(
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
+        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id, r.account_id))
         .collect())
 }
 
-pub(crate) fn split(grantee: Grantee) -> (Option<i64>, Option<i64>) {
+pub(crate) fn split(grantee: Grantee) -> (Option<i64>, Option<i64>, Option<i64>) {
     match grantee {
-        Grantee::State(state) => (Some(state.0), None),
-        Grantee::Group(group) => (None, Some(group.0)),
+        Grantee::State(state) => (Some(state.0), None, None),
+        Grantee::Group(group) => (None, Some(group.0), None),
+        Grantee::Account(account) => (None, None, Some(account.0)),
     }
 }
 
-/// Rebuilds a grantee from its `(state_id, group_id)` columns.
-pub(crate) fn grantee_from(state: Option<i64>, group: Option<i64>) -> Option<Grantee> {
-    match (state, group) {
-        (Some(state), None) => Some(Grantee::State(StateId(state))),
-        (None, Some(group)) => Some(Grantee::Group(GroupId(group))),
+/// Rebuilds a grantee from its `(state_id, group_id, account_id)` columns.
+pub(crate) fn grantee_from(
+    state: Option<i64>,
+    group: Option<i64>,
+    account: Option<i64>,
+) -> Option<Grantee> {
+    match (state, group, account) {
+        (Some(state), None, None) => Some(Grantee::State(StateId(state))),
+        (None, Some(group), None) => Some(Grantee::Group(GroupId(group))),
+        (None, None, Some(account)) => Some(Grantee::Account(AccountId(account))),
         _ => None,
     }
 }
 
-fn to_grant(id: i64, permission: String, state: Option<i64>, group: Option<i64>) -> Option<Grant> {
-    let grantee = grantee_from(state, group)?;
+fn to_grant(
+    id: i64,
+    permission: String,
+    state: Option<i64>,
+    group: Option<i64>,
+    account: Option<i64>,
+) -> Option<Grant> {
+    let grantee = grantee_from(state, group, account)?;
     Some(Grant {
         id,
         permission,
@@ -525,6 +561,41 @@ mod tests {
         revoke(&pool, group_grant).await.unwrap();
         let after: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
         assert_eq!(after, vec![ADMIN_AUDIT, DISCORD_ACCESS, REQUEST_GROUPS]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn grants_to_a_user_count_for_that_user_only(pool: PgPool) {
+        account(&pool, 1).await; // owner
+        let pilot = account(&pool, 2).await;
+        let other = account(&pool, 3).await;
+        let id = grant(&pool, ADMIN_AUDIT, Grantee::Account(pilot))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(effective(&pool, pilot).await.unwrap().contains(ADMIN_AUDIT));
+        assert!(!effective(&pool, other).await.unwrap().contains(ADMIN_AUDIT));
+        assert_eq!(
+            of_account(&pool, pilot).await.unwrap(),
+            vec![(id, ADMIN_AUDIT.to_owned())]
+        );
+        // Main or not, as AA's user permissions.
+        sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE id = $1")
+            .bind(pilot.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(effective(&pool, pilot).await.unwrap().contains(ADMIN_AUDIT));
+        // Deactivated accounts hold nothing.
+        sqlx::query("UPDATE core.accounts SET active = false WHERE id = $1")
+            .bind(pilot.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(effective(&pool, pilot).await.unwrap().is_empty());
+        assert_eq!(
+            revoke(&pool, id).await.unwrap().map(|g| g.grantee),
+            Some(Grantee::Account(pilot))
+        );
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

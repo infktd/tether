@@ -60,7 +60,7 @@
           <td><span class="state-badge" data-state="{{ r.state_style }}">{{ r.state }}</span></td>
           <td class="num">{{ r.characters }}</td>
           <td>
-            {% if r.owner %}<span class="badge" data-variant="outline">Owner</span>{% endif %}
+            {% if r.owner %}<span class="badge" data-variant="outline">Superuser</span>{% endif %}
             {% if !r.active %}<span class="badge" data-variant="destructive">Deactivated</span>{% endif %}
           </td>
         </tr>

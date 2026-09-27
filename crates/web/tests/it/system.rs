@@ -433,3 +433,37 @@ async fn schedules_run_now_from_the_system_page(db: PgPool) {
         swapped.body
     );
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_notification_cap_is_a_setting(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    let shown = page(&h, "/admin/system", &owner).await;
+    assert!(
+        shown.body.contains(r#"name="max_per_user""#) && shown.body.contains(r#"value="50""#),
+        "AA's default: {}",
+        shown.body
+    );
+    let res = send(
+        &h.app,
+        form("/admin/system/notifications", "max_per_user=0", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    let res = send(
+        &h.app,
+        form("/admin/system/notifications", "max_per_user=3", &pilot),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    let res = send(
+        &h.app,
+        form("/admin/system/notifications", "max_per_user=3", &owner),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/system");
+    assert_eq!(
+        tether_db::settings::notifications_max(&h.db).await.unwrap(),
+        3
+    );
+}

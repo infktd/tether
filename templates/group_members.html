@@ -7,7 +7,7 @@
   <div class="flex items-end justify-between gap-4">
     <div>
       <h1 class="page-title flex items-center gap-2">{{ name }} <span class="badge" data-variant="outline">{{ label }}</span></h1>
-      {% if restricted %}<p class="text-muted-foreground mt-1">Restricted: only the owner removes members.</p>{% endif %}
+      {% if restricted %}<p class="text-muted-foreground mt-1">Restricted: on the admin pages, only a superuser adds or removes members directly.</p>{% endif %}
     </div>
     <a href="/group-management/{{ id }}/audit" class="btn" data-variant="outline">Audit Log</a>
   </div>

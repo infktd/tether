@@ -55,6 +55,11 @@ pub enum Change {
         state: StateId,
         priority: i32,
     },
+    /// AA's `public`: the state covers any main (below higher states).
+    SetPublic {
+        state: StateId,
+        public: bool,
+    },
     /// Require a scope on every character of the state's accounts.
     AddScope {
         state: StateId,
@@ -201,6 +206,35 @@ fn check_priority(s: &State, priority: i32, states: &[State]) -> Result<(), AppE
     Ok(())
 }
 
+/// A public state takes anyone who logs in with a main, so, as Guest, it
+/// never holds a sensitive permission (admin powers and the like).
+async fn check_public(
+    conn: &mut sqlx::PgConnection,
+    s: &State,
+    public: bool,
+) -> Result<(), AppError> {
+    if s.is_guest() {
+        return Err(AppError::bad_request(
+            "Guest already covers everyone no other state does.",
+        ));
+    }
+    if !public {
+        return Ok(());
+    }
+    let granted = db::granted_to(&mut *conn, &[s.id]).await?;
+    if let Some(p) = granted
+        .iter()
+        .find(|p| tether_core::permissions::is_sensitive(p))
+    {
+        return Err(AppError::bad_request(format!(
+            "{} grants {p}, which can't go to a public state: anyone who logs in with EVE could \
+             be in it. Revoke it first.",
+            s.name
+        )));
+    }
+    Ok(())
+}
+
 fn priority_taken() -> AppError {
     AppError::new(
         axum::http::StatusCode::CONFLICT,
@@ -253,7 +287,8 @@ fn affected(states: &[State], change: &Change) -> Result<Vec<StateId>, AppError>
         | Change::Add { state, .. }
         | Change::Remove { state, .. }
         | Change::AddScope { state, .. }
-        | Change::RemoveScope { state, .. } => vec![*state],
+        | Change::RemoveScope { state, .. }
+        | Change::SetPublic { state, .. } => vec![*state],
         Change::Move { state, up, past } => {
             vec![*state, pinned_neighbour(states, *state, *up, *past)?.id]
         }
@@ -374,6 +409,22 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
             check_priority(s, *priority, &states)?;
             after.set_priority(s.id, *priority);
             format!("Set {}'s priority to {priority}", s.name)
+        }
+        Change::SetPublic { state: id, public } => {
+            let s = find(&states, *id)?;
+            check_public(&mut conn, s, *public).await?;
+            after.set_public(s.id, *public);
+            if *public {
+                warning = Some(format!(
+                    "Anyone who logs in with EVE joins {} unless a state above it covers them, as \
+                     Alliance Auth's public states. Who moves below counts only pilots already \
+                     here.",
+                    s.name
+                ));
+                format!("Make {} public", s.name)
+            } else {
+                format!("Make {} not public", s.name)
+            }
         }
         Change::Add {
             state: id,
@@ -584,6 +635,25 @@ pub async fn apply(
                 }
                 db::Reprioritized::Taken => return Err(priority_taken()),
             }
+        }
+        Change::SetPublic { state: id, public } => {
+            let s = find(&states, *id)?;
+            check_public(&mut tx, s, *public).await?;
+            if !db::set_public(&mut tx, *id, *public).await? {
+                return Err(AppError::new(
+                    axum::http::StatusCode::CONFLICT,
+                    if *public {
+                        format!("{} is already public.", s.name)
+                    } else {
+                        format!("{} isn't public.", s.name)
+                    },
+                ));
+            }
+            (
+                "state.public",
+                *id,
+                json!({ "state": s.name, "public": public }),
+            )
         }
         Change::Add { state: id, .. } => {
             let s = find(&states, *id)?;

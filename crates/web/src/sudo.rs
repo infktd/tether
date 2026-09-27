@@ -65,8 +65,8 @@ pub enum Action {
     Setup,
     /// The Discord application and bot (their secrets included).
     DiscordSettings,
-    /// Anything only the owner may do to a Restricted group: its members,
-    /// leaders, settings and the flag itself.
+    /// What only a superuser may do to a Restricted group (AA's code): set
+    /// or clear the flag, and add or remove members on the admin pages.
     RestrictedGroup,
     /// Changing the main, for the owner and accounts holding a sensitive
     /// permission ([`check_privileged`]): the main is what confirms it's

@@ -231,7 +231,7 @@ pub async fn options(db: &PgPool) -> Result<Options, AppError> {
         sync_names: tether_db::settings::get_bool_or(
             db,
             tether_db::settings::DISCORD_SYNC_NAMES,
-            true,
+            false,
         )
         .await?,
         strip_unmapped: tether_db::settings::get_bool(
@@ -318,7 +318,7 @@ pub async fn add_mapping(
             .await?
             .filter(|s| !s.is_blacklist())
             .ok_or_else(|| AppError::not_found("No such state."))?
-            .is_guest(),
+            .open_to_anyone(),
         Grantee::Group(group) => {
             groups::lock(&mut tx, group, false).await?;
             let group = groups::get(&mut *tx, group)
@@ -326,10 +326,15 @@ pub async fn add_mapping(
                 .ok_or_else(|| AppError::not_found("No such group."))?;
             group.flags.anyone_can_join()
         }
+        Grantee::Account(_) => {
+            return Err(AppError::bad_request(
+                "Roles go to states and groups, not to single users.",
+            ));
+        }
     };
     if role.privileged && open {
         return Err(AppError::bad_request(format!(
-            "{} has moderation or server-management permissions, so it can't go to Guest or an Open group: anyone can be in those.",
+            "{} has moderation or server-management permissions, so it can't go to Guest, a public state or an Open group: anyone can be in those.",
             role.name
         )));
     }
@@ -382,6 +387,9 @@ fn mapping_details(role_id: i64, role_name: &str, grantee: Grantee) -> serde_jso
         }
         Grantee::Group(group) => {
             json!({ "role_id": role_id.to_string(), "role": role_name, "group_id": group.0 })
+        }
+        Grantee::Account(account) => {
+            json!({ "role_id": role_id.to_string(), "role": role_name, "account_id": account.0 })
         }
     }
 }
@@ -780,7 +788,7 @@ async fn strip(
         .map_err(crate::discord_sync::discord_failure)?;
     // A Tether nickname ("[ACME] Name") would still say they belong.
     let sync_names =
-        tether_db::settings::get_bool_or(db_pool, tether_db::settings::DISCORD_SYNC_NAMES, true)
+        tether_db::settings::get_bool(db_pool, tether_db::settings::DISCORD_SYNC_NAMES)
             .await
             .map_err(JobError::retry)?;
     if sync_names {

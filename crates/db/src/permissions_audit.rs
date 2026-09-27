@@ -1,7 +1,7 @@
 //! Permissions Audit (AA's permissions tool): for every permission, who
 //! holds it and through what, computed the way `permissions::effective`
 //! grants it (active accounts only, never blacklisted ones; groups only
-//! while the account has a main; the owner holds everything).
+//! while the account has a main; superusers hold everything).
 
 use crate::PgPool;
 
@@ -10,6 +10,8 @@ use crate::PgPool;
 pub struct Counts {
     pub states: i64,
     pub groups: i64,
+    /// Grants to single users (AA's "via user").
+    pub users: i64,
     pub accounts: i64,
 }
 
@@ -17,14 +19,16 @@ pub async fn counts(pool: &PgPool, permission: &str) -> Result<Counts, sqlx::Err
     sqlx::query_as!(
         Counts,
         r#"
-        WITH g AS (SELECT state_id, group_id FROM core.permission_grants WHERE permission = $1)
+        WITH g AS (SELECT state_id, group_id, account_id FROM core.permission_grants WHERE permission = $1)
         SELECT (SELECT count(*) FROM g WHERE state_id IS NOT NULL) AS "states!",
                (SELECT count(*) FROM g WHERE group_id IS NOT NULL) AS "groups!",
+               (SELECT count(*) FROM g WHERE account_id IS NOT NULL) AS "users!",
                (SELECT count(*) FROM core.accounts a
                 WHERE a.active
                   AND NOT core.blacklisted(a.id)
                   AND (
                     a.is_owner
+                    OR a.id IN (SELECT account_id FROM g WHERE account_id IS NOT NULL)
                     OR a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL)
                     OR (a.main_character_id IS NOT NULL AND EXISTS (
                         SELECT 1 FROM core.group_members m
@@ -46,7 +50,10 @@ pub struct Holder {
     pub main_name: String,
     pub state: String,
     pub state_style: String,
+    /// A superuser (AA's is_superuser).
     pub owner: bool,
+    /// Granted to it directly (AA's "via user").
+    pub via_user: bool,
     /// Its state grants it.
     pub via_state: bool,
     /// Groups it's in that grant it.
@@ -57,11 +64,12 @@ pub async fn holders(pool: &PgPool, permission: &str) -> Result<Vec<Holder>, sql
     sqlx::query_as!(
         Holder,
         r#"
-        WITH g AS (SELECT state_id, group_id FROM core.permission_grants WHERE permission = $1)
+        WITH g AS (SELECT state_id, group_id, account_id FROM core.permission_grants WHERE permission = $1)
         SELECT a.id AS account_id, COALESCE(main.id, 0) AS "main_id!",
                COALESCE(main.name, '(no main)') AS "main_name!",
                s.name AS state, COALESCE(s.builtin, 'custom') AS "state_style!",
                a.is_owner AS owner,
+               a.id IN (SELECT account_id FROM g WHERE account_id IS NOT NULL) AS "via_user!",
                a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL) AS "via_state!",
                COALESCE((
                    SELECT array_agg(gr.name ORDER BY gr.name)
@@ -76,6 +84,7 @@ pub async fn holders(pool: &PgPool, permission: &str) -> Result<Vec<Holder>, sql
                   AND NOT core.blacklisted(a.id)
                   AND (
             a.is_owner
+            OR a.id IN (SELECT account_id FROM g WHERE account_id IS NOT NULL)
             OR a.state_id IN (SELECT state_id FROM g WHERE state_id IS NOT NULL)
             OR (a.main_character_id IS NOT NULL AND EXISTS (
                 SELECT 1 FROM core.group_members m

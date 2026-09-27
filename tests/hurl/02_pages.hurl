@@ -474,6 +474,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/system/notifications
+Origin: {{base}}
+[Form]
+max_per_user: 50
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/menu
 HTTP 303
 [Asserts]
@@ -623,6 +631,32 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/users/1/superuser
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/superuser/revoke
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/permissions
+Origin: {{base}}
+[Form]
+permission: admin.audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/permissions/1/revoke
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/permissions/audit
 HTTP 303
 [Asserts]
@@ -682,6 +716,15 @@ POST {{base}}/admin/states/1/move
 Origin: {{base}}
 [Form]
 direction: up
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/states/4/public
+Origin: {{base}}
+[Form]
+public: on
+confirm: 1
 HTTP 303
 [Asserts]
 header "Location" == "/login"

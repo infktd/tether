@@ -1,7 +1,8 @@
 //! Keeping Discord in step with states and groups (F12): each linked member
 //! gets exactly the Tether-managed roles their state and groups map to, and
 //! the nickname template if one is set. Roles Tether doesn't manage are
-//! left alone, and leaving the server isn't tracked.
+//! left alone. A member no longer in the server is unlinked and notified,
+//! as AA does.
 //!
 //! Database triggers queue `discord.sync_member` whenever an account's
 //! state, main, groups or main's corporation change, and `discord.sync_all`
@@ -82,7 +83,7 @@ async fn nickname_for(
     ctx: &SyncContext,
     account: AccountId,
 ) -> Result<Option<String>, tether_esi::names::NamesError> {
-    if !settings::get_bool_or(&ctx.db, settings::DISCORD_SYNC_NAMES, true).await? {
+    if !settings::get_bool(&ctx.db, settings::DISCORD_SYNC_NAMES).await? {
         return Ok(None);
     }
     let Some(main) = db::main_character(&ctx.db, account).await? else {
@@ -227,6 +228,11 @@ pub async fn sync_member(
         &removed,
     )
     .await;
+    if matches!(synced, Ok(None)) {
+        left_server(&mut tx, account, link.discord_user_id)
+            .await
+            .map_err(JobError::retry)?;
+    }
     tx.commit().await.map_err(JobError::retry)?;
     let Some(synced) = synced? else {
         return Ok(());
@@ -280,6 +286,45 @@ pub async fn sync_member(
     Ok(())
 }
 
+/// A linked member who isn't in the server (they left, or were removed by
+/// hand): unlinked, audited and notified, as AA's sync does
+/// (`delete_user(notify_user=True)`). Under the user's lock, in the
+/// caller's transaction; the unlink queues the usual removal, which finds
+/// nobody to kick.
+async fn left_server(
+    tx: &mut sqlx::PgTransaction<'_>,
+    account: AccountId,
+    discord_user_id: i64,
+) -> Result<(), sqlx::Error> {
+    let Some(link) = db::unlink_user(&mut **tx, account, discord_user_id).await? else {
+        return Ok(());
+    };
+    tether_db::audit::record(
+        &mut **tx,
+        tether_db::audit::Actor::System,
+        "discord.left_server",
+        Some(&format!("account:{}", account.0)),
+        json!({ "discord_user_id": link.discord_user_id.to_string(), "username": link.username }),
+    )
+    .await?;
+    tether_db::notifications::notify(
+        tx,
+        account,
+        tether_db::notifications::Level::Warning,
+        "Discord Account Disabled",
+        Some(
+            "Your Discord account was disabled automatically: you're no longer in the Discord server. If you think this was a \
+             mistake, please contact an admin.",
+        ),
+    )
+    .await?;
+    tracing::info!(
+        account = account.0,
+        "not in the Discord server any more: unlinked"
+    );
+    Ok(())
+}
+
 /// Adds the roles the member is due and takes managed roles they aren't
 /// mapped to. A mapped role that `grantable` holds back (now too powerful,
 /// or above the bot) is neither given nor taken. `None` if they aren't in
@@ -310,7 +355,7 @@ async fn sync_roles(
         .await
         .map_err(discord_failure)?
     else {
-        // Not in the server (never joined, or left): nothing to do.
+        // Not in the server (left, or removed by hand): the caller unlinks.
         return Ok(None);
     };
     let assignable = |role: &u64| check.roles.iter().any(|r| r.id == *role && r.assignable);

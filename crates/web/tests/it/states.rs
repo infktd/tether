@@ -220,3 +220,75 @@ async fn a_state_can_cover_a_faction(db: PgPool) {
         .unwrap();
     assert_eq!(state_of(&h, &mittani).await, "Member");
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_public_state_takes_any_main_but_never_sensitive_permissions(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let guest = log_in_as(&h, MITTANI, None).await;
+    assert_eq!(state_of(&h, &guest).await, "Guest");
+
+    // Blue holding an admin permission can't be made public...
+    let grant = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            r#"{"permission":"admin.audit","state_id":2}"#,
+        ),
+    )
+    .await;
+    assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
+    let grant_id = serde_json::from_str::<serde_json::Value>(&grant.body).unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let public = "/admin/states/2/public";
+    let refused = send(&h.app, form(public, "public=on&confirm=1", &owner)).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    assert!(refused.body.contains("admin.audit"), "{}", refused.body);
+    send(
+        &h.app,
+        axum::http::Request::delete(format!("/api/admin/permissions/grants/{grant_id}"))
+            .header(axum::http::header::ORIGIN, SITE)
+            .header(axum::http::header::COOKIE, format!("{SESSION}={owner}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    // ...and asks first, since everyone below moves.
+    let asked = send(&h.app, form(public, "public=on", &owner)).await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.body);
+    assert!(asked.body.contains("Anyone who logs in"), "{}", asked.body);
+    let made = send(&h.app, form(public, "public=on&confirm=1", &owner)).await;
+    assert_eq!(made.location(), "/admin/states", "{}", made.body);
+    let account = me(&h, &guest).await["account_id"].as_i64().unwrap();
+    tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(account))
+        .await
+        .unwrap();
+    assert_eq!(state_of(&h, &guest).await, "Blue", "any main, as AA");
+    // As Guest, a public state fills no compliance group (the Compliant
+    // group allows every state).
+    let groups = me(&h, &guest).await["groups"].clone();
+    assert!(
+        !groups.as_array().unwrap().iter().any(|g| g == "Compliant"),
+        "{groups}"
+    );
+    // Member is higher: its members stay.
+    assert_eq!(state_of(&h, &owner).await, "Member");
+
+    // Now public, it takes no sensitive permission.
+    let grant = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            r#"{"permission":"admin.audit","state_id":2}"#,
+        ),
+    )
+    .await;
+    assert_eq!(grant.status, StatusCode::BAD_REQUEST, "{}", grant.body);
+    let listed = page(&h, "/admin/states", &owner).await;
+    assert!(listed.body.contains(">Public<"), "{}", listed.body);
+}

@@ -1,13 +1,16 @@
 //! Users (AA's admin site Users): find any account by any of its
-//! characters, see its characters, state, groups and permissions, and
-//! deactivate or reactivate it.
+//! characters, see its characters, state, groups and permissions,
+//! deactivate or reactivate it, grant it permissions of its own (AA's user
+//! permissions, for `admin.permissions` holders) and, for superusers, make
+//! it a superuser or not.
 
 use askama::Template;
+use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde::Deserialize;
-use tether_core::permissions::{ADMIN_GROUPS, ADMIN_USERS, PERMISSIONS_AUDIT};
+use tether_core::permissions::{ADMIN_GROUPS, ADMIN_PERMISSIONS, ADMIN_USERS, PERMISSIONS_AUDIT};
 use tether_db::accounts::AccountId;
 use tether_db::audit::Actor;
 use tether_db::users::{self as db, CharacterRow, Row, Status};
@@ -102,6 +105,13 @@ struct OnePage {
     characters: Vec<CharacterView>,
     groups: Vec<(i64, String)>,
     permissions: Vec<String>,
+    /// Granted to this account itself: `(grant id, permission)`.
+    own_grants: Vec<(i64, String)>,
+    /// The viewer may grant it permissions (`admin.permissions`): only
+    /// those the viewer holds, listed here.
+    grantable: Option<Vec<String>>,
+    /// The viewer is a superuser (makes and unmakes superusers).
+    superuser_controls: bool,
     /// Whether the viewer may open groups and the Permissions Audit.
     link_groups: bool,
     link_audit: bool,
@@ -165,6 +175,17 @@ async fn user_page(
     } else {
         None
     };
+    let own_grants = tether_db::permissions::of_account(&state.db, account).await?;
+    let grantable = viewer.contains(ADMIN_PERMISSIONS).then(|| {
+        viewer
+            .iter()
+            .filter(|p| !own_grants.iter().any(|(_, g)| g == *p))
+            .cloned()
+            .collect()
+    });
+    let superuser_controls = tether_db::accounts::standing(&state.db, session.account)
+        .await?
+        .is_some_and(|s| s.is_owner);
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -189,6 +210,9 @@ async fn user_page(
                     .await?
                     .into_iter()
                     .collect(),
+                own_grants,
+                grantable,
+                superuser_controls,
                 link_groups: viewer.contains(ADMIN_GROUPS),
                 link_audit: viewer.contains(PERMISSIONS_AUDIT),
                 notes,
@@ -251,4 +275,92 @@ pub async fn reactivate(
     Path(id): Path<i64>,
 ) -> Result<Response, PageError> {
     set_active(state, session, id, true).await
+}
+
+/// `POST /admin/users/{id}/superuser`: make it a superuser (superusers
+/// only, sudo mode).
+pub async fn make_superuser(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+) -> Result<Response, PageError> {
+    set_superuser(state, session, id, true).await
+}
+
+/// `POST /admin/users/{id}/superuser/revoke`
+pub async fn revoke_superuser(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+) -> Result<Response, PageError> {
+    set_superuser(state, session, id, false).await
+}
+
+async fn set_superuser(
+    state: AppState,
+    session: Option<CurrentSession>,
+    id: i64,
+    on: bool,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_USERS, "users").await?;
+    match admin::set_superuser(&state.db, session.account, AccountId(id), on).await {
+        Ok(()) => Ok(super::stay::back(
+            &format!("/admin/users/{id}"),
+            if on {
+                "Made a superuser."
+            } else {
+                "No longer a superuser."
+            },
+        )),
+        Err(err) => user_page(&state, &session, shell, id, Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GrantForm {
+    permission: String,
+}
+
+/// `POST /admin/users/{id}/permissions`: grant this user a permission of
+/// its own (AA's user permissions). Only one the admin holds.
+pub async fn grant(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<GrantForm>,
+) -> Result<Response, PageError> {
+    // The answer is the user's page: Users is needed as well.
+    let (session, shell) = guard(&state, session, ADMIN_USERS, "users").await?;
+    session.require(&state, ADMIN_PERMISSIONS).await?;
+    let grantee = tether_db::permissions::Grantee::Account(AccountId(id));
+    match admin::grant(&state, session.account, &form.permission, grantee).await {
+        Ok(_) => Ok(super::stay::back(
+            &format!("/admin/users/{id}"),
+            format!("Granted {}.", form.permission),
+        )),
+        Err(err) => user_page(&state, &session, shell, id, Some(err)).await,
+    }
+}
+
+/// `POST /admin/users/{id}/permissions/{grant_id}/revoke`
+pub async fn revoke(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, grant_id)): Path<(i64, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_USERS, "users").await?;
+    session.require(&state, ADMIN_PERMISSIONS).await?;
+    let own = tether_db::permissions::of_account(&state.db, AccountId(id)).await?;
+    let result = if own.iter().any(|(g, _)| *g == grant_id) {
+        admin::revoke(&state, session.account, grant_id).await
+    } else {
+        Err(AppError::not_found("No such grant on this account."))
+    };
+    match result {
+        Ok(()) => Ok(super::stay::back(
+            &format!("/admin/users/{id}"),
+            "Permission revoked.",
+        )),
+        Err(err) => user_page(&state, &session, shell, id, Some(err)).await,
+    }
 }

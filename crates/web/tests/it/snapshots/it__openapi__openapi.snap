@@ -506,7 +506,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "admin"
         ],
-        "summary": "`POST /api/admin/permissions/grants`: grant to a state or a group.",
+        "summary": "`POST /api/admin/permissions/grants`: grant to a state, a group or a\nsingle user.",
         "operationId": "grant",
         "requestBody": {
           "content": {
@@ -2109,6 +2109,14 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "permission"
         ],
         "properties": {
+          "account_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A single user (AA's user permissions); only a permission you hold."
+          },
           "group_id": {
             "type": [
               "integer",
@@ -2135,6 +2143,14 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "permission"
         ],
         "properties": {
+          "account_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A grant to a single user (AA's user permissions)."
+          },
           "group_id": {
             "type": [
               "integer",
@@ -2708,6 +2724,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
           "id",
           "name",
           "priority",
+          "public",
           "accounts",
           "covers",
           "required_scopes",
@@ -2750,6 +2767,10 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
             "type": "integer",
             "format": "int32",
             "description": "Higher wins; Guest is 0."
+          },
+          "public": {
+            "type": "boolean",
+            "description": "AA's `public`: it covers any main (below higher states)."
           },
           "required_scopes": {
             "type": "array",

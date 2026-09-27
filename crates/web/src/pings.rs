@@ -564,6 +564,9 @@ pub async fn restrict(
     let (state_id, group_id) = match grantee {
         tether_db::permissions::Grantee::State(s) => (Some(s.0), None),
         tether_db::permissions::Grantee::Group(g) => (None, Some(g.0)),
+        tether_db::permissions::Grantee::Account(_) => {
+            return Err(AppError::bad_request("Choose a state or a group."));
+        }
     };
     let mut tx = state.db.begin().await?;
     match ping_options::restrict(&mut *tx, &item, state_id, group_id).await {

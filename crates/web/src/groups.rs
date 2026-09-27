@@ -73,12 +73,15 @@ pub fn auto_group() -> AppError {
 pub(crate) fn owner_only() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
-        "This group is Restricted: only the owner changes its members or that setting.",
+        "This group is Restricted: only a superuser adds or removes its members directly, or \
+         changes that setting.",
     )
 }
 
-/// Only the owner changes a Restricted group (its members, leaders and
-/// settings, and the flag itself), and only freshly logged in (sudo mode).
+/// As AA's code: only a superuser sets or clears the Restricted flag, or
+/// adds and removes a Restricted group's members from the admin pages,
+/// and only freshly logged in (sudo mode). Group Management (leaders and
+/// `group_management`) handles its requests and members as any group's.
 pub(crate) fn restricted_owner(is_owner: bool) -> Result<(), AppError> {
     if !is_owner {
         return Err(owner_only());
@@ -183,13 +186,14 @@ pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joi
     let pending = groups::pending(&mut *tx, group.id, account)
         .await?
         .is_some();
-    // Only the owner lets anyone into a Restricted group: even Open, joining
-    // it is a request (accepted by the owner).
-    let flags = Flags {
-        open: group.flags.open && !group.flags.restricted,
-        ..group.flags
-    };
-    let joined = match rules::join(flags, &allowed, me.state, is_member, can_request, pending) {
+    let joined = match rules::join(
+        group.flags,
+        &allowed,
+        me.state,
+        is_member,
+        can_request,
+        pending,
+    ) {
         // Internal groups don't exist as far as users can tell.
         Join::NotJoinable if group.flags.internal => {
             return Err(AppError::not_found("No such group."));
@@ -490,10 +494,6 @@ pub async fn decide(
 ) -> Result<(), AppError> {
     let mut tx = db.begin().await?;
     let group = managed(&mut tx, actor, group).await?;
-    let me = standing(&mut tx, actor).await?;
-    if group.flags.restricted && decision == Decision::Accept {
-        restricted_owner(me.is_owner)?;
-    }
     let Some(leave) = groups::remove_request(&mut *tx, group.id, requester).await? else {
         return Err(AppError::not_found("No pending request from that account."));
     };
@@ -548,16 +548,19 @@ pub async fn kick(
 ) -> Result<(), AppError> {
     let mut tx = db.begin().await?;
     let group = managed(&mut tx, actor, group).await?;
-    remove_in(&mut tx, actor, &group, member).await?;
+    remove_in(&mut tx, actor, &group, member, false).await?;
     tx.commit().await?;
     Ok(())
 }
 
+/// `direct`: an admin removing them from the admin pages (a Restricted
+/// group's are a superuser's to remove there), not Group Management.
 async fn remove_in(
     tx: &mut sqlx::PgConnection,
     actor: AccountId,
     group: &Group,
     member: AccountId,
+    direct: bool,
 ) -> Result<(), AppError> {
     if group.compliance {
         return Err(managed_group());
@@ -565,7 +568,7 @@ async fn remove_in(
     if tether_db::autogroups::is_auto(&mut *tx, group.id).await? {
         return Err(auto_group());
     }
-    if group.flags.restricted {
+    if direct && group.flags.restricted {
         restricted_owner(standing(&mut *tx, actor).await?.is_owner)?;
     }
     gate_sensitive_removal(&mut *tx, group.id).await?;
@@ -702,11 +705,13 @@ pub async fn update(
     {
         return Err(auto_group());
     }
-    let owner = standing(&mut tx, actor).await?.is_owner;
     let membership_moves = states != old_states || new.compliance != old.compliance;
-    // A Restricted group's settings are the owner's alone, as is the flag.
-    if old.flags.restricted || new.flags.restricted {
-        restricted_owner(owner)?;
+    // The Restricted flag is a superuser's to set or clear (AA's admin
+    // makes it read-only for everyone else), and so are changes that take
+    // a Restricted group's members out (its allowed states, compliance):
+    // only a superuser removes them from the admin pages.
+    if old.flags.restricted != new.flags.restricted || (old.flags.restricted && membership_moves) {
+        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     if new.compliance
         && tether_db::smart_groups::settings(&mut *tx, group)
@@ -764,7 +769,13 @@ pub async fn update(
     groups::update(&mut *tx, group, &description, new.flags, new.compliance).await?;
     groups::set_allowed_states(&mut tx, group, &states).await?;
     let mut removed = Vec::new();
-    for account in groups::members_not_allowed(&mut *tx, group).await? {
+    let leaving = groups::members_not_allowed(&mut *tx, group).await?;
+    // Taking people out of a group that grants a sensitive permission takes
+    // it away, as revoking would (sudo mode).
+    if !leaving.is_empty() {
+        gate_sensitive_removal(&mut tx, group).await?;
+    }
+    for account in leaving {
         groups::remove_member(&mut *tx, group, account).await?;
         audit::record(
             &mut *tx,
@@ -807,9 +818,6 @@ pub async fn delete(db: &PgPool, actor: AccountId, group: GroupId) -> Result<(),
     }
     if tether_db::autogroups::is_auto(&mut *tx, group).await? {
         return Err(auto_group());
-    }
-    if found.flags.restricted {
-        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
     }
     gate_sensitive_removal(&mut tx, group).await?;
     groups::delete(&mut *tx, group).await?;
@@ -888,7 +896,7 @@ pub async fn remove_member(
 ) -> Result<(), AppError> {
     let mut tx = db.begin().await?;
     let found = load(&mut tx, group).await?;
-    remove_in(&mut tx, actor, &found, account).await?;
+    remove_in(&mut tx, actor, &found, account, true).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -902,14 +910,9 @@ pub async fn set_leader(
     on: bool,
 ) -> Result<(), AppError> {
     let mut tx = db.begin().await?;
-    let found = load_locked(&mut tx, group, false).await?;
+    load_locked(&mut tx, group, false).await?;
     if on {
         refuse_blacklisted(&mut tx, account).await?;
-    }
-    if found.flags.restricted {
-        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
-    }
-    if on {
         if !standing(&mut tx, account).await?.active {
             return Err(AppError::bad_request(
                 "That account is deactivated: reactivate it first.",
@@ -953,11 +956,8 @@ pub async fn set_leader_group(
         return Err(AppError::bad_request("A group can't lead itself."));
     }
     let mut tx = db.begin().await?;
-    let found = load_locked(&mut tx, group, false).await?;
+    load_locked(&mut tx, group, false).await?;
     let leading = load_locked(&mut tx, leader_group, false).await?;
-    if found.flags.restricted {
-        restricted_owner(standing(&mut tx, actor).await?.is_owner)?;
-    }
     if on {
         // Leading a group is Group Management over it: never for anyone
         // who can walk in, nor for everyone compliant.

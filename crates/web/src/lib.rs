@@ -212,6 +212,19 @@ pub fn router(state: AppState) -> Router {
             post(pages::users::reactivate),
         )
         .route(
+            "/admin/users/{id}/superuser",
+            post(pages::users::make_superuser),
+        )
+        .route(
+            "/admin/users/{id}/superuser/revoke",
+            post(pages::users::revoke_superuser),
+        )
+        .route("/admin/users/{id}/permissions", post(pages::users::grant))
+        .route(
+            "/admin/users/{id}/permissions/{grant_id}/revoke",
+            post(pages::users::revoke),
+        )
+        .route(
             "/admin/permissions/audit",
             get(pages::permissions_audit::index),
         )
@@ -232,6 +245,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/states/{id}/rename", post(pages::states::rename))
         .route("/admin/states/{id}/delete", post(pages::states::delete))
         .route("/admin/states/{id}/move", post(pages::states::move_state))
+        .route("/admin/states/{id}/public", post(pages::states::set_public))
         .route(
             "/admin/states/{id}/priority",
             post(pages::states::set_priority),
@@ -281,6 +295,10 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/system/summary", get(pages::system::summary))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route("/admin/system/theme", post(pages::system::set_theme))
+        .route(
+            "/admin/system/notifications",
+            post(pages::system::set_notifications),
+        )
         .route(
             "/blacklist",
             get(pages::blacklist::index).post(pages::blacklist::add),

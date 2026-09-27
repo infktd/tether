@@ -15,8 +15,7 @@ pub struct AccountId(pub i64);
 /// came to, following Alliance Auth's authentication backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignIn {
-    /// Its account's main (or it became the main of an account that had
-    /// none): signed in.
+    /// Its account's main: signed in.
     Existing(AccountId),
     /// A returning owner: re-attached to the account it last belonged to,
     /// which had no main, and made its main.
@@ -26,6 +25,10 @@ pub enum SignIn {
     /// An alt of an account with a main. Only the main signs in: SSO
     /// proves who controls a character, not who owns the account.
     NotMain,
+    /// A character of an account with no main (it was sold, moved or lost
+    /// its token): refused, as AA's backend does. A browser still signed
+    /// in picks a new main with Change Main.
+    NoMain,
     /// Its account is deactivated.
     Deactivated,
 }
@@ -35,7 +38,7 @@ impl SignIn {
     pub fn account(&self) -> Option<AccountId> {
         match self {
             Self::Existing(a) | Self::Reattached(a) | Self::Created(a) => Some(*a),
-            Self::NotMain | Self::Deactivated => None,
+            Self::NotMain | Self::NoMain | Self::Deactivated => None,
         }
     }
 }
@@ -58,9 +61,10 @@ pub struct Lost {
     pub from: AccountId,
     /// It was that account's main, which is now cleared.
     pub was_main: bool,
-    /// It was the owner account's last character: the account stops being
-    /// the owner, so first-run setup reopens for the holder of the setup
-    /// token (otherwise nobody could ever administer the instance again).
+    /// It was a superuser account's last character: the account can't sign
+    /// in any more, so it stops being a superuser. With none left, first-run
+    /// setup reopens for the holder of the setup token (otherwise nobody
+    /// could ever administer the instance again).
     pub owner_lost: bool,
     /// `sold` (another owner hash), `moved` (someone else signed in with
     /// it) or `token` (its token died).
@@ -73,9 +77,9 @@ pub struct SignInResult {
     pub became_owner: bool,
     /// The character was sold: its old account lost it.
     pub lost: Option<Lost>,
-    /// It became the main of an account that had none (signing in to a
-    /// main-less account, or a returning owner re-attached): proof of a
-    /// character, but not of the account's main as it was.
+    /// It became the main of an account that had none (a returning owner
+    /// re-attached): proof of a character, but not of the account's main
+    /// as it was.
     pub took_main: bool,
 }
 
@@ -83,8 +87,8 @@ pub struct SignInResult {
 /// Auth's backend does:
 ///
 /// - A known character with the recorded owner hash signs in to its
-///   account if it's the main, or if the account has no main (it becomes
-///   the main: SSO just proved control of it). Any other alt is refused.
+///   account only if it's the main. Any other character is refused, also
+///   when the account has no main (AA's backend returns no user).
 /// - A known character with a different owner hash was sold: its old
 ///   account loses it, and it's treated as new.
 /// - A new character whose owner hash was seen on it before is
@@ -124,20 +128,12 @@ pub async fn sign_in(
                 SignIn::Deactivated
             } else {
                 match r.main_character_id {
-                    Some(main) if main != login.character_id => SignIn::NotMain,
-                    // Taking over a main-less account needs a recorded owner
-                    // hash to match (characters from before hashes were
-                    // recorded can't prove it).
-                    None if r.owner_hash.is_none() => SignIn::NotMain,
-                    main => {
+                    Some(main) if main == login.character_id => {
                         touch(&mut tx, login).await?;
-                        if main.is_none() {
-                            set_main_in(&mut tx, account, login.character_id).await?;
-                            audit_main(&mut tx, account, login, "signed in").await?;
-                            took_main = true;
-                        }
                         SignIn::Existing(account)
                     }
+                    Some(_) => SignIn::NotMain,
+                    None => SignIn::NoMain,
                 }
             }
         }
@@ -600,6 +596,86 @@ pub async fn reactivate<'e>(
     Ok(result.rows_affected() == 1)
 }
 
+/// What granting or revoking superuser came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuperuserChange {
+    Changed,
+    /// The actor isn't a superuser (checked under the lock, so one being
+    /// unmade can't race its own removal).
+    NotSuperuser,
+    /// It already was (or wasn't).
+    Unchanged,
+    NotFound,
+    /// Deactivated accounts can't be superusers (reactivate it first).
+    Inactive,
+    /// Revoking it from the only superuser would leave nobody able to
+    /// administer the instance.
+    LastSuperuser,
+}
+
+/// Makes an account a superuser (AA's `is_superuser`: holds every
+/// permission) or stops it being one, for `actor`, who must be an active
+/// superuser (never through a personal access token). Serialized with
+/// sign-ins, ownership changes (which can also end a superuser: its last
+/// character gone) and other superuser changes. The caller audits.
+pub async fn set_superuser(
+    tx: &mut sqlx::PgTransaction<'_>,
+    actor: AccountId,
+    account: AccountId,
+    on: bool,
+) -> Result<SuperuserChange, sqlx::Error> {
+    lock(tx).await?;
+    let actor_is_superuser = sqlx::query_scalar!(
+        "SELECT is_owner FROM core.accounts WHERE id = $1 AND active",
+        actor.0
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false);
+    if !actor_is_superuser || crate::permissions::scoped_by_token(actor).is_some() {
+        return Ok(SuperuserChange::NotSuperuser);
+    }
+    let Some(row) = sqlx::query!(
+        "SELECT is_owner, active FROM core.accounts WHERE id = $1 FOR UPDATE",
+        account.0
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    else {
+        return Ok(SuperuserChange::NotFound);
+    };
+    if row.is_owner == on {
+        return Ok(SuperuserChange::Unchanged);
+    }
+    if on && !row.active {
+        return Ok(SuperuserChange::Inactive);
+    }
+    if !on {
+        // Only superusers who can still sign in count: active, with a main.
+        let others = sqlx::query_scalar!(
+            r#"
+            SELECT count(*) AS "n!" FROM core.accounts
+            WHERE is_owner AND id <> $1 AND active AND main_character_id IS NOT NULL
+            "#,
+            account.0
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+        if others == 0 {
+            return Ok(SuperuserChange::LastSuperuser);
+        }
+    }
+    sqlx::query!(
+        "UPDATE core.accounts SET is_owner = $2 WHERE id = $1",
+        account.0,
+        on
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(SuperuserChange::Changed)
+}
+
+/// Whether any superuser exists: until one does, first-run setup is open.
 pub async fn owner_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
     let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS (SELECT 1 FROM core.accounts WHERE is_owner) AS "exists!""#
@@ -1085,7 +1161,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
-    async fn a_sold_main_clears_the_main_until_the_owner_signs_in_again(pool: PgPool) {
+    async fn a_sold_main_leaves_the_account_without_a_main_and_its_alts_cant_sign_in(pool: PgPool) {
         let seller = account(&pool, 1, "Seller Main").await;
         add(&pool, 2, "Seller Alt", seller).await;
 
@@ -1097,14 +1173,87 @@ mod tests {
         assert_eq!(account.main, None, "no alt is promoted silently");
         assert_eq!(account.characters, vec![character(2, "Seller Alt")]);
 
-        // The owner signs in with a character still theirs: it's the main.
+        // AA's backend: with no main, nobody signs in to the account, not
+        // even with a character still on it.
+        assert_eq!(login(&pool, 2, "Seller Alt").await, SignIn::NoMain);
+        assert_eq!(get(&pool, seller).await.unwrap().unwrap().main, None);
+
+        // A session still signed in (or an admin) picks the new main.
+        crate::tokens::upsert(&pool, 2, b"sealed", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            change_main(&pool, seller, 2, crate::audit::Actor::Account(seller))
+                .await
+                .unwrap(),
+            MainChange::Changed {
+                name: "Seller Alt".into()
+            }
+        );
         assert_eq!(
             login(&pool, 2, "Seller Alt").await,
             SignIn::Existing(seller)
         );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn superusers_are_granted_and_the_last_one_stays(pool: PgPool) {
+        let first = claim(&pool, 1, "First").await.outcome.account().unwrap();
+        let second = account(&pool, 2, "Second").await;
+        let set = |actor, account, on| {
+            let pool = pool.clone();
+            async move {
+                let mut tx = pool.begin().await.unwrap();
+                let changed = set_superuser(&mut tx, actor, account, on).await.unwrap();
+                tx.commit().await.unwrap();
+                changed
+            }
+        };
+
+        // Only a superuser acts.
         assert_eq!(
-            get(&pool, seller).await.unwrap().unwrap().main,
-            Some(character(2, "Seller Alt"))
+            set(second, second, true).await,
+            SuperuserChange::NotSuperuser
+        );
+        // Any number of superusers, as AA's.
+        assert_eq!(set(first, second, true).await, SuperuserChange::Changed);
+        assert_eq!(set(first, second, true).await, SuperuserChange::Unchanged);
+        assert!(get(&pool, second).await.unwrap().unwrap().is_owner);
+        // Either can stop being one while the other remains...
+        assert_eq!(set(second, first, false).await, SuperuserChange::Changed);
+        // ...and then can't act any more...
+        assert_eq!(
+            set(first, second, false).await,
+            SuperuserChange::NotSuperuser
+        );
+        // ...but the last stays.
+        assert_eq!(
+            set(second, second, false).await,
+            SuperuserChange::LastSuperuser
+        );
+        assert!(owner_exists(&pool).await.unwrap());
+        assert_eq!(
+            set(second, AccountId(9999), true).await,
+            SuperuserChange::NotFound
+        );
+
+        // Deactivated accounts can't be superusers.
+        let mut tx = pool.begin().await.unwrap();
+        assert!(deactivate(&mut tx, first, Some(second)).await.unwrap());
+        tx.commit().await.unwrap();
+        assert_eq!(set(second, first, true).await, SuperuserChange::Inactive);
+
+        // A superuser who can't sign in (no main) doesn't count as another.
+        let third = account(&pool, 3, "Third").await;
+        assert_eq!(set(second, third, true).await, SuperuserChange::Changed);
+        sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE id = $1")
+            .bind(third.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            set(second, second, false).await,
+            SuperuserChange::LastSuperuser
         );
     }
 

@@ -6,7 +6,7 @@
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>
     <h1 class="page-title">States</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">A pilot's state comes from their main character. States are checked from the top: the first one that covers the main's alliance, corporation or the character itself wins. Anyone no state covers is Guest. Changes apply to everyone within a minute.</p>
+    <p class="text-muted-foreground mt-1 max-w-3xl">A pilot's state comes from their main character. States are checked from the top: the first one that is public or covers the main's alliance, corporation or the character itself wins. Anyone no state covers is Guest. Changes apply to everyone within a minute.</p>
   </div>
   {% include "admin_error.html" %}
 
@@ -16,6 +16,7 @@
       <div>
         <h2 id="state-{{ c.id }}" class="flex items-center gap-2">
           <span class="state-badge" data-state="{{ c.style }}">{{ c.name }}</span>
+          {% if c.public %}<span class="badge" data-variant="outline" title="Available to any character">Public</span>{% endif %}
           {% if c.guest %}<span class="text-muted-foreground" title="Everyone else: can't be renamed or deleted">{% call icons::icon("lock") %}{% endcall %}<span class="sr-only">Can't be renamed or deleted</span></span>{% endif %}
         </h2>
         <p>{{ c.about }}</p>
@@ -111,6 +112,10 @@
             <input class="input num w-24" id="priority-{{ c.id }}" name="priority" type="number" min="1" max="1000000" value="{{ c.priority }}" required>
           </div>
           <button type="submit" class="btn" data-variant="outline">Set</button>
+        </form>
+        <form method="post" action="/admin/states/{{ c.id }}/public" class="flex items-end gap-2">
+          <label class="label gap-2 font-normal h-9"><input type="checkbox" class="input" name="public" value="on"{% if c.public %} checked{% endif %}> <span><span class="font-medium">Public</span> · any character with a main, unless a state above covers them</span></label>
+          <button type="submit" class="btn" data-variant="outline">Save</button>
         </form>
       </div>
       <form method="post" action="/admin/states/{{ c.id }}/delete" hx-confirm="Delete {{ c.name }}? Its {{ c.accounts }} account(s) move to the next state that covers them, and its permissions and Discord roles are removed.{% if c.builtin %} It's built in: apps and required scopes that rely on it stop applying.{% endif %}">

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.states SET public = $2\n        WHERE id = $1 AND public <> $2\n          AND builtin IS DISTINCT FROM 'guest' AND builtin IS DISTINCT FROM 'blacklist'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3f59f62743320ca069a3ef8e498ffdf6088ae50e5dc0929a627e6b77c6be0c00"
+}

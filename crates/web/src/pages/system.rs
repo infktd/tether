@@ -57,6 +57,8 @@ struct SystemPage {
     presets: Vec<Preset>,
     /// The accent isn't one of the presets.
     custom: bool,
+    /// AA's `NOTIFICATIONS_MAX_PER_USER`.
+    notifications_max: i64,
     error: Option<String>,
 }
 
@@ -161,6 +163,7 @@ async fn system_page(
                     })
                     .collect(),
                 accent,
+                notifications_max: tether_db::settings::notifications_max(&state.db).await?,
                 error: error.map(|e| e.message().to_owned()),
             },
         ),
@@ -345,6 +348,38 @@ pub async fn set_updates(
             "Update checks off."
         },
     ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationsForm {
+    max_per_user: String,
+}
+
+/// `POST /admin/system/notifications`: AA's `NOTIFICATIONS_MAX_PER_USER`.
+pub async fn set_notifications(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<NotificationsForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
+    let range = tether_db::settings::NOTIFICATIONS_MAX_RANGE;
+    let result = match form.max_per_user.trim().parse::<i64>() {
+        Ok(n) if range.contains(&n) => {
+            crate::notifications::set_max(&state.db, session.account, n).await
+        }
+        _ => Err(AppError::bad_request(format!(
+            "Keep {} to {} notifications per user.",
+            range.start(),
+            range.end()
+        ))),
+    };
+    match result {
+        Ok(()) => Ok(super::stay::back(
+            "/admin/system",
+            "Notification limit saved.",
+        )),
+        Err(err) => system_page(&state, shell, Some(err)).await,
+    }
 }
 
 #[derive(Debug, Deserialize)]

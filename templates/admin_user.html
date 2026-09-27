@@ -12,12 +12,24 @@
         <h1 class="page-title">{{ main_name }}</h1>
         <div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span class="state-badge" data-state="{{ state_style }}">{{ state }}</span>
-          {% if owner %}<span class="badge" data-variant="outline">Owner</span>{% endif %}
+          {% if owner %}<span class="badge" data-variant="outline">Superuser</span>{% endif %}
           {% if !active %}<span class="badge" data-variant="destructive">Deactivated</span>{% endif %}
           <span>Account <span class="num">{{ id }}</span>, joined <span class="num">{{ joined }}</span></span>
         </div>
       </div>
     </div>
+    <div class="flex flex-wrap items-center gap-2">
+    {% if superuser_controls && active %}
+    {% if owner %}
+    <form method="post" action="/admin/users/{{ id }}/superuser/revoke" hx-confirm="Stop {{ main_name }} being a superuser? They keep only what their state, groups and own grants give them.">
+      <button type="submit" class="btn" data-variant="outline">Revoke superuser</button>
+    </form>
+    {% else %}
+    <form method="post" action="/admin/users/{{ id }}/superuser" hx-confirm="Make {{ main_name }} a superuser? Superusers hold every permission, including making and revoking other superusers.">
+      <button type="submit" class="btn" data-variant="outline">Make superuser</button>
+    </form>
+    {% endif %}
+    {% endif %}
     {% if !owner %}
     {% if active %}
     <form method="post" action="/admin/users/{{ id }}/deactivate" hx-confirm="Deactivate {{ main_name }}? They become Guest, lose every permission and group service, and can't sign in until reactivated.">
@@ -29,6 +41,7 @@
     </form>
     {% endif %}
     {% endif %}
+    </div>
   </div>
 
   {% include "admin_error.html" %}
@@ -109,5 +122,40 @@
       {% endif %}
     </section>
   </div>
+
+  {% if grantable.is_some() || !own_grants.is_empty() %}
+  <section class="card">
+    <header><h2>Granted to this user</h2><p>Permissions of their own, beside their state's and groups' (Alliance Auth's user permissions). You can grant or revoke only what you hold yourself.</p></header>
+    <section class="flex flex-col gap-4">
+      {% if own_grants.is_empty() %}
+      <p class="text-sm text-muted-foreground">None.</p>
+      {% else %}
+      <div class="flex flex-wrap gap-2">
+        {% for (gid, p) in own_grants %}
+        {% if grantable.is_some() %}
+        <form method="post" action="/admin/users/{{ id }}/permissions/{{ gid }}/revoke" class="grant-chip" hx-confirm="Revoke {{ p }} from {{ main_name }}?">
+          <span class="num">{{ p }}</span>
+          <button type="submit" aria-label="Revoke {{ p }} from {{ main_name }}" title="Revoke">×</button>
+        </form>
+        {% else %}
+        <span class="badge num" data-variant="outline">{{ p }}</span>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if let Some(options) = grantable %}{% if !options.is_empty() %}
+      <form method="post" action="/admin/users/{{ id }}/permissions" class="flex items-end gap-2 max-w-xl" hx-confirm="Grant this permission to {{ main_name }}?">
+        <div class="grid gap-2 grow">
+          <label class="label" for="user-permission">Permission</label>
+          <select class="select input" id="user-permission" name="permission">
+            {% for p in options %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="btn" data-variant="outline">Grant</button>
+      </form>
+      {% endif %}{% endif %}
+    </section>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

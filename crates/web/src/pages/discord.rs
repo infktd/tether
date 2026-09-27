@@ -133,6 +133,8 @@ async fn page(
             let (grantee, kind) = match m.grantee {
                 Grantee::State(id) => (state_name(&states, id), "state"),
                 Grantee::Group(g) => (group_name(g), "group"),
+                // Roles map to states and groups only.
+                Grantee::Account(a) => (format!("account {}", a.0), "account"),
             };
             // Prefer Discord's current name, in case the role was renamed.
             let role_name = check

@@ -14,7 +14,8 @@ pub const DISCORD_APPLICATION_ID: &str = "discord.application_id";
 /// The Discord server members join, as a string.
 pub const DISCORD_GUILD_ID: &str = "discord.guild_id";
 /// AA's `DISCORD_SYNC_NAMES`: whether Tether sets members' nicknames (by
-/// the Name Formatter). On unless set.
+/// the Name Formatter). Off unless set, as AA's (instances from before
+/// this default had it saved as on).
 pub const DISCORD_SYNC_NAMES: &str = "discord.sync_names";
 /// Removes every role Tether doesn't map to a member, except Discord's
 /// own (integration) roles and reserved group names. Off unless set.
@@ -33,6 +34,26 @@ pub const GROUPS_AUTO_LEAVE: &str = "groups.auto_leave";
 /// AA's `GROUPMANAGEMENT_REQUESTS_NOTIFICATION`: `true` tells a group's
 /// leaders about new requests. Off unless set.
 pub const GROUPS_NOTIFY_REQUESTS: &str = "groups.notify_requests";
+
+/// AA's `NOTIFICATIONS_MAX_PER_USER`: how many notifications each account
+/// keeps (the oldest go first). [`NOTIFICATIONS_MAX_DEFAULT`] unless set.
+pub const NOTIFICATIONS_MAX_PER_USER: &str = "notifications.max_per_user";
+/// AA's default.
+pub const NOTIFICATIONS_MAX_DEFAULT: i64 = 50;
+/// The range admins may set: at least one, and a bound on the table.
+pub const NOTIFICATIONS_MAX_RANGE: std::ops::RangeInclusive<i64> = 1..=1000;
+
+/// The notification cap, [`NOTIFICATIONS_MAX_DEFAULT`] when unset or out of
+/// range.
+pub async fn notifications_max<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<i64, sqlx::Error> {
+    Ok(get(executor, NOTIFICATIONS_MAX_PER_USER)
+        .await?
+        .and_then(|v| v.as_i64())
+        .filter(|n| NOTIFICATIONS_MAX_RANGE.contains(n))
+        .unwrap_or(NOTIFICATIONS_MAX_DEFAULT))
+}
 
 /// A boolean setting; unset (or not a boolean) is `false`.
 pub async fn get_bool<'e>(

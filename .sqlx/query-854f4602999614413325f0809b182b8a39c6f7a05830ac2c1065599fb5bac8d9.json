@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM core.permission_grants WHERE id = $1 RETURNING id, permission, state_id, group_id",
+  "query": "\n            UPDATE core.permission_grants g SET permission = $2\n            WHERE g.permission = $1\n              AND NOT EXISTS (\n                  SELECT 1 FROM core.permission_grants h\n                  WHERE h.permission = $2\n                    AND h.state_id IS NOT DISTINCT FROM g.state_id\n                    AND h.group_id IS NOT DISTINCT FROM g.group_id\n                    AND h.account_id IS NOT DISTINCT FROM g.account_id\n              )\n            RETURNING id, permission, state_id, group_id, account_id\n            ",
   "describe": {
     "columns": [
       {
@@ -46,19 +46,32 @@
             "name": "group_id"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.permission_grants",
+            "name": "account_id"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "9ba289614d1ea6425cb677eafa2f0f6a6792b432523b51ed5344f2b782bb2a89"
+  "hash": "854f4602999614413325f0809b182b8a39c6f7a05830ac2c1065599fb5bac8d9"
 }

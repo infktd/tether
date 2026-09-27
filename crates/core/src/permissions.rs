@@ -1,5 +1,5 @@
 //! Permissions. Core defines the ones below; plugins add their own from
-//! their manifests in milestone 2. Grants go to states and groups only.
+//! their manifests. Grants go to states, groups and single users (AA's).
 
 pub const ADMIN_GROUPS: &str = "admin.groups";
 pub const ADMIN_PERMISSIONS: &str = "admin.permissions";
@@ -58,7 +58,7 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     ),
     (
         ADMIN_PERMISSIONS,
-        "Grant and revoke permissions (effectively full admin: holders can grant themselves anything)",
+        "Grant and revoke permissions they hold themselves, to states, groups and single users",
     ),
     (
         ADMIN_STATES,

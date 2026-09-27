@@ -1,13 +1,12 @@
 //! In-app notifications (AA's): only the recipient sees them, and each
-//! account keeps its latest 50.
+//! account keeps its latest few (AA's `NOTIFICATIONS_MAX_PER_USER`, 50
+//! unless an admin changes it).
 
 use chrono::{DateTime, Utc};
 
 use crate::PgPool;
 use crate::accounts::AccountId;
 
-/// How many each account keeps; the oldest (read or not) go first.
-pub const KEEP: i64 = 50;
 pub const MAX_TITLE: usize = 254;
 pub const MAX_MESSAGE: usize = 2000;
 /// The Postgres channel a change is announced on, with the account id.
@@ -51,7 +50,7 @@ pub async fn notify(
 
 /// [`notify`], unless the same one is already waiting unread: for notices
 /// others can trigger at will (requests), so they can't push everything
-/// else out of the 50.
+/// else out of the account's latest (the cap).
 pub async fn notify_once(
     tx: &mut sqlx::PgConnection,
     account: AccountId,
@@ -93,6 +92,8 @@ async fn send(
     if inserted == 0 {
         return Ok(());
     }
+    // How many each account keeps; the oldest (read or not) go first.
+    let keep = crate::settings::notifications_max(&mut *tx).await?;
     sqlx::query!(
         r#"
         DELETE FROM core.notifications
@@ -102,7 +103,7 @@ async fn send(
         )
         "#,
         account.0,
-        KEEP,
+        keep,
     )
     .execute(&mut *tx)
     .await?;
@@ -232,6 +233,31 @@ mod tests {
         // The message defaults to the title.
         assert_eq!(all[0].message, "n54");
         assert_eq!(unread(&pool, me).await.unwrap(), 50);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn the_cap_is_a_setting(pool: PgPool) {
+        let me = account(&pool).await;
+        crate::settings::set(
+            &pool,
+            crate::settings::NOTIFICATIONS_MAX_PER_USER,
+            serde_json::json!(3),
+        )
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        for i in 0..5 {
+            notify(&mut conn, me, Level::Info, &format!("n{i}"), None)
+                .await
+                .unwrap();
+        }
+        let titles: Vec<String> = list(&pool, me)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|n| n.title)
+            .collect();
+        assert_eq!(titles, ["n4", "n3", "n2"]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

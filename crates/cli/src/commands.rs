@@ -51,6 +51,10 @@ pub enum UsersCommand {
     Deactivate { query: String },
     /// Reactivate a deactivated account.
     Reactivate { query: String },
+    /// Set an account's main (as AA's admin can): one of its own
+    /// characters with a working token, by character id or name. For an
+    /// account whose main was sold or moved: only its main signs in.
+    Main { query: String, character: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -122,6 +126,9 @@ pub async fn run(
         Command::Users {
             command: Some(UsersCommand::Reactivate { query }),
         } => set_active(db, &query, true, out).await,
+        Command::Users {
+            command: Some(UsersCommand::Main { query, character }),
+        } => set_main(db, &query, &character, out).await,
         Command::States { command: None } => list_states(db, out).await,
         Command::States {
             command: Some(StatesCommand::Add { state, entity_id }),
@@ -168,7 +175,7 @@ async fn list_users(db: &PgPool, out: &mut dyn Write) -> anyhow::Result<()> {
     )?;
     for u in &users {
         let name = if u.is_owner {
-            format!("{} (owner)", u.main_name)
+            format!("{} (superuser)", u.main_name)
         } else {
             u.main_name.clone()
         };
@@ -207,6 +214,35 @@ async fn set_active(
     Ok(())
 }
 
+async fn set_main(
+    db: &PgPool,
+    query: &str,
+    character: &str,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let Some(id) = accounts::find(db, query).await? else {
+        bail!("no account matches {query:?}");
+    };
+    let account = accounts::get(db, id).await?.context("account vanished")?;
+    let Some(chosen) = account.characters.iter().find(|c| {
+        c.id.to_string() == character.trim() || c.name.eq_ignore_ascii_case(character.trim())
+    }) else {
+        bail!("account {} has no character {character:?}", id.0);
+    };
+    // The stored token state decides (the ownership check keeps it).
+    match accounts::change_main(db, id, chosen.id, Actor::Cli).await? {
+        accounts::MainChange::Changed { name } | accounts::MainChange::Unchanged { name } => {
+            tether_web::states::evaluate_account(db, id).await?;
+            writeln!(out, "account {}: main is {name}", id.0)?;
+            Ok(())
+        }
+        accounts::MainChange::NoValidToken { name } => {
+            bail!("{name} has no working token: its owner must log in with it first")
+        }
+        accounts::MainChange::NotOnAccount => bail!("that character isn't on the account"),
+    }
+}
+
 async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Result<()> {
     let Some(id) = accounts::find(db, query).await? else {
         bail!("no account matches {query:?}");
@@ -221,7 +257,7 @@ async fn show_user(db: &PgPool, query: &str, out: &mut dyn Write) -> anyhow::Res
         out,
         "account {}{}",
         id.0,
-        if account.is_owner { " (owner)" } else { "" }
+        if account.is_owner { " (superuser)" } else { "" }
     )?;
     writeln!(out, "state: {state}")?;
     if !account.active {

@@ -98,7 +98,7 @@ async fn users_lists_and_shows_accounts(db: PgPool) {
     let list = cli(&db, &esi, Command::Users { command: None })
         .await
         .unwrap();
-    assert!(list.contains("Chribba (owner)"), "{list}");
+    assert!(list.contains("Chribba (superuser)"), "{list}");
     assert!(list.contains("gigX"));
     assert!(list.contains("2 account(s)"));
 
@@ -115,11 +115,38 @@ async fn users_lists_and_shows_accounts(db: PgPool) {
     .await
     .unwrap();
     assert!(
-        show.contains(&format!("account {} (owner)", owner.0)),
+        show.contains(&format!("account {} (superuser)", owner.0)),
         "{show}"
     );
     assert!(show.contains("Chribba  (main)"));
     assert!(show.contains("admin.audit"));
+
+    // An account without a main (nobody can sign in to it) gets one from
+    // the shell: one of its characters with a working token.
+    sqlx::query("UPDATE core.accounts SET main_character_id = NULL WHERE id = $1")
+        .bind(owner.0)
+        .execute(&db)
+        .await
+        .unwrap();
+    let main = |character: &str| {
+        cli(
+            &db,
+            &esi,
+            Command::Users {
+                command: Some(UsersCommand::Main {
+                    query: "chribba".into(),
+                    character: character.into(),
+                }),
+            },
+        )
+    };
+    assert!(main("The Mittani").await.is_err(), "no working token yet");
+    tether_db::tokens::upsert(&db, 443630591, b"sealed", &[])
+        .await
+        .unwrap();
+    let set = main("the mittani").await.unwrap();
+    assert!(set.contains("main is The Mittani"), "{set}");
+    assert!(main("gigX").await.is_err(), "not on the account");
 
     let missing = cli(
         &db,

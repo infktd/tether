@@ -53,6 +53,8 @@ pub struct Card {
     pub builtin: bool,
     pub priority: i32,
     pub guest: bool,
+    /// AA's `public`: covers any main.
+    pub public: bool,
     pub accounts: i64,
     pub covers: Vec<Chip>,
     pub can_up: bool,
@@ -144,6 +146,7 @@ async fn states_page(
             builtin: s.builtin.is_some(),
             priority: s.priority,
             guest: s.is_guest(),
+            public: s.public,
             accounts: counts.get(&s.id).copied().unwrap_or(0),
             covers: covered
                 .iter()
@@ -528,6 +531,36 @@ pub async fn remove_scope(
         scope: form.scope,
     };
     change(&state, session, remove, true, action, fields).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublicForm {
+    /// A checkbox: present when ticked.
+    public: Option<String>,
+    confirm: Option<String>,
+}
+
+/// `POST /admin/states/{id}/public`: AA's `public` ("available to any
+/// character"). Everyone it would take moves, so it asks first.
+pub async fn set_public(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<PublicForm>,
+) -> Result<Response, PageError> {
+    let action = format!("/admin/states/{id}/public");
+    let public = form.public.is_some();
+    let fields = if public {
+        vec![("public", "on".to_owned())]
+    } else {
+        Vec::new()
+    };
+    let update = Change::SetPublic {
+        state: StateId(id),
+        public,
+    };
+    let confirmed = is_confirmed(form.confirm.as_deref());
+    change(&state, session, update, confirmed, action, fields).await
 }
 
 #[derive(Debug, Deserialize)]

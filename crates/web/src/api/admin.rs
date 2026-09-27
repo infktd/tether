@@ -346,6 +346,9 @@ pub struct GrantOut {
     pub state_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<i64>,
+    /// A grant to a single user (AA's user permissions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<i64>,
 }
 
 /// `GET /api/admin/permissions`
@@ -366,15 +369,17 @@ pub async fn list_permissions(
         grants: grants
             .into_iter()
             .map(|g| {
-                let (state_id, group_id) = match g.grantee {
-                    Grantee::State(s) => (Some(s.0), None),
-                    Grantee::Group(group) => (None, Some(group.0)),
+                let (state_id, group_id, account_id) = match g.grantee {
+                    Grantee::State(s) => (Some(s.0), None, None),
+                    Grantee::Group(group) => (None, Some(group.0), None),
+                    Grantee::Account(account) => (None, None, Some(account.0)),
                 };
                 GrantOut {
                     id: g.id,
                     permission: g.permission,
                     state_id,
                     group_id,
+                    account_id,
                 }
             })
             .collect(),
@@ -386,9 +391,13 @@ pub struct GrantIn {
     pub permission: String,
     pub state_id: Option<i64>,
     pub group_id: Option<i64>,
+    /// A single user (AA's user permissions); only a permission you hold.
+    #[serde(default)]
+    pub account_id: Option<i64>,
 }
 
-/// `POST /api/admin/permissions/grants`: grant to a state or a group.
+/// `POST /api/admin/permissions/grants`: grant to a state, a group or a
+/// single user.
 #[utoipa::path(post, path = "/api/admin/permissions/grants", tag = "admin", security(("session" = [])), request_body = GrantIn,
     responses((status = 201, body = Created), (status = 400), (status = 403), (status = 404), (status = 409)))]
 pub async fn grant(
@@ -397,7 +406,7 @@ pub async fn grant(
     Json(body): Json<GrantIn>,
 ) -> Result<(StatusCode, Json<Created>), AppError> {
     session.require(&state, ADMIN_PERMISSIONS).await?;
-    let grantee = admin::grantee(body.state_id, body.group_id)?;
+    let grantee = admin::grantee(body.state_id, body.group_id, body.account_id)?;
     let id = admin::grant(&state, session.account, &body.permission, grantee).await?;
     Ok((StatusCode::CREATED, Json(Created { id })))
 }
@@ -508,6 +517,8 @@ pub struct StateOut {
     pub builtin: Option<&'static str>,
     /// Higher wins; Guest is 0.
     pub priority: i32,
+    /// AA's `public`: it covers any main (below higher states).
+    pub public: bool,
     /// Accounts in the state now.
     pub accounts: i64,
     pub covers: Vec<CoveredOut>,
@@ -561,6 +572,7 @@ pub async fn list_states(
                 id: s.id.0,
                 builtin: s.builtin.map(tether_core::states::Builtin::as_str),
                 priority: s.priority,
+                public: s.public,
                 accounts: counts.get(&s.id).copied().unwrap_or(0),
                 covers: covered
                     .iter()

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, builtin, priority FROM core.states WHERE builtin = $1",
+  "query": "\n        SELECT id, name, builtin, priority, public FROM core.states\n        WHERE builtin IS DISTINCT FROM 'blacklist'\n        ORDER BY priority DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -46,19 +46,29 @@
             "name": "priority"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "public",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "public"
+          }
+        }
       }
     ],
     "parameters": {
-      "Left": [
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "1f6f5dda5d60b313bcb274729381dcda88f148328969a03fad3132a25c4cf90b"
+  "hash": "42bca6c9fa9737e3a9ef6ebb3294425cfe8aaf344f606da4ed83cde58640831b"
 }
