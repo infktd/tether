@@ -1719,28 +1719,22 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
         .execute(&h.db)
         .await
         .unwrap();
-    let register = open(&h, &format!("links/{open_link}/add"), &line).await;
-    assert!(
-        register
-            .body
-            .contains("Not registered for Fleet Activity Tracking: gigX"),
-        "{}",
-        register.body
-    );
-    assert!(
-        register.body.contains("href=\"/register"),
-        "{}",
-        register.body
-    );
-    assert!(!register.body.contains(&format!("name=\"c_{GIGX}\"")));
     let res = post(
         &h,
         &format!("links/{open_link}/add"),
-        &format!("_form=register&c_{LINE}=on"),
+        &format!("_form=register&c_{LINE}=on&c_{GIGX}=on"),
         &line,
     )
     .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body
+            .contains("gigX isn&#39;t registered for Fleet Activity Tracking"),
+        "{}",
+        res.body
+    );
+    // Tether's Register Character card, to register it.
+    assert!(res.body.contains("href=\"/register"), "{}", res.body);
     assert_eq!(fats(&h, &open_link).await, vec![(LINE, None)]);
 
     // Logs are kept for the settings' days: 61 days old stays at 90.

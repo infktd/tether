@@ -135,7 +135,7 @@ fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
         ["links", "page", n] => links_page(viewer, number(n)?),
         ["links", "create"] => create_page(viewer, None, owner_added(request)),
         ["links", hash] => details_page(viewer, hash, None),
-        ["links", hash, "add"] => register_page(viewer, hash, None),
+        ["links", hash, "add"] => register_page(viewer, hash, None, false),
         ["stats"] => stats_page(viewer, this_year()),
         ["stats", year] => stats_page(viewer, year_of(year)?),
         ["stats", "corporation", id] => corporation_page(viewer, number(id)?, this_year()),
@@ -1539,8 +1539,15 @@ fn add_fat(viewer: &Viewer, link: &LinkInfo, who: &str) -> Result<SubmitResult, 
     Ok(SubmitResult::Redirect(format!("links/{}", link.hash)))
 }
 
-/// The page members open from the FC's link: their characters, to tick.
-fn register_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page, PageError> {
+/// The page members open from the FC's link. `unregistered`: a character
+/// they ticked isn't registered for the app, so Tether's Register
+/// Character card is shown.
+fn register_page(
+    viewer: &Viewer,
+    hash: &str,
+    note: Option<&str>,
+    unregistered: bool,
+) -> Result<Page, PageError> {
     let link = load_link(hash)?;
     let registered = query(
         "SELECT f.character_id, f.character_name, f.created_at FROM fats f \
@@ -1590,36 +1597,28 @@ fn register_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page
             .description("This FAT link is closed.")
             .text("Registration closed with the link. If you were in the fleet, ask the FC to reopen it or to add your FAT."));
     }
-    let left: Vec<_> = viewer
+    let mut ready: Vec<_> = viewer
         .characters
         .iter()
         .filter(|c| !done.contains(&c.id))
         .collect();
-    if left.is_empty() {
+    if ready.is_empty() {
         return Ok(page.description("All your characters are registered for this fleet."));
     }
-    // As aa-afat, a FAT needs the character's location scopes: only the
-    // characters registered for this app can be ticked.
-    let app: Vec<i64> = esi::characters().iter().map(|c| c.id).collect();
-    let (mut ready, unregistered): (Vec<_>, Vec<_>) =
-        left.into_iter().partition(|c| app.contains(&c.id));
     page = page.description(
         "Register your attendance while the link is open. Each character must be online in EVE: \
          Tether asks ESI, and records its system and ship.",
     );
-    if !unregistered.is_empty() {
-        let names: Vec<&str> = unregistered.iter().map(|c| c.name.as_str()).collect();
+    // As aa-afat's token_required: a FAT needs the character registered
+    // for this app (its location scopes). Registering is Tether's page.
+    if unregistered {
         page = page
-            .text(format!(
-                "Not registered for Fleet Activity Tracking: {}. Register them (EVE asks to let \
-                 Tether see whether they're online, where they are and what they fly), then \
-                 open this link again.",
-                names.join(", ")
-            ))
+            .text(
+                "Register your characters for Fleet Activity Tracking (EVE asks to let Tether see \
+                 whether they're online, where they are and what they fly), then open this link \
+                 again.",
+            )
             .cards(CardGrid::new().register());
-    }
-    if ready.is_empty() {
-        return Ok(page);
     }
     // The main first, then by name.
     ready.sort_by_key(|c| (c.id != viewer.main.id, c.name.to_lowercase()));
@@ -1652,14 +1651,24 @@ enum Presence {
     Trouble,
 }
 
-/// A character endpoint's JSON, or why not.
-fn character_json(endpoint: &str, id: i64) -> Result<serde_json::Value, Presence> {
+/// A character endpoint's JSON, or why not. After ESI or Tether trouble
+/// (`troubled`), no more calls in this submission: every ESI error counts
+/// against the app's error allowance, which ESI fleet tracking shares.
+fn character_json(
+    endpoint: &str,
+    id: i64,
+    troubled: &mut bool,
+) -> Result<serde_json::Value, Presence> {
+    if *troubled {
+        return Err(Presence::Trouble);
+    }
     match esi::get(endpoint, Subject::Character(id), &[], None) {
         Ok(response) => Ok(serde_json::from_str(&response.body).unwrap_or_default()),
         Err(esi::Error::NotRegistered | esi::Error::NotAllowed(_)) => Err(Presence::NotRegistered),
         Err(esi::Error::Token) => Err(Presence::Token),
         Err(err) => {
             log::warn(format!("{endpoint} for a FAT: {err:?}"));
+            *troubled = true;
             Err(Presence::Trouble)
         }
     }
@@ -1667,16 +1676,16 @@ fn character_json(endpoint: &str, id: i64) -> Result<serde_json::Value, Presence
 
 /// aa-afat's add_fat: the character must be online; its system and ship
 /// are recorded (if ESI can't say, the FAT goes without them).
-fn presence(id: i64) -> Presence {
-    let online = match character_json("character-online", id) {
+fn presence(id: i64, troubled: &mut bool) -> Presence {
+    let online = match character_json("character-online", id, troubled) {
         Ok(json) => json["online"].as_bool() == Some(true),
         Err(why) => return why,
     };
     if !online {
         return Presence::Offline;
     }
-    let field = |endpoint: &str, name: &str| {
-        character_json(endpoint, id)
+    let mut field = |endpoint: &str, name: &str| {
+        character_json(endpoint, id, troubled)
             .ok()
             .and_then(|json| json[name].as_i64())
             .filter(|n| *n > 0)
@@ -1703,6 +1712,7 @@ fn register(
             viewer,
             hash,
             Some("Tick at least one character."),
+            false,
         )?));
     }
     if !link.open {
@@ -1710,14 +1720,17 @@ fn register(
             viewer,
             hash,
             Some("The link closed before you registered."),
+            false,
         )?));
     }
     // aa-afat's check, character by character (at most three ESI calls
     // each, and a form holds 30 characters: within the host's 100).
     let mut chosen = Vec::new();
     let mut problems = Vec::new();
+    let mut unregistered = false;
+    let mut troubled = false;
     for c in ticked.iter().take(MAX_FORM_CHARACTERS) {
-        let why = match presence(c.id) {
+        let why = match presence(c.id, &mut troubled) {
             Presence::Online { system, ship } => {
                 chosen.push(serde_json::json!({
                     "character_id": c.id,
@@ -1730,7 +1743,10 @@ fn register(
                 continue;
             }
             Presence::Offline => "isn't online in EVE; log in and try again",
-            Presence::NotRegistered => "isn't registered for Fleet Activity Tracking",
+            Presence::NotRegistered => {
+                unregistered = true;
+                "isn't registered for Fleet Activity Tracking"
+            }
             Presence::Token => "needs to log in to Tether again (its login expired)",
             Presence::Trouble => "couldn't be checked with ESI just now; try again",
         };
@@ -1762,6 +1778,7 @@ fn register(
             viewer,
             hash,
             Some("The link closed before you registered."),
+            false,
         )?));
     }
     let ids: Vec<i64> = added
@@ -1774,6 +1791,7 @@ fn register(
             viewer,
             hash,
             Some(&problems.join(" ")),
+            unregistered,
         )?));
     }
     Ok(SubmitResult::Redirect(format!("links/{}/add", link.hash)))
