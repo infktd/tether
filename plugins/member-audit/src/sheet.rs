@@ -2,15 +2,17 @@
 //! its own tabs, linked beside the title:
 //!
 //! - Overview (`character/{id}`): the profile; corporation history, roles
-//!   and titles, killmails, bio.
-//! - Skills: the queue (live), skills by group, skill sets, attributes.
+//!   (when the Settings read them) and titles, killmails, bio. Its pilot
+//!   shares it from here (`share_characters`).
+//! - Skills: the queue (live), skills by group, skill sets (for
+//!   `view_skill_sets`), attributes.
 //! - Assets, by location (`assets/{location}` for one location's items).
 //! - Wallet: journal, transactions, market orders, contracts (and each
 //!   contract's items), loyalty points.
 //! - Clones: implants, jump clones.
 //! - Industry: jobs, blueprints, mining ledger, planets.
 //! - Contacts: contacts, NPC standings.
-//! - Mail, for those who may read it (`mail/{id}`, audited).
+//! - Mail, for whoever may open the sheet (`mail/{id}`, audited).
 
 use chrono::{Duration, Utc};
 use tether_plugin_sdk::jobs::{self, NewJob};
@@ -32,7 +34,7 @@ use crate::{
 const MAX_ROWS: i64 = 300;
 /// An Update now may be asked for once in this long per character.
 const UPDATE_WAIT: Duration = Duration::minutes(10);
-/// Updates of other members' characters one person may ask for an hour.
+/// Updates of other pilots' characters one person may ask for an hour.
 const MAX_ASKS_PER_HOUR: i64 = 10;
 
 /// The character a sheet is about.
@@ -44,6 +46,8 @@ pub(crate) struct Subject {
     pub alliance_id: Option<i64>,
     pub alliance: String,
     pub may_read_mail: bool,
+    /// Its Skill Sets tab (`view_skill_sets`).
+    pub skill_sets: bool,
 }
 
 /// The character, if the viewer may open its sheet; not found otherwise
@@ -72,6 +76,7 @@ pub(crate) fn subject(access: &Access, id: i64) -> Result<Subject, PageError> {
         alliance_id,
         alliance: text(row, 4),
         may_read_mail: access.may_read_mail(id),
+        skill_sets: access.skill_sets,
     })
 }
 
@@ -177,7 +182,7 @@ pub(crate) fn update_now(
         return Err(PageError::Forbidden);
     }
     let who = subject(access, id)?;
-    // Other members' characters: a few an hour per person, so nobody
+    // Other pilots' characters: a few an hour per person, so nobody
     // spends the app's ESI budget in bulk.
     let own = access.owns(id);
     if !own {
@@ -190,7 +195,7 @@ pub(crate) fn update_now(
                 access,
                 &who,
                 Some(&format!(
-                    "You've asked for {MAX_ASKS_PER_HOUR} updates of other members' characters in \
+                    "You've asked for {MAX_ASKS_PER_HOUR} updates of other pilots' characters in \
                      the last hour: this one waits for its turn in the regular sync."
                 )),
             )?));
@@ -232,6 +237,44 @@ pub(crate) fn update_now(
     Ok(SubmitResult::Redirect(format!("character/{id}")))
 }
 
+// ---- Sharing ---------------------------------------------------------------
+
+/// Shares the viewer's own character with holders of
+/// `view_shared_characters` (for `share_characters`), or stops sharing it
+/// (always), as aa-memberaudit's launcher.
+pub(crate) fn share(
+    access: &Access,
+    submission: &Submission,
+    shared: bool,
+) -> Result<SubmitResult, PageError> {
+    let id: i64 = submission
+        .value("character")
+        .parse()
+        .map_err(|_| PageError::NotFound)?;
+    // The sheet the button is on, of one of the viewer's own characters.
+    if submission.request.path != format!("character/{id}") || !access.owns(id) {
+        return Err(PageError::Forbidden);
+    }
+    if shared && !access.share {
+        return Err(PageError::Forbidden);
+    }
+    subject(access, id)?;
+    // Who shared it: the share counts only while they own it.
+    storage::execute(
+        "UPDATE characters SET is_shared = $2, shared_at = CASE WHEN $2 THEN now() END, \
+         shared_by_main = CASE WHEN $2 THEN $3 END WHERE character_id = $1",
+        &[id.into(), shared.into(), access.viewer.main.id.into()],
+    )
+    .map_err(|e| failed("sharing the character", e))?;
+    tether_plugin_sdk::log::info(format!(
+        "character {id} {} by {} ({})",
+        if shared { "shared" } else { "no longer shared" },
+        access.viewer.main.name,
+        access.viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect(format!("character/{id}")))
+}
+
 // ---- Overview --------------------------------------------------------------
 
 fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, PageError> {
@@ -244,7 +287,7 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
                     c.faction_id, {fact}, coalesce(c.bio, ''), c.update_requested_at, \
                     (SELECT count(*) FROM clones WHERE character_id = c.character_id), \
                     (SELECT max(finish) FROM queue WHERE character_id = c.character_id), \
-                    c.update_done_at \
+                    c.update_done_at, c.is_shared \
              FROM characters c WHERE c.character_id = $1",
             system = name_of("c.system_id"),
             place = name_of("c.location_id"),
@@ -262,6 +305,10 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
     }
     if access.viewer.main.id == id {
         profile = profile.badge(badge("Main", Tone::Neutral));
+    }
+    let is_shared = boolean(c, 23);
+    if is_shared {
+        profile = profile.badge(badge("Shared", Tone::Neutral));
     }
     let ids: Db = id.to_string().into();
     let training = crate::pages::training(&ids)?;
@@ -330,6 +377,31 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
         },
     );
 
+    // Its pilot shares it, or stops (aa-memberaudit's launcher).
+    if access.owns(id) {
+        if is_shared {
+            profile = profile.fact(
+                "Sharing",
+                Value::from(
+                    action("Stop sharing", "unshare_character").field("character", id.to_string()),
+                ),
+            );
+        } else if access.share {
+            profile = profile.fact(
+                "Sharing",
+                Value::from(
+                    action("Share", "share_character")
+                        .field("character", id.to_string())
+                        .confirm(
+                            "Recruiters will see this character's whole sheet, mail included, \
+                             until you stop sharing it.",
+                        ),
+                ),
+            );
+        }
+    }
+
+    let settings = crate::settings::for_page()?;
     let fresh = Freshness::of(id)?;
     let history = query(
         &format!(
@@ -360,10 +432,16 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             vec![corp, time_or_blank(r, 2), time_or_blank(r, 4), days.into()]
         }),
     );
-    let roles = query(
-        "SELECT scope, role FROM roles WHERE character_id = $1 ORDER BY scope, role",
-        &[id.into()],
-    )?;
+    // Roles only when the Settings read them (aa-memberaudit's
+    // MEMBERAUDIT_FEATURE_ROLES_ENABLED, off by default).
+    let roles = if settings.roles {
+        query(
+            "SELECT scope, role FROM roles WHERE character_id = $1 ORDER BY scope, role",
+            &[id.into()],
+        )?
+    } else {
+        Vec::new()
+    };
     let roles = with_rows(
         Table::new(vec![Column::text("Role"), Column::text("Where")])
             .title("Corporation roles")
@@ -462,12 +540,20 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             vec![Section::Table(history), fresh.line(&["history"])],
         )
         .tab(
-            "Roles and titles",
-            vec![
-                Section::Table(roles),
-                Section::Table(titles),
-                fresh.line(&["roles", "titles"]),
-            ],
+            if settings.roles {
+                "Roles and titles"
+            } else {
+                "Titles"
+            },
+            if settings.roles {
+                vec![
+                    Section::Table(roles),
+                    Section::Table(titles),
+                    fresh.line(&["roles", "titles"]),
+                ]
+            } else {
+                vec![Section::Table(titles), fresh.line(&["titles"])]
+            },
         )
         .tab(
             "Killmails",
@@ -596,7 +682,11 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
         skill_sections.push(Section::Text("No skills read yet.".to_owned()));
     }
     skill_sections.push(fresh.line(&["skills"]));
-    let sets = crate::sets::for_character(id)?;
+    let sets = if who.skill_sets {
+        crate::sets::for_character(id)?
+    } else {
+        Vec::new()
+    };
     let sets_table = with_rows(
         Table::new(vec![
             Column::text("Skill set"),
@@ -642,7 +732,7 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
         None => Section::Text("Attributes not read yet.".to_owned()),
     };
     let queue_end = when(head, 4).filter(|t| *t > now);
-    Ok(sheet_page(who, "Skills")
+    let page = sheet_page(who, "Skills")
         .stats(vec![
             Stat::new("Skill points", int(head, 0)),
             Stat::new("Unallocated", int(head, 1)),
@@ -659,9 +749,14 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
             "Skill queue",
             vec![Section::Table(queue_table), fresh.line(&["skills"])],
         )
-        .tab("Skills", skill_sections)
-        .tab("Skill sets", vec![Section::Table(sets_table)])
-        .tab("Attributes", vec![attributes, fresh.line(&["attributes"])]))
+        .tab("Skills", skill_sections);
+    // aa-memberaudit's Skill Sets tab needs view_skill_sets.
+    let page = if who.skill_sets {
+        page.tab("Skill sets", vec![Section::Table(sets_table)])
+    } else {
+        page
+    };
+    Ok(page.tab("Attributes", vec![attributes, fresh.line(&["attributes"])]))
 }
 
 /// `1,234,567`.

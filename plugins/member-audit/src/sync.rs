@@ -5,7 +5,8 @@
 //! fall due at their own intervals, set near ESI's cache times: location
 //! and wallet every half hour, the journal, contracts and industry hourly,
 //! assets every two hours, contacts and blueprints every six, corporation
-//! history and roles daily. A run takes the most overdue first (a new
+//! history and roles daily (roles only when the Settings turn them on, as
+//! aa-memberaudit's `MEMBERAUDIT_FEATURE_ROLES_ENABLED`). A run takes the most overdue first (a new
 //! character's whole sheet before anything else), and while work is left
 //! it queues a follow-up run a minute later. So a large alliance is read
 //! steadily rather than all at once, and nothing is read more often than
@@ -32,10 +33,6 @@ const NAME_RESERVE: usize = 8;
 pub(crate) const MORE: &str = "sync_more";
 /// One character's "Update now".
 pub(crate) const UPDATE: &str = "update_character";
-/// Wallet journal and transactions kept (ESI's own window is 30 days).
-const WALLET_DAYS: &str = "90 days";
-/// Mail kept.
-const MAIL_DAYS: &str = "365 days";
 /// Longest journal description, contract title or mail subject kept.
 const MAX_SHORT: usize = 200;
 /// Longest mail body kept, in characters.
@@ -123,6 +120,7 @@ impl From<EsiError> for Stop {
 
 /// A run's state: calls left, and ids met that need names.
 struct Run {
+    settings: crate::settings::Settings,
     calls: usize,
     ids: Vec<i64>,
     /// Structures met, and a character who may see each.
@@ -239,15 +237,17 @@ fn i(v: &Json) -> Option<i64> {
 /// A scheduled or follow-up run (`only` none), or one character's Update
 /// now.
 pub(crate) fn run(only: Option<i64>) -> Result<(), JobError> {
+    let settings = crate::settings::get().map_err(|e| retry("reading settings", e))?;
     if only.is_none() {
-        refresh_characters()?;
+        refresh_characters(&settings)?;
     }
     let mut run = Run {
+        settings,
         calls: ESI_BUDGET - NAME_RESERVE,
         ids: Vec::new(),
         structures: Vec::new(),
     };
-    let due = due(only)?;
+    let due = due(only, settings.roles)?;
     let mut skipped: Vec<i64> = Vec::new();
     let mut left = false;
     for (character, name) in &due {
@@ -313,9 +313,11 @@ pub(crate) fn run(only: Option<i64>) -> Result<(), JobError> {
     Ok(())
 }
 
-/// The host's list of characters (Members' registered with the app's
-/// scopes): new ones added, those gone forgotten with all their data.
-fn refresh_characters() -> Result<(), JobError> {
+/// The host's list of characters (registered with the app's scopes, by
+/// pilots holding one of its permissions): new ones added, those gone
+/// forgotten with all their data. History older than the Settings keep
+/// goes, and shares past the sharing timeout end.
+fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobError> {
     let characters = esi::characters();
     let list: Vec<Json> = characters
         .iter()
@@ -335,20 +337,34 @@ fn refresh_characters() -> Result<(), JobError> {
              corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, seen_at = now()",
             vec![rows(list)],
         ),
+        // aa-memberaudit's MEMBERAUDIT_DATA_RETENTION_LIMIT: mail,
+        // contracts and wallet history.
         stmt(
-            &format!("DELETE FROM journal WHERE at < now() - interval '{WALLET_DAYS}'"),
-            vec![],
+            "DELETE FROM journal WHERE at < now() - make_interval(days => $1::int)",
+            vec![settings.retention_days.into()],
         ),
         stmt(
-            &format!("DELETE FROM transactions WHERE at < now() - interval '{WALLET_DAYS}'"),
-            vec![],
+            "DELETE FROM transactions WHERE at < now() - make_interval(days => $1::int)",
+            vec![settings.retention_days.into()],
         ),
         stmt(
-            &format!("DELETE FROM mails WHERE at < now() - interval '{MAIL_DAYS}'"),
-            vec![],
+            "DELETE FROM mails WHERE at < now() - make_interval(days => $1::int)",
+            vec![settings.retention_days.into()],
         ),
         stmt(
-            "DELETE FROM contracts WHERE issued < now() - interval '180 days'",
+            "DELETE FROM contracts WHERE issued < now() - make_interval(days => $1::int)",
+            vec![settings.retention_days.into()],
+        ),
+        // MEMBERAUDIT_SHARING_TIMEOUT (0: until unshared).
+        stmt(
+            "UPDATE characters SET is_shared = false, shared_at = NULL, shared_by_main = NULL \
+             WHERE is_shared AND $1::int > 0 AND shared_at < now() - make_interval(mins => $1::int)",
+            vec![settings.sharing_timeout_minutes.into()],
+        ),
+        // Roles off: none kept, even from a run that began while they were
+        // on.
+        stmt(
+            "DELETE FROM roles WHERE NOT (SELECT roles_enabled FROM settings WHERE id = 1)",
             vec![],
         ),
         stmt(
@@ -357,11 +373,12 @@ fn refresh_characters() -> Result<(), JobError> {
         ),
     ])
     .map_err(|e| retry("storing characters", e))?;
-    // Not in the list any more (left, sold, no longer a Member, consent
-    // withdrawn): forgotten at once, with all its data. An empty list may
+    // Not in the list any more (left, sold, the account holds none of the
+    // app's permissions any more, consent withdrawn): forgotten at once,
+    // with all its data. An empty list may
     // be the host having trouble, so on that alone nothing is forgotten
-    // for a day; empty for longer, it's real (the last Member left, or the
-    // app's scopes went), and everything goes.
+    // for a day; empty for longer, it's real (the last registered pilot
+    // left, or the app's scopes went), and everything goes.
     let forget = if characters.is_empty() {
         "DELETE FROM characters WHERE seen_at < now() - interval '1 day'"
     } else {
@@ -379,11 +396,12 @@ fn refresh_characters() -> Result<(), JobError> {
 }
 
 /// Sections due, most urgent first: a character never read at all goes
-/// first, whole; then whatever is most overdue.
-fn due(only: Option<i64>) -> Result<Vec<(i64, String)>, JobError> {
+/// first, whole; then whatever is most overdue. Roles only when `roles`.
+fn due(only: Option<i64>, roles: bool) -> Result<Vec<(i64, String)>, JobError> {
     let sections: Vec<Json> = SECTIONS
         .iter()
         .enumerate()
+        .filter(|(_, s)| roles || s.name != "roles")
         .map(|(rank, s)| json!({ "name": s.name, "every": s.every, "rank": rank }))
         .collect();
     let rows = match only {
@@ -1211,15 +1229,23 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
             }))
         })
         .collect();
-    store(&[stmt(
-        "INSERT INTO mails (character_id, mail_id, at, from_id, subject, is_read, labels, recipients) \
+    store(&[
+        stmt(
+            "INSERT INTO mails (character_id, mail_id, at, from_id, subject, is_read, labels, recipients) \
          SELECT $2, mail_id, at, from_id, subject, is_read, labels, recipients \
          FROM json_to_recordset($1::json) AS x(mail_id bigint, at timestamptz, from_id bigint, \
               subject text, is_read boolean, labels jsonb, recipients jsonb) \
          WHERE at IS NOT NULL \
          ON CONFLICT (character_id, mail_id) DO UPDATE SET is_read = EXCLUDED.is_read, labels = EXCLUDED.labels",
-        vec![rows(items), id.into()],
-    )])?;
+            vec![rows(items), id.into()],
+        ),
+        // aa-memberaudit's MEMBERAUDIT_MAX_MAILS: the newest are kept.
+        stmt(
+            "DELETE FROM mails WHERE character_id = $1 AND mail_id NOT IN ( \
+               SELECT mail_id FROM mails WHERE character_id = $1 ORDER BY at DESC, mail_id DESC LIMIT $2)",
+            vec![id.into(), run.settings.max_mails.into()],
+        ),
+    ])?;
     // Bodies: each read once, newest first, a few a run.
     let pending = storage::query(
         "SELECT mail_id FROM mails WHERE character_id = $1 AND body IS NULL ORDER BY at DESC LIMIT $2",

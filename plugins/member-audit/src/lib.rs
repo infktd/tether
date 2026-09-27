@@ -11,22 +11,24 @@
 //!   Wallet (journal, transactions, market orders, contracts, loyalty),
 //!   Clones (implants, jump clones), Industry (jobs, blueprints, mining,
 //!   planets), Contacts (contacts, NPC standings), and Mail on its own
-//!   audited pages.
+//!   audited pages. Pilots share their own characters from it.
 //! - **Character Finder**: member characters within the viewer's scope,
 //!   with each one's main, main organisation and state.
 //! - **Skill Sets** and **Reports**.
+//! - **Settings**: aa-memberaudit's settings (see `settings`).
 //! - **Secure Groups filters**: a skill at a level, a skill set, an item.
 //!
 //! Who sees what follows aa-memberaudit's permissions (see `access`). Data
-//! comes from every Member character registered with the plugin's user
-//! scopes; `sync` reads each section on its own clock within the host's
-//! ESI budget.
+//! comes from the characters registered with Member Audit (its user
+//! scopes) by pilots holding one of its permissions, in any state; `sync`
+//! reads each section on its own clock within the host's ESI budget.
 
 mod access;
 mod filters;
 mod mail;
 mod pages;
 mod sets;
+mod settings;
 mod sheet;
 mod sync;
 
@@ -47,8 +49,9 @@ impl Plugin for MemberAudit {
         match parts.as_slice() {
             [""] => pages::my_characters(&viewer),
             ["finder"] => pages::finder(&access, &request),
-            ["skill-sets"] => sets::skill_sets_page(&viewer, None),
+            ["skill-sets"] => sets::skill_sets_page(&access, None),
             ["reports"] => sets::reports(&access),
+            ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
                 sheet::render(&access, id, rest)
@@ -67,7 +70,10 @@ impl Plugin for MemberAudit {
         let path = submission.request.path.clone();
         match (path.as_str(), submission.form.as_str()) {
             ("skill-sets", "add_set") if viewer.can("manage") => {
-                sets::add_set(&viewer, &submission)
+                sets::add_set(&access, &submission)
+            }
+            ("settings", "settings") if viewer.can("manage") => {
+                settings::save(&viewer, &submission)
             }
             ("skill-sets", "delete_set") if viewer.can("manage") => {
                 sets::delete_set(&viewer, submission.value("set"))
@@ -77,6 +83,8 @@ impl Plugin for MemberAudit {
                 submission.value("q"),
             )?)),
             (_, "update_character") => sheet::update_now(&access, &submission),
+            (_, "share_character") => sheet::share(&access, &submission, true),
+            (_, "unshare_character") => sheet::share(&access, &submission, false),
             _ => Err(PageError::Forbidden),
         }
     }

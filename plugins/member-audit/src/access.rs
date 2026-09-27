@@ -1,25 +1,30 @@
 //! Who may see which characters: aa-memberaudit's permissions.
 //!
-//! - `basic`: the app, and your own characters (their sheets and mail).
-//! - `finder`: the Character Finder and Reports, listing the characters in
-//!   your scope.
-//! - `characters`: opening sheets of characters in your scope.
+//! - `basic_access`: the app, and your own characters (their sheets and
+//!   mail).
+//! - `finder_access`: the Character Finder, listing the characters in your
+//!   scope (and, with `view_shared_characters`, shared ones).
+//! - `reports_access`: Reports, over the characters in your scope.
+//! - `characters_access`: opening sheets of characters in your scope.
 //! - Scope: `view_same_corporation` (characters whose owner's main is in
 //!   your main's corporation), `view_same_alliance` (in your main's
-//!   alliance), `view_everything` (every member character). Without one,
-//!   the scope is your own characters.
-//! - `view_mail`: reading the mail of characters whose sheets you may
-//!   open. Your own characters' mail needs no permission. Every view of a
-//!   mail page is in Tether's audit log either way.
+//!   alliance), `view_everything` (every character registered with Member
+//!   Audit). Without one, the scope is your own characters.
+//! - `share_characters`: sharing your own characters; `view_shared_characters`:
+//!   opening the sheets of characters their pilots shared (recruiters).
+//! - `view_skill_sets`: a sheet's Skill Sets tab, and the Skill Sets page.
+//! - Mail goes with the sheet, as in aa-memberaudit: whoever may open a
+//!   character's sheet may read its mail. Every view of a mail page is in
+//!   Tether's audit log.
 //!
 //! As in aa-memberaudit, the scopes go by the owner's main, so officers see
 //! every alt of the pilots whose main is in their corporation, wherever the
 //! alt is. Tether tells Member Audit, and no other app, who owns each
 //! character (`identity::owners`). A character with no owner it knows of
-//! (no longer a Member's) is in nobody's corporation or alliance scope.
+//! is in nobody's corporation or alliance scope.
 
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tether_plugin_sdk::identity::{self, Owner, Viewer};
 use tether_plugin_sdk::log;
@@ -28,23 +33,33 @@ use tether_plugin_sdk::storage::Value as Db;
 pub(crate) struct Access<'a> {
     pub viewer: &'a Viewer,
     pub finder: bool,
+    pub reports: bool,
     pub characters: bool,
-    pub mail: bool,
+    /// May share their own characters.
+    pub share: bool,
+    /// May open shared characters' sheets.
+    pub shared: bool,
+    pub skill_sets: bool,
     everything: bool,
     corporation: Option<i64>,
     alliance: Option<i64>,
-    /// Who owns each member character, by character id: asked of the host
-    /// the first time it's needed.
+    /// Who owns each character, by character id: asked of the host the
+    /// first time it's needed.
     owners: OnceCell<BTreeMap<i64, Owner>>,
+    /// The characters their pilots share: read the first time it's needed.
+    shared_ids: OnceCell<BTreeSet<i64>>,
 }
 
 impl<'a> Access<'a> {
     pub fn of(viewer: &'a Viewer) -> Self {
         Self {
             viewer,
-            finder: viewer.can("finder"),
-            characters: viewer.can("characters"),
-            mail: viewer.can("view_mail"),
+            finder: viewer.can("finder_access"),
+            reports: viewer.can("reports_access"),
+            characters: viewer.can("characters_access"),
+            share: viewer.can("share_characters"),
+            shared: viewer.can("view_shared_characters"),
+            skill_sets: viewer.can("view_skill_sets"),
             everything: viewer.can("view_everything"),
             corporation: viewer
                 .can("view_same_corporation")
@@ -56,6 +71,7 @@ impl<'a> Access<'a> {
                 None
             },
             owners: OnceCell::new(),
+            shared_ids: OnceCell::new(),
         }
     }
 
@@ -72,13 +88,46 @@ impl<'a> Access<'a> {
         })
     }
 
-    /// Who owns a member character: their main and state.
+    /// Who owns a character registered with Member Audit: their main and
+    /// state.
     pub fn owner(&self, character: i64) -> Option<&Owner> {
         self.owners().get(&character)
     }
 
     pub fn owns(&self, character: i64) -> bool {
         self.viewer.characters.iter().any(|c| c.id == character)
+    }
+
+    /// Characters their pilots share, for holders of
+    /// `view_shared_characters` (none for anyone else): within the sharing
+    /// timeout, and only while the main who shared it still owns it.
+    fn shared_ids(&self) -> &BTreeSet<i64> {
+        self.shared_ids.get_or_init(|| {
+            if !self.shared {
+                return BTreeSet::new();
+            }
+            let rows = crate::query(
+                "SELECT c.character_id, c.shared_by_main FROM characters c \
+                 LEFT JOIN settings s ON s.id = 1 \
+                 WHERE c.is_shared AND (coalesce(s.sharing_timeout_minutes, 0) = 0 \
+                   OR c.shared_at > now() - make_interval(mins => s.sharing_timeout_minutes))",
+                &[],
+            )
+            .unwrap_or_default();
+            rows.iter()
+                .filter(|r| {
+                    let id = crate::int(r, 0);
+                    let by = crate::opt_int(r, 1);
+                    self.owner(id).is_some_and(|o| Some(o.main.id) == by)
+                })
+                .map(|r| crate::int(r, 0))
+                .collect()
+        })
+    }
+
+    /// Whether the character is shared and the viewer may see shared ones.
+    pub fn sees_shared(&self, character: i64) -> bool {
+        self.shared && self.shared_ids().contains(&character)
     }
 
     /// Whether an owner's main is within a corporation or alliance scope.
@@ -103,20 +152,34 @@ impl<'a> Access<'a> {
             .is_some_and(|owner| self.main_in_scope(owner))
     }
 
-    /// May open this character's sheet.
+    /// May open this character's sheet, and so read its mail.
     pub fn may_open(&self, character: i64) -> bool {
-        self.owns(character) || (self.characters && self.in_scope(character))
+        self.owns(character)
+            || (self.characters && self.in_scope(character))
+            || self.sees_shared(character)
     }
 
-    /// May read this character's mail.
+    /// May read this character's mail: whoever may open its sheet, as in
+    /// aa-memberaudit.
     pub fn may_read_mail(&self, character: i64) -> bool {
-        self.owns(character) || (self.mail && self.may_open(character))
+        self.may_open(character)
     }
 
-    /// SQL (over `characters c`) for the characters the Finder and Reports
-    /// list, and its parameter as `$first`: the viewer's own, and those in
-    /// scope. Fixed SQL; only ids are parameters.
+    /// SQL (over `characters c`) for the characters Reports list, and its
+    /// parameter as `$first`: the viewer's own, and those in scope. Fixed
+    /// SQL; only ids are parameters.
     pub fn listed(&self, first: usize) -> (String, Vec<Db>) {
+        self.listing(first, false)
+    }
+
+    /// As [`Self::listed`], for the Character Finder: shared characters
+    /// too, for holders of `view_shared_characters` (aa-memberaudit's
+    /// Finder).
+    pub fn found(&self, first: usize) -> (String, Vec<Db>) {
+        self.listing(first, true)
+    }
+
+    fn listing(&self, first: usize, with_shared: bool) -> (String, Vec<Db>) {
         if self.everything {
             return ("true".to_owned(), Vec::new());
         }
@@ -129,6 +192,9 @@ impl<'a> Access<'a> {
                     .map(|owner| owner.character_id),
             );
         }
+        if with_shared {
+            ids.extend(self.shared_ids().iter().copied());
+        }
         ids.sort_unstable();
         ids.dedup();
         (
@@ -137,8 +203,8 @@ impl<'a> Access<'a> {
         )
     }
 
-    /// Member characters whose owner's main is named like `q` (lowercase),
-    /// for the Finder's search.
+    /// Characters whose owner's main is named like `q` (lowercase), for
+    /// the Finder's search.
     pub fn mains_named(&self, q: &str) -> Vec<i64> {
         self.owners()
             .values()
@@ -150,7 +216,7 @@ impl<'a> Access<'a> {
     /// What the scope is, in words.
     pub fn scope_words(&self) -> &'static str {
         if self.everything {
-            "every member character"
+            "every character registered with Member Audit"
         } else {
             match (self.corporation.is_some(), self.alliance.is_some()) {
                 (_, true) => {

@@ -1,7 +1,8 @@
 //! Mail, on its own pages (`mail/{character}` and
 //! `mail/{character}/{mail}`), whose every view Tether records in its
-//! audit log (`audit = true` in plugin.toml): a pilot's own characters, or
-//! with `view_mail`, the characters whose sheets the viewer may open.
+//! audit log (`audit = true` in plugin.toml): of every character whose
+//! sheet the viewer may open, as in aa-memberaudit (mail is part of the
+//! sheet).
 
 use tether_plugin_sdk::storage::Value as Db;
 use tether_plugin_sdk::{Card, Column, Page, PageError, Section, Table, Tone, Value, badge, link};

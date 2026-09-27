@@ -2,10 +2,10 @@
 //! and migrations, characters registered for it, a character synced
 //! from mocked ESI (every section of the sheet), and AA's pages: My
 //! Characters (the card grid, Register Character first), the Character
-//! Sheet's pages and tabs, mail behind `view_mail` and audited, the
-//! Character Finder (with each character's main and state) scoped by the
-//! owner's main's corporation or alliance, or everything, Skill Sets and
-//! reports.
+//! Sheet's pages and tabs, mail with the sheet and audited, the Character
+//! Finder (with each character's main and state) scoped by the owner's
+//! main's corporation or alliance, or everything, sharing, Skill Sets,
+//! reports and aa-memberaudit's settings.
 
 use std::sync::OnceLock;
 
@@ -45,16 +45,33 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 3] = [
+const MIGRATIONS: [&str; 4] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
+    "migrations/0004_aa_settings.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
 /// manifest without the `[publisher]` table, and no signature. Only the
 /// bundled Member Audit learns who owns each character.
 fn package() -> Vec<u8> {
+    let manifest = bundled_manifest();
+
+    let migrations: Vec<String> = MIGRATIONS.iter().map(|m| plugin_file(m)).collect();
+    let component = component();
+    let mut entries: Vec<(&str, &[u8])> = vec![
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ];
+    for (name, sql) in MIGRATIONS.iter().zip(&migrations) {
+        entries.push((name, sql.as_bytes()));
+    }
+    testing::zip(&entries)
+}
+
+/// The manifest as bundled: without the `[publisher]` table.
+fn bundled_manifest() -> String {
     let mut skip = false;
     let manifest: String = plugin_file("plugin.toml")
         .lines()
@@ -67,16 +84,7 @@ fn package() -> Vec<u8> {
         .map(|line| format!("{line}\n"))
         .collect();
     assert!(!manifest.contains("PUBLISHER_KEY"));
-    let migrations: Vec<String> = MIGRATIONS.iter().map(|m| plugin_file(m)).collect();
-    let component = component();
-    let mut entries: Vec<(&str, &[u8])> = vec![
-        ("plugin.toml", manifest.as_bytes()),
-        ("plugin.wasm", &component),
-    ];
-    for (name, sql) in MIGRATIONS.iter().zip(&migrations) {
-        entries.push((name, sql.as_bytes()));
-    }
-    testing::zip(&entries)
+    manifest
 }
 
 /// A harness bundling Member Audit.
@@ -506,7 +514,9 @@ async fn member_audit_end_to_end(db: PgPool) {
     .fetch_one(&h.db)
     .await
     .unwrap();
-    assert_eq!(sections, 24, "{:?}", plugin_warnings(&h).await);
+    // Roles aren't read: aa-memberaudit's MEMBERAUDIT_FEATURE_ROLES_ENABLED
+    // is off by default.
+    assert_eq!(sections, 23, "{:?}", plugin_warnings(&h).await);
 
     // My Characters: Tether's Register Character card first, then a card
     // per character with its portrait, logos and facts, and the totals.
@@ -573,7 +583,6 @@ async fn member_audit_end_to_end(db: PgPool) {
         "2006-03-01",
         "Update now",
         "State War Academy",
-        "Director",
         "Quartermaster",
         "Unlucky Pilot",
         "Honest trader",
@@ -606,6 +615,7 @@ async fn member_audit_end_to_end(db: PgPool) {
     ] {
         assert!(sheet.contains(text), "{text}");
     }
+    assert!(!sheet.contains("Corporation roles"), "roles are off");
     // The owner's own character: Mail beside the title.
     assert!(sheet.contains(&format!(
         r#"<a href="/plugins/{ID}/mail/{CHRIBBA}">Mail</a>"#
@@ -665,6 +675,78 @@ async fn member_audit_end_to_end(db: PgPool) {
     .unwrap();
     let again = page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &owner).await;
     assert!(again.body.contains("Update now"), "{}", again.body);
+
+    // aa-memberaudit's settings, on the app's Settings page (`manage`):
+    // roles on, a shorter retention and fewer mails kept.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
+    assert!(
+        settings.body.contains("MEMBERAUDIT_DATA_RETENTION_LIMIT"),
+        "{}",
+        settings.body
+    );
+    let refused = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            "_form=settings&retention_days=3&max_mails=250&sharing_timeout_minutes=0",
+            &owner,
+        ),
+    )
+    .await;
+    assert!(
+        refused.status.is_client_error() || refused.body.contains("within its range"),
+        "{}",
+        refused.body
+    );
+    let saved = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            "_form=settings&retention_days=30&max_mails=1&roles_enabled=on&sharing_timeout_minutes=0",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+    let stored: (i32, i32, bool) = sqlx::query_as(
+        r#"SELECT retention_days, max_mails, roles_enabled FROM "plugin_tether.member-audit".settings"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, (30, 1, true));
+    sync(&h).await;
+    let overview = page(
+        &h,
+        &format!("/plugins/{ID}/character/{CHRIBBA}?_tab=1"),
+        &owner,
+    )
+    .await;
+    assert!(overview.body.contains("Director"), "{}", overview.body);
+    let mails: i64 =
+        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.member-audit".mails"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert!(mails <= 1, "{mails}");
+    // Off again: the roles read are forgotten.
+    let saved = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            "_form=settings&retention_days=360&max_mails=250&sharing_timeout_minutes=0",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+    let roles: i64 =
+        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.member-audit".roles"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(roles, 0);
 
     // Character Finder (the owner holds everything), with its search box.
     let finder = page(&h, &format!("/plugins/{ID}/finder?q=chrib"), &owner).await;
@@ -798,7 +880,7 @@ async fn member_account(h: &Harness, characters: &[(i64, &str, i64, Option<i64>)
         "INSERT INTO core.permission_grants (permission, state_id) VALUES ($1, $2) \
          ON CONFLICT DO NOTHING",
     )
-    .bind(format!("plugin.{ID}.basic"))
+    .bind(format!("plugin.{ID}.basic_access"))
     .bind(MEMBER_STATE)
     .execute(&mut *tx)
     .await
@@ -891,7 +973,12 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
     )
     .await;
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
-    for permission in ["basic", "finder", "characters", "view_same_corporation"] {
+    for permission in [
+        "basic_access",
+        "finder_access",
+        "characters_access",
+        "view_same_corporation",
+    ] {
         grant(&h, &owner, permission).await;
     }
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
@@ -915,7 +1002,7 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
 }
 
 /// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance
-/// or everything; mail only with `view_mail`, and every view audited.
+/// or everything; mail with the sheet, and every view audited.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn who_sees_what(db: PgPool) {
     let (h, owner) = synced(db).await;
@@ -942,8 +1029,18 @@ async fn who_sees_what(db: PgPool) {
     let sheet = |id: i64| format!("/plugins/{ID}/character/{id}");
     let mail = format!("/plugins/{ID}/mail/{CHRIBBA}");
 
-    // Basic access alone: only their own characters.
-    grant(&h, &owner, "basic").await;
+    // Basic access alone: only their own characters, and no Skill Sets
+    // (view_skill_sets) or Settings (manage).
+    grant(&h, &owner, "basic_access").await;
+    for uri in ["skill-sets", "settings"] {
+        assert_eq!(
+            page(&h, &format!("/plugins/{ID}/{uri}"), &blue)
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "{uri}"
+        );
+    }
     assert_eq!(
         page(&h, &format!("/plugins/{ID}"), &blue).await.status,
         StatusCode::OK
@@ -988,7 +1085,7 @@ async fn who_sees_what(db: PgPool) {
     assert!(refused.status.is_client_error(), "{}", refused.body);
 
     // The Finder without a scope: their own characters only (none here).
-    grant(&h, &owner, "finder").await;
+    grant(&h, &owner, "finder_access").await;
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
     assert_eq!(finder.status, StatusCode::OK, "{}", finder.body);
     for name in ["Chribba", "Corp Mate", "Mate Alt", "Outsider", "Spy Alt"] {
@@ -1027,16 +1124,23 @@ async fn who_sees_what(db: PgPool) {
             StatusCode::NOT_FOUND
         );
     }
-    // Reports, the same scope.
+    // Reports, the same scope, with their own permission (reports_access).
     sqlx::query(r#"INSERT INTO "plugin_tether.member-audit".skill_sets (name) VALUES ('Anyone')"#)
         .execute(&h.db)
         .await
         .unwrap();
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/reports"), &blue)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    grant(&h, &owner, "reports_access").await;
     let reports = page(&h, &format!("/plugins/{ID}/reports"), &blue).await;
     assert_eq!(reports.status, StatusCode::OK, "{}", reports.body);
     assert!(reports.body.contains("Mate Alt"), "{}", reports.body);
     assert!(!reports.body.contains("Spy Alt"), "{}", reports.body);
-    grant(&h, &owner, "characters").await;
+    grant(&h, &owner, "characters_access").await;
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
     assert!(finder.body.contains(&sheet(CORP_MATE)), "{}", finder.body);
     assert!(finder.body.contains(&sheet(MATE_ALT)), "{}", finder.body);
@@ -1054,13 +1158,24 @@ async fn who_sees_what(db: PgPool) {
         StatusCode::NOT_FOUND
     );
 
-    // Everyone: Chribba too, sheet and all, but no mail without view_mail.
+    // Everyone: Chribba too, sheet and all, mail included (as in
+    // aa-memberaudit, mail is part of the sheet). No Skill sets tab without
+    // view_skill_sets.
     grant(&h, &owner, "view_everything").await;
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
     assert!(finder.body.contains(&sheet(CHRIBBA)), "{}", finder.body);
     let res = page(&h, &sheet(CHRIBBA), &blue).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    assert!(!res.body.contains(&mail), "{}", res.body);
+    assert!(
+        res.body.contains(&format!(r#"<a href="{mail}">Mail</a>"#)),
+        "{}",
+        res.body
+    );
+    let skills = page(&h, &format!("{}/skills", sheet(CHRIBBA)), &blue).await;
+    assert!(!skills.body.contains("Skill sets"), "{}", skills.body);
+    grant(&h, &owner, "view_skill_sets").await;
+    let skills = page(&h, &format!("{}/skills", sheet(CHRIBBA)), &blue).await;
+    assert!(skills.body.contains("Skill sets"), "{}", skills.body);
     // They may ask for an update of someone else's character, a few an
     // hour.
     let ask = || {
@@ -1088,27 +1203,10 @@ async fn who_sees_what(db: PgPool) {
         .unwrap();
     let res = send(&h.app, ask()).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    assert!(
-        res.body.contains("updates of other members"),
-        "{}",
-        res.body
-    );
-    let before = mail_views(&h).await.len();
-    assert_eq!(page(&h, &mail, &blue).await.status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        page(&h, &format!("{mail}/{MAIL}"), &blue).await.status,
-        StatusCode::NOT_FOUND
-    );
+    assert!(res.body.contains("updates of other pilots"), "{}", res.body);
 
-    // With view_mail: the Mail link, the mail, and every view audited
-    // under their name.
-    grant(&h, &owner, "view_mail").await;
-    let res = page(&h, &sheet(CHRIBBA), &blue).await;
-    assert!(
-        res.body.contains(&format!(r#"<a href="{mail}">Mail</a>"#)),
-        "{}",
-        res.body
-    );
+    // The mail, and every view audited under their name.
+    let before = mail_views(&h).await.len();
     let one = page(&h, &format!("{mail}/{MAIL}"), &blue).await;
     assert_eq!(one.status, StatusCode::OK, "{}", one.body);
     assert!(one.body.contains("Fleet at 19:00"), "{}", one.body);
@@ -1116,9 +1214,7 @@ async fn who_sees_what(db: PgPool) {
     let last = views.last().unwrap();
     assert_eq!(last.0, "gigX");
     assert_eq!(last.1["path"], format!("mail/{CHRIBBA}/{MAIL}"));
-    // Refused views were recorded too (the log is written before the app
-    // decides), and nothing else.
-    assert_eq!(views.len(), before + 3, "{views:?}");
+    assert_eq!(views.len(), before + 1, "{views:?}");
 }
 
 // ---- Secure Groups: Member Audit's filters ------------------------------------
@@ -1508,4 +1604,129 @@ async fn a_big_hangar_is_stored_whole(db: PgPool) {
     .unwrap();
     assert_eq!(stored, 8000, "{:?}", plugin_warnings(&h).await);
     assert!(whole);
+}
+
+/// aa-memberaudit's sharing: a pilot with `share_characters` shares their
+/// own character from its sheet, and holders of `view_shared_characters`
+/// (recruiters) find it and open it, mail included and audited, until it
+/// stops being shared or the sharing timeout passes.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn pilots_share_characters_with_recruiters(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let recruiter = log_in_as(&h, "1887431749:gigX", None).await;
+    for permission in ["basic_access", "finder_access", "view_shared_characters"] {
+        grant(&h, &owner, permission).await;
+    }
+    let sheet = format!("/plugins/{ID}/character/{CHRIBBA}");
+    let share = |form_name: &'static str, token: &str| {
+        form(
+            &sheet,
+            &format!("_form={form_name}&character={CHRIBBA}"),
+            token,
+        )
+    };
+    assert_eq!(
+        page(&h, &sheet, &recruiter).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // Only its pilot shares it.
+    let refused = send(&h.app, share("share_character", &recruiter)).await;
+    assert!(refused.status.is_client_error(), "{}", refused.body);
+    let own = page(&h, &sheet, &owner).await.body;
+    assert!(own.contains(">Share<"), "{own}");
+    let shared = send(&h.app, share("share_character", &owner)).await;
+    assert_eq!(shared.status, StatusCode::SEE_OTHER, "{}", shared.body);
+    assert!(page(&h, &sheet, &owner).await.body.contains("Stop sharing"));
+
+    // The recruiter finds it and opens it, mail too.
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &recruiter).await;
+    assert!(finder.body.contains(&sheet), "{}", finder.body);
+    let res = page(&h, &sheet, &recruiter).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("Shared"), "{}", res.body);
+    assert!(!res.body.contains("Stop sharing"), "{}", res.body);
+    let mail = page(
+        &h,
+        &format!("/plugins/{ID}/mail/{CHRIBBA}/{MAIL}"),
+        &recruiter,
+    )
+    .await;
+    assert_eq!(mail.status, StatusCode::OK, "{}", mail.body);
+    assert_eq!(mail_views(&h).await.last().unwrap().0, "gigX");
+
+    // Shared by someone who no longer owns it (sold on): not shared for
+    // its new pilot.
+    sqlx::query(r#"UPDATE "plugin_tether.member-audit".characters SET shared_by_main = 1"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        page(&h, &sheet, &recruiter).await.status,
+        StatusCode::NOT_FOUND
+    );
+    sqlx::query(r#"UPDATE "plugin_tether.member-audit".characters SET shared_by_main = $1"#)
+        .bind(CHRIBBA)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(page(&h, &sheet, &recruiter).await.status, StatusCode::OK);
+
+    // Stopped: gone again.
+    let stopped = send(&h.app, share("unshare_character", &owner)).await;
+    assert_eq!(stopped.status, StatusCode::SEE_OTHER, "{}", stopped.body);
+    assert_eq!(
+        page(&h, &sheet, &recruiter).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // The sharing timeout (MEMBERAUDIT_SHARING_TIMEOUT) ends a share at the
+    // next sync.
+    send(&h.app, share("share_character", &owner)).await;
+    sqlx::raw_sql(
+        r#"UPDATE "plugin_tether.member-audit".settings SET sharing_timeout_minutes = 60;
+           UPDATE "plugin_tether.member-audit".characters SET shared_at = now() - interval '2 hours'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    assert_eq!(
+        page(&h, &sheet, &recruiter).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// 0.2 named aa-memberaudit's permissions `basic`, `finder` and
+/// `characters`: an upgrade moves their grants to AA's names, and drops
+/// `view_mail` (mail goes with the sheet).
+#[test]
+fn upgrading_from_0_2_moves_the_renamed_grants() {
+    use tether_plugins::manifest::{Manifest, permission_renames};
+    let now = Manifest::parse(&bundled_manifest()).unwrap();
+    let was = Manifest::parse(
+        "[plugin]\nid = \"tether.member-audit\"\nname = \"Member Audit\"\nversion = \"0.2.0\"\n\
+         host_api = \"1\"\n\n[permissions]\nbasic = \"b\"\nfinder = \"f\"\ncharacters = \"c\"\n\
+         view_same_corporation = \"s\"\nview_same_alliance = \"a\"\nview_everything = \"e\"\n\
+         view_mail = \"m\"\nmanage = \"m\"\n",
+    )
+    .unwrap();
+    let mut renames = permission_renames(Some(&was), &now);
+    renames.sort();
+    assert_eq!(
+        renames,
+        [
+            ("basic".to_owned(), "basic_access".to_owned()),
+            ("characters".to_owned(), "characters_access".to_owned()),
+            ("finder".to_owned(), "finder_access".to_owned()),
+        ]
+    );
+    for permission in [
+        "reports_access",
+        "view_skill_sets",
+        "share_characters",
+        "view_shared_characters",
+    ] {
+        assert!(now.permissions.contains_key(permission), "{permission}");
+    }
+    assert!(!now.permissions.contains_key("view_mail"));
 }

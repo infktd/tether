@@ -20,17 +20,23 @@ use crate::{
 /// A queue ending sooner than this is flagged.
 const QUEUE_WARNING: Duration = Duration::hours(24);
 
-/// The app's own pages beside the title.
+/// The app's own pages beside the title, those the viewer may open.
 pub(crate) fn app_links(page: Page, access: &Access) -> Page {
-    let page = page
-        .link("My Characters", "")
-        .link("Skill Sets", "skill-sets");
-    if access.finder {
-        page.link("Character Finder", "finder")
-            .link("Reports", "reports")
-    } else {
-        page
+    let manage = access.viewer.can("manage");
+    let mut page = page.link("My Characters", "");
+    if access.skill_sets || manage {
+        page = page.link("Skill Sets", "skill-sets");
     }
+    if access.finder {
+        page = page.link("Character Finder", "finder");
+    }
+    if access.reports {
+        page = page.link("Reports", "reports");
+    }
+    if manage {
+        page = page.link("Settings", "settings");
+    }
+    page
 }
 
 /// An id as the entity its `names` category says it is, or its name.
@@ -122,7 +128,8 @@ fn ids_param(viewer: &Viewer) -> Db {
 /// A character's row as the cards and the Finder read it.
 const CHARACTER_COLUMNS: &str = "c.character_id, c.name, c.corporation_id, c.alliance_id, \
     coalesce(c.total_sp, 0), coalesce(c.wallet, 0), c.system_id, c.ship_type_id, c.synced_at, \
-    EXISTS (SELECT 1 FROM section_syncs y WHERE y.character_id = c.character_id AND NOT y.ok)";
+    EXISTS (SELECT 1 FROM section_syncs y WHERE y.character_id = c.character_id AND NOT y.ok), \
+    c.is_shared";
 
 fn character_names() -> String {
     format!(
@@ -134,7 +141,7 @@ fn character_names() -> String {
     )
 }
 
-/// Columns 0-9 as `CHARACTER_COLUMNS`, then 10-13 the names.
+/// Columns 0-10 as `CHARACTER_COLUMNS`, then 11-14 the names.
 fn character_select(filter: &str) -> String {
     format!(
         "SELECT {CHARACTER_COLUMNS}, {names} FROM characters c {filter}",
@@ -146,15 +153,18 @@ fn character_select(filter: &str) -> String {
 fn card(row: &[Db], training: Option<&Training>, main: bool) -> Profile {
     let id = int(row, 0);
     let mut profile = Profile::new(character(id, text(row, 1)))
-        .corporation(corporation(int(row, 2), text(row, 10)));
+        .corporation(corporation(int(row, 2), text(row, 11)));
     if let Some(ally) = opt_int(row, 3).filter(|a| *a > 0) {
-        profile = profile.alliance(alliance(ally, text(row, 11)));
+        profile = profile.alliance(alliance(ally, text(row, 12)));
     }
     if main {
         profile = profile.badge(badge("Main", Tone::Neutral));
     }
     if row.get(9).and_then(Db::as_bool).unwrap_or(false) {
         profile = profile.badge(badge("Update issues", Tone::Warning));
+    }
+    if row.get(10).and_then(Db::as_bool).unwrap_or(false) {
+        profile = profile.badge(badge("Shared", Tone::Neutral));
     }
     let synced = when(row, 8);
     if synced.is_none() {
@@ -166,7 +176,7 @@ fn card(row: &[Db], training: Option<&Training>, main: bool) -> Profile {
         .fact(
             "Location",
             if opt_int(row, 6).is_some() {
-                text(row, 12).into()
+                text(row, 13).into()
             } else {
                 Value::from("")
             },
@@ -174,7 +184,7 @@ fn card(row: &[Db], training: Option<&Training>, main: bool) -> Profile {
         .fact(
             "Ship",
             match opt_int(row, 7) {
-                Some(ship) => item_type(ship, text(row, 13)).into(),
+                Some(ship) => item_type(ship, text(row, 14)).into(),
                 None => Value::from(""),
             },
         )
@@ -272,7 +282,7 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
         return Err(PageError::NotFound);
     }
     let q: String = q.trim().to_lowercase().chars().take(100).collect();
-    let (scope, mut params) = access.listed(1);
+    let (scope, mut params) = access.found(1);
     let scope_params = params.len();
     let search = if q.is_empty() {
         String::new()
@@ -351,21 +361,21 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
                 } else {
                     character(id, text(r, 1)).into()
                 },
-                corporation(corp, text(r, 10)).into(),
+                corporation(corp, text(r, 11)).into(),
                 match ally {
-                    Some(a) => alliance(a, text(r, 11)).into(),
+                    Some(a) => alliance(a, text(r, 12)).into(),
                     None => "".into(),
                 },
                 main,
                 organisation,
                 state,
                 if opt_int(r, 6).is_some() {
-                    text(r, 12).into()
+                    text(r, 13).into()
                 } else {
                     "".into()
                 },
                 match opt_int(r, 7) {
-                    Some(ship) => item_type(ship, text(r, 13)).into(),
+                    Some(ship) => item_type(ship, text(r, 14)).into(),
                     None => "".into(),
                 },
                 int(r, 4).into(),
@@ -375,8 +385,13 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
     );
     Ok(app_links(
         Page::new("Character Finder").description(format!(
-            "Member characters registered with Member Audit: {}",
-            access.scope_words()
+            "Characters registered with Member Audit: {}{}",
+            access.scope_words(),
+            if access.shared {
+                ", and characters their pilots share"
+            } else {
+                ""
+            }
         )),
         access,
     )

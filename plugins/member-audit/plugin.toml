@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.member-audit"
 name = "Member Audit"
-version = "0.2.0"
+version = "0.3.0"
 host_api = "1"
 description = "A full character viewer (aa-memberaudit's): skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails and more; Character Finder, Skill Sets and reports."
 
@@ -14,8 +14,11 @@ key = "PUBLISHER_KEY"
 storage = true
 
 [capabilities.esi]
-# From every Member character (Member requires these once installed, as
-# AA's Member Audit compliance does): aa-memberaudit's character sheet.
+# aa-memberaudit's character sheet, from the characters their pilots
+# register with Member Audit (its Register Character card): anyone holding
+# one of its permissions, in any state. To require them of every
+# character of a state (AA's compliance groups), an admin uses "Require
+# Member Audit's scopes" on the States page.
 user = [
     "esi-skills.read_skills.v1",
     "esi-skills.read_skillqueue.v1",
@@ -52,39 +55,58 @@ every = "5m"
 name = "report_filters"
 every = "1h"
 
-# aa-memberaudit's permissions. Grant Member basic. Officers: finder (the
-# list) and characters (opening sheets), with a scope: view_same_corporation
-# or view_same_alliance (by the owner's main, as aa-memberaudit), or
-# view_everything. Without a scope they see only their own characters.
-# view_mail reads the mail of characters one may open; every view of a
-# mail page is in Tether's audit log.
+# aa-memberaudit's permissions, as its own (AA's descriptions). Grant
+# basic_access to whoever may use it (Member, usually). Officers:
+# finder_access (the Character Finder), reports_access (Reports) and
+# characters_access (opening others' sheets), with a scope:
+# view_same_corporation or view_same_alliance (by the owner's main, as
+# aa-memberaudit), or view_everything. Without a scope they see only their
+# own characters. Whoever may open a sheet may read its mail, as in
+# aa-memberaudit; every view of a mail page is in Tether's audit log.
+# share_characters lets pilots share their own characters with holders of
+# view_shared_characters (recruiters). manage is Tether's: skill sets and
+# the app's settings (aa-memberaudit keeps both in Django's admin).
 [permissions]
-basic = "Use Member Audit: register and view your own characters, their mail included"
-finder = "Character Finder and Reports: list member characters in your scope"
-characters = "Open the character sheets of member characters in your scope"
-view_same_corporation = "Scope: every character of pilots whose main is in your main's corporation"
-view_same_alliance = "Scope: every character of pilots whose main is in your main's alliance"
-view_everything = "Scope: every member character"
-view_mail = "Read the mail of characters whose sheets you may open (every view is audited)"
-manage = "Create and delete skill sets"
+basic_access = "Can access this app, register, and view own characters"
+share_characters = "Can share his/her characters"
+finder_access = "Can access character finder feature"
+reports_access = "Can access reports feature"
+characters_access = "Can view characters owned by others, mail included, within a view scope below (every mail view audited)"
+view_shared_characters = "Can view shared characters, mail included (every mail view audited)"
+view_same_corporation = "Can view corporation characters (pilots whose main is in your main's corporation)"
+view_same_alliance = "Can view alliance characters (pilots whose main is in your main's alliance)"
+view_everything = "Can view all characters"
+view_skill_sets = "Can view skill sets for a character"
+manage = "Create and delete skill sets, and change Member Audit's settings"
+
+# What 0.2 called them: their grants move on upgrade. view_mail is gone
+# (mail goes with the sheet, as aa-memberaudit's), and its grants with it.
+[renamed_permissions]
+basic = "basic_access"
+finder = "finder_access"
+characters = "characters_access"
 
 [[pages]]
 path = ""
-permission = "basic"
+permission = "basic_access"
 
 [[pages]]
 path = "finder"
-permission = "finder"
+permission = "finder_access"
 
 [[pages]]
 path = "reports"
-permission = "finder"
+permission = "reports_access"
 
 # Mail: every view in Tether's audit log, whoever looks.
 [[pages]]
 path = "mail"
-permission = "basic"
+permission = "basic_access"
 audit = true
+
+[[pages]]
+path = "settings"
+permission = "manage"
 
 [[navigation]]
 label = "Member Audit"

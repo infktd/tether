@@ -99,14 +99,20 @@ pub(crate) fn for_character(id: i64) -> Result<Vec<(String, Vec<String>)>, PageE
     Ok(out)
 }
 
-pub(crate) fn skill_sets_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
+/// The Skill Sets page: for `view_skill_sets` (which of your characters
+/// can use each), and for `manage` (to add and delete them).
+pub(crate) fn skill_sets_page(access: &Access, note: Option<&str>) -> Result<Page, PageError> {
+    let viewer = access.viewer;
+    if !access.skill_sets && !viewer.can("manage") {
+        return Err(PageError::NotFound);
+    }
     let sets = skill_sets()?;
     let mine = own(viewer);
     let mut page = crate::pages::app_links(
         Page::new("Skill Sets").description(
             "Named lists of skills, such as a doctrine, and which of your characters can use them",
         ),
-        &Access::of(viewer),
+        access,
     );
     if let Some(note) = note {
         page = page.text(note);
@@ -213,17 +219,18 @@ pub(crate) fn parse_skills(text: &str) -> Result<Vec<(i64, i64)>, String> {
     Ok(out)
 }
 
-pub(crate) fn add_set(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+pub(crate) fn add_set(access: &Access, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let viewer = access.viewer;
     let name = submission.value("name").trim().to_owned();
     let skills = match parse_skills(submission.value("skills")) {
         Ok(skills) => skills,
-        Err(why) => return Ok(SubmitResult::Page(skill_sets_page(viewer, Some(&why))?)),
+        Err(why) => return Ok(SubmitResult::Page(skill_sets_page(access, Some(&why))?)),
     };
     let count = storage::query("SELECT count(*) FROM skill_sets", &[])
         .map_err(|e| failed("counting skill sets", e))?;
     if count.rows.first().map_or(0, |r| int(r, 0)) >= MAX_SETS {
         return Ok(SubmitResult::Page(skill_sets_page(
-            viewer,
+            access,
             Some(&format!(
                 "There can be at most {MAX_SETS} skill sets: delete one first."
             )),
@@ -246,7 +253,7 @@ pub(crate) fn add_set(viewer: &Viewer, submission: &Submission) -> Result<Submit
     .map_err(|e| failed("saving the skill set", e))?;
     if added.rows.is_empty() {
         return Ok(SubmitResult::Page(skill_sets_page(
-            viewer,
+            access,
             Some("A skill set with that name already exists."),
         )?));
     }
@@ -268,8 +275,10 @@ pub(crate) fn delete_set(viewer: &Viewer, set: &str) -> Result<SubmitResult, Pag
     Ok(SubmitResult::Redirect("skill-sets".into()))
 }
 
+/// Reports (aa-memberaudit's `reports_access`): the Skill Sets report,
+/// over the characters in the viewer's scope.
 pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
-    if !access.finder {
+    if !access.reports {
         return Err(PageError::NotFound);
     }
     let sets = skill_sets()?;
@@ -291,7 +300,7 @@ pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
             with_rows(
                 Table::new(vec![Column::text("Character")]).empty("Nobody yet."),
                 able.iter().map(|(id, n)| {
-                    if access.characters || access.owns(*id) {
+                    if access.may_open(*id) {
                         vec![link(n.clone(), format!("character/{id}")).into()]
                     } else {
                         vec![character(*id, n.clone()).into()]
