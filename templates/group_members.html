@@ -15,9 +15,10 @@
 
   <section class="card">
     <header><h2>Direct join link</h2><p>Anyone whose state may join can use it, even while the group is Hidden.</p></header>
-    <section class="max-w-xl">
+    <section class="flex max-w-xl items-center gap-2" data-code>
       <label class="sr-only" for="join-link">Direct join link</label>
-      <input class="input num" id="join-link" value="{{ join_link }}" readonly>
+      <input class="input num min-w-0 flex-1" id="join-link" value="{{ join_link }}" readonly>
+      <button type="button" class="btn" data-variant="outline" data-copy data-copied-label="Copied">Copy</button>
     </section>
   </section>
 

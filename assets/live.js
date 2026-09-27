@@ -1,5 +1,6 @@
 // App pages' live values (DESIGN.md, Plugins): countdowns tick, progress
-// bars between two instants fill, and Copy buttons copy. The server draws
+// bars between two instants fill, and Copy buttons copy (app code blocks,
+// and Group Management's direct join links). The server draws
 // each as it is when the page is made; this only keeps them current, so
 // the page reads fine without it. Nothing here animates: values change in
 // place. Every instant comes from an attribute the host wrote.
@@ -39,14 +40,20 @@
   };
   setInterval(tick, 1000);
 
-  // Copy buttons: the text is the <pre> in the same block.
+  // Copy buttons: the text is the <pre> in the same block, or its
+  // read-only field (a group's direct join link).
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element && event.target.closest("button[data-copy]");
     if (!button) return;
     const block = button.closest("[data-code]");
-    const text = block && block.querySelector("pre");
+    const text = block && block.querySelector("pre, input");
     if (!text) return;
+    const field = text instanceof HTMLInputElement;
     const select = () => {
+      if (field) {
+        text.select();
+        return;
+      }
       const selection = window.getSelection();
       if (selection) selection.selectAllChildren(text);
     };
@@ -54,7 +61,7 @@
       select();
       return;
     }
-    navigator.clipboard.writeText(text.textContent).then(
+    navigator.clipboard.writeText(field ? text.value : text.textContent).then(
       () => {
         if (!button.dataset.label) button.dataset.label = button.textContent;
         button.textContent = button.dataset.copiedLabel || "Copied";

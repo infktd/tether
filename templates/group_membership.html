@@ -18,9 +18,10 @@
             <div class="font-medium">{{ g.name }}</div>
             {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
             {% if let Some(link) = g.join_link %}
-            <div class="mt-2 max-w-sm">
+            <div class="mt-2 flex max-w-sm items-center gap-2" data-code>
               <label class="sr-only" for="join-link-{{ g.id }}">Direct join link for {{ g.name }}</label>
-              <input class="input num text-xs" id="join-link-{{ g.id }}" value="{{ link }}" readonly title="Hidden: this link is the way in. Select it to copy.">
+              <input class="input num text-xs min-w-0 flex-1" id="join-link-{{ g.id }}" value="{{ link }}" readonly title="Hidden: this link is the way in.">
+              <button type="button" class="btn" data-variant="outline" data-size="sm" data-copy data-copied-label="Copied" aria-label="Copy the direct join link for {{ g.name }}">Copy</button>
             </div>
             {% endif %}
           </td>

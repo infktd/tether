@@ -386,6 +386,8 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
     .await;
     let hidden = hidden.location().rsplit('/').next().unwrap().to_owned();
     let membership = page(&h, "/group-management/membership", &owner).await;
+    // A read-only field (select it to copy) and a Copy button, which the
+    // bundled live.js wires up as app code blocks' are.
     assert!(
         membership
             .body
@@ -393,10 +395,30 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
         "{}",
         membership.body
     );
+    let copy = r#"data-copy data-copied-label="Copied" aria-label="Copy the direct join link for Scouts">Copy</button>"#;
+    assert!(membership.body.contains(copy), "{}", membership.body);
+    assert!(
+        membership
+            .body
+            .contains(r#"<script src="/static/live.js" defer></script>"#),
+        "{}",
+        membership.body
+    );
     let members = page(&h, &format!("/group-management/{id}"), &owner).await;
     assert!(members.body.contains("The Mittani"));
     assert!(members.body.contains(">Organization<"), "{}", members.body);
     assert!(members.body.contains(&format!("{SITE}/groups/{id}")));
+    assert!(
+        members.body.contains(r#"data-code>"#)
+            && members
+                .body
+                .contains(r#"data-copy data-copied-label="Copied">Copy</button>"#),
+        "{}",
+        members.body
+    );
+    // The script copies a block's field as well as its text.
+    let js = send(&h.app, get("/static/live.js", &[])).await;
+    assert!(js.body.contains(r#"querySelector("pre, input")"#));
     let log = page(&h, &format!("/group-management/{id}/audit"), &owner).await;
     assert!(
         log.body.contains("Accept") && log.body.contains("Reject"),
