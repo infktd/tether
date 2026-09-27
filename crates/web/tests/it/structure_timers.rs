@@ -1,7 +1,7 @@
 //! The Structure Timers plugin end to end: installed from its real
 //! component and migration, timers created, edited and deleted through its
-//! forms, AA's two permissions, and corporation-only timers seen and
-//! edited only by the creator's corporation.
+//! forms and row buttons, AA's two permissions, and corporation-only
+//! timers seen and edited only by the creator's corporation.
 
 use std::sync::OnceLock;
 
@@ -150,7 +150,28 @@ async fn structure_timers_end_to_end(db: PgPool) {
     assert!(list.body.contains("1d 2h"), "{}", list.body);
     assert!(list.body.contains("Important"));
     assert!(list.body.contains("Jita IV - Moon 4"));
-    assert!(list.body.contains("Create Timer"));
+    // Create Timer is the header's button; upcoming timers tick in the
+    // browser, with the creator's portrait; each row has Edit and a
+    // Delete that asks first.
+    assert!(
+        list.body
+            .contains(&format!("href=\"/plugins/{ID}/add\">Create Timer</a>")),
+        "{}",
+        list.body
+    );
+    assert!(list.body.contains("data-countdown"), "{}", list.body);
+    assert!(
+        list.body
+            .contains("images.evetech.net/characters/196379789/portrait"),
+        "{}",
+        list.body
+    );
+    assert!(
+        list.body
+            .contains("The Fortizar timer in Jita is deleted for everyone."),
+        "{}",
+        list.body
+    );
     assert!(!list.body.contains("Old Astrahus"), "{}", list.body);
     let old = timers_page(&h, &owner, 1).await;
     assert!(old.body.contains("Old Astrahus"), "{}", old.body);
@@ -174,6 +195,7 @@ async fn structure_timers_end_to_end(db: PgPool) {
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(seen.body.contains("Hostile Fortizar"));
     assert!(!seen.body.contains("Create Timer"), "{}", seen.body);
+    assert!(!seen.body.contains("name=\"timer\""), "{}", seen.body);
     let public = timer_id(&h, "Hostile Fortizar").await;
     for uri in ["add".to_owned(), format!("timer/{public}")] {
         assert_eq!(
@@ -258,7 +280,7 @@ async fn structure_timers_end_to_end(db: PgPool) {
     );
     // Posting to it from outside the corporation finds nothing.
     for body in [
-        "_form=delete&confirm=on".to_owned(),
+        format!("_form=delete&timer={corp}"),
         timer_body("Hijacked", "&eve_time=&days=1&hours=&minutes="),
     ] {
         let res = send(
@@ -301,8 +323,8 @@ async fn structure_timers_end_to_end(db: PgPool) {
             .contains("Hostile Fortizar")
     );
 
-    // A manager in another corporation deletes a public timer; delete needs
-    // the confirmation.
+    // A manager in another corporation deletes a public timer from its
+    // page: only the button the page drew posts.
     let res = send(
         &h.app,
         form(&format!("/plugins/{ID}/timer/{public}"), "_form=delete", &a),
@@ -313,7 +335,7 @@ async fn structure_timers_end_to_end(db: PgPool) {
         &h.app,
         form(
             &format!("/plugins/{ID}/timer/{public}"),
-            "_form=delete&confirm=on",
+            &format!("_form=delete&timer={public}"),
             &a,
         ),
     )
@@ -321,6 +343,58 @@ async fn structure_timers_end_to_end(db: PgPool) {
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let list = timers_page(&h, &owner, 0).await;
     assert!(!list.body.contains("Hostile Fortizar"), "{}", list.body);
+
+    // And from the list's row: not by a viewer without timer_management,
+    // whose list has no such button; not a timer outside the viewer's
+    // corporation; yes by a manager.
+    let res = create(
+        &h,
+        &owner,
+        "Row+Keepstar",
+        "&eve_time=&days=1&hours=&minutes=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let row = timer_id(&h, "Row Keepstar").await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}"),
+            &format!("_form=delete&timer={row}"),
+            &blue,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}"),
+            &format!("_form=delete&timer={corp}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(timer_id(&h, "Our Raitaru (armor)").await, corp);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}"),
+            &format!("_form=delete&timer={row}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let gone: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM \"plugin_tether.structure-timers\".timers WHERE id = $1",
+    )
+    .bind(row)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(gone, 0);
 
     // No warnings or errors in the plugin's log.
     let problems: Vec<String> = sqlx::query_scalar(

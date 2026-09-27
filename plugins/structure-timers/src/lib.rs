@@ -21,7 +21,7 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, badge, link, log, time,
+    SubmitResult, Table, Tone, Value, action, badge, character, countdown, link, log, time,
 };
 
 /// AA's structure choices.
@@ -102,6 +102,14 @@ impl Plugin for StructureTimers {
         }
         match (path, submission.form.as_str()) {
             ("add", "timer") => save_timer(&viewer, None, &submission),
+            // A row's Delete on the list.
+            ("", "delete") => {
+                let id: i64 = submission
+                    .value("timer")
+                    .parse()
+                    .map_err(|_| PageError::NotFound)?;
+                delete_timer(&viewer, id)
+            }
             _ => Err(PageError::NotFound),
         }
     }
@@ -174,6 +182,8 @@ struct Timer {
     important: bool,
     corp_timer: bool,
     creator: String,
+    /// The creator's main (0 for automatic timers).
+    creator_id: i64,
     created_at: Option<DateTime<Utc>>,
     corporation_id: i64,
     /// Who last edited it, and when ("" if nobody has).
@@ -185,7 +195,8 @@ struct Timer {
 
 const TIMER_COLUMNS: &str = "id, details, system, planet_moon, structure, timer_type, objective, \
                              eve_time, important, corp_timer, creator_name, created_at, \
-                             corporation_id, coalesce(updated_by_name, ''), updated_at";
+                             corporation_id, coalesce(updated_by_name, ''), updated_at, \
+                             creator_character_id";
 
 fn timer(row: &[Db]) -> Option<Timer> {
     Some(Timer {
@@ -200,6 +211,7 @@ fn timer(row: &[Db]) -> Option<Timer> {
         important: flag(row, 8),
         corp_timer: flag(row, 9),
         creator: text(row, 10),
+        creator_id: int(row, 15),
         created_at: when(row, 11),
         corporation_id: int(row, 12),
         editor: text(row, 13),
@@ -240,6 +252,7 @@ fn automatic() -> (Vec<Timer>, Option<String>) {
                         important: false,
                         corp_timer: s.timer.corporation_id.is_some(),
                         creator: s.source.clone(),
+                        creator_id: 0,
                         created_at: None,
                         corporation_id: s.timer.corporation_id.unwrap_or_default(),
                         editor: String::new(),
@@ -319,12 +332,18 @@ fn timer_table(list: &[Timer], now: DateTime<Utc>, manage: bool, empty: &str) ->
     ];
     if manage {
         columns.push(Column::text("Action"));
+        columns.push(Column::text(""));
     }
     let mut table = Table::new(columns).empty(empty);
     for t in list {
+        let creator: Value = if t.creator_id > 0 {
+            character(t.creator_id, t.creator.clone()).into()
+        } else {
+            t.creator.clone().into()
+        };
         let mut row = vec![
             time(rfc3339(t.eve_time)),
-            when::countdown(now, t.eve_time).into(),
+            remaining(now, t.eve_time),
             t.structure.clone().into(),
             t.timer_type.clone().into(),
             t.system.clone().into(),
@@ -332,18 +351,44 @@ fn timer_table(list: &[Timer], now: DateTime<Utc>, manage: bool, empty: &str) ->
             objective_badge(&t.objective),
             t.details.clone().into(),
             flags(t),
-            t.creator.clone().into(),
+            creator,
         ];
         if manage {
             // Automatic timers are changed in the app that made them.
-            row.push(match t.source {
-                Some(_) => "".into(),
-                None => link("Edit", format!("timer/{}", t.id)).into(),
-            });
+            match t.source {
+                Some(_) => row.extend(["".into(), "".into()]),
+                None => row.extend([
+                    link("Edit", format!("timer/{}", t.id)).into(),
+                    delete_button(t),
+                ]),
+            }
         }
         table = table.row(row);
     }
     table
+}
+
+/// The time left: upcoming timers tick in the browser; past ones say how
+/// long ago.
+fn remaining(now: DateTime<Utc>, at: DateTime<Utc>) -> Value {
+    if at > now {
+        countdown(rfc3339(at))
+    } else {
+        when::countdown(now, at).into()
+    }
+}
+
+/// A timer's Delete, asking first. It posts `delete` with the timer's id,
+/// from the list or the timer's own page.
+fn delete_button(t: &Timer) -> Value {
+    action("Delete", "delete")
+        .field("timer", t.id.to_string())
+        .tone(Tone::Danger)
+        .confirm(format!(
+            "The {} timer in {} is deleted for everyone.",
+            t.structure, t.system
+        ))
+        .into()
 }
 
 fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
@@ -392,7 +437,7 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
         page = page.text(problem);
     }
     if manage {
-        page = page.card(Card::new("Timers").field("New timer", link("Create Timer", "add")));
+        page = page.button("Create Timer", "add");
     }
     Ok(page
         .tab(
@@ -571,8 +616,8 @@ fn edit_page(
     let now = Utc::now();
     let mut about = Card::new("Timer")
         .field("EVE time", time(rfc3339(t.eve_time)))
-        .field("Remaining", when::countdown(now, t.eve_time))
-        .field("Creator", t.creator.clone());
+        .field("Remaining", remaining(now, t.eve_time))
+        .field("Creator", character(t.creator_id, t.creator.clone()));
     if let Some(created) = t.created_at {
         about = about.field("Created", time(rfc3339(created)));
     }
@@ -581,6 +626,7 @@ fn edit_page(
             .field("Last edited by", t.editor.clone())
             .field("Last edited", time(rfc3339(updated)));
     }
+    about = about.field("Delete", delete_button(&t));
     let mut page = Page::new("Edit Timer")
         .description(format!("{} in {}", t.structure, t.system))
         .card(about);
@@ -588,11 +634,7 @@ fn edit_page(
         page = page.text(note);
     }
     let values = values.unwrap_or_else(|| Values::stored(&t));
-    Ok(page.form(timer_form(&values, "Save Timer")).form(
-        Form::new("delete", "Delete Timer")
-            .description("The timer is gone for everyone.")
-            .field(Field::checkbox("confirm", "Yes, delete this timer", false).required()),
-    ))
+    Ok(page.form(timer_form(&values, "Save Timer")))
 }
 
 fn save_timer(
