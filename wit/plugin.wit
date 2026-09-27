@@ -140,8 +140,11 @@ interface page {
         /// data-source scopes: one EVE login with one of the viewer's own
         /// characters adds it as the app's data source, and brings them
         /// back to this page with that character's id as `owner` in the
-        /// query. Drawn only for those who may add owners (holders of the
-        /// app's `manage` or an `add_...` permission, and app admins);
+        /// query. Anyone can type a query: treat `owner` as a hint, and use
+        /// it only if it's one of the viewer's characters and one of
+        /// `esi.data-sources`. Drawn only for those who may add owners
+        /// (holders of an `add_...` permission of the app, and app
+        /// admins), with the host's own words and the scopes beside it;
         /// nothing for anyone else.
         add-owner(string),
     }

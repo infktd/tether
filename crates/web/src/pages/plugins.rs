@@ -79,9 +79,27 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         );
     }
     if !c.esi.data_source.is_empty() {
+        let adders: Vec<&str> = crate::plugin_consent::owner_permissions(manifest);
         add(
-            "ESI access through characters you designate",
-            c.esi.data_source.join(", "),
+            "ESI access through its owners' characters",
+            format!(
+                "{}. Owners (AA's Add Owner) are added, and used at once, by {}: each logs in \
+                 with one of their own characters. You can see and remove any owner on the \
+                 app's page.",
+                c.esi.data_source.join(", "),
+                if adders.is_empty() {
+                    "app admins only".to_owned()
+                } else {
+                    format!(
+                        "holders of {} and app admins",
+                        adders
+                            .iter()
+                            .map(|p| format!("{} ({p})", manifest.permissions[*p]))
+                            .collect::<Vec<_>>()
+                            .join(" or ")
+                    )
+                }
+            ),
         );
     }
     if !c.discord.is_empty() {
@@ -1642,5 +1660,40 @@ pub async fn remove_channel(
     match crate::plugin_consent::set_channel(&state, session.account, id, channel, false).await {
         Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         Err(err) => plugin_page(&state, shell, id, Some(err)).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(permissions: &str) -> Manifest {
+        Manifest::parse(&format!(
+            "[plugin]\nid = \"acme.mine\"\nname = \"Mine\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+             [capabilities.esi]\ndata_source = [\"esi-industry.read_corporation_mining.v1\"]\n\n\
+             [permissions]\n{permissions}\n"
+        ))
+        .unwrap()
+    }
+
+    fn owners_line(m: &Manifest) -> String {
+        capabilities(m)
+            .into_iter()
+            .find(|c| c.title.contains("owners"))
+            .map(|c| c.detail)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_review_says_who_adds_owners() {
+        let with = manifest("manage = \"Manage\"\nadd_refinery_owner = \"Can add refinery owner\"");
+        let line = owners_line(&with);
+        assert!(
+            line.contains("holders of Can add refinery owner (add_refinery_owner) and app admins"),
+            "{line}"
+        );
+        assert!(!line.contains("(manage)"), "{line}");
+        let none = manifest("manage = \"Manage\"");
+        assert!(owners_line(&none).contains("app admins only"));
     }
 }

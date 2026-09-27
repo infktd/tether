@@ -1,22 +1,19 @@
 -- App owners (data sources) are added as Alliance Auth adds them: a holder
--- of the app's add permission logs in with the character, and it's in use
--- at once, with no admin approval (Jay, 2026-09-26). Offers still waiting
--- for an admin become owners now, for the corporation their character is
--- in, audited as the system's doing. One whose corporation isn't known
--- stays unused until it's added again.
-WITH approved AS (
-    UPDATE core.plugin_data_sources d
-    SET approved_at = now(), corporation_id = c.corporation_id
-    FROM core.characters c
-    WHERE c.id = d.character_id
-      AND d.approved_at IS NULL
-      AND c.corporation_id IS NOT NULL
-    RETURNING d.plugin_id, d.character_id
+-- of the app's add permission logs in with one of their own characters,
+-- and it's in use at once, with no admin approval (Jay, 2026-09-26).
+-- Offers still waiting for an admin were made under the old rules, by
+-- people who may not hold an add permission now, so they are dropped, not
+-- approved: whoever may add owners adds them again in one login. Each is
+-- recorded as removed by the system.
+WITH removed AS (
+    DELETE FROM core.plugin_data_sources
+    WHERE approved_at IS NULL
+    RETURNING plugin_id, character_id
 )
 INSERT INTO core.audit_log (actor_account_id, action, target, details)
-SELECT NULL, 'plugin.data_source_approved', 'plugin:' || plugin_id,
+SELECT NULL, 'plugin.data_source_removed', 'plugin:' || plugin_id,
        jsonb_build_object(
            'character_id', character_id,
-           'reason', 'owners need no admin approval (Alliance Auth style)'
+           'reason', 'owners are now added, not offered'
        )
-FROM approved;
+FROM removed;

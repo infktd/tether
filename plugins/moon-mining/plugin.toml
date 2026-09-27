@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.moon-mining"
 name = "Moon Mining"
-version = "0.2.0"
+version = "0.2.1"
 host_api = "1"
 description = "Moon extractions, pops and their value, moons from surveys, reports, fresh moons for Members and old ones for Blue, and an extraction planner for Station Managers."
 
@@ -52,7 +52,7 @@ extractions_access = "Can access extractions and view owned moons, with mining t
 reports_access = "Can access reports: moons' potential income, members' mining, uploads and ore prices"
 view_all_moons = "Can view all moons"
 upload_moon_scan = "Can upload moon scans, and see the moons they uploaded"
-add_refinery_owner = "Can add refinery owner: offer a corporation's character as a data source"
+add_refinery_owner = "Can add refinery owner: one of your Station Managers, whose corporation's moons are read at once"
 view_moon_ledgers = "Can view moon ledgers: who mined each extraction"
 # Not in aa-moonmining (its settings live in Django's admin): nobody holds
 # it until an admin grants it.

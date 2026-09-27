@@ -1181,8 +1181,10 @@ pub fn share(path: impl Into<String>) -> Value {
 /// boss"; "Add owner" when empty), for apps with data-source scopes: one
 /// EVE login adds one of the viewer's characters as your data source and
 /// brings them back to this page with its id as `owner` in the query.
-/// Only drawn for those who may add owners (your `manage` or `add_...`
-/// permission holders, and app admins).
+/// That query is untrusted (anyone can type one): use it only if it's one
+/// of the viewer's characters and in [`esi::data_sources`]. Only drawn for
+/// those who may add owners (holders of one of your `add_...`
+/// permissions, and app admins).
 pub fn add_owner(label: impl Into<String>) -> Value {
     Value::AddOwner(label.into())
 }

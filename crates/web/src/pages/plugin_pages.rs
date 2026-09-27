@@ -79,6 +79,9 @@ pub struct AddOwnerView {
     pub label: String,
     pub plugin: String,
     pub back: String,
+    /// What EVE will ask for: the app's data-source scopes, in the host's
+    /// own words beside the app's.
+    pub scopes: Vec<String>,
 }
 
 /// A character, corporation, alliance, faction or type: its picture from
@@ -395,8 +398,9 @@ pub struct Ctx<'a> {
     /// with it.
     pub site: &'a str,
     /// For a viewer who may add the app's owners: the page's link path,
-    /// which Add owner's login comes back to. `None` draws no Add owner.
-    pub owner_back: Option<String>,
+    /// which Add owner's login comes back to, and the scopes EVE asks for.
+    /// `None` draws no Add owner.
+    pub owner_back: Option<(String, Vec<String>)>,
     next: std::cell::Cell<usize>,
 }
 
@@ -413,9 +417,9 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// For a viewer who may add owners, on the page at `back` (see
-    /// `owner_back`).
-    pub fn adding_owners(mut self, back: Option<String>) -> Self {
+    /// For a viewer who may add owners, on the page at `back`, the login
+    /// asking for `scopes` (see `owner_back`).
+    pub fn adding_owners(mut self, back: Option<(String, Vec<String>)>) -> Self {
         self.owner_back = back;
         self
     }
@@ -514,7 +518,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
             ..plain(String::new())
         },
         Value::AddOwner(label) => ValueView {
-            add_owner: ctx.owner_back.as_ref().map(|back| AddOwnerView {
+            add_owner: ctx.owner_back.as_ref().map(|(back, scopes)| AddOwnerView {
                 label: if label.trim().is_empty() {
                     "Add owner".to_owned()
                 } else {
@@ -522,6 +526,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
                 },
                 plugin: plugin.to_owned(),
                 back: back.clone(),
+                scopes: scopes.clone(),
             }),
             ..plain(String::new())
         },
@@ -989,14 +994,15 @@ async fn render_page(state: &AppState, opened: &Opened, via: Via) -> Result<Page
     }
 }
 
-/// The page's path, for Add owner to come back to, if the viewer may add
-/// the app's owners (a browser session holding the app's add permission).
-fn owner_back(opened: &Opened) -> Option<String> {
+/// The page's path, for Add owner to come back to, and the scopes its
+/// login asks for, if the viewer may add the app's owners (a browser
+/// session holding the app's add permission).
+fn owner_back(opened: &Opened) -> Option<(String, Vec<String>)> {
     opened
         .owners
         .as_ref()
         .filter(|o| o.can_offer)
-        .map(|_| opened.path.clone())
+        .map(|o| (opened.path.clone(), o.scopes.clone()))
 }
 
 /// Draws a page, or with `reload` only its content, for a live page
@@ -1517,7 +1523,9 @@ mod tests {
                 "page".to_owned(),
                 "",
             )
-            .adding_owners(back.map(str::to_owned))
+            .adding_owners(
+                back.map(|b| (b.to_owned(), vec!["esi-fleets.read_fleet.v1".to_owned()])),
+            )
         };
         let label = Value::AddOwner("Log in with the fleet boss".to_owned());
         assert!(value(&ctx(None), &label).add_owner.is_none());
@@ -1527,6 +1535,7 @@ mod tests {
         assert_eq!(drawn.label, "Log in with the fleet boss");
         assert_eq!(drawn.plugin, "acme.fat");
         assert_eq!(drawn.back, "links/create");
+        assert_eq!(drawn.scopes, vec!["esi-fleets.read_fleet.v1".to_owned()]);
         let unnamed = value(&ctx(Some("")), &Value::AddOwner(" ".to_owned()))
             .add_owner
             .expect("drawn");

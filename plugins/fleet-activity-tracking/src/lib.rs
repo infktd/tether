@@ -704,7 +704,9 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
 }
 
 /// The character Add owner just added, from the query Tether brings the
-/// FC back with (`owner`).
+/// FC back with (`owner`). Anyone can type a query, so it's only a hint:
+/// `create_page` uses it only if it's one of the viewer's own characters
+/// that is a data source, and `create_link` checks the choice again.
 fn owner_added(request: &Request) -> Option<i64> {
     request
         .query
@@ -777,11 +779,12 @@ fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Resul
     let added = added.filter(|id| trackable.iter().any(|(c, _)| c == id));
     let login = Card::new("Track your ESI fleet")
         .description(if trackable.is_empty() {
-            "Log in with the character that is (or will be) fleet boss: EVE asks you to allow \
-             Tether to read its fleet, and it's offered below for tracking."
+            "Log in with your own character that is (or will be) fleet boss: EVE asks you to \
+             allow Tether to read its fleet, and it's offered below for tracking. Only your own: \
+             logging in with someone else's character moves it to your account."
         } else {
-            "Boss the fleet with another character? Log in with it: it joins the characters \
-             offered below."
+            "Boss the fleet with another of your own characters? Log in with it: it joins the \
+             characters offered below. Someone else's character would move to your account."
         })
         .field("Fleet boss", add_owner("Log in with the fleet boss"));
     if let Some(id) = added {

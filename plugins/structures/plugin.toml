@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.structures"
 name = "Structures"
-version = "0.3.0"
+version = "0.3.1"
 host_api = "1"
 description = "Owners' Upwell structures, starbases, customs offices and skyhooks with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner, and low-fuel alerts."
 
@@ -40,13 +40,15 @@ every = "10m"
 
 # aa-structures' names. Grant Member basic_access and
 # view_corporation_structures (or view_alliance_structures); leadership
-# view_all_structures, view_structure_fit and manage.
+# view_all_structures, view_structure_fit and manage; Station Managers
+# add_structure_owner.
 [permissions]
 basic_access = "Open Structures (it shows the structures the view permissions allow)"
 view_corporation_structures = "See the structures of your main's corporation"
 view_alliance_structures = "See the structures of every corporation in your main's alliance"
 view_all_structures = "See every owner's structures"
 view_structure_fit = "See structures' fittings"
+add_structure_owner = "Can add structure owner: one of your Station Managers, whose corporation's structures are read at once"
 manage = "Manage Structures: Discord channels, low-fuel alerts, tags and owners' syncing"
 
 [[pages]]

@@ -26,10 +26,21 @@ fn target(plugin: &str) -> String {
     format!("plugin:{plugin}")
 }
 
+/// The app's permissions that add owners: its `add_…` ones, as AA's
+/// `add_refinery_owner` and `add_structure_owner` and aa-afat's
+/// `add_fatlink` (whose FCs add their fleet boss). In AA only these add
+/// owners, not an app's general management permission.
+pub fn owner_permissions(manifest: &Manifest) -> Vec<&str> {
+    manifest
+        .permissions
+        .keys()
+        .map(String::as_str)
+        .filter(|name| name.starts_with("add_"))
+        .collect()
+}
+
 /// Who may add a character as an app's data source (AA's Add Owner):
-/// holders of the app's `manage` permission or of any of its `add_…` ones
-/// (as AA's `add_refinery_owner` and `add_structure_owner`, and aa-afat's
-/// `add_fatlink`, whose FCs add their fleet boss), and app admins
+/// holders of one of [`owner_permissions`], and app admins
 /// (`admin.plugins`). Only for those who may open the app's main page,
 /// where their owners are listed.
 pub fn may_offer(manifest: &Manifest, holds: impl Fn(&str) -> bool) -> bool {
@@ -44,10 +55,8 @@ pub fn may_offer(manifest: &Manifest, holds: impl Fn(&str) -> bool) -> bool {
     }
     let id = &manifest.plugin.id;
     holds(tether_core::permissions::ADMIN_PLUGINS)
-        || manifest
-            .permissions
-            .keys()
-            .filter(|name| *name == "manage" || name.starts_with("add_"))
+        || owner_permissions(manifest)
+            .into_iter()
             .any(|name| holds(&format!("plugin.{id}.{name}")))
 }
 
@@ -174,15 +183,25 @@ pub async fn finish(
     .await?;
     tx.commit().await?;
     // The app reads its new owner now, not at its next scheduled run: the
-    // pilot's doing, so audited as theirs. Best effort: the owner stands
-    // whatever happens here.
+    // pilot's doing, so audited as theirs. At most every minute for app
+    // admins (as their Run now), every ten for everyone else (as a
+    // registration's), so adding owners can't keep an app running. Best
+    // effort: the owner stands whatever happens here.
+    let admin = tether_db::permissions::effective(&state.db, account)
+        .await?
+        .contains(tether_core::permissions::ADMIN_PLUGINS);
+    let gap = if admin {
+        tether_jobs::schedule::RUN_NOW_GAP
+    } else {
+        crate::plugin_jobs::TRIGGERED_GAP
+    };
     let why = json!({ "reason": "data_source_added", "character_id": identity.character_id });
     crate::plugin_jobs::run_app_schedules(
         &state.db,
         &running.manifest,
         Actor::Account(account),
         &why,
-        tether_jobs::schedule::RUN_NOW_GAP,
+        gap,
     )
     .await;
     Ok(())
@@ -312,26 +331,28 @@ mod tests {
     }
 
     #[test]
-    fn owners_are_added_by_manage_add_and_app_admins() {
+    fn owners_are_added_by_add_permissions_and_app_admins() {
         let m = manifest(
             "view = \"v\"\nmanage = \"m\"\nadd_fatlink = \"a\"\nother = \"o\"",
             true,
         );
+        assert_eq!(owner_permissions(&m), vec!["add_fatlink"]);
         let with = |held: &[&str]| may_offer(&m, |p| held.contains(&p));
         assert!(!with(&["plugin.acme.mine.view"]));
         assert!(!with(&["plugin.acme.mine.view", "plugin.acme.mine.other"]));
-        assert!(with(&["plugin.acme.mine.view", "plugin.acme.mine.manage"]));
+        // As in AA, managing an app isn't adding its owners.
+        assert!(!with(&["plugin.acme.mine.view", "plugin.acme.mine.manage"]));
         assert!(with(&[
             "plugin.acme.mine.view",
             "plugin.acme.mine.add_fatlink"
         ]));
         assert!(with(&["plugin.acme.mine.view", "admin.plugins"]));
         // Not without the main page, where the login comes back to.
-        assert!(!with(&["plugin.acme.mine.manage"]));
+        assert!(!with(&["plugin.acme.mine.add_fatlink"]));
         // Another app's permission of the same name is no use.
         assert!(!with(&[
             "plugin.acme.mine.view",
-            "plugin.acme.other.manage"
+            "plugin.acme.other.add_fatlink"
         ]));
         // Nothing to offer to an app without data sources.
         let none = manifest("view = \"v\"\nmanage = \"m\"", false);

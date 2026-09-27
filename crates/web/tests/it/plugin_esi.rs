@@ -33,7 +33,7 @@ async fn install(h: &Harness, owner: &str) {
         "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[capabilities]\ndiscord = [\"send_message\"]\n\n\
          [capabilities.esi]\nuser = [\"{SKILLS}\"]\ndata_source = [\"{MINING}\"]\n\n\
-         [permissions]\nview = \"See\"\nmanage = \"Manage\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\nmanage = \"Manage\"\nadd_owner = \"Add owners\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
@@ -367,9 +367,16 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
 
-    // The app's manage permission may: its holder adds their own
-    // character, in use at once, and sees only their own.
+    // Nor may the app's manage permission, as in AA.
     grant_to_guests(&h, &owner, "manage").await;
+    let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
+    assert!(!main.contains("Add owner"), "{main}");
+    let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+
+    // An add_ permission may: its holder adds their own character, in use
+    // at once, and sees only their own.
+    grant_to_guests(&h, &owner, "add_owner").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
     assert!(main.contains("Add owner"), "{main}");
     let (asked, pilot) = grant(
@@ -997,7 +1004,7 @@ async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_adding(db: P
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn waiting_offers_become_owners_and_owners_stay_with_their_account(db: PgPool) {
+async fn waiting_offers_are_dropped_and_owners_stay_with_their_account(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
@@ -1007,7 +1014,8 @@ async fn waiting_offers_become_owners_and_owners_stay_with_their_account(db: PgP
     assert!(out.starts_with("ok"), "{out}");
 
     // An offer from before owners needed no approval: migration 0047
-    // makes it an owner, audited as the system.
+    // drops it (its offerer may hold no add permission), audited as the
+    // system.
     sqlx::query(
         "UPDATE core.plugin_data_sources SET approved_at = NULL, approved_by = NULL, \
          corporation_id = NULL",
@@ -1024,16 +1032,33 @@ async fn waiting_offers_become_owners_and_owners_stay_with_their_account(db: PgP
     .await
     .unwrap();
     let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
-    assert!(out.starts_with("ok"), "{out}");
+    assert_eq!(out, "err Error::NotADataSource");
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM core.plugin_data_sources")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
     let audited: (Option<i64>, String) = sqlx::query_as(
         "SELECT actor_account_id, details::text FROM core.audit_log \
-         WHERE action = 'plugin.data_source_approved'",
+         WHERE action = 'plugin.data_source_removed'",
     )
     .fetch_one(&h.db)
     .await
     .unwrap();
     assert_eq!(audited.0, None);
     assert!(audited.1.contains(&CHRIBBA.to_string()), "{}", audited.1);
+    assert!(
+        audited.1.contains("owners are now added, not offered"),
+        "{}",
+        audited.1
+    );
+    // The owners card lists it as removed; holders add it again in one
+    // login.
+    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
+    assert!(main.contains("Removed by"), "{main}");
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
 
     // Added by an account the character isn't on (any more: sold, or
     // moved to another account): the app stops reading through it.

@@ -2,7 +2,7 @@
 //!
 //! - Owners are corporations, added through a data source (AA's "Add
 //!   Structure Owner"): a character with the in-game Station Manager role,
-//!   added by a holder of `manage`, in use at once.
+//!   added by a holder of `add_structure_owner`, in use at once.
 //! - The structure list: name, type, system and region, fuel and time
 //!   left, services, state and its timer, reinforce hour; filtered by
 //!   owner, low fuel and reinforced, and seen by permission (the viewer's

@@ -2,7 +2,7 @@
 //!
 //! - Extractions come from the corporations of the app's owners
 //!   (data-source characters: a Station Manager's, for moon extractions and
-//!   structures), added by holders of `manage`.
+//!   structures), added by holders of `add_refinery_owner`.
 //! - Each pop (the chunk's automatic fracture) is pinged to Members on
 //!   Discord.
 //! - A popped moon is Members-only for a while (default 4 hours), then on
