@@ -65,9 +65,11 @@ const OBJECTIVES: &[&str] = &["Friendly", "Hostile", "Neutral"];
 
 /// AA's field lengths.
 const MAX_TEXT: u32 = 254;
-/// Rows per list, within the host's page limits.
+/// Rows per list at most; long texts cut them shorter (`LIST_BYTES`).
 const UPCOMING_ROWS: i64 = 500;
 const PAST_ROWS: i64 = 200;
+/// Both tabs' rows together, well under the host's 1 MiB a page.
+const LIST_BYTES: usize = 600 * 1024;
 
 struct StructureTimers;
 
@@ -391,6 +393,39 @@ fn delete_button(t: &Timer) -> Value {
         .into()
 }
 
+/// What one row of the list costs the page: every text it draws (the
+/// structure and system twice, in Delete's question), 16 bytes for each of
+/// its 12 values, and room for its times, badges and links. Fields are
+/// capped in characters, and the host counts bytes.
+fn row_bytes(t: &Timer) -> usize {
+    t.details.len()
+        + t.system.len() * 2
+        + t.planet_moon.len()
+        + t.structure.len() * 2
+        + t.timer_type.len()
+        + t.objective.len()
+        + t.creator.len()
+        + 12 * 16
+        + 256
+}
+
+/// Keeps as much of `list` as fits in `budget`, taking it from the budget.
+/// Whether anything was left out.
+fn fit(list: &mut Vec<Timer>, budget: &mut usize) -> bool {
+    let mut kept = 0;
+    for t in list.iter() {
+        let bytes = row_bytes(t);
+        if bytes > *budget {
+            break;
+        }
+        *budget -= bytes;
+        kept += 1;
+    }
+    let cut = kept < list.len();
+    list.truncate(kept);
+    cut
+}
+
 fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     let now = Utc::now();
     let manage = viewer.can("timer_management");
@@ -406,6 +441,22 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     past.extend(shared_past);
     past.sort_by_key(|t| std::cmp::Reverse(t.eve_time));
     past.truncate(usize::try_from(PAST_ROWS).unwrap_or(usize::MAX));
+    // The stats count the whole list; the tables are cut to what fits.
+    let upcoming_count = count(upcoming.len());
+    let important_count = count(upcoming.iter().filter(|t| t.important).count());
+    let corporation_count = count(upcoming.iter().filter(|t| t.corp_timer).count());
+    // However long the timers' texts, the page stays within the host's
+    // limits: the lists are cut short rather than the page refused.
+    // Upcoming first, leaving the past at least a third.
+    let mut budget = LIST_BYTES * 2 / 3;
+    let upcoming_title = fit(&mut upcoming, &mut budget)
+        .then(|| format!("The first {}, all that fit", upcoming.len()));
+    budget += LIST_BYTES / 3;
+    let past_title = if fit(&mut past, &mut budget) {
+        format!("The latest {}, all that fit", past.len())
+    } else {
+        format!("The latest {PAST_ROWS}, newest first")
+    };
     let next = upcoming.first().map_or_else(
         || Value::from("None"),
         |t| badge(when::countdown(now, t.eve_time), Tone::Accent).into(),
@@ -421,17 +472,10 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
         )
         .stats(vec![
             next_stat,
-            Stat::new("Upcoming", count(upcoming.len())),
-            Stat::new(
-                "Important",
-                count(upcoming.iter().filter(|t| t.important).count()),
-            )
-            .caption("upcoming"),
-            Stat::new(
-                "Corporation",
-                count(upcoming.iter().filter(|t| t.corp_timer).count()),
-            )
-            .caption("upcoming, your corporation's only"),
+            Stat::new("Upcoming", upcoming_count),
+            Stat::new("Important", important_count).caption("upcoming"),
+            Stat::new("Corporation", corporation_count)
+                .caption("upcoming, your corporation's only"),
         ]);
     if let Some(problem) = problem {
         page = page.text(problem);
@@ -439,21 +483,16 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     if manage {
         page = page.button("Create Timer", "add");
     }
+    let mut upcoming_table = timer_table(&upcoming, now, manage, "No upcoming timers.");
+    if let Some(title) = upcoming_title {
+        upcoming_table = upcoming_table.title(title);
+    }
     Ok(page
-        .tab(
-            "Upcoming",
-            vec![Section::Table(timer_table(
-                &upcoming,
-                now,
-                manage,
-                "No upcoming timers.",
-            ))],
-        )
+        .tab("Upcoming", vec![Section::Table(upcoming_table)])
         .tab(
             "Past",
             vec![Section::Table(
-                timer_table(&past, now, manage, "No past timers.")
-                    .title(format!("The latest {PAST_ROWS}, newest first")),
+                timer_table(&past, now, manage, "No past timers.").title(past_title),
             )],
         ))
 }

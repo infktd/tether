@@ -406,3 +406,32 @@ async fn structure_timers_end_to_end(db: PgPool) {
     .unwrap();
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+/// However long the timers' texts (fields are capped in characters, the
+/// host's page limit counts bytes), the lists still render: cut short,
+/// and saying so.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_board_of_long_timers_still_renders(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let long = "漢".repeat(254);
+    // Well past what fits in 1 MiB at these lengths, upcoming and past.
+    sqlx::query(
+        "INSERT INTO \"plugin_tether.structure-timers\".timers (details, system, planet_moon, \
+         structure, timer_type, objective, eve_time, corporation_id, creator_account_id, \
+         creator_character_id, creator_name) \
+         SELECT $1, $1, $1, $1, $1, 'Hostile', now() + n * interval '1 minute', 1, 1, \
+         196379789, 'Chribba' FROM generate_series(-200, 500) AS n",
+    )
+    .bind(&long)
+    .execute(&h.db)
+    .await
+    .unwrap();
+
+    for tab in [0, 1] {
+        let list = timers_page(&h, &owner, tab).await;
+        assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+        assert!(list.body.contains("all that fit"), "{}", list.body);
+    }
+}
