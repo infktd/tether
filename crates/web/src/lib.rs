@@ -18,6 +18,24 @@ compile_error!("the plugin-http-test feature must never be enabled in release bu
 pub use tether_web_core::*;
 
 mod api;
+
+/// Every page, from the crates that hold them: the core's page
+/// infrastructure, and the admin, member and apps pages.
+pub mod pages {
+    pub use tether_web_admin::pages::{
+        admin, autogroups, blacklist, compliance, discord, menu, permissions_audit, pings, plugins,
+        setup, states, system, users,
+    };
+    pub use tether_web_apps::pages::{plugin_pages, plugin_visuals};
+    pub use tether_web_core::pages::*;
+    pub use tether_web_member::pages::account::{
+        change_main_login, home, login, make_main, profile, to_dashboard,
+    };
+    pub use tether_web_member::pages::{
+        access_tokens, corpstats, groups, notifications, securegroups, tokens,
+    };
+}
+
 #[cfg(feature = "dev-login")]
 mod dev_login;
 pub mod openapi;

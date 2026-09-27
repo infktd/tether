@@ -729,7 +729,7 @@ impl Plugins {
 
     /// Why replacing `installed` with the bundled `package` needs an
     /// admin's review, if it does: what the review would list changes (the
-    /// review's own comparison, [`crate::pages::plugins::Changes`]), or it
+    /// review's own comparison, [`crate::plugin_review::Changes`]), or it
     /// can't be compared, or it can't be installed at all, or an admin
     /// rolled back to the installed package, or its new migrations would
     /// run with no snapshot to go back to.
@@ -743,7 +743,7 @@ impl Plugins {
             return Ok(Some("the installed package can't be read to compare"));
         };
         let changes =
-            crate::pages::plugins::Changes::new(&old.package().manifest, &package.manifest);
+            crate::plugin_review::Changes::new(&old.package().manifest, &package.manifest);
         if !changes.unchanged() {
             return Ok(Some("it asks for something new or different"));
         }

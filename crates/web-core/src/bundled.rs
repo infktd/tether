@@ -16,7 +16,7 @@
 //! nothing new: at startup, under the lifecycle lock and before apps load,
 //! Tether applies such an update or rebuild itself, as the system and
 //! through the approval's own upgrade path, when the review's comparison
-//! ([`crate::pages::plugins::Changes`]) finds nothing to list. Anything
+//! ([`crate::plugin_review::Changes`]) finds nothing to list. Anything
 //! else waits for the admin's review ([`crate::plugins::Plugins::start`]).
 //!
 //! The ids of bundled apps are reserved: no package from anywhere else

@@ -39,7 +39,7 @@ RUN cargo chef cook --release --locked --recipe-path recipe.json -p tether-serve
 COPY . .
 # The server, then the apps that come with it (plugins/*), packaged
 # unsigned: they ship in this image and are exactly as trusted as the
-# binary (crates/web/src/bundled.rs).
+# binary (crates/web-core/src/bundled.rs).
 RUN cargo build --release --locked -p tether-server \
  && cp target/release/tether /usr/local/bin/tether \
  && scripts/bundle-apps.sh /usr/share/tether/apps

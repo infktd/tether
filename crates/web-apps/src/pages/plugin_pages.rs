@@ -23,7 +23,7 @@ use tether_plugins::services::{Builtin, Character, State as ViewerState, Viewer}
 use tether_plugins::{manifest, page as page_rules};
 
 use super::stay::{Toast, with_toast};
-use super::{PageError, Shell, load, render};
+use super::{CardFoot, PageError, Shell, encode, grouped, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
@@ -165,17 +165,6 @@ pub struct CardItemView {
     pub foot: Option<CardFoot>,
 }
 
-/// Tether's own footer under the card of one of the viewer's characters
-/// on the Dashboard (DESIGN.md, Dashboard): its registration status, and
-/// Make main when it has working EVE access and isn't the main. The app
-/// never sees it.
-#[derive(Clone, Debug)]
-pub struct CardFoot {
-    pub character_id: i64,
-    pub status: Option<super::StatusChip>,
-    pub make_main: bool,
-}
-
 pub struct CardsView {
     /// Tether's Register Character card first, for an app with user
     /// scopes that asks for it: where it leads (registering for the app).
@@ -283,19 +272,6 @@ fn short_isk(amount: f64) -> String {
     let text = format!("{scaled:.2}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
     format!("{text}{unit}")
-}
-
-/// `1,240,000,000`.
-pub fn grouped(n: i64) -> String {
-    let digits = n.unsigned_abs().to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    if n < 0 { format!("-{out}") } else { out }
 }
 
 /// A badge's Basecoat variant ("" for the default, the accent).
@@ -1368,18 +1344,6 @@ pub async fn widget(
         Err(_) => unavailable(widget.title, href),
     };
     Ok(render(StatusCode::OK, &fragment))
-}
-
-/// Percent-encodes a query component.
-pub fn encode(text: &str) -> String {
-    text.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                char::from(b).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 // ---- handlers ---------------------------------------------------------------

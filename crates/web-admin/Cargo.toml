@@ -1,5 +1,5 @@
 [package]
-name = "tether-web"
+name = "tether-web-admin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,17 +10,9 @@ publish.workspace = true
 workspace = true
 
 [features]
-# Fixture sessions for manual testing. Refuses to compile in release builds.
-dev-login = []
-# Scalar at /docs, loaded from a CDN. Refuses to compile in release builds.
-dev-docs = []
 # Installing an app from an uploaded .zip (POST /admin/plugins), for app
-# developers testing builds; multipart reads the upload (the multer crate).
-# Refuses to compile in release builds.
-dev-upload = ["tether-web-admin/dev-upload"]
-# Tests only: plugin HTTP requests go to a local stand-in (wiremock).
-# Refuses to compile in release builds.
-plugin-http-test = ["tether-web-core/plugin-http-test"]
+# developers testing builds. Refuses to compile in release builds.
+dev-upload = ["axum/multipart", "tether-web-core/dev-upload"]
 
 [dependencies]
 askama.workspace = true
@@ -40,9 +32,6 @@ tether-jobs.workspace = true
 tether-net.workspace = true
 tether-plugins.workspace = true
 tether-web-core.workspace = true
-tether-web-admin.workspace = true
-tether-web-member.workspace = true
-tether-web-apps.workspace = true
 tether-snapshots.workspace = true
 thiserror.workspace = true
 tether-db.workspace = true
@@ -52,13 +41,5 @@ tokio.workspace = true
 utoipa.workspace = true
 
 [dev-dependencies]
-# The integration tests route plugin HTTP to wiremock, and install most
-# test packages through the development upload route.
-tether-web = { path = ".", features = ["plugin-http-test", "dev-upload"] }
-futures-core.workspace = true
 tether-plugins = { workspace = true, features = ["testing"] }
-wiremock.workspace = true
-insta.workspace = true
-serde_json.workspace = true
 tokio.workspace = true
-tower.workspace = true

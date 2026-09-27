@@ -521,7 +521,7 @@ pub async fn strip(
     Ok(render(
         StatusCode::OK,
         &StatusStrip {
-            players: players.map(super::plugin_pages::grouped),
+            players: players.map(super::grouped),
         },
     ))
 }

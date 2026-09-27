@@ -7,7 +7,7 @@
 #
 # A bundled package has no [publisher] key and no signature: it ships in
 # the same image as Tether and is exactly as trusted (see
-# crates/web/src/bundled.rs). Packages for anywhere else are signed with
+# crates/web-core/src/bundled.rs). Packages for anywhere else are signed with
 # scripts/package-plugin.sh.
 set -euo pipefail
 

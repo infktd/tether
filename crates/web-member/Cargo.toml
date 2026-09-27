@@ -1,0 +1,40 @@
+[package]
+name = "tether-web-member"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+askama.workspace = true
+axum.workspace = true
+axum-extra.workspace = true
+chrono.workspace = true
+futures-core.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tether-core.workspace = true
+tether-esi.workspace = true
+tether-jobs.workspace = true
+tether-net.workspace = true
+tether-plugins.workspace = true
+tether-web-core.workspace = true
+tether-snapshots.workspace = true
+thiserror.workspace = true
+tether-db.workspace = true
+tether-discord.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+utoipa.workspace = true
+
+[dev-dependencies]
+tether-plugins = { workspace = true, features = ["testing"] }
+tokio.workspace = true

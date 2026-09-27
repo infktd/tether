@@ -259,7 +259,7 @@ pub async fn layer(
             let url = format!(
                 "/reauthenticate?action={}&return_to={}",
                 action.key(),
-                crate::pages::plugin_pages::encode(&from)
+                crate::pages::encode(&from)
             );
             if htmx {
                 // htmx would follow a redirect and swap the page into a

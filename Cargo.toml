@@ -33,6 +33,9 @@ tether-esi = { path = "crates/esi" }
 tether-jobs = { path = "crates/jobs" }
 tether-web = { path = "crates/web" }
 tether-web-core = { path = "crates/web-core" }
+tether-web-admin = { path = "crates/web-admin" }
+tether-web-member = { path = "crates/web-member" }
+tether-web-apps = { path = "crates/web-apps" }
 tether-cli = { path = "crates/cli" }
 tether-discord = { path = "crates/discord" }
 tether-net = { path = "crates/net" }

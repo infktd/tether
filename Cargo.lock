@@ -3900,13 +3900,76 @@ dependencies = [
  "tether-plugins",
  "tether-snapshots",
  "tether-web",
+ "tether-web-admin",
+ "tether-web-apps",
  "tether-web-core",
+ "tether-web-member",
  "thiserror 2.0.21",
  "tokio",
  "tower",
  "tracing",
  "utoipa",
  "wiremock",
+]
+
+[[package]]
+name = "tether-web-admin"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "axum",
+ "axum-extra",
+ "chrono",
+ "futures-core",
+ "getrandom 0.4.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tether-core",
+ "tether-db",
+ "tether-discord",
+ "tether-esi",
+ "tether-jobs",
+ "tether-net",
+ "tether-plugins",
+ "tether-snapshots",
+ "tether-web-core",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "utoipa",
+]
+
+[[package]]
+name = "tether-web-apps"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "axum",
+ "axum-extra",
+ "chrono",
+ "futures-core",
+ "getrandom 0.4.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tether-core",
+ "tether-db",
+ "tether-discord",
+ "tether-esi",
+ "tether-jobs",
+ "tether-net",
+ "tether-plugins",
+ "tether-snapshots",
+ "tether-web-core",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "utoipa",
 ]
 
 [[package]]
@@ -3940,6 +4003,36 @@ dependencies = [
  "tracing",
  "utoipa",
  "wiremock",
+]
+
+[[package]]
+name = "tether-web-member"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "axum",
+ "axum-extra",
+ "chrono",
+ "futures-core",
+ "getrandom 0.4.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tether-core",
+ "tether-db",
+ "tether-discord",
+ "tether-esi",
+ "tether-jobs",
+ "tether-net",
+ "tether-plugins",
+ "tether-snapshots",
+ "tether-web-core",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "utoipa",
 ]
 
 [[package]]
