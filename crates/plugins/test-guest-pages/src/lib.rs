@@ -1,8 +1,8 @@
 //! A plugin whose pages misbehave on request, for the host's page checks.
 
 use tether_plugin_sdk::{
-    Card, CodeBlock, Column, Field, Form, Page, PageError, Plugin, Profile, Request, Stat,
-    Submission, SubmitResult, Table, Tone, action, actions, alliance, badge, character,
+    Card, CardGrid, CodeBlock, Column, Field, Form, Page, PageError, Plugin, Profile, Request,
+    Stat, Submission, SubmitResult, Table, Tone, action, actions, alliance, badge, character,
     corporation, countdown, faction, isk, item_type, link, log, progress, time,
 };
 
@@ -76,6 +76,20 @@ fn blocks() -> Page {
                 .copy_label(format!("Copy {EVIL}")),
         )
         .code(CodeBlock::new("plain"))
+        .cards(
+            // Asks for the Register Character card, which an app without
+            // user scopes doesn't get.
+            CardGrid::new()
+                .register()
+                .linked(
+                    Profile::new(character(90_000_002, format!("Card {EVIL}")))
+                        .corporation(corporation(98_000_001, "Corp"))
+                        .alliance(alliance(99_000_001, format!("Ally {EVIL}")))
+                        .fact("Wallet", isk(5.0e9)),
+                    "values",
+                )
+                .card(Profile::new(character(0, "Unlinked Pilot"))),
+        )
 }
 
 struct Pages;

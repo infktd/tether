@@ -232,6 +232,26 @@ interface page {
         badges: list<badge>,
     }
 
+    /// One card of a grid: a profile drawn compactly (portrait, name,
+    /// corporation and alliance, facts stacked), opening one of the
+    /// plugin's pages.
+    record profile-card {
+        profile: profile,
+        /// The page the card opens, e.g. `character/90000001`: a link path
+        /// relative to the plugin's pages, as for `link`.
+        link: option<string>,
+    }
+
+    /// A grid of compact profile cards, e.g. My Characters: one card per
+    /// character (at most 100).
+    record card-grid {
+        items: list<profile-card>,
+        /// Start the grid with Tether's own "Register Character" card,
+        /// which opens character registration. Only for plugins with user
+        /// scopes (`capabilities.esi.user`): elsewhere it is left out.
+        register: bool,
+    }
+
     /// Text to copy, such as a fitting in EFT format: shown as it is, in a
     /// monospaced block, with a button that copies it.
     record code-block {
@@ -251,6 +271,8 @@ interface page {
         form(form),
         profile(profile),
         code(code-block),
+        /// A grid of profile cards (My Characters).
+        cards(card-grid),
     }
 
     record tab {

@@ -127,6 +127,19 @@ pub struct ProfileView {
     pub badges: Vec<BadgeView>,
 }
 
+/// A card of a grid: a profile drawn compactly, opening `href`.
+pub struct CardItemView {
+    pub profile: ProfileView,
+    pub href: Option<String>,
+}
+
+pub struct CardsView {
+    /// Tether's Register Character card first, for an app with user
+    /// scopes that asks for it.
+    pub register: bool,
+    pub items: Vec<CardItemView>,
+}
+
 pub struct StatView {
     pub label: String,
     pub value: ValueView,
@@ -191,6 +204,7 @@ pub enum SectionView {
     Form(FormView),
     Profile(ProfileView),
     Code(CodeView),
+    Cards(CardsView),
 }
 
 pub struct CodeView {
@@ -360,6 +374,9 @@ pub struct Ctx<'a> {
     pub action: &'a str,
     /// Starts every popover id drawn with this context.
     pub prefix: String,
+    /// Whether the app reads members' characters (user scopes), so its
+    /// card grids may start with Tether's Register Character card.
+    pub registers: bool,
     next: std::cell::Cell<usize>,
 }
 
@@ -369,8 +386,15 @@ impl<'a> Ctx<'a> {
             plugin,
             action,
             prefix,
+            registers: false,
             next: std::cell::Cell::new(0),
         }
+    }
+
+    /// For an app with user scopes (see `registers`).
+    pub fn registering(mut self, registers: bool) -> Self {
+        self.registers = registers;
+        self
     }
 
     fn next_id(&self) -> String {
@@ -543,6 +567,17 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
         }),
         Section::Text(text) => SectionView::Text(text.clone()),
         Section::Profile(p) => SectionView::Profile(profile(ctx, p)),
+        Section::Cards(grid) => SectionView::Cards(CardsView {
+            register: grid.register && ctx.registers,
+            items: grid
+                .items
+                .iter()
+                .map(|card| CardItemView {
+                    profile: profile(ctx, &card.profile),
+                    href: card.link.as_deref().map(|path| page_href(ctx.plugin, path)),
+                })
+                .collect(),
+        }),
         Section::Code(code) => SectionView::Code(CodeView {
             title: code.title.clone(),
             text: code.text.clone(),
@@ -925,7 +960,8 @@ fn draw(
         parts.push(format!("{TAB}={i}"));
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
-    let ctx = Ctx::new(&id, &opened.href, "page".to_owned());
+    let ctx = Ctx::new(&id, &opened.href, "page".to_owned())
+        .registering(!opened.running.manifest.capabilities.esi.user.is_empty());
     let sections: Vec<SectionView> = page.sections.iter().map(|s| section(&ctx, s)).collect();
     let tab_sections: Vec<SectionView> = page
         .tabs
@@ -1080,7 +1116,10 @@ pub async fn widget(
                         sections: {
                             // Popover ids unique among the Dashboard's
                             // widgets.
-                            let ctx = Ctx::new(&id, &opened.href, format!("widget-{index}-{id}"));
+                            let ctx = Ctx::new(&id, &opened.href, format!("widget-{index}-{id}"))
+                                .registering(
+                                    !opened.running.manifest.capabilities.esi.user.is_empty(),
+                                );
                             page.sections.iter().map(|s| section(&ctx, s)).collect()
                         },
                         href,
@@ -1361,5 +1400,23 @@ mod tests {
             ..bar
         };
         assert_eq!(progress(&fixed, at("2020-01-01T00:00:00Z")).percent, 90);
+    }
+
+    #[test]
+    fn only_apps_with_user_scopes_draw_the_register_card() {
+        let grid = Section::Cards(tether_plugins::host::CardGrid {
+            items: Vec::new(),
+            register: true,
+        });
+        let drawn = |registers: bool| {
+            let ctx =
+                Ctx::new("acme.x", "/plugins/acme.x", "page".to_owned()).registering(registers);
+            match section(&ctx, &grid) {
+                SectionView::Cards(cards) => cards.register,
+                _ => panic!("not a card grid"),
+            }
+        };
+        assert!(drawn(true));
+        assert!(!drawn(false));
     }
 }

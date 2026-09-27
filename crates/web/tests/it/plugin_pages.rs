@@ -414,6 +414,13 @@ async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
         "Pilot 7 is told no &#60;script&#62;",
         r#"name="verdict" value="reject &#34;&#60;script&#62;alert(1)&#60;/script&#62;&#34;""#,
         r#"data-variant="destructive">Reject &#60;script&#62;"#,
+        // A card grid: each card's portrait, logos and name, the name
+        // opening its page; a card without a page is just its name.
+        r#"<section class="card-grid">"#,
+        r#"src="https://images.evetech.net/characters/90000002/portrait?size=128""#,
+        r#"<span title="Ally &#60;script&#62;alert(1)&#60;/script&#62;"><img src="https://images.evetech.net/alliances/99000001/logo?size=64""#,
+        r#"<a class="hover:underline underline-offset-4" href="/plugins/acme.pages/values">Card &#60;script&#62;"#,
+        r#"<h3 class="grid-card-name">Unlinked Pilot</h3>"#,
         // The script that keeps them live, bundled.
         r#"<script src="/static/live.js" defer></script>"#,
     ] {
@@ -421,6 +428,8 @@ async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
     }
     // Not a live page.
     assert!(!body.contains("hx-trigger=\"every"), "{body}");
+    // No Register Character card: this app reads no members' characters.
+    assert!(!body.contains("Register Character"), "{body}");
 
     let js = send(&h.app, get("/static/live.js", &[])).await;
     assert_eq!(js.status, StatusCode::OK);

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::host::{Action, Entity, FieldKind, Form, Progress};
+use crate::host::{Action, Entity, FieldKind, Form, Profile, Progress};
 use crate::host::{Page, Section, Value};
 
 pub const MAX_SECTIONS: usize = 40;
@@ -23,6 +23,8 @@ pub const MAX_PAGE_LINKS: usize = 8;
 pub const MAX_CODE_TEXT: usize = 16 * 1024;
 /// Badges after a profile's name.
 pub const MAX_PROFILE_BADGES: usize = 8;
+/// Cards in one grid.
+pub const MAX_CARDS: usize = 100;
 /// How often a page may ask to be reloaded, in seconds: what it asks for
 /// is brought into this range.
 pub const MIN_REFRESH_SECONDS: u32 = 5;
@@ -195,6 +197,11 @@ fn page_values(page: &Page) -> impl Iterator<Item = &Value> {
                 Section::Table(table) => Box::new(table.rows.iter().flatten()),
                 Section::Card(card) => Box::new(card.fields.iter().map(|(_, v)| v)),
                 Section::Profile(profile) => Box::new(profile.facts.iter().map(|(_, v)| v)),
+                Section::Cards(grid) => Box::new(
+                    grid.items
+                        .iter()
+                        .flat_map(|card| card.profile.facts.iter().map(|(_, v)| v)),
+                ),
                 Section::Text(_) | Section::Form(_) | Section::Code(_) => {
                     Box::new(std::iter::empty())
                 }
@@ -314,38 +321,56 @@ fn check_section(section: &Section, budget: &mut Budget) -> Result<(), PageProbl
             budget.value()?;
             budget.bytes(code.text.len())?;
         }
-        Section::Profile(profile) => {
-            check_entity(&profile.subject, budget)?;
-            for entity in [&profile.corporation, &profile.alliance]
-                .into_iter()
-                .flatten()
-            {
-                check_entity(entity, budget)?;
-            }
-            if let Some(subtitle) = &profile.subtitle {
-                budget.text("a profile subtitle", subtitle)?;
-            }
-            if profile.facts.len() > MAX_FIELDS {
+        Section::Profile(profile) => check_profile(profile, budget)?,
+        Section::Cards(grid) => {
+            if grid.items.len() > MAX_CARDS {
                 return Err(problem(format!(
-                    "a profile has {} facts; the limit is {MAX_FIELDS}",
-                    profile.facts.len()
+                    "a card grid has {} cards; the limit is {MAX_CARDS}",
+                    grid.items.len()
                 )));
             }
-            for (label, value) in &profile.facts {
-                budget.text("a profile fact label", label)?;
-                check_value(value, budget)?;
-            }
-            if profile.badges.len() > MAX_PROFILE_BADGES {
-                return Err(problem(format!(
-                    "a profile has {} badges; the limit is {MAX_PROFILE_BADGES}",
-                    profile.badges.len()
-                )));
-            }
-            for badge in &profile.badges {
-                budget.value()?;
-                budget.text("a badge", &badge.label)?;
+            for card in &grid.items {
+                check_profile(&card.profile, budget)?;
+                if let Some(path) = &card.link {
+                    check_link_path(path)?;
+                    budget.bytes(path.len())?;
+                }
             }
         }
+    }
+    Ok(())
+}
+
+fn check_profile(profile: &Profile, budget: &mut Budget) -> Result<(), PageProblem> {
+    check_entity(&profile.subject, budget)?;
+    for entity in [&profile.corporation, &profile.alliance]
+        .into_iter()
+        .flatten()
+    {
+        check_entity(entity, budget)?;
+    }
+    if let Some(subtitle) = &profile.subtitle {
+        budget.text("a profile subtitle", subtitle)?;
+    }
+    if profile.facts.len() > MAX_FIELDS {
+        return Err(problem(format!(
+            "a profile has {} facts; the limit is {MAX_FIELDS}",
+            profile.facts.len()
+        )));
+    }
+    for (label, value) in &profile.facts {
+        budget.text("a profile fact label", label)?;
+        check_value(value, budget)?;
+    }
+    if profile.badges.len() > MAX_PROFILE_BADGES {
+        return Err(problem(format!(
+            "a profile has {} badges; the limit is {MAX_PROFILE_BADGES}",
+            profile.badges.len()
+        )));
+    }
+    for badge in &profile.badges {
+        budget.value()?;
+        budget.text("a badge", &badge.label)?;
     }
     Ok(())
 }
@@ -892,6 +917,74 @@ mod tests {
             caption: None,
         }]));
         assert!(check(&nan).is_err());
+    }
+
+    fn grid_card(link: Option<&str>, facts: Vec<(String, Value)>) -> crate::host::ProfileCard {
+        crate::host::ProfileCard {
+            profile: Profile {
+                subject: Entity {
+                    kind: crate::host::EntityKind::Character,
+                    id: 90_000_001,
+                    name: "Example Pilot".to_owned(),
+                },
+                subtitle: None,
+                corporation: None,
+                alliance: None,
+                facts,
+                badges: Vec::new(),
+            },
+            link: link.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn card_grids_are_checked_like_profiles() {
+        let grid = |items| {
+            let mut p = page();
+            p.sections.push(Section::Cards(crate::host::CardGrid {
+                items,
+                register: true,
+            }));
+            p
+        };
+        assert_eq!(
+            check(&grid(vec![grid_card(Some("character/1"), Vec::new())])),
+            Ok(())
+        );
+        // Links stay inside the plugin.
+        for bad in ["https://evil.example", "/admin", "../x"] {
+            assert!(check(&grid(vec![grid_card(Some(bad), Vec::new())])).is_err());
+        }
+        // Facts are checked as values, and their actions can be posted.
+        assert!(
+            check(&grid(vec![grid_card(
+                None,
+                vec![("t".to_owned(), Value::Time("soon".to_owned()))]
+            )]))
+            .is_err()
+        );
+        let with_action = grid(vec![grid_card(
+            None,
+            vec![(
+                "Update".to_owned(),
+                Value::Action(act("refresh", &[("character", "1")])),
+            )],
+        )]);
+        assert_eq!(check(&with_action), Ok(()));
+        assert!(
+            find_action(
+                &with_action,
+                "refresh",
+                &[("character".to_owned(), "1".to_owned())]
+            )
+            .is_some()
+        );
+        let too_many = grid(
+            (0..=MAX_CARDS)
+                .map(|_| grid_card(None, Vec::new()))
+                .collect(),
+        );
+        assert!(check(&too_many).unwrap_err().0.contains("cards"));
     }
 
     #[test]

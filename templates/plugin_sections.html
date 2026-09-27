@@ -116,6 +116,45 @@
     {% endif %}
   </section>
 </section>
+{% when SectionView::Cards(grid) %}
+<section class="card-grid">
+  {% if grid.register %}
+  <a class="card grid-card grid-card-register" href="/register">
+    <span class="grid-card-plus" aria-hidden="true"><svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+    <span class="grid-card-name">Register Character</span>
+    <span class="text-[13px] text-muted-foreground">Add a character, or give one the access this app reads.</span>
+  </a>
+  {% endif %}
+  {% for item in grid.items %}
+  {% let p = item.profile %}
+  <article class="card grid-card">
+    <div class="flex items-start gap-3">
+      <span class="grid-card-picture">
+        {% if let Some(href) = item.href %}<a href="{{ href }}" tabindex="-1" aria-hidden="true">{% call picture(p.subject) %}{% endcall %}</a>{% else %}{% call picture(p.subject) %}{% endcall %}{% endif %}
+        {% if p.corporation.is_some() || p.alliance.is_some() %}
+        <span class="grid-card-logos">
+          {% if let Some(e) = p.corporation %}<span title="{{ e.name }}">{% call picture(e) %}{% endcall %}</span>{% endif %}
+          {% if let Some(e) = p.alliance %}<span title="{{ e.name }}">{% call picture(e) %}{% endcall %}</span>{% endif %}
+        </span>
+        {% endif %}
+      </span>
+      <div class="flex min-w-0 flex-col gap-1">
+        <h3 class="grid-card-name">{% if let Some(href) = item.href %}<a class="hover:underline underline-offset-4" href="{{ href }}">{{ p.subject.name }}</a>{% else %}{{ p.subject.name }}{% endif %}</h3>
+        {% if !p.badges.is_empty() %}<div class="flex flex-wrap gap-1.5">{% for b in p.badges %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endfor %}</div>{% endif %}
+        {% if let Some(s) = p.subtitle %}<p class="text-xs text-muted-foreground">{{ s }}</p>{% endif %}
+        {% if let Some(e) = p.corporation %}<span class="truncate text-xs text-foreground-soft">{{ e.name }}{% if let Some(a) = p.alliance %} · {{ a.name }}{% endif %}</span>{% endif %}
+      </div>
+    </div>
+    {% if !p.facts.is_empty() %}
+    <dl class="grid-card-facts">
+      {% for (label, v) in p.facts %}
+      <div><dt>{{ label }}</dt><dd>{% call value(v, false) %}{% endcall %}</dd></div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
 {% when SectionView::Code(code) %}
 <section class="card code-block" data-code>
   <header class="flex items-center justify-between gap-3">

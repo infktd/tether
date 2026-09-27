@@ -52,7 +52,11 @@ async fn the_example_plugin_renders_its_pages() {
     assert!(matches!(rendered.page.sections[0], Section::Profile(_)));
     assert!(matches!(rendered.page.sections[2], Section::Table(_)));
     assert!(matches!(rendered.page.sections[4], Section::Code(_)));
-    assert_eq!(rendered.page.tabs.len(), 1);
+    assert_eq!(rendered.page.tabs.len(), 2);
+    assert!(matches!(
+        rendered.page.tabs[1].sections[0],
+        Section::Cards(_)
+    ));
     assert_eq!(rendered.page.links.len(), 4);
     assert_eq!(rendered.page.refresh_seconds, None);
     assert_eq!(rendered.logs.len(), 1);

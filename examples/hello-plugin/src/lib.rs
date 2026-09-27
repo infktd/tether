@@ -1,15 +1,15 @@
 //! An example plugin: a page with every kind of block (a profile, stats,
 //! tables with entities, countdowns and progress bars, a card, text to
-//! copy and tabs), page links beside the title, and a live page that
+//! copy, a grid of character cards and tabs), page links beside the title, and a live page that
 //! reloads itself while it "syncs". Build it with
 //! `cargo build -p hello-plugin --target wasm32-wasip2 --release`.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tether_plugin_sdk::{
-    Card, CodeBlock, Column, Page, PageError, Plugin, Profile, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character, corporation,
-    countdown, isk, item_type, link, log, progress, time,
+    Card, CardGrid, CodeBlock, Column, Page, PageError, Plugin, Profile, Request, Section, Stat,
+    Submission, SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character,
+    corporation, countdown, isk, item_type, link, log, progress, time,
 };
 
 struct Hello;
@@ -198,6 +198,33 @@ fn main_page() -> Page {
         .tab(
             "Notes",
             vec![Section::Text("Tabs hold more sections.".into())],
+        )
+        .tab(
+            "Characters",
+            vec![Section::Cards(
+                // `register()` starts it with Tether's Register Character
+                // card, for apps with user scopes (this one has none).
+                CardGrid::new()
+                    .register()
+                    .linked(
+                        Profile::new(character(0, "Aura Example"))
+                            .corporation(corporation(1_000_044, "School of Applied Knowledge"))
+                            .badge(badge("Main", Tone::Neutral))
+                            .fact("Wallet", isk(1_240_000_000.0))
+                            .fact("Ship", item_type(587, "Rifter")),
+                        "about",
+                    )
+                    .card(
+                        Profile::new(character(0, "Example Alt"))
+                            .corporation(corporation(0, "Example Mining Corp"))
+                            .fact(
+                                "Training",
+                                progress(0.0)
+                                    .between(rfc3339(now - 600), rfc3339(now + 3_600))
+                                    .label("Mining V"),
+                            ),
+                    ),
+            )],
         )
 }
 

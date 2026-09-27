@@ -98,9 +98,9 @@ macro_rules! export {
     };
 }
 pub use bindings::tether::plugin::page::{
-    Action, Badge, Card, Choice, CodeBlock, Column, Entity, EntityKind, Field, FieldKind, Form,
-    Link, NumberInput, Profile, Progress, Section, SelectInput, Stat, Tab, Table, TextInput, Tone,
-    Value,
+    Action, Badge, Card, CardGrid, Choice, CodeBlock, Column, Entity, EntityKind, Field, FieldKind,
+    Form, Link, NumberInput, Profile, ProfileCard, Progress, Section, SelectInput, Stat, Tab,
+    Table, TextInput, Tone, Value,
 };
 pub use bindings::{Page, PageError, Request, Submission, SubmitResult};
 
@@ -631,6 +631,12 @@ impl Page {
         self.section(Section::Profile(profile))
     }
 
+    /// A grid of compact profile cards, e.g. My Characters. See
+    /// [`CardGrid::new`].
+    pub fn cards(self, grid: CardGrid) -> Self {
+        self.section(Section::Cards(grid))
+    }
+
     /// Text to copy (a fitting, a list): monospaced, kept exactly, with a
     /// Copy button. See [`CodeBlock::new`].
     pub fn code(self, code: CodeBlock) -> Self {
@@ -988,6 +994,49 @@ impl Profile {
     pub fn badge(mut self, badge: Badge) -> Self {
         self.badges.push(badge);
         self
+    }
+}
+
+impl CardGrid {
+    /// An empty grid; add cards with [`CardGrid::card`] or
+    /// [`CardGrid::linked`] (at most 100).
+    pub fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            register: false,
+        }
+    }
+
+    /// Start with Tether's "Register Character" card, which opens
+    /// character registration. Only drawn for plugins with user scopes.
+    pub fn register(mut self) -> Self {
+        self.register = true;
+        self
+    }
+
+    /// A card that opens nothing.
+    pub fn card(mut self, profile: Profile) -> Self {
+        self.items.push(ProfileCard {
+            profile,
+            link: None,
+        });
+        self
+    }
+
+    /// A card opening one of your pages (a link path, e.g.
+    /// `character/90000001`).
+    pub fn linked(mut self, profile: Profile, path: impl Into<String>) -> Self {
+        self.items.push(ProfileCard {
+            profile,
+            link: Some(path.into()),
+        });
+        self
+    }
+}
+
+impl Default for CardGrid {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -59,7 +59,7 @@ cargo build --target wasm32-wasip2 --release
 
 No other tooling is needed: `wasm32-wasip2` produces a component directly. Forgetting `export!` only fails when linking the `.wasm`, so always build for `wasm32-wasip2` (and run `cargo clippy --target wasm32-wasip2`), not just for your own machine.
 
-`examples/hello-plugin` in the repository is a complete example with every kind of section and value: a profile, entities, countdowns, progress bars, row actions, text to copy, page links and a live page.
+`examples/hello-plugin` in the repository is a complete example with every kind of section and value: a profile, a card grid, entities, countdowns, progress bars, row actions, text to copy, page links and a live page.
 
 ## plugin.toml
 
@@ -184,7 +184,8 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
 
 - `PageError::NotFound` and `PageError::Forbidden` show the usual pages; `PageError::Failed(text)` shows a generic error to the user, and `text` to admins in the plugin's log.
 - A page has a title, an optional one-line description, links beside the title, sections, and optional tabs (each with its own sections).
-- Sections: a row of stats (`stats`, at most 8), a `table`, a `card` of label/value fields, a paragraph of `text`, a `form`, a `profile` (the top of a page about one character or corporation), or `code` (text to copy).
+- Sections: a row of stats (`stats`, at most 8), a `table`, a `card` of label/value fields, a paragraph of `text`, a `form`, a `profile` (the top of a page about one character or corporation), `cards` (a grid of compact profiles, such as My Characters, each opening one of your pages), or `code` (text to copy).
+- A card grid (`CardGrid::new().linked(profile, "character/90000001")`, or `.card(profile)` for one that opens nothing) can ask with `.register()` to start with Tether's own Register Character card, which opens character registration. Only apps with user scopes get it: registering is how their characters arrive.
 - Values are typed so the host formats them consistently:
   - `Value::Text`, `Value::Number` (counts, IDs), `isk(amount)` (abbreviated in tables), `time(rfc3339)` (EVE time), `badge(label, tone)`, and `link(label, path)` to another page of the same plugin (`.primary()` draws it as a button);
   - entities: `character(id, name)`, `corporation(...)`, `alliance(...)`, `faction(...)` and `item_type(...)` (items and ships), drawn as the 20px portrait, logo or icon from CCP's image server and the name. Tether builds the image address from the kind and id; you never give a URL. An id of 0 or less gets initials;
@@ -252,6 +253,7 @@ The host refuses a page (and logs why, for admins) if it breaks these rules:
 | Card fields, profile facts | 40 |
 | Page links (buttons included) | 8, each a link path |
 | Profile badges | 8 |
+| Cards in a grid | 100; each card's profile as a profile, its link a link path |
 | Actions | 4 in one `actions` value; each has a form id (not the id of a form on the page) and at most 10 hidden fields, names as for form fields |
 | Progress | fraction 0 to 1; `from` and `to` both or neither, real instants, `to` after `from` |
 | Code blocks | 16 KiB of text |
