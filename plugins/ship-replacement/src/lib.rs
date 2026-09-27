@@ -26,8 +26,9 @@ use tether_plugin_sdk::http;
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
-    SubmitResult, Table, Tone, Value, badge, isk, link, log, time,
+    Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
+    SubmitResult, Table, Tone, Value, action, actions, badge, character, isk, item_type, link, log,
+    time,
 };
 
 const MAX_NAME: u32 = 150;
@@ -54,31 +55,65 @@ impl Plugin for ShipReplacement {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let parts: Vec<&str> = request.path.split('/').collect();
-        match parts.as_slice() {
+        let page = match parts.as_slice() {
             [""] => srp_fleets(&viewer),
             ["add"] => add_page(&viewer, None),
             ["fleet", fleet] => fleet_page(&viewer, id(fleet)?, None),
             ["request", code] => request_page(&viewer, code, None),
             ["review", request] => review_page(&viewer, id(request)?, None),
             _ => Err(PageError::NotFound),
-        }
+        }?;
+        Ok(with_links(page, &viewer))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let path = submission.request.path.clone();
         let parts: Vec<&str> = path.split('/').collect();
-        match (parts.as_slice(), submission.form.as_str()) {
+        let result = match (parts.as_slice(), submission.form.as_str()) {
             (["add"], "add_fleet") => add_fleet(&viewer, &submission),
             (["fleet", fleet], _) => fleet_action(&viewer, id(fleet)?, &submission),
             (["request", code], "request") => request_srp(&viewer, code, &submission),
             (["review", request], _) => review_action(&viewer, id(request)?, &submission),
             _ => Err(PageError::NotFound),
-        }
+        }?;
+        Ok(match result {
+            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            other => other,
+        })
     }
 }
 
 tether_plugin_sdk::export!(ShipReplacement);
+
+/// Beside the title, as AA's SRP navbar: the fleet list, and Add SRP Fleet
+/// for those who may add one.
+fn with_links(page: Page, viewer: &Viewer) -> Page {
+    let page = page.link("SRP Fleets", "");
+    if viewer.can("add_srpfleetmain") {
+        page.button("Add SRP Fleet", "add")
+    } else {
+        page
+    }
+}
+
+/// A character's portrait and name (the name alone if the id is unknown).
+fn pilot(id: i64, name: &str) -> Value {
+    if id > 0 {
+        character(id, name).into()
+    } else {
+        name.into()
+    }
+}
+
+/// A ship's icon and name.
+fn ship(type_id: i64, name: &str) -> Value {
+    if type_id > 0 {
+        item_type(type_id, name).into()
+    } else {
+        name.into()
+    }
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -354,8 +389,8 @@ fn srp_fleets(viewer: &Viewer) -> Result<Page, PageError> {
     for r in &mine {
         my = my.row(vec![
             r.fleet_name.clone().into(),
-            r.character_name.clone().into(),
-            r.ship_name.clone().into(),
+            pilot(r.character_id, &r.character_name),
+            ship(r.ship_type_id, &r.ship_name),
             time_or(r.killmail_time, ""),
             isk_or(r.kb_total_loss, "unknown"),
             isk_or(r.payout, ""),
@@ -371,11 +406,7 @@ fn srp_fleets(viewer: &Viewer) -> Result<Page, PageError> {
             page = page.stats(total_stats(&totals(row)));
         }
     }
-    page = page.table(table).table(my);
-    if viewer.can("add_srpfleetmain") {
-        page = page.card(Card::new("SRP staff").field("New fleet", link("Add SRP Fleet", "add")));
-    }
-    Ok(page)
+    Ok(page.table(table).table(my))
 }
 
 fn add_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
@@ -466,6 +497,8 @@ struct Req {
     fleet_id: i64,
     fleet_name: String,
     character_name: String,
+    character_id: i64,
+    ship_type_id: i64,
     killmail_id: i64,
     link: String,
     ship_name: String,
@@ -484,7 +517,7 @@ struct Req {
 const REQUEST_SELECT: &str = "SELECT r.id, r.fleet_id, f.name, r.character_name, r.killmail_id, \
      r.killboard_link, r.ship_name, r.killmail_time, r.kb_total_loss, r.payout, r.status, r.paid, \
      r.additional_info, coalesce(r.reviewer_name, ''), r.created_at, r.decided_at, r.paid_at, \
-     r.account_id, f.fleet_time \
+     r.account_id, f.fleet_time, r.character_id, r.ship_type_id \
      FROM requests r JOIN fleets f ON f.id = r.fleet_id";
 
 fn request(row: &[Db]) -> Req {
@@ -508,6 +541,8 @@ fn request(row: &[Db]) -> Req {
         paid_at: when(row, 16),
         account_id: int(row, 17),
         fleet_time: when(row, 18),
+        character_id: int(row, 19),
+        ship_type_id: int(row, 20),
     }
 }
 
@@ -810,7 +845,11 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
     if !f.aar.is_empty() {
         about = about.field("After Action Report", cut(&f.aar, 1500));
     }
-    let mut table = Table::new(vec![
+    let manage = viewer.can("manage_srp");
+    if manage {
+        about = about.field("Actions", actions(fleet_buttons(&f)));
+    }
+    let mut columns = vec![
         Column::numeric("Requested"),
         Column::text("Character"),
         Column::text("Ship"),
@@ -818,19 +857,34 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
         Column::numeric("Loss value"),
         Column::numeric("Payout"),
         Column::text("Status"),
-    ])
-    .title("SRP Requests")
-    .empty("No requests yet.");
+    ];
+    // aa-srp's Approve and Reject (and Mark Paid) in the request's row.
+    if manage {
+        columns.push(Column::text(""));
+    }
+    let mut table = Table::new(columns)
+        .title("SRP Requests")
+        .empty("No requests yet.");
     for r in &requests {
-        table = table.row(vec![
+        let mut row = vec![
             time_or(r.created_at, ""),
             link(r.character_name.clone(), format!("review/{}", r.id)).into(),
-            r.ship_name.clone().into(),
+            ship(r.ship_type_id, &r.ship_name),
             r.killmail_id.into(),
             isk_or(r.kb_total_loss, "unknown"),
             isk_or(r.payout, ""),
             r.status().into(),
-        ]);
+        ];
+        if manage {
+            // A value holds 1 to 4 buttons: an empty cell for none.
+            let buttons = request_buttons(viewer, r);
+            row.push(if buttons.is_empty() {
+                "".into()
+            } else {
+                actions(buttons)
+            });
+        }
+        table = table.row(row);
     }
     let mut page = Page::new(f.name.clone()).description("SRP Fleet Data");
     if let Some(note) = note {
@@ -839,35 +893,58 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
     if let Some(row) = sums.first() {
         page = page.stats(total_stats(&totals(row)));
     }
-    page = page.card(about).table(table);
-    if viewer.can("manage_srp") {
-        page = page
-            .form(if f.completed {
-                Form::new("reopen", "Mark Incomplete")
-                    .description("Pilots can request SRP again.")
-                    .field(Field::checkbox("confirm", "Yes", true).required())
-            } else {
-                Form::new("complete", "Mark Completed")
-                    .description("No more requests: finish reviewing the ones in.")
-                    .field(Field::checkbox("confirm", "Yes", true).required())
-            })
-            .form(
-                Form::new("pay_all", "Mark Approved Paid")
-                    .description(
-                        "Every approved request of this fleet, paid now (except your own).",
-                    )
-                    .field(Field::checkbox("confirm", "Yes, they're paid", false).required()),
-            )
-            .form(
-                Form::new("remove", "Remove Fleet")
-                    .description(
-                        "Its requests and their comments go with it. Their losses stay claimed: \
-                         they can't be requested again.",
-                    )
-                    .field(Field::checkbox("confirm", "Yes, remove this fleet", false).required()),
-            );
+    Ok(page.card(about).table(table))
+}
+
+/// A fleet's buttons for SRP managers: Mark Completed (or Incomplete),
+/// Mark Approved Paid and Remove Fleet. Each posts to `fleet_action`.
+fn fleet_buttons(f: &Fleet) -> Vec<Action> {
+    vec![
+        if f.completed {
+            action("Mark Incomplete", "reopen").confirm("Pilots can request SRP again.")
+        } else {
+            action("Mark Completed", "complete")
+                .confirm("No more requests: finish reviewing the ones in.")
+        },
+        action("Mark Approved Paid", "pay_all")
+            .confirm("Every approved request of this fleet is marked paid now, except your own."),
+        action("Remove Fleet", "remove").tone(Tone::Danger).confirm(
+            "The fleet, its requests and their comments are removed. Their losses stay claimed: \
+             they can't be requested again.",
+        ),
+    ]
+}
+
+/// A request's buttons in its fleet's table, for SRP managers: Approve
+/// and Reject until it's paid, Mark Paid once approved; none on their own
+/// request. Each posts to `fleet_action` with the request's id.
+fn request_buttons(viewer: &Viewer, r: &Req) -> Vec<Action> {
+    if r.paid || r.account_id == viewer.account_id {
+        return Vec::new();
     }
-    Ok(page)
+    let on = |a: Action| a.field("request", r.id.to_string());
+    let mut buttons = Vec::new();
+    if r.status != "approved" {
+        buttons.push(on(action("Approve", "decide")).field("decision", "approve"));
+    }
+    if r.status != "rejected" {
+        buttons.push(
+            on(action("Reject", "decide"))
+                .field("decision", "reject")
+                .tone(Tone::Danger)
+                .confirm(format!(
+                    "{}'s request for their {} is rejected; they see it on their SRP page.",
+                    r.character_name, r.ship_name
+                )),
+        );
+    }
+    if r.status == "approved" {
+        buttons.push(on(action("Mark Paid", "paid")).confirm(format!(
+            "{}'s {} is marked paid.",
+            r.character_name, r.ship_name
+        )));
+    }
+    buttons
 }
 
 fn fleet_action(
@@ -916,6 +993,35 @@ fn fleet_action(
             log::info(format!("SRP fleet {} ({}) removed by {who}", f.id, f.name));
             Ok(SubmitResult::Redirect(String::new()))
         }
+        // A request's row buttons: one of this fleet's, not the manager's
+        // own.
+        form @ ("decide" | "paid") => {
+            let r = request_by_id(id(submission.value("request"))?)?;
+            if r.fleet_id != f.id {
+                return Err(PageError::NotFound);
+            }
+            if r.account_id == viewer.account_id {
+                return Err(PageError::Forbidden);
+            }
+            let problem = if form == "paid" {
+                mark_paid(viewer, &r)?
+            } else {
+                let approve = match submission.value("decision") {
+                    "approve" => true,
+                    "reject" => false,
+                    _ => return Err(PageError::NotFound),
+                };
+                decide(viewer, &r, approve, "")?
+            };
+            match problem {
+                Some(note) => Ok(SubmitResult::Page(fleet_page(
+                    viewer,
+                    fleet_id,
+                    Some(note),
+                )?)),
+                None => back(),
+            }
+        }
         _ => Err(PageError::NotFound),
     }
 }
@@ -940,8 +1046,8 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
             "Fleet",
             link(r.fleet_name.clone(), format!("fleet/{}", r.fleet_id)),
         )
-        .field("Character", r.character_name.clone())
-        .field("Ship", r.ship_name.clone())
+        .field("Character", pilot(r.character_id, &r.character_name))
+        .field("Ship", ship(r.ship_type_id, &r.ship_name))
         .field("Lost", time_or(r.killmail_time, ""))
         .field("Killboard Link", cut(&r.link, 300))
         .field("Killmail", r.killmail_id)
@@ -974,6 +1080,15 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
         );
     }
     let own = r.account_id == viewer.account_id;
+    if viewer.can("manage_srp") && r.status == "approved" && !r.paid && !own {
+        about = about.field(
+            "Payment",
+            action("Mark Paid", "paid").confirm(format!(
+                "{}'s {} is marked paid.",
+                r.character_name, r.ship_name
+            )),
+        );
+    }
     let comments = query(
         "SELECT created_at, author_name, body FROM comments WHERE request_id = $1 \
          ORDER BY created_at, id LIMIT $2",
@@ -1042,12 +1157,6 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
                 .field(Field::textarea("comment", "Comment", MAX_COMMENT)),
         );
     }
-    if viewer.can("manage_srp") && r.status == "approved" && !r.paid && !own {
-        page = page.form(
-            Form::new("paid", "Mark Paid")
-                .field(Field::checkbox("confirm", "Yes, it's paid", false).required()),
-        );
-    }
     Ok(page.form(
         Form::new("comment", "Add Comment")
             .description("Only SRP staff see comments.")
@@ -1071,6 +1180,76 @@ fn add_comment(viewer: &Viewer, request_id: i64, body: &str) -> Result<bool, Pag
     )
     .map_err(|e| failed("adding the comment", e))?;
     Ok(added > 0)
+}
+
+/// Approves or rejects a request, with the comment (if any) on the
+/// record. Callers check `manage_srp` and that it isn't the viewer's own.
+/// What went wrong, for the page, if it couldn't be decided.
+fn decide(
+    viewer: &Viewer,
+    r: &Req,
+    approve: bool,
+    comment: &str,
+) -> Result<Option<&'static str>, PageError> {
+    // Not once paid, nor by its own pilot. Approving keeps a payout set
+    // earlier, else pays zKillboard's value.
+    let changed = storage::execute(
+        "UPDATE requests SET status = $2, \
+           payout = CASE WHEN $3 THEN coalesce(payout, kb_total_loss) ELSE payout END, \
+           reviewer_name = $4, decided_at = now() \
+         WHERE id = $1 AND NOT paid AND account_id <> $5",
+        &[
+            r.id.into(),
+            if approve { "approved" } else { "rejected" }.into(),
+            approve.into(),
+            viewer.main.name.clone().into(),
+            viewer.account_id.into(),
+        ],
+    )
+    .map_err(|e| failed("saving the decision", e))?;
+    if changed == 0 {
+        return Ok(Some("It's paid already: nothing to decide."));
+    }
+    // Every decision is on the record, with the comment if any.
+    let word = if approve { "Approved" } else { "Rejected" };
+    let line = if comment.is_empty() {
+        format!("{word}.")
+    } else {
+        format!("{word}: {comment}")
+    };
+    if !add_comment(viewer, r.id, &line)? {
+        return Ok(Some(
+            "Decision saved, but this request holds no more comments.",
+        ));
+    }
+    log::info(format!(
+        "SRP request {} {} by {} ({})",
+        r.id,
+        if approve { "approved" } else { "rejected" },
+        viewer.main.name,
+        viewer.main.id
+    ));
+    Ok(None)
+}
+
+/// Marks an approved request paid, once. Callers check `manage_srp` and
+/// that it isn't the viewer's own.
+fn mark_paid(viewer: &Viewer, r: &Req) -> Result<Option<&'static str>, PageError> {
+    let changed = storage::execute(
+        "UPDATE requests SET paid = true, paid_at = now() \
+         WHERE id = $1 AND status = 'approved' AND NOT paid AND account_id <> $2",
+        &[r.id.into(), viewer.account_id.into()],
+    )
+    .map_err(|e| failed("marking paid", e))?;
+    if changed == 0 {
+        return Ok(Some("Only approved requests can be paid, once."));
+    }
+    add_comment(viewer, r.id, "Marked paid.")?;
+    log::info(format!(
+        "SRP request {} marked paid by {} ({})",
+        r.id, viewer.main.name, viewer.main.id
+    ));
+    Ok(None)
 }
 
 fn review_action(
@@ -1102,41 +1281,10 @@ fn review_action(
                 "reject" => false,
                 _ => return Err(PageError::NotFound),
             };
-            // Not once paid, nor by its own pilot. Approving keeps a
-            // payout set earlier, else pays zKillboard's value.
-            let changed = storage::execute(
-                "UPDATE requests SET status = $2, \
-                   payout = CASE WHEN $3 THEN coalesce(payout, kb_total_loss) ELSE payout END, \
-                   reviewer_name = $4, decided_at = now() \
-                 WHERE id = $1 AND NOT paid AND account_id <> $5",
-                &[
-                    r.id.into(),
-                    if approve { "approved" } else { "rejected" }.into(),
-                    approve.into(),
-                    viewer.main.name.clone().into(),
-                    viewer.account_id.into(),
-                ],
-            )
-            .map_err(|e| failed("saving the decision", e))?;
-            if changed == 0 {
-                return note("It's paid already: nothing to decide.");
+            match decide(viewer, &r, approve, &comment)? {
+                Some(problem) => note(problem),
+                None => back(),
             }
-            // Every decision is on the record, with the comment if any.
-            let word = if approve { "Approved" } else { "Rejected" };
-            let line = if comment.is_empty() {
-                format!("{word}.")
-            } else {
-                format!("{word}: {comment}")
-            };
-            if !add_comment(viewer, r.id, &line)? {
-                return note("Decision saved, but this request holds no more comments.");
-            }
-            log::info(format!(
-                "SRP request {} {} by {who}",
-                r.id,
-                if approve { "approved" } else { "rejected" }
-            ));
-            back()
         }
         "payout" => {
             need(viewer.can("change_srpuserrequest"))?;
@@ -1178,18 +1326,10 @@ fn review_action(
         }
         "paid" => {
             need(viewer.can("manage_srp"))?;
-            let changed = storage::execute(
-                "UPDATE requests SET paid = true, paid_at = now() \
-                 WHERE id = $1 AND status = 'approved' AND NOT paid AND account_id <> $2",
-                &[r.id.into(), viewer.account_id.into()],
-            )
-            .map_err(|e| failed("marking paid", e))?;
-            if changed == 0 {
-                return note("Only approved requests can be paid, once.");
+            match mark_paid(viewer, &r)? {
+                Some(problem) => note(problem),
+                None => back(),
             }
-            add_comment(viewer, r.id, "Marked paid.")?;
-            log::info(format!("SRP request {} marked paid by {who}", r.id));
-            back()
         }
         "comment" => {
             if comment.is_empty() {

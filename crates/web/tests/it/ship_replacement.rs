@@ -451,6 +451,52 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     );
     let seen = open(&h, &owner, &review).await;
     assert!(seen.body.contains("Fit was off-doctrine"), "{}", seen.body);
+
+    // aa-srp's row buttons on the fleet's page: a rejected request offers
+    // Approve, an approved one Reject (asking first) and Mark Paid; an
+    // adjuster gets none.
+    let fleet_url = format!("fleet/{fleet}");
+    let rows = open(&h, &owner, &fleet_url).await;
+    assert!(
+        rows.body
+            .contains("Pilot A&#39;s request for their Rifter is rejected"),
+        "{}",
+        rows.body
+    );
+    let res = post(
+        &h,
+        &adjuster,
+        &fleet_url,
+        &format!("_form=decide&request={r3}&decision=approve"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    for (decision, status) in [("approve", "approved"), ("reject", "rejected")] {
+        let res = post(
+            &h,
+            &owner,
+            &fleet_url,
+            &format!("_form=decide&request={r3}&decision={decision}"),
+        )
+        .await;
+        assert_eq!(
+            res.status,
+            StatusCode::SEE_OTHER,
+            "{decision}: {}",
+            res.body
+        );
+        assert_eq!(res.location(), at(&fleet_url));
+        assert_eq!(status_of(&h, r3).await.0, status);
+    }
+    // The same button twice: a rejected request has no Reject.
+    let res = post(
+        &h,
+        &owner,
+        &fleet_url,
+        &format!("_form=decide&request={r3}&decision=reject"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     // Changing an approved payout sends it back for approval.
     let res = post(
         &h,
@@ -464,7 +510,7 @@ async fn ship_replacement_end_to_end(db: PgPool) {
         status_of(&h, r1).await,
         ("pending".to_owned(), Some(11_000_000.0), false)
     );
-    let res = post(&h, &owner, &review, "_form=paid&confirm=on").await;
+    let res = post(&h, &owner, &review, "_form=paid").await;
     assert_ne!(res.status, StatusCode::SEE_OTHER);
     let res = post(
         &h,
@@ -491,15 +537,24 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     for body in [
         "_form=decide&decision=approve&comment=",
         "_form=payout&payout=1&comment=",
-        "_form=paid&confirm=on",
+        "_form=paid",
     ] {
         let res = post(&h, &owner, &own, body).await;
         assert_ne!(res.status, StatusCode::SEE_OTHER, "{body}");
     }
+    // Nor from its row on the fleet's page, which has no buttons for it.
+    let res = post(
+        &h,
+        &owner,
+        &format!("fleet/{fleet}"),
+        &format!("_form=decide&request={r2}&decision=approve"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     assert_eq!(status_of(&h, r2).await, ("pending".to_owned(), None, false));
 
     // Paid: then the payout is settled.
-    let res = post(&h, &owner, &review, "_form=paid&confirm=on").await;
+    let res = post(&h, &owner, &review, "_form=paid").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(
         status_of(&h, r1).await,
@@ -522,24 +577,19 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     assert!(fleet_page.body.contains("12.5m"), "{}", fleet_page.body);
     let home = open(&h, &owner, "").await;
     assert!(home.body.contains("Outstanding"), "{}", home.body);
+    // Add SRP Fleet is the header's button, for those who may add one.
+    assert!(
+        home.body
+            .contains(&format!("href=\"{}\">Add SRP Fleet</a>", at("add"))),
+        "{}",
+        home.body
+    );
 
     // Completed: no more requests.
-    let res = post(
-        &h,
-        &owner,
-        &format!("fleet/{fleet}"),
-        "_form=complete&confirm=on",
-    )
-    .await;
+    let res = post(&h, &owner, &format!("fleet/{fleet}"), "_form=complete").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     // A second click changes nothing (set, not toggled): the form is gone.
-    let again = post(
-        &h,
-        &owner,
-        &format!("fleet/{fleet}"),
-        "_form=complete&confirm=on",
-    )
-    .await;
+    let again = post(&h, &owner, &format!("fleet/{fleet}"), "_form=complete").await;
     assert_ne!(again.status, StatusCode::SEE_OTHER);
     let completed: bool = one(
         &h,
@@ -566,13 +616,7 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     assert_ne!(res.status, StatusCode::SEE_OTHER);
 
     // Removing the fleet takes its requests, but their losses stay claimed.
-    let res = post(
-        &h,
-        &owner,
-        &format!("fleet/{fleet}"),
-        "_form=remove&confirm=on",
-    )
-    .await;
+    let res = post(&h, &owner, &format!("fleet/{fleet}"), "_form=remove").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let left: i64 = one(
         &h,
