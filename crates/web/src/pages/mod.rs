@@ -405,9 +405,16 @@ struct ProfilePage {
     characters: Vec<CharacterRow>,
     groups: Vec<String>,
     permissions: Vec<String>,
+    /// Member Audit's My Characters, leading the Dashboard: the pilot's
+    /// character audit, with AA's own panels after it.
+    lead: Option<DashboardWidget>,
     widgets: Vec<DashboardWidget>,
     error: Option<String>,
 }
+
+/// The app whose first widget, My Characters, leads the Dashboard when
+/// it's installed and the viewer may open it.
+const CHARACTER_AUDIT: &str = "tether.member-audit";
 
 /// A plugin's Dashboard widget, loaded after the page.
 pub struct DashboardWidget {
@@ -543,7 +550,9 @@ pub async fn to_dashboard() -> Redirect {
     Redirect::permanent("/dashboard")
 }
 
-/// `GET /dashboard`: AA's Dashboard (characters, state, groups).
+/// `GET /dashboard`: AA's Dashboard (characters, state, groups). With
+/// Member Audit it's the pilot's character audit: My Characters' card grid
+/// first, then AA's panels, compactly.
 pub async fn profile(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -555,7 +564,7 @@ pub async fn profile(
     annotate(&state, session.account, &mut loaded.characters).await?;
     let groups = tether_db::groups::names_for(&state.db, session.account).await?;
     let held = permissions::effective(&state.db, session.account).await?;
-    let widgets = state
+    let mut widgets: Vec<(String, usize, DashboardWidget)> = state
         .plugins
         .widgets()
         .into_iter()
@@ -566,11 +575,24 @@ pub async fn profile(
                     .unwrap_or(tether_core::permissions::ADMIN_PLUGINS),
             )
         })
-        .map(|w| DashboardWidget {
-            url: format!("/dashboard/widgets/{}/{}", w.plugin_id, w.index),
-            title: w.title,
+        .map(|w| {
+            (
+                w.plugin_id.clone(),
+                w.index,
+                DashboardWidget {
+                    url: format!("/dashboard/widgets/{}/{}", w.plugin_id, w.index),
+                    title: w.title,
+                },
+            )
         })
         .collect();
+    // With Member Audit (and access to it), the Dashboard is the pilot's
+    // character audit, as Jay asked: its My Characters widget first.
+    let lead = widgets
+        .iter()
+        .position(|(plugin, index, _)| plugin == CHARACTER_AUDIT && *index == 0)
+        .map(|i| widgets.remove(i).2);
+    let widgets = widgets.into_iter().map(|(_, _, w)| w).collect();
     let permissions = held.into_iter().collect();
     Ok(render(
         StatusCode::OK,
@@ -582,6 +604,7 @@ pub async fn profile(
             characters: loaded.characters,
             groups,
             permissions,
+            lead,
             widgets,
             error: None,
         },

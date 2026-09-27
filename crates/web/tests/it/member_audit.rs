@@ -1167,6 +1167,63 @@ async fn member_audit_feeds_secure_groups(db: PgPool) {
     assert_eq!(values, 57);
 }
 
+// ---- the Dashboard ----------------------------------------------------------
+
+/// With Member Audit and its basic access, the Dashboard is the pilot's
+/// character audit: My Characters' cards first (Register Character leading
+/// them), then AA's Characters and Membership panels. Without access, the
+/// Dashboard as before.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_dashboard_is_the_character_audit(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let widget = format!("/dashboard/widgets/{ID}/0");
+    let dashboard = page(&h, "/dashboard", &owner).await;
+    assert_eq!(dashboard.status, StatusCode::OK, "{}", dashboard.body);
+    let body = &dashboard.body;
+    let audit = body
+        .find(&format!(r#"id="character-audit" hx-get="{widget}""#))
+        .expect("My Characters leads");
+    let characters = body.find(r#"id="characters""#).expect("AA's Characters");
+    let membership = body.find(r#"aria-label="Membership""#).expect("Membership");
+    assert!(audit < characters && characters < membership, "{body}");
+    // AA's panels, compactly: Change Main and Add Character stay.
+    assert!(body.contains("Change Main"), "{body}");
+    assert!(body.contains("Add character"), "{body}");
+    assert!(!body.contains(r#"aria-label="Summary""#), "{body}");
+    // Drawn once, not again among the other widgets.
+    assert_eq!(body.matches(&widget).count(), 1, "{body}");
+
+    let cards = page(&h, &widget, &owner).await;
+    assert_eq!(cards.status, StatusCode::OK, "{}", cards.body);
+    let register = cards
+        .body
+        .find(r#"href="/register""#)
+        .expect("Register Character");
+    let first = cards
+        .body
+        .find(&format!(r#"href="/plugins/{ID}/character/{CHRIBBA}""#))
+        .expect("Chribba's card");
+    assert!(register < first, "{}", cards.body);
+    assert!(
+        cards.body.contains(&format!(
+            "https://images.evetech.net/characters/{CHRIBBA}/portrait?size=128"
+        )),
+        "{}",
+        cards.body
+    );
+    assert!(cards.body.contains("Wallets"), "{}", cards.body);
+
+    // Someone without Member Audit's access: the Dashboard as it was.
+    let guest = log_in_as(&h, "443630591:The Mittani", None).await;
+    let theirs = page(&h, "/dashboard", &guest).await.body;
+    assert!(!theirs.contains("character-audit"), "{theirs}");
+    assert!(theirs.contains(r#"aria-label="Summary""#), "{theirs}");
+    assert_eq!(
+        page(&h, &widget, &guest).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
 /// A big hangar: more than the host takes in one call's parameters, so it
 /// is stored in pieces, and whole.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

@@ -345,7 +345,7 @@
      portrait with the corporation and alliance logos on its corner. */
   .card-grid {
     @apply grid gap-4;
-    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
   }
   .grid-card {
     @apply flex flex-col gap-4 p-5;
