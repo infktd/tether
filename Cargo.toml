@@ -16,6 +16,7 @@ members = [
     "plugins/structures",
     "plugins/ship-replacement",
     "plugins/fleet-operations",
+    "plugins/fittings",
 ]
 
 [workspace.package]

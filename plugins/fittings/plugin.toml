@@ -1,0 +1,60 @@
+# Fittings, a first-party Tether plugin (Alliance Auth's
+# allianceauth-fittings, asked for by Jay: doctrine designers paste EFT
+# fits and list them in doctrines). `scripts/package-plugin.sh` builds,
+# zips and signs it, putting the publisher's key in below.
+[plugin]
+id = "tether.fittings"
+name = "Fittings"
+version = "0.1.0"
+host_api = "1"
+description = "Doctrines and ship fits: paste a fit as EFT, see it by slot with its required skills, copy it back into EVE, and group fits into doctrines."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+# Items are looked up with ESI's public universe endpoints (no token, no
+# scope): names to ids when a fit is added, then each type's group and
+# required skills in the background, kept in the app's storage.
+[capabilities]
+storage = true
+# The viewer's groups, and the groups a manager may pick from: AA's
+# categories are limited to groups.
+groups = true
+
+# Looks up the item details of new fits right after they're added; this
+# daily run catches up on anything a failed run left behind.
+[[capabilities.schedules]]
+name = "details"
+every = "1d"
+
+# allianceauth-fittings' permissions, exactly. Grant Member access_fittings;
+# doctrine designers manage too (they see every category). Who sees a
+# category is set on it: members of its groups, or everyone.
+[permissions]
+access_fittings = "Can access the fittings module"
+manage = "Can manage doctrines and fits"
+
+[[pages]]
+path = ""
+permission = "access_fittings"
+
+[[pages]]
+path = "add-fit"
+permission = "manage"
+
+[[pages]]
+path = "add-doctrine"
+permission = "manage"
+
+[[pages]]
+path = "add-category"
+permission = "manage"
+
+[[pages]]
+path = "edit"
+permission = "manage"
+
+[[navigation]]
+label = "Fittings"
+path = ""
+section = "fleet"

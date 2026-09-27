@@ -14,6 +14,7 @@ mod compliance;
 mod dashboard;
 mod dev_login;
 mod discord;
+mod fittings;
 mod fleet_activity_tracking;
 mod fleet_operations;
 mod github;

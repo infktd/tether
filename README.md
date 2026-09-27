@@ -38,6 +38,7 @@ Tether runs the day-to-day of an EVE Online alliance or corporation: who's in, w
 | Fleet Operations | Upcoming and past fleet operations with countdowns, and the next ones on the Dashboard |
 | Fleet Activity Tracking | FAT links, ESI-tracked fleets and participation stats |
 | Ship Replacement | SRP fleets and requests, with killmail values from zKillboard |
+| Fittings | Doctrines and fits pasted as EFT, by slot with required skills and Copy EFT, and categories limited to groups |
 | HR Applications | Application forms per corporation, and recruiter reviews |
 
 More apps install straight from a GitHub repository. Tether reviews what each one asks for and shows it to you before anything runs.
