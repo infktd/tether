@@ -2,7 +2,9 @@
 //! component and migration; forms per corporation with written, pick-one
 //! and tick-any questions; pilots applying and following their status;
 //! reviewers scoped to their main's corporation marking in progress,
-//! commenting, approving, rejecting and deleting by permission.
+//! commenting, approving, rejecting and deleting by AA's permissions; the
+//! applicant withdrawing until it's decided; reviewers' own applications
+//! in their queue, as AA.
 
 use std::sync::OnceLock;
 
@@ -473,6 +475,11 @@ async fn hr_applications_end_to_end(db: PgPool) {
         let res = post(&h, &b, &review, &body).await;
         assert_eq!(res.status, StatusCode::CONFLICT, "{body}: {}", res.body);
     }
+    // Commenting takes add_applicationcomment too, as AA.
+    assert!(!for_b.body.contains("Add Comment"), "{}", for_b.body);
+    let res = post(&h, &b, &review, "_form=comment&comment=Knows+his+rocks").await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    grant(&h, &owner, "add_applicationcomment", MEMBER_STATE).await;
     let res = post(&h, &b, &review, "_form=comment&comment=Knows+his+rocks").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert!(open(&h, &a, &review).await.body.contains("Knows his rocks"));
@@ -480,20 +487,13 @@ async fn hr_applications_end_to_end(db: PgPool) {
     let view = open(&h, &pilot, &format!("view/{pilot_app}")).await;
     assert!(view.body.contains("In Progress"), "{}", view.body);
     assert!(!view.body.contains("Knows his rocks"));
-    // ...and can't withdraw it now it's being reviewed (the notes stay).
+    // ...and may still withdraw it while it's in progress (AA: until it's
+    // decided).
     assert!(
-        !view.body.contains("apply again afterwards"),
+        view.body.contains("apply again afterwards"),
         "{}",
         view.body
     );
-    let res = post(
-        &h,
-        &pilot,
-        &format!("view/{pilot_app}"),
-        &format!("_form=delete&application={pilot_app}"),
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     // Comments are capped, so the page always fits the host's limits.
     sqlx::query(
         "INSERT INTO \"plugin_tether.hr-applications\".comments \
@@ -535,9 +535,40 @@ async fn hr_applications_end_to_end(db: PgPool) {
     let reviewed = open(&h, &a, "review?_tab=1").await;
     assert!(reviewed.body.contains("Approved"), "{}", reviewed.body);
 
+    // gigX applies again, and withdraws it while A reviews it.
+    let res = post(
+        &h,
+        &blue,
+        &format!("apply/{npc_form}"),
+        &format!("{answers}&consent=on"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let again = application_of(&h, "gigX", npc_form).await;
+    let res = post(
+        &h,
+        &a,
+        "review",
+        &format!("_form=claim&application={again}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(
+        &h,
+        &blue,
+        &format!("view/{again}"),
+        &format!("_form=delete&application={again}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        open(&h, &a, &format!("review/{again}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+
     // The owner (every permission, all corporations): search, reject
     // without marking in progress first, delete, from the queue's rows as
-    // AA; never their own.
+    // AA; their own too, as AA.
     let found = post(&h, &owner, "review", "_form=search&q=GIGX").await;
     assert_eq!(found.status, StatusCode::OK, "{}", found.body);
     assert!(found.body.contains(&format!("review/{blue_owner_app}")));
@@ -587,10 +618,16 @@ async fn hr_applications_end_to_end(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let own = application_of(&h, "Chribba", blue_form).await;
-    assert_eq!(
-        open(&h, &owner, &format!("review/{own}")).await.status,
-        StatusCode::NOT_FOUND
-    );
+    let seen = open(&h, &owner, &format!("review/{own}")).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    let res = post(
+        &h,
+        &owner,
+        "review",
+        &format!("_form=decide&application={own}&decision=approve"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
     // Deleting a form takes its applications with it.
     let res = post(

@@ -3,14 +3,16 @@
 //! - **Application forms**, one per corporation, with questions: a written
 //!   answer, one choice, or any of several choices (`manage`, AA's admin).
 //! - **Applications**: pilots (`basic`) apply to a corporation once, follow
-//!   its status on **My Applications**, and may delete it while pending.
+//!   its status on **My Applications**, and may delete it until it's
+//!   decided (as AA, even while in progress).
 //! - **HR Application Management** (`human_resources`): the applications
 //!   to the corporation of the reviewer's main (every corporation with
 //!   `all_corporations`), with the applicant's characters and answers.
 //!   Reviewers **Mark in Progress** to become an application's reviewer,
-//!   comment, and (as its reviewer) approve or reject it with
-//!   `approve_application` / `reject_application`; `delete_application`
-//!   deletes one. Nobody reviews their own application.
+//!   comment with `add_applicationcomment` (as AA), and (as its reviewer)
+//!   approve or reject it with `approve_application` /
+//!   `reject_application`; `delete_application` deletes one. As AA, a
+//!   reviewer's own applications are in their queue like any other.
 //!
 //! The applicant's characters are kept as they were when they applied:
 //! plugins only learn an account's characters while its owner is looking.
@@ -420,10 +422,9 @@ fn create_page(viewer: &Viewer) -> Result<Page, PageError> {
         .table(create))
 }
 
-/// The applicant's Delete: only until a recruiter takes it up (withdrawing
-/// then would take their notes with it).
+/// The applicant's Delete: until it's decided, even in progress (AA's).
 fn own_delete(a: &Application) -> Option<Action> {
-    (a.pending() && a.reviewer_account_id.is_none()).then(|| {
+    a.pending().then(|| {
         action("Delete", "delete")
             .field("application", a.id.to_string())
             .tone(Tone::Danger)
@@ -669,8 +670,7 @@ fn personal_view(viewer: &Viewer, app: i64) -> Result<Page, PageError> {
 
 fn delete_own(viewer: &Viewer, app: i64) -> Result<SubmitResult, PageError> {
     let deleted = storage::execute(
-        "DELETE FROM applications WHERE id = $1 AND account_id = $2 AND approved IS NULL \
-         AND reviewer_account_id IS NULL",
+        "DELETE FROM applications WHERE id = $1 AND account_id = $2 AND approved IS NULL",
         &[app.into(), viewer.account_id.into()],
     )
     .map_err(|e| failed("deleting the application", e))?;
@@ -687,15 +687,14 @@ fn delete_own(viewer: &Viewer, app: i64) -> Result<SubmitResult, PageError> {
 // ---- reviewing ---------------------------------------------------------------
 
 /// Applications this reviewer may see: to their main's corporation (every
-/// corporation with `all_corporations`), and never their own. Takes $1
-/// (corporation), $2 (all) and $3 (account).
-const IN_SCOPE: &str = "((f.corporation_id = $1 AND $1 <> 0) OR $2) AND a.account_id <> $3";
+/// corporation with `all_corporations`), their own included, as AA. Takes
+/// $1 (corporation) and $2 (all).
+const IN_SCOPE: &str = "((f.corporation_id = $1 AND $1 <> 0) OR $2)";
 
 fn scope(viewer: &Viewer) -> Vec<Db> {
     vec![
         viewer.main.corporation_id.into(),
         viewer.can("all_corporations").into(),
-        viewer.account_id.into(),
     ]
 }
 
@@ -704,7 +703,7 @@ fn reviewable(viewer: &Viewer, app: i64) -> Result<Application, PageError> {
     let mut params = scope(viewer);
     params.push(app.into());
     query(
-        &format!("{APP_SELECT} WHERE {IN_SCOPE} AND a.id = $4"),
+        &format!("{APP_SELECT} WHERE {IN_SCOPE} AND a.id = $3"),
         &params,
     )?
     .first()
@@ -802,7 +801,7 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
     if let Some(q) = &search {
         params.push(q.clone().into());
         filter = " AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.characters) c \
-                   WHERE strpos(lower(c->>'name'), $4) > 0)"
+                   WHERE strpos(lower(c->>'name'), $3) > 0)"
             .to_owned();
     }
     let list = |status: &str, order: &str, limit: i64| -> Result<Vec<Application>, PageError> {
@@ -970,11 +969,16 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
             "Mark in Progress makes you its reviewer: only you can then approve or reject it.",
         );
     }
-    Ok(page.table(table).form(
-        Form::new("comment", "Add Comment")
-            .description("Only reviewers see comments.")
-            .field(Field::textarea("comment", "Comment", MAX_COMMENT).required()),
-    ))
+    page = page.table(table);
+    // AA's Comment: human_resources and add_applicationcomment.
+    if viewer.can("add_applicationcomment") {
+        page = page.form(
+            Form::new("comment", "Add Comment")
+                .description("Only reviewers see comments.")
+                .field(Field::textarea("comment", "Comment", MAX_COMMENT).required()),
+        );
+    }
+    Ok(page)
 }
 
 /// An application's action, from its page or (`from_list`) its row in
@@ -1060,6 +1064,9 @@ fn review_action(
             back()
         }
         "comment" => {
+            if !viewer.can("add_applicationcomment") {
+                return Err(PageError::Forbidden);
+            }
             let body = submission.value("comment").trim().to_owned();
             if body.is_empty() {
                 return note("Write a comment first.");

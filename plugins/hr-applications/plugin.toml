@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.hr-applications"
 name = "HR Applications"
-version = "0.2.0"
+version = "0.3.0"
 host_api = "1"
 description = "Application forms per corporation: pilots apply, recruiters review with comments and approve or reject, applicants follow their status."
 
@@ -14,12 +14,14 @@ key = "PUBLISHER_KEY"
 [capabilities]
 storage = true
 
-# AA's names where AA has one. In AA anyone with a main may apply: grant
-# basic to Guest and Member. Recruiters get human_resources, and approve,
-# reject and delete as AA splits them.
+# AA's names where AA has one. In AA anyone with a main may apply, with no
+# permission: grant basic to every state (an app page always needs one).
+# Recruiters get human_resources, and comment, approve, reject and delete
+# as AA splits them.
 [permissions]
-basic = "Apply to corporations and follow your own applications"
-human_resources = "Review applications to your main's corporation: read, mark in progress and comment"
+basic = "Apply to corporations and follow your own applications (AA: anyone with a main; grant it to every state)"
+human_resources = "Review applications to your main's corporation: read and mark in progress"
+add_applicationcomment = "Can add comments to applications you can review"
 approve_application = "Approve applications you're reviewing"
 reject_application = "Reject applications you're reviewing"
 delete_application = "Delete applications you can review"
