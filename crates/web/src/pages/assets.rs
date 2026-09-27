@@ -1,5 +1,5 @@
 //! Static assets, embedded in the binary: the built stylesheet, htmx and
-//! the Geist fonts. Nothing is fetched from a CDN at runtime.
+//! the Archivo and IBM Plex Mono fonts. Nothing is fetched from a CDN at runtime.
 
 use std::sync::OnceLock;
 
@@ -42,16 +42,16 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../../../../assets/vendor/htmx/htmx.min.js"),
     },
     Asset {
-        path: "fonts/Geist-Variable.woff2",
+        path: "fonts/Archivo-Variable.woff2",
         content_type: "font/woff2",
         immutable: true,
-        bytes: include_bytes!("../../../../assets/vendor/fonts/Geist-Variable.woff2"),
+        bytes: include_bytes!("../../../../assets/vendor/fonts/Archivo-Variable.woff2"),
     },
     Asset {
-        path: "fonts/GeistMono-Variable.woff2",
+        path: "fonts/IBMPlexMono-Variable.woff2",
         content_type: "font/woff2",
         immutable: true,
-        bytes: include_bytes!("../../../../assets/vendor/fonts/GeistMono-Variable.woff2"),
+        bytes: include_bytes!("../../../../assets/vendor/fonts/IBMPlexMono-Variable.woff2"),
     },
 ];
 

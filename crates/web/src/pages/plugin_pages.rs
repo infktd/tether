@@ -61,7 +61,7 @@ pub struct ValueView {
     pub badge: Option<&'static str>,
     /// Buttons that post; empty for other values.
     pub actions: Vec<ActionView>,
-    /// Numbers, ISK and times: Geist Mono.
+    /// Numbers, ISK and times: IBM Plex Mono.
     pub mono: bool,
     pub entity: Option<EntityView>,
     pub countdown: Option<CountdownView>,
@@ -115,7 +115,13 @@ pub struct ProgressView {
     /// between them.
     pub from: Option<String>,
     pub to: Option<String>,
+    /// The segmented bar's cells (DESIGN.md): lit or not, [`SEGMENTS`] of
+    /// them.
+    pub cells: Vec<bool>,
 }
+
+/// Cells in a segmented bar.
+pub const SEGMENTS: usize = 24;
 
 /// A button that posts like a one-button form.
 pub struct ActionView {
@@ -262,6 +268,9 @@ fn short_isk(amount: f64) -> String {
         (amount / 1e6, "m")
     } else if abs >= 1e3 {
         (amount / 1e3, "k")
+    } else if abs < 0.5 {
+        // Not "-0" for a tiny negative (or negative zero) amount.
+        return "0".to_owned();
     } else {
         return format!("{amount:.0}");
     };
@@ -271,7 +280,7 @@ fn short_isk(amount: f64) -> String {
 }
 
 /// `1,240,000,000`.
-fn grouped(n: i64) -> String {
+pub(crate) fn grouped(n: i64) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -349,14 +358,15 @@ pub fn countdown_text(seconds_left: i64) -> String {
         seconds_left % 3_600 / 60,
         seconds_left % 60,
     );
+    // "T−", as the DESIGN.md countdowns (a real minus sign).
     if d > 0 {
-        format!("{d}d {h}h {m}m")
+        format!("T\u{2212} {d}d {h}h {m}m")
     } else if h > 0 {
-        format!("{h}h {m}m")
+        format!("T\u{2212} {h}h {m}m")
     } else if m > 0 {
-        format!("{m}m {s:02}s")
+        format!("T\u{2212} {m}m {s:02}s")
     } else {
-        format!("{s}s")
+        format!("T\u{2212} {s}s")
     }
 }
 
@@ -388,12 +398,14 @@ fn progress(progress: &Progress, now: chrono::DateTime<chrono::Utc>) -> Progress
         }
         None => progress.fraction.clamp(0.0, 1.0),
     };
+    let lit = (fraction * SEGMENTS as f64).round() as usize;
     ProgressView {
         value: format!("{fraction:.4}"),
         percent: (fraction * 100.0).floor() as u32,
         label: progress.label.clone(),
         from: span.map(|(from, _)| machine_time(from)),
         to: span.map(|(_, to)| machine_time(to)),
+        cells: (0..SEGMENTS).map(|i| i < lit).collect(),
     }
 }
 
@@ -1626,6 +1638,8 @@ mod tests {
         assert_eq!(short_isk(12_500.0), "12.5k");
         assert_eq!(short_isk(999.0), "999");
         assert_eq!(short_isk(-2_000_000.0), "-2m");
+        assert_eq!(short_isk(-0.0), "0");
+        assert_eq!(short_isk(-0.3), "0");
         assert_eq!(grouped(1_240_000_000), "1,240,000,000");
         assert_eq!(grouped(-1234), "-1,234");
         assert_eq!(grouped(12), "12");
@@ -1635,11 +1649,11 @@ mod tests {
     fn countdowns_read_as_live_js_writes_them() {
         assert_eq!(
             countdown_text(2 * 86_400 + 4 * 3_600 + 13 * 60 + 9),
-            "2d 4h 13m"
+            "T\u{2212} 2d 4h 13m"
         );
-        assert_eq!(countdown_text(4 * 3_600 + 13 * 60), "4h 13m");
-        assert_eq!(countdown_text(13 * 60 + 5), "13m 05s");
-        assert_eq!(countdown_text(45), "45s");
+        assert_eq!(countdown_text(4 * 3_600 + 13 * 60), "T\u{2212} 4h 13m");
+        assert_eq!(countdown_text(13 * 60 + 5), "T\u{2212} 13m 05s");
+        assert_eq!(countdown_text(45), "T\u{2212} 45s");
         assert_eq!(countdown_text(0), "done");
         assert_eq!(countdown_text(-3_600), "done");
     }

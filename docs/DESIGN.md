@@ -1,136 +1,153 @@
 # Design
 
-The look is dark, quiet and dense: zinc neutrals, 1px borders instead of shadows, Geist for text, Geist Mono for anything that counts or ticks, and one accent color. Reference mockup: "Alliance Platform Mockup", Moon Tracker member view.
+**Flight deck for New Eden.** Tether looks like a ship's instrument panel: near-black "void" with warm bone text, hairline seams with bright corner registration marks, cut-corner controls, instruments instead of charts, and EVE's own colour meanings (standings blue and red) plus one signal orange for what needs you. The reference is the design canvas ("Tether: flight-deck identity for New Eden"): Identity, Dashboard, Character sheet, SRP, Sign in, Operations, Structures and Moon Mining artboards.
 
 Every core page and every plugin page follows this file. When a screen needs something not covered here, extend this file first, then build it.
 
 ## Principles
 
-- **Borders, not shadows.** Surfaces separate with 1px `--border` lines and a slightly lighter card fill. No drop shadows, glows or gradients.
-- **One accent per screen.** The accent marks the single most important state (fresh moons, unread counts, the next countdown). Everything else is neutral.
-- **Dense but readable.** Tables are the main way data is shown. Comfortable row height, clear column headers, no zebra stripes.
-- **Numbers are monospaced.** Timers, ISK, counts, coordinates and timestamps use Geist Mono so columns align and countdowns don't jitter.
-- **Dark mode only for v1.** Tokens are named so a light theme can be added later without touching components.
+- **Seams, not shadows.** Surfaces separate with 1px `--border` hairlines; panels carry bright corner brackets (registration marks). No drop shadows, glows or gradients, except the ambient sky (Motion).
+- **Square, with one cut.** Corners are square. The primary button, the active tab and the active filter key have their bottom-right corner cut (8px, 7px on small controls). Nothing else is cut, so the cut marks what is selected or what acts.
+- **EVE's colour meanings.** Blue (`--info`) is friendly, healthy, positive ISK; red (`--destructive`) is hostile, a loss, an error; the signal (`--accent`, orange by default) is the one thing that needs you now (the next countdown, pending counts, a queue about to end). Everything else is bone and fog.
+- **Instruments, not charts.** Progress is a segmented bar (capacitor cells); skill levels are EVE's five squares; composition is a ring; readouts are mono numbers split by hairlines; facts are dotted-leader ledgers.
+- **Numbers are monospaced.** Timers, ISK, counts, tickers, ids that are wanted, and timestamps use IBM Plex Mono so columns align and countdowns don't jitter.
+- **Dense but readable.** Tables are the main way data is shown. Comfortable rows, overline headers, no zebra stripes.
+- **Dark only.** Tokens are named so a light theme could come later without touching components.
 
 ## Tokens
 
-Written as shadcn-style theme variables, so they work unchanged with Basecoat, shadcn-svelte or shadcn/ui.
+Written as shadcn-style theme variables, so Basecoat's components pick them up.
 
 ```css
 :root {
   /* surfaces */
-  --background: #09090b;        /* page */
-  --sidebar: #0c0c0e;           /* sidebar, cards */
-  --card: #0c0c0e;
-  --muted: #18181b;             /* tab track, subtle fills */
-  --accent-surface: #1c1c20;    /* active nav item, hover rows */
+  --background: #07090c;        /* void: the page */
+  --sidebar: rgba(7,9,12,.8);   /* the shell over the sky */
+  --card: #0c1016;              /* hull: panels, tables, cards */
+  --muted: #121820;             /* raised: active key, tab track, subtle fills */
+  --accent-surface: #0f141b;    /* hover rows, hover nav */
 
   /* text */
-  --foreground: #fafafa;        /* primary text */
-  --foreground-soft: #d4d4d8;   /* secondary text in tables and nav */
-  --muted-foreground: #a1a1aa;  /* labels, captions, meta */
-  --faint: #3f3f46;             /* watermarks, badge outlines */
+  --foreground: #e7e3d8;        /* bone: primary text */
+  --foreground-soft: #a9afb7;   /* fog: secondary text, nav */
+  --muted-foreground: #7c8591;  /* dim: labels, captions, overlines */
+  --faint: #2a3645;             /* seams you notice: outlines, empty cells */
 
   /* lines */
-  --border: #27272a;
-  --input: #27272a;
-  --ring: #a1a1aa;
+  --border: #1c2530;            /* seam */
+  --bracket: #566579;           /* panel corner marks */
+  --input: #1c2530;
+  --ring: #a9afb7;
 
-  /* primary action: inverted, white on dark */
-  --primary: #fafafa;
-  --primary-foreground: #09090b;
+  /* primary action: bone fill, void text */
+  --primary: #e7e3d8;
+  --primary-foreground: #07090c;
 
-  /* accent: one per screen */
-  --accent: #f59e0b;            /* amber */
-  --accent-soft: #292012;       /* accent badge background */
+  /* signal: one per screen (per-instance setting) */
+  --accent: #ff7a1a;
+  --accent-soft: #2a1608;
 
-  /* status */
-  --info: #60a5fa;              /* Blue, healthy, informational */
-  --info-foreground: #93c5fd;
-  --info-soft: #13203a;
-  --destructive: #ef4444;
-  --destructive-soft: #2a1215;
+  /* EVE standings */
+  --info: #4da3ff;              /* friendly, healthy */
+  --info-foreground: #9cc8ff;
+  --info-soft: #0e1e33;
+  --destructive: #f2555a;       /* hostile, loss, error */
+  --destructive-soft: #2b1012;
 
   /* shape */
-  --radius-sm: 6px;             /* buttons, inputs, badges, nav items */
-  --radius: 8px;                /* tab track, avatars */
-  --radius-lg: 10px;            /* cards, panels, tables */
+  --radius: 0;                  /* square everywhere */
+  --cut: 8px;                   /* the one cut corner */
 }
 ```
 
-**With Basecoat.** shadcn's `accent` role is a hover surface, not a highlight. So Basecoat's `accent` utilities (`bg-accent`, `text-accent-foreground`) map to `--accent-surface` and `--foreground`, and the amber `--accent` is exposed as the `highlight` colour (`text-highlight`, `bg-highlight-soft`). The mapping lives in `assets/app.css`.
+**With Basecoat.** shadcn's `accent` role is a hover surface, not a highlight. So Basecoat's `accent` utilities map to `--accent-surface` and `--foreground`, and the signal `--accent` is exposed as the `highlight` colour (`text-highlight`, `bg-highlight-soft`). The mapping lives in `assets/app.css`.
 
-The accent is a per-instance setting. Alliances pick it under Admin → System → Appearance (presets or any colour); amber is the default. Good alternatives keep similar lightness: `#fb923c`, `#a78bfa`, `#34d399`. A colour must reach 4.5:1 against `--background`, so it reads as text and carries dark text in pills; `--accent-soft` is derived (14% of the accent over the background). It reaches pages as `/theme.css`, loaded after the built stylesheet, since the CSP allows no inline styles.
+The signal colour is a per-instance setting. Alliances pick it under Admin → System → Appearance (presets or any colour); signal orange `#ff7a1a` is the default. A colour must reach 4.5:1 against `--background`, so it reads as text and carries dark text in pills; `--accent-soft` is derived. It reaches pages as `/theme.css`, loaded after the built stylesheet, since the CSP allows no inline styles.
 
-Status colors must differ in lightness as well as hue, and pair color with a text label or dot, never color alone.
+**Moon ore rarity** (Moon Mining) is its own scale, brighter with value: R4 `#3c4a5c`, R8 `#6b7d92`, R16 `#a9afb7`, R32 `#e3c08a`, R64 the signal. Security status: 0.5 and up blue, above 0 signal, 0 and below red.
+
+Status colours must differ in lightness as well as hue, and pair colour with a text label or a square mark, never colour alone.
 
 ## Typography
 
-Fonts are **bundled and self-hosted**, never loaded from Google Fonts or any CDN (see the opsec rule in `CLAUDE.md`). Geist and Geist Mono are open-licensed.
+Fonts are **bundled and self-hosted**, never loaded from Google Fonts or any CDN (see the opsec rule in `CLAUDE.md`). Archivo (variable, with its width axis; subset to Latin, Latin Extended, Cyrillic and the symbols Tether uses) and IBM Plex Mono (IBM's variable woff2, unmodified), both under the SIL Open Font License (`assets/vendor/fonts/`).
 
 ```css
---font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
---font-mono: "Geist Mono", ui-monospace, monospace;
+--font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
+--font-mono: "IBM Plex Mono", ui-monospace, monospace;
 ```
 
 | Use | Size | Weight | Notes |
 | --- | --- | --- | --- |
-| Page title (h1) | 28px | 600 | letter-spacing -0.02em |
-| Section title (h2) | 15px | 600 | card and panel headers |
+| Page title (h1) | 30px | 600 | Archivo at 125% width (`font-stretch`), -0.01em |
+| Detail title (h2 in a profile or side panel) | 18–20px | 600 | 125% width |
+| Overline (card headers, column headers, labels over readouts) | 11px | 500 | uppercase, +0.14em tracking, `--muted-foreground` |
 | Body, table cells | 14px | 400 | primary text |
-| Nav items, buttons | 14px | 500 | |
-| Labels, table headers | 13px | 500 | `--muted-foreground` |
+| Nav items, buttons | 14px | 500 | tabs and filter keys are overline-styled (11px, +0.14em, uppercase) |
 | Captions, meta | 12px | 400 | `--muted-foreground` |
-| Stat values | 26px | 500 | Geist Mono |
-| Timers, ISK, counts | inherits | 400–500 | Geist Mono |
+| Readouts (stat values) | 22px | 500 | Plex Mono; a unit suffix (`B`, `M`, `/3`) in `--muted-foreground` |
+| Timers, ISK, counts, tickers | inherits | 400–500 | Plex Mono |
 
 ## Spacing and layout
 
-A 4px base. Common steps: 4, 8, 12, 16, 20, 24, 32.
+A 4px base. Common steps: 4, 8, 12, 14, 18, 22, 26, 36.
 
 | Element | Value |
 | --- | --- |
-| Sidebar width | 256px, fixed, right border |
-| Top bar height | 64px, bottom border |
-| Content padding | 28px top and bottom, 32px sides |
-| Gap between page sections | 24px |
-| Gap between cards | 16px |
-| Card padding | 20px |
-| Right rail (detail panels) | 340px |
+| Status strip (top) | 40px, full width, bottom seam |
+| Sidebar width | 236px, right seam, over the sky |
+| Content padding | 30px top, 36px sides |
+| Gap between page sections | 20px |
+| Gap between panels | 14px |
+| Panel padding | 18px |
+| Right rail (detail panels) | 330–372px |
 | Desktop design width | 1440px; layouts must hold down to 1280px |
 
-Page structure: sidebar → top bar with breadcrumb, search and icon buttons → page header (title, one-line description, actions on the right) → optional stat row → main content with an optional right rail.
+Page structure: status strip (wordmark, EVE clock, Tranquility and ESI status, the page's trail, search, bell) → sidebar → page header (overline, title, and on the right readouts or the page's actions) → optional readouts or filter keys → content with an optional right rail.
 
 ## Components
 
-**Buttons**, 36px tall (32px inside tables), `--radius-sm`, 14px/500, 16px horizontal padding.
-- Primary: `--primary` fill, `--primary-foreground` text. At most one per screen region.
-- Outline: `--background` fill, `--border` border, `--foreground` text. The default for secondary actions.
-- Destructive: outline style with `--destructive` text; filled only inside confirmation dialogs.
-- Icon-only: 36×36 outline button with an `aria-label`.
+**Status strip**: 40px, `--sidebar` over the sky. Left to right: the wordmark (the two-node tether glyph and `TETHER` in Archivo at 125% width, 700, +0.18em), then in 12px Plex Mono: `EVE 05:14:22` (ticking in the browser), `■ TRANQUILITY 24,112` (players online from ESI's public status, the square blue when up, red when down), `■ ESI` health, then the page's trail (section / page in uppercase mono, the current part in bone). On the right, the notification bell with its unread count in the signal.
 
-**Inputs**, 36px tall, `--background` fill, `--input` border, `--radius-sm`. Search inputs carry a 16px leading icon. Every input has a `<label>`, visually hidden if the design omits it.
+**Panels** (`.card`): `--card` fill, 1px `--border`, square, with four 10px corner brackets in `--bracket` (drawn as background images on the border box, so no extra markup). 18px padding. A panel's header is an overline, not a big title.
 
-**Cards and panels**: `--card` fill, 1px `--border`, `--radius-lg`, 20px padding. Titles are h2 at 15px/600.
+**Buttons**, 34px tall (28px small), square, 13px/500 (12px small), 16px horizontal padding.
+- Primary: `--primary` fill, `--primary-foreground` text, weight 600, the bottom-right corner cut. At most one per screen region.
+- Outline: `--card` fill, `--faint` border, `--foreground` text. The default for secondary actions; a "+ Add…" outline carries the cut too.
+- Quiet: no border, `--muted-foreground` text, turning `--foreground` (or `--destructive` for Reject/Remove) on hover. For low-weight row actions such as Reject or Make main.
+- Destructive: outline with `--destructive` text; filled `--destructive` only inside confirmations.
+- Icon-only: 32×32 outline with an `aria-label`.
 
-**Stat cards**: label (13px muted), value (26px Geist Mono), caption (12px muted). Four across on desktop.
+**Inputs**, 32px tall, `--card` fill, `--border` border, square, 13px. Every input has a `<label>`, visually hidden if the design omits it; an overline label beside a filter is fine.
 
-**Tables**: live inside a card. Header row 13px/500 muted, left-aligned; body 14px; 16px vertical cell padding; 20px horizontal padding on the outer columns, 12px on inner ones; 1px `--border` between rows; row actions right-aligned as small outline buttons. Primary cell: name at 14px/500 with a 12px muted sub-line. Sorting and filtering happen on the server.
+**Readouts** (stat values): an overline label over a 22px mono value, in a row split by 1px vertical seams (no boxes). Used in page headers and under profiles. A value that needs you is in the signal; hostile or loss in red.
 
-**Tabs**: a segmented control. `--muted` track with 4px padding and `--radius`; the active tab is a `--background` pill with `--foreground` text; inactive tabs are muted text on the track.
+**Tables**: inside a panel. Header row is overline (11px, +0.14em, uppercase, `--muted-foreground`); body 13–14px; 10px vertical cell padding; 18px on the outer columns; 1px seams between rows; hover lightens the row. A status column is a leading 8px square in the status colour. Row actions right-aligned: a quiet text action, then a small primary or outline button. Primary cell: a 28px framed portrait or icon, the name, and the ticker in 12px mono `--muted-foreground`.
 
-**Badges**: 12px, 2px × 8px padding, `--radius-sm`.
-- Neutral (tags, ore types): 1px `--faint` outline, `--foreground-soft` text.
-- Status: soft fill (`--accent-soft`, `--info-soft`, `--destructive-soft`) with matching text and a 6px leading dot.
-- Notification levels use the status badges: danger is destructive, warning is accent, success is info (healthy), and info is the neutral badge with a dot. The top bar's bell carries the unread count as an accent count pill.
+**Tabs and filter keys**: a row of keys, 30px tall, 11px/600 uppercase, +0.14em. The active key has a `--faint` border, `--muted` fill, bone text and the cut corner; inactive keys are `--muted-foreground` text with no border. Counts follow the label in mono (`PENDING 03`), the count in the signal when it needs attention.
 
-**Sidebar navigation**: grouped under 12px/500 muted headings. Items are 36px tall links with a 16px icon, 14px text, `--radius-sm`. Active item: `--accent-surface` fill, `--foreground` text, weight 500, `aria-current="page"`. Count pills use the accent fill with dark text. The sidebar is as tall as the window and stays put while the page scrolls; its links scroll inside it if they must. The signed-in character sits at the bottom above a top border, and opens the account menu: a small panel above it (the browser's own popover: no script, Escape or a click outside closes it) with Token Management, Access tokens and Log out. Those live only there, never in the sidebar or elsewhere. Services is a sidebar item in Account instead, as in AA (where pilots look to link Discord), for those with a service to link. Admins arrange the sections, items, folders (a collapsible item, open while one of its pages is shown) and custom links on the Menu page; the default is Account, Fleet, Industry, Corporation, Apps and Admin, and a section with nothing this person may open isn't shown. Apps' links go in the section their manifest names (Fleet for Fleet Activity Tracking, Fleet Operations, Ship Replacement and Structure Timers; Industry for Moon Mining and Structures; Corporation for Member Audit and HR Applications), or Apps. AA's officer tools are sidebar items for whoever holds their permissions, as in AA, and stay in the Administration hub too: Corporation Stats and the Compliance Report open the Corporation section, and Permissions Audit sits in Admin under Administration. Admin otherwise holds one item, Administration (see below); every other admin page starts hidden in the sidebar, and admins can pin any of them on the Menu page. A menu an admin has saved keeps its arrangement: new defaults apply only to items it has no entry for.
+**Badges**: 10–11px mono or overline text, 1px border, square, 1px × 6px padding.
+- Neutral: `--faint` border, `--foreground-soft` text.
+- Status: the status colour's border and text (`--info`, `--destructive`, signal), or a soft fill for the state badge. Never colour alone: a word goes with it.
+- Notification levels: danger red, warning signal, success blue, info neutral. The bell's unread count is the signal.
 
-**Watermark**: on pages showing sensitive data, a single line in 11px Geist Mono, `--faint` color, bottom-right of the data card: `Viewing as <character> · <EVE time>`. Decorative, `aria-hidden`. Only where it matters: app pages showing members' data. Never on the Dashboard or its widgets.
+**Ledger** (facts in a panel or card): the label in `--muted-foreground`, a dotted `--faint` leader filling the space, the value right-aligned (mono for numbers). Used for character facts, membership, summaries.
 
-**Toasts** confirm an action or explain why it didn't happen, without moving the page: Basecoat's toaster, bottom-right, at most 360px wide, 16px from the edges. Each toast is a `--card` panel with a 1px `--border`, `--radius-lg` and 12px padding (no shadow): a 6px status dot (info for done, destructive for a problem), one line of 14px text, and a 24px icon-only close button. Done toasts leave after 4 seconds, problems after 8, and hovering keeps them. New ones stack above older ones, three at most. They fade in and rise 4px over 150ms (none under reduced motion). `role="status"`, or `role="alert"` for problems. The server asks for one with an `HX-Trigger` header (`{"toast": {"message": "...", "tone": "done" | "problem"}}`); `assets/live.js` draws it with text only, never markup.
+**Segmented bar** (progress, fuel, a drill cycle): 16–32 cells, 2px apart, 5–6px tall; lit cells in bone (or the signal when it needs you soon, or a rarity colour), unlit `#161d26`. A bar between two known instants fills live.
 
-**Icons**: Lucide-style outline icons, 16px, stroke width 2, `currentColor`. Bundled as inline SVG or a sprite, never fetched. No emoji.
+**Skill levels**: five 9px squares: trained filled bone, the level in training outlined in the signal over `--accent-soft`, the rest outlined `--faint`.
+
+**Countdowns**: `T− 3h 12m` in Plex Mono; the nearest one, or any under a few hours, in the signal; hostile timers in red.
+
+**Sidebar navigation**: grouped under overline headings with a hairline running to the right. Items are 32px, 14px text in `--foreground-soft`, indented 26px. The active item: `--muted` fill, bone text at 500, and a 6px signal square before its label; `aria-current="page"`. Counts are mono in the signal (`03`). The sidebar sits over the sky with `--sidebar`, as tall as the window, and stays put while the page scrolls; its links scroll inside it if they must. The signed-in character sits at the bottom above a seam (framed 30px portrait, name, `[TICKER] STATE` in mono) and opens the account menu: a small panel above it (the browser's own popover: no script, Escape or a click outside closes it) with Token Management, Access tokens and Log out. Those live only there, never in the sidebar or elsewhere. Services is a sidebar item in Account instead, as in AA (where pilots look to link Discord), for those with a service to link. Admins arrange the sections, items, folders (a collapsible item, open while one of its pages is shown) and custom links on the Menu page; the default is Account, Fleet, Industry, Corporation, Apps and Admin, and a section with nothing this person may open isn't shown. Apps' links go in the section their manifest names (Fleet for Fleet Activity Tracking, Fleet Operations, Ship Replacement, Structure Timers and Fittings; Industry for Moon Mining and Structures; Corporation for Member Audit and HR Applications), or Apps. AA's officer tools are sidebar items for whoever holds their permissions, as in AA, and stay in the Administration hub too: Corporation Stats and the Compliance Report open the Corporation section, and Permissions Audit sits in Admin under Administration. Admin otherwise holds one item, Administration (see below); every other admin page starts hidden in the sidebar, and admins can pin any of them on the Menu page. A menu an admin has saved keeps its arrangement: new defaults apply only to items it has no entry for.
+
+**Portraits and logos**: square, in a 1px `--faint` frame with 2px padding at 54px and up; the corporation logo overlaps a portrait's bottom-right corner as a 20px square with a 2px `--card` ring. Initials on `--muted` when there is no picture.
+
+**Watermark**: on pages showing sensitive data, a single line in 11px Plex Mono, `--faint`, bottom-right of the data panel: `Viewing as <character> · <EVE time>`. Decorative, `aria-hidden`. Only where it matters: app pages showing members' data. Never on the Dashboard or its widgets.
+
+**Toasts** confirm an action or explain why it didn't happen, without moving the page: bottom-right, at most 400px wide, 24px from the edges. Each toast is a bracketed panel with 12px padding (no shadow): a 6px square (blue for done, red for a problem), one line of 13px text, and a quiet Undo or close. Done toasts leave after 4 seconds, problems after 8, and hovering keeps them. New ones stack above older ones, three at most. They fade in and rise 4px over 150ms (none under reduced motion). `role="status"`, or `role="alert"` for problems. The server asks for one with an `HX-Trigger` header (`{"toast": {"message": "...", "tone": "done" | "problem"}}`); `assets/live.js` draws it with text only, never markup.
+
+**Icons**: Lucide-style outline icons, 16px, stroke width 2, `currentColor`, square caps where the icon allows. Bundled as inline SVG, never fetched. No emoji.
 
 ## Page hygiene and state
 
@@ -167,24 +184,26 @@ Sudo mode's interstitial (`/reauthenticate`), shown when an owner-only or sensit
 
 ## Motion
 
-Motion says something arrived or is on its way; it never decorates. Everything moves for 200ms or less (the progress line, which grows for as long as a request takes, aside), eases out, and uses opacity and at most a 4px rise: no scaling, bouncing, sliding panels or parallax. Under `prefers-reduced-motion: reduce`, none of it happens.
+Motion says something arrived, is on its way, or that the ship is alive; it never gets in the way. Interface motion lasts 200ms or less (the progress line aside), eases out, and uses opacity and at most a 4px rise. Under `prefers-reduced-motion: reduce`, none of it happens, the sky included.
 
-- **Page content** fades in and rises 4px over 180ms when a page arrives (not when it is swapped in place: a tab, a filter, an action). The sidebar, top bar and rail stay still. The overview's tiles follow each other 25ms apart, at most 100ms.
+- **The sky** (ambient, behind every page): a navigation-chart dot grid (1px dots every 24px) panning slowly diagonally (24px per 16s, seamless), two sparse star layers drifting at different speeds for depth (110s and 240s per tile), a few glints fading in and out (5s), and a faint blue scan sweep top to bottom about every 12s. It lives in one fixed layer behind the page; panels are opaque, so it never moves under text. It is the only decoration allowed to move continuously, and it stops under reduced motion.
+- **Page content** fades in and rises 4px over 180ms when a page arrives (not when it is swapped in place: a tab, a filter, an action). The status strip, sidebar and rail stay still. Tiles and cards follow each other 25ms apart, at most 100ms.
 - **Swapped content** (htmx fragments) fades in over 150ms.
-- **Progress**: while a request runs, a 2px `--muted-foreground` line grows across the top of the page, appearing only after 150ms so quick requests show nothing. It is neutral, not the accent.
+- **Progress**: while a request runs, a 2px `--foreground-soft` line grows across the top of the page, appearing only after 150ms so quick requests show nothing.
+- **Alarms**: a reinforced or attacked structure's core square pulses (1.6s); a breathing outline marks a proposed (not yet real) plan. Nothing else pulses.
 - **Folders** in the sidebar open and close over 150ms where the browser can animate to auto height, and snap elsewhere.
-- **Hover and state changes**: 150ms color and opacity transitions, as before.
-- Counts and countdowns never animate between values: they change in place (Geist Mono keeps them from jittering).
+- **Hover and state changes**: 150ms colour transitions.
+- Counts and countdowns never animate between values: they change in place (Plex Mono keeps them from jittering).
 
 ## Data display
 
 - **Relative times** for recent events ("1h 12m ago") with the absolute EVE time in a tooltip or sub-line.
-- **Countdowns** in Geist Mono, updated live from the server (server-sent events); the nearest one gets the accent color. A countdown to an instant that is already known (a skill finishing, a timer) ticks in the browser instead, from the bundled `assets/live.js`, with the absolute EVE time in its tooltip: `2d 4h 13m` over a day, `4h 13m` over an hour, `13m 05s` under it. Once the instant passes it reads `done`.
+- **Countdowns** in Plex Mono (`T− 2d 4h`), updated live from the server (server-sent events); the nearest one gets the accent color. A countdown to an instant that is already known (a skill finishing, a timer) ticks in the browser instead, from the bundled `assets/live.js`, with the absolute EVE time in its tooltip: `T− 2d 4h 13m` over a day, `T− 4h 13m` over an hour, `T− 13m 05s` under it. Once the instant passes it reads `done`.
 - **EVE time (UTC)** everywhere, labeled "EVE".
 - **ISK** abbreviated in tables (`1.24b`, `350.2m`), full value on hover or in detail views.
 - **EVE names** (systems, moons, structures, characters) exactly as ESI returns them. Character portraits and corp or alliance logos come from CCP's image server at 32px in tables and 36px in the sidebar (20px as an app's entity values, 64px in a profile), with initials as the fallback.
 
-**State badges** show an account's access state as a status badge: Member in the accent, Blue in info, Guest and admin-made states neutral. The label is always the state's name.
+**State badges** show an account's access state as a status badge: Member in the signal, Blue in info, Guest and admin-made states neutral. The label is always the state's name.
 
 ## Configuration pages
 
@@ -193,7 +212,7 @@ Admin settings must make sense without documentation open. Alliance Auth's setti
 - **Plain language, in terms of pilots.** Each setting carries one sentence on its effect ("Pilots whose main is in one of these get Member"), never internal names. Headings name the thing, not the table.
 - **Ordered lists are cards in order.** When order matters (states), each item is a card, top first, with up and down icon buttons, and one sentence says how the order is used ("The highest match wins").
 - **EVE entities are chips.** An alliance, corporation or character in a list is a chip: 20px logo or portrait, name, kind in muted text, and a remove icon button with an `aria-label`. They are added with an exact-name search whose results show the logo and kind before anything is added.
-- **Live counts.** Next to each item, how many accounts it covers right now, in Geist Mono.
+- **Live counts.** Next to each item, how many accounts it covers right now, in Plex Mono.
 - **Preview before impact.** A change that would move any account's access shows a confirmation first, listing where accounts move ("12 accounts: Guest → Member") with Apply and Cancel. A change that moves nobody applies at once. Plain forms work without JavaScript; htmx only makes them smoother.
 - **Built-ins are marked.** Built-in items that can't be renamed or removed carry a lock icon and a one-line reason instead of hidden or disabled buttons.
 - **Works from defaults.** A fresh instance's defaults are usable as they are, and empty states say what to do next.
@@ -210,13 +229,13 @@ Admin settings must make sense without documentation open. Alliance Auth's setti
 
 Plugins never ship their own styles. They return a declarative page description (headers, stat rows, tables, cards, tabs, forms, badges, profiles, card grids, row actions, text to copy, links to share) and the host renders it with these components, so every plugin looks native. Any exception needs a documented reason and still uses these tokens.
 
-- **Page header**: the title, the one-line description under it, and on the right the page's own links (sub-pages such as "Skill Sets · Character Finder · Reports") as a segmented control like Tabs, the current page marked, then at most one primary button that opens a page ("Create timer"). Links to sub-pages live here, never in "More" cards at the bottom.
-- **Entities** (a character, corporation, alliance, faction, or an item or ship type) are their 20px picture from CCP's image server, `--radius-sm`, then the name at 14px: portraits for characters, logos for corporations, alliances and factions, icons for types (CCP's 32px icon). The host builds the image address from the kind and id; a plugin never supplies a URL. No id (0 or less) gets initials on `--muted`, as avatars do. In tables the picture sits before the name.
-- **Row actions**: buttons that post (Approve, Reject, Close) sit in a table's cell as small 32px buttons, right-aligned, several side by side: outline by default, outline with `--destructive` text for destructive ones, primary only for a region's one main action. A destructive or far-reaching one asks first: the browser's own popover, centred over a dimmed page, 360px wide, `--card` fill, 20px padding, with one sentence stating the consequence ("Its 4 members lose access"), then Cancel (outline) and the action, filled destructive or primary. No script; Escape or a click outside cancels.
-- **Text to copy** (a fitting in EFT format, a list): a card with its title on the left of the header and a small outline Copy button on the right; the text in Geist Mono at 13px, exactly as given (spaces and line breaks kept), on `--background` with a 1px border, `--radius-sm`, 12px padding, scrolling past 384px. The button reads "Copied" for 1.5s after copying; where the browser can't copy, it selects the text instead. The host's own single values to copy (a group's direct join link) use the same button and script: a read-only field with the outline Copy button beside it. So does an app's link to share (a FAT link's register page, an SRP fleet's request page): the app names one of its own pages and the host writes the full address from the site's address (as the join link's), 12px Geist Mono in the field, the small Copy button beside it, at most 384px wide.
-- **Profile**: the top of a page about one character (or corporation). A card with the 64px portrait or logo on the left (`--radius`), then the name as an h2 at 20px/600 with an optional muted 13px subtitle, and on one line under it the corporation and alliance as 20px entities in `--foreground-soft`. Badges (neutral or status) follow the name. Under them, the facts: a grid of three columns (two below 1280px, four from 1536px), each a 12px muted label over its 14px value; numbers, ISK, times and countdowns in Geist Mono. It replaces a tall label/value card as a page's overview.
-- **Card grid** (My Characters): compact profiles, one card per character, in a grid of cards at least 288px wide (as many across as fit), 16px apart. Each card: the 64px portrait (`--radius`) with the corporation and alliance logos (20px, a 2px `--card` ring) overlapping its bottom-right corner, then beside it the name at 15px/600 (a link to the card's page, the portrait too), badges, an optional 12px muted subtitle, and the corporation and alliance names in 12px `--foreground-soft`. Under a top border, the facts one per line: the 12px muted label on the left, the value right-aligned (Geist Mono for numbers, ISK and times; a progress bar 160px wide). For an app that reads the characters pilots register for it (user scopes), the host may start the grid with its own **Register Character** card, which opens registering for that app: a dashed `--border` card, a 64px `--muted` square holding a plus icon, "Register another character" at 15px/600 and one muted line. The app asks for it; it never gets a link outside its own pages.
-- **Progress**: a 4px bar, `--muted` track, `--foreground-soft` fill, `--radius-sm`, full width of its cell, with an optional 12px muted label and the percentage in Geist Mono above it. A bar between two known instants (a skill in training) fills live in the browser. Neutral, never the accent; no animation between values (it moves as time does).
+- **Page header**: the title, the one-line description under it, and on the right the page's own links (sub-pages such as "Skill Sets · Character Finder · Reports") as filter keys (see Tabs and filter keys), the current page marked, then at most one primary button (cut corner) that opens a page ("Create timer"). Links to sub-pages live here, never in "More" cards at the bottom.
+- **Entities** (a character, corporation, alliance, faction, or an item or ship type) are their 20px square picture from CCP's image server, then the name at 14px: portraits for characters, logos for corporations, alliances and factions, icons for types (CCP's 32px icon). The host builds the image address from the kind and id; a plugin never supplies a URL. No id (0 or less) gets initials on `--muted`, as avatars do. In tables the picture sits before the name.
+- **Row actions**: buttons that post (Approve, Reject, Close) sit in a table's cell as small 28px buttons, right-aligned, several side by side: quiet for low-weight ones (Reject turns red on hover), outline by default, primary (cut) only for the row's one main action. A destructive or far-reaching one asks first: the browser's own popover, centred over a dimmed page, 360px wide, a bracketed panel, 20px padding, with one sentence stating the consequence ("Its 4 members lose access"), then Cancel (outline) and the action, filled destructive or primary. No script; Escape or a click outside cancels.
+- **Text to copy** (a fitting in EFT format, a list): a card with its title on the left of the header and a small outline Copy button on the right; the text in Plex Mono at 12px, exactly as given (spaces and line breaks kept), on `--background` with a 1px border, 12px padding, scrolling past 384px. The button reads "Copied" for 1.5s after copying; where the browser can't copy, it selects the text instead. The host's own single values to copy (a group's direct join link) use the same button and script: a read-only field with the outline Copy button beside it. So does an app's link to share (a FAT link's register page, an SRP fleet's request page): the app names one of its own pages and the host writes the full address from the site's address (as the join link's), 12px Plex Mono in the field, the small Copy button beside it, at most 384px wide.
+- **Profile**: the top of a page about one character (or corporation). A bracketed panel with the 64–100px framed portrait or logo on the left, an overline over the name (the subtitle, e.g. "Capsuleer · alt of …"), the name as an h2 at 20–32px/600 in Archivo at 125% width, and on one line under it the corporation and alliance as 20px entities in `--foreground-soft`. Badges (neutral or status) follow the name. Under them, the facts: a grid of three columns (two below 1280px, four from 1536px), each an overline label over its 14px value (or dotted-leader ledger lines in narrow panels); numbers, ISK, times and countdowns in Plex Mono. Key numbers can instead be a readout row under the profile. It replaces a tall label/value card as a page's overview.
+- **Card grid** (My Characters): compact profiles, one card per character, in a grid of bracketed cards at least 288px wide (as many across as fit), 14px apart. Each card: the 54–64px framed portrait with the corporation and alliance logos (20px, a 2px `--card` ring) overlapping its bottom-right corner, then beside it the name at 15px/600 (a link to the card's page, the portrait too), badges, an optional 12px muted subtitle, and the corporation and alliance names in 12px `--foreground-soft`. Under it, the facts as ledger lines (label, dotted leader, value right-aligned; Plex Mono for numbers, ISK and times), then training as a segmented bar with its countdown, then a mono footer (`SYNCED 4M AGO`). For an app that reads the characters pilots register for it (user scopes), the host may start the grid with its own **Register Character** card, which opens registering for that app: a dashed `--faint` card, a 64px `--muted` square holding a plus icon, "Register another character" at 15px/600 and one muted line. The app asks for it; it never gets a link outside its own pages.
+- **Progress**: a segmented bar (see Components), full width of its cell, with an optional 12px muted label and the percentage in Plex Mono above it. A bar between two known instants (a skill in training) fills live in the browser. Bone by default; the signal only when the plugin marks it urgent; no animation between values (it moves as time does).
 - **Tabs** are links carrying the page's query plus the host's `_tab`; htmx swaps only the content (`#plugin-content`), pushes the address and keeps the scroll position. **Forms and row actions** post to the page's own address (with its query and tab), and the answer replaces the content in place with a toast; a page the app answers with is shown there, under the same tab and query, and an app's redirect to the same page keeps the tab. A button in a Dashboard widget leaves the viewer on the Dashboard.
 - **Live pages**: a page that says it is still filling in (a first sync) reloads its content in place every few seconds (5 to 300) while it says so, and stops once it doesn't. The content swaps without the fade and without scrolling, so the page doesn't blink; a page with a form never reloads under someone typing, and an audited page never reloads at all.
 
@@ -228,10 +247,11 @@ Plugins never ship their own styles. They return a declarative page description 
 
 ## Don't
 
-- No drop shadows, gradients, glows or glassmorphism.
-- No more than one accent color per screen.
+- No drop shadows, gradients, glows or glassmorphism (the sky's faint sweep is the one gradient, and it sits behind everything).
+- No rounded corners, and no cut corners except on the primary button and the active key.
+- No more than one signal colour on a screen's key element; blue and red only for their meanings.
 - No Google Fonts, CDNs or remote assets at runtime.
 - No emoji in the UI.
-- No animation longer than 200ms except the progress line, and none that ignores reduced motion.
+- No interface animation longer than 200ms except the progress line, the sky and the two alarms, and none that ignores reduced motion.
 - No zebra-striped tables or heavy table borders.
 - No light-gray text below 4.5:1 contrast for anything a user needs to read.

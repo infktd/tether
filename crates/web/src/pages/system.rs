@@ -479,3 +479,29 @@ pub async fn audit_log(
     let older = more.then(|| rows.last().map(|r| r.id)).flatten();
     Ok(render(StatusCode::OK, &AuditPage { shell, rows, older }))
 }
+
+#[derive(Template)]
+#[template(path = "status_strip.html")]
+struct StatusStrip {
+    /// Pilots online, with thousands separators.
+    players: Option<String>,
+    problem: String,
+}
+
+/// `GET /status/strip`: Tranquility and ESI for every page's status strip
+/// (DESIGN.md). Signed-in only, so it's no free ESI relay; ESI's own
+/// cache answers most of these.
+pub async fn strip(
+    State(state): State<AppState>,
+    _session: CurrentSession,
+) -> Result<Response, PageError> {
+    let (players, problem) = esi_status(&state).await;
+    Ok(render(
+        StatusCode::OK,
+        &StatusStrip {
+            players: players.map(super::plugin_pages::grouped),
+            problem: problem.unwrap_or_default(),
+        },
+    ))
+}
+

@@ -13,12 +13,20 @@
 <title>{% block title %}{% endblock %} · Tether</title>
 </head>
 <body hx-indicator="#page-progress">
+{#- The sky (DESIGN.md, Motion): one fixed layer behind the page. -#}
+<div class="sky" aria-hidden="true" hx-preserve id="sky"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>
+{#- The status strip: wordmark, EVE time, Tranquility and ESI, the page's
+    trail, the bell. -#}
+<header class="status-strip">
+  <a href="/" class="wordmark" aria-label="Tether, home">{% include "wordmark.html" %}</a>
+  <span>EVE <span class="text-foreground" data-eve-clock>--:--:--</span></span>
+  <span id="tq-status" hx-get="/status/strip" hx-trigger="load, every 60s" hx-swap="innerHTML" class="flex items-center gap-7"></span>
+  <nav class="trail" aria-label="Breadcrumb">{% block breadcrumb %}{% endblock %}</nav>
+  {% include "notification_bell.html" %}
+</header>
 <div class="app-shell{% if shell.admin_rail.is_some() %} has-rail{% endif %}">
   <aside class="app-sidebar">
-    <div class="h-16 flex items-center px-5 border-b">
-      <a href="/" class="text-[15px] font-semibold tracking-tight">Tether</a>
-    </div>
-    <nav class="flex-1 overflow-y-auto px-3 py-5 flex flex-col gap-6" aria-label="Main">
+    <nav class="flex-1 overflow-y-auto px-3 py-5 flex flex-col gap-5" aria-label="Main">
       {% for section in shell.menu %}
       <div class="flex flex-col gap-1">
         <div class="nav-heading">{{ section.label }}</div>
@@ -60,7 +68,7 @@
   </aside>
   {% if let Some(rail) = shell.admin_rail %}
   <nav class="admin-rail" aria-label="Administration">
-    <div class="h-16 shrink-0 flex items-center px-5 border-b text-sm font-semibold">Administration</div>
+    <div class="shrink-0 px-5 pt-5 pb-1 ov">Administration</div>
     <div class="flex flex-col gap-5 overflow-y-auto px-3 py-5">
       <a href="/admin" class="admin-rail-item">Overview</a>
       {% for g in rail %}
@@ -76,11 +84,7 @@
   {% endif %}
   <div class="flex flex-col min-w-0 relative">
     <div id="page-progress" class="page-progress htmx-indicator" aria-hidden="true"></div>
-    <header class="h-16 border-b flex items-center gap-4 px-8 text-sm text-muted-foreground">
-      <div class="min-w-0 flex-1 truncate">{% block breadcrumb %}{% endblock %}</div>
-      {% include "notification_bell.html" %}
-    </header>
-    <main class="px-8 py-7 flex flex-col gap-6 w-full max-w-[1440px]">
+    <main class="px-9 py-7 flex flex-col gap-5 w-full max-w-[1440px]">
       {% if shell.no_main %}
       <div class="alert" data-variant="destructive" role="status">
         <section class="flex flex-wrap items-center justify-between gap-3">

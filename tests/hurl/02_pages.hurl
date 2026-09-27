@@ -137,13 +137,13 @@ HTTP 200
 [Asserts]
 header "Content-Type" == "text/javascript; charset=utf-8"
 
-GET {{base}}/static/fonts/Geist-Variable.woff2
+GET {{base}}/static/fonts/Archivo-Variable.woff2
 HTTP 200
 [Asserts]
 header "Content-Type" == "font/woff2"
 header "Cache-Control" contains "immutable"
 
-GET {{base}}/static/fonts/GeistMono-Variable.woff2
+GET {{base}}/static/fonts/IBMPlexMono-Variable.woff2
 HTTP 200
 
 GET {{base}}/no-such-page

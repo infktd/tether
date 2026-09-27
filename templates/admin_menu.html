@@ -24,7 +24,7 @@
     <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="new_tab" value="on"{% if n.new_tab %} checked{% endif %}> New tab</label>
     {% endif %}
     <label class="sr-only" for="parent-{{ n.reference }}">In</label>
-    <select class="select input h-8 text-sm" id="parent-{{ n.reference }}" name="parent">
+    <select class="select input h-8 text-sm w-56 shrink-0" id="parent-{{ n.reference }}" name="parent">
       {% for p in places %}{% if !(n.is_folder() && p.folder) && p.reference != n.reference %}<option value="{{ p.reference }}"{% if p.reference == n.parent %} selected{% endif %}>{{ p.label }}</option>{% endif %}{% endfor %}
     </select>
     <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="hidden" value="on"{% if n.hidden %} checked{% endif %}> Hidden</label>

@@ -2,13 +2,16 @@
 <html lang="en" class="dark">
 <head>
 {% include "head.html" %}
+<script src="/static/live.js" defer></script>
 <title>{% block title %}{% endblock %} · Tether</title>
 </head>
 <body>
-<main class="min-h-screen flex items-start justify-center px-4 py-24">
+<div class="sky" aria-hidden="true"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>
+<main class="min-h-screen flex items-start justify-center px-4 py-20">
   <div class="w-full {% block width %}max-w-[400px]{% endblock %} flex flex-col gap-6">
-    <div class="text-[15px] font-semibold tracking-tight">Tether</div>
+    <a href="/" class="wordmark signin-wordmark" aria-label="Tether, home">{% include "wordmark.html" %}</a>
     {% block content %}{% endblock %}
+    <p class="num text-xs text-muted-foreground">EVE <span class="text-foreground" data-eve-clock>--:--:--</span></p>
   </div>
 </main>
 </body>

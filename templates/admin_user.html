@@ -109,18 +109,24 @@
       </ul>
       {% endif %}
     </section>
+    {% if permissions.is_empty() %}
     <section class="card data-card">
-      <header><h2>Permissions <span class="num text-muted-foreground font-normal">{{ permissions.len() }}</span></h2></header>
-      {% if permissions.is_empty() %}
+      <header><h2>Permissions <span class="num">0</span></h2></header>
       <p class="px-5 pb-5 text-sm text-muted-foreground">Holds no permissions.</p>
-      {% else %}
-      <ul class="px-5 pb-5 flex flex-wrap gap-2">
-        {% for p in permissions %}
-        <li>{% if link_audit %}<a class="badge num" data-variant="outline" href="/admin/permissions/audit/{{ p }}">{{ p }}</a>{% else %}<span class="badge num" data-variant="outline">{{ p }}</span>{% endif %}</li>
-        {% endfor %}
-      </ul>
-      {% endif %}
     </section>
+    {% else %}
+    {#- A long list: summarised, opened on demand (DESIGN.md). -#}
+    <details class="card card-disclosure self-start">
+      <summary>Permissions <span class="num">{{ permissions.len() }}</span></summary>
+      <section>
+        <ul class="flex flex-wrap gap-2">
+          {% for p in permissions %}
+          <li>{% if link_audit %}<a class="badge num" data-variant="outline" href="/admin/permissions/audit/{{ p }}">{{ p }}</a>{% else %}<span class="badge num" data-variant="outline">{{ p }}</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    </details>
+    {% endif %}
   </div>
 
   {% if grantable.is_some() || !own_grants.is_empty() %}

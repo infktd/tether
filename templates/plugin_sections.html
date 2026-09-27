@@ -47,7 +47,8 @@
 {%- else if let Some(c) = v.countdown -%}<time class="num" datetime="{{ c.at }}" title="{{ c.title }}" data-countdown>{{ c.text }}</time>
 {%- else if let Some(p) = v.progress -%}<span class="meter-value">
 <span class="meter-meta">{% if let Some(label) = p.label %}<span class="truncate">{{ label }}</span>{% endif %}<span class="num ml-auto" data-percent>{{ p.percent }}%</span></span>
-<progress class="meter" max="1" value="{{ p.value }}"{% if let Some(from) = p.from %} data-from="{{ from }}"{% endif %}{% if let Some(to) = p.to %} data-to="{{ to }}"{% endif %}{% if let Some(label) = p.label %} aria-label="{{ label }}"{% endif %}>{{ p.percent }}%</progress>
+<progress class="sr-only" max="1" value="{{ p.value }}"{% if let Some(from) = p.from %} data-from="{{ from }}"{% endif %}{% if let Some(to) = p.to %} data-to="{{ to }}"{% endif %}{% if let Some(label) = p.label %} aria-label="{{ label }}"{% endif %}>{{ p.percent }}%</progress>
+<span class="segbar" aria-hidden="true">{% for lit in p.cells %}<span{% if *lit %} data-lit{% endif %}></span>{% endfor %}</span>
 </span>
 {%- else if let Some(href) = v.href -%}{% if v.primary %}<a class="btn" data-variant="primary" data-size="sm" href="{{ href }}">{{ v.text }}</a>{% else %}<a class="underline underline-offset-4" href="{{ href }}">{{ v.text }}</a>{% endif %}
 {%- else if let Some(variant) = v.badge -%}<span class="badge"{% if !variant.is_empty() %} data-variant="{{ variant }}"{% endif %}>{{ v.text }}</span>
@@ -59,7 +60,7 @@
 {% for s in list %}
 {% match s %}
 {% when SectionView::Stats(stats) %}
-<section class="grid grid-cols-4 gap-4">
+<section class="readouts">
   {% for stat in stats %}
   <div class="card stat">
     <div class="stat-label">{{ stat.label }}</div>
@@ -88,9 +89,9 @@
 <section class="card">
   <header><h2>{{ card.title }}</h2>{% if let Some(d) = card.description %}<p>{{ d }}</p>{% endif %}</header>
   <section>
-    <dl class="grid gap-4 text-sm">
+    <dl class="ledger-dl">
       {% for (label, v) in card.fields %}
-      <div class="grid gap-1"><dt class="font-medium">{{ label }}</dt><dd class="break-words">{% call value(v, false) %}{% endcall %}</dd></div>
+      <div><dt>{{ label }}</dt><dd>{% call value(v, false) %}{% endcall %}</dd></div>
       {% endfor %}
     </dl>
   </section>
@@ -103,11 +104,11 @@
     <div class="flex items-center gap-4">
       {% call picture(p.subject) %}{% endcall %}
       <div class="flex min-w-0 flex-col gap-1.5">
+        {% if let Some(s) = p.subtitle %}<p class="ov">{{ s }}</p>{% endif %}
         <div class="flex flex-wrap items-center gap-2">
           <h2 class="profile-name">{{ p.subject.name }}</h2>
           {% for b in p.badges %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endfor %}
         </div>
-        {% if let Some(s) = p.subtitle %}<p class="text-[13px] text-muted-foreground">{{ s }}</p>{% endif %}
         {% if p.corporation.is_some() || p.alliance.is_some() %}
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-foreground-soft">
           {% if let Some(e) = p.corporation %}{% call entity(e) %}{% endcall %}{% endif %}
@@ -155,7 +156,7 @@
       </div>
     </div>
     {% if !p.facts.is_empty() %}
-    <dl class="grid-card-facts">
+    <dl class="grid-card-facts ledger-dl">
       {% for (label, v) in p.facts %}
       <div><dt>{{ label }}</dt><dd>{% call value(v, false) %}{% endcall %}</dd></div>
       {% endfor %}

@@ -1,33 +1,74 @@
-{% extends "bare.html" %}
-{% block title %}Log in{% endblock %}
-{% block content %}
-{% if sso_ready %}
-<section class="card">
-  <header>
-    <h2>Log in</h2>
-    <p>Use your EVE Online character. You log in on CCP's site; Tether never sees your password.</p>
-  </header>
-  <section>
-    <a href="/auth/login" class="btn w-full" data-variant="primary">Log in with EVE Online</a>
+{#- Sign in (DESIGN.md, the canvas's Sign in): the wordmark, one line of
+    purpose, one EVE login, and the tether drawing turning on the right.
+    Public: it shows nothing about the instance's size or members. -#}
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+{% include "head.html" %}
+<script src="/static/live.js" defer></script>
+<title>Log in · Tether</title>
+</head>
+<body>
+<div class="sky" aria-hidden="true"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>
+<main class="signin">
+  <section class="signin-copy">
+    <div class="wordmark signin-wordmark">{% include "wordmark.html" %}</div>
+    <div class="flex flex-col gap-7">
+      <div class="ov">Self-hosted · for EVE Online alliances and corporations</div>
+      <h1 class="signin-title">Every pilot,<br>accounted for.</h1>
+      {% if sso_ready %}
+      <p class="signin-lede">Log in with your EVE character to reach fleets, timers, SRP and the rest of your alliance's tools. You log in on CCP's site; Tether never sees your password.</p>
+      <div class="flex flex-wrap items-center gap-5">
+        <a href="/auth/login" class="btn signin-cta" data-variant="primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>
+          Log in with EVE Online</a>
+        <span class="num text-xs text-muted-foreground">SSO · login.eveonline.com</span>
+      </div>
+      {% if !setup_complete %}
+      <p class="text-xs text-muted-foreground">Setting up this instance? <a href="/setup" class="underline underline-offset-4">Open the setup wizard</a>.</p>
+      {% endif %}
+      {% else %}
+      <p class="signin-lede">EVE Online login isn't set up on this instance yet.</p>
+      <div>
+        {% if setup_complete %}
+        <p class="text-sm text-muted-foreground">A superuser needs to connect its EVE application again.</p>
+        {% else %}
+        <a href="/setup" class="btn signin-cta" data-variant="primary">Open the setup wizard</a>
+        {% endif %}
+      </div>
+      {% endif %}
+      <div class="num flex gap-6 border-t pt-4 text-xs text-muted-foreground">
+        <span>EVE <span class="text-foreground" data-eve-clock>--:--:--</span></span>
+        <span>ADMINS LOG IN HERE TOO</span>
+      </div>
+    </div>
+    <p class="signin-legal">EVE Online and the EVE logo are the registered trademarks of CCP hf. All rights are reserved worldwide. Tether is a free, self-hosted tool and is not affiliated with CCP.</p>
   </section>
-  <footer class="text-xs text-muted-foreground">Admins log in here too. Admin pages appear in the sidebar for whoever holds their permissions.</footer>
-</section>
-{% if !setup_complete %}
-<p class="text-xs text-muted-foreground">Setting up this instance? <a href="/setup" class="underline underline-offset-4">Open the setup wizard</a>.</p>
-{% endif %}
-{% else %}
-<section class="card">
-  <header>
-    <h2>Log in</h2>
-    <p>EVE Online login isn't set up on this instance yet.</p>
-  </header>
-  <section>
-    {% if setup_complete %}
-    <p class="text-sm text-muted-foreground">The instance's owner needs to connect its EVE application again.</p>
-    {% else %}
-    <a href="/setup" class="btn w-full" data-variant="primary">Open the setup wizard</a>
-    {% endif %}
+  <section class="signin-art" aria-hidden="true">
+    <svg width="720" height="720" viewBox="0 0 720 720" fill="none">
+      <circle cx="360" cy="360" r="330" stroke="#1c2530"/>
+      <circle cx="360" cy="360" r="250" stroke="#1c2530" stroke-dasharray="2 6"/>
+      <circle cx="360" cy="360" r="160" stroke="#1c2530"/>
+      <circle class="signin-pulse" cx="360" cy="360" r="90" stroke="#4da3ff" stroke-opacity=".35"/>
+      <path d="M360 20v24M360 676v24M20 360h24M676 360h24" stroke="#2a3645"/>
+      <g class="signin-orbit">
+        <path d="M360 360 C 420 300, 520 250, 555 147" stroke="#566579"/>
+        <path d="M360 360 C 300 430, 230 520, 150 585" stroke="#566579"/>
+        <path d="M360 360 C 450 390, 560 430, 604 486" stroke="#566579"/>
+        <rect x="547" y="139" width="16" height="16" fill="#0c1016" stroke="#e7e3d8"/>
+        <rect x="142" y="577" width="16" height="16" fill="#0c1016" stroke="#e7e3d8"/>
+        <rect x="596" y="478" width="16" height="16" fill="#0c1016" stroke="var(--accent)"/>
+      </g>
+      <g class="signin-orbit-back">
+        <path d="M360 360 C 330 290, 260 240, 222 198" stroke="#3c4a5c" stroke-dasharray="3 4"/>
+        <rect x="216" y="192" width="12" height="12" fill="#0c1016" stroke="#a9afb7"/>
+        <path d="M360 360 C 380 280, 400 240, 440 205" stroke="#3c4a5c" stroke-dasharray="3 4"/>
+        <rect x="434" y="199" width="12" height="12" fill="#0c1016" stroke="#a9afb7"/>
+      </g>
+      <rect x="340" y="340" width="40" height="40" fill="#0c1016" stroke="#e7e3d8" stroke-width="1.5"/>
+      <rect x="352" y="352" width="16" height="16" fill="#e7e3d8"/>
+    </svg>
   </section>
-</section>
-{% endif %}
-{% endblock %}
+</main>
+</body>
+</html>

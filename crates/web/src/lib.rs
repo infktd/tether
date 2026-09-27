@@ -122,6 +122,7 @@ pub fn router(state: AppState) -> Router {
             post(pages::notifications::delete_read),
         )
         .route("/notifications/stream", get(pages::notifications::stream))
+        .route("/status/strip", get(pages::system::strip))
         .route("/notifications/{id}", get(pages::notifications::show))
         .route(
             "/notifications/{id}/delete",

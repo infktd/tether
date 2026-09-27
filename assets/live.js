@@ -13,14 +13,21 @@
     const h = Math.floor((seconds % 86400) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
-    if (d > 0) return `${d}d ${h}h ${m}m`;
-    if (h > 0) return `${h}h ${m}m`;
-    if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
-    return `${s}s`;
+    if (d > 0) return `T\u2212 ${d}d ${h}h ${m}m`;
+    if (h > 0) return `T\u2212 ${h}h ${m}m`;
+    if (m > 0) return `T\u2212 ${m}m ${String(s).padStart(2, "0")}s`;
+    return `T\u2212 ${s}s`;
   };
 
+  const pad = (n) => String(n).padStart(2, "0");
   const tick = () => {
     const now = Date.now();
+    // The status strip's EVE clock (UTC).
+    const d = new Date(now);
+    const clock = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    for (const el of document.querySelectorAll("[data-eve-clock]")) {
+      if (el.textContent !== clock) el.textContent = clock;
+    }
     for (const el of document.querySelectorAll("time[data-countdown]")) {
       const at = Date.parse(el.getAttribute("datetime"));
       if (Number.isNaN(at)) continue;
@@ -37,9 +44,16 @@
       bar.textContent = percent;
       const shown = bar.parentElement && bar.parentElement.querySelector("[data-percent]");
       if (shown && shown.textContent !== percent) shown.textContent = percent;
+      // The segmented bar beside it: light as many cells as the fraction.
+      const cells = bar.parentElement ? bar.parentElement.querySelectorAll(".segbar > span") : [];
+      const lit = Math.round(fraction * cells.length);
+      cells.forEach((cell, i) => {
+        if ((i < lit) !== cell.hasAttribute("data-lit")) cell.toggleAttribute("data-lit", i < lit);
+      });
     }
   };
   setInterval(tick, 1000);
+  tick();
 
   // Staying on the page (DESIGN.md, Page hygiene and state). A boosted
   // link or GET form to the page already shown (a tab, a filter, the next

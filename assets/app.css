@@ -6,59 +6,64 @@
 
 @source "../templates";
 
-/* Fonts are bundled and served by the host; never a CDN (CLAUDE.md). */
+/* Fonts are bundled and served by the host; never a CDN (CLAUDE.md).
+   Archivo carries its width axis for the expanded titles. */
 @font-face {
-  font-family: "Geist";
-  src: url("/static/fonts/Geist-Variable.woff2") format("woff2");
+  font-family: "Archivo";
+  src: url("/static/fonts/Archivo-Variable.woff2") format("woff2");
   font-weight: 100 900;
+  font-stretch: 62% 125%;
   font-display: swap;
 }
 @font-face {
-  font-family: "Geist Mono";
-  src: url("/static/fonts/GeistMono-Variable.woff2") format("woff2");
-  font-weight: 100 900;
+  font-family: "IBM Plex Mono";
+  src: url("/static/fonts/IBMPlexMono-Variable.woff2") format("woff2");
+  font-weight: 100 700;
   font-display: swap;
 }
 
-/* Tokens from docs/DESIGN.md. Dark only for v1; `.dark` is on <html>, and
-   listing both keeps these ahead of Basecoat's defaults. */
+/* Tokens from docs/DESIGN.md (flight deck). Dark only; `.dark` is on
+   <html>, and listing both keeps these ahead of Basecoat's defaults. */
 :root,
 .dark {
   /* surfaces */
-  --background: #09090b;
-  --sidebar: #0c0c0e;
-  --card: #0c0c0e;
-  --muted: #18181b;
-  --accent-surface: #1c1c20;
+  --background: #07090c;
+  --sidebar: rgba(7, 9, 12, 0.8);
+  --card: #0c1016;
+  --muted: #121820;
+  --accent-surface: #0f141b;
 
   /* text */
-  --foreground: #fafafa;
-  --foreground-soft: #d4d4d8;
-  --muted-foreground: #a1a1aa;
-  --faint: #3f3f46;
+  --foreground: #e7e3d8;
+  --foreground-soft: #a9afb7;
+  --muted-foreground: #7c8591;
+  --faint: #2a3645;
 
   /* lines */
-  --border: #27272a;
-  --input: #27272a;
-  --ring: #a1a1aa;
+  --border: #1c2530;
+  --bracket: #566579;
+  --input: #1c2530;
+  --ring: #a9afb7;
 
-  /* primary action: inverted, white on dark */
-  --primary: #fafafa;
-  --primary-foreground: #09090b;
+  /* primary action: bone fill, void text */
+  --primary: #e7e3d8;
+  --primary-foreground: #07090c;
 
-  /* accent: one per screen */
-  --accent: #f59e0b;
-  --accent-soft: #292012;
+  /* signal: one per screen (per-instance, /theme.css) */
+  --accent: #ff7a1a;
+  --accent-soft: #2a1608;
 
-  /* status */
-  --info: #60a5fa;
-  --info-foreground: #93c5fd;
-  --info-soft: #13203a;
-  --destructive: #ef4444;
-  --destructive-soft: #2a1215;
+  /* EVE standings */
+  --info: #4da3ff;
+  --info-foreground: #9cc8ff;
+  --info-soft: #0e1e33;
+  --destructive: #f2555a;
+  --destructive-soft: #2b1012;
 
   /* shape */
-  --radius: 8px;
+  --radius: 0px;
+  --cut: 8px;
+  --cut-sm: 7px;
 
   /* Basecoat's remaining shadcn roles, in terms of the tokens above. */
   --card-foreground: var(--foreground);
@@ -70,25 +75,29 @@
   --sidebar-foreground: var(--foreground-soft);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent-surface);
+  --sidebar-accent: var(--muted);
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
-  --sidebar-width: 256px;
+  --sidebar-width: 236px;
 
   color-scheme: dark;
 }
 
 @theme {
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
-  --radius-sm: 6px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Square everywhere (DESIGN.md): every radius utility is 0. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
 
-  /* shadcn's "accent" is a hover surface; DESIGN.md's --accent is the one
-     highlight colour. Basecoat only reaches accent through these utilities,
-     so remap them and expose the amber as `highlight`. */
+  /* shadcn's "accent" is a hover surface; DESIGN.md's --accent is the
+     signal. Basecoat only reaches accent through these utilities, so remap
+     them and expose the signal as `highlight`. */
   --color-accent: var(--accent-surface);
   --color-accent-foreground: var(--foreground);
   --color-highlight: var(--accent);
@@ -96,6 +105,7 @@
 
   --color-foreground-soft: var(--foreground-soft);
   --color-faint: var(--faint);
+  --color-bracket: var(--bracket);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
   --color-info-soft: var(--info-soft);
@@ -108,7 +118,11 @@
     font-size: 14px;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply text-foreground antialiased;
+    background: transparent;
+  }
+  html {
+    background: var(--background);
   }
   /* Visible focus everywhere (DESIGN.md accessibility). */
   :focus-visible {
@@ -180,7 +194,7 @@
 
   /* The unread count on the top bar's bell. */
   .notification-count {
-    @apply absolute -right-1 -top-1 min-w-4 rounded-full bg-highlight px-1 text-center text-[10px] font-medium leading-4 text-background;
+    @apply absolute -right-1 -top-1 min-w-4 bg-highlight px-1 text-center text-[10px] font-medium leading-4 text-background;
   }
 
   /* A notification's level (DESIGN.md): a status badge, dot and word. */
@@ -189,7 +203,7 @@
   }
   .notification-level::before {
     content: "";
-    @apply size-1.5 rounded-full bg-current;
+    @apply size-1.5 bg-current;
   }
   .notification-level[data-level="danger"] {
     @apply border-0 bg-destructive-soft text-destructive;
@@ -241,7 +255,7 @@
   }
   .state-badge::before {
     content: "";
-    @apply size-1.5 rounded-full bg-current;
+    @apply size-1.5 bg-current;
   }
   .state-badge[data-state="member"] {
     @apply bg-highlight-soft text-highlight;
@@ -282,7 +296,7 @@
     @apply text-foreground-soft;
   }
   .step-marker {
-    @apply inline-flex size-5 items-center justify-center rounded-full border text-xs;
+    @apply inline-flex size-5 items-center justify-center border text-xs;
   }
 
   /* DESIGN.md: destructive is outline style with destructive text. */
@@ -411,7 +425,7 @@
   /* Buttons that post: right-aligned small outline buttons in tables. */
   .row-actions,
   .confirm-popover {
-    /* Not Geist Mono, even in a numeric (right-aligned) column. */
+    /* Not the mono face, even in a numeric (right-aligned) column. */
     font-family: var(--font-sans);
     font-variant-numeric: normal;
   }
@@ -466,7 +480,7 @@
     box-shadow: none;
   }
   .toast-dot {
-    @apply size-1.5 shrink-0 rounded-full bg-info;
+    @apply size-1.5 shrink-0 bg-info;
   }
   .toast[data-tone="problem"] .toast-dot {
     @apply bg-destructive;
@@ -483,7 +497,11 @@
 
   /* A widget's heading is the link to its page (no separate "Open"). */
   .widget-title {
-    @apply text-base font-semibold;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
   }
   .widget-title a {
     @apply inline-flex items-center gap-1 underline-offset-4 hover:underline;
@@ -498,7 +516,12 @@
     @apply gap-0 py-0;
   }
   .card-disclosure > summary {
-    @apply flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-[15px] font-semibold;
+    @apply flex cursor-pointer list-none items-center gap-2 px-5 py-4;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
   }
   .card-disclosure > summary::-webkit-details-marker {
     display: none;
@@ -528,16 +551,21 @@
    job. */
 @layer components {
   .app-shell {
-    @apply grid min-h-screen grid-cols-[256px_minmax(0,1fr)];
+    @apply grid grid-cols-[236px_minmax(0,1fr)];
+    min-height: calc(100vh - 40px);
   }
   .app-shell.has-rail {
-    @apply xl:grid-cols-[256px_208px_minmax(0,1fr)];
+    @apply xl:grid-cols-[236px_208px_minmax(0,1fr)];
   }
   .app-sidebar {
-    @apply sticky top-0 flex h-screen flex-col self-start border-r bg-sidebar;
+    @apply sticky flex flex-col self-start border-r bg-sidebar;
+    top: 40px;
+    height: calc(100vh - 40px);
   }
   .admin-rail {
-    @apply sticky top-0 hidden h-screen flex-col self-start border-r bg-sidebar xl:flex;
+    @apply sticky hidden flex-col self-start border-r bg-sidebar xl:flex;
+    top: 40px;
+    height: calc(100vh - 40px);
   }
 
   /* The account menu: the signed-in character opens it. */
@@ -548,7 +576,7 @@
     @apply text-muted-foreground;
   }
   .user-menu {
-    @apply m-0 w-[232px] flex-col gap-0.5 rounded-lg border bg-card p-1 text-foreground;
+    @apply m-0 w-[212px] flex-col gap-0.5 border bg-card p-1 text-foreground;
     position: fixed;
     inset: auto auto 72px 12px;
   }
@@ -576,7 +604,12 @@
 
   /* A card that opens: its summary is the header. */
   .install-file > summary {
-    @apply flex cursor-pointer list-none items-center gap-1 px-5 py-4 text-[15px] font-semibold;
+    @apply flex cursor-pointer list-none items-center gap-1 px-5 py-4;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
   }
   .install-file > summary::-webkit-details-marker {
     display: none;
@@ -604,6 +637,768 @@
       transform 2s cubic-bezier(0.2, 0, 0, 1) 150ms;
   }
 }
+
+/* Flight deck (DESIGN.md). Later in the components layer than Basecoat
+   and the rules above, so these win at equal specificity. */
+@layer components {
+  /* Panels: a hull fill, a seam, and bright corner brackets drawn on the
+     border box (no extra markup). */
+  .card,
+  .bk {
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0;
+    background-origin: border-box;
+    background-repeat: no-repeat;
+    background-image:
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket)),
+      linear-gradient(var(--bracket), var(--bracket));
+    background-size: 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px;
+    background-position: left top, left top, right top, right top, left bottom, left bottom, right bottom, right bottom;
+  }
+  /* A panel's header is an overline, not a big title. */
+  .card > header h2,
+  .card > header h3 {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .card > header > p {
+    @apply text-sm text-foreground-soft;
+  }
+
+  /* Titles: Archivo at its widest. */
+  .page-title {
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    font-stretch: 125%;
+  }
+  .wide {
+    font-stretch: 125%;
+  }
+  /* An overline: 11px, spaced capitals, dim. */
+  .ov {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Buttons: square, 34px (28px small); the primary one is cut. */
+  .btn {
+    border-radius: 0;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .btn:not([data-size]),
+  .btn[data-size="default"] {
+    height: 34px;
+    padding-inline: 16px;
+  }
+  .btn[data-size="sm"] {
+    height: 28px;
+    padding-inline: 12px;
+    font-size: 12px;
+  }
+  .btn:not([data-variant]),
+  .btn[data-variant="primary"] {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%);
+  }
+  .btn[data-size="sm"]:not([data-variant]),
+  .btn[data-size="sm"][data-variant="primary"] {
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut-sm)), calc(100% - var(--cut-sm)) 100%, 0 100%);
+  }
+  .btn:not([data-variant]):hover,
+  .btn[data-variant="primary"]:hover {
+    background: #ffffff;
+  }
+  .btn[data-variant="outline"],
+  .btn[data-variant="secondary"] {
+    background: var(--card);
+    border: 1px solid var(--faint);
+    color: var(--foreground);
+    box-shadow: none;
+  }
+  .btn[data-variant="outline"]:hover,
+  .btn[data-variant="secondary"]:hover {
+    background: var(--muted);
+    border-color: var(--bracket);
+  }
+  .btn[data-variant="ghost"] {
+    background: transparent;
+    color: var(--muted-foreground);
+  }
+  .btn[data-variant="ghost"]:hover {
+    background: transparent;
+    color: var(--foreground);
+  }
+  .btn[data-variant="destructive"] {
+    background: var(--card);
+    border: 1px solid var(--destructive-soft);
+    color: var(--destructive);
+  }
+  .btn[data-variant="destructive"]:hover {
+    background: var(--destructive-soft);
+  }
+  /* Inside a confirmation, the destructive action is filled. */
+  .confirm-popover .btn[data-variant="destructive"] {
+    background: var(--destructive);
+    color: var(--background);
+    border-color: var(--destructive);
+  }
+  .btn-destructive-outline:hover {
+    border-color: var(--destructive);
+  }
+
+  /* Inputs: square, hull fill, a seam. */
+  .input,
+  .select,
+  .textarea,
+  select,
+  textarea {
+    border-radius: 0;
+  }
+  .input,
+  .select select,
+  .textarea {
+    background: var(--card);
+    border-color: var(--border);
+    box-shadow: none;
+    font-size: 13px;
+  }
+
+  /* Badges: square, bordered, small. */
+  .badge {
+    border-radius: 0;
+    font-size: 11px;
+    padding: 1px 6px;
+  }
+  .badge[data-variant="outline"],
+  .badge[data-variant="secondary"] {
+    background: transparent;
+    border: 1px solid var(--faint);
+    color: var(--foreground-soft);
+  }
+  .state-badge,
+  .notification-level {
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+  }
+  .state-badge::before,
+  .notification-level::before {
+    border-radius: 0;
+  }
+  .state-badge[data-state="member"] {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--background));
+    color: var(--accent);
+  }
+  .state-badge[data-state="blue"] {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--info) 40%, var(--background));
+    color: var(--info);
+  }
+
+  /* Tables: overline headers, seams between rows, a hover. */
+  .table {
+    font-size: 13px;
+  }
+  .table th {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .data-card .table td,
+  .data-card .table th {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-top-color: #161d26;
+  }
+  .data-card .table td:first-child,
+  .data-card .table th:first-child {
+    padding-left: 18px;
+  }
+  .data-card .table td:last-child,
+  .data-card .table th:last-child {
+    padding-right: 18px;
+  }
+  .table tbody tr:hover {
+    background: var(--accent-surface);
+  }
+  /* Cells wrap, so a table fits its panel; numbers and buttons don't. */
+  .table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .table td.num,
+  .table td .num,
+  .table td .btn,
+  .table td .badge {
+    white-space: nowrap;
+  }
+  .data-card > header {
+    padding: 14px 18px 8px;
+  }
+  /* A panel's footer under its table keeps its own padding. */
+  .data-card > footer {
+    padding: 12px 18px 16px;
+    border-top: 1px solid #161d26;
+  }
+
+  /* Tabs and filter keys: spaced capitals; the active key is raised and
+     cut. */
+  .tab-nav {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    gap: 2px;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+  }
+  .tab-nav > a {
+    display: inline-flex;
+    height: 30px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px;
+    border: 1px solid transparent;
+    border-radius: 0;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .tab-nav > a:hover {
+    color: var(--foreground);
+  }
+  .tab-nav > a[aria-current="page"] {
+    background: var(--muted);
+    border-color: var(--faint);
+    color: var(--foreground);
+    font-weight: 600;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut-sm)), calc(100% - var(--cut-sm)) 100%, 0 100%);
+  }
+
+  /* Readouts: an overline over a mono value, split by seams, no boxes. */
+  .stat {
+    padding: 0 22px;
+    border-left: 1px solid var(--border);
+    gap: 6px;
+  }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  /* A row of readouts: the first sits flush with the page. */
+  .readouts {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 12px;
+  }
+  .readouts > .stat:first-child,
+  .stat:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+  /* A stat card that is still a panel (legacy markup) loses its box. */
+  .card.stat {
+    background: transparent;
+    border-width: 0 0 0 1px;
+    background-image: none;
+  }
+
+  /* Ledger: label, dotted leader, value. */
+  .ledger {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 13px;
+  }
+  .ledger > div {
+    display: flex;
+    align-items: flex-end;
+    min-width: 0;
+  }
+  .ledger > div > :first-child {
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+  }
+  .ledger > div > :last-child {
+    min-width: 0;
+    text-align: right;
+  }
+  .ledger > div::after {
+    content: none;
+  }
+  .ledger-dots {
+    flex-grow: 1;
+    border-bottom: 1px dotted var(--faint);
+    margin: 0 8px 4px;
+    min-width: 12px;
+  }
+
+  /* The same ledger as a definition list (app cards and card grids):
+     the dotted leader hangs off the label. */
+  .ledger-dl {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 13px;
+  }
+  .ledger-dl > div {
+    display: flex;
+    align-items: flex-end;
+    min-width: 0;
+  }
+  .ledger-dl dt {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: flex-end;
+    min-width: max-content;
+    color: var(--muted-foreground);
+    font-size: 13px;
+  }
+  .ledger-dl dt::after {
+    content: "";
+    flex: 1 1 auto;
+    min-width: 12px;
+    margin: 0 8px 4px;
+    border-bottom: 1px dotted var(--faint);
+  }
+  .ledger-dl dd {
+    min-width: 0;
+    max-width: 70%;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .grid-card-facts.ledger-dl {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .grid-card-facts.ledger-dl > div {
+    justify-content: flex-start;
+  }
+  .grid-card-facts.ledger-dl dd .meter-value {
+    width: 10rem;
+  }
+  .profile-name {
+    font-size: 24px;
+    font-weight: 600;
+    font-stretch: 125%;
+    line-height: 1.1;
+  }
+  .profile-facts dt {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .grid-card-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .grid-card-register {
+    border-style: dashed;
+    border-color: var(--faint);
+    background-image: none;
+  }
+  .readouts > .stat {
+    flex: 1 1 0;
+    min-width: 150px;
+  }
+
+  /* Segmented bar: cells, lit or not. */
+  .segbar {
+    display: flex;
+    gap: 2px;
+  }
+  .segbar > span {
+    flex-grow: 1;
+    height: 6px;
+    background: #161d26;
+  }
+  .segbar > span[data-lit] {
+    background: var(--foreground);
+  }
+  .segbar[data-tone="signal"] > span[data-lit] {
+    background: var(--accent);
+  }
+
+  /* Skill levels: five squares. */
+  .levels {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .levels > span {
+    width: 9px;
+    height: 9px;
+    box-sizing: border-box;
+    border: 1px solid var(--faint);
+  }
+  .levels > span[data-trained] {
+    background: var(--foreground);
+    border-color: var(--foreground);
+  }
+  .levels > span[data-training] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* A status square before a row or a label. */
+  .mark {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    background: var(--faint);
+  }
+  .mark[data-tone="signal"] { background: var(--accent); }
+  .mark[data-tone="info"] { background: var(--info); }
+  .mark[data-tone="danger"] { background: var(--destructive); }
+
+  /* Portraits and logos: square, framed at larger sizes. */
+  .avatar-img,
+  .avatar-initials,
+  .entity-img,
+  .entity-initials {
+    border-radius: 0;
+  }
+  .entity-img[data-size="lg"],
+  .entity-initials[data-size="lg"] {
+    border-radius: 0;
+    outline: 1px solid var(--faint);
+    outline-offset: 2px;
+  }
+
+  /* Alerts: a hull panel with a seam in the tone's colour. */
+  .alert {
+    border-radius: 0;
+    background: var(--card);
+    border: 1px solid var(--faint);
+  }
+  .alert[data-variant="destructive"] {
+    border-color: color-mix(in srgb, var(--destructive) 45%, var(--background));
+  }
+
+  /* Sidebar and rail: overline headings with a hairline, indented items,
+     the current one raised with a signal square. */
+  .nav-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px 6px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .nav-heading::after {
+    content: "";
+    flex-grow: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .nav-item {
+    height: 32px;
+    border-radius: 0;
+    gap: 10px;
+    padding: 0 10px;
+    font-weight: 400;
+    color: var(--foreground-soft);
+  }
+  .nav-item > svg {
+    width: 15px;
+    height: 15px;
+    color: var(--muted-foreground);
+  }
+  .nav-item:hover {
+    background: var(--muted);
+  }
+  .nav-item[aria-current="page"] {
+    background: var(--muted);
+    color: var(--foreground);
+    font-weight: 500;
+  }
+  .nav-item[aria-current="page"] > svg {
+    color: var(--accent);
+  }
+  .admin-rail-item {
+    border-radius: 0;
+  }
+  .admin-rail-item[aria-current="page"] {
+    background: var(--muted);
+    gap: 10px;
+  }
+  .admin-rail-item[aria-current="page"]::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .user-button,
+  .user-menu,
+  .user-menu-item,
+  .admin-tile,
+  .admin-tile-icon {
+    border-radius: 0;
+  }
+
+  /* The status strip across the top. */
+  .status-strip {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    height: 40px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--sidebar);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--foreground-soft);
+  }
+  .status-strip .wordmark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 196px;
+    font-family: var(--font-sans);
+    font-stretch: 125%;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.18em;
+    color: var(--foreground);
+  }
+  .status-strip .trail {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+  .status-strip .trail a:hover {
+    color: var(--foreground);
+  }
+  .status-strip .up { background: var(--info); }
+  .status-strip .down { background: var(--destructive); }
+
+  /* The page header's parts. */
+  .page-over {
+    margin-bottom: 6px;
+  }
+  .toaster .toast .toast-content {
+    border-radius: 0;
+  }
+  .toast-dot {
+    border-radius: 0;
+  }
+  .code-text {
+    border-radius: 0;
+    font-size: 12px;
+  }
+  .confirm-popover {
+    border-radius: 0;
+  }
+}
+
+/* Sign in (the canvas's Sign in artboard). */
+@layer components {
+  .signin {
+    display: flex;
+    min-height: 100vh;
+  }
+  .signin-copy {
+    width: 640px;
+    max-width: 100%;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 48px 72px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 48px;
+  }
+  .signin-wordmark {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-stretch: 125%;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.2em;
+  }
+  .signin-title {
+    margin: 0;
+    font-size: 54px;
+    line-height: 1.02;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    font-stretch: 125%;
+  }
+  .signin-lede {
+    margin: 0;
+    max-width: 440px;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--foreground-soft);
+  }
+  .btn.signin-cta {
+    height: 48px;
+    padding-inline: 26px;
+    font-size: 15px;
+    gap: 12px;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+  }
+  .signin-legal {
+    margin: 0;
+    max-width: 480px;
+    font-size: 11px;
+    color: #5b6470;
+  }
+  .signin-art {
+    flex-grow: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  @media (max-width: 1100px) {
+    .signin-art {
+      display: none;
+    }
+    .signin-copy {
+      width: 100%;
+      padding: 32px 24px;
+    }
+    .signin-title {
+      font-size: 40px;
+    }
+  }
+  .signin-orbit,
+  .signin-orbit-back,
+  .signin-pulse {
+    transform-origin: 360px 360px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .signin-orbit { animation: sky-turn 180s linear infinite; }
+  .signin-orbit-back { animation: sky-turn 120s linear infinite reverse; }
+  .signin-pulse { animation: sky-pulse 4s ease-out infinite; }
+}
+@keyframes sky-turn { to { transform: rotate(360deg); } }
+@keyframes sky-pulse { from { transform: scale(0.6); opacity: 0.5; } to { transform: scale(1.5); opacity: 0; } }
+
+/* The sky (DESIGN.md, Motion): one fixed layer behind everything. Panels
+   are opaque, so it never moves under text. */
+@layer components {
+  .sky {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--background);
+  }
+  .sky > div {
+    position: absolute;
+  }
+  .sky .grid {
+    inset: -48px;
+    background-image: radial-gradient(#151b24 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .sky .far {
+    inset: -560px;
+    background-size: 560px 560px;
+    background-image:
+      radial-gradient(1px 1px at 41px 97px, #4a5b70, transparent),
+      radial-gradient(1px 1px at 233px 31px, #3c4a5c, transparent),
+      radial-gradient(1px 1px at 402px 288px, #4a5b70, transparent),
+      radial-gradient(1px 1px at 128px 431px, #3c4a5c, transparent),
+      radial-gradient(1px 1px at 511px 176px, #4a5b70, transparent),
+      radial-gradient(1px 1px at 317px 507px, #3c4a5c, transparent);
+  }
+  .sky .near {
+    inset: -400px;
+    background-size: 400px 400px;
+    background-image:
+      radial-gradient(1.5px 1.5px at 37px 81px, #8fa3ba, transparent),
+      radial-gradient(1px 1px at 211px 33px, #6b7d92, transparent),
+      radial-gradient(1.5px 1.5px at 305px 260px, #c9d4e2, transparent),
+      radial-gradient(1px 1px at 120px 340px, #6b7d92, transparent),
+      radial-gradient(1px 1px at 372px 148px, #8fa3ba, transparent);
+  }
+  .sky .glint {
+    inset: 0;
+    opacity: 0.4;
+    background-size: 700px 700px;
+    background-image:
+      radial-gradient(2px 2px at 150px 210px, #e7e3d8, transparent),
+      radial-gradient(2px 2px at 520px 90px, #9cc8ff, transparent),
+      radial-gradient(1.5px 1.5px at 610px 560px, #e7e3d8, transparent);
+  }
+  .sky .sweep {
+    left: 0;
+    right: 0;
+    top: -220px;
+    height: 220px;
+    opacity: 0;
+    background: linear-gradient(to bottom, transparent, rgba(77, 163, 255, 0.03) 70%, rgba(77, 163, 255, 0.1) 99%, rgba(77, 163, 255, 0.22));
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sky .grid { animation: sky-pan 16s linear infinite; }
+  .sky .far { animation: sky-far 240s linear infinite; }
+  .sky .near { animation: sky-near 110s linear infinite; }
+  .sky .glint { animation: sky-glint 5s ease-in-out infinite alternate; }
+  .sky .sweep { opacity: 1; animation: sky-sweep 12s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+  .alarm { animation: alarm 1.6s ease-in-out infinite; }
+  .breathe { animation: breathe 3s ease-in-out infinite; }
+}
+@keyframes sky-pan { to { transform: translate(24px, 24px); } }
+@keyframes sky-far { to { transform: translate(560px, 280px); } }
+@keyframes sky-near { to { transform: translate(400px, 200px); } }
+@keyframes sky-glint { from { opacity: 0.15; } to { opacity: 0.85; } }
+@keyframes sky-sweep { 0% { transform: translateY(0); } 75% { transform: translateY(calc(100vh + 220px)); } 100% { transform: translateY(calc(100vh + 220px)); } }
+@keyframes alarm { 50% { opacity: 0.35; } }
+@keyframes breathe { 50% { opacity: 0.6; } }
 
 /* Motion (DESIGN.md): short, opacity first, nothing that bounces, and none
    at all for anyone who asks for less. */

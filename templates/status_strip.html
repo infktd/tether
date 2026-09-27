@@ -1,0 +1,2 @@
+{#- Tranquility and ESI, for the status strip (/status/strip). -#}
+{% if let Some(n) = players %}<span class="flex items-center gap-1.5"><span class="mark up" aria-hidden="true"></span>TRANQUILITY <span class="text-foreground">{{ n }}</span></span><span class="flex items-center gap-1.5"><span class="mark up" aria-hidden="true"></span>ESI</span>{% else %}<span class="flex items-center gap-1.5" title="{{ problem }}"><span class="mark down" aria-hidden="true"></span>ESI UNREACHABLE</span>{% endif %}

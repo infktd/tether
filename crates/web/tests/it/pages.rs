@@ -318,8 +318,8 @@ async fn static_assets_are_embedded_and_cacheable(db: PgPool) {
     for (path, content_type) in [
         ("/static/app.css", "text/css; charset=utf-8"),
         ("/static/htmx.min.js", "text/javascript; charset=utf-8"),
-        ("/static/fonts/Geist-Variable.woff2", "font/woff2"),
-        ("/static/fonts/GeistMono-Variable.woff2", "font/woff2"),
+        ("/static/fonts/Archivo-Variable.woff2", "font/woff2"),
+        ("/static/fonts/IBMPlexMono-Variable.woff2", "font/woff2"),
     ] {
         let res = send(&h.app, get(path, &[])).await;
         assert_eq!(res.status, StatusCode::OK, "{path}");
