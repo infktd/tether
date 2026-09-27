@@ -34,7 +34,8 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
-    Table, Tone, Value, badge, link, log, time,
+    Table, Tone, Value, action, alliance, badge, character, corporation, countdown, item_type,
+    link, log, time,
 };
 
 use crate::notification::{Category, Context, Fields};
@@ -74,79 +75,15 @@ struct Structures;
 impl Plugin for Structures {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        let path = request.path.as_str();
-        if path.is_empty() {
-            return list_page(&viewer, Filter::default());
-        }
-        if let Some(corp) = path.strip_prefix("owner/") {
-            let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
-            return list_page(
-                &viewer,
-                Filter {
-                    owner: Some(corp),
-                    tags: None,
-                },
-            );
-        }
-        if let Some(ids) = path.strip_prefix("tags/") {
-            let ids = tags::parse_filter(ids).ok_or(PageError::NotFound)?;
-            return list_page(
-                &viewer,
-                Filter {
-                    owner: None,
-                    tags: Some(ids),
-                },
-            );
-        }
-        if let Some(id) = path.strip_prefix("structure/") {
-            let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
-            return detail::page(&viewer, id);
-        }
-        if let Some(corp) = path.strip_prefix("settings/owner/") {
-            let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
-            return owner_settings_page(corp);
-        }
-        match path {
-            "settings" => settings_page(None),
-            "settings/tags" => tags::settings_page(None),
-            "pocos" => pocos_page(&viewer),
-            _ => Err(PageError::NotFound),
-        }
+        Ok(with_links(render_page(&request, &viewer)?, &viewer))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        let path = submission.request.path.as_str();
-        // Every form's page checks the viewer may open it (the host), and
-        // managers' forms need manage (the host, for settings pages; here,
-        // for the structure page's tags).
-        if submission.form == "filter_tags" {
-            return Ok(tags::submit_filter(&submission));
-        }
-        if let Some(id) = path.strip_prefix("structure/") {
-            let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
-            if submission.form != "structure_tags"
-                || !viewer.can("manage")
-                || !detail::visible_structure(&viewer, id)?
-            {
-                return Err(PageError::NotFound);
-            }
-            return tags::save_structure_tags(&viewer, id, &submission);
-        }
-        if let Some(corp) = path.strip_prefix("settings/owner/") {
-            let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
-            if submission.form != "owner_routes" {
-                return Err(PageError::NotFound);
-            }
-            return save_owner_settings(&viewer, corp, &submission);
-        }
-        match (path, submission.form.as_str()) {
-            ("settings", "settings") => save_settings(&viewer, &submission),
-            ("settings", "retry") => retry_owner(&viewer, &submission),
-            ("settings/tags", "save_tag") => tags::save_tag(&viewer, &submission),
-            ("settings/tags", "delete_tag") => tags::delete_tag(&viewer, &submission),
-            _ => Err(PageError::NotFound),
-        }
+        Ok(match submit_form(&submission, &viewer)? {
+            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            other => other,
+        })
     }
 
     fn run_job(job: Job) -> Result<(), JobError> {
@@ -160,6 +97,103 @@ impl Plugin for Structures {
 }
 
 tether_plugin_sdk::export!(Structures);
+
+/// The app's pages beside the title, as aa-structures' navbar: the list
+/// and the public customs offices for everyone, the settings and tags for
+/// managers. The host adds Add owner.
+fn with_links(page: Page, viewer: &Viewer) -> Page {
+    let mut page = page;
+    if viewer.can("basic_access") {
+        page = page.link("Structures", "").link("Customs offices", "pocos");
+    }
+    if viewer.can("manage") {
+        page = page
+            .link("Settings", "settings")
+            .link("Tag settings", "settings/tags");
+    }
+    page
+}
+
+fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
+    let path = request.path.as_str();
+    if path.is_empty() {
+        return list_page(viewer, Filter::default());
+    }
+    if let Some(corp) = path.strip_prefix("owner/") {
+        let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
+        return list_page(
+            viewer,
+            Filter {
+                owner: Some(corp),
+                tags: None,
+            },
+        );
+    }
+    if let Some(ids) = path.strip_prefix("tags/") {
+        let ids = tags::parse_filter(ids).ok_or(PageError::NotFound)?;
+        return list_page(
+            viewer,
+            Filter {
+                owner: None,
+                tags: Some(ids),
+            },
+        );
+    }
+    if let Some(id) = path.strip_prefix("structure/") {
+        let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
+        return detail::page(viewer, id);
+    }
+    if let Some(corp) = path.strip_prefix("settings/owner/") {
+        let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
+        return owner_settings_page(corp);
+    }
+    match path {
+        "settings" => settings_page(None),
+        "settings/tags" => tags::settings_page(None),
+        "pocos" => pocos_page(viewer),
+        _ => Err(PageError::NotFound),
+    }
+}
+
+fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult, PageError> {
+    let path = submission.request.path.as_str();
+    // Every form's page checks the viewer may open it (the host), and
+    // managers' forms need manage (the host, for settings pages; here,
+    // for the structure page's tags).
+    if submission.form == "filter_tags" {
+        return Ok(tags::submit_filter(submission));
+    }
+    if let Some(id) = path.strip_prefix("structure/") {
+        let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
+        if submission.form != "structure_tags"
+            || !viewer.can("manage")
+            || !detail::visible_structure(viewer, id)?
+        {
+            return Err(PageError::NotFound);
+        }
+        return tags::save_structure_tags(viewer, id, submission);
+    }
+    if let Some(corp) = path.strip_prefix("settings/owner/") {
+        let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
+        if submission.form != "owner_routes" {
+            return Err(PageError::NotFound);
+        }
+        return save_owner_settings(viewer, corp, submission);
+    }
+    // The settings pages' forms and row buttons are managers': checked
+    // here too, not only by the host's page rule.
+    if path.starts_with("settings") && !viewer.can("manage") {
+        return Err(PageError::Forbidden);
+    }
+    match (path, submission.form.as_str()) {
+        ("settings", "settings") => save_settings(viewer, submission),
+        // A row's Retry now, in the settings' owner table.
+        ("settings", "retry") => retry_owner(viewer, submission),
+        ("settings/tags", "save_tag") => tags::save_tag(viewer, submission),
+        ("settings/tags", "delete_tag") => tags::delete_tag(viewer, submission),
+        _ => Err(PageError::NotFound),
+    }
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -214,6 +248,33 @@ fn count(n: usize) -> i64 {
 /// Ids as a comma list, for `string_to_array($n, ',')::bigint[]`.
 fn id_list(ids: &[i64]) -> String {
     ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+}
+
+/// An instant: counting down while it's ahead, else the EVE time it was.
+fn upcoming(t: DateTime<Utc>, now: DateTime<Utc>) -> Value {
+    if t > now {
+        countdown(rfc3339(t))
+    } else {
+        time(rfc3339(t))
+    }
+}
+
+/// A type's icon and name, when its id is known.
+fn typed(id: i64, name: impl Into<String>) -> Value {
+    if id > 0 {
+        item_type(id, name).into()
+    } else {
+        name.into().into()
+    }
+}
+
+/// A corporation's logo and name, when its id is known.
+fn owner_value(id: i64, name: impl Into<String>) -> Value {
+    if id > 0 {
+        corporation(id, name).into()
+    } else {
+        name.into().into()
+    }
 }
 
 /// "3d 4h", "5h 12m".
@@ -1391,7 +1452,8 @@ const STRUCTURE_ROW: &str = "SELECT s.structure_id, s.name, coalesce(t.name, 'Ty
         s.kind, s.has_core, \
         coalesce((SELECT string_agg(g.name, ', ' ORDER BY g.sort_order, g.name) FROM structure_tags st \
             JOIN tags g ON g.id = st.tag_id WHERE st.structure_id = s.structure_id), ''), \
-        coalesce(m.name, s.planet_name, pl.name, ''), s.strontium, s.details::text, s.unanchors_at \
+        coalesce(m.name, s.planet_name, pl.name, ''), s.strontium, s.details::text, s.unanchors_at, \
+        s.corporation_id, coalesce(s.type_id, 0) \
      FROM structures s \
      LEFT JOIN names t ON t.id = s.type_id \
      LEFT JOIN systems y ON y.system_id = s.system_id \
@@ -1443,9 +1505,9 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
     };
     let upwell = text(row, 14) == "upwell";
     vec![
-        text(row, 13).into(),
+        owner_value(int(row, 21), text(row, 13)),
         name_link(row),
-        text(row, 2).into(),
+        typed(int(row, 22), text(row, 2)),
         system_text(row).into(),
         text(row, 5).into(),
         expires,
@@ -1456,7 +1518,7 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
             "".into()
         },
         state_badge(&text(row, 8)),
-        when(row, 9).map_or_else(|| "".into(), |t| time(rfc3339(t))),
+        when(row, 9).map_or_else(|| "".into(), |t| upcoming(t, now)),
         reinforce.into(),
         if upwell {
             detail::core_badge(row.get(15).and_then(Db::as_bool))
@@ -1495,16 +1557,16 @@ fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64) -> Vec<Value> {
     // Reinforced until, or unanchoring at.
     let timer = when(row, 9).or_else(|| when(row, 20));
     vec![
-        text(row, 13).into(),
+        owner_value(int(row, 21), text(row, 13)),
         name_link(row),
-        text(row, 2).into(),
+        typed(int(row, 22), text(row, 2)),
         system_text(row).into(),
         text(row, 17).into(),
         expires,
         remaining,
         opt_int(row, 18).map_or_else(|| "".into(), Value::from),
         state_badge(&text(row, 8)),
-        timer.map_or_else(|| "".into(), |t| time(rfc3339(t))),
+        timer.map_or_else(|| "".into(), |t| upcoming(t, now)),
         text(row, 16).into(),
     ]
 }
@@ -1546,9 +1608,9 @@ fn orbital_row(row: &[Db]) -> Vec<Value> {
         _ => String::new(),
     };
     vec![
-        text(row, 13).into(),
+        owner_value(int(row, 21), text(row, 13)),
         name_link(row),
-        text(row, 2).into(),
+        typed(int(row, 22), text(row, 2)),
         system_text(row).into(),
         text(row, 5).into(),
         text(row, 17).into(),
@@ -1669,7 +1731,8 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
     .map_err(|e| failed("counting structures", e))?;
     let timers = storage::query(
         &format!(
-            "SELECT t.kind, t.at, s.name, coalesce(y.name, sn.name, ''), coalesce(o.name, '') \
+            "SELECT t.kind, t.at, s.name, coalesce(y.name, sn.name, ''), coalesce(o.name, ''), \
+                 s.corporation_id \
              FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
              LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
              LEFT JOIN names o ON o.id = s.corporation_id \
@@ -1683,7 +1746,8 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             "SELECT o.corporation_id, coalesce(n.name, 'Corporation ' || o.corporation_id::text), \
                  coalesce(a.name, ''), \
                  (SELECT count(*) FROM structures s WHERE s.corporation_id = o.corporation_id), \
-                 max(o.structures_at), bool_and(o.structures_retry_at > now()) \
+                 max(o.structures_at), bool_and(o.structures_retry_at > now()), \
+                 coalesce(max(o.alliance_id), 0) \
              FROM owners o LEFT JOIN names n ON n.id = o.corporation_id LEFT JOIN names a ON a.id = o.alliance_id \
              WHERE {} \
              GROUP BY o.corporation_id, n.name, a.name ORDER BY 2 LIMIT {OWNER_ROWS}",
@@ -1724,6 +1788,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
     let timer_table = with_rows(
         Table::new(vec![
             Column::numeric("When (EVE)"),
+            Column::numeric("Remaining"),
             Column::text("Timer"),
             Column::text("Structure"),
             Column::text("System"),
@@ -1734,10 +1799,11 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         timers.rows.iter().map(|r| {
             vec![
                 when(r, 1).map_or_else(|| "".into(), |t| time(rfc3339(t))),
+                when(r, 1).map_or_else(|| "".into(), |t| countdown(rfc3339(t))),
                 text(r, 0).into(),
                 text(r, 2).into(),
                 text(r, 3).into(),
-                text(r, 4).into(),
+                owner_value(int(r, 5), text(r, 4)),
             ]
         }),
     );
@@ -1757,9 +1823,13 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             } else {
                 badge("OK", Tone::Success)
             };
+            let alliance_cell: Value = match int(r, 6) {
+                id if id > 0 && !text(r, 2).is_empty() => alliance(id, text(r, 2)).into(),
+                _ => text(r, 2).into(),
+            };
             vec![
                 link(text(r, 1), format!("owner/{}", int(r, 0))).into(),
-                text(r, 2).into(),
+                alliance_cell,
                 int(r, 3).into(),
                 when(r, 4).map_or_else(|| "".into(), |t| time(rfc3339(t))),
                 status.into(),
@@ -1837,13 +1907,9 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         )
         .tab(
             "Orbitals",
-            vec![
-                Section::Table(orbital_table(orbitals.rows.iter().map(|r| orbital_row(r)).collect())),
-                Section::Card(
-                    tether_plugin_sdk::Card::new("Customs offices")
-                        .field("Public list", link("Customs offices open to you", "pocos")),
-                ),
-            ],
+            vec![Section::Table(orbital_table(
+                orbitals.rows.iter().map(|r| orbital_row(r)).collect(),
+            ))],
         )
         .tab(
             "Tags",
@@ -1868,11 +1934,6 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
                         .to_owned(),
                 ),
             ],
-        );
-    } else {
-        page = page.card(
-            tether_plugin_sdk::Card::new("Filter")
-                .field("All structures", link("Back to every structure", "")),
         );
     }
     Ok(page)
@@ -1940,7 +2001,7 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
                 None => text(r, 1),
             };
             vec![
-                text(r, 0).into(),
+                owner_value(owner_corp, text(r, 0)),
                 system.into(),
                 text(r, 3).into(),
                 text(r, 4).into(),
@@ -1976,7 +2037,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     let owners = storage::query(
         "SELECT o.character_id, o.character_name, coalesce(n.name, 'Corporation ' || o.corporation_id::text), \
              o.structures_at, o.notifications_at, o.last_error, \
-             greatest(o.structures_retry_at, o.notifications_retry_at) \
+             greatest(o.structures_retry_at, o.notifications_retry_at), o.corporation_id \
          FROM owners o LEFT JOIN names n ON n.id = o.corporation_id ORDER BY 3, 2",
         &[],
     )
@@ -2072,13 +2133,19 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             (None, None) => badge("OK", Tone::Success),
         };
         vec![
-            text(r, 2).into(),
-            text(r, 1).into(),
+            owner_value(int(r, 7), text(r, 2)),
+            character(int(r, 0), text(r, 1)).into(),
             when(r, 3).map_or_else(|| "".into(), |t| time(rfc3339(t))),
             when(r, 4).map_or_else(|| "".into(), |t| time(rfc3339(t))),
             status.into(),
             text(r, 5).into(),
             backing_off.map_or_else(|| "".into(), |t| time(rfc3339(t))),
+            // An owner ESI refused (a lost role or token) is left alone for
+            // an hour, doubling up to a day: once it's fixed in game, a
+            // manager retries it now.
+            action("Retry now", "retry")
+                .field("owner", int(r, 0).to_string())
+                .into(),
         ]
     });
     let owner_table = with_rows(
@@ -2090,21 +2157,12 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::text("Status"),
             Column::text("Last problem"),
             Column::numeric("Next try"),
+            Column::text(""),
         ])
         .title("Owners")
         .empty("No owners yet: Add owner (top right) logs in with a Station Manager, and an admin approves it."),
         owner_rows,
     );
-    let choices: Vec<(String, String)> = owners
-        .rows
-        .iter()
-        .map(|r| {
-            (
-                int(r, 0).to_string(),
-                format!("{} ({})", text(r, 1), text(r, 2)),
-            )
-        })
-        .collect();
     let sent_table = with_rows(
         Table::new(vec![
             Column::numeric("Queued"),
@@ -2173,26 +2231,15 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             ]
         }),
     );
-    page = page
+    Ok(page
         .form(form)
         .table(routing_table)
-        .card(tether_plugin_sdk::Card::new("Tags").field(
-            "Make and change tags",
-            link("Structures tags", "settings/tags"),
-        ))
-        .table(owner_table);
-    if !choices.is_empty() {
-        page = page.form(
-            Form::new("retry", "Retry now")
-                .title("Retry an owner")
-                .description(
-                    "An owner ESI refused (a lost role or token) is left alone for an hour, doubling \
-                     up to a day. Once it's fixed in game, retry it now.",
-                )
-                .field(Field::select("owner", "Owner", choices).required()),
-        );
-    }
-    Ok(page.table(sent_table))
+        .table(owner_table)
+        .text(
+            "An owner ESI refused (a lost role or token) is left alone for an hour, doubling up \
+             to a day. Once it's fixed in game, Retry now reads it again.",
+        )
+        .table(sent_table))
 }
 
 fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
@@ -2369,10 +2416,7 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
         );
     Ok(Page::new(format!("Structures owner: {name}"))
         .description("Discord routing for one owner")
-        .form(form)
-        .card(
-            tether_plugin_sdk::Card::new("Structures").field("Back", link("Settings", "settings")),
-        ))
+        .form(form))
 }
 
 fn save_owner_settings(

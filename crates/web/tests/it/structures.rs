@@ -480,6 +480,29 @@ async fn structures_end_to_end(db: PgPool) {
     ] {
         assert!(list.body.contains(seen), "{seen}: {}", list.body);
     }
+    // The app's pages beside the title (a manager's too); owners' logos,
+    // types' icons, and the reinforced Keep's timer counting down.
+    for href in ["pocos", "settings", "settings/tags"] {
+        assert!(
+            list.body
+                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
+            "{href}: {}",
+            list.body
+        );
+    }
+    assert!(
+        list.body.contains(&format!(
+            "images.evetech.net/corporations/{CHRIBBA_CORP}/logo"
+        )),
+        "{}",
+        list.body
+    );
+    assert!(
+        list.body.contains("images.evetech.net/types/"),
+        "{}",
+        list.body
+    );
+    assert!(list.body.contains("data-countdown"), "{}", list.body);
     // Low fuel: the Keep only.
     let low = page(&h, &format!("/plugins/{ID}?_tab=1"), &owner).await;
     assert!(low.body.contains("Under 72 hours of fuel"), "{}", low.body);
@@ -569,6 +592,19 @@ async fn structures_end_to_end(db: PgPool) {
     let seen = page(&h, &url, &gigx).await;
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(!seen.body.contains("Jita - Keep"), "{}", seen.body);
+    // Not a manager: no links to the settings.
+    assert!(
+        seen.body.contains(&format!("href=\"/plugins/{ID}/pocos\"")),
+        "{}",
+        seen.body
+    );
+    assert!(
+        !seen
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/settings\"")),
+        "{}",
+        seen.body
+    );
     assert!(
         !seen.body.contains("Otherworld Enterprises"),
         "{}",
@@ -642,6 +678,14 @@ async fn an_owner_without_the_role_is_left_alone(db: PgPool) {
     assert!(backing_off);
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(settings.body.contains("Backing off"), "{}", settings.body);
+    // Each owner's row has its Retry now.
+    assert!(
+        settings.body.contains(&format!(
+            "name=\"_form\" value=\"retry\"><input type=\"hidden\" name=\"owner\" value=\"{CHRIBBA}\">"
+        )),
+        "{}",
+        settings.body
+    );
 
     // The next runs leave ESI alone (the notifications read still counts
     // as fresh, too).
@@ -1406,6 +1450,44 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
         "{}",
         seen.body
     );
+
+    // A manager deletes the tag from its row on the tag page, which asks
+    // first; a Member can't.
+    let tag_page = page(&h, &format!("/plugins/{ID}/settings/tags"), &owner).await;
+    assert!(
+        tag_page
+            .body
+            .contains("The tag Staging is deleted and comes off its 1 structures."),
+        "{}",
+        tag_page.body
+    );
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings/tags"),
+            &format!("_form=delete_tag&tag={staging}"),
+            &member,
+        ),
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings/tags"),
+            &format!("_form=delete_tag&tag={staging}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let left: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.structures".tags WHERE name = 'Staging'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
 
     // Customs offices made private again: off the public list.
     let res = send(

@@ -12,7 +12,7 @@ use crate::orbitals::METENOX_GAS_PER_HOUR;
 use crate::tags;
 use crate::{
     VISIBLE, failed, int, kind_label, left, opt_int, rfc3339, services_text, state_badge, text,
-    visibility, when, with_rows,
+    typed, upcoming, visibility, when, with_rows,
 };
 
 /// A structure the viewer may see, or not found.
@@ -61,7 +61,7 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
              s.fuel_expires, s.state, s.state_timer_end, s.unanchors_at, s.reinforce_hour, \
              s.services::text, coalesce(m.name, ''), coalesce(s.planet_name, p.name, ''), \
              s.details::text, s.fuel_blocks, s.strontium, s.magmatic_gas, s.gas_expires, \
-             s.has_core, s.fuel_read_at, s.onlined_since, s.corporation_id \
+             s.has_core, s.fuel_read_at, s.onlined_since, s.corporation_id, coalesce(s.type_id, 0) \
          FROM structures s LEFT JOIN names t ON t.id = s.type_id \
          LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
          LEFT JOIN names r ON r.id = y.region_id LEFT JOIN names o ON o.id = s.corporation_id \
@@ -83,7 +83,7 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
             link(text(row, 6), format!("owner/{}", int(row, 23))),
         )
         .field("Kind", kind_label(&kind))
-        .field("Type", text(row, 2))
+        .field("Type", typed(int(row, 24), text(row, 2)))
         .field("System", system)
         .field("Region", text(row, 5));
     match kind.as_str() {
@@ -97,10 +97,10 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
         general = general.field("State", state_badge(&text(row, 8)));
     }
     if let Some(t) = when(row, 9) {
-        general = general.field("State timer", time(rfc3339(t)));
+        general = general.field("State timer", upcoming(t, now));
     }
     if let Some(t) = when(row, 10) {
-        general = general.field("Unanchors", time(rfc3339(t)));
+        general = general.field("Unanchors", upcoming(t, now));
     }
     if let Some(t) = when(row, 22) {
         general = general.field("Online since", time(rfc3339(t)));
@@ -220,11 +220,13 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
                 .empty("Not read yet (the owner needs the Director role)."),
             fuels.iter().map(|(t, q)| {
                 vec![
-                    names
-                        .iter()
-                        .find(|(i, _)| i == t)
-                        .map_or_else(|| format!("Type {t}"), |(_, n)| n.clone())
-                        .into(),
+                    typed(
+                        *t,
+                        names
+                            .iter()
+                            .find(|(i, _)| i == t)
+                            .map_or_else(|| format!("Type {t}"), |(_, n)| n.clone()),
+                    ),
                     (*q).into(),
                 ]
             }),
@@ -264,7 +266,7 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
     {
         page = page.form(form);
     }
-    Ok(page.card(Card::new("Structures").field("Back", link("Every structure", ""))))
+    Ok(page)
 }
 
 /// The fitting (aa-structures' fit view): modules by slot, fighters, the
@@ -274,7 +276,7 @@ fn fitting(page: Page, viewer: &Viewer, id: i64) -> Result<Page, PageError> {
         return Ok(page);
     }
     let items = storage::query(
-        "SELECT i.flag, coalesce(n.name, 'Type ' || i.type_id::text), i.quantity \
+        "SELECT i.flag, coalesce(n.name, 'Type ' || i.type_id::text), i.quantity, i.type_id \
          FROM structure_items i LEFT JOIN names n ON n.id = i.type_id \
          WHERE i.structure_id = $1 ORDER BY i.flag, 2",
         &[id.into()],
@@ -292,10 +294,11 @@ fn fitting(page: Page, viewer: &Viewer, id: i64) -> Result<Page, PageError> {
              owner character's Director role.",
         ));
     };
-    let mut modules: Vec<(&'static str, u8, String)> = Vec::new();
-    let mut bays: Vec<(&'static str, String, i64)> = Vec::new();
+    let mut modules: Vec<(&'static str, u8, Value)> = Vec::new();
+    let mut bays: Vec<(&'static str, Value, i64)> = Vec::new();
     for row in &items.rows {
-        let (flag, name, quantity) = (text(row, 0), text(row, 1), int(row, 2));
+        let (flag, quantity) = (text(row, 0), int(row, 2));
+        let name = typed(int(row, 3), text(row, 1));
         if let Some((group, slot)) = slot_group(&flag) {
             modules.push((group, slot, name));
             continue;
@@ -328,7 +331,7 @@ fn fitting(page: Page, viewer: &Viewer, id: i64) -> Result<Page, PageError> {
         .empty("Nothing fitted."),
         modules
             .into_iter()
-            .map(|(g, s, n)| vec![g.into(), i64::from(s).into(), n.into()]),
+            .map(|(g, s, n)| vec![g.into(), i64::from(s).into(), n]),
     ));
     let page = page.table(with_rows(
         Table::new(vec![
@@ -339,7 +342,7 @@ fn fitting(page: Page, viewer: &Viewer, id: i64) -> Result<Page, PageError> {
         .title("Bays")
         .empty("Nothing in its bays."),
         bays.into_iter()
-            .map(|(b, n, q)| vec![b.into(), n.into(), q.into()]),
+            .map(|(b, n, q)| vec![b.into(), n, q.into()]),
     ));
     Ok(page.card(Card::new("Assets").field("Read", time(rfc3339(read_at)))))
 }

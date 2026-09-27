@@ -14,8 +14,8 @@ use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::jobs::JobError;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, Submission, SubmitResult, Table, Tone, Value, badge,
-    link, log,
+    Column, Field, Form, Page, PageError, Submission, SubmitResult, Table, Tone, Value, action,
+    badge, link, log,
 };
 
 use crate::{VISIBLE, failed, int, retry, text, with_rows};
@@ -229,6 +229,7 @@ pub fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::text("Default"),
             Column::numeric("Order"),
             Column::numeric("Structures"),
+            Column::text(""),
         ])
         .title("Tags")
         .empty("No tags yet."),
@@ -244,6 +245,19 @@ pub fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                 if t.is_default { "Yes" } else { "No" }.into(),
                 t.order.into(),
                 t.structures.into(),
+                // Generated tags can't be deleted.
+                if t.user_managed {
+                    action("Delete", "delete_tag")
+                        .field("tag", t.id.to_string())
+                        .tone(Tone::Danger)
+                        .confirm(format!(
+                            "The tag {} is deleted and comes off its {} structures.",
+                            t.name, t.structures
+                        ))
+                        .into()
+                } else {
+                    "".into()
+                },
             ]
         }),
     );
@@ -284,22 +298,7 @@ pub fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                         .help("Put it on every structure first seen from now on."),
                 ),
         );
-    let removable: Vec<(String, String)> = tags
-        .iter()
-        .filter(|t| t.user_managed)
-        .map(|t| (t.id.to_string(), t.name.clone()))
-        .collect();
-    if !removable.is_empty() {
-        page = page.form(
-            Form::new("delete_tag", "Delete tag")
-                .title("Delete a tag")
-                .description("It comes off every structure. Generated tags can't be deleted.")
-                .field(Field::select("tag", "Tag", removable).required()),
-        );
-    }
-    Ok(page.card(
-        tether_plugin_sdk::Card::new("Structures").field("Back", link("Settings", "settings")),
-    ))
+    Ok(page)
 }
 
 pub fn save_tag(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
