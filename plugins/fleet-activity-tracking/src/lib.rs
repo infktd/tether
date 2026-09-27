@@ -25,8 +25,9 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, badge, link, log, time,
+    Action, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
+    SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character, corporation,
+    item_type, link, log, time,
 };
 
 /// A new link's expiry unless the FC picks another (aa-afat's default).
@@ -41,9 +42,9 @@ const LOG_DAYS: i64 = 60;
 const LINKS_PER_PAGE: i64 = 100;
 /// Characters offered on the register form (a form has at most 30 fields).
 const MAX_FORM_CHARACTERS: usize = 30;
-/// Attendees shown on a link's page, and offered for removal in a list.
+/// Attendees shown on a link's page, each with its Remove for managers
+/// (beyond them, a manager removes a FAT by name).
 const MAX_ATTENDEES: i64 = 500;
-const MAX_SELECT: usize = 100;
 /// Rows in statistics tables, within the host's page limits.
 const MAX_STAT_ROWS: usize = 300;
 const MAX_FLEET: u32 = 100;
@@ -73,44 +74,16 @@ struct FleetActivityTracking;
 impl Plugin for FleetActivityTracking {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        let parts: Vec<&str> = request.path.split('/').collect();
-        match parts.as_slice() {
-            [""] => dashboard(&viewer),
-            ["links"] => links_page(&viewer, 1),
-            ["links", "page", n] => links_page(&viewer, number(n)?),
-            ["links", "create"] => create_page(&viewer, None),
-            ["links", hash] => details_page(&viewer, hash, None),
-            ["links", hash, "add"] => register_page(&viewer, hash, None),
-            ["stats"] => stats_page(&viewer, this_year()),
-            ["stats", year] => stats_page(&viewer, year_of(year)?),
-            ["stats", "corporation", id] => corporation_page(&viewer, number(id)?, this_year()),
-            ["stats", "corporation", id, year] => {
-                corporation_page(&viewer, number(id)?, year_of(year)?)
-            }
-            ["stats", "alliance", id] => alliance_page(&viewer, number(id)?, this_year()),
-            ["stats", "alliance", id, year] => alliance_page(&viewer, number(id)?, year_of(year)?),
-            ["stats", "character", id] => character_page(&viewer, number(id)?, this_year()),
-            ["stats", "character", id, year] => {
-                character_page(&viewer, number(id)?, year_of(year)?)
-            }
-            ["fleet-types"] => fleet_types_page(None),
-            ["logs"] => logs_page(&viewer),
-            _ => Err(PageError::NotFound),
-        }
+        Ok(with_links(render_page(&request, &viewer)?, &viewer))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         remember_characters(&viewer);
-        let path = submission.request.path.clone();
-        let parts: Vec<&str> = path.split('/').collect();
-        match (parts.as_slice(), submission.form.as_str()) {
-            (["links", "create"], "create") => create_link(&viewer, &submission),
-            (["links", hash, "add"], "register") => register(&viewer, hash, &submission),
-            (["links", hash], form) => change_link(&viewer, hash, form, &submission),
-            (["fleet-types"], form) => change_fleet_types(&viewer, form, &submission),
-            _ => Err(PageError::NotFound),
-        }
+        Ok(match submit_form(&submission, &viewer)? {
+            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            other => other,
+        })
     }
 
     fn run_job(job: Job) -> Result<(), JobError> {
@@ -124,6 +97,63 @@ impl Plugin for FleetActivityTracking {
 }
 
 tether_plugin_sdk::export!(FleetActivityTracking);
+
+/// The app's pages beside the title, as aa-afat's navbar, and Create FAT
+/// Link as its button: those the viewer may open.
+fn with_links(page: Page, viewer: &Viewer) -> Page {
+    let mut page = page;
+    if viewer.can("basic_access") {
+        page = page
+            .link("Dashboard", "")
+            .link("FAT Links", "links")
+            .link("Statistics", "stats");
+    }
+    if viewer.can("manage_afat") {
+        page = page.link("Fleet types", "fleet-types");
+    }
+    if viewer.can("logs_view") {
+        page = page.link("Logs", "logs");
+    }
+    if can_create(viewer) {
+        page = page.button("Create FAT Link", "links/create");
+    }
+    page
+}
+
+fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
+    let parts: Vec<&str> = request.path.split('/').collect();
+    match parts.as_slice() {
+        [""] => dashboard(viewer),
+        ["links"] => links_page(viewer, 1),
+        ["links", "page", n] => links_page(viewer, number(n)?),
+        ["links", "create"] => create_page(viewer, None),
+        ["links", hash] => details_page(viewer, hash, None),
+        ["links", hash, "add"] => register_page(viewer, hash, None),
+        ["stats"] => stats_page(viewer, this_year()),
+        ["stats", year] => stats_page(viewer, year_of(year)?),
+        ["stats", "corporation", id] => corporation_page(viewer, number(id)?, this_year()),
+        ["stats", "corporation", id, year] => corporation_page(viewer, number(id)?, year_of(year)?),
+        ["stats", "alliance", id] => alliance_page(viewer, number(id)?, this_year()),
+        ["stats", "alliance", id, year] => alliance_page(viewer, number(id)?, year_of(year)?),
+        ["stats", "character", id] => character_page(viewer, number(id)?, this_year()),
+        ["stats", "character", id, year] => character_page(viewer, number(id)?, year_of(year)?),
+        ["fleet-types"] => fleet_types_page(None),
+        ["logs"] => logs_page(viewer),
+        _ => Err(PageError::NotFound),
+    }
+}
+
+fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult, PageError> {
+    let path = submission.request.path.clone();
+    let parts: Vec<&str> = path.split('/').collect();
+    match (parts.as_slice(), submission.form.as_str()) {
+        (["links", "create"], "create") => create_link(viewer, submission),
+        (["links", hash, "add"], "register") => register(viewer, hash, submission),
+        (["links", hash], form) => change_link(viewer, hash, form, submission),
+        (["fleet-types"], form) => change_fleet_types(viewer, form, submission),
+        _ => Err(PageError::NotFound),
+    }
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -364,6 +394,8 @@ struct LinkInfo {
     doctrine: Option<String>,
     creator_account: i64,
     creator_name: String,
+    /// The FC's main when they created it.
+    creator_id: i64,
     created_at: String,
     expires_at: String,
     reopened: i64,
@@ -388,7 +420,7 @@ const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.c
      l.creator_name, l.created_at, l.expires_at, l.reopened, \
      (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, l.expires_at > now(), \
      l.esi_state, l.esi_character_name, l.esi_stop_reason, l.esi_polled_at, \
-     l.esi_started_at > now() - interval '6 hours', l.esi_character_id"; // TRACK_CAP
+     l.esi_started_at > now() - interval '6 hours', l.esi_character_id, l.creator_id"; // TRACK_CAP
 
 fn link_info(row: &[Db]) -> LinkInfo {
     LinkInfo {
@@ -399,6 +431,7 @@ fn link_info(row: &[Db]) -> LinkInfo {
         doctrine: maybe_text(row, 4),
         creator_account: int(row, 5),
         creator_name: text(row, 6),
+        creator_id: int(row, 18),
         created_at: text(row, 7),
         expires_at: text(row, 8),
         reopened: int(row, 9),
@@ -480,13 +513,28 @@ fn links_table(viewer: &Viewer, title: &str, empty: &str, links: &[LinkInfo]) ->
             vec![
                 fleet_cell(viewer, l),
                 l.fleet_type.clone().unwrap_or_default().into(),
-                l.creator_name.clone().into(),
+                character(l.creator_id, l.creator_name.clone()).into(),
                 time(l.created_at.clone()),
                 l.fats.into(),
                 status(l),
             ]
         }),
     )
+}
+
+/// A character, corporation, alliance or type: its picture and name, or
+/// the id until the name is known, or nothing for none.
+fn named(
+    make: fn(i64, String) -> tether_plugin_sdk::Entity,
+    name: String,
+    id: i64,
+    what: &str,
+) -> Value {
+    match (name, id) {
+        (_, 0) => "".into(),
+        (name, id) if !name.is_empty() => make(id, name).into(),
+        (_, id) => make(id, format!("{what} {id}")).into(),
+    }
 }
 
 /// Enabled fleet types as select options, plus `keep` (a link's current
@@ -527,7 +575,7 @@ fn dashboard(viewer: &Viewer) -> Result<Page, PageError> {
     )?;
     let totals = totals.first();
     let recent = query(
-        "SELECT f.character_name, l.fleet, coalesce(l.fleet_type, ''), l.created_at \
+        "SELECT f.character_name, l.fleet, coalesce(l.fleet_type, ''), l.created_at, f.character_id \
          FROM fats f JOIN links l ON l.id = f.link_id \
          WHERE f.character_id = ANY(string_to_array($1, ',')::bigint[]) \
          ORDER BY l.created_at DESC LIMIT 20",
@@ -568,7 +616,7 @@ fn dashboard(viewer: &Viewer) -> Result<Page, PageError> {
         .empty("No FATs yet. Open the FAT link your FC shares in fleet to register one."),
         recent.iter().map(|r| {
             vec![
-                text(r, 0).into(),
+                character(int(r, 4), text(r, 0)).into(),
                 text(r, 1).into(),
                 text(r, 2).into(),
                 time(text(r, 3)),
@@ -596,27 +644,7 @@ fn dashboard(viewer: &Viewer) -> Result<Page, PageError> {
         "No FAT links yet.",
         &latest,
     ));
-    Ok(page.card(menu(viewer)))
-}
-
-/// Links to the app's pages the viewer may open.
-fn menu(viewer: &Viewer) -> Card {
-    let mut card = Card::new("Fleet Activity Tracking")
-        .field("FAT Links", link("Every FAT link", "links"))
-        .field("Statistics", link("Attendance by month", "stats"));
-    if can_create(viewer) {
-        card = card.field(
-            "Create FAT Link",
-            link("For a fleet you run", "links/create"),
-        );
-    }
-    if viewer.can("manage_afat") {
-        card = card.field("Fleet types", link("Manage fleet types", "fleet-types"));
-    }
-    if viewer.can("logs_view") {
-        card = card.field("Logs", link("What FCs and managers did", "logs"));
-    }
-    card
+    Ok(page)
 }
 
 fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
@@ -648,13 +676,8 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
             "No FAT links yet.",
             &links,
         ));
-    let mut more = Card::new("More");
-    if can_create(viewer) {
-        more = more.field(
-            "Create FAT Link",
-            link("For a fleet you run", "links/create"),
-        );
-    }
+    // Paging; the app's pages and Create FAT Link are beside the title.
+    let mut more = Card::new("Pages");
     if page_number > 1 {
         more = more.field(
             "Newer",
@@ -903,6 +926,8 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             )
         ));
     }
+    let manage = viewer.can("manage_afat");
+    let edit = can_edit(viewer, &link);
     let mut card = Card::new("FAT link")
         .field(
             "Register link",
@@ -917,7 +942,10 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             "Doctrine",
             link.doctrine.clone().unwrap_or_else(|| "None".to_owned()),
         )
-        .field("Created by", link.creator_name.clone())
+        .field(
+            "Created by",
+            character(link.creator_id, link.creator_name.clone()),
+        )
         .field("Created", time(link.created_at.clone()));
     if link.reopened > 0 {
         card = card.field("Reopened", link.reopened);
@@ -935,9 +963,17 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             card = card.field("Fleet last read", time(at.clone()));
         }
     }
+    let buttons = if edit {
+        link_actions(viewer, &link)
+    } else {
+        Vec::new()
+    };
+    if !buttons.is_empty() {
+        card = card.field("Actions", actions(buttons));
+    }
     // Ships and systems are where pilots were (intel): only for the link's
     // FC and managers, not every FC.
-    let intel = can_edit(viewer, &link);
+    let intel = edit;
     let mut columns = vec![
         Column::text("Character"),
         Column::text("Corporation"),
@@ -947,31 +983,32 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
         columns.extend([Column::text("Ship"), Column::text("System")]);
     }
     columns.extend([Column::numeric("Registered"), Column::text("How")]);
+    // Managers remove a FAT from its row.
+    if manage {
+        columns.push(Column::text(""));
+    }
     page = page.card(card).table(with_rows(
         Table::new(columns)
             .title("Attendees")
             .empty("Nobody has registered yet."),
         attendees.iter().map(|r| {
-            let corporation = match (text(r, 2), int(r, 6)) {
-                (name, _) if !name.is_empty() => name,
-                (_, 0) => "Unknown".to_owned(),
-                (_, id) => format!("Corporation {id}"),
-            };
-            let alliance = match (text(r, 3), int(r, 7)) {
-                (name, _) if !name.is_empty() => name,
-                (_, 0) => String::new(),
-                (_, id) => format!("Alliance {id}"),
-            };
             // Names from ESI, or the id until they're known.
-            let named = |name: String, id: i64, what: &str| match (name, id) {
-                (name, _) if !name.is_empty() => name,
-                (_, 0) => String::new(),
-                (_, id) => format!("{what} {id}"),
+            let corporation_cell = match (text(r, 2), int(r, 6)) {
+                (_, 0) => "Unknown".into(),
+                (name, id) => named(corporation, name, id, "Corporation"),
             };
-            let mut row: Vec<Value> = vec![text(r, 1).into(), corporation.into(), alliance.into()];
+            let mut row: Vec<Value> = vec![
+                character(int(r, 0), text(r, 1)).into(),
+                corporation_cell,
+                named(alliance, text(r, 3), int(r, 7), "Alliance"),
+            ];
             if intel {
-                row.push(named(text(r, 8), int(r, 11), "Type").into());
-                row.push(named(text(r, 9), int(r, 12), "System").into());
+                row.push(named(item_type, text(r, 8), int(r, 11), "Type"));
+                row.push(match (text(r, 9), int(r, 12)) {
+                    (name, _) if !name.is_empty() => name.into(),
+                    (_, 0) => "".into(),
+                    (_, id) => format!("System {id}").into(),
+                });
             }
             row.push(time(text(r, 4)));
             row.push(match (maybe_text(r, 5), flag(r, 10)) {
@@ -979,6 +1016,18 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 (None, true) => "ESI fleet".into(),
                 (None, false) => "Registered".into(),
             });
+            if manage {
+                row.push(
+                    action("Remove", "remove_fat")
+                        .field("character_id", int(r, 0).to_string())
+                        .tone(Tone::Danger)
+                        .confirm(format!(
+                            "{}'s FAT for this fleet is removed; statistics lose it.",
+                            text(r, 1)
+                        ))
+                        .into(),
+                );
+            }
             row
         }),
     ));
@@ -988,10 +1037,12 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             link.fats
         ));
     }
-    if !can_edit(viewer, &link) {
+    if !edit {
         return Ok(page.text("Only the FC who created this link, or a manager, can change it."));
     }
-    let manage = viewer.can("manage_afat");
+    if !link.open && !manage && link.reopened >= REOPEN_LIMIT {
+        page = page.text("You've reopened this link once already; a manager can reopen it again.");
+    }
     page = page.tab(
         "Edit",
         vec![Section::Form(
@@ -1015,76 +1066,6 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 ),
         )],
     );
-    if let Some(esi) = &link.esi
-        && esi.tracking
-    {
-        page = page.tab(
-            "Stop tracking",
-            vec![Section::Form(
-                Form::new("stop_tracking", "Stop ESI tracking")
-                    .description(format!(
-                        "Stops reading {}'s fleet; the link stays open for members to click. \
-                         Only {} can resume it.",
-                        esi.character_name, esi.character_name
-                    ))
-                    .field(Field::checkbox("confirm", "Stop tracking", false).required()),
-            )],
-        );
-    }
-    // Only the owner of the tracked character resumes it.
-    if let Some(esi) = &link.esi
-        && !esi.tracking
-        && link.open
-        && esi.within_cap
-        && owns(viewer, esi.character_id)
-    {
-        page = page.tab(
-            "Resume tracking",
-            vec![Section::Form(
-                Form::new("resume", "Resume ESI tracking")
-                    .description(format!(
-                        "Reads {}'s fleet again every minute. They must be the fleet boss.",
-                        esi.character_name
-                    ))
-                    .field(Field::checkbox("confirm", "Resume tracking", true).required()),
-            )],
-        );
-    }
-    if link.open {
-        page = page.tab(
-            "Close",
-            vec![Section::Form(
-                Form::new("close", "Close FAT link")
-                    .description("Nobody can register once it's closed.")
-                    .field(Field::checkbox("confirm", "Close it now", false).required()),
-            )],
-        );
-    } else if manage || link.reopened < REOPEN_LIMIT {
-        page = page.tab(
-            "Reopen",
-            vec![Section::Form(
-                Form::new("reopen", "Reopen FAT link")
-                    .description(if manage {
-                        "Members can register again for this long."
-                    } else {
-                        "Members can register again for this long. You can reopen a link once; after that, ask a manager."
-                    })
-                    .field(
-                        Field::number("expiry", "Open for (minutes)")
-                            .range(Some(1.0), Some(MAX_EXPIRY_MINUTES as f64), true)
-                            .value(DEFAULT_EXPIRY_MINUTES.to_string())
-                            .required(),
-                    ),
-            )],
-        );
-    } else {
-        page = page.tab(
-            "Reopen",
-            vec![Section::Text(
-                "You've reopened this link once already; a manager can reopen it again.".into(),
-            )],
-        );
-    }
     page = page.tab(
         "Add FAT",
         vec![Section::Form(
@@ -1099,49 +1080,72 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 ),
         )],
     );
-    if manage {
-        let remove = if link.fats == 0 {
-            Section::Text("There are no FATs to remove.".into())
-        } else if link.fats <= count(MAX_SELECT) {
-            Section::Form(
-                Form::new("remove_fat", "Remove FAT").field(
-                    Field::select(
-                        "character_id",
-                        "Character",
-                        attendees
-                            .iter()
-                            .map(|r| (int(r, 0).to_string(), text(r, 1)))
-                            .collect(),
-                    )
-                    .required(),
-                ),
-            )
-        } else {
-            Section::Form(
-                Form::new("remove_fat", "Remove FAT")
-                    .field(Field::text("character_name", "Character name", 40).required()),
-            )
-        };
-        page = page.tab("Remove FAT", vec![remove]).tab(
-            "Delete",
+    // Attendees beyond those listed (each with its Remove) by name.
+    if manage && link.fats > MAX_ATTENDEES {
+        page = page.tab(
+            "Remove FAT",
             vec![Section::Form(
-                Form::new("delete", "Delete FAT link")
-                    .description(format!(
-                        "Deletes this link and its {} FATs; statistics lose them. This can't be undone.",
-                        link.fats
-                    ))
-                    .field(
-                        Field::checkbox(
-                            "confirm",
-                            format!("Delete \"{}\" and its {} FATs", link.fleet, link.fats),
-                            false,
-                        )
-                        .required(),
-                    ),
+                Form::new("remove_by_name", "Remove FAT")
+                    .field(Field::text("character_name", "Character name", 40).required()),
             )],
         );
     }
     Ok(page)
+}
+
+/// A link's buttons for its FC and managers, as aa-afat's: stop or resume
+/// ESI tracking, close or reopen it, delete it. Each posts to `change_link`.
+fn link_actions(viewer: &Viewer, link: &LinkInfo) -> Vec<Action> {
+    let manage = viewer.can("manage_afat");
+    let mut buttons = Vec::new();
+    if let Some(esi) = &link.esi
+        && esi.tracking
+    {
+        buttons.push(action("Stop tracking", "stop_tracking").confirm(format!(
+            "Tether stops reading {}'s fleet; the link stays open for members to click. Only {} \
+             can resume it.",
+            esi.character_name, esi.character_name
+        )));
+    }
+    // Only the owner of the tracked character resumes it.
+    if let Some(esi) = &link.esi
+        && !esi.tracking
+        && link.open
+        && esi.within_cap
+        && owns(viewer, esi.character_id)
+    {
+        buttons.push(action("Resume tracking", "resume").confirm(format!(
+            "Tether reads {}'s fleet again every minute. They must be the fleet boss.",
+            esi.character_name
+        )));
+    }
+    if link.open {
+        buttons.push(action("Close", "close").confirm("Nobody can register once it's closed."));
+    } else if manage || link.reopened < REOPEN_LIMIT {
+        buttons.push(
+            action("Reopen", "reopen")
+                .field("expiry", DEFAULT_EXPIRY_MINUTES.to_string())
+                .confirm(if manage {
+                    format!("Members can register again for {DEFAULT_EXPIRY_MINUTES} minutes.")
+                } else {
+                    format!(
+                        "Members can register again for {DEFAULT_EXPIRY_MINUTES} minutes. You can \
+                         reopen a link once; after that, ask a manager."
+                    )
+                }),
+        );
+    }
+    if manage {
+        buttons.push(
+            action("Delete", "delete")
+                .tone(Tone::Danger)
+                .confirm(format!(
+                    "\"{}\" and its {} FATs are deleted; statistics lose them. This can't be undone.",
+                    link.fleet, link.fats
+                )),
+        );
+    }
+    buttons
 }
 
 fn change_link(
@@ -1317,7 +1321,7 @@ fn change_link(
             Ok(back())
         }
         "add_fat" => add_fat(viewer, &link, submission.value("character").trim()),
-        "remove_fat" if manage => {
+        "remove_fat" | "remove_by_name" if manage => {
             // The next read of the fleet would add it straight back.
             if link.esi.as_ref().is_some_and(|e| e.tracking) {
                 return Ok(SubmitResult::Page(details_page(
@@ -1381,7 +1385,7 @@ fn change_link(
             )?;
             Ok(SubmitResult::Redirect("links".into()))
         }
-        "remove_fat" | "delete" => Err(PageError::Forbidden),
+        "remove_fat" | "remove_by_name" | "delete" => Err(PageError::Forbidden),
         _ => Err(PageError::NotFound),
     }
 }
@@ -2008,52 +2012,46 @@ fn fleet_types_page(note: Option<&str>) -> Result<Page, PageError> {
                 Column::text("Fleet type"),
                 Column::text("Status"),
                 Column::numeric("FAT links"),
+                Column::text(""),
             ])
             .empty("No fleet types yet: add the kinds of fleets you run (CTA, Home Defense, Mining...)."),
             rows.iter().map(|r| {
-                let status = if flag(r, 2) {
+                let enabled = flag(r, 2);
+                let status = if enabled {
                     badge("Enabled", Tone::Success)
                 } else {
                     badge("Disabled", Tone::Neutral)
                 };
-                vec![text(r, 1).into(), status.into(), int(r, 3).into()]
+                // Each posts `change_type` with the type and what to do.
+                let change = |label: &str, what: &str| {
+                    action(label, "change_type")
+                        .field("type", int(r, 0).to_string())
+                        .field("action", what)
+                };
+                let buttons = vec![
+                    if enabled {
+                        change("Disable", "disable")
+                    } else {
+                        change("Enable", "enable")
+                    },
+                    change("Delete", "delete").tone(Tone::Danger).confirm(format!(
+                        "\"{}\" is deleted; the links that used it keep it.",
+                        text(r, 1)
+                    )),
+                ];
+                vec![
+                    text(r, 1).into(),
+                    status.into(),
+                    int(r, 3).into(),
+                    actions(buttons),
+                ]
             }),
         ))
+        .text("Disabled types aren't offered for new links. Deleting one keeps it on the links that used it.")
         .form(
             Form::new("add_type", "Add fleet type")
                 .field(Field::text("name", "Name", MAX_TYPE_NAME).required()),
         );
-    if !rows.is_empty() {
-        page = page.form(
-            Form::new("change_type", "Apply")
-                .title("Change a fleet type")
-                .description(
-                    "Disabled types aren't offered for new links. Deleting one keeps it on the links that used it.",
-                )
-                .field(
-                    Field::select(
-                        "type",
-                        "Fleet type",
-                        rows.iter()
-                            .map(|r| (int(r, 0).to_string(), text(r, 1)))
-                            .collect(),
-                    )
-                    .required(),
-                )
-                .field(
-                    Field::select(
-                        "action",
-                        "Action",
-                        vec![
-                            ("enable".into(), "Enable".into()),
-                            ("disable".into(), "Disable".into()),
-                            ("delete".into(), "Delete".into()),
-                        ],
-                    )
-                    .required(),
-                ),
-        );
-    }
     Ok(page)
 }
 
@@ -2138,7 +2136,8 @@ fn change_fleet_types(
 
 fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
     let rows = query(
-        "SELECT g.at, g.event, g.actor_name, g.link_hash, g.description, l.hash IS NOT NULL \
+        "SELECT g.at, g.event, g.actor_name, g.link_hash, g.description, l.hash IS NOT NULL, \
+                g.actor_id \
          FROM logs g LEFT JOIN links l ON l.hash = g.link_hash \
          ORDER BY g.at DESC, g.id DESC LIMIT 500",
         &[],
@@ -2168,7 +2167,7 @@ fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
                 vec![
                     time(text(r, 0)),
                     text(r, 1).into(),
-                    text(r, 2).into(),
+                    character(int(r, 6), text(r, 2)).into(),
                     text(r, 4).into(),
                     target,
                 ]

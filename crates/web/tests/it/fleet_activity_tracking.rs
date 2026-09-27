@@ -213,12 +213,64 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     let res = post(&h, "fleet-types", "_form=add_type&name=cta", &owner).await;
     assert_eq!(res.status, StatusCode::OK);
     assert!(res.body.contains("already a fleet type"), "{}", res.body);
+    // Each type's row has Disable (or Enable) and Delete.
+    let cta: i64 = sqlx::query_scalar(sql!(
+        "SELECT id FROM \"{}\".fleet_types WHERE name = 'CTA'",
+        schema(&h).await
+    ))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    for (what, status) in [("disable", "Disabled"), ("enable", "Enabled")] {
+        let res = post(
+            &h,
+            "fleet-types",
+            &format!("_form=change_type&type={cta}&action={what}"),
+            &owner,
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{what}: {}", res.body);
+        let types = open(&h, "fleet-types", &owner).await;
+        assert!(types.body.contains(status), "{status}: {}", types.body);
+    }
 
     let hash = create_link(&h, &owner, "Home defense", "CTA").await;
     let details = open(&h, &format!("links/{hash}"), &owner).await;
     assert_eq!(details.status, StatusCode::OK, "{}", details.body);
     assert!(details.body.contains("Home defense"));
     assert!(details.body.contains("CTA"));
+    // aa-afat's navbar beside the title, Create FAT Link as its button,
+    // and the link's own buttons: Close, and Delete asking first.
+    for href in ["links", "stats", "fleet-types", "logs"] {
+        assert!(
+            details
+                .body
+                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
+            "{href}: {}",
+            details.body
+        );
+    }
+    assert!(
+        details.body.contains(&format!(
+            "href=\"/plugins/{ID}/links/create\">Create FAT Link</a>"
+        )),
+        "{}",
+        details.body
+    );
+    assert!(
+        details
+            .body
+            .contains("Nobody can register once it&#39;s closed."),
+        "{}",
+        details.body
+    );
+    assert!(
+        details
+            .body
+            .contains("&#34;Home defense&#34; and its 0 FATs are deleted"),
+        "{}",
+        details.body
+    );
     assert!(
         details
             .body
@@ -267,6 +319,21 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     let details = open(&h, &format!("links/{hash}"), &owner).await;
     assert!(
         details.body.contains("Otherworld Enterprises"),
+        "{}",
+        details.body
+    );
+    // Portraits and logos, and each row's Remove for a manager.
+    for image in [
+        format!("characters/{LINE}/portrait"),
+        format!("corporations/{CHRIBBA_CORP}/logo"),
+        format!("alliances/{CHRIBBA_ALLIANCE}/logo"),
+    ] {
+        assert!(details.body.contains(&image), "{image}: {}", details.body);
+    }
+    assert!(
+        details
+            .body
+            .contains("Line Alt&#39;s FAT for this fleet is removed"),
         "{}",
         details.body
     );
@@ -350,7 +417,7 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     let res = post(
         &h,
         &format!("links/{late}"),
-        "_form=reopen&expiry=30",
+        "_form=reopen&expiry=60",
         &owner,
     )
     .await;
@@ -375,13 +442,7 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(fats(&h, &late).await.len(), 2);
-    let res = post(
-        &h,
-        &format!("links/{late}"),
-        "_form=delete&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{late}"), "_form=delete", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(res.location(), format!("/plugins/{ID}/links"));
     assert_eq!(
@@ -512,23 +573,23 @@ async fn permissions_follow_aa_afat(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    let res = post(
-        &h,
-        &format!("links/{own}"),
-        "_form=delete&confirm=on",
-        &line,
-    )
-    .await;
+    let res = post(&h, &format!("links/{own}"), "_form=delete", &line).await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     // An FC reopens their own link once; then only a manager can.
     expire(&h, &own).await;
-    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=5", &line).await;
+    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=60", &line).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let res = post(&h, &format!("links/{own}"), "_form=close&confirm=on", &line).await;
+    let res = post(&h, &format!("links/{own}"), "_form=close", &line).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=5", &line).await;
+    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=60", &line).await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=5", &owner).await;
+    let res = post(
+        &h,
+        &format!("links/{own}"),
+        "_form=reopen&expiry=60",
+        &owner,
+    )
+    .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
     no_problems(&plugin_problems(&h).await);
@@ -950,13 +1011,7 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert!(res.body.contains("Stop ESI tracking first"), "{}", res.body);
     assert_eq!(esi_fats(&h, &hash).await.len(), 3);
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=stop_tracking&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=stop_tracking", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(
         tracking(&h, &hash).await,
@@ -972,23 +1027,11 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(esi_fats(&h, &hash).await.len(), 2);
     // Resuming waits a minute after the last read.
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=resume&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert!(res.body.contains("try again shortly"), "{}", res.body);
     age_poll(&h, &hash).await;
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=resume&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
 
@@ -1033,13 +1076,7 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     }
 
     // Closing the link stops tracking, and the job stops queuing itself.
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=close&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=close", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(
         tracking(&h, &hash).await,
@@ -1058,13 +1095,7 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     age_poll(&h, &hash).await;
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=resume&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
     assert_eq!(queued_polls(&h).await, 1);
@@ -1137,41 +1168,24 @@ async fn esi_tracking_stops_when_boss_passes_and_resumes(db: PgPool) {
         "{}",
         details.body
     );
-    let resume = open(&h, &format!("links/{hash}?_tab=1"), &owner).await;
+    // Its owner gets Resume tracking among the link's buttons.
+    let resume = open(&h, &format!("links/{hash}"), &owner).await;
     assert!(
-        resume.body.contains("Resume ESI tracking"),
+        resume.body.contains(">Resume tracking</button>"),
         "{}",
         resume.body
     );
     // Not within a minute of the last read.
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=resume&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
     assert!(res.body.contains("try again shortly"), "{}", res.body);
     age_poll(&h, &hash).await;
     // A manager can't restart someone else's character's tracking: only
     // its owner is offered Resume.
     grant(&h, &owner, "manage_afat", MEMBER_STATE).await;
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=resume&confirm=on",
-        &line,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &line).await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("stopped"));
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=resume&confirm=on",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(tracking(&h, &hash).await, (Some("tracking".into()), None));
     assert_eq!(queued_polls(&h).await, 1);
