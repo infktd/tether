@@ -45,11 +45,12 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
     "migrations/0004_aa_settings.sql",
+    "migrations/0005_data_exports.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -1735,4 +1736,100 @@ fn upgrading_from_0_2_moves_the_renamed_grants() {
         assert!(now.permissions.contains_key(permission), "{permission}");
     }
     assert!(!now.permissions.contains_key("view_mail"));
+}
+
+/// aa-memberaudit's data exports: CSV files of every character's
+/// contracts, contract items and wallet journal, for `exports_access`.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn data_exports_are_csv_files_for_exports_access(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let at = format!("/plugins/{ID}/data-export");
+    let res = page(&h, &at, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    // The daily schedule has already built them.
+    for text in [
+        "Data Export",
+        "Wallet journal",
+        "Contract item",
+        "/plugins/tether.member-audit/downloads/wallet-journal",
+        "updated in the last hour",
+    ] {
+        assert!(res.body.contains(text), "{text}: {}", res.body);
+    }
+    // At most once an hour, as AA's.
+    let again = send(
+        &h.app,
+        form(&at, "_form=update_export&topic=contract", &owner),
+    )
+    .await;
+    assert!(
+        again.body.contains("updated in the last hour"),
+        "{}",
+        again.body
+    );
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".export_runs SET asked_at = now() - interval '61 minutes'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    for topic in ["contract", "contract-item", "wallet-journal"] {
+        let res = send(
+            &h.app,
+            form(&at, &format!("_form=update_export&topic={topic}"), &owner),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        assert!(res.body.contains("has been started"), "{}", res.body);
+    }
+    work(&h).await;
+
+    let journal = page(
+        &h,
+        &format!("/plugins/{ID}/downloads/wallet-journal"),
+        &owner,
+    )
+    .await;
+    assert_eq!(journal.status, StatusCode::OK, "{}", journal.body);
+    assert!(
+        journal.body.starts_with(
+            "date,owner character,owner corporation,entry id,ref type,first party,second party,\
+             amount,balance,context_id,context_id_type,tax,tax_receiver,description,reason\r\n"
+        ),
+        "{}",
+        journal.body
+    );
+    for text in [
+        "2026-09-24 12:00:00,Chribba,",
+        ",1,Bounty Prizes,",
+        ",1000,1234567.89,",
+        ",Bounty,",
+    ] {
+        assert!(journal.body.contains(text), "{text}: {}", journal.body);
+    }
+    let contracts = page(&h, &format!("/plugins/{ID}/downloads/contract"), &owner).await;
+    for text in [
+        ",Item Exchange,Outstanding,2026-09-20 00:00:00,",
+        ",Public,Chribba,",
+        "Tritanium for sale",
+    ] {
+        assert!(contracts.body.contains(text), "{text}: {}", contracts.body);
+    }
+    let items = page(
+        &h,
+        &format!("/plugins/{ID}/downloads/contract-item"),
+        &owner,
+    )
+    .await;
+    assert!(items.body.contains(",1,"), "{}", items.body);
+    assert!(
+        items.body.contains(",1000,yes,no,no,no,no,"),
+        "{}",
+        items.body
+    );
+
+    // Not for pilots without exports_access.
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let res = page(&h, &format!("/plugins/{ID}/downloads/contract"), &pilot).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
 }

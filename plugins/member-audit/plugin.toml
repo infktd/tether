@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.member-audit"
 name = "Member Audit"
-version = "0.3.1"
+version = "0.4.0"
 host_api = "1"
 description = "A full character viewer (aa-memberaudit's): skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails and more; Character Finder, Skill Sets and reports."
 
@@ -12,6 +12,9 @@ key = "PUBLISHER_KEY"
 
 [capabilities]
 storage = true
+# aa-memberaudit's data exports: CSV files Tether writes from the rows
+# Member Audit hands over, for holders of exports_access.
+downloads = true
 
 [capabilities.esi]
 # aa-memberaudit's character sheet, from the characters their pilots
@@ -55,6 +58,11 @@ every = "5m"
 name = "report_filters"
 every = "1h"
 
+# The data exports, rebuilt daily (and on request, at most hourly).
+[[capabilities.schedules]]
+name = "exports"
+every = "1d"
+
 # aa-memberaudit's permissions, as its own (AA's descriptions). Grant
 # basic_access to whoever may use it (Member, usually). Officers:
 # finder_access (the Character Finder), reports_access (Reports) and
@@ -80,6 +88,7 @@ view_skill_sets = "Can view skill sets for a character"
 # aa-memberaudit's: told when a pilot in your view scope drops a character
 # (Tether sends the notice when a character is unregistered).
 notified_on_character_removal = "Notified when member drops character"
+exports_access = "Can access data exports (every character's contracts and wallet journal)"
 manage = "Create and delete skill sets, and change Member Audit's settings"
 
 # What 0.2 called them: their grants move on upgrade. view_mail is gone
@@ -100,6 +109,10 @@ permission = "finder_access"
 [[pages]]
 path = "reports"
 permission = "reports_access"
+
+[[pages]]
+path = "data-export"
+permission = "exports_access"
 
 # Mail: every view in Tether's audit log, whoever looks.
 [[pages]]

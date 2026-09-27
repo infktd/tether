@@ -24,6 +24,7 @@
 //! reads each section on its own clock within the host's ESI budget.
 
 mod access;
+mod exports;
 mod filters;
 mod mail;
 mod pages;
@@ -51,6 +52,7 @@ impl Plugin for MemberAudit {
             ["finder"] => pages::finder(&access, &request),
             ["skill-sets"] => sets::skill_sets_page(&access, None),
             ["reports"] => sets::reports(&access),
+            ["data-export"] if viewer.can("exports_access") => exports::page(&access, None),
             ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
@@ -71,6 +73,9 @@ impl Plugin for MemberAudit {
         match (path.as_str(), submission.form.as_str()) {
             ("skill-sets", "add_set") if viewer.can("manage") => {
                 sets::add_set(&access, &submission)
+            }
+            ("data-export", "update_export") if viewer.can("exports_access") => {
+                exports::update(&access, submission.value("topic"))
             }
             ("settings", "settings") if viewer.can("manage") => {
                 settings::save(&viewer, &submission)
@@ -98,6 +103,8 @@ impl Plugin for MemberAudit {
                 sync::run(Some(character))
             }
             "report_filters" => filters::report_filters(0),
+            exports::JOB => exports::run(&job.payload),
+            exports::SCHEDULE => exports::all(),
             filters::MORE_REPORTS => {
                 filters::report_filters(payload_id(&job.payload, "from").unwrap_or(0) as usize)
             }

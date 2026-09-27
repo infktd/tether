@@ -737,22 +737,30 @@ fn journal(run: &mut Run, id: i64) -> Result<(), Stop> {
         .map(|j| {
             run.ids.extend(i(&j["first_party_id"]));
             run.ids.extend(i(&j["second_party_id"]));
+            run.ids.extend(i(&j["tax_receiver_id"]));
             json!({
                 "id": j["id"], "date": j["date"], "ref_type": j["ref_type"],
                 "amount": j["amount"], "balance": j["balance"],
                 "description": clip(j["description"].as_str().unwrap_or_default(), MAX_SHORT),
                 "first_party_id": j["first_party_id"], "second_party_id": j["second_party_id"],
+                "context_id": j["context_id"], "context_id_type": j["context_id_type"],
+                "tax": j["tax"], "tax_receiver_id": j["tax_receiver_id"],
+                "reason": clip(j["reason"].as_str().unwrap_or_default(), MAX_SHORT),
             })
         })
         .collect();
     insert_all(
         vec![],
         "INSERT INTO journal (character_id, id, at, ref_type, amount, balance, description, \
-                              first_party_id, second_party_id) \
-         SELECT $2, id, date, ref_type, amount, balance, coalesce(description, ''), first_party_id, second_party_id \
+                              first_party_id, second_party_id, context_id, context_id_type, tax, \
+                              tax_receiver_id, reason) \
+         SELECT $2, id, date, ref_type, amount, balance, coalesce(description, ''), first_party_id, \
+                second_party_id, context_id, context_id_type, tax, tax_receiver_id, \
+                coalesce(reason, '') \
          FROM json_to_recordset($1::json) AS x(id bigint, date timestamptz, ref_type text, \
               amount double precision, balance double precision, description text, \
-              first_party_id bigint, second_party_id bigint) \
+              first_party_id bigint, second_party_id bigint, context_id bigint, \
+              context_id_type text, tax double precision, tax_receiver_id bigint, reason text) \
          ON CONFLICT (character_id, id) DO NOTHING",
         &entries,
         id,
@@ -785,7 +793,12 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
     let items: Vec<Json> = items
         .into_iter()
         .map(|c| {
-            for key in ["issuer_id", "assignee_id", "acceptor_id"] {
+            for key in [
+                "issuer_id",
+                "issuer_corporation_id",
+                "assignee_id",
+                "acceptor_id",
+            ] {
                 run.ids.extend(i(&c[key]).filter(|id| *id > 0));
             }
             for key in ["start_location_id", "end_location_id"] {
@@ -802,18 +815,22 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
         vec![],
         "INSERT INTO contracts (character_id, contract_id, kind, status, availability, issuer_id, \
              assignee_id, acceptor_id, issued, expires, completed, title, price, reward, collateral, \
-             volume, start_location_id, end_location_id) \
+             volume, start_location_id, end_location_id, accepted, issuer_corporation_id, \
+             days_to_complete, buyout) \
          SELECT $2, contract_id, type, status, availability, issuer_id, assignee_id, acceptor_id, \
              date_issued, date_expired, date_completed, coalesce(title, ''), price, reward, collateral, \
-             volume, start_location_id, end_location_id \
+             volume, start_location_id, end_location_id, date_accepted, issuer_corporation_id, \
+             days_to_complete, buyout \
          FROM json_to_recordset($1::json) AS x(contract_id bigint, type text, status text, \
              availability text, issuer_id bigint, assignee_id bigint, acceptor_id bigint, \
              date_issued timestamptz, date_expired timestamptz, date_completed timestamptz, \
              title text, price double precision, reward double precision, \
              collateral double precision, volume double precision, start_location_id bigint, \
-             end_location_id bigint) \
+             end_location_id bigint, date_accepted timestamptz, issuer_corporation_id bigint, \
+             days_to_complete integer, buyout double precision) \
          ON CONFLICT (character_id, contract_id) DO UPDATE SET status = EXCLUDED.status, \
-             acceptor_id = EXCLUDED.acceptor_id, completed = EXCLUDED.completed",
+             acceptor_id = EXCLUDED.acceptor_id, completed = EXCLUDED.completed, \
+             accepted = EXCLUDED.accepted",
         &items,
         id,
     )?;
@@ -840,9 +857,12 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
             .extend(items.iter().filter_map(|x| i(&x["type_id"])));
         store(&[
             stmt(
-                "INSERT INTO contract_items (character_id, contract_id, record_id, type_id, quantity, is_included) \
-                 SELECT $2, $3, record_id, type_id, quantity, is_included \
-                 FROM json_to_recordset($1::json) AS x(record_id bigint, type_id bigint, quantity bigint, is_included boolean) \
+                "INSERT INTO contract_items (character_id, contract_id, record_id, type_id, quantity, \
+                     is_included, is_singleton, raw_quantity) \
+                 SELECT $2, $3, record_id, type_id, quantity, is_included, \
+                     coalesce(is_singleton, false), raw_quantity \
+                 FROM json_to_recordset($1::json) AS x(record_id bigint, type_id bigint, quantity bigint, \
+                     is_included boolean, is_singleton boolean, raw_quantity bigint) \
                  ON CONFLICT DO NOTHING",
                 vec![rows(items), id.into(), contract.into()],
             ),
