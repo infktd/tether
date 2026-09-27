@@ -341,6 +341,11 @@ async fn fittings_end_to_end(db: PgPool) {
         "Republic Fleet EMP S",
         "Offline",
         "Copy EFT",
+        // AA's Copy Buy All: each item once, how many the fit holds.
+        "Copy Buy All",
+        "Rifter x1\n",
+        "200mm AutoCannon II x2",
+        "Warrior II x3",
         "Burn in",
         "Required skills",
         "Small Projectile Turret",

@@ -405,6 +405,24 @@ fn required_skills(fit: &Fit, lines: &[Line]) -> Result<Vec<(i64, String, i64)>,
         .collect())
 }
 
+/// AA's "Copy Buy All": the hull, then each item once with how many the
+/// fit holds, in the fit's order, for EVE's multibuy. Loaded charges are
+/// left out: EFT doesn't say how many are loaded (cargo lists spares).
+fn multibuy(hull: &str, lines: &[Line]) -> String {
+    let mut items: Vec<(&str, i64)> = Vec::new();
+    for line in lines {
+        match items.iter_mut().find(|(name, _)| *name == line.name) {
+            Some((_, count)) => *count += line.quantity,
+            None => items.push((&line.name, line.quantity)),
+        }
+    }
+    let mut out = format!("{hull} x1");
+    for (name, count) in items {
+        out.push_str(&format!("\n{name} x{count}"));
+    }
+    out
+}
+
 fn roman(level: i64) -> &'static str {
     match level {
         1 => "I",
@@ -470,6 +488,11 @@ pub(crate) fn page(access: &Access, id: i64) -> Result<Page, PageError> {
         CodeBlock::new(fit.eft.clone())
             .title("EFT")
             .copy_label("Copy EFT"),
+    );
+    page = page.code(
+        CodeBlock::new(multibuy(&fit.hull, &lines))
+            .title("Buy All")
+            .copy_label("Copy Buy All"),
     );
     if !fit.description.is_empty() {
         page = page.card(Card::new("Notes").description(clip(&fit.description, 2000)));
@@ -899,6 +922,39 @@ pub(crate) fn delete(viewer: &Viewer, id: i64) -> Result<SubmitResult, PageError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buy_all_counts_each_item_once() {
+        let line = |name: &str, quantity, charge: Option<(i64, String)>| Line {
+            place: Place::Low,
+            type_id: 1,
+            name: name.to_owned(),
+            charge,
+            quantity,
+            offline: false,
+        };
+        let lines = vec![
+            line("Damage Control II", 1, None),
+            line(
+                "Heavy Missile Launcher II",
+                1,
+                Some((2, "Scourge Heavy Missile".into())),
+            ),
+            line(
+                "Heavy Missile Launcher II",
+                1,
+                Some((2, "Scourge Heavy Missile".into())),
+            ),
+            line("Hobgoblin II", 5, None),
+            line("Scourge Heavy Missile", 1000, None),
+        ];
+        assert_eq!(
+            multibuy("Drake", &lines),
+            "Drake x1\nDamage Control II x1\nHeavy Missile Launcher II x2\nHobgoblin II x5\n\
+             Scourge Heavy Missile x1000"
+        );
+        assert_eq!(multibuy("Capsule", &[]), "Capsule x1");
+    }
 
     #[test]
     fn items_after_the_rigs_go_by_category() {
