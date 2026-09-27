@@ -246,15 +246,37 @@ pub async fn add_plugin_permissions(
     Ok(())
 }
 
+/// A grant moved to a renamed permission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovedGrant {
+    /// The grant, under its new name.
+    pub grant: Grant,
+    pub from: String,
+}
+
+/// What [`sync_plugin_permissions`] changed, for the audit log.
+#[derive(Debug, Default)]
+pub struct PermissionsSynced {
+    pub removed: Vec<Grant>,
+    pub moved: Vec<MovedGrant>,
+}
+
 /// Makes a plugin's permissions exactly `permissions` on an upgrade or
 /// rollback: new ones are added, descriptions updated, and ones it no
 /// longer declares removed with every grant of them. Grants of the ones it
-/// keeps stay. Returns the grants removed, for the audit log.
+/// keeps stay.
+///
+/// `renames` (old name, new name) move grants first: only from a
+/// permission this plugin held that it no longer declares, to one it
+/// declares now and didn't hold, so grants never cross plugins or merge
+/// into a permission someone already holds. A holder who somehow has
+/// both keeps the new one; the duplicate goes with the old name.
 pub async fn sync_plugin_permissions(
     tx: &mut sqlx::PgConnection,
     plugin_id: &str,
     permissions: &[(String, String)],
-) -> Result<Vec<Grant>, sqlx::Error> {
+    renames: &[(String, String)],
+) -> Result<PermissionsSynced, sqlx::Error> {
     let names: Vec<String> = permissions.iter().map(|(name, _)| name.clone()).collect();
     let held = sqlx::query_scalar!(
         "SELECT permission FROM core.plugin_permissions WHERE plugin_id = $1 FOR UPDATE",
@@ -274,6 +296,35 @@ pub async fn sync_plugin_permissions(
     )
     .execute(&mut *tx)
     .await?;
+    let mut moved = Vec::new();
+    for (from, to) in renames {
+        if !held.contains(from) || names.contains(from) || !new.contains(to) {
+            continue;
+        }
+        let rows = sqlx::query!(
+            r#"
+            UPDATE core.permission_grants g SET permission = $2
+            WHERE g.permission = $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.permission_grants h
+                  WHERE h.permission = $2
+                    AND h.state_id IS NOT DISTINCT FROM g.state_id
+                    AND h.group_id IS NOT DISTINCT FROM g.group_id
+              )
+            RETURNING id, permission, state_id, group_id
+            "#,
+            from,
+            to
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        moved.extend(rows.into_iter().filter_map(|r| {
+            to_grant(r.id, r.permission, r.state_id, r.group_id).map(|grant| MovedGrant {
+                grant,
+                from: from.clone(),
+            })
+        }));
+    }
     let rows = sqlx::query!(
         r#"
         DELETE FROM core.permission_grants
@@ -311,10 +362,28 @@ pub async fn sync_plugin_permissions(
         .execute(&mut *tx)
         .await?;
     }
-    Ok(rows
-        .into_iter()
-        .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
-        .collect())
+    Ok(PermissionsSynced {
+        removed: rows
+            .into_iter()
+            .filter_map(|r| to_grant(r.id, r.permission, r.state_id, r.group_id))
+            .collect(),
+        moved,
+    })
+}
+
+/// How many grants each permission has, for an upgrade's review.
+pub async fn grant_counts<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    permissions: &[String],
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT permission, count(*) AS "count!" FROM core.permission_grants
+           WHERE permission = ANY($1) GROUP BY permission"#,
+        permissions
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.permission, r.count)).collect())
 }
 
 /// Removes every grant of a plugin's permissions (its permissions go with

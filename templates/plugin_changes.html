@@ -21,6 +21,16 @@
     {% endfor %}
   </dl>
   {% endif %}
+  {% if !c.permissions_renamed.is_empty() %}
+  <dl class="grid gap-4">
+    {% for r in c.permissions_renamed %}
+    <div class="grid gap-1">
+      <dt class="font-medium flex flex-wrap items-center gap-2"><span class="badge" data-variant="secondary">Renamed</span> Permission <span class="num">{{ r.from }}</span> → <span class="num">{{ r.to }}</span></dt>
+      <dd class="text-muted-foreground break-words">{{ r.description }}. {% if r.grants == 1 %}1 grant moves{% else %}{{ r.grants }} grants move{% endif %} to the new name.</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  {% endif %}
   {% if !c.permissions_changed.is_empty() %}
   <dl class="grid gap-4">
     {% for p in c.permissions_changed %}

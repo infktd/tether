@@ -98,6 +98,9 @@ header = "X-ApiKey"        # the header it's sent in
 [permissions]              # granted like core ones, as plugin.<id>.<name>
 view = "View the mining ledger"
 manage = "Manage the mining ledger"
+
+[renamed_permissions]      # optional: what an earlier version called them (see Packaging)
+# see = "view"             # old name = new name; the old one's grants move on upgrade
 ```
 
 The admin sees every capability before approving an install. Secrets are values like API keys that the admin enters. Each goes to one declared host in one header (not `Cookie`, `Host` or headers that frame the request); the host adds it to your requests there, and your plugin never sees it (see HTTP below). `http` can't name Tether's own destinations (ESI, EVE SSO, CCP's image server, Discord, GitHub or their subdomains): a package that does is refused, since ESI and Discord go through the host API. Names and descriptions can't contain control characters or invisible formatting (bidi overrides, zero-width characters).
@@ -139,7 +142,7 @@ Admins can install straight from a repository, and Tether looks there once a day
 
 To try a build before publishing it, run a development build of Tether (`cargo run -p tether-server --features dev`): its Apps page can also install a signed package from a file. Release builds install only from GitHub. A package under the id of an app that comes with Tether (such as `tether.moon-mining`) is always refused.
 
-An upgrade is reviewed like an install. The admin sees what the new version asks for beyond the old one: hosts, secrets, scopes, timers, filters and permissions. A version must keep every migration already applied unchanged, and keep `storage` once it has data. A permission you drop takes its grants with it; renaming one is a drop plus an add. Admins can roll back one version: your earlier package goes back, and if your new migrations ran, so does the data (from the snapshot taken before them).
+An upgrade is reviewed like an install. The admin sees what the new version asks for beyond the old one: hosts, secrets, scopes, timers, filters and permissions. A version must keep every migration already applied unchanged, and keep `storage` once it has data. A permission you drop takes its grants with it; renaming one is a drop plus an add, unless you say so in `[renamed_permissions]` (old name = new name, e.g. `view = "extractions_access"`): then the old one's grants move to the new one. The old name must be gone from `[permissions]` and the new one declared, and a grant moves only within your app and only onto a new name nobody held before, so no grant is merged into one someone already has; nor can a rename create a `manage` or `add_...` permission (they let accounts offer your app data sources) from one that wasn't. The admin's review shows each rename and how many grants move, and the moves are in the audit log. Rolling back moves them back. Admins can roll back one version: your earlier package goes back, and if your new migrations ran, so does the data (from the snapshot taken before them).
 
 ## Who sees what
 

@@ -36,6 +36,11 @@ pub struct Manifest {
     /// ledger"`. Granted like core ones, as `plugin.<id>.<name>`.
     #[serde(default)]
     pub permissions: BTreeMap<String, String>,
+    /// Permissions an earlier version called something else, old name to
+    /// new, e.g. `view = "extractions_access"`: on an upgrade the old
+    /// one's grants move to the new one instead of going with it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub renamed_permissions: BTreeMap<String, String>,
     /// Who may open which pages: a path prefix and the permission it needs.
     /// A page no rule covers is for admins only (`admin.plugins`).
     #[serde(default)]
@@ -114,6 +119,39 @@ pub struct Widget {
 
 /// Most widgets a plugin may add.
 pub const MAX_WIDGETS: usize = 3;
+
+/// The permissions renamed going from `from` to `to` (an upgrade, or a
+/// rollback going back over a rename), as (old name, new name) without the
+/// `plugin.<id>.` prefix: each named in `to`'s `[renamed_permissions]`, or
+/// the reverse of one in `from`'s. Only pairs where the old name is
+/// declared by `from` and not by `to`, and the new one the other way
+/// round. With no `from` (unknown), `to`'s renames as they are.
+pub fn permission_renames(from: Option<&Manifest>, to: &Manifest) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = to
+        .renamed_permissions
+        .iter()
+        .map(|(old, new)| (old.clone(), new.clone()))
+        .collect();
+    if let Some(from) = from {
+        pairs.extend(
+            from.renamed_permissions
+                .iter()
+                .map(|(old, new)| (new.clone(), old.clone())),
+        );
+    }
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (old, new) in pairs {
+        let fits = to.permissions.contains_key(&new)
+            && !to.permissions.contains_key(&old)
+            && from.is_none_or(|f| {
+                f.permissions.contains_key(&old) && !f.permissions.contains_key(&new)
+            });
+        if fits && !out.iter().any(|(o, n)| *o == old || *n == new) {
+            out.push((old, new));
+        }
+    }
+    out
+}
 
 impl Manifest {
     /// The permission (full name, `plugin.<id>.<name>`) a page needs, or
@@ -396,6 +434,37 @@ impl Manifest {
         for (name, description) in &self.permissions {
             check_name("a permission name", name)?;
             check_text("a permission description", description, 120, true)?;
+        }
+        if self.renamed_permissions.len() > 20 {
+            return Err(bad("more than 20 [renamed_permissions]"));
+        }
+        let mut targets = std::collections::BTreeSet::new();
+        for (old, new) in &self.renamed_permissions {
+            check_name("a renamed permission", old)?;
+            if self.permissions.contains_key(old) {
+                return Err(bad(format!(
+                    "[renamed_permissions] {old:?} is still in [permissions]"
+                )));
+            }
+            if !self.permissions.contains_key(new) {
+                return Err(bad(format!(
+                    "[renamed_permissions] {old:?} becomes {new:?}, which [permissions] doesn't declare"
+                )));
+            }
+            // Holding `manage` or an `add_*` permission lets an account
+            // offer the app data sources: a rename mustn't hand that to
+            // everyone who held something else.
+            let offers = |name: &str| name == "manage" || name.starts_with("add_");
+            if offers(new) && !offers(old) {
+                return Err(bad(format!(
+                    "[renamed_permissions] {old:?} can't become {new:?}: a manage or add_ permission starts with nobody holding it"
+                )));
+            }
+            if !targets.insert(new.as_str()) {
+                return Err(bad(format!(
+                    "[renamed_permissions]: two permissions become {new:?}"
+                )));
+            }
         }
         if self.pages.len() > 20 {
             return Err(bad("more than 20 [[pages]] rules"));
@@ -711,6 +780,42 @@ mod tests {
     // A throwaway minisign public key (base64 of "Ed", key id, 32 bytes).
     const KEY: &str = "RWQBAgMEBQYHCCo2i9XhGZdgQcPjPRZfEwD/sVbMxhw6zXk1Rv8UJvfO";
 
+    #[test]
+    fn renames_go_forward_on_upgrades_and_back_on_rollbacks() {
+        let old = Manifest::parse(&manifest(
+            "[permissions]\nview = \"See\"\nold = \"Old\"\nmanage = \"Manage\"\n",
+        ))
+        .unwrap();
+        let new = Manifest::parse(&manifest(
+            "[permissions]\nextractions_access = \"See\"\nbasic_access = \"Old\"\nmanage = \"Manage\"\n\
+             [renamed_permissions]\nview = \"extractions_access\"\nold = \"basic_access\"\n",
+        ))
+        .unwrap();
+        let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        assert_eq!(
+            permission_renames(Some(&old), &new),
+            vec![
+                pair("old", "basic_access"),
+                pair("view", "extractions_access")
+            ]
+        );
+        // Rolling back reverses them.
+        assert_eq!(
+            permission_renames(Some(&new), &old),
+            vec![
+                pair("basic_access", "old"),
+                pair("extractions_access", "view")
+            ]
+        );
+        // Nothing to move between two versions that both have the new names.
+        assert!(permission_renames(Some(&new), &new).is_empty());
+        assert_eq!(permission_renames(None, &new).len(), 2);
+        // Kept in the round trip, and left out when empty.
+        let text = serde_json::to_string(&new).unwrap();
+        assert!(text.contains("renamed_permissions"), "{text}");
+        assert!(!serde_json::to_string(&old).unwrap().contains("renamed"));
+    }
+
     fn manifest(extra: &str) -> String {
         format!(
             r#"
@@ -830,6 +935,26 @@ manage = "Manage the mining ledger"
                 "between 5m and 7d",
             ),
             ("[permissions]\nView = \"x\"", "lowercase letters"),
+            (
+                "[permissions]\nview = \"x\"\n[renamed_permissions]\nold = \"gone\"",
+                "doesn't declare",
+            ),
+            (
+                "[permissions]\nview = \"x\"\n[renamed_permissions]\nview = \"view\"",
+                "still in [permissions]",
+            ),
+            (
+                "[permissions]\nview = \"x\"\n[renamed_permissions]\na = \"view\"\nb = \"view\"",
+                "two permissions become",
+            ),
+            (
+                "[permissions]\nview = \"x\"\n[renamed_permissions]\nOld = \"view\"",
+                "lowercase letters",
+            ),
+            (
+                "[permissions]\nadd_owner = \"x\"\n[renamed_permissions]\nview = \"add_owner\"",
+                "starts with nobody holding it",
+            ),
             ("[capabilities]\n\"a\\nb\\u001b[31m\" = 1", "unknown field"),
         ] {
             let err = Manifest::parse(&manifest(extra)).unwrap_err();

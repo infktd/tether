@@ -318,6 +318,144 @@ async fn an_upgrade_shows_what_changes_and_rolls_back(db: PgPool) {
     );
 }
 
+/// The hello plugin at `version` with a raw `[permissions]` (and maybe
+/// `[renamed_permissions]`) block.
+fn hello_permissions(key: &Key, version: &str, permissions: &str) -> (Vec<u8>, String) {
+    let manifest = format!(
+        "[plugin]\nid = \"{HELLO}\"\nname = \"Hello\"\nversion = \"{version}\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n{permissions}",
+        key.public(),
+    );
+    let component = hello_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    let signature = key.sign(&bytes);
+    (bytes, signature)
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn renamed_permissions_keep_their_grants(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let key = Key::new(1);
+    let (bytes, signature) = hello_permissions(
+        &key,
+        "1.0.0",
+        "[permissions]\nview = \"See it\"\nold = \"See old things\"\nreport = \"Read reports\"\n",
+    );
+    install_package(&h, &owner, &bytes, &signature).await;
+    for (permission, state) in [
+        ("plugin.acme.hello.view", GUEST_STATE),
+        ("plugin.acme.hello.old", GUEST_STATE),
+        ("plugin.acme.hello.old", BLUE_STATE),
+        ("plugin.acme.hello.report", GUEST_STATE),
+    ] {
+        sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ($1, $2)")
+            .bind(permission)
+            .bind(state)
+            .execute(&h.db)
+            .await
+            .unwrap();
+    }
+
+    // 1.1.0 renames view and old, and drops report.
+    let (bytes, signature) = hello_permissions(
+        &key,
+        "1.1.0",
+        "[permissions]\nextractions_access = \"See it\"\nbasic_access = \"See old things\"\n\n\
+         [renamed_permissions]\nview = \"extractions_access\"\nold = \"basic_access\"\n\
+         # Not a permission 1.0.0 had: nothing to move.\nnever = \"never_had\"\n",
+    );
+    // A rename to a permission it doesn't declare is refused at upload.
+    let res = upload(&h, &owner, &bytes, &signature).await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert!(res.body.contains("renamed_permissions"), "{}", res.body);
+    let (bytes, signature) = hello_permissions(
+        &key,
+        "1.1.0",
+        "[permissions]\nextractions_access = \"See it\"\nbasic_access = \"See old things\"\n\n\
+         [renamed_permissions]\nview = \"extractions_access\"\nold = \"basic_access\"\n",
+    );
+    let res = upload(&h, &owner, &bytes, &signature).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let review_at = res.location().to_owned();
+    let review = page(&h, &review_at, &owner).await;
+    assert_eq!(review.status, StatusCode::OK, "{}", review.body);
+    let what_changes = review.body.split("What changes").nth(1).unwrap();
+    for part in [
+        "Renamed",
+        "plugin.acme.hello.view</span> → <span class=\"num\">plugin.acme.hello.extractions_access",
+        "plugin.acme.hello.old</span> → <span class=\"num\">plugin.acme.hello.basic_access",
+        "1 grant moves",
+        "2 grants move",
+    ] {
+        assert!(what_changes.contains(part), "{part}: {what_changes}");
+    }
+    // Renamed ones aren't also listed as new and gone; the dropped one is.
+    assert!(
+        !what_changes.contains("Nobody holds it until you grant it"),
+        "{what_changes}"
+    );
+    assert!(
+        what_changes.contains("plugin.acme.hello.report"),
+        "{what_changes}"
+    );
+
+    let res = send(&h.app, form(&format!("{review_at}/approve"), "", &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(running_version(&h, HELLO), "1.1.0");
+    let held: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT permission, state_id FROM core.permission_grants \
+         WHERE permission LIKE 'plugin.%' ORDER BY 1, 2",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        held,
+        [
+            ("plugin.acme.hello.basic_access".to_owned(), BLUE_STATE),
+            ("plugin.acme.hello.basic_access".to_owned(), GUEST_STATE),
+            (
+                "plugin.acme.hello.extractions_access".to_owned(),
+                GUEST_STATE
+            ),
+        ]
+    );
+    // Audited: what moved, from where, and what went.
+    let upgraded: serde_json::Value =
+        sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'plugin.upgraded'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let moved = upgraded["grants_moved"].as_array().unwrap();
+    assert_eq!(moved.len(), 3, "{upgraded}");
+    assert!(moved.iter().any(|m| m["from"] == "plugin.acme.hello.view"
+        && m["permission"] == "plugin.acme.hello.extractions_access"
+        && m["state_id"] == GUEST_STATE));
+    assert_eq!(
+        upgraded["grants_removed"][0]["permission"],
+        "plugin.acme.hello.report"
+    );
+
+    // Rolling back moves them back.
+    let shown = page(&h, "/admin/plugins/acme.hello", &owner).await;
+    let card = shown.body.split("Roll back to").nth(1).unwrap();
+    assert!(card.contains("Renamed"), "{card}");
+    let res = roll_back(&h, &owner, HELLO, HELLO).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        grants(&h.db).await,
+        [
+            "plugin.acme.hello.old",
+            "plugin.acme.hello.old",
+            "plugin.acme.hello.view"
+        ]
+    );
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn only_a_newer_compatible_version_upgrades(db: PgPool) {
     let h = harness(db, true).await;

@@ -1394,6 +1394,20 @@ fn declared_permissions(id: &str, manifest: &manifest::Manifest) -> Vec<(String,
         .collect()
 }
 
+/// Grants moved to renamed permissions, for the audit log.
+fn moved_json(moved: &[tether_db::permissions::MovedGrant]) -> Vec<serde_json::Value> {
+    moved
+        .iter()
+        .zip(grants_json(
+            &moved.iter().map(|m| m.grant.clone()).collect::<Vec<_>>(),
+        ))
+        .map(|(m, mut grant)| {
+            grant["from"] = json!(m.from);
+            grant
+        })
+        .collect()
+}
+
 /// Grants removed with permissions, for the audit log.
 fn grants_json(grants: &[tether_db::permissions::Grant]) -> Vec<serde_json::Value> {
     grants
@@ -1488,7 +1502,7 @@ async fn upgrade_now(
         // An upload by hand keeps the repository it had.
         (None, db::Origin::Signed) => {}
     }
-    let changed = apply_manifest(state, &mut tx, &id, manifest, actor).await?;
+    let changed = apply_manifest(state, &mut tx, &id, None, manifest, actor).await?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),
@@ -1505,6 +1519,7 @@ async fn upgrade_now(
             "capabilities": manifest.capabilities,
             "permissions": manifest.permissions,
             "grants_removed": grants_json(&changed.grants_removed),
+            "grants_moved": moved_json(&changed.grants_moved),
             "secrets_deleted": changed.secrets_deleted,
             "storage": changed
                 .storage_created
@@ -1527,6 +1542,8 @@ async fn upgrade_now(
 /// What [`apply_manifest`] changed.
 struct Applied {
     grants_removed: Vec<tether_db::permissions::Grant>,
+    /// Grants carried over to renamed permissions.
+    grants_moved: Vec<tether_db::permissions::MovedGrant>,
     /// Secrets whose values went: gone, or now for another host, header
     /// or prefix.
     secrets_deleted: Vec<String>,
@@ -1536,16 +1553,25 @@ struct Applied {
 /// Makes what an installed plugin may do exactly what `manifest` asks for,
 /// on an upgrade or a rollback: its permissions (grants of dropped ones go),
 /// HTTP hosts and secrets, and the user scopes Member requires. Creates its
-/// storage if it asks for storage and has none.
+/// storage if it asks for storage and has none. Grants of renamed
+/// permissions move to their new names (`from`, the manifest being
+/// replaced when known, lets a rollback move them back).
 async fn apply_manifest(
     state: &crate::AppState,
     tx: &mut PgConnection,
     id: &str,
+    from: Option<&manifest::Manifest>,
     manifest: &manifest::Manifest,
     actor: AccountId,
 ) -> Result<Applied, AppError> {
     let declared = declared_permissions(id, manifest);
-    let grants_removed = tether_db::permissions::sync_plugin_permissions(tx, id, &declared).await?;
+    let renames: Vec<(String, String)> = manifest::permission_renames(from, manifest)
+        .into_iter()
+        .map(|(old, new)| (format!("plugin.{id}.{old}"), format!("plugin.{id}.{new}")))
+        .collect();
+    let synced =
+        tether_db::permissions::sync_plugin_permissions(tx, id, &declared, &renames).await?;
+    let (grants_removed, grants_moved) = (synced.removed, synced.moved);
     let secrets_deleted = crate::plugin_http::approve(tx, id, manifest, actor).await?;
     if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
         .await?
@@ -1565,6 +1591,7 @@ async fn apply_manifest(
         };
     Ok(Applied {
         grants_removed,
+        grants_moved,
         secrets_deleted,
         storage_created,
     })
@@ -1873,7 +1900,15 @@ async fn roll_back_now(
         } else {
             false
         };
-        let changed = apply_manifest(state, &mut tx, id, &old.manifest, actor).await?;
+        let changed = apply_manifest(
+            state,
+            &mut tx,
+            id,
+            plan.current.as_ref().map(|p| &p.manifest),
+            &old.manifest,
+            actor,
+        )
+        .await?;
         audit::record(
             &mut *tx,
             Actor::Account(actor),
@@ -1893,6 +1928,7 @@ async fn roll_back_now(
                 })),
                 "data_deleted": data_deleted,
                 "grants_removed": grants_json(&changed.grants_removed),
+                "grants_moved": moved_json(&changed.grants_moved),
                 "secrets_deleted": changed.secrets_deleted,
             }),
         )

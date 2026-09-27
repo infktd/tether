@@ -553,12 +553,64 @@ pub struct Changes {
     pub permissions_removed: Vec<PermissionRow>,
     /// Kept (with their grants), but described differently.
     pub permissions_changed: Vec<PermissionRow>,
+    /// Renamed: their grants move to the new name.
+    pub permissions_renamed: Vec<RenameRow>,
+}
+
+/// A permission renamed, and how many grants move with it.
+pub struct RenameRow {
+    pub from: String,
+    pub to: String,
+    pub description: String,
+    pub grants: i64,
 }
 
 impl Changes {
+    /// What changes from `old` to `new`, with the grants that renames
+    /// would move counted.
+    async fn counted(state: &AppState, old: &Manifest, new: &Manifest) -> Result<Self, AppError> {
+        let mut changes = Self::new(old, new);
+        let names: Vec<String> = changes
+            .permissions_renamed
+            .iter()
+            .map(|r| r.from.clone())
+            .collect();
+        if !names.is_empty() {
+            let counts = tether_db::permissions::grant_counts(&state.db, &names).await?;
+            for rename in &mut changes.permissions_renamed {
+                rename.grants = counts
+                    .iter()
+                    .find(|(p, _)| *p == rename.from)
+                    .map_or(0, |(_, n)| *n);
+            }
+        }
+        Ok(changes)
+    }
+
     fn new(old: &Manifest, new: &Manifest) -> Self {
         let (before, after) = (capabilities(old), capabilities(new));
+        let id = &new.plugin.id;
+        let full = |name: &str| format!("plugin.{id}.{name}");
+        let renames = tether_plugins::manifest::permission_renames(Some(old), new);
+        let permissions_renamed: Vec<RenameRow> = renames
+            .iter()
+            .map(|(from, to)| RenameRow {
+                from: full(from),
+                to: full(to),
+                description: new.permissions.get(to).cloned().unwrap_or_default(),
+                grants: 0,
+            })
+            .collect();
+        let renamed = |name: &str| {
+            permissions_renamed
+                .iter()
+                .any(|r| r.from == name || r.to == name)
+        };
         let (had, has) = (permissions(old), permissions(new));
+        let (had, has): (Vec<PermissionRow>, Vec<PermissionRow>) = (
+            had.into_iter().filter(|p| !renamed(&p.name)).collect(),
+            has.into_iter().filter(|p| !renamed(&p.name)).collect(),
+        );
         Self {
             added: after
                 .iter()
@@ -588,11 +640,13 @@ impl Changes {
                 })
                 .cloned()
                 .collect(),
+            permissions_renamed,
         }
     }
 
     fn unchanged(&self) -> bool {
-        self.added.is_empty()
+        self.permissions_renamed.is_empty()
+            && self.added.is_empty()
             && self.removed.is_empty()
             && self.permissions_added.is_empty()
             && self.permissions_removed.is_empty()
@@ -639,12 +693,13 @@ async fn review_page(
     let pending = plugins::pending(state, upload_id).await?;
     let (trust_title, trust_detail) = trust_text(&pending.trust);
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let changes = match &pending.installed {
+        Some(old) => Some(Changes::counted(state, &old.manifest, &pending.package.manifest).await?),
+        None => None,
+    };
     let upgrade = pending.installed_version.map(|from| UpgradeView {
         from,
-        changes: pending
-            .installed
-            .as_ref()
-            .map(|old| Changes::new(&old.manifest, &pending.package.manifest)),
+        changes,
         new_migrations: pending.new_migrations,
         snapshots: state.plugins.snapshots_on(),
         base: pending.base.clone(),
@@ -715,12 +770,13 @@ async fn bundled_review_page(
 ) -> Result<Response, PageError> {
     let review = plugins::bundled_review(state, id).await?;
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let changes = match &review.installed {
+        Some(old) => Some(Changes::counted(state, &old.manifest, &review.package.manifest).await?),
+        None => None,
+    };
     let upgrade = review.installed_version.map(|from| UpgradeView {
         from,
-        changes: review
-            .installed
-            .as_ref()
-            .map(|old| Changes::new(&old.manifest, &review.package.manifest)),
+        changes,
         new_migrations: review.new_migrations,
         snapshots: state.plugins.snapshots_on(),
         base: review.base.clone(),
@@ -1013,22 +1069,22 @@ async fn plugin_page(
             version,
         }
     });
-    let rollback = plugins::rollback_plan(state, id)
-        .await?
-        .map(|plan| RollbackView {
-            changes: match (&plan.current, &plan.earlier) {
-                (Some(current), Some(earlier)) => {
-                    Some(Changes::new(&current.manifest, &earlier.manifest))
-                }
-                _ => None,
-            },
-            from: plan.from,
-            to: plan.to,
-            upgraded_at: time(plan.upgraded_at),
-            restore: plan.restore.map(|s| time(s.header.taken_at)),
-            deletes_data: plan.deletes_data,
-            blocked: plan.blocked,
-        });
+    let plan = plugins::rollback_plan(state, id).await?;
+    let rollback_changes = match plan.as_ref().map(|p| (&p.current, &p.earlier)) {
+        Some((Some(current), Some(earlier))) => {
+            Some(Changes::counted(state, &current.manifest, &earlier.manifest).await?)
+        }
+        _ => None,
+    };
+    let rollback = plan.map(|plan| RollbackView {
+        changes: rollback_changes,
+        from: plan.from,
+        to: plan.to,
+        upgraded_at: time(plan.upgraded_at),
+        restore: plan.restore.map(|s| time(s.header.taken_at)),
+        deletes_data: plan.deletes_data,
+        blocked: plan.blocked,
+    });
     let schedules = tether_db::plugin_jobs::schedules(&state.db, id)
         .await?
         .into_iter()
