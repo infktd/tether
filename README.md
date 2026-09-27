@@ -32,7 +32,7 @@ Tether runs the day-to-day of an EVE Online alliance or corporation: who's in, w
 | App | What it does |
 | --- | --- |
 | Moon Mining | Extraction timers, pop pings, mining ledgers, and a planner for a steady extraction cadence |
-| Member Audit | Characters, skills, assets and wallets, with views for multiboxers |
+| Member Audit | A full character viewer (skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails), the Character Finder and skill sets, with views for multiboxers |
 | Structures | Upwell structures, starbases, customs offices, fuel alerts, fittings and tags |
 | Structure Timers | A shared timerboard, filled automatically from Structures |
 | Fleet Activity Tracking | FAT links, ESI-tracked fleets and participation stats |

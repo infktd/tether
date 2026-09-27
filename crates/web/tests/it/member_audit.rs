@@ -1,7 +1,10 @@
 //! The Member Audit plugin end to end: installed from its real component
-//! and migration, Member requiring its user scopes, a character synced
-//! from mocked ESI, and AA's pages: My Characters, the Character Sheet,
-//! Character Finder, Skill Sets and reports.
+//! and migrations, Member requiring its user scopes, a character synced
+//! from mocked ESI (every section of the sheet), and AA's pages: My
+//! Characters (the card grid, Register Character first), the Character
+//! Sheet's pages and tabs, mail behind `view_mail` and audited, the
+//! Character Finder scoped by corporation, alliance or everything, Skill
+//! Sets and reports.
 
 use std::sync::OnceLock;
 
@@ -16,8 +19,15 @@ use wiremock::{Mock, ResponseTemplate};
 
 const ID: &str = "tether.member-audit";
 const CHRIBBA: i64 = 196379789;
+const CORP: i64 = 1164409536;
+const ALLIANCE: i64 = 159826257;
 const JITA: i64 = 30000142;
 const JITA_4_4: i64 = 60003760;
+const KEEPSTAR: i64 = 1_030_000_000_001;
+const PLANET: i64 = 40_009_082;
+const MAIL: i64 = 77;
+const CONTRACT: i64 = 5001;
+const KILLMAIL: i64 = 1002;
 
 fn component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -34,28 +44,37 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
+const MIGRATIONS: [&str; 3] = [
+    "migrations/0001_member_audit.sql",
+    "migrations/0002_complete_data.sql",
+    "migrations/0003_character_sheet.sql",
+];
+
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(8);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let first = plugin_file("migrations/0001_member_audit.sql");
-    let second = plugin_file("migrations/0002_complete_data.sql");
+    let migrations: Vec<String> = MIGRATIONS.iter().map(|m| plugin_file(m)).collect();
     let component = component();
-    let bytes = testing::zip(&[
+    let mut entries: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_member_audit.sql", first.as_bytes()),
-        ("migrations/0002_complete_data.sql", second.as_bytes()),
-    ]);
+    ];
+    for (name, sql) in MIGRATIONS.iter().zip(&migrations) {
+        entries.push((name, sql.as_bytes()));
+    }
+    let bytes = testing::zip(&entries);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
 
+/// Every section of a character sheet, as ESI answers.
 async fn mount_esi(h: &Harness) {
     let json = |value: serde_json::Value| {
         ResponseTemplate::new(200)
             .insert_header("x-pages", "1")
             .set_body_json(value)
     };
+    let hash = "b".repeat(40);
     let routes = [
         (
             "skills",
@@ -70,7 +89,9 @@ async fn mount_esi(h: &Harness) {
         (
             "skillqueue",
             serde_json::json!([
-                { "skill_id": 3301, "finished_level": 4, "queue_position": 0, "finish_date": "2030-01-01T00:00:00Z" },
+                { "skill_id": 3301, "finished_level": 4, "queue_position": 0,
+                  "start_date": "2026-01-01T00:00:00Z", "finish_date": "2090-01-01T00:00:00Z",
+                  "level_start_sp": 8000, "level_end_sp": 45255, "training_start_sp": 8000 },
             ]),
         ),
         ("wallet", serde_json::json!(1234567.89)),
@@ -84,16 +105,29 @@ async fn mount_esi(h: &Harness) {
         ),
         (
             "clones",
-            serde_json::json!({ "jump_clones": [
-                { "jump_clone_id": 7, "location_id": JITA_4_4, "location_type": "station", "implants": [9899] },
-            ] }),
+            serde_json::json!({
+                "home_location": { "location_id": JITA_4_4, "location_type": "station" },
+                "last_clone_jump_date": "2026-09-01T00:00:00Z",
+                "jump_clones": [
+                    { "jump_clone_id": 7, "location_id": KEEPSTAR, "location_type": "structure", "implants": [9899] },
+                ],
+            }),
         ),
         ("implants", serde_json::json!([9899])),
         (
             "wallet/journal",
             serde_json::json!([
                 { "id": 1, "date": "2026-09-24T12:00:00Z", "ref_type": "bounty_prizes",
-                  "amount": 1000.0, "balance": 1234567.89, "description": "Bounty" },
+                  "amount": 1000.0, "balance": 1234567.89, "description": "Bounty",
+                  "first_party_id": 1000125, "second_party_id": CHRIBBA },
+            ]),
+        ),
+        (
+            "wallet/transactions",
+            serde_json::json!([
+                { "client_id": 90000010, "date": "2026-09-24T12:00:00Z", "is_buy": false,
+                  "is_personal": true, "journal_ref_id": 2, "location_id": JITA_4_4,
+                  "quantity": 10, "transaction_id": 3, "type_id": 34, "unit_price": 5.5 },
             ]),
         ),
         (
@@ -101,12 +135,183 @@ async fn mount_esi(h: &Harness) {
             serde_json::json!([
                 { "item_id": 1_000_000_000_010_i64, "type_id": 34, "quantity": 1_000_000, "location_id": JITA_4_4,
                   "location_flag": "Hangar", "location_type": "station", "is_singleton": false },
+                { "item_id": 1_000_000_000_011_i64, "type_id": 587, "quantity": 1, "location_id": JITA_4_4,
+                  "location_flag": "Hangar", "location_type": "station", "is_singleton": true },
+                { "item_id": 1_000_000_000_012_i64, "type_id": 9899, "quantity": 2,
+                  "location_id": 1_000_000_000_011_i64, "location_flag": "Cargo",
+                  "location_type": "item", "is_singleton": false },
             ]),
+        ),
+        (
+            "contracts",
+            serde_json::json!([
+                { "acceptor_id": 0, "assignee_id": 0, "availability": "public",
+                  "contract_id": CONTRACT, "date_expired": "2090-01-01T00:00:00Z",
+                  "date_issued": "2026-09-20T00:00:00Z", "for_corporation": false,
+                  "issuer_corporation_id": CORP, "issuer_id": CHRIBBA, "status": "outstanding",
+                  "type": "item_exchange", "title": "Tritanium for sale", "price": 5000000.0 },
+            ]),
+        ),
+        (
+            "contracts/5001/items",
+            serde_json::json!([
+                { "is_included": true, "is_singleton": false, "quantity": 1000, "record_id": 1, "type_id": 34 },
+            ]),
+        ),
+        (
+            "contacts",
+            serde_json::json!([
+                { "contact_id": 90000010, "contact_type": "character", "standing": 10.0, "is_watched": true },
+            ]),
+        ),
+        (
+            "standings",
+            serde_json::json!([
+                { "from_id": 500001, "from_type": "faction", "standing": 2.5 },
+            ]),
+        ),
+        (
+            "mail",
+            serde_json::json!([
+                { "mail_id": MAIL, "from": 90000011, "subject": "Fleet tonight", "is_read": false,
+                  "labels": [1], "timestamp": "2026-09-20T19:04:05Z",
+                  "recipients": [{ "recipient_id": CHRIBBA, "recipient_type": "character" }] },
+            ]),
+        ),
+        (
+            "mail/77",
+            serde_json::json!({
+                "body": "<font size=\"12\">Fleet at 19:00</font><br>Bring <b>logi</b>",
+                "from": 90000011, "labels": [1], "read": false,
+                "recipients": [{ "recipient_id": CHRIBBA, "recipient_type": "character" }],
+                "subject": "Fleet tonight", "timestamp": "2026-09-20T19:04:05Z",
+            }),
+        ),
+        (
+            "mail/labels",
+            serde_json::json!({
+                "labels": [{ "color": "#ffffff", "label_id": 1, "name": "Inbox", "unread_count": 1 }],
+                "total_unread_count": 1,
+            }),
+        ),
+        ("mail/lists", serde_json::json!([])),
+        (
+            "loyalty/points",
+            serde_json::json!([{ "corporation_id": 1000035, "loyalty_points": 12345 }]),
+        ),
+        (
+            "planets",
+            serde_json::json!([
+                { "last_update": "2026-09-20T00:00:00Z", "num_pins": 12, "owner_id": CHRIBBA,
+                  "planet_id": PLANET, "planet_type": "temperate", "solar_system_id": JITA,
+                  "upgrade_level": 4 },
+            ]),
+        ),
+        (
+            "industry/jobs",
+            serde_json::json!([
+                { "activity_id": 1, "blueprint_id": 55, "blueprint_location_id": JITA_4_4,
+                  "blueprint_type_id": 691, "duration": 3600, "end_date": "2090-01-01T00:00:00Z",
+                  "facility_id": JITA_4_4, "installer_id": CHRIBBA, "job_id": 66,
+                  "output_location_id": JITA_4_4, "product_type_id": 587, "runs": 10,
+                  "start_date": "2026-09-20T00:00:00Z", "station_id": JITA_4_4, "status": "active" },
+            ]),
+        ),
+        (
+            "blueprints",
+            serde_json::json!([
+                { "item_id": 55, "location_flag": "Hangar", "location_id": JITA_4_4,
+                  "material_efficiency": 10, "quantity": -1, "runs": -1, "time_efficiency": 20,
+                  "type_id": 691 },
+            ]),
+        ),
+        (
+            "orders",
+            serde_json::json!([
+                { "duration": 90, "is_corporation": false, "issued": "2026-09-20T00:00:00Z",
+                  "location_id": JITA_4_4, "order_id": 88, "price": 6.0, "range": "station",
+                  "region_id": 10000002, "type_id": 34, "volume_remain": 500, "volume_total": 1000 },
+            ]),
+        ),
+        (
+            "killmails/recent",
+            serde_json::json!([{ "killmail_hash": hash, "killmail_id": KILLMAIL }]),
+        ),
+        (
+            "corporationhistory",
+            serde_json::json!([
+                { "corporation_id": CORP, "record_id": 2, "start_date": "2010-01-01T00:00:00Z" },
+                { "corporation_id": 1000167, "record_id": 1, "start_date": "2006-01-01T00:00:00Z" },
+            ]),
+        ),
+        (
+            "attributes",
+            serde_json::json!({ "charisma": 17, "intelligence": 27, "memory": 21, "perception": 17,
+                                "willpower": 17, "bonus_remaps": 1 }),
+        ),
+        (
+            "roles",
+            serde_json::json!({ "roles": ["Director"], "roles_at_hq": [], "roles_at_base": [], "roles_at_other": [] }),
+        ),
+        (
+            "titles",
+            serde_json::json!([{ "title_id": 1, "name": "<color=0xff00ff00>Quartermaster</color>" }]),
+        ),
+        (
+            "mining",
+            serde_json::json!([{ "date": "2026-09-20", "quantity": 1000, "solar_system_id": JITA, "type_id": 1230 }]),
         ),
     ];
     for (route, body) in routes {
         Mock::given(method("GET"))
             .and(path(format!("/characters/{CHRIBBA}/{route}")))
+            .respond_with(json(body))
+            .mount(&h.esi_server)
+            .await;
+    }
+    let public = [
+        (
+            format!("/characters/{CHRIBBA}"),
+            serde_json::json!({
+                "achievement_score": 0, "birthday": "2006-03-01T12:00:00Z", "bloodline_id": 5, "corporation_id": CORP,
+                "description": "<b>Honest</b> trader", "gender": "male", "name": "Chribba",
+                "race_id": 2, "security_status": 5.0,
+            }),
+        ),
+        (
+            format!("/killmails/{KILLMAIL}/{hash}"),
+            serde_json::json!({
+                "attackers": [{ "character_id": CHRIBBA, "damage_done": 500, "final_blow": true,
+                                "security_status": 5.0, "ship_type_id": 587 }],
+                "killmail_id": KILLMAIL, "killmail_time": "2026-09-20T19:04:05Z", "solar_system_id": JITA,
+                "victim": { "character_id": 90000012, "corporation_id": 98000001, "damage_taken": 500,
+                            "ship_type_id": 587 },
+            }),
+        ),
+        (
+            format!("/universe/structures/{KEEPSTAR}"),
+            serde_json::json!({ "name": "Jita - Example Keepstar", "owner_id": 98000001,
+                                "solar_system_id": JITA, "type_id": 35834 }),
+        ),
+        (
+            format!("/universe/planets/{PLANET}"),
+            serde_json::json!({ "name": "Jita IV", "planet_id": PLANET,
+                                "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
+                                "system_id": JITA, "type_id": 11 }),
+        ),
+        (
+            "/universe/categories/16".to_owned(),
+            serde_json::json!({ "category_id": 16, "groups": [255], "name": "Skill", "published": true }),
+        ),
+        (
+            "/universe/groups/255".to_owned(),
+            serde_json::json!({ "category_id": 16, "group_id": 255, "name": "Gunnery",
+                                "published": true, "types": [3300, 3301] }),
+        ),
+    ];
+    for (route, body) in public {
+        Mock::given(method("GET"))
+            .and(path(route))
             .respond_with(json(body))
             .mount(&h.esi_server)
             .await;
@@ -120,7 +325,21 @@ async fn mount_esi(h: &Harness) {
             { "id": JITA_4_4, "name": "Jita IV - Moon 4 - Caldari Navy Assembly Plant", "category": "station" },
             { "id": 28352, "name": "Rorqual", "category": "inventory_type" },
             { "id": 34, "name": "Tritanium", "category": "inventory_type" },
+            { "id": 587, "name": "Rifter", "category": "inventory_type" },
+            { "id": 691, "name": "Rifter Blueprint", "category": "inventory_type" },
+            { "id": 1230, "name": "Veldspar", "category": "inventory_type" },
             { "id": 9899, "name": "Ocular Filter - Basic", "category": "inventory_type" },
+            { "id": CORP, "name": "Example Holding", "category": "corporation" },
+            { "id": ALLIANCE, "name": "Example Alliance", "category": "alliance" },
+            { "id": 1000035, "name": "Caldari Navy", "category": "corporation" },
+            { "id": 1000125, "name": "CONCORD", "category": "corporation" },
+            { "id": 1000167, "name": "State War Academy", "category": "corporation" },
+            { "id": 500001, "name": "Caldari State", "category": "faction" },
+            { "id": 90000010, "name": "Friendly Pilot", "category": "character" },
+            { "id": 90000011, "name": "Fleet Commander", "category": "character" },
+            { "id": 90000012, "name": "Unlucky Pilot", "category": "character" },
+            { "id": 98000001, "name": "Some Corp", "category": "corporation" },
+            { "id": CHRIBBA, "name": "Chribba", "category": "character" },
         ])))
         .with_priority(1)
         .mount(&h.esi_server)
@@ -160,10 +379,13 @@ async fn register(h: &Harness, token: &str) -> String {
     let login = res.cookie_value(LOGIN);
     let state = query_param(res.location(), "state").to_owned();
     let asked = h.sso.last_requested.lock().unwrap().clone();
-    assert!(
-        asked.contains(&"esi-skills.read_skillqueue.v1".to_owned()),
-        "{asked:?}"
-    );
+    for scope in [
+        "esi-skills.read_skillqueue.v1",
+        "esi-mail.read_mail.v1",
+        "esi-universe.read_structures.v1",
+    ] {
+        assert!(asked.contains(&scope.to_owned()), "{asked:?}");
+    }
     let res = send(
         &h.app,
         get(
@@ -176,9 +398,19 @@ async fn register(h: &Harness, token: &str) -> String {
     res.cookie_value(SESSION)
 }
 
-#[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn member_audit_end_to_end(db: PgPool) {
-    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+async fn plugin_warnings(h: &Harness) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT message FROM core.plugin_logs WHERE plugin_id = $1 AND level IN ('warn', 'error')",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+/// Installed, Chribba registered and read whole.
+async fn synced(db: PgPool) -> (Harness, String) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
     cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
@@ -186,55 +418,233 @@ async fn member_audit_end_to_end(db: PgPool) {
     mount_esi(&h).await;
     work(&h).await;
     let owner = register(&h, &owner).await;
-
     sync(&h).await;
-    let problems: Vec<String> = sqlx::query_scalar(
-        "SELECT message FROM core.plugin_logs WHERE plugin_id = $1 AND level IN ('warn', 'error')",
+    let problems = plugin_warnings(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    (h, owner)
+}
+
+async fn grant(h: &Harness, owner: &str, permission: &str) {
+    let res = send(
+        &h.app,
+        form(
+            "/admin/permissions/grant",
+            &format!("permission=plugin.{ID}.{permission}&grantee=state:{BLUE_STATE}"),
+            owner,
+        ),
     )
-    .bind(ID)
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+async fn mail_views(h: &Harness) -> Vec<(String, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT actor_name, details FROM core.audit_log \
+         WHERE action = 'plugin.page_view' AND target = $1 ORDER BY id",
+    )
+    .bind(format!("plugin:{ID}"))
     .fetch_all(&h.db)
     .await
-    .unwrap();
-    assert!(problems.is_empty(), "{problems:?}");
+    .unwrap()
+}
 
-    // My Characters, with the combined numbers.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn member_audit_end_to_end(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    // Every section was read, within the run's budget.
+    let sections: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".section_syncs WHERE ok"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(sections, 24, "{:?}", plugin_warnings(&h).await);
+
+    // My Characters: Tether's Register Character card first, then a card
+    // per character with its portrait, logos and facts, and the totals.
     let mine = page(&h, &format!("/plugins/{ID}"), &owner).await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
-    assert!(mine.body.contains(">Jita<"), "{}", mine.body);
-    assert!(mine.body.contains("Rorqual"));
+    let body = &mine.body;
+    let register = body.find(r#"<a class="card grid-card grid-card-register" href="/register">"#);
+    let card = body.find(&format!("/plugins/{ID}/character/{CHRIBBA}"));
     assert!(
-        mine.body.contains("50000000") || mine.body.contains("50,000,000"),
-        "{}",
-        mine.body
+        register.is_some() && card.is_some() && register < card,
+        "{body}"
     );
+    for part in [
+        format!("https://images.evetech.net/characters/{CHRIBBA}/portrait?size=128"),
+        format!("https://images.evetech.net/corporations/{CORP}/logo?size=64"),
+        format!("https://images.evetech.net/alliances/{ALLIANCE}/logo?size=64"),
+        ">Jita<".to_owned(),
+        "Rorqual".to_owned(),
+        "50,000,000".to_owned(),
+        // The skill in training fills live.
+        r#"data-from="2026-01-01T00:00:00Z" data-to="2090-01-01T00:00:00Z""#.to_owned(),
+        "Small Hybrid Turret IV".to_owned(),
+        // No "More" card: the app's pages are beside the title.
+        format!(r#"<a href="/plugins/{ID}/skill-sets">Skill Sets</a>"#),
+    ] {
+        assert!(body.contains(&part), "{part}\n\n{body}");
+    }
+    assert!(!body.contains(">More<"), "{body}");
 
-    // The Character Sheet, every tab.
+    // The Character Sheet: every page and tab.
+    let sheet_pages = [
+        ("", 4),
+        ("/skills", 4),
+        ("/assets", 1),
+        (&format!("/assets/{JITA_4_4}") as &str, 1),
+        ("/wallet", 5),
+        (&format!("/contract/{CONTRACT}") as &str, 1),
+        ("/clones", 1),
+        ("/industry", 4),
+        ("/contacts", 2),
+    ];
     let mut sheet = String::new();
-    for tab in 0..5 {
-        let res = page(
-            &h,
-            &format!("/plugins/{ID}/character/{CHRIBBA}?_tab={tab}"),
-            &owner,
-        )
-        .await;
-        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-        sheet.push_str(&res.body);
+    for (sub, tabs) in sheet_pages {
+        for tab in 0..tabs {
+            let res = page(
+                &h,
+                &format!("/plugins/{ID}/character/{CHRIBBA}{sub}?_tab={tab}"),
+                &owner,
+            )
+            .await;
+            if res.status != StatusCode::OK {
+                panic!("{sub} {tab}: {:?}", plugin_warnings(&h).await);
+            }
+            sheet.push_str(&res.body);
+        }
     }
     for text in [
-        "Gunnery",
+        // Overview.
+        "Chribba&#39;s Rorqual",
+        "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
+        ">5.0<",
+        "2006-03-01",
+        "Update now",
+        "State War Academy",
+        "Director",
+        "Quartermaster",
+        "Unlucky Pilot",
+        "Honest trader",
+        // Skills, by group.
+        "Gunnery · 264,000 SP",
         "Small Hybrid Turret",
+        "Charisma",
+        // Assets by location, a ship's cargo in it.
         "Tritanium",
         "Ocular Filter - Basic",
-        "Chribba&#39;s Rorqual",
-        "bounty_prizes",
+        // Wallet.
+        "Bounty prizes",
+        "CONCORD",
+        "Friendly Pilot",
+        "Tritanium for sale",
+        "Caldari Navy",
+        // Clones: the implant's icon, the jump clone's structure.
+        "https://images.evetech.net/types/9899/icon?size=32",
+        "Jump clone in Jita - Example Keepstar",
+        // Industry.
+        "Manufacturing",
+        "Rifter Blueprint",
+        "Veldspar",
+        "Jita IV",
+        // Contacts and standings.
+        "Caldari State",
+        "+10.0",
+        // Freshness under each tab.
+        "Last update",
     ] {
-        assert!(sheet.contains(text), "{text}: {sheet}");
+        assert!(sheet.contains(text), "{text}");
     }
+    // The owner's own character: Mail beside the title.
+    assert!(sheet.contains(&format!(
+        r#"<a href="/plugins/{ID}/mail/{CHRIBBA}">Mail</a>"#
+    )));
 
-    // Character Finder (the owner holds everything).
+    // Mail: the owner's own, read and audited.
+    let list = page(&h, &format!("/plugins/{ID}/mail/{CHRIBBA}"), &owner).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+    assert!(list.body.contains("Fleet tonight"), "{}", list.body);
+    assert!(list.body.contains("Inbox (1)"), "{}", list.body);
+    let one = page(&h, &format!("/plugins/{ID}/mail/{CHRIBBA}/{MAIL}"), &owner).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.body);
+    assert!(
+        one.body.contains("Fleet at 19:00\nBring logi"),
+        "{}",
+        one.body
+    );
+    assert!(one.body.contains("Fleet Commander"), "{}", one.body);
+    let views = mail_views(&h).await;
+    assert_eq!(views.len(), 2, "{views:?}");
+    assert_eq!(views[0].0, "Chribba");
+    assert_eq!(views[1].1["path"], format!("mail/{CHRIBBA}/{MAIL}"));
+    // Only the mail pages are audited.
+    assert!(
+        views
+            .iter()
+            .all(|(_, d)| d["path"].as_str().unwrap().starts_with("mail/"))
+    );
+
+    // Update now: queued, run, and the sheet offers it again.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/character/{CHRIBBA}"),
+            &format!("_form=update_character&character={CHRIBBA}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(
+        res.status,
+        StatusCode::SEE_OTHER,
+        "{:?}",
+        plugin_warnings(&h).await
+    );
+    let queued = page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &owner).await;
+    assert!(queued.body.contains("Update queued"), "{}", queued.body);
+    work(&h).await;
+    let done = page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &owner).await;
+    assert!(done.body.contains("Updated"), "{}", done.body);
+    // Once in ten minutes: the button is back after that.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".characters SET update_requested_at = now() - interval '11 minutes'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let again = page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &owner).await;
+    assert!(again.body.contains("Update now"), "{}", again.body);
+
+    // Character Finder (the owner holds everything), with its search box.
     let finder = page(&h, &format!("/plugins/{ID}/finder?q=chrib"), &owner).await;
     assert_eq!(finder.status, StatusCode::OK, "{}", finder.body);
     assert!(finder.body.contains(&format!("character/{CHRIBBA}")));
+    let searched = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/finder"),
+            "_form=search&q=holding",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(searched.status, StatusCode::OK, "{}", searched.body);
+    assert!(
+        searched.body.contains(&format!("character/{CHRIBBA}")),
+        "{}",
+        searched.body
+    );
+    let none = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/finder"),
+            "_form=search&q=nobody",
+            &owner,
+        ),
+    )
+    .await;
+    assert!(none.body.contains("No characters match."), "{}", none.body);
 
     // A skill set, and who can use it.
     let bad = send(
@@ -261,49 +671,13 @@ async fn member_audit_end_to_end(db: PgPool) {
     assert!(sets.body.contains("Gunnery 4"), "{}", sets.body);
     let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
     assert!(reports.body.contains("Guns"), "{}", reports.body);
-
-    // A Blue pilot with basic access sees only their own characters.
-    let blue = log_in_as(&h, "1887431749:gigX", None).await;
-    let res = send(
-        &h.app,
-        form(
-            "/admin/permissions/grant",
-            &format!("permission=plugin.{ID}.basic&grantee=state:{BLUE_STATE}"),
-            &owner,
-        ),
+    let tab = page(
+        &h,
+        &format!("/plugins/{ID}/character/{CHRIBBA}/skills?_tab=2"),
+        &owner,
     )
     .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(
-        page(&h, &format!("/plugins/{ID}"), &blue).await.status,
-        StatusCode::OK
-    );
-    assert_eq!(
-        page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &blue)
-            .await
-            .status,
-        StatusCode::NOT_FOUND
-    );
-    for uri in ["finder", "finder?q=chribba", "reports"] {
-        assert_eq!(
-            page(&h, &format!("/plugins/{ID}/{uri}"), &blue)
-                .await
-                .status,
-            StatusCode::NOT_FOUND,
-            "{uri}"
-        );
-    }
-    // Only skill-set managers change them.
-    let refused = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/skill-sets"),
-            "_form=add_set&name=Mine&skills=Gunnery+1",
-            &blue,
-        ),
-    )
-    .await;
-    assert!(refused.status.is_client_error(), "{}", refused.body);
+    assert!(tab.body.contains("Guns"), "{}", tab.body);
 
     // Deleting a skill set.
     let set: i64 = sqlx::query_scalar("SELECT id FROM \"plugin_tether.member-audit\".skill_sets")
@@ -341,6 +715,185 @@ async fn member_audit_end_to_end(db: PgPool) {
             .await
             .unwrap();
     assert_eq!(characters, 1);
+    // Empty for over a day, it's real: everything is forgotten, mail too.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".characters SET seen_at = now() - interval '25 hours'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let left: (i64, i64) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".characters),
+                  (SELECT count(*) FROM "plugin_tether.member-audit".mails)"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0));
+}
+
+/// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance
+/// or everything; mail only with `view_mail`, and every view audited.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn who_sees_what(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    // A member in the Blue pilot's corporation (98133756).
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.member-audit".characters
+           (character_id, name, corporation_id, alliance_id, synced_at)
+           VALUES (90000020, 'Corp Mate', 98133756, 1695357456, now())"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    let sheet = |id: i64| format!("/plugins/{ID}/character/{id}");
+    let mail = format!("/plugins/{ID}/mail/{CHRIBBA}");
+
+    // Basic access alone: only their own characters.
+    grant(&h, &owner, "basic").await;
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}"), &blue).await.status,
+        StatusCode::OK
+    );
+    for uri in [sheet(CHRIBBA), sheet(90000020), mail.clone()] {
+        assert_eq!(
+            page(&h, &uri, &blue).await.status,
+            StatusCode::NOT_FOUND,
+            "{uri}"
+        );
+    }
+    for uri in ["finder", "finder?q=chribba", "reports"] {
+        assert_eq!(
+            page(&h, &format!("/plugins/{ID}/{uri}"), &blue)
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "{uri}"
+        );
+    }
+    // Only skill-set managers change them.
+    let refused = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/skill-sets"),
+            "_form=add_set&name=Mine&skills=Gunnery+1",
+            &blue,
+        ),
+    )
+    .await;
+    assert!(refused.status.is_client_error(), "{}", refused.body);
+    // Nor can they ask for someone else's update.
+    let refused = send(
+        &h.app,
+        form(
+            &sheet(CHRIBBA),
+            &format!("_form=update_character&character={CHRIBBA}"),
+            &blue,
+        ),
+    )
+    .await;
+    assert!(refused.status.is_client_error(), "{}", refused.body);
+
+    // The Finder without a scope: their own characters only (none here).
+    grant(&h, &owner, "finder").await;
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
+    assert_eq!(finder.status, StatusCode::OK, "{}", finder.body);
+    assert!(
+        !finder.body.contains("Chribba") && !finder.body.contains("Corp Mate"),
+        "{}",
+        finder.body
+    );
+
+    // Their main's corporation: the corporation mate, listed, but no sheet
+    // without `characters`.
+    grant(&h, &owner, "view_same_corporation").await;
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
+    assert!(finder.body.contains("Corp Mate"), "{}", finder.body);
+    assert!(!finder.body.contains("Chribba"), "{}", finder.body);
+    assert!(!finder.body.contains(&sheet(90000020)), "{}", finder.body);
+    assert_eq!(
+        page(&h, &sheet(90000020), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
+    grant(&h, &owner, "characters").await;
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
+    assert!(finder.body.contains(&sheet(90000020)), "{}", finder.body);
+    assert_eq!(
+        page(&h, &sheet(90000020), &blue).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        page(&h, &sheet(CHRIBBA), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // Everyone: Chribba too, sheet and all, but no mail without view_mail.
+    grant(&h, &owner, "view_everything").await;
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
+    assert!(finder.body.contains(&sheet(CHRIBBA)), "{}", finder.body);
+    let res = page(&h, &sheet(CHRIBBA), &blue).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(!res.body.contains(&mail), "{}", res.body);
+    // They may ask for an update of someone else's character, a few an
+    // hour.
+    let ask = || {
+        form(
+            &sheet(CHRIBBA),
+            &format!("_form=update_character&character={CHRIBBA}"),
+            &blue,
+        )
+    };
+    let res = send(&h.app, ask()).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let account = me(&h, &blue).await["account_id"].as_i64().unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.member-audit".update_asks (account_id, character_id)
+           SELECT $1, $2 FROM generate_series(1, 9)"#,
+    )
+    .bind(account)
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(r#"UPDATE "plugin_tether.member-audit".characters SET update_requested_at = NULL"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = send(&h.app, ask()).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body.contains("updates of other members"),
+        "{}",
+        res.body
+    );
+    let before = mail_views(&h).await.len();
+    assert_eq!(page(&h, &mail, &blue).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        page(&h, &format!("{mail}/{MAIL}"), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // With view_mail: the Mail link, the mail, and every view audited
+    // under their name.
+    grant(&h, &owner, "view_mail").await;
+    let res = page(&h, &sheet(CHRIBBA), &blue).await;
+    assert!(
+        res.body.contains(&format!(r#"<a href="{mail}">Mail</a>"#)),
+        "{}",
+        res.body
+    );
+    let one = page(&h, &format!("{mail}/{MAIL}"), &blue).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.body);
+    assert!(one.body.contains("Fleet at 19:00"), "{}", one.body);
+    let views = mail_views(&h).await;
+    let last = views.last().unwrap();
+    assert_eq!(last.0, "gigX");
+    assert_eq!(last.1["path"], format!("mail/{CHRIBBA}/{MAIL}"));
+    // Refused views were recorded too (the log is written before the app
+    // decides), and nothing else.
+    assert_eq!(views.len(), before + 3, "{views:?}");
 }
 
 // ---- Secure Groups: Member Audit's filters ------------------------------------
@@ -396,16 +949,6 @@ async fn report_filters(h: &Harness) {
     .unwrap();
     tether_jobs::schedule::run_due(&h.db).await.unwrap();
     work(h).await;
-}
-
-async fn plugin_warnings(h: &Harness) -> Vec<String> {
-    sqlx::query_scalar(
-        "SELECT message FROM core.plugin_logs WHERE plugin_id = $1 AND level IN ('warn', 'error')",
-    )
-    .bind(ID)
-    .fetch_all(&h.db)
-    .await
-    .unwrap()
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -539,7 +1082,7 @@ async fn member_audit_feeds_secure_groups(db: PgPool) {
     assert!(!in_group(not_unknown).await, "reversed, but not reported");
     assert!(!in_group(gunnery).await);
     // Synced whole again: reported again.
-    sqlx::query(r#"UPDATE "plugin_tether.member-audit".characters SET synced_at = NULL"#)
+    sqlx::query(r#"DELETE FROM "plugin_tether.member-audit".section_syncs"#)
         .execute(&h.db)
         .await
         .unwrap();
@@ -622,4 +1165,49 @@ async fn member_audit_feeds_secure_groups(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(values, 57);
+}
+
+/// A big hangar: more than the host takes in one call's parameters, so it
+/// is stored in pieces, and whole.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_big_hangar_is_stored_whole(db: PgPool) {
+    let (h, _) = synced(db).await;
+    for page in 1..=8_i64 {
+        let items: Vec<serde_json::Value> = (0..1000_i64)
+            .map(|n| {
+                serde_json::json!({
+                    "item_id": 1_000_000_100_000_i64 + page * 1000 + n, "type_id": 34,
+                    "quantity": 1, "location_id": JITA_4_4, "location_flag": "Hangar",
+                    "location_type": "station", "is_singleton": false,
+                })
+            })
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(format!("/characters/{CHRIBBA}/assets")))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "8")
+                    .set_body_json(items),
+            )
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    sqlx::query(
+        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'assets'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let (stored, whole): (i64, bool) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".assets),
+                  (SELECT assets_at IS NOT NULL FROM "plugin_tether.member-audit".characters)"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, 8000, "{:?}", plugin_warnings(&h).await);
+    assert!(whole);
 }

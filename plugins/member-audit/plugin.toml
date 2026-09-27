@@ -5,7 +5,7 @@ id = "tether.member-audit"
 name = "Member Audit"
 version = "0.2.0"
 host_api = "1"
-description = "Every member character's skills, queue, assets, wallet, clones and location; Character Finder and Skill Sets for officers."
+description = "A full character viewer (aa-memberaudit's): skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails and more; Character Finder, Skill Sets and reports."
 
 [publisher]
 key = "PUBLISHER_KEY"
@@ -15,7 +15,7 @@ storage = true
 
 [capabilities.esi]
 # From every Member character (Member requires these once installed, as
-# AA's Member Audit compliance does).
+# AA's Member Audit compliance does): aa-memberaudit's character sheet.
 user = [
     "esi-skills.read_skills.v1",
     "esi-skills.read_skillqueue.v1",
@@ -25,21 +25,46 @@ user = [
     "esi-clones.read_implants.v1",
     "esi-location.read_location.v1",
     "esi-location.read_ship_type.v1",
+    "esi-contracts.read_character_contracts.v1",
+    "esi-characters.read_contacts.v1",
+    "esi-characters.read_standings.v1",
+    "esi-mail.read_mail.v1",
+    "esi-characters.read_loyalty.v1",
+    "esi-planets.manage_planets.v1",
+    "esi-industry.read_character_jobs.v1",
+    "esi-characters.read_blueprints.v1",
+    "esi-markets.read_character_orders.v1",
+    "esi-killmails.read_killmails.v1",
+    "esi-characters.read_corporation_roles.v1",
+    "esi-characters.read_titles.v1",
+    "esi-industry.read_character_mining.v1",
+    "esi-universe.read_structures.v1",
 ]
 
+# Each section is read on its own clock (see src/sync.rs); a run that
+# can't read everything due queues a follow-up a minute later.
 [[capabilities.schedules]]
 name = "sync"
-every = "15m"
+every = "5m"
 
 # Reports each character's answers to the Secure Groups filters below.
 [[capabilities.schedules]]
 name = "report_filters"
 every = "1h"
 
-# Grant Member basic; officers (recruiters, auditors) finder too.
+# aa-memberaudit's permissions. Grant Member basic. Officers: finder (the
+# list) and characters (opening sheets), with a scope: view_same_corporation,
+# view_same_alliance or view_everything. Without a scope they see only
+# their own characters. view_mail reads the mail of characters one may
+# open; every view of a mail page is in Tether's audit log.
 [permissions]
-basic = "Use Member Audit for your own characters"
-finder = "Character Finder and reports: every member's characters"
+basic = "Use Member Audit: register and view your own characters, their mail included"
+finder = "Character Finder and Reports: list member characters in your scope"
+characters = "Open the character sheets of member characters in your scope"
+view_same_corporation = "Scope: characters in your main's corporation"
+view_same_alliance = "Scope: characters in your main's alliance"
+view_everything = "Scope: every member character"
+view_mail = "Read the mail of characters whose sheets you may open (every view is audited)"
 manage = "Create and delete skill sets"
 
 [[pages]]
@@ -54,10 +79,21 @@ permission = "finder"
 path = "reports"
 permission = "finder"
 
+# Mail: every view in Tether's audit log, whoever looks.
+[[pages]]
+path = "mail"
+permission = "basic"
+audit = true
+
 [[navigation]]
 label = "Member Audit"
 path = ""
 section = "corporation"
+
+# The Dashboard leads with it: a card per character.
+[[widgets]]
+title = "My Characters"
+path = ""
 
 # aa-securegroups' Member Audit filters. Each character passes or not;
 # one passing character is enough for its account.
