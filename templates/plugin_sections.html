@@ -10,6 +10,13 @@
 <span class="entity">{% call picture(e) %}{% endcall %}<span class="entity-name">{{ e.name }}</span></span>
 {%- endmacro %}
 
+{#- A character's registration status (Registered, or what it's missing,
+    linking to Register Character). -#}
+{% macro status_chip(chip) -%}
+{%- if chip.problem -%}<a href="/register" class="badge" data-variant="destructive" title="Register it with the access your state needs">{{ chip.label }}</a>
+{%- else -%}<span class="badge" data-variant="secondary">{{ chip.label }}</span>{%- endif -%}
+{%- endmacro %}
+
 {% macro action_fields(a) -%}
 <input type="hidden" name="_form" value="{{ a.form }}">{% for (name, field) in a.fields %}<input type="hidden" name="{{ name }}" value="{{ field }}">{% endfor %}
 {%- endmacro %}
@@ -123,8 +130,8 @@
   {% if grid.register %}
   <a class="card grid-card grid-card-register" href="/register">
     <span class="grid-card-plus" aria-hidden="true"><svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
-    <span class="grid-card-name">Register Character</span>
-    <span class="text-[13px] text-muted-foreground">Add a character, or give one the access this app reads.</span>
+    <span class="grid-card-name">Register another character</span>
+    <span class="text-[13px] text-muted-foreground">Log in with EVE to add one, or renew one's access.</span>
   </a>
   {% endif %}
   {% for item in grid.items %}
@@ -153,6 +160,17 @@
       <div><dt>{{ label }}</dt><dd>{% call value(v, false) %}{% endcall %}</dd></div>
       {% endfor %}
     </dl>
+    {% endif %}
+    {% if let Some(foot) = item.foot %}
+    <div class="grid-card-foot">
+      {% if let Some(chip) = foot.status %}{% call status_chip(chip) %}{% endcall %}{% else %}<span></span>{% endif %}
+      {% if foot.make_main %}
+      <form method="post" action="/profile/main">
+        <input type="hidden" name="character_id" value="{{ foot.character_id }}">
+        <button type="submit" class="btn" data-variant="ghost" data-size="sm">Make main</button>
+      </form>
+      {% endif %}
+    </div>
     {% endif %}
   </article>
   {% endfor %}

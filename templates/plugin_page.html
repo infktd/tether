@@ -2,7 +2,7 @@
 {% block title %}{{ c.title }}{% endblock %}
 {% block breadcrumb %}{{ plugin_name }}&nbsp;/&nbsp;<span class="text-foreground">{{ c.title }}</span>{% endblock %}
 {% block content %}
-<div class="flex flex-col gap-6 relative" hx-boost="true">
+<div class="flex flex-col gap-6 relative" hx-boost="true"{% if c.audited %} hx-history="false"{% endif %}>
   {% include "plugin_content.html" %}
 </div>
 {% endblock %}

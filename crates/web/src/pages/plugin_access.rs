@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use axum::extract::{Path, Query, State};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use tether_core::permissions::ADMIN_PLUGINS;
@@ -139,7 +139,7 @@ pub async fn owners(
                 corporation: names
                     .get(&corporation_id)
                     .cloned()
-                    .unwrap_or_else(|| format!("Corporation {corporation_id}")),
+                    .unwrap_or_else(|| "Unknown corporation".to_owned()),
                 corporation_id,
                 name: d.character.name,
                 offered_by: d.offered_by.unwrap_or_else(|| "Someone".to_owned()),
@@ -163,7 +163,7 @@ pub(crate) fn gone_row(g: plugin_esi::GoneSource) -> GoneRow {
     GoneRow {
         name: g
             .character_name
-            .unwrap_or_else(|| format!("Character {}", g.character_id)),
+            .unwrap_or_else(|| "Unknown character".to_owned()),
         what: if g.action.ends_with("withdrawn") {
             format!("Withdrawn by {who}")
         } else {
@@ -180,12 +180,13 @@ fn plugin_id(id: &str) -> Result<&str, AppError> {
         .map_err(|_| AppError::not_found("No such app."))
 }
 
-/// Back to the app's page, or the Dashboard if it isn't running.
-fn back(state: &AppState, id: &str) -> Response {
+/// Back to the app's page, or the Dashboard if it isn't running, with a
+/// toast saying what happened.
+fn back(state: &AppState, id: &str, message: &str) -> Response {
     if state.plugins.running(id).is_some() {
-        Redirect::to(&format!("/plugins/{id}")).into_response()
+        super::stay::back(&format!("/plugins/{id}"), message)
     } else {
-        Redirect::to("/dashboard").into_response()
+        super::stay::back("/dashboard", message)
     }
 }
 
@@ -229,9 +230,9 @@ pub async fn withdraw(
     let id = plugin_id(&id)?;
     plugin_consent::withdraw_offer(&state, session.account, id, character).await?;
     if from.from.as_deref() == Some("tokens") {
-        return Ok(Redirect::to("/tokens").into_response());
+        return Ok(super::stay::back("/tokens", "Withdrawn."));
     }
-    Ok(back(&state, id))
+    Ok(back(&state, id, "Withdrawn."))
 }
 
 /// Where a withdrawal came from: `?from=tokens` is Token Management.
@@ -300,5 +301,5 @@ pub async fn remove(
     let admin = app_admin(&state, session).await?;
     let id = plugin_id(&id)?;
     plugin_consent::remove_source_as_admin(&state, admin, id, character).await?;
-    Ok(back(&state, id))
+    Ok(back(&state, id, "Removed."))
 }

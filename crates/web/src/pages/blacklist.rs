@@ -4,7 +4,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use tether_core::permissions::{BLACKLIST_ADD_NOTES, BLACKLIST_MANAGE, BLACKLIST_VIEW};
 use tether_db::blacklist::{self as db, Listed, Note};
@@ -57,18 +57,22 @@ async fn page(
     let q: String = query.trim().chars().take(100).collect();
     let notes = db::notes(&state.db, None, (!q.is_empty()).then_some(q.as_str()), 200).await?;
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        code,
-        &BlacklistPage {
-            shell,
-            listed: db::list(&state.db).await?,
-            notes,
-            query,
-            manage: held.contains(BLACKLIST_MANAGE),
-            add_notes: held.contains(BLACKLIST_ADD_NOTES),
-            me: session.account.0,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            code,
+            &BlacklistPage {
+                shell,
+                listed: db::list(&state.db).await?,
+                notes,
+                query,
+                manage: held.contains(BLACKLIST_MANAGE),
+                add_notes: held.contains(BLACKLIST_ADD_NOTES),
+                me: session.account.0,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -89,7 +93,7 @@ async fn done(
     result: Result<(), AppError>,
 ) -> Result<Response, PageError> {
     match result {
-        Ok(()) => Ok(Redirect::to("/blacklist").into_response()),
+        Ok(()) => Ok(super::stay::back("/blacklist", "Saved.")),
         Err(err) => page(state, session, shell, String::new(), Some(err)).await,
     }
 }

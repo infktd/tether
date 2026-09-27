@@ -4,7 +4,7 @@
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use serde_json::json;
@@ -135,31 +135,35 @@ async fn system_page(
         })
         .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let problem = error.as_ref().map(|e| e.message().to_owned());
     let accent = crate::theme::accent(&state.db).await?;
-    Ok(render(
-        code,
-        &SystemPage {
-            shell,
-            esi_online,
-            esi_error,
-            budget: state.esi.budget(),
-            jobs,
-            dead_count,
-            dead,
-            schedules,
-            updates: updates::status(&state.db).await?,
-            custom: !crate::theme::PRESETS.iter().any(|(_, v)| *v == accent),
-            presets: crate::theme::PRESETS
-                .iter()
-                .map(|(name, value)| Preset {
-                    name,
-                    value,
-                    checked: *value == accent,
-                })
-                .collect(),
-            accent,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    Ok(super::with_problem(
+        problem,
+        render(
+            code,
+            &SystemPage {
+                shell,
+                esi_online,
+                esi_error,
+                budget: state.esi.budget(),
+                jobs,
+                dead_count,
+                dead,
+                schedules,
+                updates: updates::status(&state.db).await?,
+                custom: !crate::theme::PRESETS.iter().any(|(_, v)| *v == accent),
+                presets: crate::theme::PRESETS
+                    .iter()
+                    .map(|(name, value)| Preset {
+                        name,
+                        value,
+                        checked: *value == accent,
+                    })
+                    .collect(),
+                accent,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -239,7 +243,7 @@ pub async fn retry_job(
     )
     .await?;
     tx.commit().await?;
-    Ok(Redirect::to("/admin/system").into_response())
+    Ok(super::stay::back("/admin/system", "Job queued again."))
 }
 
 /// Runs a schedule now for an admin (the System page's or an app page's
@@ -314,7 +318,7 @@ pub async fn run_now(
         return Ok(run_now_fragment(&result));
     }
     match result {
-        Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/system", "Queued.")),
         Err(err) => system_page(&state, shell, Some(err)).await,
     }
 }
@@ -333,7 +337,14 @@ pub async fn set_updates(
 ) -> Result<Response, PageError> {
     let (session, _) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
     updates::set_enabled(&state, session.account, form.enabled.is_some()).await?;
-    Ok(Redirect::to("/admin/system").into_response())
+    Ok(super::stay::back(
+        "/admin/system",
+        if form.enabled.is_some() {
+            "Update checks on."
+        } else {
+            "Update checks off."
+        },
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,6 +359,7 @@ pub struct ThemeForm {
 pub async fn set_theme(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    headers: HeaderMap,
     Form(form): Form<ThemeForm>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
@@ -357,6 +369,11 @@ pub async fn set_theme(
         &form.accent
     };
     match crate::theme::set_accent(&state, session.account, chosen).await {
+        // The accent is in a stylesheet: a whole new load shows it.
+        Ok(()) if super::is_htmx(&headers) => Ok(super::stay::with_toast(
+            (StatusCode::NO_CONTENT, [("hx-refresh", "true")]).into_response(),
+            super::stay::Toast::done("Accent saved."),
+        )),
         Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
         Err(err) => system_page(&state, shell, Some(err)).await,
     }
@@ -369,7 +386,7 @@ pub async fn check_updates(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
     match updates::check_now(&state, session.account).await {
-        Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/system", "Checked for updates.")),
         Err(err) => system_page(&state, shell, Some(err)).await,
     }
 }

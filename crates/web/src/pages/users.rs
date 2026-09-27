@@ -5,7 +5,7 @@
 use askama::Template;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use tether_core::permissions::{ADMIN_GROUPS, ADMIN_USERS, PERMISSIONS_AUDIT};
 use tether_db::accounts::AccountId;
@@ -166,31 +166,35 @@ async fn user_page(
         None
     };
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        status,
-        &OnePage {
-            shell,
-            id,
-            main_id: found.main.as_ref().map_or(0, |m| m.id),
-            main_name: found
-                .main
-                .map_or_else(|| "(no main)".to_owned(), |m| m.name),
-            owner: found.is_owner,
-            active: found.active,
-            joined,
-            state_style: access.style(),
-            state: access.name,
-            characters,
-            groups: db::groups(&state.db, account).await?,
-            permissions: tether_db::permissions::effective(&state.db, account)
-                .await?
-                .into_iter()
-                .collect(),
-            link_groups: viewer.contains(ADMIN_GROUPS),
-            link_audit: viewer.contains(PERMISSIONS_AUDIT),
-            notes,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            status,
+            &OnePage {
+                shell,
+                id,
+                main_id: found.main.as_ref().map_or(0, |m| m.id),
+                main_name: found
+                    .main
+                    .map_or_else(|| "(no main)".to_owned(), |m| m.name),
+                owner: found.is_owner,
+                active: found.active,
+                joined,
+                state_style: access.style(),
+                state: access.name,
+                characters,
+                groups: db::groups(&state.db, account).await?,
+                permissions: tether_db::permissions::effective(&state.db, account)
+                    .await?
+                    .into_iter()
+                    .collect(),
+                link_groups: viewer.contains(ADMIN_GROUPS),
+                link_audit: viewer.contains(PERMISSIONS_AUDIT),
+                notes,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -219,7 +223,14 @@ async fn set_active(
     )
     .await
     {
-        Ok(()) => Ok(Redirect::to(&format!("/admin/users/{id}")).into_response()),
+        Ok(()) => Ok(super::stay::back(
+            &format!("/admin/users/{id}"),
+            if active {
+                "Account reactivated."
+            } else {
+                "Account deactivated."
+            },
+        )),
         Err(err) => user_page(&state, &session, shell, id, Some(err)).await,
     }
 }

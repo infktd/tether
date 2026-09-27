@@ -72,9 +72,17 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
+/// An error answer's message, kept with the response so a page that
+/// posted can say it in a toast instead of leaving the page
+/// (`pages::stay`).
+#[derive(Clone, Debug)]
+pub struct Problem(pub String);
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let problem = Problem(self.message.to_string());
         let mut response = (self.status, self.message).into_response();
+        response.extensions_mut().insert(problem);
         if let Some(secs) = self.retry_after {
             response
                 .headers_mut()

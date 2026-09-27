@@ -4,7 +4,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use tether_core::permissions::ADMIN_SYSTEM;
 
@@ -70,14 +70,18 @@ async fn menu_page(
         }
     }
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        code,
-        &MenuPage {
-            shell,
-            sections,
-            places,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            code,
+            &MenuPage {
+                shell,
+                sections,
+                places,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -118,7 +122,7 @@ async fn apply(
     let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "menu").await?;
     let result = menu::edit(&state.db, session.account, &catalogue(&state), edit(&form)).await;
     match result {
-        Ok(()) => Ok(Redirect::to("/admin/menu").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/menu", "Menu saved.")),
         Err(err) => menu_page(&state, shell, Some(err)).await,
     }
 }

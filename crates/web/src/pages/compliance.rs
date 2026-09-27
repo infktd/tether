@@ -204,7 +204,7 @@ pub async fn page(
             id: list.corporation_id,
             name: list
                 .corporation_name
-                .unwrap_or_else(|| format!("Corporation {}", list.corporation_id)),
+                .unwrap_or_else(|| "Unknown corporation".to_owned()),
             members: list.members,
             registered: list.registered,
             coverage: if list.members > 0 {
@@ -218,7 +218,7 @@ pub async fn page(
                 .take(MAX_UNREGISTERED_SHOWN)
                 .map(|(id, name)| Unregistered {
                     id,
-                    name: name.unwrap_or_else(|| format!("Character {id}")),
+                    name: name.unwrap_or_else(|| "Unknown character".to_owned()),
                 })
                 .collect(),
         });
@@ -228,7 +228,7 @@ pub async fn page(
         .into_iter()
         .map(|(id, name)| UncoveredCorp {
             id,
-            name: name.unwrap_or_else(|| format!("Corporation {id}")),
+            name: name.unwrap_or_else(|| "Unknown corporation".to_owned()),
         })
         .collect();
     Ok(render(

@@ -169,6 +169,7 @@ async fn page(
         }
     };
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = DiscordPage {
         shell,
         callback_url: state.site.discord_callback_url(),
@@ -196,7 +197,7 @@ async fn page(
             .collect(),
         error: error.map(|e| e.message().to_owned()),
     };
-    Ok(render(code, &page))
+    Ok(super::with_problem(problem, render(code, &page)))
 }
 
 fn role_options(check: &GuildCheck) -> Vec<RoleOption> {
@@ -236,7 +237,10 @@ pub async fn save_settings(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
     match discord::save_settings(&state, session.account, &input).await {
-        Ok(_) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(_) => Ok(super::stay::back(
+            "/admin/discord",
+            "Discord settings saved.",
+        )),
         Err(err) => page(&state, shell, Some(&input), Some(err)).await,
     }
 }
@@ -263,7 +267,7 @@ pub async fn save_name_format(
     )
     .await
     {
-        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/discord", "Name format saved.")),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
@@ -288,7 +292,7 @@ pub async fn save_options(
         strip_unmapped: form.strip_unmapped.is_some(),
     };
     match discord::save_options(&state, session.account, options).await {
-        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/discord", "Options saved.")),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
@@ -312,7 +316,7 @@ pub async fn add_mapping(
         Err(err) => Err(err),
     };
     match result {
-        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/discord", "Role mapping saved.")),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
@@ -330,7 +334,7 @@ pub async fn add_channel(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
     match crate::pings::add_channel(&state, session.account, &form.channel_id).await {
-        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/discord", "Channel added.")),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
@@ -343,7 +347,7 @@ pub async fn remove_channel(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
     match crate::pings::remove_channel(&state, session.account, id).await {
-        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/discord", "Channel removed.")),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
@@ -356,7 +360,7 @@ pub async fn remove_mapping(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_DISCORD, "discord").await?;
     match discord::remove_mapping(&state, session.account, id).await {
-        Ok(()) => Ok(Redirect::to("/admin/discord").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/discord", "Role mapping removed.")),
         Err(err) => page(&state, shell, None, Some(err)).await,
     }
 }
@@ -401,7 +405,7 @@ pub async fn unlink(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     discord::unlink(&state, session.account).await?;
-    Ok(Redirect::to("/services").into_response())
+    Ok(super::stay::back("/services", "Discord unlinked."))
 }
 
 /// `GET /discord/callback`: Discord sends the member back here.

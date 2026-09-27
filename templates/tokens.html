@@ -34,9 +34,9 @@
             {% if t.scopes.is_empty() %}<span class="text-sm text-muted-foreground">Login only</span>
             {% else %}
             <details>
-              <summary class="text-sm cursor-pointer"><span class="num">{{ t.scopes.len() }}</span> {% if t.scopes.len() == 1 %}scope{% else %}scopes{% endif %}</summary>
+              <summary class="text-sm cursor-pointer{% if t.missing %} text-destructive{% endif %}">{{ t.summary }}</summary>
               <ul class="mt-2 grid gap-1 text-sm" role="list">
-                {% for s in t.scopes %}<li title="{{ s.scope }}">{{ s.description }}</li>{% endfor %}
+                {% for s in t.scopes %}<li title="{{ s.scope }}">{{ s.description }} <span class="text-xs text-muted-foreground">· {{ s.used_by }}</span></li>{% endfor %}
               </ul>
             </details>
             {% endif %}

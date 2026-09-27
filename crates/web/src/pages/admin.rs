@@ -203,6 +203,7 @@ async fn groups_page(
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = GroupsPage {
         shell,
         groups,
@@ -211,7 +212,7 @@ async fn groups_page(
         error: error.map(|e| e.message().to_owned()),
         form,
     };
-    Ok(render(status, &page))
+    Ok(super::with_problem(problem, render(status, &page)))
 }
 
 /// `GET /admin/groups`
@@ -244,7 +245,10 @@ pub async fn create_group(
     )
     .await
     {
-        Ok(id) => Ok(Redirect::to(&format!("/admin/groups/{}", id.0)).into_response()),
+        Ok(id) => Ok(super::stay::back(
+            &format!("/admin/groups/{}", id.0),
+            "Group created.",
+        )),
         Err(err) => groups_page(&state, shell, form, Some(err)).await,
     }
 }
@@ -261,7 +265,7 @@ pub async fn group_options(
         notify_requests: checked(&fields, "notify_requests"),
     };
     match crate::groups::set_options(&state.db, session.account, options).await {
-        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/groups", "Settings saved.")),
         Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
     }
 }
@@ -281,7 +285,7 @@ pub async fn reserve(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::groups::reserve(&state.db, session.account, &form.name, &form.reason).await {
-        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/groups", "Name reserved.")),
         Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
     }
 }
@@ -294,7 +298,7 @@ pub async fn unreserve(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::groups::unreserve(&state.db, session.account, &form.name).await {
-        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/groups", "Reservation removed.")),
         Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
     }
 }
@@ -506,6 +510,7 @@ async fn group_page(
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = GroupPage {
         shell,
         smart,
@@ -522,7 +527,7 @@ async fn group_page(
         check,
         check_query,
     };
-    Ok(render(status, &page))
+    Ok(super::with_problem(problem, render(status, &page)))
 }
 
 /// `GET /admin/groups/{id}`. With `?check=<character>` (a name or id) or
@@ -553,11 +558,7 @@ pub async fn group(
     let checked = query
         .get("checked")
         .and_then(|n| n.parse::<usize>().ok())
-        .map(|changed| match changed {
-            0 => "Checked now: every member passes, and nobody else was due to join.".to_owned(),
-            1 => "Checked now: 1 membership changed. The Audit Log names it.".to_owned(),
-            n => format!("Checked now: {n} memberships changed. The Audit Log names each."),
-        });
+        .map(checked_now);
     let extra = match account {
         None => Extra {
             notice: checked,
@@ -595,16 +596,31 @@ pub async fn group(
     group_page(&state, shell, id, extra).await
 }
 
+/// What Check now did, in words.
+fn checked_now(changed: usize) -> String {
+    match changed {
+        0 => "Checked now: every member passes, and nobody else was due to join.".to_owned(),
+        1 => "Checked now: 1 membership changed. The Audit Log names it.".to_owned(),
+        n => format!("Checked now: {n} memberships changed. The Audit Log names each."),
+    }
+}
+
 /// `POST /admin/groups/{id}/smart/check`: Check now, the hourly sweep for
 /// this group alone (aa-securegroups' Run check); audited. Back to the
-/// group's page, which says what it did.
+/// group's page, which says what it did: in a toast with htmx (the page
+/// stays where it was), else on the page (`?checked=`).
 pub async fn smart_check(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    headers: axum::http::HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::smart_groups::check_now(&state.db, session.account, GroupId(id)).await {
+        Ok(changed) if super::is_htmx(&headers) => Ok(super::stay::back(
+            &format!("/admin/groups/{id}"),
+            checked_now(changed),
+        )),
         Ok(changed) => {
             Ok(Redirect::to(&format!("/admin/groups/{id}?checked={changed}")).into_response())
         }
@@ -620,7 +636,7 @@ async fn on_group(
     result: Result<(), AppError>,
 ) -> Result<Response, PageError> {
     match result {
-        Ok(()) => Ok(Redirect::to(&format!("/admin/groups/{id}")).into_response()),
+        Ok(()) => Ok(super::stay::back(&format!("/admin/groups/{id}"), "Saved.")),
         Err(err) => group_page(state, shell, id, Extra::error(err)).await,
     }
 }
@@ -913,7 +929,7 @@ pub async fn delete_group(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::groups::delete(&state.db, session.account, GroupId(id)).await {
-        Ok(()) => Ok(Redirect::to("/admin/groups").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/groups", "Group deleted.")),
         Err(err) => group_page(&state, shell, id, Extra::error(err)).await,
     }
 }
@@ -1109,6 +1125,7 @@ async fn permissions_page(
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = PermissionsPage {
         shell,
         rows,
@@ -1122,7 +1139,7 @@ async fn permissions_page(
             .collect(),
         error: error.map(|e| e.message().to_owned()),
     };
-    Ok(render(status, &page))
+    Ok(super::with_problem(problem, render(status, &page)))
 }
 
 /// `GET /admin/permissions`
@@ -1171,7 +1188,7 @@ pub async fn grant(
         Err(err) => Err(err),
     };
     match result {
-        Ok(()) => Ok(Redirect::to("/admin/permissions").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/permissions", "Granted.")),
         Err(err) => permissions_page(&state, shell, Some(err)).await,
     }
 }
@@ -1184,7 +1201,7 @@ pub async fn revoke(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
     match admin::revoke(&state, session.account, grant_id).await {
-        Ok(()) => Ok(Redirect::to("/admin/permissions").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/permissions", "Revoked.")),
         Err(err) => permissions_page(&state, shell, Some(err)).await,
     }
 }

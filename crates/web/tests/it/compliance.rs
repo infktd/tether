@@ -157,7 +157,7 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     // The pilot sees a banner and a checklist; officers see the account.
     let profile = page(&h, "/dashboard", &owner).await.body;
     assert!(profile.contains("Register Character"), "{profile}");
-    assert!(profile.contains("Needs registering"), "{profile}");
+    assert!(profile.contains("Missing 1 scope · Register"), "{profile}");
     let checklist = page(&h, "/register", &owner).await.body;
     assert!(checklist.contains("Register Chribba") && checklist.contains("Register The Mittani"));
     let officers = page(&h, "/compliance", &owner).await.body;
@@ -349,10 +349,7 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
     )
     .await
     .body;
-    assert!(
-        unregistered.contains("Character 90000011"),
-        "{unregistered}"
-    );
+    assert!(unregistered.contains("Unknown character"), "{unregistered}");
     // Chribba registered: not in the table (the sidebar names the viewer).
     assert!(
         !unregistered.contains(r#"<span class="font-medium">Chribba</span>"#),

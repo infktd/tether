@@ -212,8 +212,16 @@ async fn change_main_moves_the_state_and_is_audited(db: PgPool) {
             .unwrap(),
     )
     .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    assert_eq!(res.headers["HX-Refresh"], "true");
+    // Back to the Dashboard (in place, for a boosted form), with a toast.
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), "/dashboard");
+    assert_eq!(
+        toast(&res),
+        Some((
+            "The Mittani is your main now.".to_owned(),
+            "done".to_owned()
+        ))
+    );
     assert_eq!(me(&h, &owner).await["main"]["id"], MITTANI_ID);
     // The Mittani's corporation is an NPC one: Guest.
     assert_eq!(state_of(&h, &owner).await, "Guest");
@@ -263,9 +271,16 @@ async fn change_main_needs_a_working_token(db: PgPool) {
         res.body
     );
     assert_eq!(me(&h, &owner).await["main"]["id"], CHRIBBA_ID);
-    // The Dashboard offers a login with it instead of the direct button.
+    // The Dashboard offers a login instead of the direct button.
     let dashboard = page(&h, "/dashboard", &owner).await.body;
-    assert!(dashboard.contains("Log in to Change Main"), "{dashboard}");
+    assert!(
+        dashboard.contains("Change Main with EVE login"),
+        "{dashboard}"
+    );
+    assert!(
+        !dashboard.contains(&format!(r#"name="character_id" value="{MITTANI_ID}""#)),
+        "{dashboard}"
+    );
     // Each attempt may call EVE SSO: limited with Token Management's
     // refreshes (10 a minute per account).
     for _ in 1..10 {

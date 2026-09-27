@@ -5,7 +5,7 @@
 use askama::Template;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use tether_core::permissions::{
     COMPLIANCE_VIEW, CORPSTATS_ALLIANCE, CORPSTATS_CORP, CORPSTATS_STATE,
@@ -49,9 +49,7 @@ pub struct CorpRow {
 fn corp_row(c: db::Corporation) -> CorpRow {
     CorpRow {
         id: c.corporation_id,
-        name: c
-            .name
-            .unwrap_or_else(|| format!("Corporation {}", c.corporation_id)),
+        name: c.name.unwrap_or_else(|| "Unknown corporation".to_owned()),
         members: c.members,
         mains: c.mains,
         registered: c.registered,
@@ -165,9 +163,7 @@ async fn corp_page(
                 .filter(|m| tab == "members" || !m.registered)
                 .map(|m| MemberView {
                     id: m.character_id,
-                    name: m
-                        .name
-                        .unwrap_or_else(|| format!("Character {}", m.character_id)),
+                    name: m.name.unwrap_or_else(|| "Unknown character".to_owned()),
                     registered: m.registered,
                     main: m.main_name.unwrap_or_default(),
                 })
@@ -235,7 +231,10 @@ pub async fn update(
         "Corp Stats update asked for"
     );
     if queued {
-        Ok(Redirect::to(&format!("/corpstats/{id}")).into_response())
+        Ok(super::stay::back(
+            &format!("/corpstats/{id}"),
+            "Updating: the member list refreshes in a minute.",
+        ))
     } else {
         corp_page(
             &state,

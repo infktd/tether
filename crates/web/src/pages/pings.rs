@@ -5,7 +5,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use tether_core::permissions::{ADMIN_DISCORD, FLEET_PING};
 use tether_db::ping_options::{self, Kind, PingOption, Restriction};
@@ -133,19 +133,23 @@ async fn page(
         })
         .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        code,
-        &PingsPage {
-            shell,
-            offer,
-            targets,
-            recent,
-            max_message: MAX_MESSAGE,
-            max_field: MAX_FIELD,
-            form,
-            settings,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            code,
+            &PingsPage {
+                shell,
+                offer,
+                targets,
+                recent,
+                max_message: MAX_MESSAGE,
+                max_field: MAX_FIELD,
+                form,
+                settings,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -166,7 +170,7 @@ pub async fn send(
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, FLEET_PING, "pings").await?;
     match pings::send(&state, session.account, &form).await {
-        Ok(_) => Ok(Redirect::to("/pings").into_response()),
+        Ok(_) => Ok(super::stay::back("/pings", "Ping sent.")),
         Err(err) => page(&state, &session, shell, form, Some(err)).await,
     }
 }
@@ -300,26 +304,30 @@ async fn settings_page(
         })
         .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        code,
-        &SettingsPage {
-            shell,
-            mass_mentions: tether_db::settings::get_bool_or(
-                &state.db,
-                tether_db::settings::PINGS_MASS_MENTIONS,
-                true,
-            )
-            .await?,
-            channels,
-            targets,
-            fleet_types,
-            doctrines,
-            formups,
-            comms,
-            states: state_options(state).await?,
-            groups,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            code,
+            &SettingsPage {
+                shell,
+                mass_mentions: tether_db::settings::get_bool_or(
+                    &state.db,
+                    tether_db::settings::PINGS_MASS_MENTIONS,
+                    true,
+                )
+                .await?,
+                channels,
+                targets,
+                fleet_types,
+                doctrines,
+                formups,
+                comms,
+                states: state_options(state).await?,
+                groups,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -329,7 +337,7 @@ async fn done(
     result: Result<(), AppError>,
 ) -> Result<Response, PageError> {
     match result {
-        Ok(()) => Ok(Redirect::to("/admin/pings").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/pings", "Saved.")),
         Err(err) => settings_page(state, shell, Some(err)).await,
     }
 }

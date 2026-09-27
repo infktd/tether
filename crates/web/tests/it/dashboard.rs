@@ -136,10 +136,17 @@ async fn plugin_widgets_follow_their_pages(db: PgPool) {
         "plugin error text stays in its log"
     );
 
+    // Its heading is the link: no stray "Open", and no watermark on the
+    // Dashboard.
     assert!(
-        widget.body.contains("Viewing as The Mittani"),
-        "watermarked"
+        widget.body.contains(&format!(
+            r#"<h2 class="widget-title"><a href="/plugins/{ID}/values">Ore "#
+        )),
+        "{}",
+        widget.body
     );
+    assert!(!widget.body.contains(">Open<"), "{}", widget.body);
+    assert!(!widget.body.contains("Viewing as"), "{}", widget.body);
 
     let missing = page(&h, &format!("/dashboard/widgets/{ID}/9"), &pilot).await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND);

@@ -101,5 +101,8 @@
     </main>
   </div>
 </div>
+{#- Toasts (DESIGN.md): live.js fills it from HX-Trigger. Kept across
+    swaps, so a toast outlives the page reloading under it. -#}
+<div id="toaster" class="toaster" hx-preserve></div>
 </body>
 </html>

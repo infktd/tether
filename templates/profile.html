@@ -2,48 +2,47 @@
 {%- import "icons.html" as icons -%}
 {% block title %}Dashboard{% endblock %}
 {% block breadcrumb %}<span class="text-foreground">Dashboard</span>{% endblock %}
+{% macro membership() %}
+<section class="card" aria-labelledby="membership">
+  <header><h2 id="membership">Membership</h2><p>Your state comes from your main's corporation and alliance; groups add access on top.</p></header>
+  <section class="flex flex-wrap items-center gap-2">
+    <span class="state-badge" data-state="{{ state_style }}">{{ state_name }}</span>
+    {% for g in groups %}<a class="badge" data-variant="outline" href="/groups">{{ g }}</a>{% endfor %}
+    {% if groups.is_empty() %}<a class="badge" data-variant="outline" href="/groups">Browse groups</a>{% endif %}
+  </section>
+</section>
+{% endmacro %}
 {% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
 <div class="flex items-end justify-between gap-4">
   <div>
     <h1 class="page-title">Dashboard</h1>
     <p class="text-muted-foreground mt-1">{% if lead.is_some() %}Your characters at a glance, your access state and groups.{% else %}Your characters, access state and groups.{% endif %}</p>
   </div>
+  {#- One way to add a character: the card grid's own card when Member
+      Audit leads, else this. -#}
+  {% if lead.is_none() %}
   <form method="post" action="/register/start" hx-boost="false">
     <button type="submit" class="btn" data-variant="outline">{% call icons::icon("plus") %}{% endcall %} Add character</button>
   </form>
+  {% endif %}
 </div>
 
 {% if let Some(w) = lead %}
 {#- The pilot's character audit: Member Audit's My Characters (totals and
-    a card per character, Register Character first), then AA's panels. -#}
-<div class="flex flex-col gap-4" id="character-audit" hx-get="{{ w.url }}" hx-trigger="load" hx-swap="innerHTML">
-  <h2 class="text-base font-semibold">{{ w.title }}</h2>
-  <p class="text-sm text-muted-foreground">Loading…</p>
+    a card per character, "Register another character" first, Tether's
+    status and Make main under each), then Membership. -#}
+<div class="flex flex-col gap-3" id="character-audit">
+  <div class="flex flex-col gap-4" hx-get="{{ w.url }}" hx-trigger="load" hx-swap="innerHTML">
+    <h2 class="widget-title">{{ w.title }}</h2>
+    <p class="text-sm text-muted-foreground">Loading…</p>
+  </div>
+  <form method="post" action="/profile/main/login" hx-boost="false" class="flex justify-end">
+    <button type="submit" class="btn" data-variant="ghost" data-size="sm" title="Log in with any character to make it your main">Change Main with EVE login</button>
+  </form>
 </div>
 
-<div class="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-  {% include "profile_characters.html" %}
-  <section class="card" aria-label="Membership">
-    <header><h2>Membership</h2><p>From your main's corporation and alliance.</p></header>
-    <section class="grid gap-4 text-sm">
-      <div class="flex items-center justify-between gap-3">
-        <span class="text-muted-foreground">State</span>
-        <span class="state-badge" data-state="{{ state_style }}">{{ state_name }}</span>
-      </div>
-      <div class="grid gap-2">
-        <div class="flex items-center justify-between gap-3">
-          <span class="text-muted-foreground">Groups</span>
-          <a class="underline underline-offset-4" href="/groups">Groups</a>
-        </div>
-        {% if groups.is_empty() %}
-        <p class="text-muted-foreground">None yet.</p>
-        {% else %}
-        <div class="flex flex-wrap gap-2">{% for g in groups %}<span class="badge" data-variant="outline">{{ g }}</span>{% endfor %}</div>
-        {% endif %}
-      </div>
-    </section>
-  </section>
-</div>
+{% call membership() %}{% endcall %}
 {% else %}
 <section class="grid grid-cols-4 gap-4" aria-label="Summary">
   <div class="card stat">
@@ -59,7 +58,7 @@
   <div class="card stat">
     <div class="stat-label">Groups</div>
     <div class="stat-value num">{{ groups.len() }}</div>
-    <div class="stat-caption">{% if groups.is_empty() %}None yet{% else %}{{ groups.join(", ") }}{% endif %}</div>
+    <div class="stat-caption truncate">{% if groups.is_empty() %}None yet{% else %}{{ groups.join(", ") }}{% endif %}</div>
   </div>
   <div class="card stat">
     <div class="stat-label">Permissions</div>
@@ -69,21 +68,24 @@
 </section>
 
 {% include "profile_characters.html" %}
+{% call membership() %}{% endcall %}
 {% endif %}
 
 {% for w in widgets %}
 <div class="flex flex-col gap-3" hx-get="{{ w.url }}" hx-trigger="load" hx-swap="innerHTML">
-  <h2 class="text-base font-semibold">{{ w.title }}</h2>
+  <h2 class="widget-title">{{ w.title }}</h2>
   <p class="text-sm text-muted-foreground">Loading…</p>
 </div>
 {% endfor %}
 
 {% if !permissions.is_empty() %}
-<section class="card">
-  <header><h2>Permissions</h2></header>
+{#- A long list, behind a disclosure (DESIGN.md, Page hygiene). -#}
+<details class="card card-disclosure">
+  <summary>Permissions <span class="num font-normal text-muted-foreground">{{ permissions.len() }}</span><span class="ml-auto text-xs font-normal text-muted-foreground">{% if is_owner %}Owner: everything{% else %}From your state and groups{% endif %}</span></summary>
   <section class="flex flex-wrap gap-2">
     {% for p in permissions %}<span class="badge" data-variant="outline">{{ p }}</span>{% endfor %}
   </section>
-</section>
+</details>
 {% endif %}
+</div>
 {% endblock %}

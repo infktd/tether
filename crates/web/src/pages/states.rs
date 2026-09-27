@@ -7,7 +7,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use tether_core::permissions::ADMIN_STATES;
 use tether_core::states::{Builtin, EntityKind, StateId};
@@ -202,14 +202,18 @@ async fn states_page(
             })
             .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        status,
-        &StatesPage {
-            shell,
-            cards,
-            application_scopes: application_scopes.into_iter().collect(),
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            status,
+            &StatesPage {
+                shell,
+                cards,
+                application_scopes: application_scopes.into_iter().collect(),
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -274,7 +278,7 @@ async fn change(
     )
     .await
     {
-        Ok(_) => Ok(Redirect::to("/admin/states").into_response()),
+        Ok(_) => Ok(super::stay::back("/admin/states", "Saved.")),
         Err(err) => states_page(state, shell, Some(err)).await,
     }
 }

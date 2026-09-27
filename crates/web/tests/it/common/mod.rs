@@ -767,6 +767,34 @@ pub fn form(uri: &str, body: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// A request as htmx sends it from a boosted form or link on the page at
+/// `current` (a path on this site).
+pub fn boosted(mut req: Request<Body>, current: &str) -> Request<Body> {
+    let headers = req.headers_mut();
+    headers.insert("hx-request", "true".parse().unwrap());
+    headers.insert("hx-boosted", "true".parse().unwrap());
+    headers.insert(
+        "hx-current-url",
+        format!("{SITE}{current}").parse().unwrap(),
+    );
+    req
+}
+
+/// The toast an htmx answer asks for (`HX-Trigger`): its message and tone.
+pub fn toast(res: &Res) -> Option<(String, String)> {
+    let value: serde_json::Value =
+        serde_json::from_str(res.headers.get("hx-trigger")?.to_str().ok()?).ok()?;
+    Some((
+        value["toast"]["message"].as_str()?.to_owned(),
+        value["toast"]["tone"].as_str()?.to_owned(),
+    ))
+}
+
+/// Where an htmx answer sends the browser (`HX-Location`), and how.
+pub fn hx_location(res: &Res) -> Option<serde_json::Value> {
+    serde_json::from_str(res.headers.get("hx-location")?.to_str().ok()?).ok()
+}
+
 pub async fn page(h: &Harness, uri: &str, token: &str) -> Res {
     send(&h.app, get(uri, &[(SESSION, token)])).await
 }

@@ -22,6 +22,7 @@ use tether_plugins::host::{
 use tether_plugins::services::{Builtin, Character, State as ViewerState, Viewer};
 use tether_plugins::{manifest, page as page_rules};
 
+use super::stay::{Toast, with_toast};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -148,6 +149,20 @@ pub struct ProfileView {
 pub struct CardItemView {
     pub profile: ProfileView,
     pub href: Option<String>,
+    /// Tether's footer, for one of the viewer's own characters on the
+    /// Dashboard.
+    pub foot: Option<CardFoot>,
+}
+
+/// Tether's own footer under the card of one of the viewer's characters
+/// on the Dashboard (DESIGN.md, Dashboard): its registration status, and
+/// Make main when it has working EVE access and isn't the main. The app
+/// never sees it.
+#[derive(Clone, Debug)]
+pub struct CardFoot {
+    pub character_id: i64,
+    pub status: Option<super::StatusChip>,
+    pub make_main: bool,
 }
 
 pub struct CardsView {
@@ -401,6 +416,9 @@ pub struct Ctx<'a> {
     /// which Add owner's login comes back to, and the scopes EVE asks for.
     /// `None` draws no Add owner.
     pub owner_back: Option<(String, Vec<String>)>,
+    /// On the Dashboard, footers for the cards of the viewer's own
+    /// characters, by character id.
+    feet: Option<&'a std::collections::HashMap<i64, CardFoot>>,
     next: std::cell::Cell<usize>,
 }
 
@@ -413,6 +431,7 @@ impl<'a> Ctx<'a> {
             registers: false,
             site,
             owner_back: None,
+            feet: None,
             next: std::cell::Cell::new(0),
         }
     }
@@ -427,6 +446,12 @@ impl<'a> Ctx<'a> {
     /// For an app with user scopes (see `registers`).
     pub fn registering(mut self, registers: bool) -> Self {
         self.registers = registers;
+        self
+    }
+
+    /// With footers for the viewer's own characters' cards (`feet`).
+    fn with_feet(mut self, feet: &'a std::collections::HashMap<i64, CardFoot>) -> Self {
+        self.feet = Some(feet);
         self
     }
 
@@ -629,6 +654,11 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
                 .map(|card| CardItemView {
                     profile: profile(ctx, &card.profile),
                     href: card.link.as_deref().map(|path| page_href(ctx.plugin, path)),
+                    foot: ctx
+                        .feet
+                        .filter(|_| matches!(card.profile.subject.kind, EntityKind::Character))
+                        .and_then(|feet| feet.get(&card.profile.subject.id))
+                        .cloned(),
                 })
                 .collect(),
         }),
@@ -723,6 +753,9 @@ pub struct ContentView {
     pub href: String,
     /// The app's owners (Add owner), drawn by the host.
     pub owners: Option<super::plugin_access::Owners>,
+    /// Every view is audited: kept out of htmx's history cache, so back
+    /// and forward ask the server (and are recorded) again.
+    pub audited: bool,
 }
 
 #[derive(Template)]
@@ -988,7 +1021,9 @@ async fn render_page(state: &AppState, opened: &Opened, via: Via) -> Result<Page
     {
         Ok(rendered) => {
             record_logs(&state.db, id, &source(&opened.path), &rendered.logs).await;
-            Ok(rendered.page)
+            let mut page = rendered.page;
+            fill_names(state, &mut page).await;
+            Ok(page)
         }
         Err(err) => Err(render_error(state, opened, err).await),
     }
@@ -1005,14 +1040,96 @@ fn owner_back(opened: &Opened) -> Option<(String, Vec<String>)> {
         .map(|o| (opened.path.clone(), o.scopes.clone()))
 }
 
-/// Draws a page, or with `reload` only its content, for a live page
-/// reloading itself.
+/// Every entity on a page, to look at or rename.
+fn each_entity(page: &mut Page, f: &mut impl FnMut(&mut Entity)) {
+    fn value(v: &mut Value, f: &mut impl FnMut(&mut Entity)) {
+        if let Value::Entity(e) = v {
+            f(e);
+        }
+    }
+    fn profile(p: &mut Profile, f: &mut impl FnMut(&mut Entity)) {
+        f(&mut p.subject);
+        if let Some(e) = p.corporation.as_mut() {
+            f(e);
+        }
+        if let Some(e) = p.alliance.as_mut() {
+            f(e);
+        }
+        for (_, v) in &mut p.facts {
+            value(v, f);
+        }
+    }
+    let sections = page
+        .sections
+        .iter_mut()
+        .chain(page.tabs.iter_mut().flat_map(|t| t.sections.iter_mut()));
+    for s in sections {
+        match s {
+            Section::Stats(stats) => stats.iter_mut().for_each(|s| value(&mut s.value, f)),
+            Section::Table(table) => table.rows.iter_mut().flatten().for_each(|v| value(v, f)),
+            Section::Card(card) => card.fields.iter_mut().for_each(|(_, v)| value(v, f)),
+            Section::Profile(p) => profile(p, f),
+            Section::Cards(grid) => grid
+                .items
+                .iter_mut()
+                .for_each(|c| profile(&mut c.profile, f)),
+            Section::Text(_) | Section::Form(_) | Section::Code(_) => {}
+        }
+    }
+}
+
+/// An entity an app knows only by its id so far (its name not read yet),
+/// which it names with the id itself.
+fn unnamed(e: &Entity) -> bool {
+    let name = e.name.trim();
+    // Tether's names cache holds characters, corporations, alliances and
+    // factions: never an item's.
+    !matches!(e.kind, EntityKind::Type) && e.id > 0 && (name.is_empty() || name == e.id.to_string())
+}
+
+/// Names for entities an app doesn't know the name of yet (DESIGN.md: no
+/// raw ids): from Tether's own names cache where it has them, else
+/// "Unknown corporation" and the like.
+async fn fill_names(state: &AppState, page: &mut Page) {
+    let mut ids = Vec::new();
+    each_entity(page, &mut |e| {
+        if unnamed(e) {
+            ids.push(e.id);
+        }
+    });
+    if ids.is_empty() {
+        return;
+    }
+    let names = match tether_db::compliance::cached_names(&state.db, &ids).await {
+        Ok(names) => names,
+        Err(err) => {
+            tracing::warn!(error = %err, "looking up entity names");
+            Default::default()
+        }
+    };
+    each_entity(page, &mut |e| {
+        if unnamed(e) {
+            e.name = names.get(&e.id).cloned().unwrap_or_else(|| {
+                match e.kind {
+                    EntityKind::Character => "Unknown character",
+                    EntityKind::Corporation => "Unknown corporation",
+                    EntityKind::Alliance => "Unknown alliance",
+                    EntityKind::Faction | EntityKind::Type => "Unknown faction",
+                }
+                .to_owned()
+            });
+        }
+    });
+}
+
+/// Draws a page, or with `alone` only its content: for a live page
+/// reloading itself, a tab, or a post answered in place.
 fn draw(
     opened: Opened,
     page: &Page,
     status: StatusCode,
     error: Option<String>,
-    reload: bool,
+    alone: bool,
 ) -> Response {
     let id = opened.running.manifest.plugin.id.clone();
     let audited = opened.running.manifest.page_audited(&opened.path);
@@ -1090,8 +1207,9 @@ fn draw(
         watermark,
         href: opened.href.clone(),
         owners: opened.owners,
+        audited,
     };
-    let mut response = if reload {
+    let mut response = if alone {
         render(status, &PluginContent { c: content })
     } else {
         render(
@@ -1109,9 +1227,9 @@ fn draw(
     // page shown again from history would be an unrecorded view).
     headers.insert(
         header::VARY,
-        HeaderValue::from_static("HX-Request, HX-Trigger"),
+        HeaderValue::from_static("HX-Request, HX-Target, HX-Trigger"),
     );
-    if reload || audited {
+    if alone || audited {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     response
@@ -1127,8 +1245,6 @@ struct WidgetFragment {
     /// The plugin failed, or the viewer opened too many of its pages; its
     /// log says why (admins read it there).
     failed: bool,
-    /// As on the page itself.
-    watermark: String,
 }
 
 /// `GET /dashboard/widgets/{plugin}/{index}`: a plugin's Dashboard widget,
@@ -1154,22 +1270,17 @@ pub async fn widget(
         .cloned()
         .ok_or_else(missing)?;
     let href = page_href(&id, &widget.path);
-    let watermark = |name: &str| {
-        format!(
-            "Viewing as {name} · {} EVE",
-            chrono::Utc::now().format("%Y-%m-%d %H:%M")
-        )
-    };
-    let unavailable = |title: String, href: String, watermark: String| WidgetFragment {
+    let unavailable = |title: String, href: String| WidgetFragment {
         title,
         href,
         sections: Vec::new(),
         failed: true,
-        watermark,
     };
+    // The Dashboard's lead (Member Audit's My Characters): Tether adds its
+    // own footer to the cards of the viewer's characters.
+    let lead = id == super::CHARACTER_AUDIT && index == 0;
     let fragment = match open(&state, Some(session), &id, &widget.path, None).await {
         Ok((session, opened)) => {
-            let mark = watermark(&opened.shell.user.name);
             // The page's own budget: a widget is a page view.
             if state
                 .limits
@@ -1177,36 +1288,40 @@ pub async fn widget(
                 .check((session.account.0, id.clone()), std::time::Instant::now())
                 .is_err()
             {
-                unavailable(widget.title, href, mark)
+                unavailable(widget.title, href)
             } else {
                 match render_page(&state, &opened, Via::Widget).await {
-                    Ok(page) => WidgetFragment {
-                        title: widget.title,
-                        sections: {
-                            // Popover ids unique among the Dashboard's
-                            // widgets.
-                            let ctx = Ctx::new(
-                                &id,
-                                &opened.href,
-                                format!("widget-{index}-{id}"),
-                                &opened.site,
-                            )
-                            .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
-                            .adding_owners(owner_back(&opened));
-                            page.sections.iter().map(|s| section(&ctx, s)).collect()
-                        },
-                        href,
-                        failed: false,
-                        watermark: mark,
-                    },
-                    Err(_) => unavailable(widget.title, href, mark),
+                    Ok(page) => {
+                        let feet = if lead {
+                            super::card_feet(&state, session.account).await?
+                        } else {
+                            Default::default()
+                        };
+                        // Popover ids unique among the Dashboard's widgets.
+                        let ctx = Ctx::new(
+                            &id,
+                            &opened.href,
+                            format!("widget-{index}-{id}"),
+                            &opened.site,
+                        )
+                        .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
+                        .adding_owners(owner_back(&opened))
+                        .with_feet(&feet);
+                        WidgetFragment {
+                            title: widget.title,
+                            sections: page.sections.iter().map(|s| section(&ctx, s)).collect(),
+                            href,
+                            failed: false,
+                        }
+                    }
+                    Err(_) => unavailable(widget.title, href),
                 }
             }
         }
         Err(err) if err.0.status() == StatusCode::NOT_FOUND => return Err(err),
         Err(err) if err.0.status() == StatusCode::UNAUTHORIZED => return Err(err),
         // No main yet, and the like: nothing to show, politely.
-        Err(_) => unavailable(widget.title, href, String::new()),
+        Err(_) => unavailable(widget.title, href),
     };
     Ok(render(StatusCode::OK, &fragment))
 }
@@ -1234,6 +1349,18 @@ fn is_reload(headers: &HeaderMap) -> bool {
             .is_some_and(|v| v.as_bytes() == CONTENT_ID.as_bytes())
 }
 
+/// Whether htmx asked for the content alone: a live page reloading, or a
+/// tab (its links target the content). Never for a history restore,
+/// which puts back the whole page.
+fn content_alone(headers: &HeaderMap) -> bool {
+    is_reload(headers)
+        || (super::is_htmx(headers)
+            && headers
+                .get("hx-target")
+                .is_some_and(|v| v.as_bytes() == CONTENT_ID.as_bytes())
+            && !headers.contains_key("hx-history-restore-request"))
+}
+
 async fn show(
     state: AppState,
     session: Option<CurrentSession>,
@@ -1243,6 +1370,7 @@ async fn show(
     headers: HeaderMap,
 ) -> Result<Response, PageError> {
     let reload = is_reload(&headers);
+    let alone = content_alone(&headers);
     let shown = async {
         let (session, opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
         if let Err(retry) = state
@@ -1254,12 +1382,72 @@ async fn show(
         }
         let via = if reload { Via::Reload } else { Via::Page };
         let page = render_page(&state, &opened, via).await?;
-        Ok::<_, PageError>(draw(opened, &page, StatusCode::OK, None, reload))
+        Ok::<_, PageError>(draw(opened, &page, StatusCode::OK, None, alone))
     }
     .await;
     match shown {
         Err(err) if reload => Ok(reload_failed(err.0.status())),
+        // A tab that can't be shown: the whole page says why, not a
+        // page inside the content.
+        Err(err) if alone => {
+            let mut response = err.into_response();
+            let headers = response.headers_mut();
+            headers.insert("hx-retarget", HeaderValue::from_static("body"));
+            headers.insert("hx-reswap", HeaderValue::from_static("innerHTML show:top"));
+            Ok(response)
+        }
         other => other,
+    }
+}
+
+/// Where a form or an action on an app's page was posted from, and so
+/// how the answer comes back (DESIGN.md, Page hygiene and state).
+enum Posted {
+    /// Without htmx: the whole page, as ever.
+    Whole,
+    /// From the page itself: its content, swapped in place.
+    InPlace,
+    /// From another page (a Dashboard widget): back there, in place.
+    Elsewhere(String),
+}
+
+impl Posted {
+    fn of(state: &AppState, headers: &HeaderMap, page: &str) -> Self {
+        if !super::is_htmx(headers) {
+            return Self::Whole;
+        }
+        match super::stay::current_page(state.site.origin(), headers) {
+            Some(here) if here.split('?').next() == Some(page) => Self::InPlace,
+            Some(here) => Self::Elsewhere(here),
+            None => Self::Whole,
+        }
+    }
+
+    /// Answers with `page` (the page as it is now, or the one the app
+    /// answered with), `error` if the post was refused, and a toast.
+    fn answer(
+        &self,
+        opened: Opened,
+        page: &Page,
+        status: StatusCode,
+        error: Option<String>,
+        toast: Toast,
+    ) -> Response {
+        match self {
+            Self::Whole => draw(opened, page, status, error, false),
+            Self::InPlace => {
+                let mut response = draw(opened, page, status, error, true);
+                let headers = response.headers_mut();
+                headers.insert("hx-retarget", HeaderValue::from_static("#plugin-content"));
+                headers.insert("hx-reswap", HeaderValue::from_static("outerHTML show:none"));
+                headers.insert("hx-push-url", HeaderValue::from_static("false"));
+                with_toast(response, toast)
+            }
+            Self::Elsewhere(_) if toast.is_problem() => {
+                with_toast(StatusCode::NO_CONTENT.into_response(), toast)
+            }
+            Self::Elsewhere(here) => with_toast(Redirect::to(here).into_response(), toast),
+        }
     }
 }
 
@@ -1307,8 +1495,10 @@ async fn post(
     id: String,
     path: String,
     raw: Option<String>,
+    headers: HeaderMap,
     posted: Vec<(String, String)>,
 ) -> Result<Response, PageError> {
+    let from = Posted::of(&state, &headers, &page_href(&id, &path));
     let (session, opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
     if let Err(retry) = state
         .limits
@@ -1331,30 +1521,28 @@ async fn post(
     // and hidden values) to this person now, and the plugin gets the
     // values as the page drew them.
     let page = render_page(&state, &opened, Via::Form).await?;
-    let values = if let Some(form) = page_rules::find_form(&page, &form_id) {
+    let refused = |opened: Opened, status: StatusCode, problem: String| {
+        let toast = Toast::problem(problem.clone());
+        from.answer(opened, &page, status, Some(problem), toast)
+    };
+    // What the toast names: the button, or the form's.
+    let (values, label) = if let Some(form) = page_rules::find_form(&page, &form_id) {
         match page_rules::check_submission(form, &values) {
-            Ok(values) => values,
+            Ok(values) => (values, form.submit_label.clone()),
             Err(problem) => {
-                return Ok(draw(
-                    opened,
-                    &page,
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Some(problem),
-                    false,
-                ));
+                return Ok(refused(opened, StatusCode::UNPROCESSABLE_ENTITY, problem));
             }
         }
     } else if let Some(action) = page_rules::find_action(&page, &form_id, &values) {
-        action.fields.clone()
+        (action.fields.clone(), action.label.clone())
     } else {
-        return Ok(draw(
+        return Ok(refused(
             opened,
-            &page,
             StatusCode::CONFLICT,
-            Some("That form isn't on this page any more. Try again.".to_owned()),
-            false,
+            "That form isn't on this page any more. Try again.".to_owned(),
         ));
     };
+    let done = Toast::done(format!("{label} · done"));
     let submission = Submission {
         request: Request {
             path: opened.path.clone(),
@@ -1377,9 +1565,22 @@ async fn post(
         Ok(submitted) => {
             record_logs(&state.db, &id, &source(&opened.path), &submitted.logs).await;
             match submitted.result {
-                SubmitResult::Page(page) => Ok(draw(opened, &page, StatusCode::OK, None, false)),
+                // Shown where the form was, under the same tab and query.
+                SubmitResult::Page(mut page) => {
+                    fill_names(&state, &mut page).await;
+                    Ok(from.answer(opened, &page, StatusCode::OK, None, done))
+                }
                 SubmitResult::Redirect(to) => {
-                    Ok(Redirect::to(&page_href(&id, &to)).into_response())
+                    let mut href = page_href(&id, &to);
+                    // Back to this page: under the tab it was on.
+                    if href.split('?').next() == Some(page_href(&id, &path).as_str())
+                        && opened.tab > 0
+                        && !to.contains(&format!("{TAB}="))
+                    {
+                        href.push(if href.contains('?') { '&' } else { '?' });
+                        href.push_str(&format!("{TAB}={}", opened.tab));
+                    }
+                    Ok(with_toast(Redirect::to(&href).into_response(), done))
                 }
             }
         }
@@ -1393,9 +1594,10 @@ pub async fn post_main(
     session: Option<CurrentSession>,
     Path(id): Path<String>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
     Form(posted): Form<Vec<(String, String)>>,
 ) -> Result<Response, PageError> {
-    post(state, session, id, String::new(), raw, posted).await
+    post(state, session, id, String::new(), raw, headers, posted).await
 }
 
 /// `POST /plugins/{id}/{*path}`
@@ -1404,9 +1606,10 @@ pub async fn post_sub(
     session: Option<CurrentSession>,
     Path((id, path)): Path<(String, String)>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
     Form(posted): Form<Vec<(String, String)>>,
 ) -> Result<Response, PageError> {
-    post(state, session, id, path, raw, posted).await
+    post(state, session, id, path, raw, headers, posted).await
 }
 
 #[cfg(test)]

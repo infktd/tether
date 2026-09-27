@@ -40,6 +40,7 @@ mod ship_replacement;
 mod signed_out;
 mod smart_groups;
 mod states;
+mod stay;
 mod storage;
 mod structure_timers;
 mod structures;

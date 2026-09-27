@@ -1389,15 +1389,20 @@ async fn the_dashboard_is_the_character_audit(db: PgPool) {
     assert_eq!(dashboard.status, StatusCode::OK, "{}", dashboard.body);
     let body = &dashboard.body;
     let audit = body
-        .find(&format!(r#"id="character-audit" hx-get="{widget}""#))
+        .find(r#"id="character-audit""#)
         .expect("My Characters leads");
-    let characters = body.find(r#"id="characters""#).expect("AA's Characters");
-    let membership = body.find(r#"aria-label="Membership""#).expect("Membership");
-    assert!(audit < characters && characters < membership, "{body}");
-    // AA's panels, compactly: Change Main and Add Character stay.
-    assert!(body.contains("Change Main"), "{body}");
-    assert!(body.contains("Add character"), "{body}");
+    assert!(body.contains(&format!(r#"hx-get="{widget}""#)), "{body}");
+    let membership = body
+        .find(r#"aria-labelledby="membership""#)
+        .expect("Membership");
+    assert!(audit < membership, "{body}");
+    // No duplicate Characters table, and one way to add a character: the
+    // grid's own card, not the header's button too.
+    assert!(!body.contains(r#"id="characters""#), "{body}");
+    assert!(!body.contains("Add character"), "{body}");
+    assert!(body.contains("Change Main with EVE login"), "{body}");
     assert!(!body.contains(r#"aria-label="Summary""#), "{body}");
+    assert!(!body.contains("Viewing as"), "{body}");
     // Drawn once, not again among the other widgets.
     assert_eq!(body.matches(&widget).count(), 1, "{body}");
 
@@ -1420,6 +1425,17 @@ async fn the_dashboard_is_the_character_audit(db: PgPool) {
         cards.body
     );
     assert!(cards.body.contains("Wallets"), "{}", cards.body);
+    // Tether's footer on the pilot's own card: its status (Chribba is the
+    // main already: nothing to make main).
+    assert!(cards.body.contains("grid-card-foot"), "{}", cards.body);
+    assert!(!cards.body.contains(">Make main<"), "{}", cards.body);
+    assert!(
+        cards.body.contains("Register another character"),
+        "{}",
+        cards.body
+    );
+    assert!(!cards.body.contains(">Open<"), "{}", cards.body);
+    assert!(!cards.body.contains("Viewing as"), "{}", cards.body);
 
     // Someone without Member Audit's access: the Dashboard as it was.
     let guest = log_in_as(&h, "443630591:The Mittani", None).await;

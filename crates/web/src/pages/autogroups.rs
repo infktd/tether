@@ -5,7 +5,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use tether_core::permissions::ADMIN_GROUPS;
 use tether_core::states::StateId;
 use tether_db::autogroups::{self as db, Settings, Source};
@@ -107,14 +107,18 @@ async fn show(
         });
     }
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        status,
-        &AutoGroupsPage {
-            shell,
-            configs,
-            new_states: choices(&states, &[]),
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            status,
+            &AutoGroupsPage {
+                shell,
+                configs,
+                new_states: choices(&states, &[]),
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -133,7 +137,7 @@ async fn done(
     result: Result<(), AppError>,
 ) -> Result<Response, PageError> {
     match result {
-        Ok(()) => Ok(Redirect::to("/admin/autogroups").into_response()),
+        Ok(()) => Ok(super::stay::back("/admin/autogroups", "Saved.")),
         Err(err) => show(state, shell, Some(err)).await,
     }
 }

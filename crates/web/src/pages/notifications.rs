@@ -4,7 +4,7 @@ use askama::Template;
 use axum::extract::{Path, State};
 use axum::http::{HeaderName, StatusCode};
 use axum::response::sse::Sse;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use tether_core::hash_token;
 use tether_db::notifications::{self as db, Notification};
@@ -127,7 +127,7 @@ pub async fn delete(
     if !db::delete(&state.db, session.account, id).await? {
         return Err(AppError::not_found("No such notification.").into());
     }
-    Ok(Redirect::to("/notifications").into_response())
+    Ok(super::stay::back("/notifications", "Notification deleted."))
 }
 
 /// `POST /notifications/read-all`
@@ -137,7 +137,7 @@ pub async fn read_all(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     db::mark_all_read(&state.db, session.account).await?;
-    Ok(Redirect::to("/notifications").into_response())
+    Ok(super::stay::back("/notifications", "All marked as read."))
 }
 
 /// `POST /notifications/delete-read`
@@ -147,5 +147,8 @@ pub async fn delete_read(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     db::delete_read(&state.db, session.account).await?;
-    Ok(Redirect::to("/notifications").into_response())
+    Ok(super::stay::back(
+        "/notifications",
+        "Read notifications deleted.",
+    ))
 }

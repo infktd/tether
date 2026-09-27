@@ -47,16 +47,20 @@ async fn page(
     }
     let loaded = load(state, session, "access_tokens").await?;
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        code,
-        &TokensPage {
-            shell: loaded.shell,
-            tokens: tether_db::personal_tokens::for_account(&state.db, session.account).await?,
-            offered: tokens::offered(state, session.account).await?,
-            max_days: MAX_DAYS,
-            created,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            code,
+            &TokensPage {
+                shell: loaded.shell,
+                tokens: tether_db::personal_tokens::for_account(&state.db, session.account).await?,
+                offered: tokens::offered(state, session.account).await?,
+                max_days: MAX_DAYS,
+                created,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -124,7 +128,10 @@ pub async fn revoke(
         return Err(AppError::forbidden().into());
     }
     match tokens::revoke(&state, session.account, id).await {
-        Ok(()) => Ok(Redirect::to("/dashboard/access-tokens").into_response()),
+        Ok(()) => Ok(super::stay::back(
+            "/dashboard/access-tokens",
+            "Token revoked.",
+        )),
         Err(err) => page(&state, &session, None, Some(err)).await,
     }
 }

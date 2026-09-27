@@ -6,7 +6,7 @@
 use askama::Template;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::Response;
 use tether_db::accounts::AccountId;
 use tether_db::groups::{self as group_db, Group, GroupId};
 
@@ -100,15 +100,19 @@ async fn groups_page(
     requirements(&state.db, &mut mine).await?;
     requirements(&state.db, &mut available).await?;
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        status,
-        &GroupsPage {
-            shell: loaded.shell,
-            mine,
-            available,
-            notice,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            status,
+            &GroupsPage {
+                shell: loaded.shell,
+                mine,
+                available,
+                notice,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -246,18 +250,13 @@ fn organization(
 ) -> Organization {
     let corporation_id = corporation_id.unwrap_or(0);
     Organization {
-        corporation: corporation_name.unwrap_or_else(|| {
-            if corporation_id > 0 {
-                format!("Corporation {corporation_id}")
-            } else {
-                "Unknown".to_owned()
-            }
-        }),
+        // Never the id itself (DESIGN.md: no raw ids).
+        corporation: corporation_name.unwrap_or_else(|| "Unknown corporation".to_owned()),
         corporation_id,
         alliance: alliance_id.map(|id| {
             (
                 id,
-                alliance_name.unwrap_or_else(|| format!("Alliance {id}")),
+                alliance_name.unwrap_or_else(|| "Unknown alliance".to_owned()),
             )
         }),
     }
@@ -298,14 +297,18 @@ async fn requests_page(
         requested_at: r.requested_at.format("%Y-%m-%d %H:%M").to_string(),
     };
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        status,
-        &RequestsPage {
-            shell,
-            joins: joins.into_iter().map(row).collect(),
-            leaves: leaves.into_iter().map(row).collect(),
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            status,
+            &RequestsPage {
+                shell,
+                joins: joins.into_iter().map(row).collect(),
+                leaves: leaves.into_iter().map(row).collect(),
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -325,6 +328,10 @@ async fn decide(
     decision: Decision,
 ) -> Result<Response, PageError> {
     let (session, shell) = manager(&state, session).await?;
+    let message = match decision {
+        Decision::Accept => "Request accepted.",
+        Decision::Reject => "Request rejected.",
+    };
     match groups::decide(
         &state.db,
         session.account,
@@ -334,7 +341,7 @@ async fn decide(
     )
     .await
     {
-        Ok(()) => Ok(Redirect::to("/group-management").into_response()),
+        Ok(()) => Ok(super::stay::back("/group-management", message)),
         Err(err) => requests_page(&state, &session, shell, Some(err)).await,
     }
 }
@@ -451,18 +458,22 @@ async fn members_page(
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
-    Ok(render(
-        status,
-        &MembersPage {
-            shell,
-            id,
-            label: label(&group),
-            restricted: group.flags.restricted,
-            join_link: format!("{}/groups/{id}", state.site.origin()),
-            name: group.name,
-            members,
-            error: error.map(|e| e.message().to_owned()),
-        },
+    let problem = error.as_ref().map(|e| e.message().to_owned());
+    Ok(super::with_problem(
+        problem,
+        render(
+            status,
+            &MembersPage {
+                shell,
+                id,
+                label: label(&group),
+                restricted: group.flags.restricted,
+                join_link: format!("{}/groups/{id}", state.site.origin()),
+                name: group.name,
+                members,
+                error: error.map(|e| e.message().to_owned()),
+            },
+        ),
     ))
 }
 
@@ -492,7 +503,10 @@ pub async fn remove(
     )
     .await
     {
-        Ok(()) => Ok(Redirect::to(&format!("/group-management/{id}")).into_response()),
+        Ok(()) => Ok(super::stay::back(
+            &format!("/group-management/{id}"),
+            "Removed from the group.",
+        )),
         Err(err) => members_page(&state, &session, shell, id, Some(err)).await,
     }
 }

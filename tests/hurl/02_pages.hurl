@@ -80,6 +80,20 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# A boosted (htmx) post without a session is still sent to log in: the
+# in-place answers are for signed-in pages only.
+POST {{base}}/profile/main
+Origin: {{base}}
+HX-Request: true
+HX-Boosted: true
+HX-Current-URL: {{base}}/dashboard
+[Form]
+character_id: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+header "HX-Location" not exists
+
 # Change Main through EVE SSO needs a session too.
 POST {{base}}/profile/main/login
 Origin: {{base}}
@@ -116,6 +130,7 @@ HTTP 200
 header "Content-Type" == "text/css; charset=utf-8"
 header "ETag" exists
 body contains "--accent-surface"
+body contains ".toaster"
 
 GET {{base}}/static/htmx.min.js
 HTTP 200
@@ -253,6 +268,9 @@ HTTP 200
 [Asserts]
 header "Content-Type" contains "javascript"
 body contains "data-countdown"
+# Toasts and in-place swaps (DESIGN.md, Page hygiene and state).
+body contains "addEventListener(\"toast\""
+body contains "htmx:beforeSwap"
 
 GET {{base}}/corpstats
 HTTP 303

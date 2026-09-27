@@ -20,6 +20,7 @@ pub mod plugin_pages;
 pub mod plugins;
 pub mod setup;
 pub mod states;
+pub mod stay;
 pub mod system;
 pub mod tokens;
 pub mod users;
@@ -91,6 +92,16 @@ pub(crate) fn render(status: StatusCode, template: &impl Template) -> Response {
     }
 }
 
+/// A page shown again with a problem on it (a refused form): with htmx,
+/// the problem in a toast too, since the page keeps its scroll position
+/// and its alert may be out of view.
+pub(crate) fn with_problem(problem: Option<String>, response: Response) -> Response {
+    match problem {
+        Some(message) => stay::with_toast(response, stay::Toast::problem(message)),
+        None => response,
+    }
+}
+
 pub(crate) fn is_htmx(headers: &HeaderMap) -> bool {
     headers.get("hx-request").is_some_and(|v| v == "true")
 }
@@ -130,14 +141,18 @@ impl IntoResponse for PageError {
 }
 
 pub(crate) fn error_page(status: StatusCode, message: &str) -> Response {
-    render(
+    let mut response = render(
         status,
         &ErrorPage {
             status: status.as_u16(),
             title: status.canonical_reason().unwrap_or("Error"),
             message,
         },
-    )
+    );
+    response
+        .extensions_mut()
+        .insert(crate::error::Problem(message.to_owned()));
+    response
 }
 
 /// Fallback for unknown paths.
@@ -326,71 +341,57 @@ pub struct CharacterRow {
     /// It has a working token, so Change Main can pick it directly; the
     /// others need a login with them first (as AA's token list).
     pub can_be_main: bool,
-    /// `registered` or `missing` when the state requires scopes; empty
-    /// otherwise. Filled on the profile page only.
-    pub status: &'static str,
-    /// The scopes its token carries, and what uses each.
-    pub scopes: Vec<ScopeLine>,
+    /// Its registration status, when the state asks something of
+    /// characters. Filled on the Dashboard only.
+    pub status: Option<StatusChip>,
+    /// Its corporation and alliance (id and name), for the Dashboard's
+    /// Characters table.
+    pub corporation: Option<(i64, String)>,
+    pub alliance: Option<(i64, String)>,
 }
 
-pub struct ScopeLine {
-    pub scope: String,
-    pub description: String,
-    /// "Member requirement, Moon Tracker", or "Not used".
-    pub used_by: String,
-}
-
-/// Fills in each character's scopes and whether it meets the state's
-/// requirements (F16: the profile shows what was granted and why).
+/// Fills in each character's registration status, corporation and
+/// alliance, for the Dashboard's Characters table. What each scope is
+/// for is on Token Management.
 async fn annotate(
     state: &AppState,
     account: tether_db::accounts::AccountId,
     rows: &mut [CharacterRow],
 ) -> Result<(), AppError> {
     let registration = crate::compliance::registration(&state.db, account).await?;
-    let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
-    let target = registration.target.as_ref().map(|t| t.name.clone());
+    let affiliations = tether_db::plugin_esi::account_characters(&state.db, account).await?;
+    let ids: Vec<i64> = affiliations
+        .iter()
+        .flat_map(|c| [c.corporation_id, c.alliance_id])
+        .flatten()
+        .collect();
+    let names = tether_db::compliance::cached_names(&state.db, &ids).await?;
+    let named = |id: i64, unknown: &str| {
+        (
+            id,
+            names
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| unknown.to_owned()),
+        )
+    };
     for row in rows.iter_mut() {
-        let Some(status) = registration.characters.iter().find(|c| c.id == row.id) else {
-            continue;
-        };
-        if !registration.required.is_empty() {
-            row.status = if status.problem.is_none() {
-                "registered"
-            } else {
-                "missing"
-            };
+        if let Some(status) = registration.characters.iter().find(|c| c.id == row.id) {
+            row.status = StatusChip::of(&registration.required, status.problem.as_ref());
         }
-        row.scopes = status
-            .scopes
-            .iter()
-            .map(|scope| {
-                let mut users: Vec<String> = Vec::new();
-                if registration.required.contains(scope)
-                    && let Some(target) = &target
-                {
-                    users.push(format!("{target} requirement"));
-                }
-                users.extend(
-                    plugins
-                        .iter()
-                        .filter(|p| p.scopes.contains(scope))
-                        .map(|p| p.name.clone()),
-                );
-                if scope == tether_core::scopes::CORP_MEMBERSHIP {
-                    users.push("Corporation Stats".to_owned());
-                }
-                ScopeLine {
-                    scope: scope.clone(),
-                    description: tether_core::scopes::describe(scope).to_owned(),
-                    used_by: if users.is_empty() {
-                        "Not used".to_owned()
-                    } else {
-                        users.join(", ")
-                    },
-                }
-            })
-            .collect();
+        if row.status.is_none() && row.needs_login {
+            row.status = Some(StatusChip::ended());
+        }
+        if let Some(c) = affiliations.iter().find(|c| c.id == row.id) {
+            row.corporation = c
+                .corporation_id
+                .filter(|id| *id > 0)
+                .map(|id| named(id, "Unknown corporation"));
+            row.alliance = c
+                .alliance_id
+                .filter(|id| *id > 0)
+                .map(|id| named(id, "Unknown alliance"));
+        }
     }
     Ok(())
 }
@@ -409,25 +410,102 @@ struct ProfilePage {
     /// character audit, with AA's own panels after it.
     lead: Option<DashboardWidget>,
     widgets: Vec<DashboardWidget>,
-    error: Option<String>,
 }
 
 /// The app whose first widget, My Characters, leads the Dashboard when
 /// it's installed and the viewer may open it.
-const CHARACTER_AUDIT: &str = "tether.member-audit";
+pub(crate) const CHARACTER_AUDIT: &str = "tether.member-audit";
+
+/// A character's registration status as a chip: "Registered", or what
+/// it's missing (which links to Register Character).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusChip {
+    pub label: String,
+    pub problem: bool,
+}
+
+impl StatusChip {
+    /// EVE access ended (the token was revoked), whatever the state asks.
+    fn ended() -> Self {
+        Self {
+            label: "Access ended · Register".to_owned(),
+            problem: true,
+        }
+    }
+
+    /// `None` when the state asks nothing of characters (Guest).
+    fn of(
+        required: &std::collections::BTreeSet<String>,
+        problem: Option<&tether_core::scopes::Problem>,
+    ) -> Option<Self> {
+        use tether_core::scopes::Problem;
+        if required.is_empty() {
+            return None;
+        }
+        Some(match problem {
+            None => Self {
+                label: "Registered".to_owned(),
+                problem: false,
+            },
+            Some(problem) => Self {
+                label: match problem {
+                    Problem::NotRegistered => "Not registered · Register".to_owned(),
+                    Problem::Revoked => return Some(Self::ended()),
+                    Problem::Missing(scopes) if scopes.len() == 1 => {
+                        "Missing 1 scope · Register".to_owned()
+                    }
+                    Problem::Missing(scopes) => {
+                        format!("Missing {} scopes · Register", scopes.len())
+                    }
+                },
+                problem: true,
+            },
+        })
+    }
+}
+
+/// The footers Tether adds to the Dashboard's cards of the account's own
+/// characters: status, and Make main where it can (a working token, not
+/// the main already).
+pub(crate) async fn card_feet(
+    state: &AppState,
+    account: accounts::AccountId,
+) -> Result<std::collections::HashMap<i64, plugin_pages::CardFoot>, AppError> {
+    let registration = crate::compliance::registration(&state.db, account).await?;
+    let main = accounts::get(&state.db, account)
+        .await?
+        .and_then(|a| a.main)
+        .map(|m| m.id);
+    let tokens = tether_db::tokens::states_for_account(&state.db, account).await?;
+    Ok(registration
+        .characters
+        .iter()
+        .map(|c| {
+            (
+                c.id,
+                plugin_pages::CardFoot {
+                    character_id: c.id,
+                    status: StatusChip::of(&registration.required, c.problem.as_ref()).or_else(
+                        || {
+                            (tokens.get(&c.id) == Some(&tether_db::tokens::TokenState::Revoked))
+                                .then(StatusChip::ended)
+                        },
+                    ),
+                    make_main: main != Some(c.id)
+                        && tokens.get(&c.id) == Some(&tether_db::tokens::TokenState::Valid),
+                },
+            )
+        })
+        // Nothing to say (Guest's main): no empty footer.
+        .filter(|(_, foot)| foot.status.is_some() || foot.make_main)
+        .collect())
+}
 
 /// A plugin's Dashboard widget, loaded after the page.
 pub struct DashboardWidget {
     pub title: String,
     /// The fragment's address.
     pub url: String,
-}
-
-#[derive(Template)]
-#[template(path = "profile_characters.html")]
-struct CharactersFragment {
-    characters: Vec<CharacterRow>,
-    error: Option<String>,
 }
 
 pub(crate) struct Loaded {
@@ -508,8 +586,9 @@ pub(crate) async fn load(
             is_main: account.main.as_ref().is_some_and(|m| m.id == c.id),
             needs_login: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Revoked),
             can_be_main: token_states.get(&c.id) == Some(&tether_db::tokens::TokenState::Valid),
-            status: "",
-            scopes: Vec::new(),
+            status: None,
+            corporation: None,
+            alliance: None,
         })
         .collect();
     let not_compliant =
@@ -588,10 +667,13 @@ pub async fn profile(
         .collect();
     // With Member Audit (and access to it), the Dashboard is the pilot's
     // character audit, as Jay asked: its My Characters widget first.
+    // Without a main it can't show anything (apps see accounts through
+    // their main): AA's Characters, with Make main, instead.
     let lead = widgets
         .iter()
         .position(|(plugin, index, _)| plugin == CHARACTER_AUDIT && *index == 0)
-        .map(|i| widgets.remove(i).2);
+        .map(|i| widgets.remove(i).2)
+        .filter(|_| !loaded.shell.no_main);
     let widgets = widgets.into_iter().map(|(_, _, w)| w).collect();
     let permissions = held.into_iter().collect();
     Ok(render(
@@ -606,7 +688,6 @@ pub async fn profile(
             permissions,
             lead,
             widgets,
-            error: None,
         },
     ))
 }
@@ -616,10 +697,11 @@ pub struct MainForm {
     character_id: i64,
 }
 
-/// `POST /profile/main`: Change Main to a character already on the account
-/// (with a working token). On success htmx reloads the page (the sidebar,
-/// the no-main banner and the state follow the main); otherwise it swaps in
-/// the characters card with the reason. Without htmx, back to the Dashboard.
+/// `POST /profile/main`: Change Main (Make main) to a character already on
+/// the account (with a working token). Back to the Dashboard, which htmx
+/// reloads in place (the sidebar, the no-main banner and the state follow
+/// the main), with a toast; one that can't be the main says why in a
+/// toast and changes nothing.
 pub async fn make_main(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -627,25 +709,17 @@ pub async fn make_main(
     Form(form): Form<MainForm>,
 ) -> Result<Response, PageError> {
     let outcome = crate::ownership::change_main(&state, session.account, form.character_id).await?;
-    if !is_htmx(&headers) {
-        return Ok(Redirect::to("/dashboard").into_response());
-    }
-    let mut loaded = load(&state, &session, "profile").await?;
-    annotate(&state, session.account, &mut loaded.characters).await?;
-    let done = matches!(outcome, crate::ownership::ChangeMain::Done { .. });
-    let mut response = render(
-        StatusCode::OK,
-        &CharactersFragment {
-            characters: loaded.characters,
-            error: (!done).then(|| outcome.message()),
-        },
-    );
-    if done {
-        response
-            .headers_mut()
-            .insert("HX-Refresh", axum::http::HeaderValue::from_static("true"));
-    }
-    Ok(response)
+    Ok(match outcome {
+        crate::ownership::ChangeMain::Done { name } => {
+            stay::back("/dashboard", format!("{name} is your main now."))
+        }
+        // Without htmx, the Dashboard as it was.
+        _ if !is_htmx(&headers) => Redirect::to("/dashboard").into_response(),
+        refused => stay::with_toast(
+            StatusCode::NO_CONTENT.into_response(),
+            stay::Toast::problem(refused.message()),
+        ),
+    })
 }
 
 /// `POST /profile/main/login`: Change Main by logging in with EVE SSO, as

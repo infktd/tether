@@ -197,6 +197,13 @@ impl Plugin for Pages {
                     .text(format!("mine[{mine}]"))
                     .text(format!("offered[{offered}]")))
             }
+            // A form under a tab, whose post comes back to its own page.
+            "tabbed-form" => Ok(Page::new("Tabbed form")
+                .tab(
+                    "Text",
+                    vec![tether_plugin_sdk::Section::Text("text tab".into())],
+                )
+                .tab("Form", vec![tether_plugin_sdk::Section::Form(note_form())])),
             "admin/secret" => Ok(Page::new("Secret")),
             _ => Err(PageError::NotFound),
         }
@@ -204,6 +211,9 @@ impl Plugin for Pages {
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         log::info(format!("submitted {}", submission.form));
+        if submission.request.path == "tabbed-form" {
+            return Ok(SubmitResult::Redirect("tabbed-form".into()));
+        }
         if submission.checked("go") {
             return Ok(SubmitResult::Redirect("values".into()));
         }

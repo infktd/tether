@@ -43,6 +43,7 @@ async fn install(h: &Harness, owner: &str) {
         "live",
         "live-form",
         "groups",
+        "tabbed-form",
     ] {
         manifest.push_str(&format!(
             "\n[[pages]]\npath = \"{path}\"\npermission = \"view\"\n"
@@ -527,10 +528,16 @@ async fn live_pages_reload_their_content(db: PgPool) {
     assert!(!res.body.contains("<html") && !res.body.contains("app-sidebar"));
     assert!(res.body.contains("syncing"));
     // Caches tell the two apart, and don't keep the content alone.
-    assert_eq!(res.headers[header::VARY], "HX-Request, HX-Trigger");
+    assert_eq!(
+        res.headers[header::VARY],
+        "HX-Request, HX-Target, HX-Trigger"
+    );
     assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
     let whole = page(&h, "/plugins/acme.pages/live", &owner).await;
-    assert_eq!(whole.headers[header::VARY], "HX-Request, HX-Trigger");
+    assert_eq!(
+        whole.headers[header::VARY],
+        "HX-Request, HX-Target, HX-Trigger"
+    );
     assert!(whole.headers.get(header::CACHE_CONTROL).is_none());
     // One that fails leaves what's shown (and tries again later)...
     let res = send(&h.app, reload("/plugins/acme.pages/failed", Some(&owner))).await;
@@ -557,7 +564,12 @@ async fn audited_pages_record_every_view(db: PgPool) {
     // entry), and browsers don't keep them.
     assert!(!res.body.contains("hx-trigger"), "{}", res.body);
     assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
-    assert_eq!(res.headers[header::VARY], "HX-Request, HX-Trigger");
+    // Nor does htmx's own history cache: back and forward ask again.
+    assert!(res.body.contains(r#"hx-history="false""#), "{}", res.body);
+    assert_eq!(
+        res.headers[header::VARY],
+        "HX-Request, HX-Target, HX-Trigger"
+    );
     assert_eq!(
         send(&h.app, reload("/plugins/acme.pages/mail/1", Some(&pilot)))
             .await
@@ -799,4 +811,185 @@ async fn apps_see_the_viewers_groups_and_only_listed_ones_to_offer(db: PgPool) {
         "{}",
         res.body
     );
+}
+
+/// A tab, as htmx asks for it from the page at `current`: its links
+/// target the content.
+fn tab(uri: &str, current: &str, token: &str) -> Request<Body> {
+    let mut req = boosted(get(uri, &[(SESSION, token)]), current);
+    req.headers_mut()
+        .insert("hx-target", "plugin-content".parse().unwrap());
+    req
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn tabs_swap_the_content_alone(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let uri = "/plugins/acme.pages/values?moon=1";
+    // Tab links swap the content, keep the scroll and go in the history,
+    // and carry the page's query (a search stays across tabs).
+    let whole = page(&h, uri, &owner).await;
+    assert!(
+        whole.body.contains(
+            r##"hx-target="#plugin-content" hx-swap="outerHTML show:none" hx-push-url="true""##
+        ),
+        "{}",
+        whole.body
+    );
+    assert!(
+        whole
+            .body
+            .contains(r#"href="/plugins/acme.pages/values?moon=1&#38;_tab=1""#),
+        "{}",
+        whole.body
+    );
+
+    // The tab: the content alone, not the page.
+    let res = send(
+        &h.app,
+        tab("/plugins/acme.pages/values?moon=1&_tab=1", uri, &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body
+            .trim_start()
+            .starts_with(r#"<div id="plugin-content""#),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("second tab"), "{}", res.body);
+    assert!(!res.body.contains("<html") && !res.body.contains("app-sidebar"));
+    assert_eq!(
+        res.headers[header::VARY],
+        "HX-Request, HX-Target, HX-Trigger"
+    );
+    assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
+
+    // Back and forward: a history restore gets the whole page.
+    let mut restore = tab("/plugins/acme.pages/values?moon=1&_tab=1", uri, &owner);
+    restore
+        .headers_mut()
+        .insert("hx-history-restore-request", "true".parse().unwrap());
+    let res = send(&h.app, restore).await;
+    assert!(res.body.contains("app-sidebar"), "{}", res.body);
+    assert!(res.body.contains("second tab"), "{}", res.body);
+
+    // A tab that can't be shown: the whole page says so, not a page
+    // inside the content.
+    let res = send(
+        &h.app,
+        tab("/plugins/acme.pages/missing?_tab=1", uri, &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_eq!(res.headers["hx-retarget"], "body");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn actions_answer_in_place_with_a_toast(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let uri = "/plugins/acme.pages/blocks?x=1";
+    // Row actions post to the page's own address, query and all.
+    let shown = page(&h, uri, &owner).await;
+    assert!(
+        shown
+            .body
+            .contains(r#"action="/plugins/acme.pages/blocks?x=1""#),
+        "{}",
+        shown.body
+    );
+
+    // From the page: the content in place (what the app answered with,
+    // under the same address), and a toast.
+    let res = send(
+        &h.app,
+        boosted(post(uri, "_form=decide&verdict=approve&id=7", &owner), uri),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.headers["hx-retarget"], "#plugin-content");
+    assert_eq!(res.headers["hx-reswap"], "outerHTML show:none");
+    assert_eq!(res.headers["hx-push-url"], "false");
+    assert!(
+        res.body
+            .trim_start()
+            .starts_with(r#"<div id="plugin-content""#),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("Saved") && !res.body.contains("<html"));
+    assert_eq!(
+        toast(&res),
+        Some(("Approve · done".to_owned(), "done".to_owned()))
+    );
+
+    // Refused (not a button the page offers): the page as it is, the
+    // reason on it and in a toast. The host's check is unchanged.
+    let res = send(
+        &h.app,
+        boosted(post(uri, "_form=decide&id=8&verdict=approve", &owner), uri),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT);
+    assert_eq!(res.headers["hx-retarget"], "#plugin-content");
+    assert!(
+        res.body.contains("isn&#39;t on this page") || res.body.contains("isn't on this page"),
+        "{}",
+        res.body
+    );
+    let (message, tone) = toast(&res).unwrap();
+    assert!(message.contains("on this page any more"), "{message}");
+    assert_eq!(tone, "problem");
+
+    // From a Dashboard widget: back to the Dashboard, in place.
+    let res = send(
+        &h.app,
+        boosted(post(uri, "_form=close&id=8", &owner), "/dashboard"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let to = hx_location(&res).unwrap();
+    assert_eq!(to["path"], "/dashboard");
+    assert_eq!(to["push"], "false");
+    assert_eq!(
+        toast(&res),
+        Some(("Close · done".to_owned(), "done".to_owned()))
+    );
+
+    // Without JavaScript: the whole page, as ever.
+    let res = send(&h.app, post(uri, "_form=close&id=8", &owner)).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.body.contains("app-sidebar"), "{}", res.body);
+    assert!(res.headers.get("hx-trigger").is_none());
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_apps_redirect_back_keeps_the_tab(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let uri = "/plugins/acme.pages/tabbed-form?_tab=1";
+    let shown = page(&h, uri, &owner).await;
+    assert!(
+        shown
+            .body
+            .contains(r#"action="/plugins/acme.pages/tabbed-form?_tab=1""#),
+        "{}",
+        shown.body
+    );
+    // Without JavaScript: redirected to the page, under its tab.
+    let res = send(&h.app, post(uri, "_form=note&body=hi", &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(res.location(), uri);
+    // With it: the page reloaded in place, no new history entry, a toast.
+    let res = send(
+        &h.app,
+        boosted(post(uri, "_form=note&body=hi", &owner), uri),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let to = hx_location(&res).unwrap();
+    assert_eq!(to["path"], uri);
+    assert_eq!(to["swap"], "innerHTML show:none");
+    assert_eq!(to["push"], "false");
+    assert_eq!(toast(&res).unwrap().0, "Save · done");
 }

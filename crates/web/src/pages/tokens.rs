@@ -1,10 +1,13 @@
-//! Token Management: the signed-in account's tokens.
+//! Token Management: the signed-in account's tokens, and what each scope
+//! they carry is for (the Dashboard only says whether a character is
+//! registered).
 
 use askama::Template;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 
+use super::stay::{Toast, notice, with_toast};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -14,6 +17,8 @@ use crate::tokens::{self, Refreshed};
 pub struct ScopeRow {
     pub scope: String,
     pub description: String,
+    /// "Member requirement, Moon Mining", or "Not used".
+    pub used_by: String,
 }
 
 pub struct TokenRow {
@@ -21,6 +26,10 @@ pub struct TokenRow {
     pub name: String,
     pub is_main: bool,
     pub scopes: Vec<ScopeRow>,
+    /// The scopes in one line: "29 scopes · all required granted".
+    pub summary: String,
+    /// It falls short of what the state requires.
+    pub missing: bool,
     pub revoked: bool,
     pub deleted: bool,
     pub created: String,
@@ -38,35 +47,90 @@ struct TokensPage {
     error: Option<String>,
 }
 
+/// "29 scopes · all required granted", "29 scopes · 3 required missing".
+fn summary(count: usize, required: usize, missing: usize) -> String {
+    let scopes = if count == 1 {
+        "1 scope".to_owned()
+    } else {
+        format!("{count} scopes")
+    };
+    match (required, missing) {
+        (0, _) => scopes,
+        (_, 0) => format!("{scopes} · all required granted"),
+        (_, n) => format!("{scopes} · {n} required missing"),
+    }
+}
+
 async fn tokens_page(
     state: &AppState,
     session: &CurrentSession,
-    notice: Option<&str>,
+    notice: Option<String>,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let loaded = load(state, session, "tokens").await?;
+    let registration = crate::compliance::registration(&state.db, session.account).await?;
+    let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
+    let target = registration.target.as_ref().map(|t| t.name.clone());
+    // What uses a scope: the state's requirement, apps, Corporation Stats.
+    let used_by = |scope: &str| {
+        let mut users: Vec<String> = Vec::new();
+        if registration.required.contains(scope)
+            && let Some(target) = &target
+        {
+            users.push(format!("{target} requirement"));
+        }
+        users.extend(
+            plugins
+                .iter()
+                .filter(|p| p.scopes.iter().any(|s| s.as_str() == scope))
+                .map(|p| p.name.clone()),
+        );
+        if scope == tether_core::scopes::CORP_MEMBERSHIP {
+            users.push("Corporation Stats".to_owned());
+        }
+        if users.is_empty() {
+            "Not used".to_owned()
+        } else {
+            users.join(", ")
+        }
+    };
     let rows = tokens::list(&state.db, session.account)
         .await?
         .into_iter()
-        .map(|t| TokenRow {
-            character_id: t.character_id,
-            name: t.character_name,
-            is_main: t.is_main,
-            scopes: t
-                .scopes
-                .iter()
-                .map(|s| ScopeRow {
-                    description: tether_core::scopes::describe(s).to_owned(),
-                    scope: s.clone(),
-                })
-                .collect(),
-            revoked: t.revoked,
-            deleted: t.revoked_reason.as_deref() == Some("deleted"),
-            created: t.created_at.format("%Y-%m-%d").to_string(),
-            refreshed: t.last_refreshed_at.map_or_else(
-                || "never".to_owned(),
-                |at| at.format("%Y-%m-%d %H:%M").to_string(),
-            ),
+        .map(|t| {
+            let revoked = t.revoked;
+            let missing = if revoked {
+                registration.required.len()
+            } else {
+                registration
+                    .required
+                    .iter()
+                    .filter(|r| !t.scopes.contains(r))
+                    .count()
+            };
+            TokenRow {
+                character_id: t.character_id,
+                name: t.character_name,
+                is_main: t.is_main,
+                summary: summary(t.scopes.len(), registration.required.len(), missing),
+                missing: missing > 0,
+                scopes: t
+                    .scopes
+                    .iter()
+                    .map(|s| ScopeRow {
+                        description: tether_core::scopes::describe(s).to_owned(),
+                        used_by: used_by(s),
+                        scope: s.clone(),
+                    })
+                    .collect(),
+                revoked,
+                deleted: t.revoked_reason.as_deref() == Some("deleted"),
+                created: t.created_at.format("%Y-%m-%d").to_string(),
+                refreshed: t.last_refreshed_at.map_or_else(
+                    || "never".to_owned(),
+                    |at| at.format("%Y-%m-%d %H:%M").to_string(),
+                ),
+            }
         })
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
@@ -76,9 +140,38 @@ async fn tokens_page(
             shell: loaded.shell,
             rows,
             owners: super::plugin_access::own_sources(state, session.account).await?,
-            notice: notice.map(str::to_owned),
+            notice,
             error: error.map(|e| e.message().to_owned()),
         },
+    ))
+}
+
+/// The page again after an action, saying `message` (a toast with htmx).
+async fn done(
+    state: &AppState,
+    session: &CurrentSession,
+    headers: &HeaderMap,
+    message: &str,
+) -> Result<Response, PageError> {
+    let (inline, toast) = notice(headers, message);
+    let page = tokens_page(state, session, inline, None).await?;
+    Ok(match toast {
+        Some(toast) => with_toast(page, toast),
+        None => page,
+    })
+}
+
+/// The page again after an action that failed: the reason on the page,
+/// and in a toast with htmx.
+async fn failed(
+    state: &AppState,
+    session: &CurrentSession,
+    err: AppError,
+) -> Result<Response, PageError> {
+    let toast = Toast::problem(err.message().to_owned());
+    Ok(with_toast(
+        tokens_page(state, session, None, Some(err)).await?,
+        toast,
     ))
 }
 
@@ -95,32 +188,33 @@ pub async fn index(
 pub async fn refresh(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    headers: HeaderMap,
     Path(character): Path<i64>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     match tokens::refresh(&state.db, &state.vault, &state.limits, session.account, character).await {
-        Ok(Refreshed::Valid) => tokens_page(&state, &session, Some("Refreshed: the token works."), None).await,
+        Ok(Refreshed::Valid) => done(&state, &session, &headers, "Refreshed: the token works.").await,
         Ok(Refreshed::Revoked) => {
-            tokens_page(
+            done(
                 &state,
                 &session,
-                Some("EVE says that token no longer works. Log in with the character again through Add Character."),
-                None,
+                &headers,
+                "EVE says that token no longer works. Log in with the character again through Add Character.",
             )
             .await
         }
         // The page may now be Guest's (if it was the main), so it's
         // loaded fresh.
         Ok(Refreshed::Sold) => {
-            tokens_page(
+            done(
                 &state,
                 &session,
-                Some("That character now belongs to another EVE account, so it has left yours."),
-                None,
+                &headers,
+                "That character now belongs to another EVE account, so it has left yours.",
             )
             .await
         }
-        Err(err) => tokens_page(&state, &session, None, Some(err)).await,
+        Err(err) => failed(&state, &session, err).await,
     }
 }
 
@@ -128,19 +222,32 @@ pub async fn refresh(
 pub async fn delete(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    headers: HeaderMap,
     Path(character): Path<i64>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     match tokens::delete(&state.db, &state.vault, session.account, character).await {
         Ok(()) => {
-            tokens_page(
+            done(
                 &state,
                 &session,
-                Some("Token deleted. The character leaves your account in a day unless you log in with it again."),
-                None,
+                &headers,
+                "Token deleted. The character leaves your account in a day unless you log in with it again.",
             )
             .await
         }
-        Err(err) => tokens_page(&state, &session, None, Some(err)).await,
+        Err(err) => failed(&state, &session, err).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summary;
+
+    #[test]
+    fn scopes_read_in_one_line() {
+        assert_eq!(summary(29, 12, 0), "29 scopes · all required granted");
+        assert_eq!(summary(29, 12, 3), "29 scopes · 3 required missing");
+        assert_eq!(summary(1, 0, 0), "1 scope");
     }
 }

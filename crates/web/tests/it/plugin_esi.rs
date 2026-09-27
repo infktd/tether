@@ -250,8 +250,9 @@ async fn a_plain_login_keeps_the_scopes_a_character_registered(db: PgPool) {
     assert_eq!(state_of(&h, &owner).await, "Member");
     let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
     assert!(out.starts_with("ok"), "{out}");
-    // The profile shows what was granted and what uses it.
-    let profile = page(&h, "/dashboard", &owner).await.body;
+    // Token Management shows what was granted and what uses it (the
+    // Dashboard only whether each character is registered).
+    let profile = page(&h, "/tokens", &owner).await.body;
     assert!(profile.contains("Read skills and attributes"), "{profile}");
     assert!(
         profile.contains("Member requirement, ESI probe"),

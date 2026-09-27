@@ -89,44 +89,67 @@ async fn profile_shows_characters_state_and_permissions(db: PgPool) {
     assert!(html.contains("<h1 class=\"page-title\">Dashboard</h1>"));
     assert!(html.contains("https://images.evetech.net/characters/196379789/portrait?size=64"));
     assert!(html.contains("The Mittani"));
-    // As AA: the main is marked, other characters carry no "Alt" label.
-    assert!(html.contains("Main character"));
+    // As AA: the main is marked once, other characters carry no "Alt"
+    // label, and can be made the main from their row.
+    assert_eq!(html.matches("</svg> Main</span>").count(), 1, "{html}");
     assert!(!html.contains(">Alt<"));
     assert!(html.contains(r#"data-state="guest""#));
+    // Permissions: behind a disclosure, not a wall.
+    assert!(
+        html.contains(r#"<details class="card card-disclosure">"#),
+        "{html}"
+    );
     assert!(
         html.contains("admin.states"),
         "owner sees their permissions"
     );
-    assert!(html.contains(r#"hx-post="/profile/main""#));
+    assert!(html.contains(r#"action="/profile/main""#));
+    assert!(html.contains(">Make main<"), "{html}");
+    assert!(html.contains("Change Main with EVE login"), "{html}");
+    // One way to add a character, and no scope wall: scopes are on Token
+    // Management.
+    assert_eq!(html.matches("Add character").count(), 1, "{html}");
+    assert!(!html.contains("scopes granted"), "{html}");
+    assert!(
+        !html.contains("Viewing as"),
+        "no watermark on the Dashboard"
+    );
     assert!(html.contains(r#"aria-current="page""#));
     assert_only_allowed_external_urls(html);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn make_main_returns_the_characters_fragment(db: PgPool) {
+async fn make_main_stays_on_the_dashboard(db: PgPool) {
     let h = harness(db, true).await;
     let token = log_in_owner(&h, "196379789:Chribba").await;
     let token = log_in_as(&h, "443630591:The Mittani", Some(&token)).await;
 
+    // From the Dashboard (a boosted form): the Dashboard again, in place,
+    // with a toast.
     let res = send(
         &h.app,
-        htmx(form(
-            "/profile/main",
-            "character_id=443630591",
-            &[(SESSION, &token)],
-        )),
+        boosted(
+            form(
+                "/profile/main",
+                "character_id=443630591",
+                &[(SESSION, &token)],
+            ),
+            "/dashboard",
+        ),
     )
     .await;
-
-    assert_eq!(res.status, StatusCode::OK);
-    assert!(
-        res.body
-            .trim_start()
-            .starts_with(r#"<section class="card data-card" id="characters">"#),
-        "{}",
-        res.body
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let to = hx_location(&res).expect("HX-Location");
+    assert_eq!(to["path"], "/dashboard");
+    assert_eq!(to["swap"], "innerHTML show:none");
+    assert_eq!(to["push"], "false");
+    assert_eq!(
+        toast(&res),
+        Some((
+            "The Mittani is your main now.".to_owned(),
+            "done".to_owned()
+        ))
     );
-    assert!(!res.body.contains("<html"), "a fragment, not a page");
     assert_eq!(me(&h, &token).await["main"]["id"], 443630591);
 
     // Without htmx, back to the page.
@@ -141,17 +164,20 @@ async fn make_main_returns_the_characters_fragment(db: PgPool) {
     .await;
     assert_eq!(plain.location(), "/dashboard");
 
-    // A foreign character is refused in the fragment.
+    // A foreign character is refused in a toast; nothing moves.
     let foreign = send(
         &h.app,
-        htmx(form(
-            "/profile/main",
-            "character_id=1",
-            &[(SESSION, &token)],
-        )),
+        boosted(
+            form("/profile/main", "character_id=1", &[(SESSION, &token)]),
+            "/dashboard",
+        ),
     )
     .await;
-    assert!(foreign.body.contains("on your account"));
+    assert_eq!(foreign.status, StatusCode::NO_CONTENT);
+    assert!(foreign.headers.get("hx-location").is_none());
+    let (message, tone) = toast(&foreign).expect("a toast");
+    assert!(message.contains("on your account"), "{message}");
+    assert_eq!(tone, "problem");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

@@ -146,7 +146,7 @@ async fn revoked_tokens_are_marked_audited_shown_and_fixed_by_logging_in(db: PgP
 
     let profile = send(&h.app, get("/dashboard", &[(SESSION, &session)])).await;
     assert!(
-        profile.body.contains("register this character again"),
+        profile.body.contains("Access ended · Register"),
         "{}",
         profile.body
     );
