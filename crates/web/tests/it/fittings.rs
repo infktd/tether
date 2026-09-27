@@ -39,12 +39,14 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(11);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_fittings.sql");
+    let first = plugin_file("migrations/0001_fittings.sql");
+    let pilots = plugin_file("migrations/0002_pilots.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_fittings.sql", migration.as_bytes()),
+        ("migrations/0001_fittings.sql", first.as_bytes()),
+        ("migrations/0002_pilots.sql", pilots.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -607,4 +609,176 @@ async fn fittings_end_to_end(db: PgPool) {
         open(&h, &pilot, &format!("fit/{rifter}")).await.status,
         StatusCode::OK
     );
+}
+
+// ---- the pilot's side: can I fly it, Save to EVE -----------------------------------
+
+const CHRIBBA: i64 = 196379789;
+
+/// Registers `character` for Fittings through the SSO round trip; the new
+/// session (logins rotate it).
+async fn register(h: &Harness, token: &str, character: &str) -> String {
+    let res = send(
+        &h.app,
+        form(&format!("/register/start?app={ID}"), "", token),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let login = res.cookie_value(LOGIN);
+    let state = query_param(res.location(), "state").to_owned();
+    let res = send(
+        &h.app,
+        get(
+            &format!(
+                "/auth/callback?code=ok:{}&state={state}",
+                character.replace(' ', "%20")
+            ),
+            &[(LOGIN, &login), (SESSION, token)],
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    res.cookie_value(SESSION)
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn pilots_see_whether_they_can_fly_a_fit_and_save_it_to_eve(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
+    let h = harness_with_esi(db, true, esi_server().await).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    add_fit(&h, &owner, RIFTER, "&doctrine=").await;
+    let rifter = one(
+        &h,
+        "SELECT id FROM {schema}.fits WHERE name = 'Fast Tackle'",
+    )
+    .await;
+    work(&h).await;
+
+    // Nothing registered: the Register Character card.
+    let fit = open(&h, &owner, &format!("fit/{rifter}")).await.body;
+    assert!(fit.contains(&format!("/register?app={ID}")), "{fit}");
+    assert!(fit.contains("Register a character with Fittings"), "{fit}");
+
+    // Frigate I, Weapon Upgrades III, Propulsion Jamming II (IV needed),
+    // Drones V; no Small Projectile Turret (V needed).
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/skills")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "skills": [
+                {"skill_id": 3329, "active_skill_level": 1, "trained_skill_level": 1, "skillpoints_in_skill": 250},
+                {"skill_id": 3318, "active_skill_level": 3, "trained_skill_level": 3, "skillpoints_in_skill": 8000},
+                {"skill_id": 3435, "active_skill_level": 2, "trained_skill_level": 4, "skillpoints_in_skill": 1400},
+                {"skill_id": 3436, "active_skill_level": 5, "trained_skill_level": 5, "skillpoints_in_skill": 256000}
+            ],
+            "total_sp": 265650
+        })))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("/characters/{CHRIBBA}/fittings")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "fitting_id": 7
+        })))
+        .expect(1)
+        .mount(&h.esi_server)
+        .await;
+    // Registering runs the app's schedules (in the background, and not
+    // again within ten minutes of the runs installing it queued).
+    sqlx::query("UPDATE core.schedules SET last_enqueued_at = now() - interval '1 hour'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let owner = register(&h, &owner, "196379789:Chribba").await;
+    for _ in 0..100 {
+        let queued: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM core.audit_log WHERE action = 'schedule.run_now'",
+        )
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+        if queued > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    // Its skills are read.
+    work(&h).await;
+
+    let fit = open(&h, &owner, &format!("fit/{rifter}")).await.body;
+    for text in [
+        "Can I fly it",
+        ">No<",
+        "Propulsion Jamming IV (has II)",
+        "Small Projectile Turret V (untrained)",
+        "Save to EVE",
+        "Read skills again",
+    ] {
+        assert!(fit.contains(text), "{text}: {fit}");
+    }
+    // Trained IV, but only II active (an Alpha clone): II counts.
+    assert!(!fit.contains("Weapon Upgrades III"), "{fit}");
+
+    // Save to EVE: the fit as ESI's fitting, to Chribba's own character.
+    let saved = post(
+        &h,
+        &owner,
+        &format!("fit/{rifter}"),
+        &format!("_form=save_to_eve&character={CHRIBBA}"),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert!(saved.body.contains("s fittings in EVE."), "{}", saved.body);
+    let sent: Vec<serde_json::Value> = h
+        .esi_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/fittings"))
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["name"], "Fast Tackle");
+    assert_eq!(sent[0]["ship_type_id"], 587);
+    assert_eq!(
+        sent[0]["items"],
+        serde_json::json!([
+            {"flag": "LoSlot0", "quantity": 1, "type_id": 2048},
+            {"flag": "MedSlot0", "quantity": 1, "type_id": 3244},
+            {"flag": "HiSlot0", "quantity": 1, "type_id": 2881},
+            {"flag": "HiSlot1", "quantity": 1, "type_id": 2881},
+            {"flag": "RigSlot0", "quantity": 1, "type_id": 31668},
+            {"flag": "DroneBay", "quantity": 3, "type_id": 2488},
+            {"flag": "Cargo", "quantity": 50, "type_id": 28668},
+        ])
+    );
+
+    // Reading again, now.
+    let again = post(
+        &h,
+        &owner,
+        &format!("fit/{rifter}"),
+        &format!("_form=read_skills&character={CHRIBBA}"),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    assert!(again.body.contains("s skills."), "{}", again.body);
+
+    // Another pilot never gets Chribba's buttons, nor sees his skills.
+    grant(&h, &owner, "access_fittings", MEMBER_STATE).await;
+    let pilot = log_in_as(&h, PILOT_A, None).await;
+    let theirs = open(&h, &pilot, &format!("fit/{rifter}")).await.body;
+    assert!(
+        !theirs.contains("Propulsion Jamming IV (has II)"),
+        "{theirs}"
+    );
+    let refused = post(
+        &h,
+        &pilot,
+        &format!("fit/{rifter}"),
+        &format!("_form=save_to_eve&character={CHRIBBA}"),
+    )
+    .await;
+    assert_ne!(refused.status, StatusCode::OK, "{}", refused.body);
 }

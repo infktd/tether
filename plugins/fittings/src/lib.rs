@@ -27,6 +27,7 @@ mod doctrines;
 mod eft;
 mod fits;
 mod lookup;
+mod pilots;
 
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{Job, JobError};
@@ -43,7 +44,7 @@ impl Plugin for Fittings {
         match parts.as_slice() {
             [""] => doctrines::list(&access),
             ["fits"] => fits::list(&access, query_value(&request, "q")),
-            ["fit", id] => fits::page(&access, number(id)?),
+            ["fit", id] => fits::page(&access, &viewer, number(id)?, None),
             ["doctrine", id] => doctrines::page(&access, number(id)?),
             ["categories"] => categories::list(&access),
             ["category", id] => categories::page(&access, number(id)?),
@@ -72,6 +73,16 @@ impl Plugin for Fittings {
                 &access,
                 submission.value("q"),
             )?));
+        }
+        // A pilot's own: saving a fit to their character, reading its skills.
+        if let (["fit", id], "save_to_eve" | "read_skills") = (parts.as_slice(), form) {
+            let id = number(id)?;
+            let character = number(submission.value("character"))?;
+            return if form == "save_to_eve" {
+                fits::save_to_eve(&access, &viewer, id, character)
+            } else {
+                fits::read_skills(&access, &viewer, id, character)
+            };
         }
         // Everything else changes fits, doctrines or categories.
         if !access.manage {
@@ -125,6 +136,7 @@ impl Plugin for Fittings {
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
             lookup::DETAILS => lookup::details(),
+            pilots::SKILLS => pilots::sync(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }

@@ -21,6 +21,19 @@ storage = true
 # categories are limited to groups.
 groups = true
 
+# allianceauth-fittings' Save to EVE and its skill check: pilots register
+# characters for Fittings (its Register Character card on a fit's page),
+# granting it to save fittings to them and to read their skills. Only the
+# pilot sees their characters' skills; a write scope, so no state can
+# require it.
+[capabilities.esi]
+user = ["esi-fittings.write_fittings.v1", "esi-skills.read_skills.v1"]
+
+# Reads registered characters' skills (also at once when one registers).
+[[capabilities.schedules]]
+name = "skills"
+every = "6h"
+
 # Looks up the item details of new fits right after they're added; this
 # daily run catches up on anything a failed run left behind.
 [[capabilities.schedules]]

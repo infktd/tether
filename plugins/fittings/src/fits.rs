@@ -2,15 +2,17 @@
 
 use std::collections::BTreeMap;
 
+use tether_plugin_sdk::esi::{self, Error as EsiError, Subject};
 use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Card, CodeBlock, Column, Field, Form, Page, PageError, Profile, Stat, Submission, SubmitResult,
-    Table, Tone, Value, action, badge, character, item_type, link, log, time,
+    Card, CardGrid, CodeBlock, Column, Field, Form, Page, PageError, Profile, Stat, Submission,
+    SubmitResult, Table, Tone, Value, action, badge, character, item_type, link, log, time,
 };
 
 use crate::eft::{self, Problem, Slot};
 use crate::lookup::{self, Failure};
+use crate::pilots;
 use crate::{
     Access, app_links, category_names, clip, doctrine_seen, execute, failed, fit_seen, id_list,
     int, opt_int, query, text,
@@ -433,7 +435,13 @@ fn roman(level: i64) -> &'static str {
     }
 }
 
-pub(crate) fn page(access: &Access, id: i64) -> Result<Page, PageError> {
+/// A fit's page; `notice` (what a button just did) goes first.
+pub(crate) fn page(
+    access: &Access,
+    viewer: &Viewer,
+    id: i64,
+    notice: Option<&str>,
+) -> Result<Page, PageError> {
     let fit = seen_fit(access, id)?;
     let lines = lines(id)?;
     let doctrines = doctrines_of(access, id)?;
@@ -471,7 +479,11 @@ pub(crate) fn page(access: &Access, id: i64) -> Result<Page, PageError> {
         clip(&format!("{} · {}", fit.hull, fit.role), 400)
     });
     let edit = format!("edit/fit/{id}");
-    let mut page = app_links(page, access, Some(("Edit Fit", &edit))).profile(profile);
+    let mut page = app_links(page, access, Some(("Edit Fit", &edit)));
+    if let Some(notice) = notice {
+        page = page.text(notice);
+    }
+    let mut page = page.profile(profile);
     if pending {
         // Filled in by the `details` job, usually within seconds.
         page = page
@@ -523,10 +535,133 @@ pub(crate) fn page(access: &Access, id: i64) -> Result<Page, PageError> {
         };
         skill_table = skill_table.row(vec![item_type(*skill, name).into(), roman(*level).into()]);
     }
-    Ok(page.table(skill_table).text(
+    let page = page.table(skill_table).text(
         "Required skills: the highest level of each skill the hull, modules, charges, drones, \
          fighters and implants need (not cargo), without the skills those need in turn.",
-    ))
+    );
+    // AA's skill check and Save to EVE: the viewer's own characters.
+    let mine = pilots::mine(viewer);
+    Ok(if mine.is_empty() {
+        page.cards(CardGrid::new().register()).text(
+            "Register a character with Fittings to see whether it can fly this fit, and to save \
+             fits to it in EVE. Fittings reads its skills and saves fittings; nobody else sees \
+             them.",
+        )
+    } else {
+        page.table(pilots::table(&mine, &skills)?)
+    })
+}
+
+/// Save to EVE (allianceauth-fittings'): the fit, as ESI's fitting, saved
+/// to one of the viewer's own registered characters.
+pub(crate) fn save_to_eve(
+    access: &Access,
+    viewer: &Viewer,
+    id: i64,
+    character: i64,
+) -> Result<SubmitResult, PageError> {
+    let fit = seen_fit(access, id)?;
+    let c = pilots::own(viewer, character)?;
+    let body = esi_fitting(&fit, &lines(id)?);
+    let notice = match esi::post("character-fitting-save", Subject::Character(c.id), &body) {
+        Ok(_) => format!("Saved to {}'s fittings in EVE.", c.name),
+        Err(EsiError::Token | EsiError::NotRegistered) => {
+            format!(
+                "EVE access for {} has ended: register it again, then save.",
+                c.name
+            )
+        }
+        Err(EsiError::Status(status)) => format!(
+            "EVE didn't save it (status {status}). A character keeps at most 500 fittings, so \
+             {} may have no room.",
+            c.name
+        ),
+        Err(err) => {
+            log::warn(format!("saving fit {id} to EVE: {err:?}"));
+            "EVE couldn't be reached, so nothing was saved. Try again in a moment.".to_owned()
+        }
+    };
+    Ok(SubmitResult::Page(page(access, viewer, id, Some(&notice))?))
+}
+
+/// Reads one of the viewer's characters' skills again, now.
+pub(crate) fn read_skills(
+    access: &Access,
+    viewer: &Viewer,
+    id: i64,
+    character: i64,
+) -> Result<SubmitResult, PageError> {
+    seen_fit(access, id)?;
+    let c = pilots::own(viewer, character)?;
+    pilots::read(&c)?;
+    let notice = format!("Read {}'s skills.", c.name);
+    Ok(SubmitResult::Page(page(access, viewer, id, Some(&notice))?))
+}
+
+/// The fit as ESI's fitting: modules in numbered slots in the fit's order,
+/// drones, fighters and the rest (cargo, implants, which fittings can't
+/// hold as such) in their bays, each type once. Loaded charges are left
+/// out: EFT doesn't say how many.
+fn esi_fitting(fit: &Fit, lines: &[Line]) -> String {
+    let mut used = [0usize; 6];
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    let mut bays: Vec<(&str, i64, i64)> = Vec::new();
+    for line in lines {
+        let slot = match line.place {
+            Place::High => Some(("HiSlot", 0, 8)),
+            Place::Mid => Some(("MedSlot", 1, 8)),
+            Place::Low => Some(("LoSlot", 2, 8)),
+            Place::Rig => Some(("RigSlot", 3, 3)),
+            Place::Subsystem => Some(("SubSystemSlot", 4, 4)),
+            Place::Service => Some(("ServiceSlot", 5, 8)),
+            _ => None,
+        };
+        match slot {
+            Some((prefix, i, max)) if used[i] < max => {
+                items.push(serde_json::json!({
+                    "flag": format!("{prefix}{}", used[i]),
+                    "quantity": 1,
+                    "type_id": line.type_id,
+                }));
+                used[i] += 1;
+            }
+            _ => {
+                let flag = match line.place {
+                    Place::Drones => "DroneBay",
+                    Place::Fighters => "FighterBay",
+                    _ => "Cargo",
+                };
+                match bays
+                    .iter_mut()
+                    .find(|(f, t, _)| *f == flag && *t == line.type_id)
+                {
+                    Some((_, _, n)) => *n += line.quantity,
+                    None => bays.push((flag, line.type_id, line.quantity)),
+                }
+            }
+        }
+    }
+    items.extend(bays.into_iter().map(|(flag, type_id, quantity)| {
+        serde_json::json!({ "flag": flag, "quantity": quantity, "type_id": type_id })
+    }));
+    // ESI's limits: a name of 1 to 50 characters, a description of 500.
+    let plain = |text: &str, max: usize| -> String {
+        text.chars()
+            .map(|c| if c.is_control() && c != '\n' { ' ' } else { c })
+            .take(max)
+            .collect()
+    };
+    let name = match plain(fit.name.trim(), 50) {
+        n if n.trim().is_empty() => plain(&fit.hull, 50),
+        n => n,
+    };
+    serde_json::json!({
+        "name": name,
+        "description": plain(&fit.description, 500),
+        "ship_type_id": fit.hull_id,
+        "items": items,
+    })
+    .to_string()
 }
 
 // ---- adding and editing -------------------------------------------------------------
@@ -922,6 +1057,63 @@ pub(crate) fn delete(viewer: &Viewer, id: i64) -> Result<SubmitResult, PageError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fit_becomes_esis_fitting() {
+        let fit = Fit {
+            name: "Fast\tTackle ".repeat(10),
+            hull_id: 587,
+            hull: "Rifter".into(),
+            role: String::new(),
+            description: "Keep\u{7} it\nsimple".into(),
+            eft: String::new(),
+            creator_id: 1,
+            creator: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let line = |place, type_id, quantity| Line {
+            place,
+            type_id,
+            name: String::new(),
+            charge: Some((9, "Charge".into())),
+            quantity,
+            offline: false,
+        };
+        let lines = vec![
+            line(Place::Low, 1, 1),
+            line(Place::Low, 2, 1),
+            line(Place::High, 3, 1),
+            line(Place::Drones, 4, 2),
+            line(Place::Drones, 4, 3),
+            line(Place::Cargo, 5, 100),
+            line(Place::Implants, 6, 1),
+        ];
+        let esi: serde_json::Value = serde_json::from_str(&esi_fitting(&fit, &lines)).unwrap();
+        assert_eq!(esi["ship_type_id"], 587);
+        let name = esi["name"].as_str().unwrap();
+        assert_eq!(name.chars().count(), 50);
+        assert!(!name.contains('\t'));
+        assert_eq!(esi["description"], "Keep  it\nsimple");
+        assert_eq!(
+            esi["items"],
+            serde_json::json!([
+                {"flag": "LoSlot0", "quantity": 1, "type_id": 1},
+                {"flag": "LoSlot1", "quantity": 1, "type_id": 2},
+                {"flag": "HiSlot0", "quantity": 1, "type_id": 3},
+                {"flag": "DroneBay", "quantity": 5, "type_id": 4},
+                {"flag": "Cargo", "quantity": 100, "type_id": 5},
+                {"flag": "Cargo", "quantity": 1, "type_id": 6},
+            ])
+        );
+        // An empty name takes the hull's.
+        let unnamed = Fit {
+            name: "  ".into(),
+            ..fit
+        };
+        let esi: serde_json::Value = serde_json::from_str(&esi_fitting(&unnamed, &[])).unwrap();
+        assert_eq!(esi["name"], "Rifter");
+    }
 
     #[test]
     fn buy_all_counts_each_item_once() {
