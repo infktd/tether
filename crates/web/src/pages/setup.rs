@@ -133,7 +133,7 @@ fn steps(s: &SetupStatus) -> Vec<Step> {
     [
         "Setup token",
         "EVE application",
-        "Owner login",
+        "First superuser",
         "Member alliance",
     ]
     .into_iter()

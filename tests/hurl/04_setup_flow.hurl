@@ -61,11 +61,11 @@ header "Location" startsWith "https://login.eveonline.com/v2/oauth/authorize"
 header "Location" contains "code_challenge_method=S256"
 header "Set-Cookie" contains "__Host-tether_login="
 
-# The same wizard through its pages: the unlocked browser sees the owner step.
+# The same wizard through its pages: the unlocked browser sees the first-superuser step.
 GET {{base}}/setup
 HTTP 200
 [Asserts]
-body contains "Log in as the owner"
+body contains "Log in as the first superuser"
 
 # With an EVE application saved, the login page offers EVE login: the one
 # way in, for members and admins alike.
