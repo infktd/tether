@@ -123,6 +123,8 @@ pub struct DefensesView {
 /// Three-quarter rings, as EVE's HUD: each starts bottom-left and runs
 /// clockwise.
 pub fn defenses(d: &Defenses) -> DefensesView {
+    // Checked to 0..=1 already; adding 0 turns -0 into 0.
+    let [shield, armor, hull] = [d.shield, d.armor, d.hull].map(|x| x.clamp(0.0, 1.0) + 0.0);
     let ring = |radius: f64, value: f64, healthy: &'static str| {
         let circumference = 2.0 * std::f64::consts::PI * radius;
         let whole = circumference * 0.75;
@@ -142,16 +144,16 @@ pub fn defenses(d: &Defenses) -> DefensesView {
     };
     DefensesView {
         rings: vec![
-            ring(19.0, d.shield, "arc-info"),
-            ring(14.5, d.armor, "arc-fog"),
-            ring(10.0, d.hull, "arc-bone"),
+            ring(19.0, shield, "arc-info"),
+            ring(14.5, armor, "arc-fog"),
+            ring(10.0, hull, "arc-bone"),
         ],
         alarm: d.alarm,
         label: format!(
             "Shield {}%, armor {}%, hull {}%{}",
-            (d.shield * 100.0).round(),
-            (d.armor * 100.0).round(),
-            (d.hull * 100.0).round(),
+            (shield * 100.0).round(),
+            (armor * 100.0).round(),
+            (hull * 100.0).round(),
             if d.alarm { ", alarm" } else { "" }
         ),
     }
@@ -326,6 +328,18 @@ mod tests {
         });
         assert!(big.large);
         assert_eq!(big.size, 180);
+    }
+
+    #[test]
+    fn negative_zero_reads_as_zero() {
+        let v = defenses(&Defenses {
+            shield: -0.0,
+            armor: 1.0,
+            hull: 1.0,
+            alarm: false,
+        });
+        assert_eq!(v.label, "Shield 0%, armor 100%, hull 100%");
+        assert!(!v.rings[0].2.dash.starts_with('-'));
     }
 
     #[test]

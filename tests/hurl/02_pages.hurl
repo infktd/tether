@@ -31,6 +31,12 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# The status strip is for signed-in pages only: no free ESI relay.
+GET {{base}}/status/strip
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # A deep link is still sent to plain /login, and the page it was headed to
 # is kept server-side for after the login: the cookie is only a handle.
 GET {{base}}/admin/users?page=2

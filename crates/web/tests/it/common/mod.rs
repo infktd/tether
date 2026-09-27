@@ -469,6 +469,7 @@ async fn harness_parts(
         limits: Arc::default(),
         plugins: plugins.clone(),
         notices: tether_web::notifications::Notices::start(db.clone()),
+        strip: Default::default(),
     });
     Harness {
         app,

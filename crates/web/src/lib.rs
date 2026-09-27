@@ -63,7 +63,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Router, middleware};
 
-pub use state::{AppState, Limits, Site};
+pub use state::{AppState, Limits, Site, StripStatus};
 
 /// Whether this build includes fixture logins (never true in release).
 pub const DEV_LOGIN: bool = cfg!(feature = "dev-login");
@@ -769,6 +769,7 @@ mod tests {
             limits: std::sync::Arc::default(),
             plugins,
             notices: crate::notifications::Notices::idle(),
+            strip: Default::default(),
         }
     }
 

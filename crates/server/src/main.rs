@@ -387,6 +387,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let notices = tether_web::notifications::Notices::start(db.clone());
     let state = tether_web::AppState {
         notices: notices.clone(),
+        strip: Default::default(),
         vault,
         key,
         discord,

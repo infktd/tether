@@ -432,6 +432,15 @@ fn check_composition(composition: &Composition, budget: &mut Budget) -> Result<(
             return Err(problem("a composition part's grade isn't 0 to 4"));
         }
     }
+    if !composition
+        .parts
+        .iter()
+        .map(|p| p.amount)
+        .sum::<f64>()
+        .is_finite()
+    {
+        return Err(problem("a composition's parts don't add up to a number"));
+    }
     if let Some(center) = &composition.center {
         budget.text("a composition's center", center)?;
     }
@@ -929,6 +938,8 @@ mod tests {
         assert!(at(vec![(0.0, 1)]).is_err());
         assert!(at(vec![(f64::NAN, 1)]).is_err());
         assert!(at(vec![(1.0, 0); MAX_SHARES + 1]).is_err());
+        // Each part finite, their sum not.
+        assert!(at(vec![(f64::MAX, 0), (f64::MAX, 1)]).is_err());
     }
 
     #[test]

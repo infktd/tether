@@ -27,6 +27,17 @@ pub struct AppState {
     pub plugins: Arc<crate::plugins::Plugins>,
     /// Unread-count changes, for the live bell.
     pub notices: crate::notifications::Notices,
+    /// Tranquility's pilots online, for every page's status strip.
+    pub strip: Arc<StripStatus>,
+}
+
+/// What the status strip shows, asked of ESI at most once a minute however
+/// many tabs poll it; a failure is remembered as long, so an ESI outage
+/// isn't met with a call per tab. Callers wait behind the one call in
+/// flight (the lock is held across it).
+#[derive(Debug, Default)]
+pub struct StripStatus {
+    pub(crate) last: tokio::sync::Mutex<Option<(std::time::Instant, Option<i64>)>>,
 }
 
 /// Rate limits for endpoints worth guessing at.

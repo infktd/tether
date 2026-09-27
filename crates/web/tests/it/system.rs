@@ -90,6 +90,61 @@ async fn the_dashboard_says_when_esi_is_down(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_status_strip_asks_esi_once_a_minute(db: PgPool) {
+    let h = harness(db, true).await;
+    let (_, pilot) = owner_and_pilot(&h).await;
+    assert_eq!(
+        send(&h.app, get("/status/strip", &[])).await.location(),
+        "/login"
+    );
+    // A tab whose session ran out goes to log in, whole.
+    let poll = send(
+        &h.app,
+        Request::get("/status/strip")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(poll.status, StatusCode::OK);
+    assert_eq!(poll.headers["HX-Redirect"], "/login");
+    assert!(poll.body.is_empty(), "{}", poll.body);
+    Mock::given(method("GET"))
+        .and(path("/status"))
+        .respond_with(
+            ResponseTemplate::new(503).set_body_raw(r#"{"error":"downtime"}"#, "application/json"),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let asked = || async {
+        h.esi_server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().starts_with("/status"))
+            .count()
+    };
+    let strip = page(&h, "/status/strip", &pilot).await;
+    assert_eq!(strip.status, StatusCode::OK, "{}", strip.body);
+    assert!(strip.body.contains("ESI UNREACHABLE"), "{}", strip.body);
+    // Why is for admins, on System: pilots see only that it's down.
+    assert!(
+        !strip.body.contains("downtime") && !strip.body.contains("title="),
+        "{}",
+        strip.body
+    );
+    let first = asked().await;
+    assert!(first >= 1);
+    // Every tab polls it; the failure stands for a minute, so ESI isn't
+    // asked again.
+    for _ in 0..3 {
+        page(&h, "/status/strip", &pilot).await;
+    }
+    assert_eq!(asked().await, first);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn dead_jobs_are_listed_and_retried(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _) = owner_and_pilot(&h).await;

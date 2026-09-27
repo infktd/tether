@@ -483,24 +483,45 @@ pub async fn audit_log(
 #[derive(Template)]
 #[template(path = "status_strip.html")]
 struct StatusStrip {
-    /// Pilots online, with thousands separators.
+    /// Pilots online, with thousands separators; `None` when ESI didn't
+    /// answer (why is on System, for admins).
     players: Option<String>,
-    problem: String,
 }
 
+/// How long the strip's answer stands, success or not.
+const STRIP_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// `GET /status/strip`: Tranquility and ESI for every page's status strip
-/// (DESIGN.md). Signed-in only, so it's no free ESI relay; ESI's own
-/// cache answers most of these.
+/// (DESIGN.md). Signed-in only, and at most one ESI call a minute for the
+/// whole instance ([`crate::state::StripStatus`]).
 pub async fn strip(
     State(state): State<AppState>,
-    _session: CurrentSession,
+    headers: HeaderMap,
+    session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
-    let (players, problem) = esi_status(&state).await;
+    if session.is_none() {
+        // The strip's poll outlived the session: the whole tab goes to log
+        // in, rather than the login page landing inside the strip.
+        if super::is_htmx(&headers) {
+            return Ok(([("HX-Redirect", "/login")], StatusCode::OK).into_response());
+        }
+        return Err(AppError::unauthorized().into());
+    }
+    let players = {
+        let mut last = state.strip.last.lock().await;
+        match *last {
+            Some((at, players)) if at.elapsed() < STRIP_FOR => players,
+            _ => {
+                let (players, _) = esi_status(&state).await;
+                *last = Some((std::time::Instant::now(), players));
+                players
+            }
+        }
+    };
     Ok(render(
         StatusCode::OK,
         &StatusStrip {
             players: players.map(super::plugin_pages::grouped),
-            problem: problem.unwrap_or_default(),
         },
     ))
 }
