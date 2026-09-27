@@ -128,11 +128,19 @@ pub mod log {
 
 /// Who is looking at a page or posting a form (none in jobs).
 pub mod identity {
-    pub use crate::bindings::tether::plugin::identity::{Builtin, Character, State, Viewer};
+    pub use crate::bindings::tether::plugin::identity::{Builtin, Character, Owner, State, Viewer};
 
     /// The viewer, or `None` in a job.
     pub fn viewer() -> Option<Viewer> {
         crate::bindings::tether::plugin::identity::current()
+    }
+
+    /// First-party Member Audit only: who owns each of
+    /// [`esi::characters`](crate::esi::characters) (their main and state).
+    /// Every other app gets `None`: apps never learn which characters
+    /// share an account.
+    pub fn owners() -> Option<Vec<Owner>> {
+        crate::bindings::tether::plugin::identity::owners()
     }
 
     impl Viewer {

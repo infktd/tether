@@ -18,7 +18,7 @@ pub use crate::host::tether::plugin::filters::{
 pub use crate::host::tether::plugin::http::{
     Error as HttpError, Method as HttpMethod, Request as HttpRequest, Response as HttpResponse,
 };
-pub use crate::host::tether::plugin::identity::{Builtin, Character, State, Viewer};
+pub use crate::host::tether::plugin::identity::{Builtin, Character, Owner, State, Viewer};
 pub use crate::host::tether::plugin::timers::{Error as TimerError, Shared as SharedTimer, Timer};
 
 /// ESI calls in one job run or form submission.
@@ -76,6 +76,9 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     fn esi_characters(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_data_sources(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_names(&self, plugin: String, ids: Vec<i64>) -> Fut<Result<Vec<Named>, EsiError>>;
+    /// Who owns each of `plugin`'s [`esi_characters`](Self::esi_characters):
+    /// `None` for every plugin but the first-party one allowed to know.
+    fn identity_owners(&self, plugin: String) -> Fut<Option<Vec<Owner>>>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;
     fn discord_send(
         &self,

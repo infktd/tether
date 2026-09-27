@@ -176,6 +176,7 @@ fn probe(request: Request) -> Result<Page, PageError> {
         "" => "home".to_owned(),
         "viewer" => format!("{:?}", identity::viewer()),
         "characters" => format!("{:?}", esi::characters()),
+        "owners" => format!("{:?}", identity::owners()),
         "sources" => format!("{:?}", esi::data_sources()),
         // send?channel=&text=&state=Member
         "send" => {

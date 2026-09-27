@@ -430,6 +430,19 @@ interface identity {
 
     /// The viewer, or none (in a job).
     current: func() -> option<viewer>;
+
+    /// Who owns one of `esi.characters`: their account's main and state.
+    record owner {
+        character-id: s64,
+        main: character,
+        state: state,
+    }
+
+    /// First-party Member Audit only: the owner of each of
+    /// `esi.characters`, for aa-memberaudit's scopes, which go by the
+    /// owner's main. Every other app gets none: apps never learn which
+    /// characters share an account.
+    owners: func() -> option<list<owner>>;
 }
 
 /// ESI, through the host: plugins name an endpoint and whose token to use,

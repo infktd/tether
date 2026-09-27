@@ -57,6 +57,8 @@ pub struct CallState {
     jobs_refused: bool,
     services: Option<services::Shared>,
     viewer: Option<services::Viewer>,
+    /// Whether this plugin, as loaded, may learn who owns characters.
+    sees_owners: bool,
     esi_calls: usize,
     discord_sends: usize,
     filter_reports: usize,
@@ -75,6 +77,7 @@ impl CallState {
             jobs_refused: false,
             services: None,
             viewer: None,
+            sees_owners: false,
             esi_calls: 0,
             discord_sends: 0,
             filter_reports: 0,
@@ -106,6 +109,20 @@ impl CallState {
 impl tether::plugin::identity::Host for CallState {
     async fn current(&mut self) -> Option<services::Viewer> {
         self.viewer.clone()
+    }
+
+    async fn owners(&mut self) -> Option<Vec<services::Owner>> {
+        // Decided when this component was loaded, not by whichever
+        // package holds the id now: a call still running from a replaced
+        // component keeps its own answer.
+        if !self.sees_owners {
+            return None;
+        }
+        // Costs a call, as `esi.characters` does: it reads the same list.
+        match self.esi() {
+            Ok(services) => services.identity_owners(self.plugin.clone()).await,
+            Err(_) => None,
+        }
     }
 }
 
@@ -434,6 +451,7 @@ pub struct LoadedPlugin {
     id: String,
     pre: PluginPre<Sandbox<CallState>>,
     storage: Option<Storage>,
+    sees_owners: bool,
 }
 
 impl std::fmt::Debug for LoadedPlugin {
@@ -451,6 +469,14 @@ impl LoadedPlugin {
 
     pub fn storage(&self) -> Option<&Storage> {
         self.storage.as_ref()
+    }
+
+    /// Lets this component learn who owns characters (`identity.owners`;
+    /// the services still decide what it gets). Only for the first-party
+    /// app allowed to: Tether's web crate decides which when loading it.
+    pub fn seeing_owners(mut self) -> Self {
+        self.sees_owners = true;
+        self
     }
 }
 
@@ -533,6 +559,7 @@ impl Host {
     fn call_state(&self, plugin: &LoadedPlugin) -> CallState {
         let mut state = CallState::new(&plugin.id, plugin.storage.clone(), self.jobs.clone());
         state.services = self.services.clone();
+        state.sees_owners = plugin.sees_owners;
         state
     }
 
@@ -546,6 +573,7 @@ impl Host {
         );
         state.jobs_refused = true;
         state.services = self.services.clone();
+        state.sees_owners = plugin.sees_owners;
         state
     }
 
@@ -570,6 +598,7 @@ impl Host {
             id: id.to_owned(),
             pre,
             storage,
+            sees_owners: false,
         })
     }
 

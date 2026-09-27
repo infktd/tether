@@ -384,6 +384,55 @@ pub async fn serving_characters(
     .await
 }
 
+/// Who owns one of [`serving_characters`]: the account's main and state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServingOwner {
+    pub character_id: i64,
+    pub main: crate::plugin_esi::CharacterRow,
+    pub state: String,
+}
+
+/// The owners of [`serving_characters`] (the same characters: Member
+/// accounts, tokens carrying every one of `scopes`), for the one app that
+/// may know them (Member Audit, as aa-memberaudit's scopes go by the
+/// owner's main). Accounts without a main are left out.
+pub async fn serving_owners(
+    pool: &PgPool,
+    scopes: &[String],
+) -> Result<Vec<ServingOwner>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT c.id, m.id AS main_id, m.name AS main_name,
+               m.corporation_id AS main_corporation_id, m.alliance_id AS main_alliance_id,
+               s.name AS state
+        FROM core.characters c
+        JOIN core.accounts a ON a.id = c.account_id
+        JOIN core.states s ON s.id = a.state_id
+        JOIN core.character_tokens t ON t.character_id = c.id
+        JOIN core.characters m ON m.id = a.main_character_id
+        WHERE s.builtin = 'member'
+          AND t.state = 'valid' AND t.scopes @> $1
+        ORDER BY c.id
+        "#,
+        scopes,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ServingOwner {
+            character_id: r.id,
+            main: crate::plugin_esi::CharacterRow {
+                id: r.main_id,
+                name: r.main_name,
+                corporation_id: r.main_corporation_id,
+                alliance_id: r.main_alliance_id,
+            },
+            state: r.state,
+        })
+        .collect())
+}
+
 // ---- Corp Stats ----------------------------------------------------------
 
 /// Corporations a state covers: the main of some account in a state other

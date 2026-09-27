@@ -1,7 +1,8 @@
 //! Plugin ESI, identity and Discord (F16, N8, N10): user scopes only for
 //! registered characters on compliant accounts, data sources offered and
-//! approved, every call checked and logged, the host choosing the ids, and
-//! Discord only to assigned channels, pinging only state roles.
+//! approved, every call checked and logged, the host choosing the ids,
+//! who owns a character told only to the bundled Member Audit, and Discord
+//! only to assigned channels, pinging only state roles.
 
 use std::sync::OnceLock;
 
@@ -456,6 +457,139 @@ async fn pages_know_who_is_looking(db: PgPool) {
     assert!(!res.body.contains("admin.plugins"), "{}", res.body);
     // No viewer in a job.
     assert_eq!(probe(&h, "viewer", &[]).await, "None");
+}
+
+/// The probe as a bundled app under `id`: no `[publisher]`, no signature.
+fn bundled_probe(id: &str) -> Vec<u8> {
+    let manifest = format!(
+        "[plugin]\nid = \"{id}\"\nname = \"Probe {id}\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [capabilities.esi]\nuser = [\"{SKILLS}\"]\n"
+    );
+    testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &probe_component()),
+    ])
+}
+
+async fn approve_bundled(h: &Harness, owner: &str, id: &str, package: &[u8]) {
+    use sha2::Digest;
+    let sha: String = sha2::Sha256::digest(package)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugin-bundled/{id}/approve"),
+            &format!("package={sha}&reviewed=none"),
+            owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+/// Who owns a character (`identity.owners`) is Member Audit's alone, as
+/// bundled with Tether: not a signed app's, nor another bundled one's.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
+    use tether_core::states::{Builtin, EntityKind};
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let member_audit = bundled_probe("tether.member-audit");
+    let other = bundled_probe("acme.bundled");
+    let h = harness_with_bundled(db, vec![member_audit.clone(), other.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    approve_bundled(&h, &owner, "tether.member-audit", &member_audit).await;
+    approve_bundled(&h, &owner, "acme.bundled", &other).await;
+    run_jobs(&h).await;
+    let (_, owner) = grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    assert_eq!(state_of(&h, &owner).await, "Member");
+    // Everyone may list Chribba...
+    for id in [ID, "acme.bundled", "tether.member-audit"] {
+        let characters = run_probe(&h, id, "characters", Vec::new(), false).await;
+        assert!(characters.contains("Chribba"), "{id}: {characters}");
+    }
+    // ...but only Member Audit learns whose he is, in a page or a form.
+    assert_eq!(probe(&h, "owners", &[]).await, "None");
+    assert_eq!(
+        run_probe(&h, "acme.bundled", "owners", Vec::new(), true).await,
+        "None"
+    );
+    for as_page in [false, true] {
+        let owners = run_probe(&h, "tether.member-audit", "owners", Vec::new(), as_page).await;
+        for part in [
+            format!("character-id: {CHRIBBA}"),
+            format!(
+                "main: Character {{ id: {CHRIBBA}, name: \"Chribba\", corporation-id: {CHRIBBA_CORP}"
+            ),
+            "name: \"Member\"".to_owned(),
+        ] {
+            assert!(owners.contains(&part), "{part}\n{owners}");
+        }
+    }
+    // Only the characters `esi.characters` lists: not one whose token lacks
+    // the app's scope, or was revoked, or a non-Member's.
+    let only = |sql: &'static str| {
+        let db = h.db.clone();
+        async move {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+    };
+    only("UPDATE core.character_tokens SET scopes = '{}'").await;
+    assert_eq!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
+        "Some([])"
+    );
+    only("UPDATE core.character_tokens SET scopes = ARRAY['esi-skills.read_skills.v1'], state = 'revoked'").await;
+    assert_eq!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
+        "Some([])"
+    );
+    only("UPDATE core.character_tokens SET state = 'valid'").await;
+    assert!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false)
+            .await
+            .contains("Chribba")
+    );
+    sqlx::query("UPDATE core.accounts SET state_id = $1")
+        .bind(GUEST_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
+        "Some([])"
+    );
+}
+
+/// A signed package can take Member Audit's id only where Tether bundles
+/// no Member Audit, and then it learns nothing either.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_signed_app_under_member_audits_id_learns_no_owners(db: PgPool) {
+    use tether_core::states::{Builtin, EntityKind};
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let key = Key::new(2);
+    let manifest = format!(
+        "[plugin]\nid = \"tether.member-audit\"\nname = \"Not Member Audit\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities.esi]\nuser = [\"{SKILLS}\"]\n",
+        key.public()
+    );
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &probe_component()),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    run_jobs(&h).await;
+    grant(&h, &owner, "/register/start", "196379789:Chribba").await;
+    let characters = run_probe(&h, "tether.member-audit", "characters", Vec::new(), false).await;
+    assert!(characters.contains("Chribba"), "{characters}");
+    assert_eq!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
+        "None"
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

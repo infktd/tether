@@ -25,9 +25,9 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Channel, Character, DiscordError, EsiError, EsiReply, EsiResponse, FilterError, FilterValue,
-    FilterWanted, Fut, HttpError, HttpRequest, HttpResponse, Mention, Named, Services, SharedTimer,
-    Subject, Timer, TimerError,
+    Builtin, Channel, Character, DiscordError, EsiError, EsiReply, EsiResponse, FilterError,
+    FilterValue, FilterWanted, Fut, HttpError, HttpRequest, HttpResponse, Mention, Named, Owner,
+    Services, SharedTimer, State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -147,6 +147,22 @@ impl PluginServices {
             http,
         })
     }
+}
+
+/// The one app told who owns a character (`identity.owners`): Member
+/// Audit, as bundled with Tether. aa-memberaudit's scopes go by the
+/// owner's main, and its Character Finder shows the main and state (Jay,
+/// 2026-09-26). No manifest capability asks for this: it is decided here,
+/// by the id bundled apps reserve and the origin recorded at install.
+pub const OWNERS_APP: &str = "tether.member-audit";
+
+/// Whether the running plugin `id` may learn who owns characters: only
+/// [`OWNERS_APP`], and only the package bundled into Tether's image. A
+/// package from a file or GitHub can't take the id while it's bundled or
+/// was installed bundled (`crate::bundled`), and one that did anyway
+/// (Tether without bundled apps) is `signed`, so it gets nothing.
+pub fn may_see_owners(id: &str, origin: tether_db::plugins::Origin) -> bool {
+    id == OWNERS_APP && origin == tether_db::plugins::Origin::Bundled
 }
 
 fn character(row: db::CharacterRow) -> Character {
@@ -477,6 +493,46 @@ impl Services for PluginServices {
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin characters");
                     Vec::new()
+                }
+            }
+        })
+    }
+
+    fn identity_owners(&self, plugin: String) -> Fut<Option<Vec<Owner>>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            // The host passes this on only for a component loaded as the
+            // allowed app (`LoadedPlugin::seeing_owners`); what holds the
+            // id now must be the allowed app too.
+            let running = plugins.upgrade().and_then(|p| p.running(&plugin))?;
+            if !may_see_owners(&plugin, running.origin) {
+                return None;
+            }
+            // The same characters as `esi_characters`, so none it couldn't
+            // already list.
+            let scopes = &running.manifest.capabilities.esi.user;
+            if scopes.is_empty() {
+                return Some(Vec::new());
+            }
+            match tether_db::compliance::serving_owners(&db, scopes).await {
+                Ok(rows) => Some({
+                    tracing::info!(plugin, owners = rows.len(), "plugin read character owners");
+                    rows.into_iter()
+                        .map(|r| Owner {
+                            character_id: r.character_id,
+                            main: character(r.main),
+                            // Only Member accounts' characters are served.
+                            state: State {
+                                name: r.state,
+                                builtin: Some(Builtin::Member),
+                            },
+                        })
+                        .collect()
+                }),
+                Err(err) => {
+                    tracing::error!(plugin, error = %err, "plugin character owners");
+                    None
                 }
             }
         })

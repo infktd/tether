@@ -420,6 +420,8 @@ match submission.form.as_str() {
 
 `identity::viewer()` says who is looking at a page or posting a form: their account id, main, all their characters (with corporation and alliance), access state (`viewer.state.name`, and `viewer.is_member()` / `viewer.is_guest()`; admins can add states above Member, such as a leadership state, so `is_member()` is false for them: gate on your own permissions rather than on state where you can), and which of your plugin's permissions they hold (`viewer.can("manage")`). Jobs have no viewer.
 
+Apps see an account only while its owner is looking: nothing else tells you which characters share an account (`esi::characters()` has no owners). `identity::owners()` is first-party only: it answers for Tether's bundled Member Audit (each member character's main and state, for aa-memberaudit's scopes by the owner's main) and returns `None` for every other app, whatever its manifest says. There is no capability to ask for it; don't build on it.
+
 ## ESI
 
 Plugins never see a token or build an ESI URL. You name an endpoint and whose token to use; the host checks, on every call, that:

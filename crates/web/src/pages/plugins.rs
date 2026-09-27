@@ -734,11 +734,7 @@ async fn bundled_review_page(
             bundled_sha256: Some(review.sha256),
             about: About::new(&review.package, true),
             trust_title: "Comes with Tether",
-            trust_detail: "This app is part of Tether: it ships in the same image as Tether \
-                           itself and is exactly as trusted, so it isn't signed and pins no \
-                           key. Nothing else can install or update an app with this id. Look \
-                           at what it asks for before approving, as for any app."
-                .to_owned(),
+            trust_detail: bundled_trust(id),
             uploaded: None,
             base: review.base,
             source: None,
@@ -747,6 +743,23 @@ async fn bundled_review_page(
             error: error.map(|e| e.message().to_owned()),
         },
     ))
+}
+
+/// What trusting a bundled app means; for Member Audit, the one thing it
+/// learns that no other app can.
+fn bundled_trust(id: &str) -> String {
+    let mut text = "This app is part of Tether: it ships in the same image as Tether itself and \
+                    is exactly as trusted, so it isn't signed and pins no key. Nothing else can \
+                    install or update an app with this id. Look at what it asks for before \
+                    approving, as for any app."
+        .to_owned();
+    if id == crate::plugin_services::OWNERS_APP {
+        text.push_str(
+            " Unlike any other app, it learns which characters share an account: each member \
+             character's main and state, for its scopes by the owner's main.",
+        );
+    }
+    text
 }
 
 /// `GET /admin/plugin-bundled/{id}`: an app that comes with Tether, to

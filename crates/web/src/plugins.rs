@@ -168,11 +168,13 @@ enum Slot {
     Failed(String),
 }
 
-/// A running plugin and the manifest it was approved with.
+/// A running plugin, the manifest it was approved with, and where its
+/// package came from.
 #[derive(Clone)]
 pub struct Running {
     pub plugin: LoadedPlugin,
     pub manifest: Arc<tether_plugins::manifest::Manifest>,
+    pub origin: db::Origin,
 }
 
 /// A Dashboard widget of a running plugin.
@@ -478,11 +480,16 @@ impl Plugins {
         };
         let schedules = crate::plugin_jobs::declared(&package.manifest);
         let manifest = Arc::new(package.manifest);
-        let loaded = self
+        let mut loaded = self
             .host
             .load(&installed.id, package.component, storage)
             .await
             .map_err(|e| e.to_string())?;
+        // Decided now, for this component and the origin recorded with its
+        // package: a call still running after an upgrade keeps this answer.
+        if crate::plugin_services::may_see_owners(&installed.id, installed.origin) {
+            loaded = loaded.seeing_owners();
+        }
         // Installs from before scope compliance didn't record the user
         // scopes Member requires; catch them up.
         crate::compliance::sync_plugin_scopes(db, &installed.id, &manifest.capabilities.esi.user)
@@ -501,6 +508,7 @@ impl Plugins {
         Ok(Running {
             plugin: loaded,
             manifest,
+            origin: installed.origin,
         })
     }
 
