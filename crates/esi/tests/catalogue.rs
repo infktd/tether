@@ -322,6 +322,14 @@ async fn public_entries_take_ids_and_no_token() {
         })))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/markets/prices"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"adjusted_price": 5210.4, "average_price": 5423.1, "type_id": 45492},
+            {"adjusted_price": 12.5, "type_id": 34}
+        ])))
+        .mount(&server)
+        .await;
     let hash = "b".repeat(40);
     Mock::given(method("GET"))
         .and(path(format!("/killmails/1002/{hash}")))
@@ -371,6 +379,11 @@ async fn public_entries_take_ids_and_no_token() {
         .await
         .unwrap();
     assert_eq!(station.body["name"], "Some Station");
+    let prices = public("markets-prices", &[]).await.unwrap();
+    assert_eq!(prices.body[0]["type_id"], 45492);
+    assert_eq!(prices.body[0]["average_price"], 5423.1);
+    // A type without an average price has none, not zero.
+    assert!(prices.body[1]["average_price"].is_null());
     let killmail = public(
         "killmail-detail",
         &[("killmail_id", "1002"), ("killmail_hash", &hash)],

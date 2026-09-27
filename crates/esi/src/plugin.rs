@@ -566,6 +566,16 @@ pub const ENDPOINTS: &[Endpoint] = &[
         paged: false,
         params: &["station_id"],
     },
+    Endpoint {
+        // Public: CCP's average and adjusted price of every type
+        // (`/markets/prices/`, one list, cached an hour by ESI). Moon
+        // Mining values ore with it.
+        name: "markets-prices",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &[],
+    },
 ];
 
 /// The notification types `corporation-structure-notifications` passes
@@ -1270,6 +1280,17 @@ impl Esi {
                     .into_inner();
                 Ok(Response {
                     body: json(&group)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "markets-prices" => {
+                let prices = self
+                    .call_full(Priority::Bulk, self.uncached().get_markets_prices().send())
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&prices)?,
                     pages: 1,
                     refetched: 0,
                 })
