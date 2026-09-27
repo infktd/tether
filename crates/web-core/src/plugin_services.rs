@@ -193,7 +193,8 @@ fn character(row: db::CharacterRow) -> Character {
 }
 
 /// A state's `builtin` as plugins know it: Member, Blue or Guest. The
-/// Blacklist holds nothing, so none of its characters are served anyway.
+/// Blacklist reads as Guest: its characters are served only while
+/// something grants the account one of the app's permissions.
 fn builtin(builtin: Option<&str>) -> Option<Builtin> {
     match builtin {
         Some("member") => Some(Builtin::Member),

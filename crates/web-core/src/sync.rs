@@ -64,10 +64,24 @@ pub async fn affiliation_sync(db: &PgPool, esi: &Esi) -> Result<SyncSummary, Sta
 
     let accounts = tether_db::accounts::all_ids(db).await?;
     let mut state_changes = 0;
+    let mut failed = 0;
     for account in &accounts {
-        if evaluate_account(db, *account).await?.changed() {
-            state_changes += 1;
+        // One account that can't be evaluated doesn't hold up the rest:
+        // they may be moving into (or out of) the Blacklist.
+        match evaluate_account(db, *account).await {
+            Ok(result) if result.changed() => state_changes += 1,
+            Ok(_) => {}
+            Err(err) => {
+                failed += 1;
+                tracing::error!(account = account.0, error = %err, "evaluating an account");
+            }
         }
+    }
+    if failed > 0 {
+        tracing::warn!(
+            failed,
+            "some accounts weren't evaluated; the next sync tries again"
+        );
     }
     let summary = SyncSummary {
         characters: ids.len(),

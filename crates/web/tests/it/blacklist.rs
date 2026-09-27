@@ -679,4 +679,11 @@ async fn a_blacklisted_account_uses_the_apps_its_state_is_granted(db: PgPool) {
             .await
             .contains(&"plugin.acme.book.view".to_owned())
     );
+    // Deactivated: nothing, whatever is granted.
+    sqlx::query("UPDATE core.accounts SET active = false WHERE id = $1")
+        .bind(pilot_account.0)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert!(!holds().await);
 }
