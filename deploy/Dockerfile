@@ -3,22 +3,44 @@
 # Builds natively for the host architecture (amd64 or arm64); CI runs one
 # build per architecture on native runners rather than cross-compiling.
 # Keep this tag in step with rust-toolchain.toml.
-FROM rust:1.98.1-trixie AS build
+FROM rust:1.98.1-trixie AS chef
 # zip packages the bundled apps; wasm32-wasip2 is what they're built for.
+# cargo-chef (pinned) builds the dependencies as their own layer, so a
+# change to Tether's code rebuilds Tether, not wasmtime, axum and sqlx.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends mold zip \
  && rm -rf /var/lib/apt/lists/* \
- && rustup target add wasm32-wasip2
+ && rustup target add wasm32-wasip2 \
+ && cargo install cargo-chef --version 0.1.78 --locked
 WORKDIR /src
+
+# The recipe: every manifest and the lockfile, nothing else, so it changes
+# only when dependencies do. And the apps' package names, for their own
+# (WebAssembly) dependencies.
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json \
+ && for dir in plugins/*/; do \
+      sed -n 's/^name = "\(.*\)"/\1/p' "$dir/Cargo.toml" | head -1; \
+    done > apps.txt
+
+FROM chef AS build
 # sqlx checks queries against the committed .sqlx/ data; no database needed.
 ENV SQLX_OFFLINE=true
+COPY --from=planner /src/recipe.json /src/apps.txt ./
+# The same linker settings and toolchain as the real build, or its
+# fingerprints wouldn't match the cooked dependencies.
+COPY .cargo .cargo
+COPY rust-toolchain.toml ./
+# Dependencies only: this layer is reused until a manifest changes.
+RUN cargo chef cook --release --locked --recipe-path recipe.json -p tether-server \
+ && cargo chef cook --release --locked --target wasm32-wasip2 --recipe-path recipe.json \
+      $(sed 's/^/-p /' apps.txt)
 COPY . .
 # The server, then the apps that come with it (plugins/*), packaged
 # unsigned: they ship in this image and are exactly as trusted as the
 # binary (crates/web/src/bundled.rs).
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p tether-server \
+RUN cargo build --release --locked -p tether-server \
  && cp target/release/tether /usr/local/bin/tether \
  && scripts/bundle-apps.sh /usr/share/tether/apps
 

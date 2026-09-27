@@ -76,7 +76,13 @@ jobs:
         run: |
           sqlx migrate run
           SQLX_OFFLINE=false cargo sqlx prepare --workspace --check
-      - run: cargo test --workspace
+      # nextest runs each test in its own process, in parallel (the
+      # database tests each get their own database). Doctests, which it
+      # doesn't run, go through cargo test.
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --version 0.9.146 --locked
+      - run: cargo nextest run --workspace --no-fail-fast
+      - run: cargo test --workspace --doc
       # Only the tests the dev features change (the rest ran just above):
       # rerunning the whole web suite with them doubled this job's time.
       - name: Tests with the dev features
@@ -164,6 +170,19 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      # Build the image first with GitHub's layer cache (the Dockerfile
+      # cooks the dependencies in a layer of their own), as tether:local:
+      # install.sh --build then finds every layer in this builder and
+      # rebuilds nothing, while still going through its own build path.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          tags: tether:local
+          load: true
+          cache-from: type=gha,scope=install-test-${{ matrix.runner }}
+          cache-to: type=gha,mode=max,scope=install-test-${{ matrix.runner }}
       - name: Install from source without Caddy (--build --proxy none)
         run: deploy/install.sh --build --proxy none localhost
       # Compose starts the image's plain `tether` entrypoint with settings

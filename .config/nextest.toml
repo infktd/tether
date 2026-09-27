@@ -1,0 +1,6 @@
+# cargo nextest: every test in its own process, in parallel. The database
+# tests each create a database, so parallelism is capped to stay well within
+# Postgres's connection limit (100 by default).
+[profile.default]
+test-threads = 8
+slow-timeout = { period = "60s", terminate-after = 5 }

@@ -117,7 +117,8 @@ tools/bin/sqlx migrate run
 tools/bin/cargo-sqlx sqlx prepare --workspace   # after changing any query; commit .sqlx/. Run it against a freshly created and migrated database, as CI's check does: a long-lived dev database can infer different nullability
 cargo check --workspace
 cargo run -p tether-server --features dev   # /dev/login fixtures, Scalar at /docs and installing apps from a .zip (debug builds only)
-cargo test --workspace
+cargo install cargo-nextest --version 0.9.146 --locked --root tools   # once
+PATH=$PWD/tools/bin:$PATH cargo nextest run --workspace   # every test in parallel, as CI runs them (.config/nextest.toml); doctests: cargo test --workspace --doc
 cargo test -p tether-web --test it groups::   # the web tests are one binary (crates/web/tests/it); filter by module
 cargo clean   # safe any time; target/ grows with every feature set and toolchain, and a fresh test build is ~4 GB
 cargo clippy --workspace --all-targets -- -D warnings
