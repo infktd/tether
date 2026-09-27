@@ -133,6 +133,14 @@ async fn grant_location_scopes(h: &Harness) {
         .execute(&h.db)
         .await
         .unwrap();
+    sqlx::query(
+        "INSERT INTO core.app_characters (plugin_id, character_id) \
+         SELECT $1, character_id FROM core.character_tokens ON CONFLICT DO NOTHING",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
 }
 
 /// Every character's `/online`, `/location` and `/ship`: online (or not),
