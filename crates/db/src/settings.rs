@@ -34,6 +34,10 @@ pub const PINGS_DEFAULT_FLEET_TYPES: &str = "pings.use_default_fleet_types";
 /// aa-fleetpings' `default_embed_color`: the ping card's colour when its
 /// fleet type has none (`#rrggbb`). `#faa61a` unless set.
 pub const PINGS_DEFAULT_EMBED_COLOR: &str = "pings.default_embed_color";
+/// aa-fleetpings' `use_doctrines_from_fittings_module`: the form offers the
+/// doctrines apps share (Fittings') that the pilot may see, instead of the
+/// ones configured here. Off unless set.
+pub const PINGS_DOCTRINES_FROM_APPS: &str = "pings.use_doctrines_from_fittings";
 
 /// AA's `GROUPMANAGEMENT_AUTO_LEAVE`: `true` lets members leave
 /// requestable groups without approval. Off unless set.

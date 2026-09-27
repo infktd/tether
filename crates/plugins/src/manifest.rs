@@ -227,12 +227,17 @@ pub struct Capabilities {
     /// `read`.
     #[serde(default)]
     pub timers: Option<TimersAccess>,
+    /// Shared doctrines (allianceauth-fittings' in aa-fleetpings and
+    /// aa-fat): `publish` or `read`.
+    #[serde(default)]
+    pub doctrines: Option<TimersAccess>,
     /// The viewer's groups and the groups to offer them (`identity.groups`,
     /// `identity.all-groups`), to limit things to groups.
     #[serde(default)]
     pub groups: bool,
 }
 
+/// Publishing or reading something apps share (timers, doctrines).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TimersAccess {

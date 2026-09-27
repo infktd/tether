@@ -491,6 +491,25 @@ async fn fittings_end_to_end(db: PgPool) {
     }
     let list = open(&h, &pilot, "").await;
     assert!(!list.body.contains("Frigate Gang"), "{}", list.body);
+    // Shared with Fleet Pings and FAT as seen here: for the category's
+    // group, and managers.
+    type Shared = (String, String, Option<Vec<i64>>, Option<String>);
+    let shared: Vec<Shared> = sqlx::query_as(
+        "SELECT name, link, groups, see_all FROM core.shared_doctrines WHERE plugin_id = $1",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        shared,
+        vec![(
+            "Frigate Gang".to_owned(),
+            format!("doctrine/{doctrine}"),
+            Some(vec![officers.0]),
+            Some("manage".to_owned())
+        )]
+    );
     for hidden in [
         format!("doctrine/{doctrine}"),
         format!("fit/{rifter}"),

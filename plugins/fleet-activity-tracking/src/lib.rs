@@ -28,6 +28,7 @@
 //!   data source goes, the link closes, or after six hours.
 
 use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
+use tether_plugin_sdk::doctrines;
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
@@ -768,14 +769,15 @@ fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Resul
     if let Some(note) = note {
         page = page.text(note);
     }
-    let expiry = settings()?.expiry_minutes;
+    let settings = settings()?;
+    let expiry = settings.expiry_minutes;
     let mut form = Form::new("create", "Create FAT link")
         .field(Field::text("fleet", "Fleet name", MAX_FLEET).required())
         .field(
             Field::select("fleet_type", "Fleet type", type_options(None)?)
                 .help("Managers keep the list of fleet types."),
         )
-        .field(Field::text("doctrine", "Doctrine", MAX_DOCTRINE))
+        .field(doctrine_field(settings.doctrines_from_fittings, None))
         .field(
             Field::number("expiry", "Open for (minutes)")
                 .range(Some(1.0), Some(MAX_EXPIRY_MINUTES as f64), true)
@@ -858,6 +860,17 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
     };
     let fleet_type = optional(submission.value("fleet_type"));
     let doctrine = optional(submission.value("doctrine"));
+    if !doctrine_offered(
+        settings()?.doctrines_from_fittings,
+        doctrine.as_deref(),
+        None,
+    ) {
+        return Ok(SubmitResult::Page(create_page(
+            viewer,
+            Some("Choose one of the doctrines Fittings shares with you."),
+            None,
+        )?));
+    }
     let expiry = minutes(submission, "expiry")?;
     let expires = Utc::now() + Duration::minutes(expiry);
     // Only the viewer's own characters that are data sources.
@@ -1115,10 +1128,10 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                     )
                     .value(link.fleet_type.clone().unwrap_or_default()),
                 )
-                .field(
-                    Field::text("doctrine", "Doctrine", MAX_DOCTRINE)
-                        .value(link.doctrine.clone().unwrap_or_default()),
-                ),
+                .field(doctrine_field(
+                    settings.doctrines_from_fittings,
+                    link.doctrine.as_deref(),
+                )),
         )],
     );
     // aa-afat's manual FATs: within 24 hours, and before a reopen.
@@ -1227,6 +1240,17 @@ fn change_link(
             };
             let fleet_type = optional(submission.value("fleet_type"));
             let doctrine = optional(submission.value("doctrine"));
+            if !doctrine_offered(
+                settings()?.doctrines_from_fittings,
+                doctrine.as_deref(),
+                link.doctrine.as_deref(),
+            ) {
+                return Ok(SubmitResult::Page(details_page(
+                    viewer,
+                    hash,
+                    Some("Choose one of the doctrines Fittings shares with you."),
+                )?));
+            }
             run(
                 &[
                     Statement::new(
@@ -2347,11 +2371,14 @@ struct Settings {
     reopen_grace_minutes: i64,
     reopen_duration_minutes: i64,
     log_days: i64,
+    /// aa-afat's `use_doctrines_from_fittings_module`.
+    doctrines_from_fittings: bool,
 }
 
 fn settings() -> Result<Settings, PageError> {
     let rows = query(
-        "SELECT expiry_minutes, reopen_grace_minutes, reopen_duration_minutes, log_days \
+        "SELECT expiry_minutes, reopen_grace_minutes, reopen_duration_minutes, log_days, \
+                use_doctrines_from_fittings \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -2362,7 +2389,71 @@ fn settings() -> Result<Settings, PageError> {
         reopen_grace_minutes: or(1),
         reopen_duration_minutes: or(2),
         log_days: or(3),
+        doctrines_from_fittings: row
+            .and_then(|r| r.get(4))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
     })
+}
+
+/// The doctrine: free text, or with aa-afat's
+/// `use_doctrines_from_fittings_module` one of the doctrines Fittings
+/// shares that the FC may see (checked again on posting, by
+/// [`doctrine_offered`]). `current`, a link's doctrine, stays offered.
+fn doctrine_field(from_fittings: bool, current: Option<&str>) -> Field {
+    if !from_fittings {
+        let field = Field::text("doctrine", "Doctrine", MAX_DOCTRINE);
+        return match current {
+            Some(value) => field.value(value),
+            None => field,
+        };
+    }
+    // As the fleet types: an explicit None, so the list is never empty.
+    let mut options = vec![(String::new(), "None".to_owned())];
+    let mut names = shared_doctrines();
+    if let Some(value) = current.filter(|v| !names.iter().any(|n| n == v)) {
+        names.insert(0, value.to_owned());
+    }
+    options.extend(names.into_iter().take(98).map(|n| (n.clone(), n)));
+    let field = Field::select("doctrine", "Doctrine", options)
+        .help("The doctrines Fittings shares with you.");
+    match current {
+        Some(value) => field.value(value),
+        None => field,
+    }
+}
+
+/// The names of the doctrines Fittings shares that the viewer may see.
+fn shared_doctrines() -> Vec<String> {
+    match doctrines::published() {
+        Ok(shared) => {
+            let mut names: Vec<String> = Vec::new();
+            for d in shared {
+                if d.name.chars().count() <= MAX_DOCTRINE as usize
+                    && !names.iter().any(|n| n.eq_ignore_ascii_case(&d.name))
+                {
+                    names.push(d.name);
+                }
+            }
+            names
+        }
+        Err(err) => {
+            log::warn(format!("reading Fittings' doctrines: {err:?}"));
+            Vec::new()
+        }
+    }
+}
+
+/// Whether a posted doctrine is one the form offered: anything while it's
+/// typed in; with doctrines from Fittings none, the link's own, or one the
+/// viewer may see.
+fn doctrine_offered(from_fittings: bool, doctrine: Option<&str>, current: Option<&str>) -> bool {
+    match doctrine {
+        _ if !from_fittings => true,
+        None => true,
+        Some(name) if Some(name) == current => true,
+        Some(name) => shared_doctrines().iter().any(|n| n == name),
+    }
 }
 
 /// aa-afat's settings (in Django's admin there), for `manage_afat`.
@@ -2406,6 +2497,17 @@ fn settings_page() -> Result<Page, PageError> {
                         .value(settings.log_days.to_string())
                         .help("How long log entries are kept. aa-afat's default: 60")
                         .required(),
+                )
+                .field(
+                    Field::checkbox(
+                        "use_doctrines_from_fittings",
+                        "Use doctrines from Fittings",
+                        settings.doctrines_from_fittings,
+                    )
+                    .help(
+                        "Create FAT Link offers the doctrines Fittings shares that the FC may \
+                         see, instead of a text field. aa-afat's default: off",
+                    ),
                 ),
         ))
 }
@@ -2427,12 +2529,20 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         number("reopen_duration_minutes")?,
         number("log_days")?,
     );
+    let from_fittings = submission.value("use_doctrines_from_fittings") == "true";
     run(
         &[
             Statement::new(
                 "UPDATE settings SET expiry_minutes = $1, reopen_grace_minutes = $2, \
-                 reopen_duration_minutes = $3, log_days = $4 WHERE id = 1",
-                vec![expiry.into(), grace.into(), duration.into(), days.into()],
+                 reopen_duration_minutes = $3, log_days = $4, use_doctrines_from_fittings = $5 \
+                 WHERE id = 1",
+                vec![
+                    expiry.into(),
+                    grace.into(),
+                    duration.into(),
+                    days.into(),
+                    from_fittings.into(),
+                ],
             ),
             log_entry(
                 viewer,
@@ -2440,7 +2550,9 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
                 None,
                 format!(
                     "Settings: expiry {expiry} minutes, reopen grace {grace} minutes, reopen \
-                     duration {duration} minutes, logs kept {days} days"
+                     duration {duration} minutes, logs kept {days} days, doctrines from \
+                     Fittings {}",
+                    if from_fittings { "on" } else { "off" }
                 ),
             ),
         ],

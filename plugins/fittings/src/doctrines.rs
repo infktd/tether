@@ -1,6 +1,7 @@
 //! Doctrines: the app's front page (AA's dashboard: a card per doctrine),
 //! a doctrine's page, and adding, editing and deleting them.
 
+use tether_plugin_sdk::doctrines::Doctrine as SharedDoctrine;
 use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
@@ -492,4 +493,49 @@ pub(crate) fn delete(viewer: &Viewer, id: i64) -> Result<SubmitResult, PageError
         viewer.main.name, viewer.main.id
     ));
     Ok(SubmitResult::Redirect(String::new()))
+}
+
+// ---- shared with Fleet Pings and FAT ----------------------------------------------
+
+/// Shares the doctrines (aa-fleetpings' and aa-fat's
+/// `use_doctrines_from_fittings_module`), seen as here: public when a
+/// doctrine is in no category or in one without groups, else by members
+/// of its categories' groups; `manage` sees every one. Logged, not failed:
+/// nothing a pilot did depends on it.
+pub(crate) fn share() {
+    let rows = match query(
+        "SELECT d.id, d.name, \
+         (NOT EXISTS (SELECT 1 FROM category_doctrines sd WHERE sd.doctrine_id = d.id) \
+          OR EXISTS (SELECT 1 FROM category_doctrines sd WHERE sd.doctrine_id = d.id \
+                     AND NOT EXISTS (SELECT 1 FROM category_groups cg \
+                                     WHERE cg.category_id = sd.category_id))) AS public, \
+         coalesce((SELECT jsonb_agg(DISTINCT cg.group_id) FROM category_doctrines sd \
+                   JOIN category_groups cg ON cg.category_id = sd.category_id \
+                   WHERE sd.doctrine_id = d.id), '[]'::jsonb) AS groups \
+         FROM doctrines d ORDER BY lower(d.name), d.id LIMIT 500",
+        &[],
+    ) {
+        Ok(rows) => rows,
+        Err(err) => {
+            log::warn(format!("sharing doctrines: {err:?}"));
+            return;
+        }
+    };
+    let shared: Vec<SharedDoctrine> = rows
+        .iter()
+        .map(|r| {
+            let id = int(r, 0);
+            let public = r.get(2).and_then(Db::as_bool).unwrap_or(true);
+            let groups: Vec<i64> = serde_json::from_str(&text(r, 3)).unwrap_or_default();
+            SharedDoctrine {
+                key: id.to_string(),
+                name: clip(&text(r, 1), 100),
+                link: format!("doctrine/{id}"),
+                groups: (!public).then_some(groups),
+            }
+        })
+        .collect();
+    if let Err(err) = tether_plugin_sdk::doctrines::publish(&shared, Some("manage")) {
+        log::warn(format!("sharing doctrines: {err:?}"));
+    }
 }

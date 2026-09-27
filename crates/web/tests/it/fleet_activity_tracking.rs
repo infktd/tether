@@ -64,6 +64,7 @@ async fn install(h: &Harness, owner: &str) {
     let first = plugin_file("migrations/0001_fleet_activity_tracking.sql");
     let second = plugin_file("migrations/0002_esi_fleet_tracking.sql");
     let third = plugin_file("migrations/0003_settings.sql");
+    let fourth = plugin_file("migrations/0004_doctrines_from_fittings.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -74,6 +75,10 @@ async fn install(h: &Harness, owner: &str) {
         ),
         ("migrations/0002_esi_fleet_tracking.sql", second.as_bytes()),
         ("migrations/0003_settings.sql", third.as_bytes()),
+        (
+            "migrations/0004_doctrines_from_fittings.sql",
+            fourth.as_bytes(),
+        ),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -1643,6 +1648,60 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
         "{}",
         create.body
     );
+    // aa-afat's use_doctrines_from_fittings_module, off by default: the
+    // doctrine is typed in. On, it's one Fittings shares (none here).
+    assert!(
+        !create
+            .body
+            .contains("<select class=\"select\" id=\"doctrine\"")
+    );
+    assert!(create.body.contains("name=\"doctrine\""), "{}", create.body);
+    let res = post(
+        &h,
+        "settings",
+        "_form=settings&expiry_minutes=45&reopen_grace_minutes=30&reopen_duration_minutes=15\
+         &log_days=90&use_doctrines_from_fittings=on",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let create = open(&h, "links/create", &owner).await;
+    assert!(
+        create
+            .body
+            .contains("The doctrines Fittings shares with you"),
+        "{}",
+        create.body
+    );
+    let on: bool = sqlx::query_scalar(sql!(
+        "SELECT use_doctrines_from_fittings FROM \"{schema}\".settings"
+    ))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(on);
+    // A doctrine that isn't offered is refused (by the host, and FAT).
+    let res = post(
+        &h,
+        "links/create",
+        "_form=create&fleet=Roam&fleet_type=&doctrine=Ferox&expiry=60",
+        &owner,
+    )
+    .await;
+    assert!(
+        res.body.contains("Doctrine: choose one of the options"),
+        "{}",
+        res.body
+    );
+    // Unticked (browsers leave it out): typed in again.
+    let res = post(
+        &h,
+        "settings",
+        "_form=settings&expiry_minutes=45&reopen_grace_minutes=30&reopen_duration_minutes=15&log_days=90",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
     // Closed longer ago than the grace time: no reopening.
     let hash = create_link(&h, &owner, "Old fleet", "").await;

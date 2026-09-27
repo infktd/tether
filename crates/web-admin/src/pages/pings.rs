@@ -356,6 +356,8 @@ pub struct SettingsForm {
     default_fleet_types: Option<String>,
     #[serde(default)]
     default_embed_color: String,
+    #[serde(default)]
+    doctrines_from_apps: Option<String>,
 }
 
 /// `POST /admin/pings/settings`
@@ -369,6 +371,7 @@ pub async fn save_settings(
         mass_mentions: form.mass_mentions.is_some(),
         default_fleet_types: form.default_fleet_types.is_some(),
         default_color: form.default_embed_color,
+        doctrines_from_apps: form.doctrines_from_apps.is_some(),
     };
     let result = pings::save_settings(&state, session.account, &settings).await;
     done(&state, shell, result).await

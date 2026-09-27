@@ -9,7 +9,8 @@ use tether_db::PgPool;
 use tether_db::smart_groups::{self as db, SharedTimer};
 use tether_plugins::manifest::TimersAccess;
 use tether_plugins::services::{
-    FilterError, FilterValue, FilterWanted, SharedTimer as WitShared, Timer, TimerError,
+    Doctrine, DoctrineError, FilterError, FilterValue, FilterWanted, SharedDoctrine,
+    SharedTimer as WitShared, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -202,6 +203,201 @@ pub async fn published(
                 objective: t.objective,
                 corporation_id: t.corporation_id,
             },
+        })
+        .collect())
+}
+
+// ---- doctrines ------------------------------------------------------------------
+
+/// Doctrines one app may publish.
+pub const MAX_DOCTRINES: usize = 500;
+/// Groups one doctrine may be limited to.
+const MAX_DOCTRINE_GROUPS: usize = 100;
+
+fn doctrine_access(plugins: &Weak<Plugins>, plugin: &str) -> Option<TimersAccess> {
+    plugins
+        .upgrade()
+        .and_then(|p| p.running(plugin))
+        .and_then(|r| r.manifest.capabilities.doctrines)
+}
+
+fn doctrine_text(field: &str, value: &str, max: usize) -> Result<String, DoctrineError> {
+    let value = value.trim();
+    // Invisible and direction-changing characters too: Fleet Pings refuses
+    // them, and they'd make lookalike names.
+    if value.is_empty() || value.chars().count() > max || value.chars().any(crate::pings::invisible)
+    {
+        return Err(DoctrineError::Invalid(format!(
+            "a doctrine's {field} is 1 to {max} characters, on one line"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+/// Replaces `plugin`'s shared doctrines (allianceauth-fittings' doctrines,
+/// for aa-fleetpings and aa-fat). `see_all` must be one of its own
+/// permissions.
+pub async fn publish_doctrines(
+    db_pool: &PgPool,
+    plugins: &Weak<Plugins>,
+    plugin: &str,
+    doctrines: &[Doctrine],
+    see_all: Option<&str>,
+) -> Result<(), DoctrineError> {
+    if doctrine_access(plugins, plugin) != Some(TimersAccess::Publish) {
+        return Err(DoctrineError::Invalid(
+            "publishing doctrines needs `doctrines = \"publish\"` in plugin.toml".to_owned(),
+        ));
+    }
+    if doctrines.len() > MAX_DOCTRINES {
+        return Err(DoctrineError::Invalid(format!(
+            "at most {MAX_DOCTRINES} doctrines"
+        )));
+    }
+    if let Some(permission) = see_all {
+        let declared = plugins
+            .upgrade()
+            .and_then(|p| p.running(plugin))
+            .is_some_and(|r| r.manifest.permissions.contains_key(permission));
+        if !declared {
+            return Err(DoctrineError::Invalid(format!(
+                "{permission:?} isn't one of this app's permissions"
+            )));
+        }
+    }
+    // A name another app publishes stays that app's: its link can't be
+    // taken over.
+    let taken = tether_db::doctrines::names_of_others(db_pool, plugin)
+        .await
+        .map_err(|e| {
+            tracing::error!(plugin, error = %e, "reading shared doctrine names");
+            DoctrineError::Unavailable
+        })?;
+    let mut rows: Vec<tether_db::doctrines::NewDoctrine> = Vec::with_capacity(doctrines.len());
+    for d in doctrines {
+        let key = doctrine_text("key", &d.key, 100)?;
+        if rows.iter().any(|r| r.key == key) {
+            return Err(DoctrineError::Invalid(format!(
+                "the key {key:?} is used twice"
+            )));
+        }
+        tether_plugins::page::check_link_path(&d.link)
+            .map_err(|p| DoctrineError::Invalid(p.to_string()))?;
+        if let Some(groups) = &d.groups
+            && (groups.len() > MAX_DOCTRINE_GROUPS || groups.iter().any(|g| *g <= 0))
+        {
+            return Err(DoctrineError::Invalid(format!(
+                "a doctrine is limited to at most {MAX_DOCTRINE_GROUPS} groups, by id"
+            )));
+        }
+        let name = doctrine_text("name", &d.name, 100)?;
+        if let Some((other, _)) = taken
+            .iter()
+            .find(|(_, taken)| *taken == name.to_lowercase())
+        {
+            return Err(DoctrineError::Invalid(format!(
+                "{name:?} is already published by {other}"
+            )));
+        }
+        rows.push(tether_db::doctrines::NewDoctrine {
+            key,
+            name,
+            link: d.link.clone(),
+            groups: d.groups.clone(),
+        });
+    }
+    tether_db::doctrines::replace(db_pool, plugin, &rows, see_all)
+        .await
+        .map_err(|e| {
+            tracing::error!(plugin, error = %e, "publishing doctrines");
+            DoctrineError::Unavailable
+        })
+}
+
+/// A shared doctrine an account may see, from a running app: its name, the
+/// publishing app, and its page's path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeenDoctrine {
+    pub name: String,
+    pub source: String,
+    /// `/plugins/<id>/<link>`.
+    pub path: String,
+}
+
+/// The shared doctrines `account` may see (for Fleet Pings, and apps that
+/// read them): everyone's, those limited to one of its groups, and every
+/// one of a publisher whose see-all permission it holds.
+pub async fn doctrines_seen(
+    db_pool: &PgPool,
+    plugins: &Weak<Plugins>,
+    account: tether_db::accounts::AccountId,
+) -> Result<Vec<SeenDoctrine>, sqlx::Error> {
+    // Groups count only while the account has a main, as everywhere else.
+    let has_main = tether_db::accounts::get(db_pool, account)
+        .await?
+        .is_some_and(|a| a.main.is_some());
+    let groups: Vec<i64> = if has_main {
+        tether_db::groups::of_account(db_pool, account)
+            .await?
+            .into_iter()
+            .map(|(id, _)| id.0)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let held: Vec<String> = tether_db::permissions::effective(db_pool, account)
+        .await?
+        .into_iter()
+        .collect();
+    let running = plugins.upgrade();
+    let mut seen: Vec<SeenDoctrine> = Vec::new();
+    for d in tether_db::doctrines::seen(db_pool, &groups, &held).await? {
+        // From apps running and still publishing.
+        let publishing = running
+            .as_ref()
+            .and_then(|p| p.running(&d.plugin_id))
+            .is_some_and(|r| r.manifest.capabilities.doctrines == Some(TimersAccess::Publish));
+        // One of a name (an app may name two alike): the first.
+        if !publishing || seen.iter().any(|s| s.name.eq_ignore_ascii_case(&d.name)) {
+            continue;
+        }
+        seen.push(SeenDoctrine {
+            path: crate::plugins::page_href(&d.plugin_id, &d.link),
+            name: d.name,
+            source: d.plugin_name,
+        });
+    }
+    Ok(seen)
+}
+
+/// Shared doctrines for `plugin` to offer: those its viewer may see; none
+/// in a job.
+pub async fn published_doctrines(
+    db_pool: &PgPool,
+    plugins: &Weak<Plugins>,
+    plugin: &str,
+    account: Option<i64>,
+) -> Result<Vec<SharedDoctrine>, DoctrineError> {
+    if doctrine_access(plugins, plugin) != Some(TimersAccess::Read) {
+        return Err(DoctrineError::Invalid(
+            "reading shared doctrines needs `doctrines = \"read\"` in plugin.toml".to_owned(),
+        ));
+    }
+    let Some(account) = account else {
+        return Ok(Vec::new());
+    };
+    let seen = doctrines_seen(db_pool, plugins, tether_db::accounts::AccountId(account))
+        .await
+        .map_err(|e| {
+            tracing::error!(plugin, error = %e, "reading shared doctrines");
+            DoctrineError::Unavailable
+        })?;
+    Ok(seen
+        .into_iter()
+        .map(|d| SharedDoctrine {
+            name: d.name,
+            link: d.path,
+            source: d.source,
         })
         .collect())
 }

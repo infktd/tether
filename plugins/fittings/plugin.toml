@@ -5,7 +5,7 @@
 [plugin]
 id = "tether.fittings"
 name = "Fittings"
-version = "0.1.0"
+version = "0.2.0"
 host_api = "1"
 description = "Doctrines and ship fits: paste a fit as EFT, see it by slot with its required skills, copy it back into EVE, and group fits into doctrines."
 
@@ -20,6 +20,9 @@ storage = true
 # The viewer's groups, and the groups a manager may pick from: AA's
 # categories are limited to groups.
 groups = true
+# Shares its doctrines with Fleet Pings and FAT (aa-fleetpings' and aa-fat's
+# "use doctrines from Fittings"), each offered only to whoever sees it here.
+doctrines = "publish"
 
 # allianceauth-fittings' Save to EVE and its skill check: pilots register
 # characters for Fittings (its Register Character card on a fit's page),

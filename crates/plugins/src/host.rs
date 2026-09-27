@@ -362,6 +362,40 @@ impl tether::plugin::timers::Host for CallState {
     }
 }
 
+impl tether::plugin::doctrines::Host for CallState {
+    async fn publish(
+        &mut self,
+        doctrines: Vec<services::Doctrine>,
+        see_all: Option<String>,
+    ) -> Result<(), services::DoctrineError> {
+        if self.jobs_refused {
+            return Err(services::DoctrineError::Invalid(
+                "pages can't publish doctrines: do that in submit or a job".to_owned(),
+            ));
+        }
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::DoctrineError::Unavailable)?;
+        services
+            .doctrines_publish(self.plugin.clone(), doctrines, see_all)
+            .await
+    }
+
+    async fn published(
+        &mut self,
+    ) -> Result<Vec<services::SharedDoctrine>, services::DoctrineError> {
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::DoctrineError::Unavailable)?;
+        let account = self.viewer.as_ref().map(|v| v.account_id);
+        services
+            .doctrines_published(self.plugin.clone(), account)
+            .await
+    }
+}
+
 impl tether::plugin::http::Host for CallState {
     async fn send(
         &mut self,

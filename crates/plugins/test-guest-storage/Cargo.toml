@@ -22,4 +22,5 @@ print_stderr = "deny"
 dbg_macro = "deny"
 
 [dependencies]
+serde_json.workspace = true
 tether-plugin-sdk.workspace = true

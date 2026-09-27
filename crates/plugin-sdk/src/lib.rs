@@ -316,6 +316,26 @@ pub mod timers {
     }
 }
 
+/// Doctrines apps share (allianceauth-fittings' in aa-fleetpings and
+/// aa-fat): publish yours with `doctrines = "publish"`, offer others' with
+/// `doctrines = "read"`. Each is offered only to whoever may see it.
+pub mod doctrines {
+    pub use crate::bindings::tether::plugin::doctrines::{Doctrine, Error, Shared};
+
+    /// Replaces your published doctrines (at most 500), in this order.
+    /// Holders of `see_all`, one of your permissions, see every one. Not
+    /// from pages.
+    pub fn publish(doctrines: &[Doctrine], see_all: Option<&str>) -> Result<(), Error> {
+        crate::bindings::tether::plugin::doctrines::publish(doctrines, see_all)
+    }
+
+    /// Published doctrines the viewer may see (none in a job), each with
+    /// its page's address.
+    pub fn published() -> Result<Vec<Shared>, Error> {
+        crate::bindings::tether::plugin::doctrines::published()
+    }
+}
+
 /// Outbound HTTPS to the hosts in `capabilities.http` that an admin
 /// approved. The host sends the request, sets the User-Agent, adds a
 /// secret you name (you never see its value), follows redirects only

@@ -863,6 +863,46 @@ interface timers {
     published: func() -> result<list<shared>, error>;
 }
 
+/// Doctrines apps share, as allianceauth-fittings' doctrines appear in
+/// aa-fleetpings and aa-fat: one app publishes (with `doctrines =
+/// "publish"`), others offer them (with `doctrines = "read"`), and so may
+/// Tether's Fleet Pings. Each is offered only to whoever may see it.
+/// Nothing else passes between apps.
+interface doctrines {
+    record doctrine {
+        /// The publisher's own id for it.
+        key: string,
+        name: string,
+        /// Its page in the publishing app: a link path.
+        link: string,
+        /// Who sees it (AA's categories): none for everyone, else members
+        /// of any of these groups (`identity.groups` ids).
+        groups: option<list<s64>>,
+    }
+
+    record shared {
+        name: string,
+        /// Its page: the publishing app's address (`/plugins/<id>/<link>`).
+        link: string,
+        /// The publishing app's name.
+        source: string,
+    }
+
+    variant error {
+        /// Not allowed (the capability, or a page), or a doctrine breaks a
+        /// limit; which.
+        invalid(string),
+        unavailable,
+    }
+
+    /// Replaces this app's published doctrines (at most 500), in the order
+    /// given. Holders of `see-all`, one of this app's own permissions,
+    /// see every one (AA's `fittings.manage`). Only from submit or a job.
+    publish: func(doctrines: list<doctrine>, see-all: option<string>) -> result<_, error>;
+    /// Published doctrines the viewer may see; none in a job.
+    published: func() -> result<list<shared>, error>;
+}
+
 world plugin {
     import log;
     import storage;
@@ -873,6 +913,7 @@ world plugin {
     import http;
     import filters;
     import timers;
+    import doctrines;
     use jobs.{job, job-error};
     use page.{page, request, page-error, submission, submit-result};
 

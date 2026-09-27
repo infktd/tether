@@ -89,7 +89,7 @@ impl Plugin for Fittings {
             return Err(PageError::Forbidden);
         }
         let posted = |name: &str| number(submission.value(name));
-        match (parts.as_slice(), form) {
+        let changed = match (parts.as_slice(), form) {
             (["add-fit"], "fit") => fits::save(&access, &viewer, None, &submission),
             (["fits"], "delete_fit") => fits::delete(&viewer, posted("fit")?),
             (["edit", "fit", id], _) => {
@@ -130,12 +130,20 @@ impl Plugin for Fittings {
                 }
             }
             _ => Err(PageError::NotFound),
+        };
+        // Fleet Pings and FAT see doctrines as they are now.
+        if changed.is_ok() {
+            doctrines::share();
         }
+        changed
     }
 
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
-            lookup::DETAILS => lookup::details(),
+            lookup::DETAILS => {
+                doctrines::share();
+                lookup::details()
+            }
             pilots::SKILLS => pilots::sync(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }

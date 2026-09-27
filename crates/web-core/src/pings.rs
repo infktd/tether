@@ -167,6 +167,8 @@ pub struct PingSettings {
     pub mass_mentions: bool,
     pub default_fleet_types: bool,
     pub default_color: String,
+    /// `use_doctrines_from_fittings_module`.
+    pub doctrines_from_apps: bool,
 }
 
 pub async fn ping_settings(db: &tether_db::PgPool) -> Result<PingSettings, AppError> {
@@ -178,6 +180,7 @@ pub async fn ping_settings(db: &tether_db::PgPool) -> Result<PingSettings, AppEr
             .await?
             .filter(|c| valid_color(c))
             .unwrap_or_else(|| DEFAULT_EMBED_COLOR.to_owned()),
+        doctrines_from_apps: s::get_bool_or(db, s::PINGS_DOCTRINES_FROM_APPS, false).await?,
     })
 }
 
@@ -222,6 +225,7 @@ pub async fn offer(state: &AppState, account: AccountId) -> Result<Offer, AppErr
         default_color: settings.default_color,
         ..Offer::default()
     };
+    let from_apps = settings.doctrines_from_apps;
     let options = ping_options::list(&state.db).await?;
     // aa-fleetpings' defaults come first, open to everyone who can ping; a
     // configured fleet type of the same name takes its place (and its
@@ -247,12 +251,39 @@ pub async fn offer(state: &AppState, account: AccountId) -> Result<Offer, AppErr
         let open = may(&option.item());
         match option.kind {
             Kind::FleetType if open => offer.fleet_types.push(option),
+            // Set aside while the doctrines come from apps, as in AA.
+            Kind::Doctrine if from_apps => {}
             Kind::Doctrine if open => offer.doctrines.push(option),
             Kind::Doctrine => offer.closed_doctrines.push(option.name),
             Kind::Formup => offer.formups.push(option),
             Kind::Comms => offer.comms.push(option),
             Kind::FleetType => {}
         }
+    }
+    if from_apps {
+        // aa-fleetpings' use_doctrines_from_fittings_module: Fittings'
+        // doctrines this pilot may see, each linking to its page; any other
+        // shared one can't be typed in either.
+        let seen = crate::plugin_shared::doctrines_seen(
+            &state.db,
+            &std::sync::Arc::downgrade(&state.plugins),
+            account,
+        )
+        .await?;
+        for (i, d) in (1000..).zip(&seen) {
+            offer.doctrines.push(PingOption {
+                id: -i,
+                kind: Kind::Doctrine,
+                name: d.name.clone(),
+                link: Some(format!("{}{}", state.site.public_url(), d.path)),
+                color: None,
+            });
+        }
+        offer.closed_doctrines = tether_db::doctrines::names(&state.db)
+            .await?
+            .into_iter()
+            .filter(|n| !seen.iter().any(|d| d.name.eq_ignore_ascii_case(n)))
+            .collect();
     }
     Ok(offer)
 }
@@ -309,7 +340,7 @@ fn field(label: &str, value: &str) -> Result<Option<String>, AppError> {
 
 /// Control, format and separator characters: invisible, or reordering the
 /// text around them (so "Sup\u{200B}ers" can't pass for "Supers").
-fn invisible(c: char) -> bool {
+pub fn invisible(c: char) -> bool {
     c.is_control()
         || matches!(c,
             '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
@@ -710,6 +741,12 @@ pub async fn save_settings(
         serde_json::Value::String(color.clone()),
     )
     .await?;
+    s::set(
+        &mut *tx,
+        s::PINGS_DOCTRINES_FROM_APPS,
+        serde_json::Value::Bool(settings.doctrines_from_apps),
+    )
+    .await?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),
@@ -719,6 +756,7 @@ pub async fn save_settings(
             "mass_mentions": settings.mass_mentions,
             "default_fleet_types": settings.default_fleet_types,
             "default_embed_color": color,
+            "use_doctrines_from_fittings": settings.doctrines_from_apps,
         }),
     )
     .await?;

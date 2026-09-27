@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.shared_doctrines WHERE plugin_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2192dcbcf6fb3ddbd4e50cf8f9d8a918a22bdb1f6914f773d424ae14cb600a57"
+}

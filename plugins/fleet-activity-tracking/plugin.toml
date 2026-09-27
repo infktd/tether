@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.fleet-activity-tracking"
 name = "Fleet Activity Tracking"
-version = "0.3.0"
+version = "0.3.1"
 host_api = "1"
 description = "FAT links for fleets, with fleet types and expiry, registered by pilots online in EVE (their system and ship recorded), or an FC's ESI fleet tracked while it runs; stats per alliance, corporation, pilot and month."
 
@@ -12,6 +12,9 @@ key = "PUBLISHER_KEY"
 
 [capabilities]
 storage = true
+# aa-afat's "use doctrines from Fittings": Create FAT Link offers the
+# doctrines Fittings shares that the FC may see.
+doctrines = "read"
 
 [capabilities.esi]
 # aa-afat's add_fat: registering attendance needs the character online,

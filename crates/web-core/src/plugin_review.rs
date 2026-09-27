@@ -138,6 +138,21 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         ),
         None => {}
     }
+    match c.doctrines {
+        Some(tether_plugins::manifest::TimersAccess::Publish) => add(
+            "Shared doctrines",
+            "Publishes its doctrines (names, links, and which groups see each) for Fleet Pings \
+             and other apps to offer, each only to whoever may see it"
+                .to_owned(),
+        ),
+        Some(tether_plugins::manifest::TimersAccess::Read) => add(
+            "Shared doctrines",
+            "Offers doctrines other apps publish (such as Fittings'), each only to whoever may \
+             see it. Which ones it gets tells it which of the publisher's groups a pilot is in"
+                .to_owned(),
+        ),
+        None => {}
+    }
     if c.groups {
         add(
             "Groups",

@@ -27,9 +27,10 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Builtin, Channel, Character, DiscordError, EsiError, EsiReply, EsiResponse, FilterError,
-    FilterValue, FilterWanted, Fut, Group, HttpError, HttpRequest, HttpResponse, Mention, Named,
-    Owner, Services, SharedTimer, State, Subject, Timer, TimerError,
+    Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, EsiError, EsiReply,
+    EsiResponse, FilterError, FilterValue, FilterWanted, Fut, Group, HttpError, HttpRequest,
+    HttpResponse, Mention, Named, Owner, Services, SharedDoctrine, SharedTimer, State, Subject,
+    Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -884,6 +885,36 @@ impl Services for PluginServices {
         Box::pin(
             async move { crate::plugin_shared::publish(&db, &plugins, &plugin, &timers).await },
         )
+    }
+
+    fn doctrines_publish(
+        &self,
+        plugin: String,
+        doctrines: Vec<Doctrine>,
+        see_all: Option<String>,
+    ) -> Fut<Result<(), DoctrineError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_shared::publish_doctrines(
+                &db,
+                &plugins,
+                &plugin,
+                &doctrines,
+                see_all.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn doctrines_published(
+        &self,
+        plugin: String,
+        account: Option<i64>,
+    ) -> Fut<Result<Vec<SharedDoctrine>, DoctrineError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_shared::published_doctrines(&db, &plugins, &plugin, account).await
+        })
     }
 
     fn timers_published(

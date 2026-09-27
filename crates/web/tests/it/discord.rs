@@ -2462,3 +2462,256 @@ async fn secure_groups_post_run_summaries_through_the_bot(db: PgPool) {
     .unwrap();
     assert_eq!(posted, 1);
 }
+
+// ---- doctrines apps share (aa-fleetpings' use_doctrines_from_fittings_module) ----
+
+const PUBLISHER: &str = "acme.doctrines";
+
+/// The storage probe as an app sharing doctrines, with a `manage`
+/// permission that sees them all (as Fittings' does).
+async fn install_publisher(h: &Harness, owner: &str) {
+    install_publisher_as(h, owner, PUBLISHER, 4).await;
+}
+
+async fn install_publisher_as(h: &Harness, owner: &str, id: &str, key: u8) {
+    let key = tether_plugins::testing::Key::new(key);
+    let manifest = format!(
+        "[plugin]\nid = \"{id}\"\nname = \"Doctrine Book\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ndoctrines = \"publish\"\n\n\
+         [permissions]\nview = \"See\"\nmanage = \"Manage\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = build_guest("tether-plugins-test-guest-storage");
+    let bytes = tether_plugins::testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
+async fn publish_doctrines(h: &Harness, list: serde_json::Value, see_all: &str) -> String {
+    run_probe(
+        h,
+        PUBLISHER,
+        "doctrines-publish",
+        vec![
+            ("list".to_owned(), list.to_string()),
+            ("see_all".to_owned(), see_all.to_owned()),
+        ],
+        false,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn pings_offer_the_doctrines_apps_share_to_whoever_may_see_them(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = pings_ready(&h).await;
+    let res = send(
+        &h.app,
+        form(
+            "/admin/permissions/grant",
+            "permission=fleetpings.basic_access&grantee=state:1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    install_publisher(&h, &owner).await;
+
+    // Checked as published: a link inside the app, one of its own
+    // permissions, keys once each.
+    let bad_link = serde_json::json!([{ "key": "1", "name": "X", "link": "https://evil.example" }]);
+    assert!(
+        publish_doctrines(&h, bad_link, "")
+            .await
+            .starts_with("err Error::Invalid")
+    );
+    let one = serde_json::json!([{ "key": "1", "name": "X", "link": "doctrine/1" }]);
+    let out = publish_doctrines(&h, one, "admin").await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let invisible =
+        serde_json::json!([{ "key": "1", "name": "Frig\u{202e}ates", "link": "doctrine/1" }]);
+    let out = publish_doctrines(&h, invisible, "").await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let list = serde_json::json!([
+        { "key": "1", "name": "Frigate Gang", "link": "doctrine/1" },
+        { "key": "2", "name": "Black Ops", "link": "doctrine/2", "groups": [987654] },
+    ]);
+    assert_eq!(publish_doctrines(&h, list, "manage").await, "ok");
+
+    // Off (AA's default): the doctrines configured here only.
+    let form_page = page(&h, "/pings", &pilot).await.body;
+    assert!(!form_page.contains("Frigate Gang"), "{form_page}");
+    let res = send(
+        &h.app,
+        form(
+            "/admin/pings/settings",
+            "mass_mentions=on&default_fleet_types=on&default_embed_color=%23faa61a&doctrines_from_apps=on",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // On: each to whoever may see it. Black Ops is for a group the pilot
+    // isn't in; the owner holds Doctrine Book's manage, which sees all.
+    let form_page = page(&h, "/pings", &pilot).await.body;
+    assert!(
+        form_page.contains(r#"<option value="Frigate Gang">"#),
+        "{form_page}"
+    );
+    assert!(!form_page.contains("Black Ops"), "{form_page}");
+    let owners = page(&h, "/pings", &owner).await.body;
+    assert!(owners.contains(r#"<option value="Black Ops">"#), "{owners}");
+
+    // Typed in anyway: refused, as a closed configured doctrine is.
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&doctrine=black+ops&message=Hi"),
+            &pilot,
+        ),
+    )
+    .await;
+    assert!(res.body.contains("That doctrine isn"), "{}", res.body);
+
+    // A seen one links to its page in the app.
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000011"))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&doctrine=frigate+gang&message=Hi"),
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
+    let sent = h.discord_server.received_requests().await.unwrap();
+    let body: serde_json::Value = sent
+        .iter()
+        .find(|r| r.url.path().ends_with("/messages"))
+        .unwrap()
+        .body_json()
+        .unwrap();
+    let doctrine = body["embeds"][0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Doctrine")
+        .map(|f| f["value"].as_str().unwrap().to_owned());
+    assert_eq!(
+        doctrine.as_deref(),
+        Some(format!("[frigate gang]({SITE}/plugins/{PUBLISHER}/doctrine/1)").as_str())
+    );
+
+    // Stored as the app's one list.
+    let shared: i64 = sqlx::query_scalar("SELECT count(*) FROM core.shared_doctrines")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(shared, 2);
+}
+
+/// The storage probe as an app offering shared doctrines (as FAT does).
+async fn install_reader(h: &Harness, owner: &str) {
+    let key = tether_plugins::testing::Key::new(5);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.reader\"\nname = \"Reader\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ndoctrines = \"read\"\n\n\
+         [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = build_guest("tether-plugins-test-guest-storage");
+    let bytes = tether_plugins::testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_read_shared_doctrines_only_as_their_viewer_may_see_them(db: PgPool) {
+    use tether_plugins::services::{Builtin, Character, State, Viewer};
+    let h = harness(db, true).await;
+    let (owner, _pilot) = set_up(&h).await;
+    install_publisher(&h, &owner).await;
+    install_reader(&h, &owner).await;
+    let list = serde_json::json!([
+        { "key": "1", "name": "Frigate Gang", "link": "doctrine/1" },
+        { "key": "2", "name": "Black Ops", "link": "doctrine/2", "groups": [987654] },
+    ]);
+    assert_eq!(publish_doctrines(&h, list, "manage").await, "ok");
+
+    let (account, character): (i64, i64) = sqlx::query_as(
+        "SELECT a.id, c.id FROM core.accounts a JOIN core.characters c ON c.account_id = a.id \
+         WHERE NOT a.is_owner LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let me = Character {
+        id: character,
+        name: "Pilot".to_owned(),
+        corporation_id: 1,
+        alliance_id: None,
+    };
+    let pilot = Viewer {
+        account_id: account,
+        main: me.clone(),
+        characters: vec![me],
+        state: State {
+            name: "Member".to_owned(),
+            builtin: Some(Builtin::Member),
+        },
+        permissions: vec!["view".to_owned()],
+    };
+    let read = |viewer| {
+        run_probe_as(
+            &h,
+            "acme.reader",
+            "doctrines-published",
+            Vec::new(),
+            viewer,
+            true,
+        )
+    };
+    // The pilot sees the public one, with its page in the publisher.
+    assert_eq!(
+        read(Some(pilot)).await,
+        format!("Frigate Gang /plugins/{PUBLISHER}/doctrine/1 Doctrine Book")
+    );
+    // Nobody looking (a job): none.
+    assert_eq!(read(None).await, "");
+    // Another app can't take over a name (and its link).
+    install_publisher_as(&h, &owner, "acme.other", 6).await;
+    let taken = serde_json::json!([{ "key": "9", "name": "frigate gang", "link": "doctrine/9" }]);
+    let out = run_probe(
+        &h,
+        "acme.other",
+        "doctrines-publish",
+        vec![("list".to_owned(), taken.to_string())],
+        false,
+    )
+    .await;
+    assert!(out.contains("already published by acme.doctrines"), "{out}");
+    // Only apps approved to read them; pages can't publish.
+    let out = run_probe(&h, PUBLISHER, "doctrines-published", Vec::new(), true).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let out = run_probe(
+        &h,
+        PUBLISHER,
+        "doctrines-publish",
+        vec![("list".to_owned(), "[]".to_owned())],
+        true,
+    )
+    .await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+}

@@ -664,6 +664,10 @@ for setting in filters::wanted() {        // setting.config: the admin's fields,
 
 Timers one app publishes and another shows (aa-structures feeding the timerboard). With `timers = "publish"` under `[capabilities]`, `timers::publish(&[Timer { key, title, at, system, details, objective, corporation_id }])` replaces your published timers (at most 500; `at` in RFC 3339 EVE time; objective `friendly`, `hostile` or `neutral`; `corporation_id` makes it corporation-only). With `timers = "read"`, `timers::published()` returns every running app's timers that ended at most a day ago, with the source app's name; corporation-only ones only for a viewer whose main is in that corporation, and none in jobs. Not from pages (publishing).
 
+## Shared doctrines
+
+Doctrines one app publishes for others to offer (allianceauth-fittings' doctrines in aa-fleetpings and aa-fat). With `doctrines = "publish"` under `[capabilities]`, `doctrines::publish(&[Doctrine { key, name, link, groups }], see_all)` replaces your published doctrines (at most 500, in the order given): `key` your own id (1 to 100 characters, each once), `name` (1 to 100, one line), `link` one of your pages (a link path), and `groups` `None` for everyone or `Some(ids)` (`identity::groups` ids, at most 100) for members of any of them. `see_all`, one of your own permissions or `None`, sees every one (Fittings passes `Some("manage")`, AA's `fittings.manage`). Not from pages. With `doctrines = "read"`, `doctrines::published()` returns the running apps' doctrines the viewer may see, each with its name, its page's address (`/plugins/<id>/<link>`) and the source app's name; none in a job. Tether's Fleet Pings offers them too, when an admin turns on "Use doctrines from Fittings".
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.

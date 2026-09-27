@@ -16,6 +16,7 @@
 //! which runs the same probe.
 
 use tether_plugin_sdk::discord::{self, Mention};
+use tether_plugin_sdk::doctrines;
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::http;
 use tether_plugin_sdk::identity;
@@ -147,6 +148,35 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 .collect::<Vec<_>>()
                 .join(" | ")
         }
+        // doctrines-publish?list=<[{"key","name","link","groups"}] as JSON>&see_all=
+        "doctrines-publish" => {
+            let list: Vec<serde_json::Value> =
+                serde_json::from_str(&arg("list").unwrap_or_default()).unwrap_or_default();
+            let shared: Vec<doctrines::Doctrine> = list
+                .iter()
+                .map(|d| doctrines::Doctrine {
+                    key: d["key"].as_str().unwrap_or_default().to_owned(),
+                    name: d["name"].as_str().unwrap_or_default().to_owned(),
+                    link: d["link"].as_str().unwrap_or_default().to_owned(),
+                    groups: d["groups"]
+                        .as_array()
+                        .map(|g| g.iter().filter_map(serde_json::Value::as_i64).collect()),
+                })
+                .collect();
+            match doctrines::publish(&shared, arg("see_all").as_deref()) {
+                Ok(()) => "ok".to_owned(),
+                Err(e) => format!("err {e:?}"),
+            }
+        }
+        // doctrines-published: "name link source" per line
+        "doctrines-published" => match doctrines::published() {
+            Ok(shared) => shared
+                .iter()
+                .map(|d| format!("{} {} {}", d.name, d.link, d.source))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Err(e) => format!("err {e:?}"),
+        },
         // http?url=&method=post&body=&secret=&h=<name>:<value>
         "http" => {
             let url = arg("url").unwrap_or_default();

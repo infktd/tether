@@ -9,6 +9,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 pub use crate::host::tether::plugin::discord::{Channel, Error as DiscordError, Mention};
+pub use crate::host::tether::plugin::doctrines::{
+    Doctrine, Error as DoctrineError, Shared as SharedDoctrine,
+};
 pub use crate::host::tether::plugin::esi::{
     Error as EsiError, Named, Response as EsiResponse, Subject,
 };
@@ -128,6 +131,20 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     ) -> Fut<Result<(), FilterError>>;
     /// Replaces `plugin`'s published timers.
     fn timers_publish(&self, plugin: String, timers: Vec<Timer>) -> Fut<Result<(), TimerError>>;
+    /// Replaces `plugin`'s shared doctrines.
+    fn doctrines_publish(
+        &self,
+        plugin: String,
+        doctrines: Vec<Doctrine>,
+        see_all: Option<String>,
+    ) -> Fut<Result<(), DoctrineError>>;
+    /// Shared doctrines `account` may see, for `plugin` to offer; none
+    /// without an account (a job).
+    fn doctrines_published(
+        &self,
+        plugin: String,
+        account: Option<i64>,
+    ) -> Fut<Result<Vec<SharedDoctrine>, DoctrineError>>;
     /// Every app's published timers, for a plugin that may read them;
     /// corporation-only ones only for `viewer_corporation`.
     fn timers_published(
