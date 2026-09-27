@@ -3,4 +3,13 @@
 # Postgres's connection limit (100 by default).
 [profile.default]
 test-threads = 8
-slow-timeout = { period = "60s", terminate-after = 5 }
+# A test that builds guests waits on the others' builds (and the bundled
+# apps are nine release builds): on a cold CI runner that takes minutes.
+slow-timeout = { period = "60s", terminate-after = 15 }
+
+# CI: a JUnit report, which the workflow turns into annotations when a test
+# fails, so a failure can be read without the job's log.
+[profile.ci]
+
+[profile.ci.junit]
+path = "junit.xml"

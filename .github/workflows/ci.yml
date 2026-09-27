@@ -81,7 +81,20 @@ jobs:
       # doesn't run, go through cargo test.
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --version 0.9.146 --locked
-      - run: cargo nextest run --workspace --no-fail-fast
+      - run: cargo nextest run --workspace --no-fail-fast --profile ci
+      - name: Failed tests as annotations
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          report = ET.parse("target/nextest/ci/junit.xml")
+          for case in report.iter("testcase"):
+              if case.find("failure") is None and case.find("error") is None:
+                  continue
+              err = case.findtext("system-err") or case.findtext("system-out") or ""
+              text = err[-1500:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error title={case.get('classname')} {case.get('name')}::{text}")
+          PY
       - run: cargo test --workspace --doc
       # Only the tests the dev features change (the rest ran just above):
       # rerunning the whole web suite with them doubled this job's time.
