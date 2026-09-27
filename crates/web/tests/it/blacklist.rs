@@ -620,3 +620,63 @@ async fn blacklisting_never_reaches_past_what_you_hold(db: PgPool) {
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
     assert!(res.body.contains("discord.access_discord"), "{}", res.body);
 }
+
+/// Apps follow what the account holds, as core does: blacklisted, it may
+/// use an app while the Blacklist state is granted one of its permissions.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_blacklisted_account_uses_the_apps_its_state_is_granted(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    let h = harness(db, true).await;
+    name_pilots(&h).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot_account = tether_db::accounts::AccountId(account_of(&h, &pilot).await);
+    let key = tether_plugins::testing::Key::new(7);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.book\"\nname = \"Book\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[permissions]\nview = \"See\"\n\n\
+         [[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = build_guest("tether-plugins-test-guest-storage");
+    let bytes = tether_plugins::testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    let holds = || async {
+        tether_db::compliance::holds_app_permission(&h.db, pilot_account, "acme.book")
+            .await
+            .unwrap()
+    };
+
+    let res = send(
+        &h.app,
+        form("/blacklist", "who=98133756&reason=Awoxed+a+Rorqual", &owner),
+    )
+    .await;
+    assert_eq!(res.location(), "/blacklist", "{}", res.body);
+    evaluate(&h, pilot_account.0).await;
+    assert_eq!(state_of(&h, &pilot).await, "Blacklist");
+    assert!(!holds().await);
+
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            &owner,
+            &format!(
+                r#"{{"permission":"plugin.acme.book.view","state_id":{}}}"#,
+                blacklist_state(&h).await
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert!(holds().await, "the Blacklist state's grant");
+    assert!(
+        permissions_of(&h, &pilot)
+            .await
+            .contains(&"plugin.acme.book.view".to_owned())
+    );
+}
