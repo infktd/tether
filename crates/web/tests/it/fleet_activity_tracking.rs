@@ -3,8 +3,9 @@
 //! expiry, members register their characters (once each, only while the
 //! link is open), managers add, remove and delete, and statistics per
 //! pilot, corporation, alliance and month behind aa-afat's permissions.
-//! ESI-tracked fleets through an FC's approved data source, with mocked
-//! `/characters/{id}/fleet` and `/fleets/{id}/members`.
+//! ESI-tracked fleets through the fleet boss an FC adds from Create FAT
+//! Link (AA style: no approval), with mocked `/characters/{id}/fleet` and
+//! `/fleets/{id}/members`.
 
 use std::sync::OnceLock;
 
@@ -778,31 +779,24 @@ async fn work(h: &Harness) {
     while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
 }
 
-/// Chribba (the owner, our FC) offers himself as the app's data source
-/// and approves it; returns the owner's new session.
-async fn approve_fc(h: &Harness, owner: &str) -> String {
-    let owner = offer_source(h, owner, CHRIBBA, "Chribba").await;
-    approve_source(h, &owner, CHRIBBA).await;
-    owner
+/// Chribba (the owner, our FC) logs in with himself as the fleet boss;
+/// returns the owner's new session.
+async fn add_fc(h: &Harness, owner: &str) -> String {
+    offer_source(h, owner, CHRIBBA, "Chribba").await
 }
 
-async fn approve_source(h: &Harness, owner: &str, character: i64) {
+/// Adds a character of the session's account as the app's data source
+/// from Create FAT Link (the SSO round trip); returns the session after it.
+async fn offer_source(h: &Harness, session: &str, character: i64, name: &str) -> String {
     let res = send(
         &h.app,
         form(
-            &format!("/admin/plugins/{ID}/sources/{character}/approve"),
-            "",
-            owner,
+            &format!("/apps/{ID}/owners/add"),
+            "back=links/create",
+            session,
         ),
     )
     .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-}
-
-/// Offers a character of the session's account as the app's data source
-/// (the SSO round trip); returns the session after it.
-async fn offer_source(h: &Harness, session: &str, character: i64, name: &str) -> String {
-    let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", session)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let login = res.cookie_value(LOGIN);
     let state = query_param(res.location(), "state").to_owned();
@@ -960,7 +954,7 @@ async fn esi_fats(h: &Harness, hash: &str) -> Vec<EsiFat> {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     let (h, owner, line) = setup(db).await;
-    let owner = approve_fc(&h, &owner).await;
+    let owner = add_fc(&h, &owner).await;
     mount_fleet(&h, CHRIBBA).await;
     mount_members(&h).await;
 
@@ -1134,7 +1128,7 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn esi_tracking_stops_when_not_in_a_fleet(db: PgPool) {
     let (h, owner, _) = setup(db).await;
-    let owner = approve_fc(&h, &owner).await;
+    let owner = add_fc(&h, &owner).await;
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/fleet")))
         .respond_with(
@@ -1156,7 +1150,7 @@ async fn esi_tracking_stops_when_not_in_a_fleet(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn esi_tracking_stops_when_boss_passes_and_resumes(db: PgPool) {
     let (h, owner, line) = setup(db).await;
-    let owner = approve_fc(&h, &owner).await;
+    let owner = add_fc(&h, &owner).await;
     // Line has boss now.
     mount_fleet(&h, LINE).await;
     mount_members(&h).await;
@@ -1202,7 +1196,7 @@ async fn esi_tracking_stops_when_boss_passes_and_resumes(db: PgPool) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn esi_tracking_stops_on_403(db: PgPool) {
     let (h, owner, _) = setup(db).await;
-    let owner = approve_fc(&h, &owner).await;
+    let owner = add_fc(&h, &owner).await;
     mount_fleet(&h, CHRIBBA).await;
     Mock::given(method("GET"))
         .and(path(format!("/fleets/{FLEET}/members")))
@@ -1221,12 +1215,12 @@ async fn esi_tracking_stops_on_403(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn only_your_own_approved_characters_track(db: PgPool) {
+async fn only_your_own_characters_track(db: PgPool) {
     let (h, owner, line) = setup(db).await;
-    let owner = approve_fc(&h, &owner).await;
+    let owner = add_fc(&h, &owner).await;
     grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
 
-    // The FC whose character is approved may pick it.
+    // The FC who added his character may pick it.
     let create = open(&h, "links/create", &owner).await;
     assert!(
         create.body.contains("Track Chribba&#39;s fleet")
@@ -1234,11 +1228,15 @@ async fn only_your_own_approved_characters_track(db: PgPool) {
         "{}",
         create.body
     );
-    // Another FC can't pick it, and is told how to opt in.
+    // Another FC can't pick it, and can log in with his own fleet boss.
     let create = open(&h, "links/create", &line).await;
     assert_eq!(create.status, StatusCode::OK, "{}", create.body);
     assert!(!create.body.contains("Chribba"), "{}", create.body);
-    assert!(create.body.contains("Add owner"), "{}", create.body);
+    assert!(
+        create.body.contains("Log in with the fleet boss"),
+        "{}",
+        create.body
+    );
     let res = post(
         &h,
         "links/create",
@@ -1275,9 +1273,8 @@ async fn only_your_own_approved_characters_track(db: PgPool) {
 async fn a_deactivated_fcs_data_source_stops_tracking(db: PgPool) {
     let (h, owner, line) = setup(db).await;
     grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
-    // Line, an FC, offers his main; the owner approves it.
+    // Line, an FC, logs in with his main as the fleet boss.
     let line = offer_source(&h, &line, LINE, "Line Member").await;
-    approve_source(&h, &owner, LINE).await;
     mount_fleet_of(&h, LINE, LINE).await;
     Mock::given(method("GET"))
         .and(path(format!("/fleets/{FLEET}/members")))
@@ -1315,7 +1312,9 @@ async fn a_deactivated_fcs_data_source_stops_tracking(db: PgPool) {
     assert_eq!(queued_polls(&h).await, 0);
     let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
     assert!(
-        admin.body.contains("account deactivated or blacklisted"),
+        admin
+            .body
+            .contains("account deactivated, blacklisted or changed"),
         "{}",
         admin.body
     );
@@ -1425,4 +1424,129 @@ async fn fats_feed_secure_groups(db: PgPool) {
         listed.contains("Fleet Activity Tracking: FATs in the last days (Days: 30): at least 2"),
         "{listed}"
     );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    // Members without add_fatlink get no login button (and no page).
+    let gigx = log_in_as(&h, &format!("{GIGX}:gigX"), None).await;
+    assert_ne!(open(&h, "links/create", &gigx).await.status, StatusCode::OK);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/apps/{ID}/owners/add"),
+            "back=links/create",
+            &line,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+
+    // aa-afat: an FC with add_fatlink logs in with the fleet boss right
+    // there, and nobody approves it.
+    grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
+    let create = open(&h, "links/create", &line).await;
+    assert_eq!(create.status, StatusCode::OK, "{}", create.body);
+    assert!(
+        create.body.contains(&format!(
+            r#"<form method="post" action="/apps/{ID}/owners/add" hx-boost="false" class="inline-flex"><input type="hidden" name="back" value="links/create"><button type="submit" class="btn" data-variant="outline" data-size="sm">Log in with the fleet boss</button></form>"#
+        )),
+        "{}",
+        create.body
+    );
+    assert!(!create.body.contains("name=\"track\""), "{}", create.body);
+    // Only one of the app's own pages to come back to.
+    for bad in ["https://evil.example", "/admin", "../x", "a?b=c"] {
+        let res = send(
+            &h.app,
+            form(
+                &format!("/apps/{ID}/owners/add"),
+                &format!("back={}", bad.replace('?', "%3F")),
+                &line,
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}: {}", res.body);
+    }
+
+    let res = send(
+        &h.app,
+        form(
+            &format!("/apps/{ID}/owners/add"),
+            "back=links/create",
+            &line,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let login = res.cookie_value(LOGIN);
+    let state = query_param(res.location(), "state").to_owned();
+    let res = send(
+        &h.app,
+        get(
+            &format!("/auth/callback?code=ok:{LINE}:Line%20Member&state={state}"),
+            &[(LOGIN, &login), (SESSION, &line)],
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Back on Create FAT Link, with the fleet boss chosen.
+    assert_eq!(
+        res.location(),
+        format!("/plugins/{ID}/links/create?owner={LINE}")
+    );
+    let line = res.cookie_value(SESSION);
+    let back = page(&h, res.location(), &line).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+    assert!(
+        back.body
+            .contains(&format!(r#"<option value="{LINE}" selected>"#)),
+        "{}",
+        back.body
+    );
+    assert!(back.body.contains("can be tracked"), "{}", back.body);
+    // In use at once, audited as the FC's.
+    let sources = tether_db::plugin_esi::data_sources(&h.db, ID)
+        .await
+        .unwrap();
+    assert!(
+        sources.iter().any(|s| s.character.id == LINE && s.in_use()),
+        "{sources:?}"
+    );
+    let added: Option<i64> = sqlx::query_scalar(
+        "SELECT actor_account_id FROM core.audit_log WHERE action = 'plugin.data_source_added' \
+         AND target = $1",
+    )
+    .bind(format!("plugin:{ID}"))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let line_account: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+            .bind(LINE)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(added, Some(line_account));
+
+    // Create: tracking starts.
+    mount_fleet_of(&h, LINE, LINE).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!([member(LINE), member(ALT)])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let hash = tracked_link_by(&h, &line, LINE).await;
+    work(&h).await;
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+
+    // The owners card on the app's page: active, no approval anywhere.
+    let main = open(&h, "", &owner).await.body;
+    assert!(main.contains(">active</span>"), "{main}");
+    assert!(!main.contains("/approve"), "{main}");
+    assert!(!main.contains("waiting for an admin"), "{main}");
 }

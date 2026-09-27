@@ -13,11 +13,12 @@
 //! - **Logs** of what FCs and managers did, kept for 60 days.
 //! - **ESI-tracked fleets** (aa-afat's): a link can follow the fleet an FC's
 //!   character is boss of, adding a FAT (with ship and system) for everyone
-//!   in it. The FC opts in by offering that character as the app's data
-//!   source, which an admin approves. One keyed job polls every tracked
-//!   fleet each minute while any is tracked; tracking stops when the fleet
-//!   ends, the character isn't boss, ESI refuses, the data source goes, the
-//!   link closes, or after six hours.
+//!   in it. As in aa-afat, the FC logs in with the fleet boss from Create
+//!   FAT Link (Tether's Add owner: the character becomes the app's data
+//!   source, no approval), and it's offered there at once. One keyed job
+//!   polls every tracked fleet each minute while any is tracked; tracking
+//!   stops when the fleet ends, the character isn't boss, ESI refuses, the
+//!   data source goes, the link closes, or after six hours.
 
 use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
 use tether_plugin_sdk::esi::{self, Subject};
@@ -26,8 +27,8 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character, corporation,
-    item_type, link, log, share, time,
+    SubmitResult, Table, Tone, Value, action, actions, add_owner, alliance, badge, character,
+    corporation, item_type, link, log, share, time,
 };
 
 /// A new link's expiry unless the FC picks another (aa-afat's default).
@@ -126,7 +127,7 @@ fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
         [""] => dashboard(viewer),
         ["links"] => links_page(viewer, 1),
         ["links", "page", n] => links_page(viewer, number(n)?),
-        ["links", "create"] => create_page(viewer, None),
+        ["links", "create"] => create_page(viewer, None, owner_added(request)),
         ["links", hash] => details_page(viewer, hash, None),
         ["links", hash, "add"] => register_page(viewer, hash, None),
         ["stats"] => stats_page(viewer, this_year()),
@@ -457,7 +458,7 @@ fn stop_text(reason: &str, character: &str) -> String {
         ),
         "refused" => "ESI refused to show the fleet (403).".to_owned(),
         "data_source" => format!(
-            "{character} is no longer an approved data source of this app (withdrawn, removed, or moved corporation)."
+            "{character} is no longer an owner of this app (withdrawn, removed, or moved corporation). Log in with the fleet boss again on Create FAT Link."
         ),
         "token" => format!("{character}'s login has expired: they need to log in again."),
         "cap" => "Tracking stopped after six hours.".to_owned(),
@@ -702,8 +703,18 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
     Ok(page)
 }
 
-/// The viewer's own characters that are approved data sources of this app:
-/// the ones whose ESI fleet they may track.
+/// The character Add owner just added, from the query Tether brings the
+/// FC back with (`owner`).
+fn owner_added(request: &Request) -> Option<i64> {
+    request
+        .query
+        .iter()
+        .find(|(name, _)| name == "owner")
+        .and_then(|(_, id)| id.parse().ok())
+}
+
+/// The viewer's own characters that are data sources of this app: the
+/// ones whose ESI fleet they may track.
 fn trackable_characters(viewer: &Viewer) -> Vec<(i64, String)> {
     let sources = esi::data_sources();
     viewer
@@ -732,7 +743,9 @@ fn already_tracked(character_id: i64) -> Result<String, PageError> {
     })
 }
 
-fn create_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
+/// Create FAT Link, aa-afat's clickable or ESI-tracked link. `added` is
+/// the fleet boss Add owner just logged in with, chosen for tracking.
+fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Result<Page, PageError> {
     if !can_create(viewer) {
         return Err(PageError::Forbidden);
     }
@@ -758,13 +771,30 @@ fn create_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
                 .required(),
         );
     let trackable = trackable_characters(viewer);
-    if trackable.is_empty() {
-        page = page.text(
-            "To track your ESI fleet: choose Add owner at the top of Fleet Activity Tracking's \
-             main page and log in with your FC character; an admin approves it once. Then it's \
-             offered here.",
-        );
-    } else {
+    let first_login = trackable.is_empty();
+    // aa-afat's ESI FAT link: log in with the fleet boss (once; it's then
+    // offered here every time), and the link tracks its fleet.
+    let added = added.filter(|id| trackable.iter().any(|(c, _)| c == id));
+    let login = Card::new("Track your ESI fleet")
+        .description(if trackable.is_empty() {
+            "Log in with the character that is (or will be) fleet boss: EVE asks you to allow \
+             Tether to read its fleet, and it's offered below for tracking."
+        } else {
+            "Boss the fleet with another character? Log in with it: it joins the characters \
+             offered below."
+        })
+        .field("Fleet boss", add_owner("Log in with the fleet boss"));
+    if let Some(id) = added {
+        let name = trackable
+            .iter()
+            .find(|(c, _)| *c == id)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_default();
+        page = page.text(format!(
+            "{name} can be tracked: name the fleet and create the link to start."
+        ));
+    }
+    if !trackable.is_empty() {
         let mut options = vec![(
             String::new(),
             "Don't track: members click the link".to_owned(),
@@ -774,12 +804,22 @@ fn create_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
                 .into_iter()
                 .map(|(id, name)| (id.to_string(), format!("Track {name}'s fleet"))),
         );
-        form = form.field(Field::select("track", "ESI fleet", options).help(
+        let mut track = Field::select("track", "ESI fleet", options).help(
             "Every minute while the link is open (up to six hours), everyone in the fleet that \
              character is boss of gets a FAT, with ship and system.",
-        ));
+        );
+        if let Some(id) = added {
+            track = track.value(id.to_string());
+        }
+        form = form.field(track);
     }
-    Ok(page.form(form))
+    // Before the form while there's nobody to track (log in first, then
+    // fill it in); after it once there is.
+    Ok(if first_login {
+        page.card(login).form(form)
+    } else {
+        page.form(form).card(login)
+    })
 }
 
 fn minutes(submission: &Submission, name: &str) -> Result<i64, PageError> {
@@ -799,13 +839,14 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
         return Ok(SubmitResult::Page(create_page(
             viewer,
             Some("Give the fleet a name."),
+            None,
         )?));
     };
     let fleet_type = optional(submission.value("fleet_type"));
     let doctrine = optional(submission.value("doctrine"));
     let expiry = minutes(submission, "expiry")?;
     let expires = Utc::now() + Duration::minutes(expiry);
-    // Only the viewer's own characters that are approved data sources.
+    // Only the viewer's own characters that are data sources.
     let track = match submission.value("track") {
         "" => None,
         id => Some(
@@ -853,7 +894,7 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
         // That character already tracks a fleet on another link.
         Err(storage::Error::Database(e)) if e.code == "23505" && track_id.is_some() => {
             let note = already_tracked(track_id.unwrap_or_default())?;
-            return Ok(SubmitResult::Page(create_page(viewer, Some(&note))?));
+            return Ok(SubmitResult::Page(create_page(viewer, Some(&note), None)?));
         }
         Err(e) => return Err(failed("creating the link", e)),
     };

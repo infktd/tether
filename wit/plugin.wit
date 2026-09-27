@@ -135,6 +135,15 @@ interface page {
         /// link path, as for `link`. The host writes the site's address
         /// before it and draws it read-only with a Copy button.
         share(string),
+        /// Tether's own Add owner button, with these words (e.g. "Log in
+        /// with the fleet boss"; "Add owner" when empty), for apps with
+        /// data-source scopes: one EVE login with one of the viewer's own
+        /// characters adds it as the app's data source, and brings them
+        /// back to this page with that character's id as `owner` in the
+        /// query. Drawn only for those who may add owners (holders of the
+        /// app's `manage` or an `add_...` permission, and app admins);
+        /// nothing for anyone else.
+        add-owner(string),
     }
 
     record stat {
@@ -461,7 +470,8 @@ interface esi {
         /// A Member's character whose token carries the endpoint's scope:
         /// see `characters`.
         character(s64),
-        /// A data-source character an admin approved: its corporation's
+        /// A data-source character (an app owner, added by a holder of the
+        /// app's add permission): its corporation's
         /// data, for corporation endpoints.
         data-source(s64),
     }
@@ -479,7 +489,7 @@ interface esi {
         not-allowed(string),
         /// Not a Member's character, or its token lacks the scope.
         not-registered,
-        /// Not an approved data source of this plugin.
+        /// Not a data source of this plugin (in use).
         not-a-data-source,
         /// The character's token is gone or revoked: they need to log in
         /// again.
@@ -508,7 +518,7 @@ interface esi {
     /// Members' characters whose tokens carry every one of this plugin's
     /// user scopes.
     characters: func() -> list<character>;
-    /// This plugin's approved data-source characters.
+    /// This plugin's data-source characters in use.
     data-sources: func() -> list<character>;
     /// Names for ids (public ESI; at most 1,000).
     names: func(ids: list<s64>) -> result<list<named>, error>;

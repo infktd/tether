@@ -1111,15 +1111,7 @@ async fn plugin_page(
         .await?
         .into_iter()
         .map(|d| {
-            let state = if d.in_use() {
-                "approved"
-            } else if d.approved && !d.account_ok {
-                "suspended"
-            } else if d.approved {
-                "moved"
-            } else {
-                "waiting"
-            };
+            let state = super::plugin_access::source_state(&d);
             SourceView {
                 character_id: d.character.id,
                 corporation: d
@@ -1590,20 +1582,6 @@ pub async fn set_secret(
 }
 
 // ---- data sources and channels ---------------------------------------------
-
-/// `POST /admin/plugins/{id}/sources/{character}/approve`
-pub async fn approve_source(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path((id, character)): Path<(String, i64)>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
-    let id = plugin_id(&id)?;
-    match crate::plugin_consent::approve_source(&state, session.account, id, character).await {
-        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
-        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
-    }
-}
 
 /// `POST /admin/plugins/{id}/sources/{character}/remove`
 pub async fn remove_source(

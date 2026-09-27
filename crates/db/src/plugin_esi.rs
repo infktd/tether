@@ -62,17 +62,19 @@ pub struct DataSource {
     pub character: CharacterRow,
     pub offered_by: Option<String>,
     pub offered_at: DateTime<Utc>,
+    /// Added (or, before owners needed no approval, approved).
     pub approved: bool,
-    /// The corporation it was approved for; a source whose character has
-    /// moved since isn't used until approved again.
+    /// The corporation it was added for; a source whose character has
+    /// moved since isn't used until it's added again.
     pub approved_corporation: Option<i64>,
-    /// The character's account is active and not blacklisted.
+    /// The character is still on the account that added it, and that
+    /// account is active and not blacklisted.
     pub account_ok: bool,
 }
 
 impl DataSource {
-    /// Approved, still in the corporation it was approved for, and on an
-    /// account in good standing.
+    /// Added, still in the corporation it was added for, and on the
+    /// account that added it, in good standing.
     pub fn in_use(&self) -> bool {
         self.approved
             && self.account_ok
@@ -81,50 +83,32 @@ impl DataSource {
     }
 }
 
-/// Records an offer (again: an approved one stays approved).
-pub async fn offer_data_source<'e>(
+/// Adds a character as a data source (AA's Add Owner), in use at once for
+/// the corporation it's in now; adding it again brings it up to date.
+/// Returns that corporation, or `None` if the character isn't known.
+pub async fn add_data_source<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     plugin_id: &str,
     character_id: i64,
-    offered_by: AccountId,
-) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    added_by: AccountId,
+) -> Result<Option<Option<i64>>, sqlx::Error> {
+    sqlx::query_scalar!(
         r#"
-        INSERT INTO core.plugin_data_sources (plugin_id, character_id, offered_by)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (plugin_id, character_id) DO UPDATE SET offered_at = now()
+        INSERT INTO core.plugin_data_sources
+            (plugin_id, character_id, offered_by, approved_by, approved_at, corporation_id)
+        SELECT $1, c.id, $3, $3, now(), c.corporation_id FROM core.characters c WHERE c.id = $2
+        ON CONFLICT (plugin_id, character_id) DO UPDATE
+        SET offered_by = EXCLUDED.offered_by, offered_at = now(),
+            approved_by = EXCLUDED.approved_by, approved_at = now(),
+            corporation_id = EXCLUDED.corporation_id
+        RETURNING corporation_id
         "#,
         plugin_id,
         character_id,
-        offered_by.0,
+        added_by.0,
     )
-    .execute(executor)
-    .await?;
-    Ok(())
-}
-
-/// Approves an offered data source; false if there's no such offer.
-pub async fn approve_data_source<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    plugin_id: &str,
-    character_id: i64,
-    admin: AccountId,
-) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query!(
-        r#"
-        UPDATE core.plugin_data_sources d
-        SET approved_by = $3, approved_at = now(), corporation_id = c.corporation_id
-        FROM core.characters c
-        WHERE d.plugin_id = $1 AND d.character_id = $2 AND c.id = d.character_id
-          AND c.corporation_id IS NOT NULL
-        "#,
-        plugin_id,
-        character_id,
-        admin.0,
-    )
-    .execute(executor)
-    .await?;
-    Ok(done.rows_affected() == 1)
+    .fetch_optional(executor)
+    .await
 }
 
 pub async fn remove_data_source<'e>(
@@ -149,7 +133,8 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
         SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,
                d.approved_at IS NOT NULL AS "approved!", o.name AS "offered_by?",
                d.corporation_id AS approved_corporation,
-               COALESCE(ca.active AND NOT core.blacklisted(ca.id), false) AS "account_ok!"
+               COALESCE(ca.id = d.offered_by AND ca.active AND NOT core.blacklisted(ca.id), false)
+                   AS "account_ok!"
         FROM core.plugin_data_sources d
         JOIN core.characters c ON c.id = d.character_id
         LEFT JOIN core.accounts ca ON ca.id = c.account_id
@@ -179,8 +164,8 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
         .collect())
 }
 
-/// The corporation an approved data source reads, if the character is
-/// still in the corporation it was approved for.
+/// The corporation a data source reads, if the character is still in the
+/// corporation it was added for, on the account that added it.
 pub async fn approved_source_corporation<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     plugin_id: &str,
@@ -193,7 +178,7 @@ pub async fn approved_source_corporation<'e>(
         JOIN core.accounts a ON a.id = c.account_id
         WHERE d.plugin_id = $1 AND d.character_id = $2 AND d.approved_at IS NOT NULL
           AND d.corporation_id IS NOT NULL AND c.corporation_id = d.corporation_id
-          AND a.active AND NOT core.blacklisted(a.id)
+          AND a.id = d.offered_by AND a.active AND NOT core.blacklisted(a.id)
         "#,
         plugin_id,
         character_id

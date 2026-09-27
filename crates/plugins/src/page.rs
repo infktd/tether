@@ -678,6 +678,9 @@ fn check_value(value: &Value, budget: &mut Budget) -> Result<(), PageProblem> {
             check_link_path(path)?;
             budget.bytes(path.len())
         }
+        // The host's own form, to its own address: only the words are the
+        // plugin's.
+        Value::AddOwner(label) => budget.text("an add-owner label", label),
         Value::Progress(progress) => check_progress(progress, budget),
         Value::Action(action) => check_action(action, budget),
         Value::Actions(actions) => {

@@ -7,7 +7,7 @@
 //!   kind (user scopes for character endpoints, data-source scopes for
 //!   corporation ones);
 //! - the subject is a Member's character registered with the scope (user;
-//!   F11), or an approved data source (corporation);
+//!   F11), or a data source in use (corporation);
 //! - its token carries the scope.
 //!
 //! The host fills in the ids; the plugin only names the endpoint and the

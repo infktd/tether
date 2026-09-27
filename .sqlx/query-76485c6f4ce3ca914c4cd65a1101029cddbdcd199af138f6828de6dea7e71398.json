@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,\n               d.approved_at IS NOT NULL AS \"approved!\", o.name AS \"offered_by?\",\n               d.corporation_id AS approved_corporation,\n               COALESCE(ca.active AND NOT core.blacklisted(ca.id), false) AS \"account_ok!\"\n        FROM core.plugin_data_sources d\n        JOIN core.characters c ON c.id = d.character_id\n        LEFT JOIN core.accounts ca ON ca.id = c.account_id\n        LEFT JOIN core.accounts a ON a.id = d.offered_by\n        LEFT JOIN core.characters o ON o.id = a.main_character_id\n        WHERE d.plugin_id = $1 ORDER BY c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,\n               d.approved_at IS NOT NULL AS \"approved!\", o.name AS \"offered_by?\",\n               d.corporation_id AS approved_corporation,\n               COALESCE(ca.id = d.offered_by AND ca.active AND NOT core.blacklisted(ca.id), false)\n                   AS \"account_ok!\"\n        FROM core.plugin_data_sources d\n        JOIN core.characters c ON c.id = d.character_id\n        LEFT JOIN core.accounts ca ON ca.id = c.account_id\n        LEFT JOIN core.accounts a ON a.id = d.offered_by\n        LEFT JOIN core.characters o ON o.id = a.main_character_id\n        WHERE d.plugin_id = $1 ORDER BY c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -110,5 +110,5 @@
       null
     ]
   },
-  "hash": "f09a059ffe5a13c7d67a164f043d9b168933bf7b1ea2f58ca098c8cdcabae60a"
+  "hash": "76485c6f4ce3ca914c4cd65a1101029cddbdcd199af138f6828de6dea7e71398"
 }

@@ -1,7 +1,8 @@
 //! Moon Mining (Alliance Auth's name for it; PRD F21).
 //!
-//! - Extractions come from the corporations of approved data-source
-//!   characters (a Station Manager's, for moon extractions and structures).
+//! - Extractions come from the corporations of the app's owners
+//!   (data-source characters: a Station Manager's, for moon extractions and
+//!   structures), added by holders of `manage`.
 //! - Each pop (the chunk's automatic fracture) is pinged to Members on
 //!   Discord.
 //! - A popped moon is Members-only for a while (default 4 hours), then on
@@ -329,7 +330,7 @@ fn sync() -> Result<(), JobError> {
     let now = Utc::now();
     let sources = sources_by_corporation();
     if sources.is_empty() {
-        log::info("no data sources approved yet");
+        log::info("no owners added yet");
         return Ok(());
     }
     let mut budget = Budget(ESI_BUDGET);
@@ -1192,7 +1193,7 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
             Column::numeric(""),
         ])
         .title("Extractions")
-        .empty("No extractions running. Is a data source approved?"),
+        .empty("No extractions running. Has an owner been added?"),
         upcoming.iter().map(|p| {
             vec![
                 p.moon.clone().into(),

@@ -2,8 +2,8 @@
 
 use tether_plugin_sdk::{
     Card, CardGrid, CodeBlock, Column, Field, Form, Page, PageError, Plugin, Profile, Request,
-    Stat, Submission, SubmitResult, Table, Tone, action, actions, alliance, badge, character,
-    corporation, countdown, faction, isk, item_type, link, log, progress, share, time,
+    Stat, Submission, SubmitResult, Table, Tone, action, actions, add_owner, alliance, badge,
+    character, corporation, countdown, faction, isk, item_type, link, log, progress, share, time,
 };
 
 fn note_form() -> Form {
@@ -76,7 +76,12 @@ fn blocks() -> Page {
                 .copy_label(format!("Copy {EVIL}")),
         )
         .code(CodeBlock::new("plain"))
-        .card(Card::new("Share").field("Register link", share("values")))
+        .card(
+            Card::new("Share")
+                .field("Register link", share("values"))
+                // An app without data sources: drawn as nothing.
+                .field("Owner", add_owner(format!("Log in {EVIL}"))),
+        )
         .cards(
             // Asks for the Register Character card, which an app without
             // user scopes doesn't get.

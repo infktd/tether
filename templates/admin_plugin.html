@@ -32,19 +32,18 @@
 
   {% if !about.capabilities.is_empty() && !sources.is_empty() %}
   <section class="card data-card">
-    <header><h2>Data sources</h2><p>Characters offered for their corporation's data. Only approved ones are used, and only while they stay in the corporation they were approved for. Approve only characters with the in-game role ESI needs (Station Manager or Accountant): Tether asks ESI with that character's token every time, and ESI checks the role (it can take up to an hour to notice a change).</p></header>
+    <header><h2>Data sources</h2><p>The app's owners: characters added for their corporation's data by pilots with the app's add permission, as in Alliance Auth. Each is used only while it stays in the corporation it was added for, on the account that added it. Tether asks ESI with that character's token every time, and ESI checks the in-game role (it can take up to an hour to notice a change). Remove any you don't want the app to read.</p></header>
     <table class="table">
-      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Offered</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Added by</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for d in sources %}
         <tr>
           <td class="font-medium">{{ d.name }}</td>
           <td class="num">{{ d.corporation }}</td>
           <td><div class="text-sm">{{ d.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ d.when }} EVE</div></td>
-          <td>{% if d.state == "approved" %}<span class="badge" data-variant="secondary">approved</span>{% else if d.state == "suspended" %}<span class="badge" data-variant="destructive">account deactivated or blacklisted: not used</span>{% else if d.state == "moved" %}<span class="badge" data-variant="destructive">changed corporation: approve again</span>{% else %}<span class="badge" data-variant="outline">waiting</span>{% endif %}</td>
+          <td>{% if d.state == "active" %}<span class="badge" data-variant="secondary">active</span>{% else if d.state == "suspended" %}<span class="badge" data-variant="destructive">account deactivated, blacklisted or changed: not used</span>{% else %}<span class="badge" data-variant="destructive">changed corporation: add it again</span>{% endif %}</td>
           <td class="text-right">
             <div class="inline-flex gap-2">
-              {% if d.state != "approved" %}<form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/approve"><button type="submit" class="btn" data-variant="outline" data-size="sm">Approve</button></form>{% endif %}
               <form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/remove"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>
             </div>
           </td>

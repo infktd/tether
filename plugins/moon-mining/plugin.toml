@@ -15,7 +15,7 @@ storage = true
 discord = ["send_message"]
 
 [capabilities.esi]
-# From the corporation of each approved data-source character: a Station
+# From the corporation of each owner (data-source character): a Station
 # Manager (extractions, structures), an Accountant (mining observers) and
 # a Director or Personnel Manager (who holds Station Manager, for the
 # planner).

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.plugin_data_sources\n            (plugin_id, character_id, offered_by, approved_by, approved_at, corporation_id)\n        SELECT $1, c.id, $3, $3, now(), c.corporation_id FROM core.characters c WHERE c.id = $2\n        ON CONFLICT (plugin_id, character_id) DO UPDATE\n        SET offered_by = EXCLUDED.offered_by, offered_at = now(),\n            approved_by = EXCLUDED.approved_by, approved_at = now(),\n            corporation_id = EXCLUDED.corporation_id\n        RETURNING corporation_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_data_sources",
+            "name": "corporation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "4bd3398f3b43adc502cf431753c5dcbbfd8c423170bd5482372bd48d922537a3"
+}

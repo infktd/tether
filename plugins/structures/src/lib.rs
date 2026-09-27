@@ -2,7 +2,7 @@
 //!
 //! - Owners are corporations, added through a data source (AA's "Add
 //!   Structure Owner"): a character with the in-game Station Manager role,
-//!   offered by its owner and approved by an admin.
+//!   added by a holder of `manage`, in use at once.
 //! - The structure list: name, type, system and region, fuel and time
 //!   left, services, state and its timer, reinforce hour; filtered by
 //!   owner, low fuel and reinforced, and seen by permission (the viewer's
@@ -424,9 +424,7 @@ fn call(
              again (log in with it)"
                 .to_owned(),
         ),
-        esi::Error::NotADataSource => {
-            Outcome::BackOff("no longer an approved data source".to_owned())
-        }
+        esi::Error::NotADataSource => Outcome::BackOff("no longer a data source in use".to_owned()),
         other => Outcome::Later(format!("{other:?}")),
     };
     let cost = esi_cost(endpoint);
@@ -563,7 +561,7 @@ fn sync() -> Result<(), JobError> {
 fn sync_steps() -> Result<(), JobError> {
     let corporations = sync_owners()?;
     if corporations.is_empty() {
-        log::info("no structure owners yet: approve a data source");
+        log::info("no structure owners yet: add one");
         return Ok(());
     }
     let mut budget = Budget(ESI_BUDGET);
@@ -654,7 +652,7 @@ fn sync_steps() -> Result<(), JobError> {
     Ok(())
 }
 
-/// The owners table follows the host's approved data sources; a
+/// The owners table follows the host's data sources in use; a
 /// corporation with no owner left loses its structures (its timers expire
 /// on their own). An empty list while owners are known is taken as a
 /// hiccup for an hour before anything is removed.
@@ -2160,7 +2158,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::text(""),
         ])
         .title("Owners")
-        .empty("No owners yet: Add owner (top right) logs in with a Station Manager, and an admin approves it."),
+        .empty("No owners yet: Add owner (top right) logs in with a Station Manager."),
         owner_rows,
     );
     let sent_table = with_rows(
@@ -2325,7 +2323,7 @@ fn owner_channel_field(
     .required()
 }
 
-/// An owner corporation's name: one the sync knows, or one an approved
+/// An owner corporation's name: one the sync knows, or one a
 /// data source is in (routing can be set before the first sync).
 fn owner_name(corp: i64) -> Result<Option<String>, PageError> {
     let known = storage::query(

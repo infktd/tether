@@ -1,9 +1,10 @@
 //! An app's owners (AA's Add Owner), around the app's own pages: the host
-//! draws an "Add owner" button in the page header for those who may offer
-//! a character as the app's data source (`plugin_consent::may_offer`), and
-//! on the app's main page the owners: every source, with Approve and
-//! Remove, for the admins who approve them (`admin.plugins`); the viewer's
-//! own, with Withdraw, for everyone else. Plugins never see any of it.
+//! draws an "Add owner" button in the page header for those who may add a
+//! character as the app's data source (`plugin_consent::may_offer`), and
+//! on the app's main page the owners: every source, with Remove, for app
+//! admins (`admin.plugins`); the viewer's own, with Withdraw, for everyone
+//! else. Owners are in use once added, as in AA: nobody approves them.
+//! Plugins never see any of it.
 
 use std::collections::BTreeSet;
 
@@ -30,7 +31,7 @@ pub struct OwnerRow {
     pub corporation: String,
     pub offered_by: String,
     pub when: String,
-    /// approved, suspended, moved or waiting.
+    /// active, suspended or moved.
     pub state: &'static str,
     /// On the viewer's own account (they may withdraw it).
     pub own: bool,
@@ -48,8 +49,8 @@ pub struct Owners {
     pub plugin_id: String,
     /// "Add owner" in the header.
     pub can_offer: bool,
-    /// Approve and Remove on every source.
-    pub can_approve: bool,
+    /// Sees every source, with Remove (app admins).
+    pub can_manage: bool,
     /// The owners card (the app's main page, for those with something in
     /// it).
     pub panel: bool,
@@ -62,15 +63,17 @@ fn time(at: chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M").to_string()
 }
 
+/// `active` (in use), `suspended` (its account is deactivated or
+/// blacklisted, or the character left the account that added it), or
+/// `moved` (it changed corporation since it was added, or its corporation
+/// wasn't known: adding it again brings it up to date).
 pub(crate) fn source_state(d: &plugin_esi::DataSource) -> &'static str {
     if d.in_use() {
-        "approved"
-    } else if d.approved && !d.account_ok {
+        "active"
+    } else if !d.account_ok {
         "suspended"
-    } else if d.approved {
-        "moved"
     } else {
-        "waiting"
+        "moved"
     }
 }
 
@@ -99,7 +102,7 @@ pub async fn owners(
     let mut owners = Owners {
         can_offer: session.token_scopes.is_none()
             && plugin_consent::may_offer(manifest, |p| holds(p)),
-        can_approve: holds(ADMIN_PLUGINS),
+        can_manage: holds(ADMIN_PLUGINS),
         panel: false,
         scopes: manifest.capabilities.esi.data_source.clone(),
         rows: Vec::new(),
@@ -118,7 +121,7 @@ pub async fn owners(
         plugin_esi::data_sources(&state.db, &owners.plugin_id)
             .await?
             .into_iter()
-            .filter(|d| owners.can_approve || mine.contains(&d.character.id))
+            .filter(|d| owners.can_manage || mine.contains(&d.character.id))
             .collect();
     let ids: Vec<i64> = sources
         .iter()
@@ -144,14 +147,14 @@ pub async fn owners(
             }
         })
         .collect();
-    if owners.can_approve {
+    if owners.can_manage {
         owners.gone = plugin_esi::gone_data_sources(&state.db, &owners.plugin_id)
             .await?
             .into_iter()
             .map(gone_row)
             .collect();
     }
-    owners.panel = owners.can_offer || owners.can_approve || !owners.rows.is_empty();
+    owners.panel = owners.can_offer || owners.can_manage || !owners.rows.is_empty();
     Ok(Some(owners))
 }
 
@@ -186,13 +189,23 @@ fn back(state: &AppState, id: &str) -> Response {
     }
 }
 
+/// Add owner's form: the app page it was on (`back`, a link path), which
+/// the login comes back to. The header's button leaves it out: the app's
+/// main page.
+#[derive(Debug, Default, Deserialize)]
+pub struct AddForm {
+    #[serde(default)]
+    back: String,
+}
+
 /// `POST /apps/{id}/owners/add`: Add owner, off to EVE SSO to log in with
-/// the character to offer; back on the app's page afterwards.
+/// the character to add; back on the app's page afterwards.
 pub async fn add(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     jar: CookieJar,
     Path(id): Path<String>,
+    axum::Form(form): axum::Form<AddForm>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     // A browser's login: an access token can't go to EVE.
@@ -200,11 +213,11 @@ pub async fn add(
         return Err(AppError::forbidden().into());
     }
     let id = plugin_id(&id)?;
-    Ok(plugin_consent::start_offer(&state, jar, session.account, id).await?)
+    Ok(plugin_consent::start_offer(&state, jar, session.account, id, &form.back).await?)
 }
 
 /// `POST /apps/{id}/owners/{character}/withdraw`: the character's owner
-/// stops offering it (whether or not it was approved). Always allowed for
+/// withdraws it. Always allowed for
 /// one's own characters.
 pub async fn withdraw(
     State(state): State<AppState>,
@@ -228,7 +241,7 @@ pub struct WithdrawFrom {
     from: Option<String>,
 }
 
-/// One of the account's characters offered as an app's owner, for Token
+/// One of the account's characters that is an app's owner, for Token
 /// Management: wherever else they are, pilots always see what their
 /// characters are used for, and can withdraw them.
 pub struct OwnSource {
@@ -236,7 +249,7 @@ pub struct OwnSource {
     pub plugin_name: String,
     pub character_id: i64,
     pub name: String,
-    /// approved, suspended, moved or waiting.
+    /// active, suspended or moved.
     pub state: &'static str,
 }
 
@@ -268,8 +281,8 @@ pub async fn own_sources(state: &AppState, account: AccountId) -> Result<Vec<Own
     Ok(out)
 }
 
-/// An admin who approves sources (`admin.plugins`).
-async fn approver(
+/// An app admin (`admin.plugins`).
+async fn app_admin(
     state: &AppState,
     session: Option<CurrentSession>,
 ) -> Result<AccountId, AppError> {
@@ -278,25 +291,13 @@ async fn approver(
     Ok(session.account)
 }
 
-/// `POST /apps/{id}/owners/{character}/approve`
-pub async fn approve(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path((id, character)): Path<(String, i64)>,
-) -> Result<Response, PageError> {
-    let admin = approver(&state, session).await?;
-    let id = plugin_id(&id)?;
-    plugin_consent::approve_source(&state, admin, id, character).await?;
-    Ok(back(&state, id))
-}
-
 /// `POST /apps/{id}/owners/{character}/remove`
 pub async fn remove(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Path((id, character)): Path<(String, i64)>,
 ) -> Result<Response, PageError> {
-    let admin = approver(&state, session).await?;
+    let admin = app_admin(&state, session).await?;
     let id = plugin_id(&id)?;
     plugin_consent::remove_source_as_admin(&state, admin, id, character).await?;
     Ok(back(&state, id))

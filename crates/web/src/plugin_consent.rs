@@ -1,11 +1,13 @@
-//! Plugin data sources (F16): pilots with the app's add-owner permission
-//! ([`may_offer`]) offer characters as a plugin's data source (AA's Add
-//! Owner, on the app's own page), which an admin approves, through an EVE
-//! SSO login that asks for
-//! the plugin's data-source scopes plus those the account already granted
-//! (so a new grant never drops an old one). User scopes need no step here:
-//! Member requires them (see `compliance`). Also the Discord channels a
-//! plugin may post to. Every change is audited.
+//! Plugin data sources (F16), Alliance Auth style: pilots with the app's
+//! add-owner permission ([`may_offer`]) add their own characters as a
+//! plugin's data source (AA's Add Owner, on the app's own page) through an
+//! EVE SSO login that asks for the plugin's data-source scopes plus those
+//! the account already granted (so a new grant never drops an old one).
+//! It's in use at once, with no admin approval (Jay, 2026-09-26: AA's
+//! permissions and behaviour); admins see and remove any, and owners
+//! withdraw their own. User scopes need no step here: Member requires them
+//! (see `compliance`). Also the Discord channels a plugin may post to.
+//! Every change is audited.
 
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
@@ -24,13 +26,12 @@ fn target(plugin: &str) -> String {
     format!("plugin:{plugin}")
 }
 
-/// Who may offer a character as an app's data source (AA's Add Owner):
+/// Who may add a character as an app's data source (AA's Add Owner):
 /// holders of the app's `manage` permission or of any of its `add_…` ones
 /// (as AA's `add_refinery_owner` and `add_structure_owner`, and aa-afat's
-/// `add_fatlink`, whose FCs add their fleet character), and the admins who
-/// approve sources (`admin.plugins`). An admin still approves every offer.
-/// Only for those who may open the app's main page, where the login comes
-/// back to and their offers are listed.
+/// `add_fatlink`, whose FCs add their fleet boss), and app admins
+/// (`admin.plugins`). Only for those who may open the app's main page,
+/// where their owners are listed.
 pub fn may_offer(manifest: &Manifest, holds: impl Fn(&str) -> bool) -> bool {
     if manifest.capabilities.esi.data_source.is_empty() {
         return false;
@@ -60,7 +61,7 @@ async fn account_may_offer(
     Ok(may_offer(manifest, |p| held.contains(p)))
 }
 
-/// Refuses an offer the account may not make (any more): checked when the
+/// Refuses an owner the account may not add (any more): checked when the
 /// login starts, and again when it comes back, before the character is
 /// linked or its token kept.
 pub async fn check_offer(
@@ -79,13 +80,16 @@ pub async fn check_offer(
     }
 }
 
-/// Starts the login that offers a character as `plugin`'s data source,
-/// for an account that may (see [`may_offer`]); back to the app's page.
+/// Starts the login that adds a character as `plugin`'s data source, for
+/// an account that may (see [`may_offer`]); back to the app's page `back`
+/// (a checked link path; its main page when empty), with the character's
+/// id as `owner` in the query.
 pub async fn start_offer(
     state: &AppState,
     jar: CookieJar,
     account: AccountId,
     plugin: &str,
+    back: &str,
 ) -> Result<Response, AppError> {
     let running = state
         .plugins
@@ -97,10 +101,12 @@ pub async fn start_offer(
     }
     check_offer(state, account, plugin).await?;
     let scopes = crate::compliance::ask_scopes(&state.db, account, wanted.iter().cloned()).await?;
+    tether_plugins::page::check_link_path(back)
+        .map_err(|_| AppError::bad_request("That isn't one of the app's pages."))?;
     crate::auth::start_login(
         state,
         jar,
-        &format!("/plugins/{plugin}"),
+        &crate::plugins::page_href(plugin, back),
         Purpose::DataSource(plugin.to_owned()),
         &scopes,
         Some(account),
@@ -108,9 +114,10 @@ pub async fn start_offer(
     .await
 }
 
-/// After an offer login, in the callback: records it, if the character
-/// is on the signed-in account and SSO granted every scope the plugin
-/// needs.
+/// After an Add owner login, in the callback: adds the character, in use
+/// at once, if it's on the signed-in account and SSO granted every scope
+/// the plugin needs; then the app's schedules run now, so it reads its
+/// new owner at once.
 pub async fn finish(
     state: &AppState,
     account: AccountId,
@@ -148,16 +155,36 @@ pub async fn finish(
         ));
     }
     let mut tx = state.db.begin().await?;
-    db::offer_data_source(&mut *tx, plugin, identity.character_id, account).await?;
+    let Some(corporation) =
+        db::add_data_source(&mut *tx, plugin, identity.character_id, account).await?
+    else {
+        return Err(AppError::not_found("That character isn't known."));
+    };
     audit::record(
         &mut *tx,
         Actor::Account(account),
-        "plugin.data_source_offered",
+        "plugin.data_source_added",
         Some(&target(plugin)),
-        json!({ "character_id": identity.character_id, "scopes": needed }),
+        json!({
+            "character_id": identity.character_id,
+            "corporation_id": corporation,
+            "scopes": needed,
+        }),
     )
     .await?;
     tx.commit().await?;
+    // The app reads its new owner now, not at its next scheduled run: the
+    // pilot's doing, so audited as theirs. Best effort: the owner stands
+    // whatever happens here.
+    let why = json!({ "reason": "data_source_added", "character_id": identity.character_id });
+    crate::plugin_jobs::run_app_schedules(
+        &state.db,
+        &running.manifest,
+        Actor::Account(account),
+        &why,
+        tether_jobs::schedule::RUN_NOW_GAP,
+    )
+    .await;
     Ok(())
 }
 
@@ -210,44 +237,7 @@ async fn remove_source(
     Ok(())
 }
 
-/// An admin approves an offered data source.
-pub async fn approve_source(
-    state: &AppState,
-    admin: AccountId,
-    plugin: &str,
-    character: i64,
-) -> Result<(), AppError> {
-    let mut tx = state.db.begin().await?;
-    if !db::approve_data_source(&mut *tx, plugin, character, admin).await? {
-        return Err(AppError::not_found("That character wasn't offered."));
-    }
-    audit::record(
-        &mut *tx,
-        Actor::Account(admin),
-        "plugin.data_source_approved",
-        Some(&target(plugin)),
-        json!({ "character_id": character }),
-    )
-    .await?;
-    tx.commit().await?;
-    // The app reads its new source now, not at its next scheduled run: the
-    // admin's doing, so audited as theirs. Best effort: the approval
-    // stands whatever happens here.
-    if let Some(running) = state.plugins.running(plugin) {
-        let why = json!({ "reason": "data_source_approved", "character_id": character });
-        crate::plugin_jobs::run_app_schedules(
-            &state.db,
-            &running.manifest,
-            Actor::Account(admin),
-            &why,
-            tether_jobs::schedule::RUN_NOW_GAP,
-        )
-        .await;
-    }
-    Ok(())
-}
-
-/// An admin removes a data source (offered or approved).
+/// An admin removes a data source.
 pub async fn remove_source_as_admin(
     state: &AppState,
     admin: AccountId,
@@ -322,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn owners_are_added_by_manage_add_and_approving_admins() {
+    fn owners_are_added_by_manage_add_and_app_admins() {
         let m = manifest(
             "view = \"v\"\nmanage = \"m\"\nadd_fatlink = \"a\"\nother = \"o\"",
             true,

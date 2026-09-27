@@ -236,18 +236,8 @@ async fn approve_source(h: &Harness, owner: &str) -> String {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let owner = res.cookie_value(SESSION);
-    let res = send(
-        &h.app,
-        form(
-            &format!("/admin/plugins/{ID}/sources/{CHRIBBA}/approve"),
-            "",
-            &owner,
-        ),
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    owner
+    // In use at once (AA's Add Owner): nobody approves it.
+    res.cookie_value(SESSION)
 }
 
 fn registry(h: &Harness) -> Registry {

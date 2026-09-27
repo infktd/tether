@@ -209,7 +209,7 @@ pub mod esi {
         crate::bindings::tether::plugin::esi::characters()
     }
 
-    /// This plugin's approved data-source characters.
+    /// This plugin's data-source characters in use.
     pub fn data_sources() -> Vec<Character> {
         crate::bindings::tether::plugin::esi::data_sources()
     }
@@ -1158,6 +1158,16 @@ pub fn badge(label: impl Into<String>, tone: Tone) -> Badge {
 /// `path` is a link path; Tether writes the site's address before it.
 pub fn share(path: impl Into<String>) -> Value {
     Value::Share(path.into())
+}
+
+/// Tether's own Add owner button, with these words ("Log in with the fleet
+/// boss"; "Add owner" when empty), for apps with data-source scopes: one
+/// EVE login adds one of the viewer's characters as your data source and
+/// brings them back to this page with its id as `owner` in the query.
+/// Only drawn for those who may add owners (your `manage` or `add_...`
+/// permission holders, and app admins).
+pub fn add_owner(label: impl Into<String>) -> Value {
+    Value::AddOwner(label.into())
 }
 
 /// A link to another page of this plugin, relative to its pages.

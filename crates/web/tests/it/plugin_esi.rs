@@ -158,7 +158,7 @@ async fn user_scopes_need_a_compliant_registered_account(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
+            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/remove"),
             "",
             &pilot,
         ),
@@ -260,7 +260,7 @@ async fn a_plain_login_keeps_the_scopes_a_character_registered(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn data_sources_are_offered_then_approved(db: PgPool) {
+async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
@@ -275,33 +275,26 @@ async fn data_sources_are_offered_then_approved(db: PgPool) {
     assert!(main.contains("No owners yet"), "{main}");
     let (asked, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     assert!(asked.contains(&MINING.to_owned()), "{asked:?}");
+    // In use at once, as AA's Add Owner: nobody approves it.
     let main = page(&h, "/plugins/acme.esi", &owner).await.body;
-    assert!(main.contains("waiting for an admin"), "{main}");
-    assert!(
-        main.contains(&format!("/apps/acme.esi/owners/{CHRIBBA}/approve")),
-        "{main}"
-    );
+    assert!(main.contains(">active</span>"), "{main}");
+    assert!(!main.contains("/approve"), "{main}");
+    assert!(!main.contains("waiting"), "{main}");
     // Not on the Dashboard any more.
     let dashboard = page(&h, "/dashboard", &owner).await.body;
     assert!(!dashboard.contains("corporation data"), "{dashboard}");
     assert!(!dashboard.contains("/apps/acme.esi"), "{dashboard}");
-    // Offered is not approved.
-    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
-    assert_eq!(out, "err Error::NotADataSource");
-    assert_eq!(probe(&h, "sources", &[]).await, "[]");
-
-    // Approved there, and back on the app's page.
-    let res = send(
-        &h.app,
-        form(
-            &format!("/apps/acme.esi/owners/{CHRIBBA}/approve"),
-            "",
-            &owner,
-        ),
+    // Audited as the pilot's, with the corporation it's for.
+    let added: String = sqlx::query_scalar(
+        "SELECT details::text FROM core.audit_log WHERE action = 'plugin.data_source_added'",
     )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), "/plugins/acme.esi");
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        added.contains(&format!(r#""corporation_id": {CHRIBBA_CORP}"#)),
+        "{added}"
+    );
     // The host picks the corporation: the source's own.
     let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
     assert!(out.starts_with("ok pages=1"), "{out}");
@@ -355,7 +348,7 @@ async fn grant_to_guests(h: &Harness, owner: &str, permission: &str) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn only_add_owner_holders_offer_and_only_admins_approve(db: PgPool) {
+async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     const MITTANI: i64 = 443630591;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
@@ -374,8 +367,8 @@ async fn only_add_owner_holders_offer_and_only_admins_approve(db: PgPool) {
     let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
 
-    // The app's manage permission may: its holder offers their own
-    // character and sees only their own, with no Approve.
+    // The app's manage permission may: its holder adds their own
+    // character, in use at once, and sees only their own.
     grant_to_guests(&h, &owner, "manage").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
     assert!(main.contains("Add owner"), "{main}");
@@ -395,18 +388,16 @@ async fn only_add_owner_holders_offer_and_only_admins_approve(db: PgPool) {
     );
     assert!(!main.contains("Chribba"), "{main}");
     assert!(!main.contains("/approve"), "{main}");
-    for action in ["approve", "remove"] {
-        let res = send(
-            &h.app,
-            form(
-                &format!("/apps/acme.esi/owners/{CHRIBBA}/{action}"),
-                "",
-                &pilot,
-            ),
-        )
-        .await;
-        assert_eq!(res.status, StatusCode::FORBIDDEN, "{action}");
-    }
+    let res = send(
+        &h.app,
+        form(
+            &format!("/apps/acme.esi/owners/{CHRIBBA}/remove"),
+            "",
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
     // Nor can anyone withdraw someone else's character.
     let res = send(
         &h.app,
@@ -943,24 +934,10 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         std::slice::from_ref(&schedule)
     );
 
-    // Approving a data source runs them too, as the approving admin, a
-    // minute after the last run (an admin's gap).
+    // Adding a data source runs them too, as the pilot who added it, a
+    // minute after the last run (a person's gap).
     finish_runs(&h.db, "61 seconds").await;
     let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
-    assert!(
-        queued_plugin_runs(&h.db).await.is_empty(),
-        "an offer isn't approval"
-    );
-    let res = send(
-        &h.app,
-        form(
-            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
-            "",
-            &owner,
-        ),
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(
         queued_plugin_runs(&h.db).await,
         std::slice::from_ref(&schedule)
@@ -971,12 +948,12 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
     assert_eq!(audits[2].0, admin);
     assert_eq!(
         audits[2].2,
-        serde_json::json!({ "reason": "data_source_approved", "character_id": CHRIBBA })
+        serde_json::json!({ "reason": "data_source_added", "character_id": CHRIBBA })
     );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_approving(db: PgPool) {
+async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_adding(db: PgPool) {
     let (h, owner) = member_with_viewer(db).await;
     mount_viewer_esi(&h).await;
     // The queue refuses the app's jobs.
@@ -1007,18 +984,8 @@ async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_approving(db
     assert!(out.starts_with("ok"), "{out}");
     assert!(page(&h, "/register", &owner).await.body.contains("Chribba"));
 
-    // Approved all the same.
-    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
-    let res = send(
-        &h.app,
-        form(
-            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/approve"),
-            "",
-            &owner,
-        ),
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Added all the same.
+    grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
     assert!(out.starts_with("ok"), "{out}");
 
@@ -1027,4 +994,61 @@ async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_approving(db
     await_runs(&h.db, 0).await;
     assert!(queued_plugin_runs(&h.db).await.is_empty());
     assert!(run_now_audits(&h.db).await.is_empty());
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn waiting_offers_become_owners_and_owners_stay_with_their_account(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+
+    // An offer from before owners needed no approval: migration 0047
+    // makes it an owner, audited as the system.
+    sqlx::query(
+        "UPDATE core.plugin_data_sources SET approved_at = NULL, approved_by = NULL, \
+         corporation_id = NULL",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert_eq!(out, "err Error::NotADataSource");
+    sqlx::raw_sql(include_str!(
+        "../../../../migrations/0047_owners_without_approval.sql"
+    ))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+    let audited: (Option<i64>, String) = sqlx::query_as(
+        "SELECT actor_account_id, details::text FROM core.audit_log \
+         WHERE action = 'plugin.data_source_approved'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audited.0, None);
+    assert!(audited.1.contains(&CHRIBBA.to_string()), "{}", audited.1);
+
+    // Added by an account the character isn't on (any more: sold, or
+    // moved to another account): the app stops reading through it.
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let other = me(&h, &pilot).await["account_id"].as_i64().unwrap();
+    sqlx::query("UPDATE core.plugin_data_sources SET offered_by = $1")
+        .bind(other)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert_eq!(out, "err Error::NotADataSource");
+    let sources = tether_db::plugin_esi::data_sources(&h.db, "acme.esi")
+        .await
+        .unwrap();
+    assert!(sources.iter().all(|s| !s.in_use()), "{sources:?}");
+    let _ = owner;
 }

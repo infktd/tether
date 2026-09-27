@@ -19,7 +19,7 @@ discord = ["send_message"]
 timers = "publish"
 
 [capabilities.esi]
-# Through each approved data-source character (AA's structure owner): its
+# Through each owner (data-source character, AA's structure owner): its
 # corporation's structures (needs the in-game Station Manager role) and
 # its own structure notifications; starbases, customs offices and assets
 # (fittings, Metenox fuel, skyhooks) need the Director role, and are

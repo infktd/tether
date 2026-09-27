@@ -65,9 +65,20 @@ pub struct ValueView {
     pub entity: Option<EntityView>,
     pub countdown: Option<CountdownView>,
     pub progress: Option<ProgressView>,
+    /// The host's Add owner button: its words, for a viewer who may add
+    /// owners.
+    pub add_owner: Option<AddOwnerView>,
     /// A link to share: one of the plugin's pages as its full address,
     /// which the host builds from the site's origin.
     pub share: Option<String>,
+}
+
+/// Tether's own Add owner form, posting to the host: the login comes back
+/// to `back`, the page it's on.
+pub struct AddOwnerView {
+    pub label: String,
+    pub plugin: String,
+    pub back: String,
 }
 
 /// A character, corporation, alliance, faction or type: its picture from
@@ -383,6 +394,9 @@ pub struct Ctx<'a> {
     /// The site's origin (as the direct join link's): links to share start
     /// with it.
     pub site: &'a str,
+    /// For a viewer who may add the app's owners: the page's link path,
+    /// which Add owner's login comes back to. `None` draws no Add owner.
+    pub owner_back: Option<String>,
     next: std::cell::Cell<usize>,
 }
 
@@ -394,8 +408,16 @@ impl<'a> Ctx<'a> {
             prefix,
             registers: false,
             site,
+            owner_back: None,
             next: std::cell::Cell::new(0),
         }
+    }
+
+    /// For a viewer who may add owners, on the page at `back` (see
+    /// `owner_back`).
+    pub fn adding_owners(mut self, back: Option<String>) -> Self {
+        self.owner_back = back;
+        self
     }
 
     /// For an app with user scopes (see `registers`).
@@ -441,6 +463,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         progress: None,
         actions: Vec::new(),
         share: None,
+        add_owner: None,
     };
     let mono = |text: String| ValueView {
         mono: true,
@@ -488,6 +511,18 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         // is the site's and the plugin's, never one the plugin wrote.
         Value::Share(path) => ValueView {
             share: Some(format!("{}{}", ctx.site, page_href(plugin, path))),
+            ..plain(String::new())
+        },
+        Value::AddOwner(label) => ValueView {
+            add_owner: ctx.owner_back.as_ref().map(|back| AddOwnerView {
+                label: if label.trim().is_empty() {
+                    "Add owner".to_owned()
+                } else {
+                    label.clone()
+                },
+                plugin: plugin.to_owned(),
+                back: back.clone(),
+            }),
             ..plain(String::new())
         },
         Value::Countdown(text) => match utc(text) {
@@ -954,6 +989,16 @@ async fn render_page(state: &AppState, opened: &Opened, via: Via) -> Result<Page
     }
 }
 
+/// The page's path, for Add owner to come back to, if the viewer may add
+/// the app's owners (a browser session holding the app's add permission).
+fn owner_back(opened: &Opened) -> Option<String> {
+    opened
+        .owners
+        .as_ref()
+        .filter(|o| o.can_offer)
+        .map(|_| opened.path.clone())
+}
+
 /// Draws a page, or with `reload` only its content, for a live page
 /// reloading itself.
 fn draw(
@@ -978,7 +1023,8 @@ fn draw(
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
     let ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
-        .registering(!opened.running.manifest.capabilities.esi.user.is_empty());
+        .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
+        .adding_owners(owner_back(&opened));
     let sections: Vec<SectionView> = page.sections.iter().map(|s| section(&ctx, s)).collect();
     let tab_sections: Vec<SectionView> = page
         .tabs
@@ -1139,7 +1185,8 @@ pub async fn widget(
                                 format!("widget-{index}-{id}"),
                                 &opened.site,
                             )
-                            .registering(!opened.running.manifest.capabilities.esi.user.is_empty());
+                            .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
+                            .adding_owners(owner_back(&opened));
                             page.sections.iter().map(|s| section(&ctx, s)).collect()
                         },
                         href,
@@ -1459,5 +1506,30 @@ mod tests {
             Some("https://auth.example.com/plugins/acme.fat/links/0f3a/add")
         );
         assert!(view.href.is_none());
+    }
+
+    #[test]
+    fn add_owner_is_drawn_only_for_those_who_may_add_owners() {
+        let ctx = |back: Option<&str>| {
+            Ctx::new(
+                "acme.fat",
+                "/plugins/acme.fat/links/create",
+                "page".to_owned(),
+                "",
+            )
+            .adding_owners(back.map(str::to_owned))
+        };
+        let label = Value::AddOwner("Log in with the fleet boss".to_owned());
+        assert!(value(&ctx(None), &label).add_owner.is_none());
+        let drawn = value(&ctx(Some("links/create")), &label)
+            .add_owner
+            .expect("drawn");
+        assert_eq!(drawn.label, "Log in with the fleet boss");
+        assert_eq!(drawn.plugin, "acme.fat");
+        assert_eq!(drawn.back, "links/create");
+        let unnamed = value(&ctx(Some("")), &Value::AddOwner(" ".to_owned()))
+            .add_owner
+            .expect("drawn");
+        assert_eq!(unnamed.label, "Add owner");
     }
 }

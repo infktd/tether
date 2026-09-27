@@ -34,6 +34,7 @@
 
 {% macro value(v, mono_already) -%}
 {%- if !v.actions.is_empty() -%}<span class="row-actions">{% for a in v.actions %}{% call action(a) %}{% endcall %}{% endfor %}</span>
+{%- else if let Some(o) = v.add_owner -%}<form method="post" action="/apps/{{ o.plugin }}/owners/add" hx-boost="false" class="inline-flex"><input type="hidden" name="back" value="{{ o.back }}"><button type="submit" class="btn" data-variant="outline" data-size="sm">{{ o.label }}</button></form>
 {%- else if let Some(url) = v.share -%}<span class="flex max-w-sm items-center gap-2" data-code><input class="input num text-xs min-w-0 flex-1" value="{{ url }}" readonly aria-label="Link to share"><button type="button" class="btn" data-variant="outline" data-size="sm" data-copy data-copied-label="Copied">Copy</button></span>
 {%- else if let Some(e) = v.entity -%}{% call entity(e) %}{% endcall %}
 {%- else if let Some(c) = v.countdown -%}<time class="num" datetime="{{ c.at }}" title="{{ c.title }}" data-countdown>{{ c.text }}</time>

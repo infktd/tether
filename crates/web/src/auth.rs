@@ -296,7 +296,7 @@ pub async fn callback(
                 "This was started from another session. Please sign in and try again.",
             ));
         };
-        // An app owner offer the account may no longer make links nothing
+        // An app owner the account may no longer add links nothing
         // and keeps no token.
         if let db::Purpose::DataSource(plugin) = &attempt.purpose {
             crate::plugin_consent::check_offer(&state, account, plugin).await?;
@@ -475,11 +475,16 @@ pub async fn callback(
             .await?
             .is_some()
     {
-        "/register"
+        "/register".to_owned()
+    } else if let db::Purpose::DataSource(_) = &attempt.purpose {
+        // Back on the app's page, which learns which of the pilot's own
+        // characters was just added (to offer it at once: FAT's fleet
+        // boss).
+        format!("{}?owner={}", attempt.return_to, identity.character_id)
     } else {
-        attempt.return_to.as_str()
+        attempt.return_to.clone()
     };
-    Ok((jar, Redirect::to(return_to)).into_response())
+    Ok((jar, Redirect::to(&return_to)).into_response())
 }
 
 /// `POST /auth/logout`.

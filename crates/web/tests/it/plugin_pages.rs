@@ -431,6 +431,8 @@ async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
     }
     // Not a live page.
     assert!(!body.contains("hx-trigger=\"every"), "{body}");
+    // No Add owner: this app has no data sources.
+    assert!(!body.contains("owners/add"), "{body}");
     // No Register Character card: this app reads no members' characters.
     assert!(!body.contains("Register Character"), "{body}");
 

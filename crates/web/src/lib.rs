@@ -369,10 +369,6 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/plugins/{id}", get(pages::plugins::plugin))
         .route(
-            "/admin/plugins/{id}/sources/{character}/approve",
-            post(pages::plugins::approve_source),
-        )
-        .route(
             "/admin/plugins/{id}/sources/{character}/remove",
             post(pages::plugins::remove_source),
         )
@@ -420,10 +416,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/apps/{id}/owners/{character}/withdraw",
             post(pages::plugin_access::withdraw),
-        )
-        .route(
-            "/apps/{id}/owners/{character}/approve",
-            post(pages::plugin_access::approve),
         )
         .route(
             "/apps/{id}/owners/{character}/remove",
