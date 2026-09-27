@@ -1,0 +1,215 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, entity_id, entity_kind, name, note, blacklisted, restricted,\n               ultra_restricted, corporation_id, corporation_name, alliance_id,\n               alliance_name, added_by, added_by_name, added_at, edited_at\n        FROM core.pilot_notes\n        WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))\n          AND ($2::text IS NULL OR name ILIKE $2)\n          AND (CASE WHEN $3 THEN blacklisted\n                    ELSE ($4 OR ($5::bigint IS NOT NULL AND corporation_id = $5))\n                         AND ($6 OR NOT restricted) AND ($7 OR NOT ultra_restricted)\n               END)\n        ORDER BY added_at DESC, id DESC LIMIT $8\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "entity_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "entity_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "entity_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "entity_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "blacklisted",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "blacklisted"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "restricted",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "restricted"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "ultra_restricted",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "ultra_restricted"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "corporation_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "corporation_name"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "alliance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "alliance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "alliance_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "alliance_name"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "added_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "added_by"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "added_by_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "added_by_name"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "added_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "added_at"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "edited_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.pilot_notes",
+            "name": "edited_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Text",
+        "Bool",
+        "Bool",
+        "Int8",
+        "Bool",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "f0c8f296278ee9745e968897bdc5408225902d00675fda19b99d0a2985229cfd"
+}

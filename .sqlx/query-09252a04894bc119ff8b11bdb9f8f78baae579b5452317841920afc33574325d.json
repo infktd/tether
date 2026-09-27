@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT a.id, a.state_id, a.compliant,\n               m.corporation_id AS main_corporation, m.alliance_id AS main_alliance,\n               (EXTRACT(epoch FROM now() - m.birthday) / 86400)::bigint AS age_days,\n               ARRAY(\n                   SELECT DISTINCT x FROM core.characters c,\n                        LATERAL unnest(ARRAY[c.corporation_id, c.alliance_id]) AS x\n                   WHERE c.account_id = a.id AND x IS NOT NULL\n               ) AS \"affiliations!\",\n               ARRAY(SELECT gm.group_id FROM core.group_members gm WHERE gm.account_id = a.id)\n                   AS \"groups!\",\n               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS \"characters!\"\n        FROM core.accounts a\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE a.active AND NOT core.blacklisted(a.id)\n          AND ($1::bigint[] IS NULL OR a.id = ANY($1))\n        ",
+  "query": "\n        SELECT a.id, a.state_id, a.compliant,\n               m.corporation_id AS main_corporation, m.alliance_id AS main_alliance,\n               (EXTRACT(epoch FROM now() - m.birthday) / 86400)::bigint AS age_days,\n               ARRAY(\n                   SELECT DISTINCT x FROM core.characters c,\n                        LATERAL unnest(ARRAY[c.corporation_id, c.alliance_id]) AS x\n                   WHERE c.account_id = a.id AND x IS NOT NULL\n               ) AS \"affiliations!\",\n               ARRAY(SELECT gm.group_id FROM core.group_members gm WHERE gm.account_id = a.id)\n                   AS \"groups!\",\n               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS \"characters!\"\n        FROM core.accounts a\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE a.active\n          AND ($1::bigint[] IS NULL OR a.id = ANY($1))\n        ",
   "describe": {
     "columns": [
       {
@@ -100,5 +100,5 @@
       null
     ]
   },
-  "hash": "d93f50855a95c5365cd75e9192ce851f86ca169c783bc9098b1cdd632061435c"
+  "hash": "09252a04894bc119ff8b11bdb9f8f78baae579b5452317841920afc33574325d"
 }

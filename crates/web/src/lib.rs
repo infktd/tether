@@ -313,6 +313,14 @@ pub fn router(state: AppState) -> Router {
             post(pages::blacklist::delete_note),
         )
         .route(
+            "/blacklist/notes/{id}/edit",
+            post(pages::blacklist::edit_note),
+        )
+        .route(
+            "/blacklist/notes/{id}/comments",
+            post(pages::blacklist::add_comment),
+        )
+        .route(
             "/admin/groups/{id}/smart",
             post(pages::admin::smart_settings),
         )

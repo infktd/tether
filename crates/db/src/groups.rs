@@ -764,7 +764,7 @@ pub async fn set_leader_group<'e>(
 /// `get_group_leaders_groups`). Whatever its state, as AA's code (its
 /// docstring's "and is also a Member" isn't checked there). Only while the
 /// account is active (AA's inactive users can't sign in), has a main (group
-/// rights count only then) and isn't blacklisted.
+/// rights count only then).
 pub async fn led_by<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
@@ -776,7 +776,6 @@ pub async fn led_by<'e>(
           AND EXISTS (
             SELECT 1 FROM core.accounts a
             WHERE a.id = $1 AND a.active AND a.main_character_id IS NOT NULL
-              AND NOT core.blacklisted(a.id)
           )
           AND (
             EXISTS (SELECT 1 FROM core.group_leaders l WHERE l.group_id = g.id AND l.account_id = $1)

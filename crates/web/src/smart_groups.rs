@@ -379,7 +379,7 @@ async fn sweep_one(
     let now = chrono::Utc::now();
     let mut changed = 0;
     // `None`: can't be in the group at all (no main, deactivated,
-    // blacklisted, or a state it doesn't allow); else the filters failed.
+    // or a state it doesn't allow); else the filters failed.
     let judge = |account: &AccountId| -> Option<Vec<&Rule>> {
         let f = facts.get(account)?;
         if !tether_core::groups::state_allowed(&allowed, StateId(f.state)) {
@@ -412,7 +412,7 @@ async fn sweep_one(
             ),
             None => ("not eligible for this group".to_owned(), false),
         };
-        // Ineligible accounts (blacklisted, deactivated, a state the group
+        // Ineligible accounts (deactivated, without a main, a state the group
         // doesn't allow) leave at once; failing filters gets the grace.
         let remove_now = !eligible
             || settings.grace_days == 0
@@ -650,15 +650,13 @@ pub async fn explain(
     let names = Names::load(&mut conn, &rules, false).await?;
     let facts = facts.get(&account);
     let blocked = match facts {
-        None => Some(
-            "Deactivated, blacklisted or without a main character: in no smart group.".to_owned(),
-        ),
+        None => Some("Deactivated or without a main character: in no smart group.".to_owned()),
         Some(f) => {
             let allowed = groups::allowed_states(&mut *conn, group).await?;
             if tether_core::groups::state_allowed(&allowed, StateId(f.state)) {
                 None
             } else {
-                let state = tether_db::states::list(&mut *conn)
+                let state = tether_db::states::all(&mut *conn)
                     .await?
                     .into_iter()
                     .find(|s| s.id.0 == f.state)
@@ -788,7 +786,7 @@ async fn check_filter(
             if states.len() > MAX_IDS {
                 return Err(too_many());
             }
-            let known: BTreeSet<i64> = tether_db::states::list(&mut *tx)
+            let known: BTreeSet<i64> = tether_db::states::all(&mut *tx)
                 .await?
                 .into_iter()
                 .map(|s| s.id.0)

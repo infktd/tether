@@ -40,7 +40,7 @@ pub struct StateOption {
 }
 
 pub(crate) async fn state_options(state: &AppState) -> Result<Vec<StateOption>, AppError> {
-    Ok(tether_db::states::list(&state.db)
+    Ok(tether_db::states::all(&state.db)
         .await?
         .into_iter()
         .map(|s| StateOption {
@@ -406,7 +406,7 @@ async fn group_page(
         .cloned()
         .ok_or_else(|| AppError::not_found("No such group."))?;
     let allowed = groups::allowed_states(&state.db, GroupId(id)).await?;
-    let states = tether_db::states::list(&state.db)
+    let states = tether_db::states::all(&state.db)
         .await?
         .into_iter()
         .map(|s| StateChoice {

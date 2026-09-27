@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1 FROM core.accounts a JOIN core.characters c ON c.id = a.main_character_id\n            WHERE a.is_owner\n              AND (c.id = ANY($1) OR c.corporation_id = ANY($1) OR c.alliance_id = ANY($1))\n        ) AS \"covers!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "covers!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "55c4c006103ddad9d2831adac3411ebb2a0f4cc3576155c51bf1b20d0dc733aa"
+}

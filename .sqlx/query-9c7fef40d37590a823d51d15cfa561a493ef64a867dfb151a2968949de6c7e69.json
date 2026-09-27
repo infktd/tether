@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, entity_id, entity_kind, name, note, added_by, added_by_name, added_at\n        FROM core.pilot_notes\n        WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))\n          AND ($2::text IS NULL OR name ILIKE $2)\n        ORDER BY added_at DESC, id DESC LIMIT $3\n        ",
+  "query": "\n        SELECT id, note_id, comment, restricted, ultra_restricted, added_by_name, added_at\n        FROM core.pilot_note_comments\n        WHERE note_id = ANY($1) AND ($2 OR NOT restricted) AND ($3 OR NOT ultra_restricted)\n        ORDER BY added_at, id\n        ",
   "describe": {
     "columns": [
       {
@@ -9,84 +9,73 @@
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
+            "table": "core.pilot_note_comments",
             "name": "id"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "entity_id",
+        "name": "note_id",
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
-            "name": "entity_id"
+            "table": "core.pilot_note_comments",
+            "name": "note_id"
           }
         }
       },
       {
         "ordinal": 2,
-        "name": "entity_kind",
+        "name": "comment",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
-            "name": "entity_kind"
+            "table": "core.pilot_note_comments",
+            "name": "comment"
           }
         }
       },
       {
         "ordinal": 3,
-        "name": "name",
-        "type_info": "Text",
+        "name": "restricted",
+        "type_info": "Bool",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
-            "name": "name"
+            "table": "core.pilot_note_comments",
+            "name": "restricted"
           }
         }
       },
       {
         "ordinal": 4,
-        "name": "note",
-        "type_info": "Text",
+        "name": "ultra_restricted",
+        "type_info": "Bool",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
-            "name": "note"
+            "table": "core.pilot_note_comments",
+            "name": "ultra_restricted"
           }
         }
       },
       {
         "ordinal": 5,
-        "name": "added_by",
-        "type_info": "Int8",
-        "origin": {
-          "Table": {
-            "table": "core.pilot_notes",
-            "name": "added_by"
-          }
-        }
-      },
-      {
-        "ordinal": 6,
         "name": "added_by_name",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
+            "table": "core.pilot_note_comments",
             "name": "added_by_name"
           }
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "added_at",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
+            "table": "core.pilot_note_comments",
             "name": "added_at"
           }
         }
@@ -95,8 +84,8 @@
     "parameters": {
       "Left": [
         "Int8Array",
-        "Text",
-        "Int8"
+        "Bool",
+        "Bool"
       ]
     },
     "nullable": [
@@ -105,10 +94,9 @@
       false,
       false,
       false,
-      true,
       false,
       false
     ]
   },
-  "hash": "e52b43542657a13034c402bf85f49d59d6bf401c0f40a384fe8cf2e0f287d221"
+  "hash": "9c7fef40d37590a823d51d15cfa561a493ef64a867dfb151a2968949de6c7e69"
 }

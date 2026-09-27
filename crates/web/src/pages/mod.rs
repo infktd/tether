@@ -549,7 +549,9 @@ pub(crate) async fn load(
         .iter()
         .any(|p| perms.contains(*p)),
         users: perms.contains(tether_core::permissions::ADMIN_USERS),
-        blacklist: perms.contains(tether_core::permissions::BLACKLIST_VIEW),
+        blacklist: tether_core::permissions::BLACKLIST_PAGE
+            .iter()
+            .any(|p| perms.contains(*p)),
         permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEETPINGS_ACCESS),
         services: perms.contains(tether_core::permissions::DISCORD_ACCESS),

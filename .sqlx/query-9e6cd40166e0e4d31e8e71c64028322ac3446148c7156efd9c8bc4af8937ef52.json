@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.group_members (group_id, account_id)\n        SELECT $1, a.id FROM core.accounts a\n        WHERE a.id = $2 AND a.active AND a.main_character_id IS NOT NULL\n        ON CONFLICT DO NOTHING\n        RETURNING true AS \"added!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "added!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9e6cd40166e0e4d31e8e71c64028322ac3446148c7156efd9c8bc4af8937ef52"
+}

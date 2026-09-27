@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT DISTINCT a.id FROM core.accounts a\n        JOIN core.characters c ON c.account_id = a.id\n        WHERE NOT a.is_owner AND $1 IN (c.id, c.corporation_id, c.alliance_id)\n        ",
+  "query": "\n        SELECT DISTINCT a.id FROM core.accounts a\n        JOIN core.characters c ON c.id = a.main_character_id\n        WHERE NOT a.is_owner\n          AND (c.id = ANY($1) OR c.corporation_id = ANY($1) OR c.alliance_id = ANY($1))\n        ",
   "describe": {
     "columns": [
       {
@@ -17,12 +17,12 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8Array"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "1079c87a7c2d14429bf2436d6f497532274fd8477baf5c613bb7ce3a1b4d00e2"
+  "hash": "9cd51351130a7853d360d2687c0ac81a617b632dc21fcd2af1d08408987d7c40"
 }

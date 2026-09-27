@@ -19,10 +19,27 @@ fn state(id: i64, name: String, builtin: Option<String>, priority: i32, public: 
     }
 }
 
-/// Every state, highest priority first (Guest last).
-/// The states admins arrange, highest priority first. Not the Blacklist:
-/// only the Blacklist page changes it, so nothing that lists states can
-/// offer it (grants, group states, Auto Groups, moves).
+/// Every state, the Blacklist first and Guest last: what grants, group
+/// states, Auto Groups, Discord mappings and filters can name (AA's
+/// Blacklist is a state like any other there).
+pub async fn all<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, name, builtin, priority FROM core.states
+        ORDER BY builtin IS DISTINCT FROM 'blacklist', priority DESC
+        "#
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| state(r.id, r.name, r.builtin, r.priority))
+        .collect())
+}
+
+/// The states admins arrange, highest priority first (Guest last). Not
+/// the Blacklist: the Blacklist page decides who is in it, and it's always
+/// above every other.
 pub async fn list<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<State>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
@@ -131,9 +148,9 @@ pub async fn load_rules(conn: &mut sqlx::PgConnection) -> Result<StateRules, sql
     for c in covered(&mut *conn).await? {
         rules.add(c.state, c.kind, c.entity_id);
     }
-    // The Blacklist covers nothing here: evaluation checks every
-    // character against core.blacklist (see core.blacklisted), whatever
-    // the priorities.
+    // The Blacklist covers nothing here: evaluation checks the main
+    // against the blacklisted notes (see core.blacklisted), whatever the
+    // priorities.
     if let Some(blacklist) = builtin(&mut *conn, Builtin::Blacklist).await? {
         rules.set_blacklist(blacklist.id, blacklist.priority);
     }

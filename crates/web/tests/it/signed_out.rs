@@ -40,6 +40,8 @@ const ROUTES: &[&str] = &[
     "/blacklist/1/remove",
     "/blacklist/notes",
     "/blacklist/notes/1/delete",
+    "/blacklist/notes/1/edit",
+    "/blacklist/notes/1/comments",
     "/admin/groups/1/smart",
     "/admin/groups/1/smart/filters",
     "/admin/groups/1/smart/filters/1/delete",

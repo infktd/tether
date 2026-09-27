@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM core.pilot_notes WHERE id = $1 RETURNING entity_id, note",
+  "query": "DELETE FROM core.pilot_notes WHERE id = $1 RETURNING entity_id, blacklisted",
   "describe": {
     "columns": [
       {
@@ -16,12 +16,12 @@
       },
       {
         "ordinal": 1,
-        "name": "note",
-        "type_info": "Text",
+        "name": "blacklisted",
+        "type_info": "Bool",
         "origin": {
           "Table": {
             "table": "core.pilot_notes",
-            "name": "note"
+            "name": "blacklisted"
           }
         }
       }
@@ -36,5 +36,5 @@
       false
     ]
   },
-  "hash": "5097a8bad1f92730bd20d4ab681c2ef38bd36fea4bc7dfe019731b626af251d1"
+  "hash": "ef9ce9c456729fa4a3d247a4c94f2f58a0c464c553144d309c41bb25c0717a9e"
 }

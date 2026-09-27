@@ -1,5 +1,7 @@
-//! The Blacklist and the Pilot Log (AA's blacklist app): blacklisted
-//! characters, corporations and alliances, and notes on any of them.
+//! The Blacklist and the Pilot Log (allianceauth-blacklist): notes on
+//! pilots, corporations and alliances (AA's EveNote), each of which may be
+//! blacklisted, restricted or ultra restricted, and comments on notes. The
+//! Blacklist is the blacklisted notes.
 
 use chrono::{DateTime, Utc};
 use tether_core::states::EntityKind;
@@ -7,41 +9,177 @@ use tether_core::states::EntityKind;
 use crate::accounts::AccountId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Listed {
+pub struct Note {
+    pub id: i64,
     pub entity_id: i64,
     pub kind: EntityKind,
     pub name: String,
-    pub reason: String,
+    /// AA's reason.
+    pub note: String,
+    pub blacklisted: bool,
+    pub restricted: bool,
+    pub ultra_restricted: bool,
+    /// A pilot's corporation and alliance when the note was added (a
+    /// corporation's note: itself).
+    pub corporation_id: Option<i64>,
+    pub corporation_name: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
+    pub added_by: Option<i64>,
     pub added_by_name: String,
     pub added_at: DateTime<Utc>,
+    pub edited_at: Option<DateTime<Utc>>,
 }
 
-pub async fn list<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<Listed>, sqlx::Error> {
-    let rows = sqlx::query!(
+/// Which notes a reader sees, as allianceauth-blacklist's permissions.
+#[derive(Debug, Clone, Default)]
+pub struct Reader {
+    /// Every note (`view_eve_notes`), or only those on this corporation's
+    /// pilots (`view_basic_eve_notes`: the main's corporation). Neither:
+    /// none.
+    pub all: bool,
+    pub corporation: Option<i64>,
+    pub restricted: bool,
+    pub ultra_restricted: bool,
+}
+
+/// What to list.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Filter<'a> {
+    pub about: Option<&'a [i64]>,
+    /// Whose subject's name contains this.
+    pub search: Option<&'a str>,
+    /// Only blacklisted notes, whatever the reader's tiers (the Blacklist:
+    /// a restricted note's reason is hidden, not the entry).
+    pub blacklist: bool,
+}
+
+struct Row {
+    id: i64,
+    entity_id: i64,
+    entity_kind: String,
+    name: String,
+    note: String,
+    blacklisted: bool,
+    restricted: bool,
+    ultra_restricted: bool,
+    corporation_id: Option<i64>,
+    corporation_name: Option<String>,
+    alliance_id: Option<i64>,
+    alliance_name: Option<String>,
+    added_by: Option<i64>,
+    added_by_name: String,
+    added_at: DateTime<Utc>,
+    edited_at: Option<DateTime<Utc>>,
+}
+
+impl Row {
+    fn into_note(self) -> Option<Note> {
+        Some(Note {
+            id: self.id,
+            entity_id: self.entity_id,
+            kind: EntityKind::parse(&self.entity_kind)?,
+            name: self.name,
+            note: self.note,
+            blacklisted: self.blacklisted,
+            restricted: self.restricted,
+            ultra_restricted: self.ultra_restricted,
+            corporation_id: self.corporation_id,
+            corporation_name: self.corporation_name,
+            alliance_id: self.alliance_id,
+            alliance_name: self.alliance_name,
+            added_by: self.added_by,
+            added_by_name: self.added_by_name,
+            added_at: self.added_at,
+            edited_at: self.edited_at,
+        })
+    }
+}
+
+fn like(search: &str) -> String {
+    let escaped: String = search
+        .chars()
+        .flat_map(|c| match c {
+            '\\' | '%' | '_' => vec!['\\', c],
+            c => vec![c],
+        })
+        .collect();
+    format!("%{escaped}%")
+}
+
+/// The newest notes the reader may see (for the Blacklist, every
+/// blacklisted note), filtered.
+pub async fn notes<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    reader: &Reader,
+    filter: Filter<'_>,
+    limit: i64,
+) -> Result<Vec<Note>, sqlx::Error> {
+    let rows = sqlx::query_as!(
+        Row,
         r#"
-        SELECT entity_id, entity_kind, name, reason, added_by_name, added_at
-        FROM core.blacklist ORDER BY added_at DESC
-        "#
+        SELECT id, entity_id, entity_kind, name, note, blacklisted, restricted,
+               ultra_restricted, corporation_id, corporation_name, alliance_id,
+               alliance_name, added_by, added_by_name, added_at, edited_at
+        FROM core.pilot_notes
+        WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))
+          AND ($2::text IS NULL OR name ILIKE $2)
+          AND (CASE WHEN $3 THEN blacklisted
+                    ELSE ($4 OR ($5::bigint IS NOT NULL AND corporation_id = $5))
+                         AND ($6 OR NOT restricted) AND ($7 OR NOT ultra_restricted)
+               END)
+        ORDER BY added_at DESC, id DESC LIMIT $8
+        "#,
+        filter.about.map(<[i64]>::to_vec) as Option<Vec<i64>>,
+        filter.search.map(like),
+        filter.blacklist,
+        reader.all,
+        reader.corporation,
+        reader.restricted,
+        reader.ultra_restricted,
+        limit,
     )
     .fetch_all(executor)
     .await?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|r| {
-            Some(Listed {
-                entity_id: r.entity_id,
-                kind: EntityKind::parse(&r.entity_kind)?,
-                name: r.name,
-                reason: r.reason,
-                added_by_name: r.added_by_name,
-                added_at: r.added_at,
-            })
-        })
-        .collect())
+    Ok(rows.into_iter().filter_map(Row::into_note).collect())
 }
 
-/// Whether an account is blacklisted (any of its characters, or their
-/// corporation or alliance, is listed; never the owner).
+pub async fn note<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: i64,
+) -> Result<Option<Note>, sqlx::Error> {
+    let row = sqlx::query_as!(
+        Row,
+        r#"
+        SELECT id, entity_id, entity_kind, name, note, blacklisted, restricted,
+               ultra_restricted, corporation_id, corporation_name, alliance_id,
+               alliance_name, added_by, added_by_name, added_at, edited_at
+        FROM core.pilot_notes WHERE id = $1
+        "#,
+        id
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.and_then(Row::into_note))
+}
+
+impl Reader {
+    /// Whether the reader may see this note in the Pilot Log.
+    pub fn sees(&self, note: &Note) -> bool {
+        (self.all || (self.corporation.is_some() && note.corporation_id == self.corporation))
+            && (self.restricted || !note.restricted)
+            && (self.ultra_restricted || !note.ultra_restricted)
+    }
+
+    /// Whether the reader may read this note's reason (on the Blacklist,
+    /// a restricted one's reason says who to ask instead, as AA's).
+    pub fn reads_reason(&self, note: &Note) -> bool {
+        (self.restricted || !note.restricted) && (self.ultra_restricted || !note.ultra_restricted)
+    }
+}
+
+/// Whether an account is blacklisted: its main is, or is in a
+/// corporation or alliance that is (never the owner).
 pub async fn is_blacklisted<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     account: AccountId,
@@ -51,175 +189,79 @@ pub async fn is_blacklisted<'e>(
         .await
 }
 
-/// The accounts an entry covers (or would): any character of theirs is it,
-/// or is in it. Never the owner.
+/// The accounts blacklisting these would cover (or does): their main is
+/// one of them, or is in one. Never the owner.
 pub async fn accounts_covered<'e>(
     executor: impl sqlx::PgExecutor<'e>,
-    entity_id: i64,
+    entities: &[i64],
 ) -> Result<Vec<AccountId>, sqlx::Error> {
     let ids = sqlx::query_scalar!(
         r#"
         SELECT DISTINCT a.id FROM core.accounts a
-        JOIN core.characters c ON c.account_id = a.id
-        WHERE NOT a.is_owner AND $1 IN (c.id, c.corporation_id, c.alliance_id)
+        JOIN core.characters c ON c.id = a.main_character_id
+        WHERE NOT a.is_owner
+          AND (c.id = ANY($1) OR c.corporation_id = ANY($1) OR c.alliance_id = ANY($1))
         "#,
-        entity_id
+        entities
     )
     .fetch_all(executor)
     .await?;
     Ok(ids.into_iter().map(AccountId).collect())
 }
 
-pub struct NewListing<'a> {
-    pub entity_id: i64,
-    pub kind: EntityKind,
-    pub name: &'a str,
-    pub reason: &'a str,
-    pub added_by: AccountId,
-    pub added_by_name: &'a str,
-}
-
-/// `false` if it was already blacklisted.
-pub async fn add<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    listing: NewListing<'_>,
-) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query!(
-        r#"
-        INSERT INTO core.blacklist (entity_id, entity_kind, name, reason, added_by, added_by_name)
-        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING
-        "#,
-        listing.entity_id,
-        listing.kind.as_str(),
-        listing.name,
-        listing.reason,
-        listing.added_by.0,
-        listing.added_by_name,
-    )
-    .execute(executor)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-/// Removes an entry; returns its kind and name.
-pub async fn remove<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    entity_id: i64,
-) -> Result<Option<(String, String)>, sqlx::Error> {
-    let row = sqlx::query!(
-        "DELETE FROM core.blacklist WHERE entity_id = $1 RETURNING entity_kind, name",
-        entity_id
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(row.map(|r| (r.entity_kind, r.name)))
-}
-
-/// Whether blacklisting this would cover the owner's main.
+/// Whether blacklisting any of these would cover the owner's main.
 pub async fn covers_owner<'e>(
     executor: impl sqlx::PgExecutor<'e>,
-    entity_id: i64,
+    entities: &[i64],
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
         SELECT EXISTS (
             SELECT 1 FROM core.accounts a JOIN core.characters c ON c.id = a.main_character_id
             WHERE a.is_owner
-              AND (c.id = $1 OR c.corporation_id = $1 OR c.alliance_id = $1)
+              AND (c.id = ANY($1) OR c.corporation_id = ANY($1) OR c.alliance_id = ANY($1))
         ) AS "covers!"
         "#,
+        entities
+    )
+    .fetch_one(executor)
+    .await
+}
+
+/// Whether any note on this entity is blacklisted.
+pub async fn entity_blacklisted<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    entity_id: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM core.pilot_notes WHERE entity_id = $1 AND blacklisted) AS "b!""#,
         entity_id
     )
     .fetch_one(executor)
     .await
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Note {
-    pub id: i64,
-    pub entity_id: i64,
-    pub kind: EntityKind,
-    pub name: String,
-    pub note: String,
-    pub added_by: Option<i64>,
-    pub added_by_name: String,
-    pub added_at: DateTime<Utc>,
-}
-
-/// The newest notes: on the given entities, or whose subject's name
-/// contains `search`, or all.
-pub async fn notes<'e>(
+/// A character Tether knows, with the other characters on its account
+/// (AA's "all linked characters"): `(id, name, corporation, alliance)`.
+pub async fn linked_characters<'e>(
     executor: impl sqlx::PgExecutor<'e>,
-    about: Option<&[i64]>,
-    search: Option<&str>,
-    limit: i64,
-) -> Result<Vec<Note>, sqlx::Error> {
-    let pattern = search.map(|s| {
-        let escaped: String = s
-            .chars()
-            .flat_map(|c| match c {
-                '\\' | '%' | '_' => vec!['\\', c],
-                c => vec![c],
-            })
-            .collect();
-        format!("%{escaped}%")
-    });
+    character: i64,
+) -> Result<Vec<(i64, String, Option<i64>, Option<i64>)>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, entity_id, entity_kind, name, note, added_by, added_by_name, added_at
-        FROM core.pilot_notes
-        WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))
-          AND ($2::text IS NULL OR name ILIKE $2)
-        ORDER BY added_at DESC, id DESC LIMIT $3
+        SELECT c.id, c.name, c.corporation_id, c.alliance_id FROM core.characters c
+        WHERE c.account_id = (SELECT account_id FROM core.characters WHERE id = $1)
+          AND c.id <> $1
+        ORDER BY c.name
         "#,
-        about.map(<[i64]>::to_vec) as Option<Vec<i64>>,
-        pattern,
-        limit,
+        character
     )
     .fetch_all(executor)
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|r| {
-            Some(Note {
-                id: r.id,
-                entity_id: r.entity_id,
-                kind: EntityKind::parse(&r.entity_kind)?,
-                name: r.name,
-                note: r.note,
-                added_by: r.added_by,
-                added_by_name: r.added_by_name,
-                added_at: r.added_at,
-            })
-        })
+        .map(|r| (r.id, r.name, r.corporation_id, r.alliance_id))
         .collect())
-}
-
-pub async fn note<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
-    id: i64,
-) -> Result<Option<Note>, sqlx::Error> {
-    let row = sqlx::query!(
-        r#"
-        SELECT id, entity_id, entity_kind, name, note, added_by, added_by_name, added_at
-        FROM core.pilot_notes WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(row.and_then(|r| {
-        Some(Note {
-            id: r.id,
-            entity_id: r.entity_id,
-            kind: EntityKind::parse(&r.entity_kind)?,
-            name: r.name,
-            note: r.note,
-            added_by: r.added_by,
-            added_by_name: r.added_by_name,
-            added_at: r.added_at,
-        })
-    }))
 }
 
 pub struct NewNote<'a> {
@@ -227,6 +269,11 @@ pub struct NewNote<'a> {
     pub kind: EntityKind,
     pub name: &'a str,
     pub note: &'a str,
+    pub blacklisted: bool,
+    pub restricted: bool,
+    pub ultra_restricted: bool,
+    pub corporation: Option<(i64, Option<&'a str>)>,
+    pub alliance: Option<(i64, Option<&'a str>)>,
     pub added_by: AccountId,
     pub added_by_name: &'a str,
 }
@@ -237,13 +284,22 @@ pub async fn add_note<'e>(
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.pilot_notes (entity_id, entity_kind, name, note, added_by, added_by_name)
-        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+        INSERT INTO core.pilot_notes
+            (entity_id, entity_kind, name, note, blacklisted, restricted, ultra_restricted,
+             corporation_id, corporation_name, alliance_id, alliance_name, added_by, added_by_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
         "#,
         note.entity_id,
         note.kind.as_str(),
         note.name,
         note.note,
+        note.blacklisted,
+        note.restricted,
+        note.ultra_restricted,
+        note.corporation.map(|(id, _)| id),
+        note.corporation.and_then(|(_, name)| name),
+        note.alliance.map(|(id, _)| id),
+        note.alliance.and_then(|(_, name)| name),
         note.added_by.0,
         note.added_by_name,
     )
@@ -251,16 +307,130 @@ pub async fn add_note<'e>(
     .await
 }
 
-/// Deletes a note; returns it.
+/// Changes a note's reason and flags.
+pub async fn edit_note<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: i64,
+    note: &str,
+    blacklisted: bool,
+    restricted: bool,
+    ultra_restricted: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE core.pilot_notes
+        SET note = $2, blacklisted = $3, restricted = $4, ultra_restricted = $5, edited_at = now()
+        WHERE id = $1
+        "#,
+        id,
+        note,
+        blacklisted,
+        restricted,
+        ultra_restricted,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Takes an entity off the Blacklist (every note on it stays, no longer
+/// blacklisted); returns how many notes changed and the entity's kind and
+/// name.
+pub async fn unblacklist<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    entity_id: i64,
+) -> Result<Option<(String, String, u64)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        UPDATE core.pilot_notes SET blacklisted = false, edited_at = now()
+        WHERE entity_id = $1 AND blacklisted
+        RETURNING entity_kind, name
+        "#,
+        entity_id
+    )
+    .fetch_all(executor)
+    .await?;
+    let count = rows.len() as u64;
+    Ok(rows
+        .into_iter()
+        .next()
+        .map(|r| (r.entity_kind, r.name, count)))
+}
+
+/// Deletes a note and its comments; returns it.
 pub async fn delete_note<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     id: i64,
-) -> Result<Option<(i64, String)>, sqlx::Error> {
+) -> Result<Option<(i64, bool)>, sqlx::Error> {
     let row = sqlx::query!(
-        "DELETE FROM core.pilot_notes WHERE id = $1 RETURNING entity_id, note",
+        "DELETE FROM core.pilot_notes WHERE id = $1 RETURNING entity_id, blacklisted",
         id
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.map(|r| (r.entity_id, r.note)))
+    Ok(row.map(|r| (r.entity_id, r.blacklisted)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comment {
+    pub id: i64,
+    pub note_id: i64,
+    pub comment: String,
+    pub restricted: bool,
+    pub ultra_restricted: bool,
+    pub added_by_name: String,
+    pub added_at: DateTime<Utc>,
+}
+
+/// The comments on these notes the reader may see, oldest first.
+pub async fn comments<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    notes: &[i64],
+    restricted: bool,
+    ultra_restricted: bool,
+) -> Result<Vec<Comment>, sqlx::Error> {
+    sqlx::query_as!(
+        Comment,
+        r#"
+        SELECT id, note_id, comment, restricted, ultra_restricted, added_by_name, added_at
+        FROM core.pilot_note_comments
+        WHERE note_id = ANY($1) AND ($2 OR NOT restricted) AND ($3 OR NOT ultra_restricted)
+        ORDER BY added_at, id
+        "#,
+        notes,
+        restricted,
+        ultra_restricted,
+    )
+    .fetch_all(executor)
+    .await
+}
+
+pub struct NewComment<'a> {
+    pub note_id: i64,
+    pub comment: &'a str,
+    pub restricted: bool,
+    pub ultra_restricted: bool,
+    pub added_by: AccountId,
+    pub added_by_name: &'a str,
+}
+
+pub async fn add_comment<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    comment: NewComment<'_>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        INSERT INTO core.pilot_note_comments
+            (note_id, comment, restricted, ultra_restricted, added_by, added_by_name)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+        "#,
+        comment.note_id,
+        comment.comment,
+        comment.restricted,
+        comment.ultra_restricted,
+        comment.added_by.0,
+        comment.added_by_name,
+    )
+    .fetch_one(executor)
+    .await
 }

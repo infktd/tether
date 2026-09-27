@@ -25,11 +25,33 @@ pub const GROUP_MANAGEMENT: &str = "group_management";
 pub const REQUEST_GROUPS: &str = "request_groups";
 /// AA's `discord.access_discord`: may link Discord and be in the server.
 pub const DISCORD_ACCESS: &str = "discord.access_discord";
-/// The Blacklist and Pilot Log (AA's blacklist app): see them; add notes;
-/// add to and remove from the Blacklist (and delete anyone's notes).
-pub const BLACKLIST_VIEW: &str = "blacklist.view_blacklist";
-pub const BLACKLIST_ADD_NOTES: &str = "blacklist.add_notes";
-pub const BLACKLIST_MANAGE: &str = "blacklist.manage_blacklist";
+/// allianceauth-blacklist's 16 permissions: the Pilot Log's notes (on
+/// your own corporation's pilots, or anyone), the Blacklist, the
+/// restricted and ultra restricted tiers, and comments on notes.
+pub const BLACKLIST_VIEW_BASIC_NOTES: &str = "blacklist.view_basic_eve_notes";
+pub const BLACKLIST_VIEW_BLACKLIST: &str = "blacklist.view_eve_blacklist";
+pub const BLACKLIST_VIEW_NOTES: &str = "blacklist.view_eve_notes";
+pub const BLACKLIST_ADD_BASIC_NOTES: &str = "blacklist.add_basic_eve_notes";
+pub const BLACKLIST_ADD_NOTES: &str = "blacklist.add_new_eve_notes";
+pub const BLACKLIST_ADD_TO_BLACKLIST: &str = "blacklist.add_to_blacklist";
+pub const BLACKLIST_VIEW_RESTRICTED: &str = "blacklist.view_restricted_eve_notes";
+pub const BLACKLIST_VIEW_ULTRA: &str = "blacklist.view_ultra_restricted_eve_notes";
+pub const BLACKLIST_ADD_RESTRICTED: &str = "blacklist.add_restricted_eve_notes";
+pub const BLACKLIST_ADD_ULTRA: &str = "blacklist.add_ultra_restricted_eve_notes";
+pub const BLACKLIST_VIEW_COMMENTS: &str = "blacklist.view_eve_note_comments";
+pub const BLACKLIST_VIEW_RESTRICTED_COMMENTS: &str = "blacklist.view_eve_note_restricted_comments";
+pub const BLACKLIST_VIEW_ULTRA_COMMENTS: &str = "blacklist.view_eve_note_ultra_restricted_comments";
+pub const BLACKLIST_ADD_COMMENTS: &str = "blacklist.add_new_eve_note_comments";
+pub const BLACKLIST_ADD_RESTRICTED_COMMENTS: &str =
+    "blacklist.add_new_eve_note_restricted_comments";
+pub const BLACKLIST_ADD_ULTRA_COMMENTS: &str =
+    "blacklist.add_new_eve_note_ultra_restricted_comments";
+/// Any of these opens the Blacklist page.
+pub const BLACKLIST_PAGE: &[&str] = &[
+    BLACKLIST_VIEW_BLACKLIST,
+    BLACKLIST_VIEW_NOTES,
+    BLACKLIST_VIEW_BASIC_NOTES,
+];
 /// AA's permissions tool: who holds every permission, and through what.
 pub const PERMISSIONS_AUDIT: &str = "permissions_tool.audit_permissions";
 
@@ -67,13 +89,56 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     ),
     (ADMIN_AUDIT, "Read the audit log"),
     (
-        BLACKLIST_VIEW,
-        "See the Blacklist and the Pilot Log (notes on pilots, corporations and alliances)",
+        BLACKLIST_VIEW_BASIC_NOTES,
+        "Pilot Log: see notes on your main's corporation's pilots",
     ),
-    (BLACKLIST_ADD_NOTES, "Add notes to the Pilot Log"),
     (
-        BLACKLIST_MANAGE,
-        "Blacklist and unblacklist pilots, corporations and alliances (blacklisted accounts hold nothing), and delete any note",
+        BLACKLIST_VIEW_BLACKLIST,
+        "See the Blacklist (restricted reasons stay hidden without their tier)",
+    ),
+    (
+        BLACKLIST_VIEW_NOTES,
+        "Pilot Log: see every note (on pilots, corporations and alliances)",
+    ),
+    (
+        BLACKLIST_ADD_BASIC_NOTES,
+        "Pilot Log: add notes on your main's corporation's pilots",
+    ),
+    (
+        BLACKLIST_ADD_NOTES,
+        "Pilot Log: add notes on anyone, and edit notes",
+    ),
+    (
+        BLACKLIST_ADD_TO_BLACKLIST,
+        "Blacklist and unblacklist through a note: an account whose main is, or is in, a blacklisted pilot, corporation or alliance is in the Blacklist state",
+    ),
+    (BLACKLIST_VIEW_RESTRICTED, "Pilot Log: see restricted notes"),
+    (
+        BLACKLIST_VIEW_ULTRA,
+        "Pilot Log: see ultra restricted notes",
+    ),
+    (BLACKLIST_ADD_RESTRICTED, "Pilot Log: mark notes restricted"),
+    (
+        BLACKLIST_ADD_ULTRA,
+        "Pilot Log: mark notes ultra restricted",
+    ),
+    (BLACKLIST_VIEW_COMMENTS, "Pilot Log: see comments on notes"),
+    (
+        BLACKLIST_VIEW_RESTRICTED_COMMENTS,
+        "Pilot Log: see restricted comments",
+    ),
+    (
+        BLACKLIST_VIEW_ULTRA_COMMENTS,
+        "Pilot Log: see ultra restricted comments",
+    ),
+    (BLACKLIST_ADD_COMMENTS, "Pilot Log: comment on notes"),
+    (
+        BLACKLIST_ADD_RESTRICTED_COMMENTS,
+        "Pilot Log: add restricted comments",
+    ),
+    (
+        BLACKLIST_ADD_ULTRA_COMMENTS,
+        "Pilot Log: add ultra restricted comments",
     ),
     (
         PERMISSIONS_AUDIT,

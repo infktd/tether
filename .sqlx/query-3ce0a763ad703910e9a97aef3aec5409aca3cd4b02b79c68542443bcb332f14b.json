@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM core.blacklist WHERE entity_id = $1 RETURNING entity_kind, name",
+  "query": "\n        UPDATE core.pilot_notes SET blacklisted = false, edited_at = now()\n        WHERE entity_id = $1 AND blacklisted\n        RETURNING entity_kind, name\n        ",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "core.blacklist",
+            "table": "core.pilot_notes",
             "name": "entity_kind"
           }
         }
@@ -20,7 +20,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "core.blacklist",
+            "table": "core.pilot_notes",
             "name": "name"
           }
         }
@@ -36,5 +36,5 @@
       false
     ]
   },
-  "hash": "3b14a1fb03b06e3d6fc9849a3c0e6943978fa88786a45f73db5d8ea6fdbdd9f7"
+  "hash": "3ce0a763ad703910e9a97aef3aec5409aca3cd4b02b79c68542443bcb332f14b"
 }

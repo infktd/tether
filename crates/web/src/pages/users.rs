@@ -155,22 +155,33 @@ async fn user_page(
         })
         .collect();
     let viewer = tether_db::permissions::effective(&state.db, session.account).await?;
-    let notes = if viewer.contains(tether_core::permissions::BLACKLIST_VIEW) {
+    // The Pilot Log's notes on its characters, as the viewer may see them
+    // there.
+    let reader = crate::blacklist::access(state, session.account).await?;
+    let notes = if reader.notes() {
         let ids: Vec<i64> = characters
             .iter()
             .map(|c: &CharacterView| c.row.id)
             .collect();
         Some(
-            tether_db::blacklist::notes(&state.db, Some(&ids), None, 100)
-                .await?
-                .into_iter()
-                .map(|n| NoteView {
-                    at: when(n.added_at),
-                    name: n.name,
-                    note: n.note,
-                    by: n.added_by_name,
-                })
-                .collect(),
+            tether_db::blacklist::notes(
+                &state.db,
+                &reader.reader,
+                tether_db::blacklist::Filter {
+                    about: Some(&ids),
+                    ..Default::default()
+                },
+                100,
+            )
+            .await?
+            .into_iter()
+            .map(|n| NoteView {
+                at: when(n.added_at),
+                name: n.name,
+                note: n.note,
+                by: n.added_by_name,
+            })
+            .collect(),
         )
     } else {
         None

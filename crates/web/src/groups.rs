@@ -153,24 +153,9 @@ pub enum Joined {
 }
 
 /// Joins a group, or asks to, in AA's order.
-/// Blacklisted accounts are in no group and lead none.
-async fn refuse_blacklisted(
-    tx: &mut sqlx::PgConnection,
-    account: AccountId,
-) -> Result<(), AppError> {
-    if tether_db::blacklist::is_blacklisted(&mut *tx, account).await? {
-        return Err(AppError::new(
-            StatusCode::FORBIDDEN,
-            "Blacklisted accounts can't be in groups.",
-        ));
-    }
-    Ok(())
-}
-
 pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joined, AppError> {
     let mut tx = db.begin().await?;
     let group = load_locked(&mut tx, group, false).await?;
-    refuse_blacklisted(&mut tx, account).await?;
     let me = standing(&mut tx, account).await?;
     if !me.has_main {
         return Err(AppError::new(
@@ -501,7 +486,6 @@ pub async fn decide(
         if leave {
             groups::remove_member(&mut *tx, group.id, requester).await?;
         } else {
-            refuse_blacklisted(&mut tx, requester).await?;
             crate::smart_groups::check(&mut tx, group.id, requester).await?;
             let them = standing(&mut tx, requester).await?;
             let allowed = groups::allowed_states(&mut *tx, group.id).await?;
@@ -762,7 +746,7 @@ pub async fn update(
     if new.compliance && membership_moves {
         require_grants(&mut tx, actor, group, "make it a compliance group").await?;
     }
-    let known = tether_db::states::list(&mut *tx).await?;
+    let known = tether_db::states::all(&mut *tx).await?;
     if let Some(bad) = states.iter().find(|s| !known.iter().any(|k| k.id == **s)) {
         return Err(AppError::bad_request(format!("No state {}.", bad.0)));
     }
@@ -842,7 +826,6 @@ pub async fn add_member(
 ) -> Result<(), AppError> {
     let mut tx = db.begin().await?;
     let found = load_locked(&mut tx, group, false).await?;
-    refuse_blacklisted(&mut tx, account).await?;
     crate::smart_groups::check(&mut tx, group, account).await?;
     if found.compliance {
         return Err(managed_group());
@@ -912,7 +895,6 @@ pub async fn set_leader(
     let mut tx = db.begin().await?;
     load_locked(&mut tx, group, false).await?;
     if on {
-        refuse_blacklisted(&mut tx, account).await?;
         if !standing(&mut tx, account).await?.active {
             return Err(AppError::bad_request(
                 "That account is deactivated: reactivate it first.",

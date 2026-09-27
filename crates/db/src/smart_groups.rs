@@ -177,7 +177,7 @@ pub async fn delete_filter<'e>(
 }
 
 /// What filters read, for every account that may be in a group (active,
-/// with a main, not blacklisted), or only the ones given.
+/// with a main), or only the ones given.
 pub async fn facts<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     only: Option<&[AccountId]>,
@@ -198,7 +198,7 @@ pub async fn facts<'e>(
                (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS "characters!"
         FROM core.accounts a
         JOIN core.characters m ON m.id = a.main_character_id
-        WHERE a.active AND NOT core.blacklisted(a.id)
+        WHERE a.active
           AND ($1::bigint[] IS NULL OR a.id = ANY($1))
         "#,
         ids.as_deref() as Option<&[i64]>,
@@ -324,7 +324,7 @@ pub async fn member_ids<'e>(
 }
 
 /// Adds an account the sweep found passing, checked again as it's added:
-/// still active, with a main, and not blacklisted. `false` if not added.
+/// still active and with a main. `false` if not added.
 pub async fn add_if_eligible<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
@@ -335,7 +335,6 @@ pub async fn add_if_eligible<'e>(
         INSERT INTO core.group_members (group_id, account_id)
         SELECT $1, a.id FROM core.accounts a
         WHERE a.id = $2 AND a.active AND a.main_character_id IS NOT NULL
-          AND NOT core.blacklisted(a.id)
         ON CONFLICT DO NOTHING
         RETURNING true AS "added!"
         "#,

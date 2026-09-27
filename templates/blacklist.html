@@ -1,30 +1,35 @@
 {% extends "layout.html" %}
 {% block title %}Blacklist{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Blacklist</span>{% endblock %}
+{% macro tiers(prefix, restricted, ultra) %}
+{% if restricted %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="restricted" value="on"> Restricted</label>{% endif %}
+{% if ultra %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="ultra_restricted" value="on"> Ultra restricted</label>{% endif %}
+{% endmacro %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div>
     <h1 class="page-title">Blacklist</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">A blacklisted pilot, corporation or alliance puts every account whose main it covers in the Blacklist state, above every other: no permissions, no groups, no services, until it's removed. The Pilot Log keeps notes on anyone.</p>
+    <p class="text-muted-foreground mt-1 max-w-3xl">The Pilot Log keeps notes on pilots, corporations and alliances; a note can blacklist them. An account whose main is, or is in, a blacklisted pilot, corporation or alliance is in the Blacklist state, above every other: it holds what that state is granted, and leaves groups and services the state isn't allowed.</p>
   </div>
   {% include "admin_error.html" %}
 
+  {% if access.blacklist %}
   <section class="card data-card">
     <header><h2>Blacklisted <span class="num text-muted-foreground font-normal">{{ listed.len() }}</span></h2></header>
     {% if listed.is_empty() %}
     <p class="px-5 pb-5 text-sm text-muted-foreground">Nobody.</p>
     {% else %}
     <table class="table">
-      <thead><tr><th scope="col">Who</th><th scope="col">Reason</th><th scope="col">Added</th>{% if manage %}<th scope="col"><span class="sr-only">Remove</span></th>{% endif %}</tr></thead>
+      <thead><tr><th scope="col">Who</th><th scope="col">Reason</th><th scope="col">Added</th>{% if access.add && access.add_to_blacklist %}<th scope="col"><span class="sr-only">Remove</span></th>{% endif %}</tr></thead>
       <tbody>
         {% for l in listed %}
         <tr>
-          <td><div class="font-medium">{{ l.name }}</div><div class="text-xs text-muted-foreground">{{ l.kind.as_str() }}</div></td>
-          <td class="w-full whitespace-normal"><div class="break-words text-sm">{{ l.reason }}</div></td>
-          <td><div class="num text-sm">{{ crate::pages::blacklist::when(l.added_at) }}</div><div class="text-xs text-muted-foreground">{{ l.added_by_name }}</div></td>
-          {% if manage %}
+          <td><div class="font-medium">{{ l.note.name }}</div><div class="text-xs text-muted-foreground">{{ l.note.kind.as_str() }}</div></td>
+          <td class="w-full whitespace-normal">{% if let Some(reason) = l.reason %}<div class="break-words text-sm">{{ reason }}</div>{% else %}<div class="text-sm text-muted-foreground">Restricted: ask {{ l.note.added_by_name }}.</div>{% endif %}</td>
+          <td><div class="num text-sm">{{ crate::pages::blacklist::when(l.note.added_at) }}</div><div class="text-xs text-muted-foreground">{{ l.note.added_by_name }}</div></td>
+          {% if access.add && access.add_to_blacklist %}
           <td>
-            <form method="post" action="/blacklist/{{ l.entity_id }}/remove" hx-confirm="Take {{ l.name }} off the Blacklist? Accounts it covered get their state back.">
+            <form method="post" action="/blacklist/{{ l.note.entity_id }}/remove" hx-confirm="Take {{ l.note.name }} off the Blacklist? Its notes stay in the Pilot Log, and accounts it covered get their state back.">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
             </form>
           </td>
@@ -34,18 +39,22 @@
       </tbody>
     </table>
     {% endif %}
-    {% if manage %}
-    <form method="post" action="/blacklist" class="flex flex-wrap items-end gap-2 px-5 pb-5" hx-confirm="Blacklist them? Every account whose main this covers loses its permissions, groups and services.">
+    {% if access.adds() && access.add_to_blacklist %}
+    <form method="post" action="/blacklist" class="flex flex-wrap items-end gap-3 px-5 pb-5" hx-confirm="Blacklist them? Every account whose main this covers moves to the Blacklist state.">
       <div class="grid gap-1.5"><label class="label" for="bl-who">Pilot, corporation or alliance</label><input class="input w-64" id="bl-who" name="who" maxlength="100" placeholder="Exact name or id" required></div>
-      <div class="grid gap-1.5 flex-1 min-w-64"><label class="label" for="bl-reason">Reason</label><input class="input" id="bl-reason" name="reason" maxlength="1000" required></div>
+      <div class="grid gap-1.5 flex-1 min-w-64"><label class="label" for="bl-reason">Reason</label><input class="input" id="bl-reason" name="reason" maxlength="2000" required></div>
+      {% call tiers("bl", access.add_restricted, access.add_ultra) %}{% endcall %}
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="linked" value="on"> Every character on a pilot's account</label>
       <button type="submit" class="btn" data-variant="primary">Blacklist</button>
     </form>
     {% endif %}
   </section>
+  {% endif %}
 
+  {% if access.notes() %}
   <section class="card data-card">
     <header class="flex flex-wrap items-center justify-between gap-3">
-      <h2>Pilot Log</h2>
+      <div><h2>Pilot Log</h2>{% if !access.reader.all %}<p>Notes on your corporation's pilots.</p>{% endif %}</div>
       <form method="get" action="/blacklist" class="flex gap-2" role="search">
         <label class="sr-only" for="q">Search notes</label>
         <input class="input h-8 w-56" type="search" id="q" name="q" value="{{ query }}" placeholder="Name" maxlength="100">
@@ -56,16 +65,57 @@
     <p class="px-5 pb-5 text-sm text-muted-foreground">No notes{% if !query.is_empty() %} about that name{% endif %}.</p>
     {% else %}
     <table class="table">
-      <thead><tr><th scope="col">About</th><th scope="col">Note</th><th scope="col">Added</th><th scope="col"><span class="sr-only">Delete</span></th></tr></thead>
+      <thead><tr><th scope="col">About</th><th scope="col">Reason</th><th scope="col">Added</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
-        {% for n in notes %}
+        {% for v in notes %}
+        {% let n = v.note %}
         <tr>
-          <td><div class="font-medium">{{ n.name }}</div><div class="text-xs text-muted-foreground">{{ n.kind.as_str() }}</div></td>
-          <td class="w-full whitespace-normal"><div class="break-words text-sm">{{ n.note }}</div></td>
+          <td>
+            <div class="font-medium">{{ n.name }}</div>
+            <div class="text-xs text-muted-foreground">{{ n.kind.as_str() }}{% if let Some(c) = n.corporation_name %}{% if n.kind.as_str() == "character" %} · {{ c }}{% endif %}{% endif %}{% if let Some(a) = n.alliance_name %}{% if n.kind.as_str() != "alliance" %} · {{ a }}{% endif %}{% endif %}</div>
+          </td>
+          <td class="w-full whitespace-normal">
+            <div class="flex flex-wrap gap-1 mb-1">
+              {% if n.blacklisted %}<span class="badge" data-variant="destructive">Blacklisted</span>{% endif %}
+              {% if n.restricted %}<span class="badge" data-variant="secondary">Restricted</span>{% endif %}
+              {% if n.ultra_restricted %}<span class="badge" data-variant="secondary">Ultra restricted</span>{% endif %}
+            </div>
+            <div class="break-words text-sm">{{ n.note }}</div>
+            {% if access.comments && !v.comments.is_empty() %}
+            <ul class="mt-2 grid gap-1 border-l pl-3">
+              {% for c in v.comments %}
+              <li class="text-sm"><span class="break-words">{{ c.comment }}</span> <span class="text-xs text-muted-foreground">{{ c.added_by_name }}, <span class="num">{{ crate::pages::blacklist::when(c.added_at) }}</span>{% if c.restricted %} · restricted{% endif %}{% if c.ultra_restricted %} · ultra restricted{% endif %}</span></li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+            {% if access.comment %}
+            <details class="mt-2"><summary class="text-xs text-muted-foreground">Comment</summary>
+              <form method="post" action="/blacklist/notes/{{ n.id }}/comments" class="grid gap-2 mt-2">
+                <label class="sr-only" for="comment-{{ n.id }}">Comment on {{ n.name }}</label>
+                <textarea class="textarea" id="comment-{{ n.id }}" name="comment" rows="2" maxlength="2000" required></textarea>
+                <div class="flex flex-wrap items-center gap-3">{% call tiers("c", access.comment_restricted, access.comment_ultra) %}{% endcall %}<button type="submit" class="btn" data-variant="outline" data-size="sm">Add comment</button></div>
+              </form>
+            </details>
+            {% endif %}
+            {% if access.add %}
+            <details class="mt-2"><summary class="text-xs text-muted-foreground">Edit</summary>
+              <form method="post" action="/blacklist/notes/{{ n.id }}/edit" class="grid gap-2 mt-2">
+                <label class="sr-only" for="reason-{{ n.id }}">Reason</label>
+                <textarea class="textarea" id="reason-{{ n.id }}" name="reason" rows="2" maxlength="2000" required>{{ n.note }}</textarea>
+                <div class="flex flex-wrap items-center gap-3">
+                  {% if access.add_to_blacklist %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="blacklisted" value="on"{% if n.blacklisted %} checked{% endif %}> Blacklisted</label>{% endif %}
+                  {% if access.add_restricted %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="restricted" value="on"{% if n.restricted %} checked{% endif %}> Restricted</label>{% endif %}
+                  {% if access.add_ultra %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="ultra_restricted" value="on"{% if n.ultra_restricted %} checked{% endif %}> Ultra restricted</label>{% endif %}
+                  <button type="submit" class="btn" data-variant="outline" data-size="sm">Save</button>
+                </div>
+              </form>
+            </details>
+            {% endif %}
+          </td>
           <td><div class="num text-sm">{{ crate::pages::blacklist::when(n.added_at) }}</div><div class="text-xs text-muted-foreground">{{ n.added_by_name }}</div></td>
           <td>
-            {% if self.can_delete(n) %}
-            <form method="post" action="/blacklist/notes/{{ n.id }}/delete" hx-confirm="Delete this note?">
+            {% if access.owner %}
+            <form method="post" action="/blacklist/notes/{{ n.id }}/delete" hx-confirm="Delete this note and its comments?">
               <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Delete note" title="Delete">{% call icons::icon("trash") %}{% endcall %}</button>
             </form>
             {% endif %}
@@ -75,13 +125,23 @@
       </tbody>
     </table>
     {% endif %}
-    {% if add_notes %}
-    <form method="post" action="/blacklist/notes" class="flex flex-wrap items-end gap-2 px-5 pb-5">
-      <div class="grid gap-1.5"><label class="label" for="note-who">About</label><input class="input w-64" id="note-who" name="who" maxlength="100" placeholder="Exact name or id" required></div>
-      <div class="grid gap-1.5 flex-1 min-w-64"><label class="label" for="note-text">Note</label><input class="input" id="note-text" name="note" maxlength="2000" required></div>
-      <button type="submit" class="btn" data-variant="outline">Add note</button>
-    </form>
-    {% endif %}
   </section>
+  {% endif %}
+
+  {% if access.adds() %}
+  <form class="card" method="post" action="/blacklist/notes">
+    <header><h2>Add a note</h2>{% if !access.add %}<p>On a pilot in your own corporation.</p>{% endif %}</header>
+    <section class="grid gap-3">
+      <div class="grid gap-1.5 max-w-sm"><label class="label" for="note-who">About</label><input class="input" id="note-who" name="who" maxlength="100" placeholder="Exact name or id" required></div>
+      <div class="grid gap-1.5"><label class="label" for="note-text">Reason</label><textarea class="textarea" id="note-text" name="reason" rows="3" maxlength="2000" required></textarea></div>
+      <div class="flex flex-wrap items-center gap-3">
+        {% if access.add_to_blacklist %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="blacklisted" value="on"> Blacklist</label>{% endif %}
+        {% call tiers("note", access.add_restricted, access.add_ultra) %}{% endcall %}
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="linked" value="on"> Also note every character on a pilot's account</label>
+      </div>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Add note</button></footer>
+  </form>
+  {% endif %}
 </div>
 {% endblock %}

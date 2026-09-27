@@ -1,4 +1,4 @@
-//! `/blacklist`: the Blacklist and the Pilot Log (AA's blacklist app).
+//! `/blacklist`: the Blacklist and the Pilot Log (allianceauth-blacklist).
 
 use askama::Template;
 use axum::Form;
@@ -6,44 +6,64 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde::Deserialize;
-use tether_core::permissions::{BLACKLIST_ADD_NOTES, BLACKLIST_MANAGE, BLACKLIST_VIEW};
-use tether_db::blacklist::{self as db, Listed, Note};
+use tether_db::blacklist::{self as db, Comment, Filter, Note};
 
-use super::admin::guard;
-use super::{PageError, Shell, render};
+use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
-use crate::blacklist;
+use crate::blacklist::{self, Access, Flags, NewNote};
 use crate::error::AppError;
 
 pub fn when(at: &chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M").to_string()
 }
 
+/// A Blacklist row.
+pub struct Listed {
+    pub note: Note,
+    /// `None`: restricted, and the viewer lacks the tier (AA shows who to
+    /// ask instead).
+    pub reason: Option<String>,
+}
+
+/// A Pilot Log row with the comments the viewer may see.
+pub struct NoteView {
+    pub note: Note,
+    pub comments: Vec<Comment>,
+}
+
 #[derive(Template)]
 #[template(path = "blacklist.html")]
 struct BlacklistPage {
     shell: Shell,
+    access: Access,
     listed: Vec<Listed>,
-    notes: Vec<Note>,
+    notes: Vec<NoteView>,
     query: String,
-    manage: bool,
-    add_notes: bool,
-    me: i64,
     error: Option<String>,
-}
-
-impl BlacklistPage {
-    /// Authors delete their own notes; managers anyone's.
-    fn can_delete(&self, note: &Note) -> bool {
-        self.manage || note.added_by == Some(self.me)
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct NotesQuery {
     #[serde(default)]
     q: String,
+}
+
+/// Signed in, with any of the Blacklist page's permissions.
+async fn guard(
+    state: &AppState,
+    session: Option<CurrentSession>,
+) -> Result<(CurrentSession, Shell), PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    let held = tether_db::permissions::effective(&state.db, session.account).await?;
+    if !tether_core::permissions::BLACKLIST_PAGE
+        .iter()
+        .any(|p| held.contains(*p))
+    {
+        return Err(AppError::forbidden().into());
+    }
+    let loaded = load(state, &session, "blacklist").await?;
+    Ok((session, loaded.shell))
 }
 
 async fn page(
@@ -53,9 +73,65 @@ async fn page(
     query: String,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
-    let held = tether_db::permissions::effective(&state.db, session.account).await?;
+    let access = blacklist::access(state, session.account).await?;
+    let listed = if access.blacklist {
+        db::notes(
+            &state.db,
+            &access.reader,
+            Filter {
+                blacklist: true,
+                ..Filter::default()
+            },
+            500,
+        )
+        .await?
+        .into_iter()
+        .map(|note| Listed {
+            reason: access.reader.reads_reason(&note).then(|| note.note.clone()),
+            note,
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
     let q: String = query.trim().chars().take(100).collect();
-    let notes = db::notes(&state.db, None, (!q.is_empty()).then_some(q.as_str()), 200).await?;
+    let notes = if access.notes() {
+        db::notes(
+            &state.db,
+            &access.reader,
+            Filter {
+                search: (!q.is_empty()).then_some(q.as_str()),
+                ..Filter::default()
+            },
+            200,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    let comments = if access.comments && !notes.is_empty() {
+        let ids: Vec<i64> = notes.iter().map(|n| n.id).collect();
+        db::comments(
+            &state.db,
+            &ids,
+            access.restricted_comments,
+            access.ultra_comments,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    let notes = notes
+        .into_iter()
+        .map(|note| NoteView {
+            comments: comments
+                .iter()
+                .filter(|c| c.note_id == note.id)
+                .cloned()
+                .collect(),
+            note,
+        })
+        .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -64,12 +140,10 @@ async fn page(
             code,
             &BlacklistPage {
                 shell,
-                listed: db::list(&state.db).await?,
+                access,
+                listed,
                 notes,
                 query,
-                manage: held.contains(BLACKLIST_MANAGE),
-                add_notes: held.contains(BLACKLIST_ADD_NOTES),
-                me: session.account.0,
                 error: error.map(|e| e.message().to_owned()),
             },
         ),
@@ -82,39 +156,66 @@ pub async fn index(
     session: Option<CurrentSession>,
     Query(query): Query<NotesQuery>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, BLACKLIST_VIEW, "blacklist").await?;
+    let (session, shell) = guard(&state, session).await?;
     page(&state, &session, shell, query.q, None).await
 }
 
-async fn done(
+async fn done<T>(
     state: &AppState,
     session: &CurrentSession,
     shell: Shell,
-    result: Result<(), AppError>,
+    result: Result<T, AppError>,
+    message: &str,
 ) -> Result<Response, PageError> {
     match result {
-        Ok(()) => Ok(super::stay::back("/blacklist", "Saved.")),
+        Ok(_) => Ok(super::stay::back("/blacklist", message)),
         Err(err) => page(state, session, shell, String::new(), Some(err)).await,
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AddForm {
-    who: String,
-    #[serde(default)]
-    reason: String,
+fn on(value: &Option<String>) -> bool {
+    value.is_some()
 }
 
-/// `POST /blacklist`
+#[derive(Debug, Deserialize)]
+pub struct NoteForm {
+    who: String,
+    #[serde(default, alias = "note")]
+    reason: String,
+    #[serde(default)]
+    blacklisted: Option<String>,
+    #[serde(default)]
+    restricted: Option<String>,
+    #[serde(default)]
+    ultra_restricted: Option<String>,
+    #[serde(default)]
+    linked: Option<String>,
+}
+
+impl NoteForm {
+    fn new_note(&self, blacklisted: bool) -> NewNote {
+        NewNote {
+            who: self.who.clone(),
+            reason: self.reason.clone(),
+            flags: Flags {
+                blacklisted: blacklisted || on(&self.blacklisted),
+                restricted: on(&self.restricted),
+                ultra_restricted: on(&self.ultra_restricted),
+            },
+            linked: on(&self.linked),
+        }
+    }
+}
+
+/// `POST /blacklist`: a note with Blacklist ticked.
 pub async fn add(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Form(form): Form<AddForm>,
+    Form(form): Form<NoteForm>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, BLACKLIST_MANAGE, "blacklist").await?;
-    session.require(&state, BLACKLIST_VIEW).await?;
-    let result = blacklist::add(&state, session.account, &form.who, &form.reason).await;
-    done(&state, &session, shell, result).await
+    let (session, shell) = guard(&state, session).await?;
+    let result = blacklist::add_note(&state, session.account, &form.new_note(true)).await;
+    done(&state, &session, shell, result, "Blacklisted.").await
 }
 
 /// `POST /blacklist/{entity_id}/remove`
@@ -123,16 +224,9 @@ pub async fn remove(
     session: Option<CurrentSession>,
     Path(entity_id): Path<i64>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, BLACKLIST_MANAGE, "blacklist").await?;
-    session.require(&state, BLACKLIST_VIEW).await?;
-    let result = blacklist::remove(&state, session.account, entity_id).await;
-    done(&state, &session, shell, result).await
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NoteForm {
-    who: String,
-    note: String,
+    let (session, shell) = guard(&state, session).await?;
+    let result = blacklist::unblacklist(&state, session.account, entity_id).await;
+    done(&state, &session, shell, result, "Taken off the Blacklist.").await
 }
 
 /// `POST /blacklist/notes`
@@ -141,11 +235,37 @@ pub async fn add_note(
     session: Option<CurrentSession>,
     Form(form): Form<NoteForm>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, BLACKLIST_ADD_NOTES, "blacklist").await?;
-    // Adding without seeing makes no sense: notes live on the page.
-    session.require(&state, BLACKLIST_VIEW).await?;
-    let result = blacklist::add_note(&state, session.account, &form.who, &form.note).await;
-    done(&state, &session, shell, result).await
+    let (session, shell) = guard(&state, session).await?;
+    let result = blacklist::add_note(&state, session.account, &form.new_note(false)).await;
+    done(&state, &session, shell, result, "Note added.").await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EditForm {
+    reason: String,
+    #[serde(default)]
+    blacklisted: Option<String>,
+    #[serde(default)]
+    restricted: Option<String>,
+    #[serde(default)]
+    ultra_restricted: Option<String>,
+}
+
+/// `POST /blacklist/notes/{id}/edit`
+pub async fn edit_note(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<EditForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session).await?;
+    let flags = Flags {
+        blacklisted: on(&form.blacklisted),
+        restricted: on(&form.restricted),
+        ultra_restricted: on(&form.ultra_restricted),
+    };
+    let result = blacklist::edit_note(&state, session.account, id, &form.reason, flags).await;
+    done(&state, &session, shell, result, "Saved.").await
 }
 
 /// `POST /blacklist/notes/{id}/delete`
@@ -154,10 +274,33 @@ pub async fn delete_note(
     session: Option<CurrentSession>,
     Path(id): Path<i64>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, BLACKLIST_VIEW, "blacklist").await?;
-    let manage = tether_db::permissions::effective(&state.db, session.account)
-        .await?
-        .contains(BLACKLIST_MANAGE);
-    let result = blacklist::delete_note(&state, session.account, manage, id).await;
-    done(&state, &session, shell, result).await
+    let (session, shell) = guard(&state, session).await?;
+    let result = blacklist::delete_note(&state, session.account, id).await;
+    done(&state, &session, shell, result, "Note deleted.").await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommentForm {
+    comment: String,
+    #[serde(default)]
+    restricted: Option<String>,
+    #[serde(default)]
+    ultra_restricted: Option<String>,
+}
+
+/// `POST /blacklist/notes/{id}/comments`
+pub async fn add_comment(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(form): Form<CommentForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session).await?;
+    let flags = Flags {
+        blacklisted: false,
+        restricted: on(&form.restricted),
+        ultra_restricted: on(&form.ultra_restricted),
+    };
+    let result = blacklist::add_comment(&state, session.account, id, &form.comment, flags).await;
+    done(&state, &session, shell, result, "Comment added.").await
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO core.pilot_notes (entity_id, entity_kind, name, note, added_by, added_by_name)\n        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id\n        ",
+  "query": "\n        INSERT INTO core.pilot_note_comments\n            (note_id, comment, restricted, ultra_restricted, added_by, added_by_name)\n        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id\n        ",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "core.pilot_notes",
+            "table": "core.pilot_note_comments",
             "name": "id"
           }
         }
@@ -19,8 +19,8 @@
       "Left": [
         "Int8",
         "Text",
-        "Text",
-        "Text",
+        "Bool",
+        "Bool",
         "Int8",
         "Text"
       ]
@@ -29,5 +29,5 @@
       false
     ]
   },
-  "hash": "aa085636213b4d8ecbd9cbd400f64a2e2776d04d5a11e1ed1bb66dad7d769183"
+  "hash": "d9deefecee94028a7e7344a7c275b2ad220b8caf2b6aff071ce80b361cbb0bca"
 }

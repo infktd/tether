@@ -558,6 +558,18 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/blacklist/notes/1/edit
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/blacklist/notes/1/comments
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/dashboard/access-tokens
 HTTP 303
 [Asserts]

@@ -106,8 +106,9 @@ pub(crate) async fn evaluate_in(
     // The state comes from the main's affiliation alone, as in Alliance
     // Auth. Compliance (F11) is a flag on top: every character registered
     // with the state's scopes.
-    // Blacklisted: any character on the account, not just the main, so a
-    // clean alt made main is no way out (never the owner).
+    // Blacklisted (AA's blacklist): the main is, or is in, a blacklisted
+    // pilot, corporation or alliance, whatever the priorities (never the
+    // owner). The Blacklist state is all it changes.
     let blacklisted = tether_db::blacklist::is_blacklisted(&mut *tx, account).await?;
     let state = match rules.blacklist() {
         Some(blacklist) if blacklisted => blacklist,
@@ -166,19 +167,6 @@ pub(crate) async fn evaluate_in(
             serde_json::json!({ "account_id": account.0, "reason": "state not allowed" }),
         )
         .await?;
-    }
-    // Blacklisted: no groups at all, as a deactivated account.
-    if blacklisted {
-        for group in tether_db::groups::leave_all(&mut *tx, account).await? {
-            audit::record(
-                &mut *tx,
-                Actor::System,
-                "group.member.remove",
-                Some(&format!("group:{}", group.0)),
-                serde_json::json!({ "account_id": account.0, "reason": "blacklisted" }),
-            )
-            .await?;
-        }
     }
     // Auto Groups: the main's corporation and alliance groups, for the
     // states a config covers. One that doesn't exist yet waits for the

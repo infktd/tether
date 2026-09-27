@@ -1,7 +1,7 @@
 //! Permissions Audit (AA's permissions tool): for every permission, who
 //! holds it and through what, computed the way `permissions::effective`
-//! grants it (active accounts only, never blacklisted ones; groups only
-//! while the account has a main; superusers hold everything).
+//! grants it (active accounts only; groups only while the account has a
+//! main; superusers hold everything).
 
 use crate::PgPool;
 
@@ -25,7 +25,6 @@ pub async fn counts(pool: &PgPool, permission: &str) -> Result<Counts, sqlx::Err
                (SELECT count(*) FROM g WHERE account_id IS NOT NULL) AS "users!",
                (SELECT count(*) FROM core.accounts a
                 WHERE a.active
-                  AND NOT core.blacklisted(a.id)
                   AND (
                     a.is_owner
                     OR a.id IN (SELECT account_id FROM g WHERE account_id IS NOT NULL)
@@ -81,7 +80,6 @@ pub async fn holders(pool: &PgPool, permission: &str) -> Result<Vec<Holder>, sql
         JOIN core.states s ON s.id = a.state_id
         LEFT JOIN core.characters main ON main.id = a.main_character_id
         WHERE a.active
-                  AND NOT core.blacklisted(a.id)
                   AND (
             a.is_owner
             OR a.id IN (SELECT account_id FROM g WHERE account_id IS NOT NULL)

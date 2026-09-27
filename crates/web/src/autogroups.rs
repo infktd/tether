@@ -378,7 +378,7 @@ fn settings_json(settings: &Settings, states: &[StateId]) -> serde_json::Value {
 
 /// States must exist, and never Guest (anyone who signs in is Guest).
 async fn check_states(tx: &mut sqlx::PgConnection, states: &[StateId]) -> Result<(), AppError> {
-    let known = tether_db::states::list(&mut *tx).await?;
+    let known = tether_db::states::all(&mut *tx).await?;
     for state in states {
         match known.iter().find(|k| k.id == *state) {
             None => return Err(AppError::bad_request("Choose states from the list.")),

@@ -159,13 +159,13 @@ async fn held_in(
     conn: &mut sqlx::PgConnection,
     account: AccountId,
 ) -> Result<BTreeSet<String>, sqlx::Error> {
-    // Deactivated accounts hold nothing (AA's inactive users), nor do
-    // blacklisted ones; superusers always hold everything.
+    // Deactivated accounts hold nothing (AA's inactive users); superusers
+    // always hold everything. A blacklisted account holds what the
+    // Blacklist state is granted (AA).
     let owner = sqlx::query_scalar!(
         r#"
         SELECT a.is_owner AS "is_owner!" FROM core.accounts a
         WHERE a.id = $1 AND a.active
-          AND NOT core.blacklisted(a.id)
         "#,
         account.0
     )
