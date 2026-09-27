@@ -41,8 +41,8 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
-    Table, Tone, Value, action, alliance, badge, character, corporation, countdown, item_type,
-    link, log, time,
+    Table, Tone, Value, action, alliance, badge, character, corporation, countdown, defenses,
+    item_type, link, log, time,
 };
 
 use crate::notification::{Category, Context, Fields};
@@ -1530,6 +1530,24 @@ fn visible_state(state: &str, unanchoring: bool) -> &str {
     }
 }
 
+/// Shield, armor and hull as EVE's rings, from the state ESI gives (it
+/// gives no hit points): a structure in its armor timer has lost its
+/// shield, in its hull timer its shield and armor. Reinforced, its core
+/// pulses. States with no defenses to show (customs offices, skyhooks)
+/// draw nothing.
+fn defenses_for(state: &str) -> Value {
+    let (shield, armor, alarm) = match state {
+        "armor_reinforce" => (0.0, 1.0, true),
+        "armor_vulnerable" => (0.0, 1.0, true),
+        "hull_reinforce" => (0.0, 0.0, true),
+        "hull_vulnerable" => (0.0, 0.0, true),
+        "reinforced" => (0.0, 1.0, true),
+        "none" | "" => return "".into(),
+        _ => (1.0, 1.0, false),
+    };
+    defenses(shield, armor, 1.0, alarm)
+}
+
 fn state_badge(state: &str) -> Value {
     let (label, tone) = match state {
         "shield_vulnerable" => ("Shield vulnerable", Tone::Success),
@@ -1654,6 +1672,7 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) 
     };
     let upwell = text(row, 14) == "upwell";
     vec![
+        defenses_for(&text(row, 8)),
         owner_value(int(row, 21), text(row, 13)),
         name_link(row),
         typed(int(row, 22), text(row, 2)),
@@ -1686,6 +1705,7 @@ fn structure_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) 
 fn structure_table(title: &str, empty: &str, rows: Vec<Vec<Value>>) -> Table {
     with_rows(
         Table::new(vec![
+            Column::text(""),
             Column::text("Owner"),
             Column::text("Name"),
             Column::text("Type"),
@@ -1711,6 +1731,7 @@ fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) -
     // Reinforced until, or (with view_all_unanchoring_status) unanchoring at.
     let timer = when(row, 9).or_else(|| when(row, 20).filter(|_| unanchoring));
     vec![
+        defenses_for(visible_state(&text(row, 8), unanchoring)),
         owner_value(int(row, 21), text(row, 13)),
         name_link(row),
         typed(int(row, 22), text(row, 2)),
@@ -1728,6 +1749,7 @@ fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) -
 fn starbase_table(rows: Vec<Vec<Value>>) -> Table {
     with_rows(
         Table::new(vec![
+            Column::text(""),
             Column::text("Owner"),
             Column::text("Name"),
             Column::text("Type"),

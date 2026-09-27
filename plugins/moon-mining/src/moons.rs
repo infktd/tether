@@ -13,7 +13,8 @@ use tether_plugin_sdk::jobs::{self, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Section, Submission, SubmitResult, Table, Tone,
-    Value, badge, character, corporation, item_type, link, log, time,
+    Value, badge, character, composition, composition_large, corporation, item_type, link, log,
+    part, time,
 };
 
 use crate::survey::{self, Survey};
@@ -101,7 +102,10 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
             "{OWNED} \
              SELECT m.moon_id, coalesce(mn.name, 'Moon ' || m.moon_id::text), coalesce(yn.name, ''), y.security, \
                     coalesce(cn.name, ''), coalesce(rn.name, ''), coalesce(st.name, ''), coalesce(st.type_id, 0), \
-                    v.worth, coalesce(v.rarity, 0), o.structure_id \
+                    v.worth, coalesce(v.rarity, 0), o.structure_id, \
+                    (SELECT string_agg(coalesce(t.rarity, 0)::text || ':' || p.amount::text, ',' ORDER BY p.amount DESC) \
+                     FROM survey_products p LEFT JOIN ore_types t ON t.type_id = p.type_id \
+                     WHERE p.moon_id = m.moon_id) \
              FROM moons m \
              LEFT JOIN owned o ON o.moon_id = m.moon_id \
              LEFT JOIN surveys sv ON sv.moon_id = m.moon_id \
@@ -124,6 +128,7 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
     .map_err(|e| failed("reading moons", e))?;
     Ok(with_rows(
         Table::new(vec![
+            Column::text(""),
             Column::text("Moon"),
             Column::text("System"),
             Column::text("Location"),
@@ -144,7 +149,22 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
             } else {
                 "".into()
             };
+            // The moon's ores as a ring, darker to brighter by rarity.
+            let parts = value::parts(&text(r, 11));
+            let ring: Value = if parts.is_empty() {
+                "".into()
+            } else {
+                composition(
+                    parts
+                        .iter()
+                        .map(|(class, share)| {
+                            part(value::rarity(*class), *share, value::grade(*class))
+                        })
+                        .collect(),
+                )
+            };
             vec![
+                ring,
                 text(r, 1).into(),
                 system_label(&text(r, 2), float(r, 3)).into(),
                 place.into(),
@@ -304,14 +324,35 @@ pub fn moon_page(viewer: &Viewer, moon_id: i64) -> Result<Page, PageError> {
             ]
         }),
     );
+    // The survey as a large ring, the month's value in its middle.
+    let ring = (!products.rows.is_empty()).then(|| {
+        composition_large(
+            products
+                .rows
+                .iter()
+                .take(8)
+                .map(|p| {
+                    part(
+                        text(p, 1),
+                        float(p, 3).unwrap_or_default().max(1e-9),
+                        value::grade(int(p, 2)),
+                    )
+                })
+                .collect(),
+            value::short_isk(total),
+        )
+    });
     let mut page = Page::new(name)
         .description(format!(
             "A month of mining: price × share × the {:.1} million m³ a drill pulls in a month ÷ \
              10 m³ a unit of ore, at CCP's average price of the ore itself.",
             rates.per_month() / 1e6
         ))
-        .card(card)
-        .table(composition);
+        .card(card);
+    if let Some(ring) = ring {
+        page = page.card(Card::new("Composition").field("Ores by share", ring));
+    }
+    let mut page = page.table(composition);
     if viewer.can("extractions_access") && owned {
         let now = chrono::Utc::now();
         let history = extractions(Which::AtMoon, &[moon_id.into()])?;

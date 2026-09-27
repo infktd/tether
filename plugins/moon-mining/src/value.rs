@@ -86,6 +86,53 @@ pub fn rarity(class: i64) -> String {
     }
 }
 
+/// A rarity class as the host's grade, darker to brighter by value: R4 is
+/// 0, R64 is 4 (unknown: 0).
+pub fn grade(class: i64) -> u8 {
+    match class {
+        8 => 1,
+        16 => 2,
+        32 => 3,
+        64 => 4,
+        _ => 0,
+    }
+}
+
+/// A moon's ores as parsed from `rarity:share,rarity:share` (the list's
+/// query aggregates them so): the ring's parts.
+pub fn parts(aggregated: &str) -> Vec<(i64, f64)> {
+    aggregated
+        .split(',')
+        .filter_map(|part| {
+            let (class, share) = part.split_once(':')?;
+            let share: f64 = share.parse().ok()?;
+            (share.is_finite() && share > 0.0).then_some((class.parse().unwrap_or(0), share))
+        })
+        .take(8)
+        .collect()
+}
+
+/// ISK in a few characters, for the middle of a ring: `1.84B`, `620M`.
+pub fn short_isk(isk: f64) -> String {
+    let isk = finite(isk);
+    let (scaled, unit) = if isk >= 1e12 {
+        (isk / 1e12, "T")
+    } else if isk >= 1e9 {
+        (isk / 1e9, "B")
+    } else if isk >= 1e6 {
+        (isk / 1e6, "M")
+    } else if isk >= 1e3 {
+        (isk / 1e3, "K")
+    } else {
+        return format!("{isk:.0}");
+    };
+    if scaled >= 100.0 {
+        format!("{scaled:.0}{unit}")
+    } else {
+        format!("{scaled:.2}{unit}")
+    }
+}
+
 /// An ISK amount the host accepts (finite).
 pub fn finite(isk: f64) -> f64 {
     if isk.is_finite() { isk } else { 0.0 }
@@ -146,5 +193,23 @@ mod tests {
         assert_eq!(rarity(64), "R64");
         assert_eq!(rarity(0), "");
         assert_eq!(finite(f64::INFINITY), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod ring_tests {
+    use super::*;
+
+    #[test]
+    fn rarity_grades_and_parts() {
+        assert_eq!(grade(4), 0);
+        assert_eq!(grade(64), 4);
+        assert_eq!(grade(0), 0);
+        assert_eq!(parts("64:0.31,4:0.69"), vec![(64, 0.31), (4, 0.69)]);
+        assert_eq!(parts(""), vec![]);
+        assert_eq!(parts("64:0,x:y,8:0.5"), vec![(8, 0.5)]);
+        assert_eq!(short_isk(1_840_000_000.0), "1.84B");
+        assert_eq!(short_isk(620_000_000.0), "620M");
+        assert_eq!(short_isk(5.0), "5");
     }
 }

@@ -19,8 +19,9 @@ use chrono::{DateTime, Utc};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, badge, character, countdown, link, log, time,
+    Card, Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin, Request, Section, Stat,
+    Submission, SubmitResult, Table, Timeline, Tone, Value, action, badge, character, countdown,
+    link, log, time,
 };
 
 /// AA's field lengths.
@@ -314,6 +315,54 @@ fn fit(list: &mut Vec<Op>, budget: &mut usize) -> bool {
     cut
 }
 
+/// The next week at a glance: a lane per operation type (the rest under
+/// "Other"), each operation where it starts, those within three hours in
+/// the signal colour.
+fn week_timeline(list: &[Op], now: DateTime<Utc>, manage: bool) -> Option<Timeline> {
+    let to = now + chrono::Duration::days(7);
+    let soon: Vec<&Op> = list.iter().filter(|op| op.start <= to).collect();
+    if soon.is_empty() {
+        return None;
+    }
+    let mut lanes: Vec<(String, Lane)> = Vec::new();
+    for op in soon.into_iter().take(200) {
+        let kind = if op.op_type.is_empty() {
+            "Operations".to_owned()
+        } else {
+            op.op_type.clone()
+        };
+        let mut item = LaneItem::new(op.name.clone(), rfc3339(op.start));
+        if op.start - now <= chrono::Duration::hours(3) {
+            item = item.tone(Tone::Warning);
+        }
+        if manage {
+            item = item.link(format!("op/{}", op.id));
+        }
+        // Six lanes by type at most; the rest share "Other".
+        let known = lanes.iter().any(|(k, _)| *k == kind);
+        let kind = if known || lanes.len() < 6 {
+            kind
+        } else {
+            "Other".to_owned()
+        };
+        match lanes.iter().position(|(k, _)| *k == kind) {
+            Some(i) => {
+                if lanes[i].1.items.len() < 50 {
+                    lanes[i].1.items.push(item);
+                }
+            }
+            None => lanes.push((kind.clone(), Lane::new(kind).item(item))),
+        }
+    }
+    let timeline = Timeline::new(rfc3339(now - chrono::Duration::hours(6)), rfc3339(to))
+        .title("The next seven days");
+    Some(
+        lanes
+            .into_iter()
+            .fold(timeline, |t, (_, lane)| t.lane(lane)),
+    )
+}
+
 fn ops_page(viewer: &Viewer) -> Result<Page, PageError> {
     let now = Utc::now();
     let manage = viewer.can(MANAGE);
@@ -349,9 +398,12 @@ fn ops_page(viewer: &Viewer) -> Result<Page, PageError> {
     } else {
         format!("Past Fleet Operations: the latest {PAST_ROWS}, newest first")
     };
-    let page = Page::new("Fleet Operations")
+    let mut page = Page::new("Fleet Operations")
         .description("Fleet operations in EVE time, with their doctrine, form-up system and FC.")
         .stats(vec![next_stat, Stat::new("Upcoming", upcoming_count)]);
+    if let Some(timeline) = week_timeline(&upcoming, now, manage) {
+        page = page.timeline(timeline);
+    }
     Ok(header(page, manage)
         .tab(
             "Upcoming",

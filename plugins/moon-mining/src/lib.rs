@@ -36,8 +36,9 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
-    Table, Tone, Value, badge, character, countdown, isk, item_type, link, log, time,
+    Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin, Request, Section, Stat,
+    Submission, SubmitResult, Table, Timeline, Tone, Value, badge, character, countdown, isk,
+    item_type, link, log, time,
 };
 
 use crate::planner::{Advice, Cadence, Drill};
@@ -1441,6 +1442,50 @@ fn advice_row(drill: &Drill, advice: &Advice) -> Vec<Value> {
     vec![drill.name.clone().into(), status.into(), pops, action]
 }
 
+/// The plan on a timeline: a lane per drill with its pop (or the start
+/// the planner proposes, dashed), and the cadence's slots shaded.
+fn plan_timeline(advice: &[(Drill, Advice)], cadence: Cadence, now: DateTime<Utc>) -> Timeline {
+    let from = now - Duration::hours(6);
+    let to = now + planner::GAP_HORIZON;
+    let mut timeline = Timeline::new(rfc3339(from), rfc3339(to)).title("The next two weeks");
+    let mut slot = cadence.first_from(from);
+    let mut windows = 0;
+    while slot <= to && windows < 60 {
+        timeline = timeline.window(
+            rfc3339(slot - planner::ON_SLOT),
+            rfc3339(slot + planner::ON_SLOT),
+        );
+        slot += cadence.every.max(Duration::hours(1));
+        windows += 1;
+    }
+    for (drill, a) in advice.iter().take(20) {
+        let lane = Lane::new(drill.name.clone());
+        let lane = match a {
+            Advice::OnSlot { pop, .. } => {
+                lane.item(LaneItem::new("Pops", rfc3339(*pop)).tone(Tone::Success))
+            }
+            Advice::OffSlot { pop, .. } => {
+                lane.item(LaneItem::new("Pops off slot", rfc3339(*pop)).tone(Tone::Warning))
+            }
+            Advice::Overlap { pop, with, .. } => lane
+                .item(LaneItem::new(format!("Pops with {with}"), rfc3339(*pop)).tone(Tone::Danger)),
+            Advice::Start {
+                arrival, duration, ..
+            } => lane.item(
+                LaneItem::new(
+                    format!("Start now: {}", planner::duration_text(*duration)),
+                    rfc3339(now),
+                )
+                .until(rfc3339(*arrival + planner::AUTO_FRACTURE))
+                .planned(),
+            ),
+            Advice::NoSlot => lane.caption("Idle: no free slot"),
+        };
+        timeline = timeline.lane(lane);
+    }
+    timeline
+}
+
 fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
     let corporations = station_manager_corporations(viewer)?;
     if corporations.is_empty() {
@@ -1497,15 +1542,19 @@ fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
                 .empty("Every slot has a pop."),
             plan.gaps.iter().take(100).map(|g| vec![time(rfc3339(*g))]),
         );
+        if !plan.advice.is_empty() {
+            page = page.timeline(plan_timeline(&plan.advice, cadence, now));
+        }
         page = page
             .form(
                 Form::new(format!("cadence_{corp}"), "Save cadence")
                     .title("Cadence")
                     .description("One pop every so many hours, lined up on a time of day (EVE).")
                     .field(
-                        Field::number("every_hours", "Hours between pops")
+                        Field::number("every_hours", "Keep pops apart by (hours)")
                             .range(Some(1.0), Some(168.0), true)
                             .value(every.to_string())
+                            .help("Any whole number of hours, 1 to 168: 12, 24 and 48 are common.")
                             .required(),
                     )
                     .field(

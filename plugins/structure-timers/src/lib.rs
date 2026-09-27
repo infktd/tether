@@ -20,8 +20,9 @@ use chrono::{DateTime, Utc};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, badge, character, countdown, link, log, time,
+    Card, Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin, Request, Section, Stat,
+    Submission, SubmitResult, Table, Timeline, Tone, Value, action, badge, character, countdown,
+    link, log, time,
 };
 
 /// AA's structure choices.
@@ -426,6 +427,65 @@ fn fit(list: &mut Vec<Timer>, budget: &mut usize) -> bool {
     cut
 }
 
+/// The next week at a glance: a lane per timer type (the rest under
+/// "Other"); hostile timers red, friendly blue, any within three hours in
+/// the signal colour.
+fn week_timeline(list: &[Timer], now: DateTime<Utc>, manage: bool) -> Option<Timeline> {
+    let to = now + chrono::Duration::days(7);
+    let soon: Vec<&Timer> = list.iter().filter(|t| t.eve_time <= to).collect();
+    if soon.is_empty() {
+        return None;
+    }
+    let mut lanes: Vec<(String, Lane)> = Vec::new();
+    for t in soon.into_iter().take(200) {
+        let kind = if t.timer_type.is_empty() {
+            "Timers".to_owned()
+        } else {
+            t.timer_type.clone()
+        };
+        let label = if t.system.is_empty() {
+            t.structure.clone()
+        } else {
+            format!("{} · {}", t.structure, t.system)
+        };
+        let tone = if t.eve_time - now <= chrono::Duration::hours(3) {
+            Tone::Warning
+        } else {
+            match t.objective.as_str() {
+                "Hostile" => Tone::Danger,
+                "Friendly" => Tone::Success,
+                _ => Tone::Neutral,
+            }
+        };
+        let mut item = LaneItem::new(label, rfc3339(t.eve_time)).tone(tone);
+        if manage && t.source.is_none() {
+            item = item.link(format!("timer/{}", t.id));
+        }
+        // Six lanes by type at most; the rest share "Other".
+        let known = lanes.iter().any(|(k, _)| *k == kind);
+        let kind = if known || lanes.len() < 6 {
+            kind
+        } else {
+            "Other".to_owned()
+        };
+        match lanes.iter().position(|(k, _)| *k == kind) {
+            Some(i) => {
+                if lanes[i].1.items.len() < 50 {
+                    lanes[i].1.items.push(item);
+                }
+            }
+            None => lanes.push((kind.clone(), Lane::new(kind).item(item))),
+        }
+    }
+    let timeline = Timeline::new(rfc3339(now - chrono::Duration::hours(6)), rfc3339(to))
+        .title("The next seven days");
+    Some(
+        lanes
+            .into_iter()
+            .fold(timeline, |t, (_, lane)| t.lane(lane)),
+    )
+}
+
 fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     let now = Utc::now();
     let manage = viewer.can("timer_management");
@@ -482,6 +542,9 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     }
     if manage {
         page = page.button("Create Timer", "add");
+    }
+    if let Some(timeline) = week_timeline(&upcoming, now, manage) {
+        page = page.timeline(timeline);
     }
     let mut upcoming_table = timer_table(&upcoming, now, manage, "No upcoming timers.");
     if let Some(title) = upcoming_title {

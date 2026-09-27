@@ -20,7 +20,7 @@ use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Page, PageError, Profile, Section, Stat, Submission, SubmitResult, Table, Tone,
     Value, action, alliance, badge, character, corporation, countdown, faction, isk, item_type,
-    link,
+    levels, link,
 };
 
 use crate::access::Access;
@@ -599,6 +599,7 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
         Table::new(vec![
             Column::numeric("#"),
             Column::text("Skill"),
+            Column::text("Level"),
             Column::text("Progress"),
             Column::numeric("Finishes in"),
             Column::numeric("Finishes"),
@@ -613,9 +614,13 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
                 start,
                 finish,
             };
+            // EVE's squares: the levels below this one trained, this one in
+            // training.
+            let level = int(r, 3).clamp(1, 5) as u8;
             vec![
                 (int(r, 0) + 1).into(),
                 item_type(bar.skill_id, label).into(),
+                levels(level - 1, Some(level)),
                 match finish {
                     Some(f) if f <= now => badge("Completed", Tone::Success).into(),
                     Some(_) if start.is_some_and(|s| s <= now) => bar.value(),
@@ -646,7 +651,7 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
         let group = text(r, 0);
         let row = vec![
             item_type(int(r, 1), text(r, 2)).into(),
-            roman(int(r, 3)).into(),
+            levels(int(r, 3).clamp(0, 5) as u8, None),
             if int(r, 4) < int(r, 3) {
                 badge(format!("{} (Alpha)", roman(int(r, 4))), Tone::Warning).into()
             } else {
