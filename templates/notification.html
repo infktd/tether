@@ -11,7 +11,6 @@
     </header>
     <section><p class="text-sm">{{ n.message }}</p></section>
     <footer class="flex gap-2">
-      <a href="/notifications" class="btn" data-variant="outline">All notifications</a>
       <form method="post" action="/notifications/{{ n.id }}/delete"><button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete</button></form>
     </footer>
   </section>

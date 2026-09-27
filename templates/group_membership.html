@@ -15,7 +15,7 @@
         {% for g in groups %}
         <tr>
           <td>
-            <div class="font-medium">{{ g.name }}</div>
+            <a class="font-medium hover:underline underline-offset-4" href="/group-management/{{ g.id }}">{{ g.name }}</a>
             {% if !g.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ g.description }}</div>{% endif %}
             {% if let Some(link) = g.join_link %}
             <div class="mt-2 flex max-w-sm items-center gap-2" data-code>
@@ -29,10 +29,7 @@
           <td class="num">{{ g.members }}</td>
           <td class="num">{% if g.pending > 0 %}<span class="text-highlight">{{ g.pending }}</span>{% else %}0{% endif %}</td>
           <td class="text-right">
-            <div class="inline-flex gap-2">
-              <a href="/group-management/{{ g.id }}" class="btn" data-variant="outline" data-size="sm">View Members</a>
-              <a href="/group-management/{{ g.id }}/audit" class="btn" data-variant="outline" data-size="sm">Audit Log</a>
-            </div>
+            <a href="/group-management/{{ g.id }}/audit" class="btn" data-variant="outline" data-size="sm">Audit Log</a>
           </td>
         </tr>
         {% endfor %}

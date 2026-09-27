@@ -2,7 +2,7 @@
 {% block title %}Corporation Stats{% endblock %}
 {% block breadcrumb %}Corporation&nbsp;/&nbsp;<span class="text-foreground">Corporation Stats</span>{% endblock %}
 {% block content %}
-<div class="flex flex-col gap-6">
+<div class="flex flex-col gap-6" hx-boost="true">
   <div>
     <h1 class="page-title">Corporation Stats</h1>
     <p class="text-muted-foreground mt-1 max-w-3xl">Covered corporations' member lists, read with any registered Member character in each. Refreshed daily, or with Update Now.</p>
@@ -25,8 +25,8 @@
       <tbody>
         {% for f in found %}
         <tr>
-          <td class="font-medium">{% if let Some(n) = f.name %}{{ n }}{% else %}Character {{ f.character_id }}{% endif %}</td>
-          <td><a href="/corpstats/{{ f.corporation_id }}">{% if let Some(c) = f.corporation %}{{ c }}{% else %}Corporation {{ f.corporation_id }}{% endif %}</a></td>
+          <td class="font-medium">{% if let Some(n) = f.name %}{{ n }}{% else %}<span class="text-muted-foreground">Unknown character</span>{% endif %}</td>
+          <td><a href="/corpstats/{{ f.corporation_id }}">{% if let Some(c) = f.corporation %}{{ c }}{% else %}Unknown corporation{% endif %}</a></td>
           <td>{% if let Some(m) = f.main_name %}{{ m }}{% else %}<span class="state-badge" data-state="guest">Unregistered</span>{% endif %}</td>
         </tr>
         {% endfor %}

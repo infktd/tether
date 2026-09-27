@@ -12,7 +12,15 @@
 
   {% for c in configs %}
   <form class="card" method="post" action="/admin/autogroups/{{ c.id }}">
-    <header><h2>Config {{ c.id }}</h2>{% if !c.groups.is_empty() %}<p>{{ c.groups.len() }} groups: {% for g in c.groups %}{{ g }}{% if !loop.last %}, {% endif %}{% endfor %}</p>{% endif %}</header>
+    <header>
+      <h2>Config {{ loop.index }}</h2>
+      {% if !c.groups.is_empty() %}
+      <details class="text-sm text-muted-foreground">
+        <summary class="cursor-pointer"><span class="num">{{ c.groups.len() }}</span> {% if c.groups.len() == 1 %}group{% else %}groups{% endif %} kept</summary>
+        <p class="mt-1">{% for g in c.groups %}{{ g }}{% if !loop.last %}, {% endif %}{% endfor %}</p>
+      </details>
+      {% endif %}
+    </header>
     <section class="grid gap-4">
       {% let choices = &c.states %}{% let form_id = c.id.to_string() %}
       {% let corp_groups = c.settings.corp_groups %}{% let corp_prefix = c.settings.corp_prefix.as_str() %}{% let corp_source = c.settings.corp_source.as_str() %}

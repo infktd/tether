@@ -20,7 +20,7 @@
           <td class="num">{{ r.at }}</td>
           <td>{{ r.actor }}</td>
           <td><div class="num font-medium">{{ r.action }}</div>{% if !r.target.is_empty() %}<div class="text-xs text-muted-foreground num">{{ r.target }}</div>{% endif %}</td>
-          <td class="w-full whitespace-normal"><code class="num text-xs break-all">{{ r.details }}</code></td>
+          <td class="w-full whitespace-normal">{% if r.details.len() > 120 %}<details><summary class="cursor-pointer"><code class="num text-xs break-all">{{ r.details|truncate(100) }}</code></summary><code class="num text-xs break-all">{{ r.details }}</code></details>{% else %}<code class="num text-xs break-all">{{ r.details }}</code>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

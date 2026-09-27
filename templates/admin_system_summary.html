@@ -1,11 +1,10 @@
-{#- Administration's System panel: a fragment for /admin/system/summary. -#}
+{#- Administration's System panel: a fragment for /admin/system/summary.
+    Its heading is the link to the System page. -#}
+{%- import "icons.html" as icons -%}
 <section class="flex flex-col gap-3" aria-label="System">
-  <div class="flex items-end justify-between gap-4">
-    <div>
-      <h2 class="text-[15px] font-semibold">System</h2>
-      <p class="text-sm text-muted-foreground">This server right now: its version, the job queue and ESI.</p>
-    </div>
-    <a class="text-sm underline underline-offset-4" href="/admin/system">Details</a>
+  <div>
+    <h2 class="widget-title"><a href="/admin/system">System {% call icons::icon("chevron-right") %}{% endcall %}</a></h2>
+    <p class="text-sm text-muted-foreground">This server right now: its version, the job queue and ESI.</p>
   </div>
   <div class="grid grid-cols-4 gap-4">
     <div class="card stat">

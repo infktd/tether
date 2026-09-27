@@ -19,13 +19,13 @@
       <tbody>
         {% for l in listed %}
         <tr>
-          <td><div class="font-medium">{{ l.name }}</div><div class="text-xs text-muted-foreground">{{ l.kind.as_str() }} · <span class="num">{{ l.entity_id }}</span></div></td>
+          <td><div class="font-medium">{{ l.name }}</div><div class="text-xs text-muted-foreground">{{ l.kind.as_str() }}</div></td>
           <td class="w-full whitespace-normal"><div class="break-words text-sm">{{ l.reason }}</div></td>
           <td><div class="num text-sm">{{ crate::pages::blacklist::when(l.added_at) }}</div><div class="text-xs text-muted-foreground">{{ l.added_by_name }}</div></td>
           {% if manage %}
           <td>
             <form method="post" action="/blacklist/{{ l.entity_id }}/remove" hx-confirm="Take {{ l.name }} off the Blacklist? Accounts it covered get their state back.">
-              <button type="submit" class="btn" data-variant="outline" data-size="sm">Remove</button>
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
             </form>
           </td>
           {% endif %}

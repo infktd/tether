@@ -60,8 +60,8 @@
 
   <section class="flex flex-col gap-4" aria-labelledby="corp-stats">
     <div>
-      <h2 id="corp-stats" class="text-[15px] font-semibold">Corporation Stats</h2>
-      <p class="text-sm text-muted-foreground">Member lists refresh daily, read with any registered Member character in each corporation: Member requires the member list scope, and no in-game role is needed. Mains, members and who never registered are on <a href="/corpstats" class="underline">Corporation Stats</a>.</p>
+      <h2 id="corp-stats" class="widget-title"><a href="/corpstats">Corporation Stats {% call icons::icon("chevron-right") %}{% endcall %}</a></h2>
+      <p class="text-sm text-muted-foreground">Member lists refresh daily, read with any registered Member character in each corporation: Member requires the member list scope, and no in-game role is needed.</p>
     </div>
     {% if !corporations.is_empty() %}
     <section class="card data-card">

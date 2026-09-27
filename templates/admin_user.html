@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}{{ main_name }}{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/users">Users</a>&nbsp;/&nbsp;<span class="text-foreground">{{ main_name }}</span>{% endblock %}
 {% block content %}
@@ -68,7 +69,7 @@
 
   {% if let Some(notes) = notes %}
   <section class="card data-card">
-    <header><h2>Pilot Log <span class="num text-muted-foreground font-normal">{{ notes.len() }}</span></h2><p>Notes on this account's characters. <a class="underline underline-offset-4" href="/blacklist">Blacklist and Pilot Log</a></p></header>
+    <header><h2 class="widget-title"><a href="/blacklist">Pilot Log {% call icons::icon("chevron-right") %}{% endcall %}</a> <span class="num text-muted-foreground font-normal">{{ notes.len() }}</span></h2><p>Notes on this account's characters.</p></header>
     {% if notes.is_empty() %}<p class="px-5 pb-5 text-sm text-muted-foreground">No notes.</p>{% else %}
     <table class="table">
       <thead><tr><th scope="col">About</th><th scope="col">Note</th><th scope="col">Added</th></tr></thead>

@@ -34,7 +34,7 @@
           <td class="num">{% if let Some(u) = t.last_used_at %}{{ self.when(u) }}{% else %}<span class="text-muted-foreground">Never</span>{% endif %}</td>
           <td>
             <form method="post" action="/dashboard/access-tokens/{{ t.id }}/revoke" hx-boost="true" hx-confirm="Revoke {{ t.name }}? Anything using it stops working.">
-              <button type="submit" class="btn" data-variant="outline" data-size="sm">Revoke</button>
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Revoke</button>
             </form>
           </td>
         </tr>
