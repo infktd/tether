@@ -1,10 +1,14 @@
 /* Tether styles: Tailwind + vendored Basecoat, themed with docs/DESIGN.md.
    Build with scripts/css.sh; the output (static/app.css) is committed. */
 
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "./vendor/basecoat/basecoat.css";
 
+/* Classes come from the templates and the Rust that renders pages, and
+   nothing else: automatic detection read the whole checkout (docs, vendored
+   JS, whatever else lay about), so CI's build and a local one could differ. */
 @source "../templates";
+@source "../crates";
 
 /* Fonts are bundled and served by the host; never a CDN (CLAUDE.md).
    Archivo carries its width axis for the expanded titles. */
