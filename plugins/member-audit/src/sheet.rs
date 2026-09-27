@@ -61,7 +61,7 @@ pub(crate) fn subject(access: &Access, id: i64) -> Result<Subject, PageError> {
     let row = rows.first().ok_or(PageError::NotFound)?;
     let corporation_id = int(row, 1);
     let alliance_id = opt_int(row, 2).filter(|a| *a > 0);
-    if !access.may_open(id, corporation_id, alliance_id) {
+    if !access.may_open(id) {
         return Err(PageError::NotFound);
     }
     Ok(Subject {
@@ -71,7 +71,7 @@ pub(crate) fn subject(access: &Access, id: i64) -> Result<Subject, PageError> {
         corporation: text(row, 3),
         alliance_id,
         alliance: text(row, 4),
-        may_read_mail: access.may_read_mail(id, corporation_id, alliance_id),
+        may_read_mail: access.may_read_mail(id),
     })
 }
 

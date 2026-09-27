@@ -12,7 +12,8 @@
 //!   Clones (implants, jump clones), Industry (jobs, blueprints, mining,
 //!   planets), Contacts (contacts, NPC standings), and Mail on its own
 //!   audited pages.
-//! - **Character Finder**: member characters within the viewer's scope.
+//! - **Character Finder**: member characters within the viewer's scope,
+//!   with each one's main, main organisation and state.
 //! - **Skill Sets** and **Reports**.
 //! - **Secure Groups filters**: a skill at a level, a skill set, an item.
 //!

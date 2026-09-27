@@ -53,16 +53,17 @@ name = "report_filters"
 every = "1h"
 
 # aa-memberaudit's permissions. Grant Member basic. Officers: finder (the
-# list) and characters (opening sheets), with a scope: view_same_corporation,
-# view_same_alliance or view_everything. Without a scope they see only
-# their own characters. view_mail reads the mail of characters one may
-# open; every view of a mail page is in Tether's audit log.
+# list) and characters (opening sheets), with a scope: view_same_corporation
+# or view_same_alliance (by the owner's main, as aa-memberaudit), or
+# view_everything. Without a scope they see only their own characters.
+# view_mail reads the mail of characters one may open; every view of a
+# mail page is in Tether's audit log.
 [permissions]
 basic = "Use Member Audit: register and view your own characters, their mail included"
 finder = "Character Finder and Reports: list member characters in your scope"
 characters = "Open the character sheets of member characters in your scope"
-view_same_corporation = "Scope: characters in your main's corporation"
-view_same_alliance = "Scope: characters in your main's alliance"
+view_same_corporation = "Scope: every character of pilots whose main is in your main's corporation"
+view_same_alliance = "Scope: every character of pilots whose main is in your main's alliance"
 view_everything = "Scope: every member character"
 view_mail = "Read the mail of characters whose sheets you may open (every view is audited)"
 manage = "Create and delete skill sets"

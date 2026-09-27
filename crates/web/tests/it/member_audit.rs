@@ -1,10 +1,11 @@
-//! The Member Audit plugin end to end: installed from its real component
+//! The Member Audit plugin end to end: bundled from its real component
 //! and migrations, Member requiring its user scopes, a character synced
 //! from mocked ESI (every section of the sheet), and AA's pages: My
 //! Characters (the card grid, Register Character first), the Character
 //! Sheet's pages and tabs, mail behind `view_mail` and audited, the
-//! Character Finder scoped by corporation, alliance or everything, Skill
-//! Sets and reports.
+//! Character Finder (with each character's main and state) scoped by the
+//! owner's main's corporation or alliance, or everything, Skill Sets and
+//! reports.
 
 use std::sync::OnceLock;
 
@@ -13,7 +14,7 @@ use axum::http::StatusCode;
 use sqlx::PgPool;
 use tether_core::states::{Builtin, EntityKind};
 use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
-use tether_plugins::testing::{self, Key};
+use tether_plugins::testing;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
@@ -50,9 +51,22 @@ const MIGRATIONS: [&str; 3] = [
     "migrations/0003_character_sheet.sql",
 ];
 
-async fn install(h: &Harness, owner: &str) {
-    let key = Key::new(8);
-    let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
+/// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
+/// manifest without the `[publisher]` table, and no signature. Only the
+/// bundled Member Audit learns who owns each character.
+fn package() -> Vec<u8> {
+    let mut skip = false;
+    let manifest: String = plugin_file("plugin.toml")
+        .lines()
+        .filter(|line| {
+            if line.starts_with('[') {
+                skip = *line == "[publisher]";
+            }
+            !skip
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert!(!manifest.contains("PUBLISHER_KEY"));
     let migrations: Vec<String> = MIGRATIONS.iter().map(|m| plugin_file(m)).collect();
     let component = component();
     let mut entries: Vec<(&str, &[u8])> = vec![
@@ -62,9 +76,39 @@ async fn install(h: &Harness, owner: &str) {
     for (name, sql) in MIGRATIONS.iter().zip(&migrations) {
         entries.push((name, sql.as_bytes()));
     }
-    let bytes = testing::zip(&entries);
-    let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
-    assert_eq!(at, format!("/admin/plugins/{ID}"));
+    testing::zip(&entries)
+}
+
+/// A harness bundling Member Audit.
+async fn bundling(db: PgPool) -> Harness {
+    harness_with_bundled(db, vec![package()]).await
+}
+
+/// Installs the bundled Member Audit, after the review (which says what it
+/// learns that no other app does).
+async fn install(h: &Harness, owner: &str) {
+    use sha2::Digest;
+    let review = page(h, &format!("/admin/plugin-bundled/{ID}"), owner).await;
+    assert!(
+        review.body.contains("which characters share an account"),
+        "{}",
+        review.body
+    );
+    let sha: String = sha2::Sha256::digest(package())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugin-bundled/{ID}/approve"),
+            &format!("package={sha}&reviewed=none"),
+            owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), format!("/admin/plugins/{ID}"));
 }
 
 /// Every section of a character sheet, as ESI answers.
@@ -412,7 +456,7 @@ async fn plugin_warnings(h: &Harness) -> Vec<String> {
 async fn synced(db: PgPool) -> (Harness, String) {
     cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
     cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
-    let h = harness(db, true).await;
+    let h = bundling(db).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
     mount_esi(&h).await;
@@ -733,20 +777,150 @@ async fn member_audit_end_to_end(db: PgPool) {
     assert_eq!(left, (0, 0));
 }
 
+const CORP_MATE: i64 = 90000020;
+const MATE_ALT: i64 = 90000021;
+const OUTSIDER: i64 = 90000030;
+const SPY_ALT: i64 = 90000031;
+
+/// A Member account (the first character its main), each character
+/// registered with Member Audit's scopes (Chribba's) and known to it.
+async fn member_account(h: &Harness, characters: &[(i64, &str, i64, Option<i64>)]) {
+    let mut tx = h.db.begin().await.unwrap();
+    let account: i64 = sqlx::query_scalar(
+        "INSERT INTO core.accounts (state_id, main_character_id) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(MEMBER_STATE)
+    .bind(characters[0].0)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    for (id, name, corporation, alliance) in characters {
+        sqlx::query(
+            "INSERT INTO core.characters (id, account_id, name, corporation_id, alliance_id) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(id)
+        .bind(account)
+        .bind(name)
+        .bind(corporation)
+        .bind(alliance)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO core.character_tokens (character_id, refresh_token, scopes) \
+             SELECT $1, refresh_token, scopes FROM core.character_tokens WHERE character_id = $2",
+        )
+        .bind(id)
+        .bind(CHRIBBA)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"INSERT INTO "plugin_tether.member-audit".characters
+               (character_id, name, corporation_id, alliance_id, synced_at)
+               VALUES ($1, $2, $3, $4, now())"#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(corporation)
+        .bind(alliance)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+}
+
+/// The Finder's table row naming `name`.
+fn finder_row<'a>(body: &'a str, name: &str) -> &'a str {
+    body.split("<tr")
+        .find(|row| row.contains(name) && row.contains("</td>"))
+        .unwrap_or_else(|| panic!("no row for {name}\n{body}"))
+}
+
+/// Member Audit installed from a signed package (a Tether bundling none)
+/// isn't told who owns characters: corporation and alliance scopes then
+/// list only the viewer's own characters.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
+    use tether_plugins::testing::Key;
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let key = Key::new(8);
+    let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
+    let migrations: Vec<String> = MIGRATIONS.iter().map(|m| plugin_file(m)).collect();
+    let component = component();
+    let mut entries: Vec<(&str, &[u8])> = vec![
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ];
+    for (name, sql) in MIGRATIONS.iter().zip(&migrations) {
+        entries.push((name, sql.as_bytes()));
+    }
+    let bytes = testing::zip(&entries);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    mount_esi(&h).await;
+    work(&h).await;
+    let owner = register(&h, &owner).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    for permission in ["basic", "finder", "characters", "view_same_corporation"] {
+        grant(&h, &owner, permission).await;
+    }
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
+    assert_eq!(finder.status, StatusCode::OK, "{}", finder.body);
+    for name in ["Corp Mate", "Mate Alt", "Chribba"] {
+        assert!(!finder.body.contains(name), "{name}\n{}", finder.body);
+    }
+    for id in [CORP_MATE, MATE_ALT] {
+        assert_eq!(
+            page(&h, &format!("/plugins/{ID}/character/{id}"), &blue)
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let warnings = plugin_warnings(&h).await;
+    assert!(
+        warnings.iter().any(|w| w.contains("who owns characters")),
+        "{warnings:?}"
+    );
+}
+
 /// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance
 /// or everything; mail only with `view_mail`, and every view audited.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn who_sees_what(db: PgPool) {
     let (h, owner) = synced(db).await;
-    // A member in the Blue pilot's corporation (98133756).
-    sqlx::query(
-        r#"INSERT INTO "plugin_tether.member-audit".characters
-           (character_id, name, corporation_id, alliance_id, synced_at)
-           VALUES (90000020, 'Corp Mate', 98133756, 1695357456, now())"#,
+    // A member whose main is in the Blue pilot's corporation (98133756),
+    // with an alt elsewhere; and one whose main is elsewhere, with an alt
+    // in it.
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
     )
-    .execute(&h.db)
-    .await
-    .unwrap();
+    .await;
+    member_account(
+        &h,
+        &[
+            (OUTSIDER, "Outsider", 98000003, None),
+            (SPY_ALT, "Spy Alt", 98133756, Some(1695357456)),
+        ],
+    )
+    .await;
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
     let sheet = |id: i64| format!("/plugins/{ID}/character/{id}");
     let mail = format!("/plugins/{ID}/mail/{CHRIBBA}");
@@ -757,7 +931,7 @@ async fn who_sees_what(db: PgPool) {
         page(&h, &format!("/plugins/{ID}"), &blue).await.status,
         StatusCode::OK
     );
-    for uri in [sheet(CHRIBBA), sheet(90000020), mail.clone()] {
+    for uri in [sheet(CHRIBBA), sheet(CORP_MATE), mail.clone()] {
         assert_eq!(
             page(&h, &uri, &blue).await.status,
             StatusCode::NOT_FOUND,
@@ -800,30 +974,64 @@ async fn who_sees_what(db: PgPool) {
     grant(&h, &owner, "finder").await;
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
     assert_eq!(finder.status, StatusCode::OK, "{}", finder.body);
-    assert!(
-        !finder.body.contains("Chribba") && !finder.body.contains("Corp Mate"),
-        "{}",
-        finder.body
-    );
+    for name in ["Chribba", "Corp Mate", "Mate Alt", "Outsider", "Spy Alt"] {
+        assert!(!finder.body.contains(name), "{name}\n{}", finder.body);
+    }
 
-    // Their main's corporation: the corporation mate, listed, but no sheet
-    // without `characters`.
+    // Their main's corporation, by the owner's main as in aa-memberaudit:
+    // the corporation mate and his alt in another corporation, but not the
+    // alt in their corporation whose main isn't. Listed, with each one's
+    // main and state, but no sheet without `characters`.
     grant(&h, &owner, "view_same_corporation").await;
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
-    assert!(finder.body.contains("Corp Mate"), "{}", finder.body);
-    assert!(!finder.body.contains("Chribba"), "{}", finder.body);
-    assert!(!finder.body.contains(&sheet(90000020)), "{}", finder.body);
-    assert_eq!(
-        page(&h, &sheet(90000020), &blue).await.status,
-        StatusCode::NOT_FOUND
+    for name in ["Corp Mate", "Mate Alt"] {
+        assert!(finder.body.contains(name), "{name}\n{}", finder.body);
+    }
+    for name in ["Chribba", "Outsider", "Spy Alt"] {
+        assert!(!finder.body.contains(name), "{name}\n{}", finder.body);
+    }
+    for header in [">Main<", ">Main organisation<", ">State<"] {
+        assert!(finder.body.contains(header), "{header}\n{}", finder.body);
+    }
+    let alt = finder_row(&finder.body, "Mate Alt");
+    assert!(
+        alt.contains(&format!("characters/{CORP_MATE}/portrait")) && alt.contains("Corp Mate"),
+        "{alt}"
     );
+    assert!(alt.contains("corporations/98133756/logo"), "{alt}");
+    assert!(alt.contains(">Member<"), "{alt}");
+    // Searching finds characters by their main's name too.
+    let found = page(&h, &format!("/plugins/{ID}/finder?q=corp+mate"), &blue).await;
+    assert!(found.body.contains("Mate Alt"), "{}", found.body);
+    assert!(!finder.body.contains(&sheet(CORP_MATE)), "{}", finder.body);
+    for id in [CORP_MATE, MATE_ALT] {
+        assert_eq!(
+            page(&h, &sheet(id), &blue).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+    // Reports, the same scope.
+    sqlx::query(r#"INSERT INTO "plugin_tether.member-audit".skill_sets (name) VALUES ('Anyone')"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let reports = page(&h, &format!("/plugins/{ID}/reports"), &blue).await;
+    assert_eq!(reports.status, StatusCode::OK, "{}", reports.body);
+    assert!(reports.body.contains("Mate Alt"), "{}", reports.body);
+    assert!(!reports.body.contains("Spy Alt"), "{}", reports.body);
     grant(&h, &owner, "characters").await;
     let finder = page(&h, &format!("/plugins/{ID}/finder"), &blue).await;
-    assert!(finder.body.contains(&sheet(90000020)), "{}", finder.body);
-    assert_eq!(
-        page(&h, &sheet(90000020), &blue).await.status,
-        StatusCode::OK
-    );
+    assert!(finder.body.contains(&sheet(CORP_MATE)), "{}", finder.body);
+    assert!(finder.body.contains(&sheet(MATE_ALT)), "{}", finder.body);
+    for id in [CORP_MATE, MATE_ALT] {
+        assert_eq!(page(&h, &sheet(id), &blue).await.status, StatusCode::OK);
+    }
+    for id in [SPY_ALT, OUTSIDER] {
+        assert_eq!(
+            page(&h, &sheet(id), &blue).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
     assert_eq!(
         page(&h, &sheet(CHRIBBA), &blue).await.status,
         StatusCode::NOT_FOUND
@@ -954,7 +1162,7 @@ async fn report_filters(h: &Harness) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn member_audit_feeds_secure_groups(db: PgPool) {
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
-    let h = harness(db, true).await;
+    let h = bundling(db).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
     mount_esi(&h).await;

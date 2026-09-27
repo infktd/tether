@@ -1,7 +1,10 @@
 //! My Characters and the Character Finder, and what the character pages
 //! share: entities, the app's page links, freshness.
 
+use std::collections::BTreeMap;
+
 use chrono::{Duration, Utc};
+use tether_plugin_sdk::esi;
 use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::Value as Db;
 use tether_plugin_sdk::{
@@ -270,15 +273,20 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
     }
     let q: String = q.trim().to_lowercase().chars().take(100).collect();
     let (scope, mut params) = access.listed(1);
+    let scope_params = params.len();
     let search = if q.is_empty() {
         String::new()
     } else {
         params.push(q.clone().into());
         let n = params.len();
+        // Their owner's main's name too, as aa-memberaudit's search.
+        params.push(crate::id_list(&access.mains_named(&q)).into());
+        let mains = params.len();
         format!(
             " AND (strpos(lower(c.name), ${n}) > 0 \
                OR strpos(lower({corp}), ${n}) > 0 \
-               OR strpos(lower({ally}), ${n}) > 0)",
+               OR strpos(lower({ally}), ${n}) > 0 \
+               OR c.character_id = ANY(string_to_array(${mains}, ',')::bigint[]))",
             corp = name_of("c.corporation_id"),
             ally = name_of("c.alliance_id"),
         )
@@ -289,13 +297,24 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
     )?;
     let total = query(
         &format!("SELECT count(*) FROM characters c WHERE {scope}"),
-        &params[..params.len() - usize::from(!q.is_empty())],
+        &params[..scope_params],
+    )?;
+    let owners: Vec<_> = rows.iter().map(|r| access.owner(int(r, 0))).collect();
+    let organisations = corporation_names(
+        owners
+            .iter()
+            .flatten()
+            .map(|o| o.main.corporation_id)
+            .collect(),
     )?;
     let table = with_rows(
         Table::new(vec![
             Column::text("Character"),
             Column::text("Corporation"),
             Column::text("Alliance"),
+            Column::text("Main"),
+            Column::text("Main organisation"),
+            Column::text("State"),
             Column::text("Location"),
             Column::text("Ship"),
             Column::numeric("Skill points"),
@@ -307,12 +326,27 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
             format!("Characters matching \"{q}\"")
         })
         .empty("No characters match."),
-        rows.iter().map(|r| {
+        rows.iter().zip(&owners).map(|(r, owner)| {
             let id = int(r, 0);
             let corp = int(r, 2);
             let ally = opt_int(r, 3).filter(|a| *a > 0);
+            let (main, organisation, state) = match owner {
+                Some(o) => (
+                    character(o.main.id, o.main.name.clone()).into(),
+                    corporation(
+                        o.main.corporation_id,
+                        organisations
+                            .get(&o.main.corporation_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                    .into(),
+                    o.state.name.clone().into(),
+                ),
+                None => ("".into(), "".into(), "".into()),
+            };
             vec![
-                if access.may_open(id, corp, ally) {
+                if access.may_open(id) {
                     link(text(r, 1), format!("character/{id}")).into()
                 } else {
                     character(id, text(r, 1)).into()
@@ -322,6 +356,9 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
                     Some(a) => alliance(a, text(r, 11)).into(),
                     None => "".into(),
                 },
+                main,
+                organisation,
+                state,
                 if opt_int(r, 6).is_some() {
                     text(r, 12).into()
                 } else {
@@ -348,10 +385,39 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
     ])
     .form(
         Form::new("search", "Search").field(
-            Field::text("q", "Character, corporation or alliance", 100)
+            Field::text("q", "Character, corporation, alliance or main", 100)
                 .value(q.clone())
                 .help("Part of a name is enough."),
         ),
     )
     .table(table))
+}
+
+/// Names for corporations (a main's may be no member character's):
+/// stored, else asked of ESI (a page can't store them), else none.
+fn corporation_names(mut ids: Vec<i64>) -> Result<BTreeMap<i64, String>, PageError> {
+    ids.retain(|id| *id > 0);
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut names: BTreeMap<i64, String> = query(
+        "SELECT id, name FROM names WHERE id = ANY(string_to_array($1, ',')::bigint[])",
+        &[crate::id_list(&ids).into()],
+    )?
+    .iter()
+    .map(|r| (int(r, 0), text(r, 1)))
+    .collect();
+    let missing: Vec<i64> = ids
+        .into_iter()
+        .filter(|id| !names.contains_key(id))
+        .take(1000)
+        .collect();
+    if !missing.is_empty()
+        && let Ok(found) = esi::names(&missing)
+    {
+        names.extend(found.into_iter().map(|n| (n.id, n.name)));
+    }
+    Ok(names)
 }
