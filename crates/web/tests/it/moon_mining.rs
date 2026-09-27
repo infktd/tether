@@ -47,12 +47,17 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let first = plugin_file("migrations/0001_moon_mining.sql");
     let second = plugin_file("migrations/0002_surveys_and_prices.sql");
+    let third = plugin_file("migrations/0003_tether_rules_optional.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_moon_mining.sql", first.as_bytes()),
         ("migrations/0002_surveys_and_prices.sql", second.as_bytes()),
+        (
+            "migrations/0003_tether_rules_optional.sql",
+            third.as_bytes(),
+        ),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -291,6 +296,8 @@ async fn moon_mining_end_to_end(db: PgPool) {
 
     // Members (the owner holds everything): extractions, with names.
     let moons = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    // aa-moonmining has no Members-only window: off unless turned on.
+    assert!(!moons.body.contains("Fresh moons"), "{}", moons.body);
     assert_eq!(moons.status, StatusCode::OK, "{}", moons.body);
     assert!(moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
     assert!(moons.body.contains(">Jita (0.9)<"), "{}", moons.body);
@@ -378,7 +385,8 @@ async fn moon_mining_end_to_end(db: PgPool) {
             .contains("07:30")
     );
 
-    // A pop pings Members on Discord, once a channel is set.
+    // Optional, not in aa-moonmining: a pop pings Members on Discord, once
+    // a channel is set, and a Members-only window before Blue see it.
     discord_ready(&h, &owner).await;
     let res = send(
         &h.app,
@@ -462,6 +470,8 @@ async fn moon_mining_end_to_end(db: PgPool) {
     let seen = page(&h, &format!("/plugins/{ID}"), &blue).await;
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(seen.body.contains("Old moons"));
+    let fresh = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(fresh.body.contains("Fresh moons"), "{}", fresh.body);
     assert!(!seen.body.contains("Jita IV - Moon 4"), "{}", seen.body);
     assert!(!seen.body.contains("Fresh moons"));
     // Blue have the old moons and Moons (as aa-moonmining's navbar), no
@@ -479,6 +489,24 @@ async fn moon_mining_end_to_end(db: PgPool) {
             .status,
         StatusCode::NOT_FOUND
     );
+    // With the window off again (aa-moonmining's way), basic_access alone
+    // opens Moons, as aa-moonmining's index does.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
+             &days_per_month=30.4&stale_hours=12",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let seen = page(&h, &format!("/plugins/{ID}"), &blue).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert!(!seen.body.contains("Old moons"), "{}", seen.body);
+    assert!(seen.body.contains("<h1"), "{}", seen.body);
+    assert!(seen.body.contains(">Moons<"), "{}", seen.body);
 }
 
 fn urlencode(text: &str) -> String {

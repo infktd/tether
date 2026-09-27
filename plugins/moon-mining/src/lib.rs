@@ -3,10 +3,13 @@
 //! - Extractions come from the corporations of the app's owners
 //!   (data-source characters: a Station Manager's, for moon extractions and
 //!   structures), added by holders of `add_refinery_owner`.
-//! - Each pop (the chunk's automatic fracture) is pinged to Members on
-//!   Discord.
-//! - A popped moon is Members-only for a while (default 4 hours), then on
-//!   the old-moon list Blue see.
+//! - Optional, and off unless a manager turns them on (aa-moonmining has
+//!   neither): each pop (the chunk's automatic fracture) pinged to Members
+//!   on Discord, once a channel is picked; and a Members-only window after
+//!   each pop, after which the moon goes on an old-moon list for those
+//!   with `basic_access` alone (Blue). Without the window, as
+//!   aa-moonmining, extractions are for `extractions_access` and everyone
+//!   else opens Moons.
 //! - Mining totals come from the corporations' mining observers.
 //! - Station Managers (in game, from the data sources' corporation roles)
 //!   get an extraction planner: a pop cadence turned into the duration to
@@ -212,7 +215,7 @@ fn settings() -> Result<Settings, storage::Error> {
                 .unwrap_or(defaults.days_per_month),
         },
         stale: Duration::hours(row.map_or(12, |r| int(r, 5))),
-        fresh: Duration::hours(row.map_or(4, |r| int(r, 0))),
+        fresh: Duration::hours(row.map_or(0, |r| int(r, 0))),
         channel: row
             .and_then(|r| r.get(1))
             .and_then(Db::as_text)
@@ -220,8 +223,15 @@ fn settings() -> Result<Settings, storage::Error> {
         pings: row
             .and_then(|r| r.get(2))
             .and_then(Db::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
     })
+}
+
+impl Settings {
+    /// Whether the Members-only window (and the old-moon list) is on.
+    fn window(&self) -> bool {
+        self.fresh > Duration::zero()
+    }
 }
 
 /// The settings values are worked out with, for pages.
@@ -965,8 +975,12 @@ fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
         links.push(("Settings", "settings"));
     }
     let upload = viewer.can("upload_moon_scan");
-    // The old-moon list, for someone who sees it but not the extractions.
-    let mut page = if viewer.can("extractions_access") {
+    // The old-moon list (with the Members-only window on), for someone who
+    // sees it but not the extractions.
+    let window = settings()
+        .map_err(|e| failed("reading settings", e))?
+        .window();
+    let mut page = if viewer.can("extractions_access") || !window {
         page
     } else {
         page.link("Old moons", "")
@@ -1158,14 +1172,20 @@ fn popped_table(title: &str, empty: &str, pops: &[Pop]) -> Table {
     )
 }
 
-/// aa-moonmining's Extractions (Upcoming and Past), with Tether's fresh
-/// and old moons: the app's main page. Blue see only the old moons.
+/// aa-moonmining's Extractions (Upcoming and Past): the app's main page,
+/// for `extractions_access`. Others open Moons, as aa-moonmining's index;
+/// with the Members-only window on, they get the old-moon list instead,
+/// and the page adds the fresh and old moons.
 fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
     let now = Utc::now();
     let settings = settings().map_err(|e| failed("reading settings", e))?;
+    let window = settings.window();
     let old = pops(now - OLD_FOR, now - settings.fresh)?;
     let old_table = popped_table("Old moons", "No moons popped in the last two days.", &old);
     if !viewer.can("extractions_access") {
+        if !window {
+            return moons::moons_page(viewer, &moons::Filter::default());
+        }
         return Ok(Page::new("Moon Mining")
             .description("Moons popped a while ago, still worth a visit")
             .table(old_table));
@@ -1234,25 +1254,43 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
             ]
         }),
     );
-    Ok(Page::new("Moon Mining")
-        .description(format!(
-            "Fresh moons are for Members for {} hours after they pop, then Blue see them too. \
-             Values are estimates from moon surveys and CCP's ore prices.",
-            settings.fresh.num_hours()
-        ))
-        .stats(vec![
-            Stat::new("Ready now", i64::try_from(ready).unwrap_or(i64::MAX)),
+    let mut stats = vec![Stat::new(
+        "Ready now",
+        i64::try_from(ready).unwrap_or(i64::MAX),
+    )];
+    if window {
+        stats.push(
             Stat::new("Fresh", i64::try_from(fresh.len()).unwrap_or(i64::MAX)).caption(format!(
                 "popped in the last {}h",
                 settings.fresh.num_hours()
             )),
-            Stat::new(
-                "Extracting",
-                i64::try_from(upcoming.len() - ready).unwrap_or(i64::MAX),
-            ),
-            Stat::new("Coming (est.)", isk(value::finite(coming_value)))
-                .caption("chunks of surveyed moons"),
-        ])
+        );
+    }
+    stats.extend([
+        Stat::new(
+            "Extracting",
+            i64::try_from(upcoming.len() - ready).unwrap_or(i64::MAX),
+        ),
+        Stat::new("Coming (est.)", isk(value::finite(coming_value)))
+            .caption("chunks of surveyed moons"),
+    ]);
+    let page = Page::new("Moon Mining")
+        .description(if window {
+            format!(
+                "Fresh moons are for Members for {} hours after they pop, then Blue see them too. \
+                 Values are estimates from moon surveys and CCP's ore prices.",
+                settings.fresh.num_hours()
+            )
+        } else {
+            "Values are estimates from moon surveys and CCP's ore prices.".to_owned()
+        })
+        .stats(stats);
+    if !window {
+        return Ok(page
+            .tab("Extractions", vec![Section::Table(upcoming_table)])
+            .tab("Past", vec![Section::Table(past_table)]));
+    }
+    Ok(page
         .table(fresh_table)
         .tab("Extractions", vec![Section::Table(upcoming_table)])
         .tab("Past", vec![Section::Table(past_table)])
@@ -1494,13 +1532,18 @@ fn settings_page() -> Result<Page, PageError> {
         Form::new("settings", "Save")
             .field(
                 Field::number("fresh_hours", "Members-only hours after a pop")
-                    .range(Some(1.0), Some(48.0), true)
+                    .range(Some(0.0), Some(48.0), true)
                     .value(settings.fresh.num_hours().to_string())
+                    .help(
+                        "Not in aa-moonmining: 0 is off, as there. On, those with basic_access \
+                         alone (Blue) see popped moons after this many hours, on an old-moon list.",
+                    )
                     .required(),
             )
             .field(
                 Field::select("ping_channel", "Ping pops to", channels)
-                    .value(settings.channel.unwrap_or_default()),
+                    .value(settings.channel.unwrap_or_default())
+                    .help("Not in aa-moonmining: no channel, no pings."),
             )
             .field(Field::checkbox(
                 "pings",
