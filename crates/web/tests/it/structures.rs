@@ -1666,6 +1666,30 @@ async fn aa_structures_rules(db: PgPool) {
         1,
         "{sent:?}"
     );
+    // Refuelled, then low again: a new episode, alerted again.
+    for hours in [720, 4] {
+        sqlx::query(
+            r#"UPDATE "plugin_tether.structures".structures
+               SET fuel_expires = now() + make_interval(hours => $2),
+                   blocks_expires = now() + make_interval(hours => $2)
+               WHERE structure_id = $1"#,
+        )
+        .bind(KEEP)
+        .bind(hours)
+        .execute(&h.db)
+        .await
+        .unwrap();
+        let problems = sync(&h).await;
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let sent = discord_messages(&h).await;
+    assert_eq!(
+        sent.iter()
+            .filter(|m| m.contains("under the 6-hour alert"))
+            .count(),
+        2,
+        "{sent:?}"
+    );
 
     // Unanchoring: only for view_all_unanchoring_status.
     sqlx::query(

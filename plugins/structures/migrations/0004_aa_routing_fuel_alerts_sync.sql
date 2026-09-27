@@ -16,6 +16,9 @@ ALTER TABLE settings RENAME COLUMN mention_members TO default_pings;
 ALTER TABLE settings
     ADD COLUMN danger_ping text DEFAULT 'Member' CHECK (length(danger_ping) BETWEEN 1 AND 64),
     ADD COLUMN warning_ping text CHECK (length(warning_ping) BETWEEN 1 AND 64);
+-- Where Members were mentioned on attacks, warnings (lost shields,
+-- customs offices attacked) keep mentioning them.
+UPDATE settings SET warning_ping = 'Member' WHERE default_pings;
 -- The state whose role a message mentions (NULL: none). The old boolean
 -- stays for messages queued before: true meant Member.
 ALTER TABLE outbox ADD COLUMN mention_state text;
@@ -46,6 +49,10 @@ CREATE TABLE fuel_alerts_sent (
     sent_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (structure_id, config_id)
 );
+-- Alerts already sent stay sent: each threshold's to the config it became.
+INSERT INTO fuel_alerts_sent (structure_id, config_id)
+SELECT a.structure_id, c.id FROM fuel_alerts a JOIN fuel_alert_configs c ON c.start_hours = a.hours
+ON CONFLICT DO NOTHING;
 DROP TABLE fuel_alerts;
 ALTER TABLE settings DROP COLUMN fuel_thresholds;
 

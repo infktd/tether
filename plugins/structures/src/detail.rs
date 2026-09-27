@@ -94,7 +94,11 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
         _ => {}
     }
     if kind != "customs_office" && kind != "skyhook" {
-        general = general.field("State", state_badge(&text(row, 8)));
+        let unanchoring = viewer.can("view_all_unanchoring_status");
+        general = general.field(
+            "State",
+            state_badge(crate::visible_state(&text(row, 8), unanchoring)),
+        );
     }
     if let Some(t) = when(row, 9) {
         general = general.field("State timer", upcoming(t, now));

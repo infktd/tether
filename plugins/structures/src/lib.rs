@@ -71,6 +71,8 @@ const TIMER_ROWS: i64 = 80;
 const OWNER_ROWS: i64 = 60;
 /// Fuel alert configs' hours: a year at most.
 const MAX_ALERT_HOURS: i64 = 8760;
+/// Fuel alerts queued per run.
+const FUEL_ALERTS_PER_RUN: usize = 200;
 /// Fuel alert configs a page lists (aa-structures has no limit; this is
 /// the page's).
 const MAX_FUEL_CONFIGS: i64 = 100;
@@ -190,6 +192,11 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         }
         return tags::save_structure_tags(viewer, id, submission);
     }
+    // The settings pages' forms and row buttons are managers': checked
+    // here too, not only by the host's page rule.
+    if path.starts_with("settings") && !viewer.can("manage") {
+        return Err(PageError::Forbidden);
+    }
     if let Some(corp) = path.strip_prefix("settings/owner/") {
         let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
         return match submission.form.as_str() {
@@ -197,11 +204,6 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
             "owner_types" => save_owner_types(viewer, corp, submission),
             _ => Err(PageError::NotFound),
         };
-    }
-    // The settings pages' forms and row buttons are managers': checked
-    // here too, not only by the host's page rule.
-    if path.starts_with("settings") && !viewer.can("manage") {
-        return Err(PageError::Forbidden);
     }
     match (path, submission.form.as_str()) {
         ("settings", "settings") => save_settings(viewer, submission),
@@ -644,8 +646,14 @@ fn record(owner: i64, read: Read, outcome: &Outcome) -> Result<(), JobError> {
         }
         Outcome::Later(why) => {
             log::warn(format!("{c} for owner {owner}: {why}"));
+            // A short pause for this character and read (without counting
+            // a failure): the next character in turn, or the next sync,
+            // tries instead of this one again every minute.
             (
-                "UPDATE owners SET last_error = $2 WHERE character_id = $1".to_owned(),
+                format!(
+                    "UPDATE owners SET last_error = $2, {c}_retry_at = now() + interval '5 minutes' \
+                     WHERE character_id = $1"
+                ),
                 vec![owner.into(), why.as_str().into()],
             )
         }
@@ -663,8 +671,13 @@ fn sync() -> Result<(), JobError> {
     let published = publish_timers();
     synced?;
     published?;
-    queue_notifications()?;
-    queue_relay(None)
+    queue_relay(None)?;
+    if let Err(err) = queue_notifications() {
+        log::warn(format!(
+            "notification reads between syncs weren't queued: {err:?}"
+        ));
+    }
+    Ok(())
 }
 
 fn sync_steps() -> Result<(), JobError> {
@@ -1233,12 +1246,18 @@ fn fuel_alerts() -> Result<(), JobError> {
            AND s.fuel_expires > now() + make_interval(hours => c.end_hours) \
            AND (a.sent_at IS NULL OR (c.repeat_hours > 0 \
                AND a.sent_at <= now() - make_interval(hours => c.repeat_hours))) \
-         ORDER BY s.fuel_expires, c.id LIMIT 200",
+         ORDER BY s.fuel_expires, c.id LIMIT 2000",
         &[],
     )
     .map_err(|e| retry("finding low fuel", e))?;
     let now = Utc::now();
+    // At most this many alerts a run; pairs that go nowhere (no channel,
+    // or the type not sent) don't count, so they can't crowd out the rest.
+    let mut queued = 0;
     for alert in &due.rows {
+        if queued >= FUEL_ALERTS_PER_RUN {
+            break;
+        }
         let (structure, corp, config) = (int(alert, 0), int(alert, 1), int(alert, 2));
         let kind = if text(alert, 5) == "starbase" {
             "TowerResourceAlertMsg"
@@ -1295,8 +1314,14 @@ fn fuel_alerts() -> Result<(), JobError> {
                 "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
                  ON CONFLICT (key) DO NOTHING",
                 vec![
-                    // Once per alert and repeat: after the last one sent.
-                    format!("fuel:{structure}:{config}:{}", int(alert, 6)).into(),
+                    // Once per alert, low-fuel episode (the expiry) and
+                    // repeat (after the last one sent).
+                    format!(
+                        "fuel:{structure}:{config}:{}:{}",
+                        expires.timestamp(),
+                        int(alert, 6)
+                    )
+                    .into(),
                     channel.into(),
                     message.into(),
                     ping.map(str::to_owned).into(),
@@ -1309,6 +1334,7 @@ fn fuel_alerts() -> Result<(), JobError> {
             ),
         ])
         .map_err(|e| retry("queuing a fuel alert", e))?;
+        queued += 1;
     }
     Ok(())
 }
@@ -1493,6 +1519,16 @@ fn visibility(viewer: &Viewer) -> Option<Vec<Db>> {
 /// A structure `s` the viewer may see (parameters from [`visibility`]).
 const VISIBLE: &str = "($1::boolean OR s.corporation_id = $2::bigint \
      OR s.corporation_id IN (SELECT corporation_id FROM owners WHERE alliance_id = $3::bigint))";
+
+/// A starbase's state as the viewer may see it: "unanchoring" is
+/// view_all_unanchoring_status's (aa-structures'); others see it online.
+fn visible_state(state: &str, unanchoring: bool) -> &str {
+    if state == "unanchoring" && !unanchoring {
+        "online"
+    } else {
+        state
+    }
+}
 
 fn state_badge(state: &str) -> Value {
     let (label, tone) = match state {
@@ -1683,7 +1719,7 @@ fn starbase_row(row: &[Db], now: DateTime<Utc>, alert: i64, unanchoring: bool) -
         expires,
         remaining,
         opt_int(row, 18).map_or_else(|| "".into(), Value::from),
-        state_badge(&text(row, 8)),
+        state_badge(visible_state(&text(row, 8), unanchoring)),
         timer.map_or_else(|| "".into(), |t| upcoming(t, now)),
         text(row, 16).into(),
     ]
@@ -2399,6 +2435,14 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         let c = submission.value(name).trim();
         (!c.is_empty()).then(|| c.to_owned())
     };
+    if ["danger_ping", "warning_ping"]
+        .iter()
+        .any(|name| submission.value(name).trim().chars().count() > 64)
+    {
+        return Ok(SubmitResult::Page(settings_page(Some(
+            "A state's name is at most 64 characters.",
+        ))?));
+    }
     storage::execute(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
          moon_channel = $4, default_pings = $5, danger_ping = $6, warning_ping = $9, \
@@ -2483,7 +2527,8 @@ fn fuel_alert_table() -> Result<Table, PageError> {
     let rows = storage::query(
         &format!(
             "SELECT id, start_hours, end_hours, repeat_hours, ping, enabled FROM fuel_alert_configs \
-             ORDER BY start_hours DESC, id LIMIT {MAX_FUEL_CONFIGS}"
+             ORDER BY start_hours DESC, id LIMIT {}",
+            MAX_FUEL_CONFIGS * 2
         ),
         &[],
     )
@@ -2582,6 +2627,14 @@ fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResu
     let ping = submission.value("ping");
     if !matches!(ping, "none" | "warning" | "danger") {
         return Err(PageError::NotFound);
+    }
+    if !(1..=MAX_ALERT_HOURS).contains(&start)
+        || !(0..=MAX_ALERT_HOURS).contains(&end)
+        || !(0..=MAX_ALERT_HOURS).contains(&repeat)
+    {
+        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+            "A fuel alert's hours are whole numbers up to {MAX_ALERT_HOURS} (a year)."
+        )))?));
     }
     if end >= start {
         return Ok(SubmitResult::Page(settings_page(Some(
