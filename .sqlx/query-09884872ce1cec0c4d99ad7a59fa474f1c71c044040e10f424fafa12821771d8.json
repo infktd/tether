@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.smart_grace (group_id, account_id, filter_id, expires_at)\n        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09884872ce1cec0c4d99ad7a59fa474f1c71c044040e10f424fafa12821771d8"
+}

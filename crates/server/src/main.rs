@@ -321,7 +321,13 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     tether_web::compliance::register_jobs(&mut registry, db.clone(), esi.clone(), vault.clone());
     tether_web::ownership::register_jobs(&mut registry, db.clone(), vault.clone());
     tether_web::autogroups::register_jobs(&mut registry, db.clone(), esi.clone());
-    tether_web::smart_groups::register_jobs(&mut registry, db.clone(), esi.clone());
+    tether_web::smart_groups::register_jobs(
+        &mut registry,
+        db.clone(),
+        esi.clone(),
+        key.clone(),
+        discord.clone(),
+    );
     tether_web::backups::register_jobs(&mut registry, db.clone(), snapshots.clone());
     let schedules = tether_web::maintenance::schedules()
         .into_iter()

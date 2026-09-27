@@ -154,6 +154,26 @@ pub enum Joined {
 
 /// Joins a group, or asks to, in AA's order.
 pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joined, AppError> {
+    join_with(db, account, group, false).await
+}
+
+/// Joins a group, or asks to, from the Secure Groups page: as AA's,
+/// `securegroups.access_sec_group` (which the caller checked) lets them
+/// ask without `request_groups`.
+pub async fn join_secure(
+    db: &PgPool,
+    account: AccountId,
+    group: GroupId,
+) -> Result<Joined, AppError> {
+    join_with(db, account, group, true).await
+}
+
+async fn join_with(
+    db: &PgPool,
+    account: AccountId,
+    group: GroupId,
+    secure: bool,
+) -> Result<Joined, AppError> {
     let mut tx = db.begin().await?;
     let group = load_locked(&mut tx, group, false).await?;
     let me = standing(&mut tx, account).await?;
@@ -164,9 +184,10 @@ pub async fn join(db: &PgPool, account: AccountId, group: GroupId) -> Result<Joi
         ));
     }
     let allowed = groups::allowed_states(&mut *tx, group.id).await?;
-    let can_request = permissions::effective_in(&mut tx, account)
-        .await?
-        .contains(REQUEST_GROUPS);
+    let can_request = secure
+        || permissions::effective_in(&mut tx, account)
+            .await?
+            .contains(REQUEST_GROUPS);
     let is_member = groups::is_member(&mut *tx, group.id, account).await?;
     let pending = groups::pending(&mut *tx, group.id, account)
         .await?

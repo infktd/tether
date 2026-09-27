@@ -358,15 +358,30 @@ pub struct AppFilterView {
 }
 
 pub struct SmartView {
-    pub auto_join: bool,
-    pub grace_days: i32,
-    pub notify: bool,
-    /// `(id, what it asks)`.
-    pub filters: Vec<(i64, String)>,
+    pub settings: tether_db::smart_groups::Settings,
+    pub filters: Vec<SmartFilterView>,
     /// An app filter has no fresh values: sweeps leave the group alone.
     pub frozen: bool,
     /// When the sweep or Check now last judged it, EVE time.
     pub checked_at: Option<String>,
+    /// Ping channels, for the run summaries (AA's group update webhook).
+    pub channels: Vec<tether_db::pings::PingChannel>,
+}
+
+impl SmartView {
+    pub fn is_update_channel(&self, channel: &i64) -> bool {
+        self.settings.update_channel == Some(*channel)
+    }
+}
+
+/// One of a smart group's filters.
+pub struct SmartFilterView {
+    pub id: i64,
+    /// What it asks.
+    pub text: String,
+    pub grace_days: i32,
+    /// No longer reads: can only be deleted.
+    pub broken: bool,
 }
 
 /// What a group's page shows besides the group.
@@ -449,34 +464,47 @@ async fn group_page(
             let (rules, broken) = tether_db::smart_groups::rules(&state.db, GroupId(id)).await?;
             let mut conn = state.db.acquire().await?;
             let names = crate::smart_groups::Names::load(&mut conn, &rules, false).await?;
-            let mut filters: Vec<(i64, String)> =
-                rules.iter().map(|r| (r.id, names.describe(r))).collect();
+            let mut filters: Vec<SmartFilterView> = rules
+                .iter()
+                .map(|r| SmartFilterView {
+                    id: r.id,
+                    text: names.describe(r),
+                    grace_days: r.grace_days,
+                    broken: false,
+                })
+                .collect();
             // Kept out of sweeps until deleted: shown so they can be.
-            filters.extend(
-                broken
-                    .into_iter()
-                    .map(|id| (id, "a filter that no longer reads (delete it)".to_owned())),
-            );
+            filters.extend(broken.into_iter().map(|id| SmartFilterView {
+                id,
+                text: "a filter that no longer reads (delete it)".to_owned(),
+                grace_days: 0,
+                broken: true,
+            }));
             let known = tether_db::smart_groups::app_keys_known(&state.db).await?;
-            let frozen = rules.iter().any(|r| match &r.filter {
-                tether_core::smart::Filter::App {
-                    plugin,
-                    name,
-                    config,
-                    ..
-                } => !known.contains(&tether_core::smart::app_key(plugin, name, config)),
-                _ => false,
+            let frozen = rules.iter().any(|r| {
+                r.filter.leaves().iter().any(|leaf| match leaf {
+                    tether_core::smart::Filter::App {
+                        plugin,
+                        name,
+                        config,
+                        ..
+                    } => !known.contains(&tether_core::smart::app_key(plugin, name, config)),
+                    _ => false,
+                })
             });
             let checked_at = tether_db::smart_groups::swept_at(&state.db, GroupId(id))
                 .await?
                 .map(|at| at.format("%Y-%m-%d %H:%M").to_string());
+            let channels = match crate::discord::config(state).await {
+                Ok(config) => crate::pings::channels_for(state, &config).await?,
+                Err(_) => Vec::new(),
+            };
             Some(SmartView {
                 checked_at,
-                auto_join: s.auto_join,
-                grace_days: s.grace_days,
-                notify: s.notify,
+                settings: s,
                 filters,
                 frozen,
+                channels,
             })
         }
         None => None,
@@ -642,7 +670,9 @@ async fn on_group(
 }
 
 /// `POST /admin/groups/{id}/smart`: make it a smart group (Secure
-/// Groups), change its settings, or (`smart` unticked) make it ordinary.
+/// Groups), change its settings (allianceauth-secure-groups'), or (`smart`
+/// unticked) make it ordinary. Made smart from the plain form (no
+/// `configured`), it takes AA's defaults.
 pub async fn smart_settings(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -650,26 +680,105 @@ pub async fn smart_settings(
     Form(fields): Form<Fields>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
-    let result = match field(&fields, "grace_days").trim().parse::<i32>() {
-        _ if !checked(&fields, "smart") => {
-            crate::smart_groups::set_settings(&state.db, session.account, GroupId(id), None).await
+    let result = if !checked(&fields, "smart") {
+        crate::smart_groups::set_settings(&state.db, session.account, GroupId(id), None).await
+    } else {
+        let settings = if checked(&fields, "configured") {
+            match field(&fields, "update_channel").trim() {
+                "" => Ok(None),
+                channel => channel
+                    .parse::<i64>()
+                    .map(Some)
+                    .map_err(|_| AppError::bad_request("Choose a ping channel from the list.")),
+            }
+            .map(|update_channel| tether_db::smart_groups::Settings {
+                auto_join: checked(&fields, "auto_join"),
+                enabled: checked(&fields, "enabled"),
+                include_in_updates: checked(&fields, "include_in_updates"),
+                can_grace: checked(&fields, "can_grace"),
+                notify_on_add: checked(&fields, "notify_on_add"),
+                notify_on_remove: checked(&fields, "notify_on_remove"),
+                notify_on_grace: checked(&fields, "notify_on_grace"),
+                update_channel,
+                update_message: field(&fields, "update_message").trim().to_owned(),
+            })
+        } else {
+            Ok(tether_db::smart_groups::Settings {
+                auto_join: checked(&fields, "auto_join"),
+                ..Default::default()
+            })
+        };
+        match settings {
+            Ok(settings) => {
+                crate::smart_groups::set_settings(
+                    &state.db,
+                    session.account,
+                    GroupId(id),
+                    Some(settings),
+                )
+                .await
+            }
+            Err(err) => Err(err),
         }
-        Ok(grace_days) => {
-            crate::smart_groups::set_settings(
-                &state.db,
-                session.account,
-                GroupId(id),
-                Some(tether_db::smart_groups::Settings {
-                    auto_join: checked(&fields, "auto_join"),
-                    grace_days,
-                    notify: checked(&fields, "notify"),
-                }),
-            )
-            .await
-        }
-        Err(_) => Err(AppError::bad_request("A grace period is 0 to 60 days.")),
     };
     on_group(&state, shell, id, result).await
+}
+
+/// Faction ids from a comma-separated list of faction names or ids, each
+/// resolved through ESI.
+async fn factions(state: &AppState, text: &str) -> Result<Vec<i64>, AppError> {
+    let parts: Vec<&str> = text
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() || parts.len() > 20 {
+        return Err(AppError::bad_request(
+            "Name 1 to 20 factions, separated by commas.",
+        ));
+    }
+    let mut ids = Vec::new();
+    for part in parts {
+        let found: Vec<i64> = if let Ok(id) = part.parse::<i64>() {
+            vec![id]
+        } else {
+            state
+                .esi
+                .resolve_names(&[part.to_owned()], tether_esi::Priority::Interactive)
+                .await
+                .map_err(crate::admin::esi_unavailable)?
+                .factions
+                .iter()
+                .map(|e| e.id)
+                .collect()
+        };
+        // Named through ESI (and kept for describing the filter).
+        let named = tether_esi::names::resolve(
+            &state.db,
+            &state.esi,
+            &found,
+            tether_esi::Priority::Interactive,
+        )
+        .await
+        .map_err(crate::admin::names_unavailable)?;
+        let factions: Vec<i64> = found
+            .into_iter()
+            .filter(|id| {
+                named
+                    .get(id)
+                    .is_some_and(|n| n.kind() == Some(tether_core::states::EntityKind::Faction))
+            })
+            .collect();
+        if factions.is_empty() {
+            return Err(AppError::bad_request(format!(
+                "No faction is named exactly {part}."
+            )));
+        }
+        ids.extend(factions);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// Ids from a comma-separated list of corporation and alliance names or
@@ -774,9 +883,22 @@ pub async fn smart_filter(
         "main_affiliation" => entities(&state, field(&fields, "entities"))
             .await
             .map(|entities| Filter::MainAffiliation { entities }),
-        "any_affiliation" => entities(&state, field(&fields, "entities"))
+        "any_affiliation" => match (
+            entities(&state, field(&fields, "entities")).await,
+            exempt(&state, &fields).await,
+        ) {
+            (Ok(entities), Ok(exempt)) => Ok(Filter::AnyAffiliation { entities, exempt }),
+            (Err(err), _) | (_, Err(err)) => Err(err),
+        },
+        "faction" => factions(&state, field(&fields, "factions"))
             .await
-            .map(|entities| Filter::AnyAffiliation { entities }),
+            .map(|factions| Filter::Faction { factions }),
+        "service" => match field(&fields, "service") {
+            "discord" => Ok(Filter::Service {
+                service: tether_core::smart::Service::Discord,
+            }),
+            _ => Err(AppError::bad_request("Choose a service.")),
+        },
         "character_age" => field(&fields, "days")
             .trim()
             .parse::<u32>()
@@ -784,26 +906,113 @@ pub async fn smart_filter(
             .filter(|d| (1..=36_500).contains(d))
             .map(|days| Filter::CharacterAge { days })
             .ok_or_else(|| AppError::bad_request("Give an age in days.")),
-        "groups" => ids("groups").map(|groups| Filter::Groups {
-            groups,
-            all: field(&fields, "match") == "all",
-        }),
+        "groups" => match (ids("groups"), exempt(&state, &fields).await) {
+            (Ok(groups), Ok(exempt)) => Ok(Filter::Groups {
+                groups,
+                all: field(&fields, "match") == "all",
+                exempt,
+            }),
+            (Err(err), _) | (_, Err(err)) => Err(err),
+        },
         "compliant" => Ok(Filter::Compliant {}),
         "app" => app_filter(&state, &fields),
         _ => Err(AppError::bad_request("Choose a filter.")),
     };
-    let result = match filter {
-        Ok(filter) => {
+    let result = match (filter, grace_days(&fields)) {
+        (Ok(filter), Ok(grace_days)) => {
             crate::smart_groups::add_filter(
                 &state.db,
                 session.account,
                 GroupId(id),
                 filter,
                 checked(&fields, "reversed"),
+                grace_days,
             )
             .await
         }
-        Err(err) => Err(err),
+        (Err(err), _) | (_, Err(err)) => Err(err),
+    };
+    on_group(&state, shell, id, result).await
+}
+
+/// A filter's grace period from the form: AA's 5 days when left empty.
+fn grace_days(fields: &Fields) -> Result<i32, AppError> {
+    match field(fields, "grace_days").trim() {
+        "" => Ok(crate::smart_groups::DEFAULT_GRACE_DAYS),
+        days => days.parse::<i32>().map_err(|_| {
+            AppError::bad_request(format!(
+                "A grace period is 0 to {} days.",
+                crate::smart_groups::MAX_GRACE_DAYS
+            ))
+        }),
+    }
+}
+
+/// Exempt corporations and alliances (AA's exemptions on its alt and
+/// group filters), if any are named.
+async fn exempt(state: &AppState, fields: &Fields) -> Result<Vec<i64>, AppError> {
+    match field(fields, "exempt").trim() {
+        "" => Ok(Vec::new()),
+        text => entities(state, text).await,
+    }
+}
+
+/// `POST /admin/groups/{id}/smart/filters/{filter}/grace`: one filter's
+/// grace period (AA's grace period per filter).
+pub async fn smart_filter_grace(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, filter)): Path<(i64, i64)>,
+    Form(fields): Form<Fields>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let result = match field(&fields, "grace_days").trim().parse::<i32>() {
+        Ok(days) => {
+            crate::smart_groups::set_filter_grace(
+                &state.db,
+                session.account,
+                GroupId(id),
+                filter,
+                days,
+            )
+            .await
+        }
+        Err(_) => Err(AppError::bad_request(format!(
+            "A grace period is 0 to {} days.",
+            crate::smart_groups::MAX_GRACE_DAYS
+        ))),
+    };
+    on_group(&state, shell, id, result).await
+}
+
+/// `POST /admin/groups/{id}/smart/filters/combine`: two filters become one
+/// expression (AA's filter expression: AND, OR or XOR, maybe negated).
+pub async fn smart_filter_combine(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+    Form(fields): Form<Fields>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
+    let first = field(&fields, "first").parse::<i64>();
+    let second = field(&fields, "second").parse::<i64>();
+    let operator = tether_core::smart::Operator::parse(field(&fields, "operator"));
+    let result = match (first, second, operator) {
+        (Ok(first), Ok(second), Some(operator)) => {
+            crate::smart_groups::combine(
+                &state.db,
+                session.account,
+                GroupId(id),
+                first,
+                second,
+                operator,
+                checked(&fields, "negate"),
+            )
+            .await
+        }
+        _ => Err(AppError::bad_request(
+            "Choose two filters and how to combine them.",
+        )),
     };
     on_group(&state, shell, id, result).await
 }

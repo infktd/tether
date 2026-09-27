@@ -89,22 +89,39 @@
   </section>
 
   <section class="card">
-    <header><h2>Secure Group</h2><p>Tether keeps a smart group's members by its filters: every filter must pass (a reversed one must fail). Auto groups add everyone who passes; others take requests only from those who pass. Members who stop passing leave, after the grace period if there is one.</p></header>
+    <header><h2>Secure Group</h2><p>As allianceauth-secure-groups: Tether keeps a smart group's members by its filters. Every filter must pass (a reversed one must fail). Auto groups add everyone who passes; others take requests, from the Groups or Secure Groups page, only from those who pass. Members who stop passing leave at once, or when a failing filter's grace period ends if the group can grace.</p></header>
     <section class="flex flex-col gap-5">
-      <form method="post" action="/admin/groups/{{ group.id }}/smart" class="flex flex-wrap items-end gap-4">
-        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="smart" value="on"{% if smart.is_some() %} checked{% endif %}> Smart group</label>
-        {% if let Some(sm) = smart %}
-        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="auto_join" value="on"{% if sm.auto_join %} checked{% endif %}> Add everyone who passes</label>
-        <div class="grid gap-1.5"><label class="label" for="grace">Grace period (days)</label><input class="input w-24" type="number" id="grace" name="grace_days" min="0" max="60" value="{{ sm.grace_days }}"></div>
-        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="notify" value="on"{% if sm.notify %} checked{% endif %}> Notify members</label>
-        {% else %}
-        <input type="hidden" name="grace_days" value="0"><input type="hidden" name="notify" value="on">
-        {% endif %}
-        <button type="submit" class="btn" data-variant="outline">Save</button>
-      </form>
       {% if let Some(sm) = smart %}
+      <form method="post" action="/admin/groups/{{ group.id }}/smart" class="grid gap-4">
+        <input type="hidden" name="configured" value="on">
+        <div class="flex flex-wrap gap-x-6 gap-y-3">
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="smart" value="on" checked> Smart group</label>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="enabled" value="on"{% if sm.settings.enabled %} checked{% endif %}> Enabled</label>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="include_in_updates" value="on"{% if sm.settings.include_in_updates %} checked{% endif %}> Include in hourly updates</label>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="auto_join" value="on"{% if sm.settings.auto_join %} checked{% endif %}> Auto group: add everyone who passes</label>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="can_grace" value="on"{% if sm.settings.can_grace %} checked{% endif %}> Can grace</label>
+        </div>
+        <div class="flex flex-wrap gap-x-6 gap-y-3">
+          <span class="label">Notify members</span>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="notify_on_add" value="on"{% if sm.settings.notify_on_add %} checked{% endif %}> on add</label>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="notify_on_remove" value="on"{% if sm.settings.notify_on_remove %} checked{% endif %}> on remove</label>
+          <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="notify_on_grace" value="on"{% if sm.settings.notify_on_grace %} checked{% endif %}> on grace</label>
+        </div>
+        <div class="flex flex-wrap items-end gap-3">
+          <div class="grid gap-1.5"><label class="label" for="update-channel">Post each run's summary to</label>
+            <select class="select input" id="update-channel" name="update_channel">
+              <option value="">Nowhere</option>
+              {% for c in sm.channels %}<option value="{{ c.channel_id }}"{% if sm.is_update_channel(c.channel_id) %} selected{% endif %}>#{{ c.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="grid gap-1.5 flex-1 min-w-64"><label class="label" for="update-message">Extra message</label><input class="input" id="update-message" name="update_message" value="{{ sm.settings.update_message }}" maxlength="500"></div>
+          <button type="submit" class="btn" data-variant="outline">Save</button>
+        </div>
+        <p class="text-xs text-muted-foreground">AA posts summaries to Discord webhooks; Tether's bot posts them to one of the ping channels set on the Discord page, mentioning nobody.</p>
+      </form>
+      {% if !sm.settings.enabled %}<div class="alert" role="status"><section>Switched off: this is an ordinary group until it's enabled again. Nobody is checked, added or removed.</section></div>{% endif %}
       <div class="flex flex-wrap items-center justify-between gap-3 rounded-sm border p-3">
-        <p class="text-sm text-muted-foreground">Tether checks everyone against the filters every hour{% if let Some(at) = sm.checked_at %}; last at <span class="num">{{ at }}</span> EVE{% endif %}. Check now does it for this group at once: members who fail leave (or start their grace period){% if sm.auto_join %}, and everyone who passes joins{% endif %}.</p>
+        <p class="text-sm text-muted-foreground">{% if sm.settings.include_in_updates %}Tether checks everyone against the filters every hour{% else %}Left out of the hourly updates: only Check now runs it{% endif %}{% if let Some(at) = sm.checked_at %}; last at <span class="num">{{ at }}</span> EVE{% endif %}. Check now does it for this group at once: members who fail leave (or start a grace period){% if sm.settings.auto_join %}, and everyone who passes joins{% endif %}.</p>
         <form method="post" action="/admin/groups/{{ group.id }}/smart/check">
           <button type="submit" class="btn" data-variant="outline">Check now</button>
         </form>
@@ -112,29 +129,63 @@
       {% if sm.frozen %}<div class="alert" data-variant="destructive" role="status"><section>An app filter has no answers from its app in the last two days (the app is off, gone, or hasn't run yet), so Tether leaves this group's members as they are until it answers or you remove that filter.</section></div>{% endif %}
       <div class="grid gap-2">
         <div class="label">Filters</div>
-        {% if sm.filters.is_empty() %}<p class="text-sm text-muted-foreground">None yet: nobody is added until there's at least one.</p>{% endif %}
-        <ul class="flex flex-wrap gap-2">
-          {% for (fid, text) in sm.filters %}
-          <li><form method="post" action="/admin/groups/{{ group.id }}/smart/filters/{{ fid }}/delete" class="grant-chip"><span>{{ text }}</span><button type="submit" aria-label="Remove filter {{ text }}" title="Remove">×</button></form></li>
+        {% if sm.filters.is_empty() %}<p class="text-sm text-muted-foreground">None yet: nobody is added until there's at least one.</p>{% else %}
+        <ul class="grid gap-2">
+          {% for f in sm.filters %}
+          <li class="flex flex-wrap items-center gap-3 rounded-sm border px-3 py-2">
+            <span class="flex-1 min-w-48 text-sm">{{ f.text }}</span>
+            {% if !f.broken %}
+            <form method="post" action="/admin/groups/{{ group.id }}/smart/filters/{{ f.id }}/grace" class="flex items-center gap-2">
+              <label class="text-xs text-muted-foreground" for="grace-{{ f.id }}">Grace (days)</label>
+              <input class="input h-8 w-20" type="number" id="grace-{{ f.id }}" name="grace_days" min="0" max="60" value="{{ f.grace_days }}">
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Set</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/admin/groups/{{ group.id }}/smart/filters/{{ f.id }}/delete">
+              <button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Remove filter {{ f.text }}" title="Remove">{% call icons::icon("trash") %}{% endcall %}</button>
+            </form>
+          </li>
           {% endfor %}
         </ul>
+        {% endif %}
+        {% if sm.filters.len() >= 2 %}
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/filters/combine" class="flex flex-wrap items-end gap-2 rounded-sm border p-3">
+          <span class="label w-full">Combine two filters into one (an expression)</span>
+          <label class="sr-only" for="combine-first">First filter</label>
+          <select class="select input" id="combine-first" name="first">{% for f in sm.filters %}{% if !f.broken %}<option value="{{ f.id }}">{{ f.text }}</option>{% endif %}{% endfor %}</select>
+          <label class="sr-only" for="combine-operator">Operator</label>
+          <select class="select input w-24" id="combine-operator" name="operator"><option value="and">AND</option><option value="or">OR</option><option value="xor">XOR</option></select>
+          <label class="sr-only" for="combine-second">Second filter</label>
+          <select class="select input" id="combine-second" name="second">{% for f in sm.filters %}{% if !f.broken %}<option value="{{ f.id }}"{% if loop.index == 2 %} selected{% endif %}>{{ f.text }}</option>{% endif %}{% endfor %}</select>
+          <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="negate" value="on"> Negate</label>
+          <button type="submit" class="btn" data-variant="outline" data-size="sm">Combine</button>
+        </form>
+        {% endif %}
       </div>
+      <p class="text-xs text-muted-foreground">New filters get a 5 day grace period unless you give one; it applies while the group can grace.</p>
       <div class="grid gap-3 lg:grid-cols-2">
         <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
           <input type="hidden" name="kind" value="state"><div class="label">State is</div>
           <div class="flex flex-wrap gap-3">{% for s in states %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="states" value="{{ s.id }}"> {{ s.name }}</label>{% endfor %}</div>
-          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+          <div class="flex items-center justify-between gap-2"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)"><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
         </form>
         <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
           <div class="flex gap-3 text-sm"><label class="label gap-1 font-normal"><input type="radio" class="input" name="kind" value="main_affiliation" checked> Main in</label><label class="label gap-1 font-normal"><input type="radio" class="input" name="kind" value="any_affiliation"> Any character in</label></div>
-          <input class="input" name="entities" maxlength="1000" placeholder="Corporations or alliances: exact names or ids, comma-separated" required>
-          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+          <input class="input" name="entities" maxlength="1000" placeholder="Corporations or alliances: exact names or ids, comma-separated" aria-label="Corporations or alliances" required>
+          <input class="input" name="exempt" maxlength="1000" placeholder="Exempt (any character only): mains in these corporations or alliances pass" aria-label="Exempt corporations or alliances">
+          <div class="flex items-center justify-between gap-2"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)"><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
         </form>
         <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
           <input type="hidden" name="kind" value="groups">
           <div class="flex gap-3 text-sm"><span class="label">In</span><label class="label gap-1 font-normal"><input type="radio" class="input" name="match" value="any" checked> any</label><label class="label gap-1 font-normal"><input type="radio" class="input" name="match" value="all"> all</label><span class="label">of</span></div>
           <div class="flex flex-wrap gap-3">{% for g in leader_groups %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="groups" value="{{ g.id }}"> {{ g.name }}</label>{% endfor %}{% for g in other_groups %}<label class="label gap-1 font-normal text-sm"><input type="checkbox" class="input" name="groups" value="{{ g.id }}"> {{ g.name }}</label>{% endfor %}</div>
-          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+          <input class="input" name="exempt" maxlength="1000" placeholder="Exempt: mains in these corporations or alliances pass" aria-label="Exempt corporations or alliances">
+          <div class="flex items-center justify-between gap-2"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)"><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+        </form>
+        <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 grid gap-2">
+          <input type="hidden" name="kind" value="faction"><div class="label">Any character in the militia of</div>
+          <input class="input" name="factions" maxlength="1000" placeholder="Factions: exact names or ids, comma-separated" aria-label="Factions" required>
+          <div class="flex items-center justify-between gap-2"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)"><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
         </form>
         {% if !app_filters.is_empty() %}<p class="text-xs text-muted-foreground lg:col-span-2">An app's filter lets that app's answers decide who is in the group: keep them off groups that grant admin permissions.</p>{% endif %}
         {% for af in app_filters %}
@@ -147,7 +198,7 @@
             {% endfor %}
             {% if af.sum %}<input class="input w-28" type="number" name="at_least" min="1" placeholder="At least" aria-label="At least" required>{% endif %}
           </div>
-          <div class="flex items-center justify-between"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
+          <div class="flex items-center justify-between gap-2"><label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label><input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)"><button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button></div>
         </form>
         {% endfor %}
         <div class="grid gap-3">
@@ -155,11 +206,19 @@
             <input type="hidden" name="kind" value="character_age">
             <div class="grid gap-1.5"><label class="label" for="age-days">Main at least (days old)</label><input class="input w-28" type="number" id="age-days" name="days" min="1" max="36500" required></div>
             <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label>
+            <input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)">
             <button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button>
           </form>
-          <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 flex items-center justify-between gap-2">
+          <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 flex flex-wrap items-center justify-between gap-2">
             <input type="hidden" name="kind" value="compliant"><span class="label">Compliant</span>
             <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label>
+            <input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)">
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button>
+          </form>
+          <form method="post" action="/admin/groups/{{ group.id }}/smart/filters" class="rounded-sm border p-3 flex flex-wrap items-center justify-between gap-2">
+            <input type="hidden" name="kind" value="service"><input type="hidden" name="service" value="discord"><span class="label">Linked to Discord</span>
+            <label class="label gap-1 font-normal text-xs"><input type="checkbox" class="input" name="reversed" value="on"> Reversed</label>
+            <input class="input h-8 w-24" type="number" name="grace_days" min="0" max="60" placeholder="Grace" aria-label="Grace period (days)">
             <button type="submit" class="btn" data-variant="outline" data-size="sm">Add</button>
           </form>
         </div>
@@ -179,7 +238,7 @@
             <h3 class="font-medium" id="check-title">{{ c.name }}</h3>
             {% if c.passes %}<span class="badge" data-variant="secondary">passes</span>{% else %}<span class="badge" data-variant="destructive">doesn't pass</span>{% endif %}
             {% if c.member %}<span class="badge" data-variant="outline">member</span>{% else %}<span class="badge" data-variant="outline">not a member</span>{% endif %}
-            {% if let Some(since) = c.grace_since %}<span class="text-xs text-muted-foreground">in the grace period since <span class="num">{{ since.format("%Y-%m-%d %H:%M") }}</span> EVE</span>{% endif %}
+            {% if let Some(until) = c.grace_until %}<span class="text-xs text-muted-foreground">in a grace period until <span class="num">{{ until.format("%Y-%m-%d %H:%M") }}</span> EVE</span>{% endif %}
           </div>
           {% if let Some(why) = c.blocked %}<p class="text-sm">{{ why }}</p>{% endif %}
           {% if c.filters.is_empty() %}<p class="text-sm text-muted-foreground">No filters yet.</p>{% else %}
@@ -192,6 +251,13 @@
         </div>
         {% endif %}
       </div>
+      {% else %}
+      <form method="post" action="/admin/groups/{{ group.id }}/smart" class="flex flex-wrap items-end gap-4">
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="smart" value="on"> Smart group</label>
+        <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="auto_join" value="on"> Auto group: add everyone who passes</label>
+        <button type="submit" class="btn" data-variant="outline">Save</button>
+      </form>
+      <p class="text-sm text-muted-foreground">A new smart group starts with allianceauth-secure-groups' defaults: enabled, in the hourly updates, no grace, members told when removed or graced.</p>
       {% endif %}
     </section>
   </section>

@@ -1243,7 +1243,7 @@ async fn smart_group(h: &Harness, owner: &str, name: &str, filter: &str) -> i64 
         &h.app,
         form(
             &format!("/admin/groups/{group}/smart"),
-            "smart=on&auto_join=on&grace_days=0",
+            "smart=on&auto_join=on",
             owner,
         ),
     )

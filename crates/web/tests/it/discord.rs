@@ -2368,3 +2368,97 @@ async fn fleet_pings_follow_aa_fleetpings_settings(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
 }
+
+// ---- Secure Groups: run summaries (AA's group update webhook) -------------
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn secure_groups_post_run_summaries_through_the_bot(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/groups",
+            &owner,
+            r#"{"name":"Miners","internal":false,"hidden":false}"#,
+        ),
+    )
+    .await;
+    let miners = serde_json::from_str::<serde_json::Value>(&res.body).unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let settings = "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on";
+    // Only a ping channel: the bot posts nowhere else.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{miners}/smart"),
+            &format!("{settings}&update_channel=123"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{miners}/smart"),
+            &format!(
+                "{settings}&update_channel={PING_CHANNEL}&update_message=Fly+safe+%40everyone"
+            ),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{miners}/smart/filters"),
+            &format!("kind=state&states={MEMBER_STATE}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    tether_web::smart_groups::sweep(&h.db, &h.esi)
+        .await
+        .unwrap();
+    // The sweep the changes queued has run just now.
+    sqlx::query("DELETE FROM core.jobs WHERE kind = 'smart_groups.sweep'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .and(body_string_contains("**Miners**: Checked "))
+        .and(body_string_contains(
+            "Pending Removals 0)\\nFly safe @\u{200B}everyone",
+        ))
+        .respond_with(message_posted("900000000000000011"))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let mut registry = tether_jobs::Registry::new();
+    tether_web::smart_groups::register_jobs(
+        &mut registry,
+        h.db.clone(),
+        h.esi.clone(),
+        h.key.clone(),
+        h.discord.clone(),
+    );
+    let config = tether_jobs::WorkerConfig::default();
+    while tether_jobs::run_once(&h.db, &registry, &config)
+        .await
+        .unwrap()
+        != tether_jobs::Outcome::Idle
+    {}
+    let posted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE kind = 'smart_groups.post_update' AND state = 'succeeded'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(posted, 1);
+}

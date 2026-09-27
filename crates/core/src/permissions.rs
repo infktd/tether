@@ -23,6 +23,13 @@ pub const ADMIN_USERS: &str = "admin.users";
 pub const GROUP_MANAGEMENT: &str = "group_management";
 /// AA's `request_groups`: see and ask to join groups that aren't Public.
 pub const REQUEST_GROUPS: &str = "request_groups";
+/// allianceauth-secure-groups' `access_sec_group`: the Secure Groups page
+/// (check yourself against a smart group, join or ask to, leave).
+pub const SECUREGROUPS_ACCESS: &str = "securegroups.access_sec_group";
+/// allianceauth-secure-groups' `audit_sec_group`: Secure Group Audit for
+/// the smart groups you manage (Group Management over them): every
+/// member against every filter, Check now, removing members.
+pub const SECUREGROUPS_AUDIT: &str = "securegroups.audit_sec_group";
 /// AA's `discord.access_discord`: may link Discord and be in the server.
 pub const DISCORD_ACCESS: &str = "discord.access_discord";
 /// allianceauth-blacklist's 16 permissions: the Pilot Log's notes (on
@@ -66,6 +73,14 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Group Management: accept and reject requests, see and remove members, and read the audit log of every group that isn't Internal",
     ),
     (REQUEST_GROUPS, "Can request non-public groups"),
+    (
+        SECUREGROUPS_ACCESS,
+        "Secure Groups: check yourself against smart groups, and join, ask to join or leave them",
+    ),
+    (
+        SECUREGROUPS_AUDIT,
+        "Secure Group Audit: every member of the smart groups you manage against each filter; Check now; remove members",
+    ),
     (DISCORD_ACCESS, "Can access the Discord service"),
     (
         CORPSTATS_CORP,

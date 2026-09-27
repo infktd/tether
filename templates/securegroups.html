@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Secure Groups{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Secure Groups</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div>
+    <h1 class="page-title">Secure Groups</h1>
+    <p class="text-muted-foreground mt-1 max-w-3xl">Groups you're in by meeting their requirements. Each shows how you stand against them now; you can join or ask once you meet them all, and leave a group when a requirement stops passing, after its grace period if it has one.</p>
+  </div>
+  {% include "admin_error.html" %}
+
+  {% if groups.is_empty() %}
+  <section class="card"><section><p class="text-sm text-muted-foreground">No Secure Groups are open to you.</p></section></section>
+  {% else %}
+  <section class="card data-card" aria-labelledby="secure">
+    <header><h2 id="secure">Groups <span class="num text-muted-foreground font-normal">{{ groups.len() }}</span></h2></header>
+    <table class="table">
+      <thead><tr><th scope="col">Group</th><th scope="col">Requirements</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for o in groups %}
+        <tr>
+          <td>
+            <div class="font-medium">{{ o.group.name }}</div>
+            {% if !o.group.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ o.group.description }}</div>{% endif %}
+            <div class="flex flex-wrap gap-1 mt-1">
+              {% if o.member %}<span class="badge" data-variant="secondary">Member</span>{% endif %}
+              {% if let Some(until) = o.grace_until %}<span class="badge" data-variant="destructive">Leaving <span class="num">{{ crate::pages::securegroups::date(until) }}</span> EVE</span>{% endif %}
+            </div>
+          </td>
+          <td class="w-full whitespace-normal">
+            {% if let Some(why) = o.blocked %}<p class="text-sm">{{ why }}</p>{% endif %}
+            {% if o.filters.is_empty() %}<p class="text-sm text-muted-foreground">None yet.</p>{% else %}
+            <ul class="grid gap-1 text-sm" role="list">
+              {% for f in o.filters %}
+              <li class="flex items-center gap-2">{% match f.passes %}{% when Some(true) %}<span class="badge" data-variant="secondary">pass</span>{% when Some(false) %}<span class="badge" data-variant="destructive">fail</span>{% when None %}<span class="badge" data-variant="outline">unknown</span>{% endmatch %}<span>{{ f.text }}</span></li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </td>
+          <td class="text-right">
+            {% if o.pending == Some("join") %}
+            <span class="badge" data-variant="outline">Requested</span>
+            {% else if o.pending == Some("leave") %}
+            <span class="badge" data-variant="outline">Leave requested</span>
+            {% else if o.member %}
+            <form method="post" action="/securegroups/{{ o.group.id.0 }}/leave" hx-confirm="Leave {{ o.group.name }}?">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Leave</button>
+            </form>
+            {% else if o.passes %}
+            <form method="post" action="/securegroups/{{ o.group.id.0 }}/join">
+              <button type="submit" class="btn" data-variant="outline" data-size="sm">{% if o.group.flags.open && !o.group.flags.restricted %}Join{% else %}Request{% endif %}</button>
+            </form>
+            {% else %}
+            <span class="text-xs text-muted-foreground">Meet every requirement to join</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

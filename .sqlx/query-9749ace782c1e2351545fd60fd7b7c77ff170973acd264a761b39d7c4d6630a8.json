@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO core.smart_filters (group_id, kind, config, reversed)\n        VALUES ($1, $2, $3, $4) RETURNING id\n        ",
+  "query": "\n        INSERT INTO core.smart_filters (group_id, kind, config, reversed, grace_days)\n        VALUES ($1, $2, $3, $4, $5) RETURNING id\n        ",
   "describe": {
     "columns": [
       {
@@ -20,12 +20,13 @@
         "Int8",
         "Text",
         "Jsonb",
-        "Bool"
+        "Bool",
+        "Int4"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "9cfa78eef7243fabddbb82d5a3a1c766d934e51bf26348ceee664b61b088bcf2"
+  "hash": "9749ace782c1e2351545fd60fd7b7c77ff170973acd264a761b39d7c4d6630a8"
 }

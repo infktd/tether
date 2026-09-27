@@ -55,7 +55,7 @@ fn card(a: groups::Available) -> GroupCard {
 async fn requirements(db: &tether_db::PgPool, cards: &mut [GroupCard]) -> Result<(), AppError> {
     let mut smart = Vec::new();
     for card in cards.iter_mut() {
-        if tether_db::smart_groups::settings(db, GroupId(card.id))
+        if tether_db::smart_groups::active(db, GroupId(card.id))
             .await?
             .is_some()
         {

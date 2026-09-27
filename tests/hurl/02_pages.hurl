@@ -611,6 +611,57 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/groups/1/smart/filters/1/grace
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/groups/1/smart/filters/combine
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/securegroups
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/securegroups/1/join
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/securegroups/1/leave
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/securegroups/audit
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/securegroups/audit/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/securegroups/audit/1/check
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/securegroups/audit/1/members/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/system/summary
 HTTP 303
 [Asserts]

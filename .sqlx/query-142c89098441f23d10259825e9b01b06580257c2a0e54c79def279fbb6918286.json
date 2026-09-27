@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT auto_join, enabled, include_in_updates, can_grace, notify_on_add,\n               notify_on_remove, notify_on_grace, update_channel_id, update_message\n        FROM core.smart_groups WHERE group_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "auto_join",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "auto_join"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "include_in_updates",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "include_in_updates"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "can_grace",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "can_grace"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "notify_on_add",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "notify_on_add"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "notify_on_remove",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "notify_on_remove"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "notify_on_grace",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "notify_on_grace"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "update_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "update_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "update_message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.smart_groups",
+            "name": "update_message"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "142c89098441f23d10259825e9b01b06580257c2a0e54c79def279fbb6918286"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.smart_grace\n        WHERE group_id = $1 AND account_id = $2 AND NOT (filter_id = ANY($3))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ae4ee8256bfd8ddc80a3b9cfa75a2773ae84d553a09597e3aa836834fb22bbea"
+}

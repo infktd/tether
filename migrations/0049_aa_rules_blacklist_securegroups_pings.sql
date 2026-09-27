@@ -89,3 +89,52 @@ UPDATE core.personal_tokens t SET scopes = ARRAY(
     SELECT DISTINCT COALESCE(r.new, s.scope)
     FROM unnest(t.scopes) AS s(scope) LEFT JOIN blacklist_renames r ON r.old = s.scope)
 WHERE t.scopes && ARRAY(SELECT old FROM blacklist_renames);
+
+-- Secure Groups, as allianceauth-secure-groups: its settings per group
+-- (enabled, include in updates, can grace, notify on add, remove and
+-- grace), a grace period per filter (5 days unless set), and its filters:
+-- expressions, factions and services beside Tether's. AA's webhooks
+-- become the bot posting each run's summary to a ping channel.
+ALTER TABLE core.smart_groups
+    ADD COLUMN enabled boolean NOT NULL DEFAULT true,
+    ADD COLUMN include_in_updates boolean NOT NULL DEFAULT true,
+    ADD COLUMN can_grace boolean NOT NULL DEFAULT false,
+    ADD COLUMN notify_on_add boolean NOT NULL DEFAULT false,
+    ADD COLUMN notify_on_remove boolean NOT NULL DEFAULT true,
+    ADD COLUMN notify_on_grace boolean NOT NULL DEFAULT true,
+    ADD COLUMN update_channel_id bigint,
+    ADD COLUMN update_message text NOT NULL DEFAULT '' CHECK (length(update_message) <= 500);
+-- What a group did before carries over: its one notify switch is all
+-- three, and a grace period means it can grace.
+UPDATE core.smart_groups SET can_grace = grace_days > 0,
+    notify_on_add = notify, notify_on_remove = notify, notify_on_grace = notify;
+
+ALTER TABLE core.smart_filters
+    ADD COLUMN grace_days integer NOT NULL DEFAULT 5 CHECK (grace_days BETWEEN 0 AND 60);
+UPDATE core.smart_filters f SET grace_days = g.grace_days
+FROM core.smart_groups g WHERE g.group_id = f.group_id AND g.grace_days > 0;
+ALTER TABLE core.smart_filters DROP CONSTRAINT smart_filters_kind_check;
+ALTER TABLE core.smart_filters ADD CONSTRAINT smart_filters_kind_check CHECK (kind IN
+    ('state', 'main_affiliation', 'any_affiliation', 'character_age', 'groups', 'compliant',
+     'app', 'faction', 'service', 'expression'));
+
+-- A grace period per failing filter, with when it ends (AA's
+-- GracePeriodRecord). A member already in one keeps its end date, on each
+-- of the group's filters.
+CREATE TABLE core.smart_grace_filters (
+    group_id bigint NOT NULL REFERENCES core.smart_groups (group_id) ON DELETE CASCADE,
+    account_id bigint NOT NULL REFERENCES core.accounts (id) ON DELETE CASCADE,
+    filter_id bigint NOT NULL REFERENCES core.smart_filters (id) ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL,
+    PRIMARY KEY (group_id, account_id, filter_id)
+);
+CREATE INDEX smart_grace_filters_account_idx ON core.smart_grace_filters (account_id);
+INSERT INTO core.smart_grace_filters (group_id, account_id, filter_id, expires_at)
+SELECT g.group_id, g.account_id, f.id, g.since + make_interval(days => s.grace_days)
+FROM core.smart_grace g
+JOIN core.smart_groups s ON s.group_id = g.group_id
+JOIN core.smart_filters f ON f.group_id = g.group_id;
+DROP TABLE core.smart_grace;
+ALTER TABLE core.smart_grace_filters RENAME TO smart_grace;
+ALTER INDEX core.smart_grace_filters_account_idx RENAME TO smart_grace_account_idx;
+ALTER TABLE core.smart_groups DROP COLUMN grace_days, DROP COLUMN notify;

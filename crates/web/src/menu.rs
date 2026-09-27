@@ -75,6 +75,23 @@ pub const BUILTINS: &[Builtin] = &[
         "account",
         "group_management",
     ),
+    // allianceauth-secure-groups' two pages.
+    b(
+        "securegroups",
+        "Secure Groups",
+        "/securegroups",
+        "shield",
+        "account",
+        "securegroups",
+    ),
+    b(
+        "securegroups_audit",
+        "Secure Group Audit",
+        "/securegroups/audit",
+        "search",
+        "account",
+        "securegroups_audit",
+    ),
     // AA's sidebar has Services, for those with a service to link.
     b(
         "services",

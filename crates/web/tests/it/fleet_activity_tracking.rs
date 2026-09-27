@@ -1353,7 +1353,7 @@ async fn fats_feed_secure_groups(db: PgPool) {
         &h.app,
         form(
             &format!("/admin/groups/{group}/smart"),
-            "smart=on&auto_join=on&grace_days=0",
+            "smart=on&auto_join=on",
             &owner,
         ),
     )

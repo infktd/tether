@@ -18,6 +18,7 @@ pub mod pings;
 pub mod plugin_access;
 pub mod plugin_pages;
 pub mod plugins;
+pub mod securegroups;
 pub mod setup;
 pub mod states;
 pub mod stay;
@@ -204,6 +205,9 @@ pub(crate) fn menu_items(
     let may = |key: &str| match key {
         "dashboard" | "groups" => true,
         "group_management" => group_management.is_some(),
+        "securegroups" => nav.securegroups,
+        // AA: the audit permission, and Group Management over some group.
+        "securegroups_audit" => nav.securegroups_audit && group_management.is_some(),
         "pings" => nav.pings,
         "services" => nav.services,
         "administration" => nav.any(),
@@ -268,6 +272,10 @@ pub struct AdminNav {
     /// Not an admin page: Services, for those with a service to link
     /// (Discord's access permission), as AA shows it.
     pub services: bool,
+    /// Not admin pages: Secure Groups and Secure Group Audit, by
+    /// allianceauth-secure-groups' permissions.
+    pub securegroups: bool,
+    pub securegroups_audit: bool,
 }
 
 impl AdminNav {
@@ -555,6 +563,8 @@ pub(crate) async fn load(
         permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
         pings: perms.contains(tether_core::permissions::FLEETPINGS_ACCESS),
         services: perms.contains(tether_core::permissions::DISCORD_ACCESS),
+        securegroups: perms.contains(tether_core::permissions::SECUREGROUPS_ACCESS),
+        securegroups_audit: perms.contains(tether_core::permissions::SECUREGROUPS_AUDIT),
         setup: account.is_owner,
     };
     let managed = crate::groups::managed_by(&state.db, session.account).await?;

@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}{{ name }}: Secure Group Audit{% endblock %}
+{% block breadcrumb %}<a href="/securegroups/audit" class="hover:text-foreground">Secure Group Audit</a>&nbsp;/&nbsp;<span class="text-foreground">{{ name }}</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <h1 class="page-title">{{ name }}</h1>
+      <p class="text-muted-foreground mt-1 max-w-3xl">Every member against each requirement, as Tether judges them now. Check now applies them at once: members who fail leave, or start a grace period.</p>
+    </div>
+    <form method="post" action="/securegroups/audit/{{ id }}/check">
+      <button type="submit" class="btn" data-variant="outline">Check now</button>
+    </form>
+  </div>
+  {% include "admin_error.html" %}
+  <section class="card data-card">
+    <header>
+      <h2>Members <span class="num text-muted-foreground font-normal">{{ rows.len() }}</span></h2>
+      {% if !filters.is_empty() %}<ol class="text-sm text-muted-foreground list-decimal pl-5 mt-1">{% for f in filters %}<li>{{ f }}</li>{% endfor %}</ol>{% endif %}
+    </header>
+    {% if rows.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No members.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th scope="col">Main</th>{% for f in filters %}<th scope="col" class="text-center" title="{{ f }}">{{ loop.index }}</th>{% endfor %}<th scope="col">Standing</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="font-medium">{{ r.main_name }}</td>
+          {% for c in r.checks %}
+          <td class="text-center">{% match c %}{% when Some(true) %}<span class="badge" data-variant="secondary">pass</span>{% when Some(false) %}<span class="badge" data-variant="destructive">fail</span>{% when None %}<span class="badge" data-variant="outline">unknown</span>{% endmatch %}</td>
+          {% endfor %}
+          <td class="whitespace-normal text-sm">
+            {% if let Some(why) = r.blocked %}{{ why }}{% else if let Some(until) = r.grace_until %}Leaving <span class="num">{{ crate::pages::securegroups::date(until) }}</span> EVE{% else %}<span class="text-muted-foreground">Kept</span>{% endif %}
+          </td>
+          <td>
+            <form method="post" action="/securegroups/audit/{{ id }}/members/{{ r.account_id }}/remove" hx-confirm="Remove {{ r.main_name }} from {{ name }}?">
+              <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

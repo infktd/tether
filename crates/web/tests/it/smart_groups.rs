@@ -79,7 +79,7 @@ async fn auto_groups_follow_their_filters(db: PgPool) {
             &h,
             &pilot,
             miners,
-            "smart=on&auto_join=on&grace_days=0&notify=on"
+            "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on&notify_on_add=on&notify_on_remove=on&notify_on_grace=on"
         )
         .await
         .status,
@@ -89,7 +89,7 @@ async fn auto_groups_follow_their_filters(db: PgPool) {
         &h,
         &owner,
         miners,
-        "smart=on&auto_join=on&grace_days=0&notify=on",
+        "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on&notify_on_add=on&notify_on_remove=on&notify_on_grace=on",
     )
     .await;
     assert_eq!(
@@ -174,10 +174,10 @@ async fn a_grace_period_warns_before_removing(db: PgPool) {
         &h,
         &owner,
         caps,
-        "smart=on&auto_join=on&grace_days=3&notify=on",
+        "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on&notify_on_add=on&notify_on_remove=on&notify_on_grace=on&can_grace=on",
     )
     .await;
-    filter(&h, &owner, caps, "kind=compliant").await;
+    filter(&h, &owner, caps, "kind=compliant&grace_days=3").await;
     sweep(&h).await;
     assert!(in_group(&h, caps, pilot_account).await);
     // The owner is Guest here: never added unless the group names Guest.
@@ -200,7 +200,7 @@ async fn a_grace_period_warns_before_removing(db: PgPool) {
     .unwrap();
     assert!(note.starts_with("Leaving Capitals on"), "{note}");
     // Grace over.
-    sqlx::query("UPDATE core.smart_grace SET since = now() - interval '4 days'")
+    sqlx::query("UPDATE core.smart_grace SET expires_at = now() - interval '1 hour'")
         .execute(&h.db)
         .await
         .unwrap();
@@ -221,7 +221,7 @@ async fn requests_need_passing_and_filters_are_checked(db: PgPool) {
         r#"{"name":"Scouts","internal":false,"hidden":false,"open":true}"#,
     )
     .await;
-    smart(&h, &owner, scouts, "smart=on&grace_days=0&notify=on").await;
+    smart(&h, &owner, scouts, "smart=on").await;
     let res = filter(
         &h,
         &owner,
@@ -258,7 +258,7 @@ async fn requests_need_passing_and_filters_are_checked(db: PgPool) {
         .fetch_one(&h.db)
         .await
         .unwrap();
-    let res = smart(&h, &owner, compliant, "smart=on&grace_days=0").await;
+    let res = smart(&h, &owner, compliant, "smart=on").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 
     // Character age, from the main's public birthday.
@@ -276,7 +276,7 @@ async fn requests_need_passing_and_filters_are_checked(db: PgPool) {
         r#"{"name":"Veterans","internal":false,"hidden":false}"#,
     )
     .await;
-    smart(&h, &owner, vets, "smart=on&auto_join=on&grace_days=0").await;
+    smart(&h, &owner, vets, "smart=on&auto_join=on").await;
     filter(&h, &owner, vets, "kind=character_age&days=3650").await;
     sweep(&h).await;
     let pilot_account = account_of(&h, &pilot).await;
@@ -286,7 +286,7 @@ async fn requests_need_passing_and_filters_are_checked(db: PgPool) {
     );
 
     // Back to ordinary: filters and grace go.
-    let res = smart(&h, &owner, vets, "grace_days=0").await;
+    let res = smart(&h, &owner, vets, "").await;
     assert_eq!(res.location(), format!("/admin/groups/{vets}"));
     let left: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.smart_filters WHERE group_id = $1")
@@ -348,13 +348,13 @@ async fn smart_groups_never_reach_past_what_you_hold(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     // Making it smart would let a filter they pass add them: refused.
-    let res = smart(&h, &admin, directors, "smart=on&auto_join=on&grace_days=0").await;
+    let res = smart(&h, &admin, directors, "smart=on&auto_join=on").await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
     assert!(res.body.contains("admin.permissions"), "{}", res.body);
 
     // An Internal smart group stays hidden: the same 404 as none.
     let secret = group(&h, &owner, r#"{"name":"Secret"}"#).await;
-    smart(&h, &owner, secret, "smart=on&grace_days=0").await;
+    smart(&h, &owner, secret, "smart=on").await;
     filter(&h, &owner, secret, "kind=compliant&reversed=on").await;
     let join = send(&h.app, form(&format!("/groups/{secret}/join"), "", &admin)).await;
     assert_eq!(join.status, StatusCode::NOT_FOUND, "{}", join.body);
@@ -365,7 +365,7 @@ async fn smart_groups_never_reach_past_what_you_hold(db: PgPool) {
         r#"{"name":"Scouts","internal":false,"hidden":false}"#,
     )
     .await;
-    smart(&h, &owner, scouts, "smart=on&grace_days=0").await;
+    smart(&h, &owner, scouts, "smart=on").await;
     filter(
         &h,
         &owner,
@@ -422,7 +422,7 @@ async fn huge_app_values_never_stop_sweeps(db: PgPool) {
         r#"{"name":"Miners","internal":false,"hidden":false}"#,
     )
     .await;
-    smart(&h, &owner, miners, "smart=on&auto_join=on&grace_days=0").await;
+    smart(&h, &owner, miners, "smart=on&auto_join=on").await;
     filter(
         &h,
         &owner,
@@ -455,7 +455,7 @@ async fn check_now_runs_one_group_and_check_shows_each_filter(db: PgPool) {
             &h,
             &owner,
             id,
-            "smart=on&auto_join=on&grace_days=0&notify=on",
+            "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on&notify_on_add=on&notify_on_remove=on&notify_on_grace=on",
         )
         .await;
         filter(&h, &owner, id, &format!("kind=state&states={MEMBER_STATE}")).await;
@@ -643,4 +643,471 @@ async fn check_now_runs_one_group_and_check_shows_each_filter(db: PgPool) {
         "{}",
         res.body
     );
+}
+
+/// All of allianceauth-secure-groups' settings, as the full form posts
+/// them; add `&can_grace=on` and the rest as needed.
+const CONFIGURED: &str = "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on";
+
+/// The account's notifications about Secure Groups.
+async fn notifications(h: &Harness, account: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT title FROM core.notifications WHERE account_id = $1 \
+         AND (title LIKE 'Added to %' OR title LIKE 'Removed from %' OR title LIKE 'Leaving %') \
+         ORDER BY id",
+    )
+    .bind(account)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+async fn grant_state(h: &Harness, owner: &str, permission: &str, state: i64) {
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/permissions/grants",
+            owner,
+            &format!(r#"{{"permission":"{permission}","state_id":{state}}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn aa_settings_decide_notifications_updates_and_whether_it_runs(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    let miners = group(
+        &h,
+        &owner,
+        r#"{"name":"Miners","internal":false,"hidden":false,"open":true}"#,
+    )
+    .await;
+    // Made smart from the plain form: AA's defaults.
+    smart(&h, &owner, miners, "smart=on&auto_join=on").await;
+    let defaults: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT enabled, include_in_updates, can_grace, notify_on_add, notify_on_remove, \
+         notify_on_grace FROM core.smart_groups WHERE group_id = $1",
+    )
+    .bind(miners)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(defaults, (true, true, false, false, true, true));
+    filter(
+        &h,
+        &owner,
+        miners,
+        &format!("kind=state&states={MEMBER_STATE}"),
+    )
+    .await;
+    // Added, and not told (notify on add is off).
+    assert_eq!(sweep(&h).await, 1);
+    assert!(in_group(&h, miners, pilot_account).await);
+    assert!(notifications(&h, pilot_account).await.is_empty());
+
+    // Out of the hourly updates: the sweep leaves it; Check now doesn't.
+    let res = smart(
+        &h,
+        &owner,
+        miners,
+        "smart=on&configured=on&enabled=on&auto_join=on&notify_on_remove=on",
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        format!("/admin/groups/{miners}"),
+        "{}",
+        res.body
+    );
+    let (rule,): (i64,) = sqlx::query_as("SELECT id FROM core.smart_filters WHERE group_id = $1")
+        .bind(miners)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{miners}/smart/filters/{rule}/delete"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    filter(
+        &h,
+        &owner,
+        miners,
+        &format!("kind=state&states={BLUE_STATE}"),
+    )
+    .await;
+    assert_eq!(sweep(&h).await, 0);
+    assert!(in_group(&h, miners, pilot_account).await);
+    sqlx::query("UPDATE core.smart_groups SET swept_at = NULL")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = send(
+        &h.app,
+        form(&format!("/admin/groups/{miners}/smart/check"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(!in_group(&h, miners, pilot_account).await);
+    assert_eq!(
+        notifications(&h, pilot_account).await,
+        vec!["Removed from Miners".to_owned()]
+    );
+
+    // Switched off, it's an ordinary group: joining ignores the filters,
+    // and nothing sweeps it.
+    smart(&h, &owner, miners, "smart=on&configured=on").await;
+    let join = send(&h.app, form(&format!("/groups/{miners}/join"), "", &pilot)).await;
+    assert!(
+        join.status.is_success() || join.status.is_redirection(),
+        "{}",
+        join.body
+    );
+    assert!(in_group(&h, miners, pilot_account).await);
+    let res = send(
+        &h.app,
+        form(&format!("/admin/groups/{miners}/smart/check"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(res.body.contains("switched off"), "{}", res.body);
+    sqlx::query("UPDATE core.smart_groups SET swept_at = NULL")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sweep(&h).await;
+    assert!(in_group(&h, miners, pilot_account).await);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn grace_is_per_filter(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot = log_in_as(&h, GIGX, Some(&pilot)).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    let caps = group(
+        &h,
+        &owner,
+        r#"{"name":"Capitals","internal":false,"hidden":false}"#,
+    )
+    .await;
+    smart(
+        &h,
+        &owner,
+        caps,
+        &format!("{CONFIGURED}&can_grace=on&notify_on_grace=on"),
+    )
+    .await;
+    // Member: no grace. Compliant: three days.
+    filter(
+        &h,
+        &owner,
+        caps,
+        &format!("kind=state&states={MEMBER_STATE}&grace_days=0"),
+    )
+    .await;
+    filter(&h, &owner, caps, "kind=compliant&grace_days=3").await;
+    // Out of range.
+    let res = filter(&h, &owner, caps, "kind=compliant&grace_days=61").await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    sweep(&h).await;
+    assert!(in_group(&h, caps, pilot_account).await);
+
+    sqlx::query("UPDATE core.accounts SET compliant = false WHERE id = $1")
+        .bind(pilot_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(sweep(&h).await, 0, "compliant has a grace period");
+    let graced: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT f.kind, EXTRACT(epoch FROM g.expires_at - now())::float8 / 86400 \
+         FROM core.smart_grace g JOIN core.smart_filters f ON f.id = g.filter_id",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(graced.len(), 1, "{graced:?}");
+    assert_eq!(graced[0].0, "compliant");
+    assert!((2.9..3.1).contains(&graced[0].1), "{graced:?}");
+    assert!(
+        notifications(&h, pilot_account)
+            .await
+            .iter()
+            .any(|n| n.starts_with("Leaving Capitals on"))
+    );
+    // Leaving Member has none: out at once.
+    let member = tether_db::states::builtin(&h.db, Builtin::Member)
+        .await
+        .unwrap()
+        .unwrap();
+    tether_db::states::remove_entity(&h.db, member.id, 1695357456)
+        .await
+        .unwrap();
+    tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(pilot_account))
+        .await
+        .unwrap();
+    assert_eq!(sweep(&h).await, 1);
+    assert!(!in_group(&h, caps, pilot_account).await);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn expressions_exemptions_factions_and_services(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, GIGX, None).await;
+    let pilot = log_in_as(&h, GIGX, Some(&pilot)).await;
+    let pilot_account = account_of(&h, &pilot).await;
+    let new_group = |name: &'static str| {
+        let (h, owner) = (&h, &owner);
+        async move {
+            let id = group(
+                h,
+                owner,
+                &format!(r#"{{"name":"{name}","internal":false,"hidden":false}}"#),
+            )
+            .await;
+            smart(h, owner, id, CONFIGURED).await;
+            id
+        }
+    };
+
+    // Blue OR compliant: compliant is enough.
+    let either = new_group("Either").await;
+    filter(
+        &h,
+        &owner,
+        either,
+        &format!("kind=state&states={BLUE_STATE}"),
+    )
+    .await;
+    filter(&h, &owner, either, "kind=compliant").await;
+    let ids: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM core.smart_filters WHERE group_id = $1 ORDER BY id")
+            .bind(either)
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{either}/smart/filters/combine"),
+            &format!("first={}&second={}&operator=or", ids[0], ids[1]),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        format!("/admin/groups/{either}"),
+        "{}",
+        res.body
+    );
+    let kinds: Vec<String> =
+        sqlx::query_scalar("SELECT kind FROM core.smart_filters WHERE group_id = $1")
+            .bind(either)
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(kinds, vec!["expression".to_owned()]);
+    let admin_page = page(&h, &format!("/admin/groups/{either}"), &owner)
+        .await
+        .body;
+    assert!(
+        admin_page.contains("(state is Blue OR compliant)"),
+        "{admin_page}"
+    );
+
+    // An alt in CircleOfTwo Holding keeps you out, unless your main's
+    // alliance is exempt.
+    let exempt = new_group("Exempt").await;
+    let res = filter(
+        &h,
+        &owner,
+        exempt,
+        "kind=any_affiliation&entities=98133756&reversed=on&exempt=1695357456",
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        format!("/admin/groups/{exempt}"),
+        "{}",
+        res.body
+    );
+
+    // Caldari militia, on any character.
+    sqlx::query(
+        "INSERT INTO core.entity_names (id, name, category) VALUES (500001, 'Caldari State', 'faction')",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let militia = new_group("Militia").await;
+    let res = filter(&h, &owner, militia, "kind=faction&factions=500001").await;
+    assert_eq!(
+        res.location(),
+        format!("/admin/groups/{militia}"),
+        "{}",
+        res.body
+    );
+
+    // Linked to Discord (AA's service filters: Discord is Tether's one).
+    let linked = new_group("Linked").await;
+    filter(&h, &owner, linked, "kind=service&service=discord").await;
+
+    sweep(&h).await;
+    assert!(in_group(&h, either, pilot_account).await);
+    assert!(in_group(&h, exempt, pilot_account).await);
+    assert!(!in_group(&h, militia, pilot_account).await);
+    assert!(!in_group(&h, linked, pilot_account).await);
+
+    sqlx::query("UPDATE core.characters SET faction_id = 500001 WHERE id = 1887431749")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO core.discord_links (account_id, discord_user_id, username) VALUES ($1, 42, 'gigx')",
+    )
+    .bind(pilot_account)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sweep(&h).await;
+    assert!(in_group(&h, militia, pilot_account).await);
+    assert!(in_group(&h, linked, pilot_account).await);
+    let admin_page = page(&h, &format!("/admin/groups/{exempt}"), &owner)
+        .await
+        .body;
+    assert!(
+        admin_page.contains(
+            "not a character in CircleOfTwo Holding, unless the main is in Circle-Of-Two"
+        ),
+        "{admin_page}"
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_secure_groups_page_and_its_audit_follow_aas_permissions(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, MITTANI, None).await; // Guest
+    let pilot_account = account_of(&h, &pilot).await;
+    let officer = log_in_as(&h, GIGX, None).await; // Guest
+    let officer_account = account_of(&h, &officer).await;
+    let scouts = group(
+        &h,
+        &owner,
+        r#"{"name":"Scouts","internal":false,"hidden":true}"#,
+    )
+    .await;
+    smart(&h, &owner, scouts, "smart=on").await;
+    filter(
+        &h,
+        &owner,
+        scouts,
+        &format!("kind=state&states={GUEST_STATE}"),
+    )
+    .await;
+    let secret = group(&h, &owner, r#"{"name":"Secret"}"#).await;
+    smart(&h, &owner, secret, "smart=on").await;
+
+    assert_eq!(
+        page(&h, "/securegroups", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    grant_state(&h, &owner, "securegroups.access_sec_group", GUEST_STATE).await;
+    let listed = page(&h, "/securegroups", &pilot).await.body;
+    assert!(
+        listed.contains("Scouts"),
+        "hidden, but a Secure Group: {listed}"
+    );
+    assert!(!listed.contains("Secret"), "Internal: {listed}");
+    assert!(listed.contains("state is Guest"), "{listed}");
+    // Guests can't request groups, but the Secure Groups page asks for
+    // them (AA).
+    let res = send(
+        &h.app,
+        form(&format!("/securegroups/{scouts}/join"), "", &pilot),
+    )
+    .await;
+    assert_eq!(res.location(), "/securegroups", "{}", res.body);
+    let requested: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.group_requests WHERE group_id = $1 AND account_id = $2",
+    )
+    .bind(scouts)
+    .bind(pilot_account)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(requested, 1);
+    let res = send(
+        &h.app,
+        form(&format!("/securegroups/{secret}/join"), "", &pilot),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
+    // The audit needs its permission and Group Management over the group.
+    sqlx::query("INSERT INTO core.group_members (group_id, account_id) VALUES ($1, $2)")
+        .bind(scouts)
+        .bind(pilot_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        page(&h, "/securegroups/audit", &officer).await.status,
+        StatusCode::FORBIDDEN
+    );
+    grant_state(&h, &owner, "securegroups.audit_sec_group", GUEST_STATE).await;
+    let list = page(&h, "/securegroups/audit", &officer).await;
+    assert_eq!(list.status, StatusCode::OK);
+    assert!(!list.body.contains("Scouts"), "{}", list.body);
+    assert_eq!(
+        page(&h, &format!("/securegroups/audit/{scouts}"), &officer)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // Group Management (for Member), with the officer made Member.
+    grant_state(&h, &owner, "group_management", MEMBER_STATE).await;
+    cover(&h.db, Builtin::Member, EntityKind::Alliance, 1695357456).await;
+    tether_web::states::evaluate_account(&h.db, tether_db::accounts::AccountId(officer_account))
+        .await
+        .unwrap();
+    grant_state(&h, &owner, "securegroups.audit_sec_group", MEMBER_STATE).await;
+    let list = page(&h, "/securegroups/audit", &officer).await.body;
+    assert!(list.contains("Scouts"), "{list}");
+    let audit = page(&h, &format!("/securegroups/audit/{scouts}"), &officer).await;
+    assert_eq!(audit.status, StatusCode::OK, "{}", audit.body);
+    assert!(audit.body.contains("The Mittani"), "{}", audit.body);
+    assert!(audit.body.contains("state is Guest"), "{}", audit.body);
+    let res = send(
+        &h.app,
+        form(&format!("/securegroups/audit/{scouts}/check"), "", &officer),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/securegroups/audit/{scouts}/members/{pilot_account}/remove"),
+            "",
+            &officer,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(!in_group(&h, scouts, pilot_account).await);
 }

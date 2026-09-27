@@ -55,7 +55,9 @@ expression: "me(&h, &after_alt).await"
     "fleetpings.basic_access",
     "group_management",
     "permissions_tool.audit_permissions",
-    "request_groups"
+    "request_groups",
+    "securegroups.access_sec_group",
+    "securegroups.audit_sec_group"
   ],
   "state": "Guest"
 }

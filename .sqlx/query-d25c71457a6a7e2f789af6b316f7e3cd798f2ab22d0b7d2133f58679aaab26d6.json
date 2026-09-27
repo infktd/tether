@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT a.id, a.state_id, a.compliant,\n               m.corporation_id AS main_corporation, m.alliance_id AS main_alliance,\n               (EXTRACT(epoch FROM now() - m.birthday) / 86400)::bigint AS age_days,\n               ARRAY(\n                   SELECT DISTINCT x FROM core.characters c,\n                        LATERAL unnest(ARRAY[c.corporation_id, c.alliance_id]) AS x\n                   WHERE c.account_id = a.id AND x IS NOT NULL\n               ) AS \"affiliations!\",\n               ARRAY(SELECT gm.group_id FROM core.group_members gm WHERE gm.account_id = a.id)\n                   AS \"groups!\",\n               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS \"characters!\"\n        FROM core.accounts a\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE a.active\n          AND ($1::bigint[] IS NULL OR a.id = ANY($1))\n        ",
+  "query": "\n        SELECT a.id, a.state_id, a.compliant,\n               m.corporation_id AS main_corporation, m.alliance_id AS main_alliance,\n               (EXTRACT(epoch FROM now() - m.birthday) / 86400)::bigint AS age_days,\n               ARRAY(\n                   SELECT DISTINCT x FROM core.characters c,\n                        LATERAL unnest(ARRAY[c.corporation_id, c.alliance_id]) AS x\n                   WHERE c.account_id = a.id AND x IS NOT NULL\n               ) AS \"affiliations!\",\n               ARRAY(\n                   SELECT DISTINCT c.faction_id FROM core.characters c\n                   WHERE c.account_id = a.id AND c.faction_id IS NOT NULL\n               ) AS \"factions!\",\n               ARRAY(SELECT gm.group_id FROM core.group_members gm WHERE gm.account_id = a.id)\n                   AS \"groups!\",\n               EXISTS (SELECT 1 FROM core.discord_links d WHERE d.account_id = a.id)\n                   AS \"discord!\",\n               (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS \"characters!\"\n        FROM core.accounts a\n        JOIN core.characters m ON m.id = a.main_character_id\n        WHERE a.active\n          AND ($1::bigint[] IS NULL OR a.id = ANY($1))\n        ",
   "describe": {
     "columns": [
       {
@@ -72,12 +72,24 @@
       },
       {
         "ordinal": 7,
-        "name": "groups!",
+        "name": "factions!",
         "type_info": "Int8Array",
         "origin": "Expression"
       },
       {
         "ordinal": 8,
+        "name": "groups!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "discord!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
         "name": "characters!",
         "type_info": "Int8",
         "origin": "Expression"
@@ -97,8 +109,10 @@
       null,
       null,
       null,
+      null,
+      null,
       null
     ]
   },
-  "hash": "09252a04894bc119ff8b11bdb9f8f78baae579b5452317841920afc33574325d"
+  "hash": "d25c71457a6a7e2f789af6b316f7e3cd798f2ab22d0b7d2133f58679aaab26d6"
 }

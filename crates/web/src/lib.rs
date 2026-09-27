@@ -295,6 +295,19 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/system/summary", get(pages::system::summary))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route("/admin/system/theme", post(pages::system::set_theme))
+        .route("/securegroups", get(pages::securegroups::index))
+        .route("/securegroups/{id}/join", post(pages::securegroups::join))
+        .route("/securegroups/{id}/leave", post(pages::securegroups::leave))
+        .route("/securegroups/audit", get(pages::securegroups::audit_list))
+        .route("/securegroups/audit/{id}", get(pages::securegroups::audit))
+        .route(
+            "/securegroups/audit/{id}/check",
+            post(pages::securegroups::check_now),
+        )
+        .route(
+            "/securegroups/audit/{id}/members/{account_id}/remove",
+            post(pages::securegroups::remove),
+        )
         .route(
             "/admin/system/notifications",
             post(pages::system::set_notifications),
@@ -335,6 +348,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/admin/groups/{id}/smart/filters/{filter}/delete",
             post(pages::admin::smart_filter_delete),
+        )
+        .route(
+            "/admin/groups/{id}/smart/filters/{filter}/grace",
+            post(pages::admin::smart_filter_grace),
+        )
+        .route(
+            "/admin/groups/{id}/smart/filters/combine",
+            post(pages::admin::smart_filter_combine),
         )
         .route("/admin/menu", get(pages::menu::index))
         .route("/admin/menu/sections", post(pages::menu::add_section))

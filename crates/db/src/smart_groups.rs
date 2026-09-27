@@ -1,5 +1,5 @@
-//! Secure Groups (aa-securegroups): which groups are smart, their filters,
-//! the facts filters read, and grace periods.
+//! Secure Groups (allianceauth-secure-groups): which groups are smart,
+//! their settings and filters, the facts filters read, and grace periods.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -9,26 +9,98 @@ use tether_core::smart::{Facts, Filter, Rule};
 use crate::accounts::AccountId;
 use crate::groups::GroupId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A smart group's settings (allianceauth-secure-groups' `SmartGroup`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    /// Adds everyone who passes; otherwise they request.
+    /// Adds everyone who passes (AA's `auto_group`); otherwise they join or
+    /// ask to.
     pub auto_join: bool,
-    /// Days a member who stops passing keeps the group; 0 removes at once.
-    pub grace_days: i32,
-    pub notify: bool,
+    /// Off, it's an ordinary group: no sweeps, no filters on joining.
+    pub enabled: bool,
+    /// Swept every hour; off, only Check now runs it.
+    pub include_in_updates: bool,
+    /// Members failing a filter keep the group for its grace period.
+    pub can_grace: bool,
+    pub notify_on_add: bool,
+    pub notify_on_remove: bool,
+    pub notify_on_grace: bool,
+    /// A ping channel the bot posts each run's summary to (AA's group
+    /// update webhook).
+    pub update_channel: Option<i64>,
+    /// Added under the summary (AA's webhook `extra_message`).
+    pub update_message: String,
+}
+
+impl Default for Settings {
+    /// AA's defaults.
+    fn default() -> Self {
+        Self {
+            auto_join: false,
+            enabled: true,
+            include_in_updates: true,
+            can_grace: false,
+            notify_on_add: false,
+            notify_on_remove: true,
+            notify_on_grace: true,
+            update_channel: None,
+            update_message: String::new(),
+        }
+    }
+}
+
+struct SettingsRow {
+    auto_join: bool,
+    enabled: bool,
+    include_in_updates: bool,
+    can_grace: bool,
+    notify_on_add: bool,
+    notify_on_remove: bool,
+    notify_on_grace: bool,
+    update_channel_id: Option<i64>,
+    update_message: String,
+}
+
+impl From<SettingsRow> for Settings {
+    fn from(r: SettingsRow) -> Self {
+        Self {
+            auto_join: r.auto_join,
+            enabled: r.enabled,
+            include_in_updates: r.include_in_updates,
+            can_grace: r.can_grace,
+            notify_on_add: r.notify_on_add,
+            notify_on_remove: r.notify_on_remove,
+            notify_on_grace: r.notify_on_grace,
+            update_channel: r.update_channel_id,
+            update_message: r.update_message,
+        }
+    }
 }
 
 pub async fn settings<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
 ) -> Result<Option<Settings>, sqlx::Error> {
-    sqlx::query_as!(
-        Settings,
-        "SELECT auto_join, grace_days, notify FROM core.smart_groups WHERE group_id = $1",
+    Ok(sqlx::query_as!(
+        SettingsRow,
+        r#"
+        SELECT auto_join, enabled, include_in_updates, can_grace, notify_on_add,
+               notify_on_remove, notify_on_grace, update_channel_id, update_message
+        FROM core.smart_groups WHERE group_id = $1
+        "#,
         group.0
     )
     .fetch_optional(executor)
-    .await
+    .await?
+    .map(Settings::from))
+}
+
+/// The settings of a smart group that's switched on (a switched-off one
+/// is an ordinary group, as AA's).
+pub async fn active<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    group: GroupId,
+) -> Result<Option<Settings>, sqlx::Error> {
+    Ok(settings(executor, group).await?.filter(|s| s.enabled))
 }
 
 /// When the sweep (or Check now) last judged a smart group.
@@ -50,21 +122,31 @@ pub async fn swept_at<'e>(
 pub async fn set_settings<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
-    settings: Option<Settings>,
+    settings: Option<&Settings>,
 ) -> Result<(), sqlx::Error> {
     match settings {
         Some(s) => {
             sqlx::query!(
                 r#"
-                INSERT INTO core.smart_groups (group_id, auto_join, grace_days, notify)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO core.smart_groups
+                    (group_id, auto_join, enabled, include_in_updates, can_grace, notify_on_add,
+                     notify_on_remove, notify_on_grace, update_channel_id, update_message)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (group_id) DO UPDATE
-                SET auto_join = $2, grace_days = $3, notify = $4
+                SET auto_join = $2, enabled = $3, include_in_updates = $4, can_grace = $5,
+                    notify_on_add = $6, notify_on_remove = $7, notify_on_grace = $8,
+                    update_channel_id = $9, update_message = $10
                 "#,
                 group.0,
                 s.auto_join,
-                s.grace_days,
-                s.notify,
+                s.enabled,
+                s.include_in_updates,
+                s.can_grace,
+                s.notify_on_add,
+                s.notify_on_remove,
+                s.notify_on_grace,
+                s.update_channel,
+                s.update_message,
             )
             .execute(executor)
             .await?;
@@ -83,7 +165,11 @@ pub async fn all<'e>(
     executor: impl sqlx::PgExecutor<'e>,
 ) -> Result<Vec<(GroupId, Settings)>, sqlx::Error> {
     let rows = sqlx::query!(
-        "SELECT group_id, auto_join, grace_days, notify FROM core.smart_groups ORDER BY group_id"
+        r#"
+        SELECT group_id, auto_join, enabled, include_in_updates, can_grace, notify_on_add,
+               notify_on_remove, notify_on_grace, update_channel_id, update_message
+        FROM core.smart_groups ORDER BY group_id
+        "#
     )
     .fetch_all(executor)
     .await?;
@@ -94,12 +180,26 @@ pub async fn all<'e>(
                 GroupId(r.group_id),
                 Settings {
                     auto_join: r.auto_join,
-                    grace_days: r.grace_days,
-                    notify: r.notify,
+                    enabled: r.enabled,
+                    include_in_updates: r.include_in_updates,
+                    can_grace: r.can_grace,
+                    notify_on_add: r.notify_on_add,
+                    notify_on_remove: r.notify_on_remove,
+                    notify_on_grace: r.notify_on_grace,
+                    update_channel: r.update_channel_id,
+                    update_message: r.update_message,
                 },
             )
         })
         .collect())
+}
+
+fn parse(kind: String, config: serde_json::Value) -> Option<Filter> {
+    serde_json::from_value::<Filter>(serde_json::json!({
+        "kind": kind,
+        "config": config,
+    }))
+    .ok()
 }
 
 /// A group's filters, and the ids of any that no longer read (an old kind
@@ -111,7 +211,7 @@ pub async fn rules<'e>(
 ) -> Result<(Vec<Rule>, Vec<i64>), sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, kind, config, reversed FROM core.smart_filters
+        SELECT id, kind, config, reversed, grace_days FROM core.smart_filters
         WHERE group_id = $1 ORDER BY id
         "#,
         group.0
@@ -121,19 +221,29 @@ pub async fn rules<'e>(
     let mut rules = Vec::new();
     let mut broken = Vec::new();
     for r in rows {
-        match serde_json::from_value::<Filter>(serde_json::json!({
-            "kind": r.kind,
-            "config": r.config,
-        })) {
-            Ok(filter) => rules.push(Rule {
+        match parse(r.kind, r.config) {
+            Some(filter) => rules.push(Rule {
                 id: r.id,
                 filter,
                 reversed: r.reversed,
+                grace_days: r.grace_days,
             }),
-            Err(_) => broken.push(r.id),
+            None => broken.push(r.id),
         }
     }
     Ok((rules, broken))
+}
+
+/// Every smart group's filters that read, for what they need (apps'
+/// settings, birthdays).
+async fn every_filter<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Vec<Filter>, sqlx::Error> {
+    let rows = sqlx::query!("SELECT kind, config FROM core.smart_filters")
+        .fetch_all(executor)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| parse(r.kind, r.config))
+        .collect())
 }
 
 pub async fn add_filter<'e>(
@@ -141,12 +251,13 @@ pub async fn add_filter<'e>(
     group: GroupId,
     filter: &Filter,
     reversed: bool,
+    grace_days: i32,
 ) -> Result<i64, sqlx::Error> {
     let stored = serde_json::to_value(filter).map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
     sqlx::query_scalar!(
         r#"
-        INSERT INTO core.smart_filters (group_id, kind, config, reversed)
-        VALUES ($1, $2, $3, $4) RETURNING id
+        INSERT INTO core.smart_filters (group_id, kind, config, reversed, grace_days)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
         "#,
         group.0,
         filter.kind(),
@@ -155,9 +266,28 @@ pub async fn add_filter<'e>(
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
         reversed,
+        grace_days,
     )
     .fetch_one(executor)
     .await
+}
+
+/// `false` if the group has no such filter.
+pub async fn set_filter_grace<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    group: GroupId,
+    id: i64,
+    grace_days: i32,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        "UPDATE core.smart_filters SET grace_days = $3 WHERE id = $1 AND group_id = $2",
+        id,
+        group.0,
+        grace_days
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 /// `false` if the group has no such filter.
@@ -193,8 +323,14 @@ pub async fn facts<'e>(
                         LATERAL unnest(ARRAY[c.corporation_id, c.alliance_id]) AS x
                    WHERE c.account_id = a.id AND x IS NOT NULL
                ) AS "affiliations!",
+               ARRAY(
+                   SELECT DISTINCT c.faction_id FROM core.characters c
+                   WHERE c.account_id = a.id AND c.faction_id IS NOT NULL
+               ) AS "factions!",
                ARRAY(SELECT gm.group_id FROM core.group_members gm WHERE gm.account_id = a.id)
                    AS "groups!",
+               EXISTS (SELECT 1 FROM core.discord_links d WHERE d.account_id = a.id)
+                   AS "discord!",
                (SELECT count(*) FROM core.characters c WHERE c.account_id = a.id) AS "characters!"
         FROM core.accounts a
         JOIN core.characters m ON m.id = a.main_character_id
@@ -217,9 +353,11 @@ pub async fn facts<'e>(
                         .flatten()
                         .collect(),
                     affiliations: r.affiliations.into_iter().collect::<BTreeSet<_>>(),
+                    factions: r.factions.into_iter().collect(),
                     main_age_days: r.age_days,
                     groups: r.groups.into_iter().collect(),
                     compliant: r.compliant,
+                    discord: r.discord,
                     app: Default::default(),
                     characters: r.characters,
                 },
@@ -228,52 +366,68 @@ pub async fn facts<'e>(
         .collect())
 }
 
-/// Members in their grace period, and since when.
+/// Members' grace periods: when each failing filter's ends.
 pub async fn grace<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
-) -> Result<HashMap<AccountId, DateTime<Utc>>, sqlx::Error> {
+) -> Result<HashMap<AccountId, HashMap<i64, DateTime<Utc>>>, sqlx::Error> {
     let rows = sqlx::query!(
-        "SELECT account_id, since FROM core.smart_grace WHERE group_id = $1",
+        "SELECT account_id, filter_id, expires_at FROM core.smart_grace WHERE group_id = $1",
         group.0
     )
     .fetch_all(executor)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| (AccountId(r.account_id), r.since))
-        .collect())
+    let mut out: HashMap<AccountId, HashMap<i64, DateTime<Utc>>> = HashMap::new();
+    for r in rows {
+        out.entry(AccountId(r.account_id))
+            .or_default()
+            .insert(r.filter_id, r.expires_at);
+    }
+    Ok(out)
 }
 
 pub async fn start_grace<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
     account: AccountId,
+    filter: i64,
+    expires_at: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "INSERT INTO core.smart_grace (group_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        r#"
+        INSERT INTO core.smart_grace (group_id, account_id, filter_id, expires_at)
+        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING
+        "#,
         group.0,
-        account.0
+        account.0,
+        filter,
+        expires_at
     )
     .execute(executor)
     .await?;
     Ok(())
 }
 
-/// `true` if the account was in its grace period.
+/// Ends an account's grace periods on a group, except those on the given
+/// filters (all of them without). `true` if it had any it lost.
 pub async fn end_grace<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
     account: AccountId,
+    keep: &[i64],
 ) -> Result<bool, sqlx::Error> {
     let result = sqlx::query!(
-        "DELETE FROM core.smart_grace WHERE group_id = $1 AND account_id = $2",
+        r#"
+        DELETE FROM core.smart_grace
+        WHERE group_id = $1 AND account_id = $2 AND NOT (filter_id = ANY($3))
+        "#,
         group.0,
-        account.0
+        account.0,
+        keep
     )
     .execute(executor)
     .await?;
-    Ok(result.rows_affected() == 1)
+    Ok(result.rows_affected() > 0)
 }
 
 /// Mains whose birthday isn't known yet, for the character age filter:
@@ -380,13 +534,35 @@ pub async fn set_birthday<'e>(
 }
 
 /// Whether any smart group filters by character age (so birthdays are
-/// worth fetching).
+/// worth fetching), on its own or in an expression.
 pub async fn uses_age<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar!(
-        r#"SELECT EXISTS (SELECT 1 FROM core.smart_filters WHERE kind = 'character_age') AS "e!""#
-    )
-    .fetch_one(executor)
-    .await
+    Ok(every_filter(executor).await?.iter().any(|f| {
+        f.leaves()
+            .iter()
+            .any(|l| matches!(l, Filter::CharacterAge { .. }))
+    }))
+}
+
+/// Every app filter smart groups use, on its own or in an expression:
+/// `(plugin, name, config)`.
+async fn apps_used<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+) -> Result<BTreeSet<(String, String, String)>, sqlx::Error> {
+    let mut out = BTreeSet::new();
+    for filter in every_filter(executor).await? {
+        for leaf in filter.leaves() {
+            if let Filter::App {
+                plugin,
+                name,
+                config,
+                ..
+            } = leaf
+            {
+                out.insert((plugin.clone(), name.clone(), config.clone()));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Fresh app filter values, combined per account: `(account, key,
@@ -449,23 +625,29 @@ pub async fn app_keys_known<'e>(
 
 /// Drops values of settings no smart group uses any more, and of reports
 /// over a week old.
-pub async fn prune_app_values<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<(), sqlx::Error> {
+pub async fn prune_app_values(db: &crate::PgPool) -> Result<(), sqlx::Error> {
+    let used = apps_used(db).await?;
+    let plugins: Vec<String> = used.iter().map(|(p, _, _)| p.clone()).collect();
+    let names: Vec<String> = used.iter().map(|(_, n, _)| n.clone()).collect();
+    let configs: Vec<String> = used.iter().map(|(_, _, c)| c.clone()).collect();
     sqlx::query!(
         r#"
         WITH gone AS (
             DELETE FROM core.plugin_filter_reports r
             WHERE r.reported_at < now() - interval '7 days'
                OR NOT EXISTS (
-                   SELECT 1 FROM core.smart_filters f
-                   WHERE f.kind = 'app' AND f.config->>'plugin' = r.plugin_id
-                     AND f.config->>'name' = r.name AND f.config->>'config' = r.config)
+                   SELECT 1 FROM unnest($1::text[], $2::text[], $3::text[]) AS u(p, n, c)
+                   WHERE u.p = r.plugin_id AND u.n = r.name AND u.c = r.config)
             RETURNING r.plugin_id, r.name, r.config
         )
         DELETE FROM core.plugin_filter_values v USING gone g
         WHERE v.plugin_id = g.plugin_id AND v.name = g.name AND v.config = g.config
-        "#
+        "#,
+        &plugins,
+        &names,
+        &configs,
     )
-    .execute(executor)
+    .execute(db)
     .await?;
     Ok(())
 }
@@ -475,18 +657,12 @@ pub async fn app_wanted<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     plugin: &str,
 ) -> Result<Vec<(String, String)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT DISTINCT config->>'name' AS "name!", config->>'config' AS "config!"
-        FROM core.smart_filters
-        WHERE kind = 'app' AND config->>'plugin' = $1
-          AND config ? 'name' AND config ? 'config'
-        "#,
-        plugin
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows.into_iter().map(|r| (r.name, r.config)).collect())
+    Ok(apps_used(executor)
+        .await?
+        .into_iter()
+        .filter(|(p, _, _)| p == plugin)
+        .map(|(_, name, config)| (name, config))
+        .collect())
 }
 
 /// Replaces a plugin's values for one setting, one report at a time per
