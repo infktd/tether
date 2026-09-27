@@ -407,6 +407,7 @@ async fn a_newer_tether_offers_the_update_and_it_rolls_back(db: PgPool) {
 fn first_party_bundle() -> tether_web::bundled::Bundled {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = std::env::temp_dir().join(format!("tether-apps-{}", std::process::id()));
+    let _lock = guests_lock(&root);
     let output = std::process::Command::new(root.join("scripts/bundle-apps.sh"))
         .arg(&out)
         .env("CARGO_TARGET_DIR", root.join("target/test-guests"))
