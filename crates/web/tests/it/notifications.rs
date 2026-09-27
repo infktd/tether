@@ -81,6 +81,22 @@ async fn only_the_recipient_sees_opens_and_deletes(db: PgPool) {
     let listed = page(&h, "/notifications", &pilot).await;
     assert!(listed.body.contains("Hello"));
     assert!(listed.body.contains("1 unread"), "{}", listed.body);
+    // Deleting asks first, in the layout's designed confirmation (live.js
+    // fills it from hx-confirm), never the browser's own dialog.
+    assert!(
+        listed
+            .body
+            .contains(r#"hx-confirm="Delete every read notification?""#),
+        "{}",
+        listed.body
+    );
+    assert!(
+        listed
+            .body
+            .contains(r#"<div id="confirm" popover class="confirm-popover""#),
+        "{}",
+        listed.body
+    );
     let opened = page(&h, &format!("/notifications/{id}"), &pilot).await;
     assert_eq!(opened.status, StatusCode::OK);
     assert!(opened.body.contains("Body"));

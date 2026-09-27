@@ -152,6 +152,44 @@
     arm();
   });
 
+  // Confirmations (DESIGN.md, Row actions): an hx-confirm's question in
+  // the designed popover instead of the browser's dialog. Its button is
+  // named as the one that asked (its title, else its text), filled
+  // destructive when that one is; the request goes only from it. Enter in
+  // a form's field asks too, since htmx asks on every submit. Text only,
+  // never markup. Escape or a click outside cancels.
+  let pending = null;
+  document.addEventListener("htmx:confirm", (event) => {
+    const box = document.getElementById("confirm");
+    if (!event.detail.question || !box || !box.showPopover) return;
+    event.preventDefault();
+    const asker =
+      event.detail.triggeringEvent?.submitter ??
+      (event.detail.elt.matches("button") ? event.detail.elt : null) ??
+      event.detail.elt.querySelector?.("button[type=submit], button:not([type])");
+    const label = (asker?.title || asker?.textContent || "").trim() || "Confirm";
+    const danger =
+      asker?.classList.contains("btn-destructive-outline") || /^(Delete|Remove|Revoke)\b/.test(label);
+    const go = document.getElementById("confirm-go");
+    document.getElementById("confirm-text").textContent = event.detail.question;
+    go.textContent = label;
+    go.dataset.variant = danger ? "destructive" : "primary";
+    pending = event.detail;
+    box.showPopover();
+    box.querySelector("button")?.focus();
+  });
+  document.addEventListener("click", (event) => {
+    if (event.target.closest?.("#confirm-go") && pending) {
+      const confirmed = pending;
+      pending = null;
+      document.getElementById("confirm")?.hidePopover();
+      confirmed.issueRequest(true);
+    }
+  });
+  document.addEventListener("toggle", (event) => {
+    if (event.target.id === "confirm" && event.newState === "closed") pending = null;
+  }, true);
+
   // Copy buttons: the text is the <pre> in the same block, or its
   // read-only field (a group's direct join link).
   document.addEventListener("click", (event) => {
