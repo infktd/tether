@@ -530,6 +530,35 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["structure_id"],
     },
     Endpoint {
+        // Public: a character's public sheet, by `character_id`: birthday,
+        // security status, bloodline, race, faction, gender and bio (what
+        // anyone sees in game). Not its corporation's roles or anything a
+        // token reads.
+        name: "character-public",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["character_id"],
+    },
+    Endpoint {
+        // Public: an item category (16 is skills) and its groups, by
+        // `category_id`.
+        name: "universe-category",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["category_id"],
+    },
+    Endpoint {
+        // Public: an item group (a skill group, say), its name and its
+        // types, by `group_id`.
+        name: "universe-group",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["group_id"],
+    },
+    Endpoint {
         // Public: an NPC station, by `station_id`.
         name: "universe-station",
         scope: "",
@@ -1177,6 +1206,70 @@ impl Esi {
                     .into_inner();
                 Ok(Response {
                     body: json(&history)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "character-public" => {
+                let id = positive("character_id")?;
+                let detail = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_characters_detail()
+                            .character_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: serde_json::json!({
+                        "character_id": id,
+                        "name": detail.name,
+                        "birthday": detail.birthday,
+                        "security_status": detail.security_status,
+                        "bloodline_id": detail.bloodline_id,
+                        "race_id": detail.race_id,
+                        "faction_id": detail.faction_id,
+                        "gender": detail.gender,
+                        "description": detail.description,
+                    }),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "universe-category" => {
+                let id = positive("category_id")?;
+                let category = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_universe_categories_category_id()
+                            .category_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&category)?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "universe-group" => {
+                let id = positive("group_id")?;
+                let group = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_universe_groups_group_id()
+                            .group_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: json(&group)?,
                     pages: 1,
                     refetched: 0,
                 })

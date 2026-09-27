@@ -298,6 +298,30 @@ async fn public_entries_take_ids_and_no_token() {
         })))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHARACTER}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "achievement_score": 10, "birthday": "2008-05-02T12:00:00Z", "bloodline_id": 5,
+            "corporation_id": 98000001, "description": "o7", "gender": "male",
+            "name": "Some Pilot", "race_id": 2, "security_status": -1.25
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/universe/categories/16"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "category_id": 16, "groups": [255, 256], "name": "Skill", "published": true
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/universe/groups/255"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "category_id": 16, "group_id": 255, "name": "Gunnery", "published": true,
+            "types": [3300, 3301]
+        })))
+        .mount(&server)
+        .await;
     let hash = "b".repeat(40);
     Mock::given(method("GET"))
         .and(path(format!("/killmails/1002/{hash}")))
@@ -324,6 +348,25 @@ async fn public_entries_take_ids_and_no_token() {
     .await
     .unwrap();
     assert_eq!(history.body[0]["corporation_id"], 98000001);
+    let sheet = public(
+        "character-public",
+        &[("character_id", &CHARACTER.to_string())],
+    )
+    .await
+    .unwrap();
+    assert_eq!(sheet.body["security_status"], -1.25);
+    assert_eq!(sheet.body["birthday"], "2008-05-02T12:00:00Z");
+    // What a token reads isn't in it.
+    assert!(sheet.body.get("corporation_id").is_none());
+    let skills = public("universe-category", &[("category_id", "16")])
+        .await
+        .unwrap();
+    assert_eq!(skills.body["groups"], json!([255, 256]));
+    let gunnery = public("universe-group", &[("group_id", "255")])
+        .await
+        .unwrap();
+    assert_eq!(gunnery.body["name"], "Gunnery");
+    assert_eq!(gunnery.body["types"], json!([3300, 3301]));
     let station = public("universe-station", &[("station_id", "60003760")])
         .await
         .unwrap();
