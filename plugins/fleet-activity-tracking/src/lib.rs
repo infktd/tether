@@ -4,13 +4,20 @@
 //! - **FAT links**: an FC creates one for a fleet, with a fleet type, a
 //!   doctrine and an expiry, and shares its link. Members open it and
 //!   register their characters' attendance (a FAT) while it's open;
-//!   multiboxers tick every character they brought.
-//! - FCs close their links early or reopen them once; managers edit any
-//!   link, add and remove FATs by hand, delete links and keep the fleet
-//!   types.
+//!   multiboxers tick every character they brought. As aa-afat, each
+//!   character must be online in EVE: its token (the app's location
+//!   scopes, registered for this app) shows ESI that it is, and the FAT
+//!   records its system and ship.
+//! - As aa-afat, everyone with `add_fatlink` (or `manage_afat`) changes
+//!   any link: renames it, closes it, reopens it once within the reopen
+//!   grace time for the reopen duration, and adds FATs by hand within 24
+//!   hours of its creation and before it was reopened. Managers remove
+//!   FATs, delete links and keep the fleet types and the settings.
+//! - **Settings** (aa-afat's Setting): a new link's default expiry, the
+//!   reopen grace time and duration, and how long logs are kept.
 //! - **Statistics** per pilot, corporation and alliance, by month, behind
 //!   aa-afat's permissions.
-//! - **Logs** of what FCs and managers did, kept for 60 days.
+//! - **Logs** of what FCs and managers did, kept for the settings' days.
 //! - **ESI-tracked fleets** (aa-afat's): a link can follow the fleet an FC's
 //!   character is boss of, adding a FAT (with ship and system) for everyone
 //!   in it. As in aa-afat, the FC logs in with the fleet boss from Create
@@ -26,19 +33,16 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Action, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, actions, add_owner, alliance, badge, character,
-    corporation, item_type, link, log, share, time,
+    Action, Card, CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat,
+    Submission, SubmitResult, Table, Tone, Value, action, actions, add_owner, alliance, badge,
+    character, corporation, item_type, link, log, share, time,
 };
 
-/// A new link's expiry unless the FC picks another (aa-afat's default).
-const DEFAULT_EXPIRY_MINUTES: i64 = 60;
 /// The longest a link may stay open at once.
 const MAX_EXPIRY_MINUTES: i64 = 24 * 60;
-/// How often an FC may reopen their own expired link; managers may always.
-const REOPEN_LIMIT: i64 = 1;
-/// Logs are kept this long (aa-afat's default).
-const LOG_DAYS: i64 = 60;
+/// Manual FATs are added within this long of a link's creation (and before
+/// it's reopened), as aa-afat.
+const MANUAL_FAT_HOURS: i64 = 24;
 /// FAT links per page of the FAT Links list.
 const LINKS_PER_PAGE: i64 = 100;
 /// Characters offered on the register form (a form has at most 30 fields).
@@ -110,9 +114,11 @@ fn with_links(page: Page, viewer: &Viewer) -> Page {
             .link("Statistics", "stats");
     }
     if viewer.can("manage_afat") {
-        page = page.link("Fleet types", "fleet-types");
+        page = page
+            .link("Fleet types", "fleet-types")
+            .link("Settings", "settings");
     }
-    if viewer.can("logs_view") {
+    if viewer.can("log_view") {
         page = page.link("Logs", "logs");
     }
     if can_create(viewer) {
@@ -139,6 +145,7 @@ fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
         ["stats", "character", id] => character_page(viewer, number(id)?, this_year()),
         ["stats", "character", id, year] => character_page(viewer, number(id)?, year_of(year)?),
         ["fleet-types"] => fleet_types_page(None),
+        ["settings"] => settings_page(),
         ["logs"] => logs_page(viewer),
         _ => Err(PageError::NotFound),
     }
@@ -152,6 +159,7 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         (["links", hash, "add"], "register") => register(viewer, hash, submission),
         (["links", hash], form) => change_link(viewer, hash, form, submission),
         (["fleet-types"], form) => change_fleet_types(viewer, form, submission),
+        (["settings"], "settings") => save_settings(viewer, submission),
         _ => Err(PageError::NotFound),
     }
 }
@@ -251,11 +259,6 @@ fn can_create(viewer: &Viewer) -> bool {
 /// Whether the character is one of the viewer's.
 fn owns(viewer: &Viewer, character_id: i64) -> bool {
     viewer.characters.iter().any(|c| c.id == character_id)
-}
-
-fn can_edit(viewer: &Viewer, link: &LinkInfo) -> bool {
-    viewer.can("manage_afat")
-        || (viewer.can("add_fatlink") && link.creator_account == viewer.account_id)
 }
 
 /// A log entry of what the viewer did (aa-afat's events).
@@ -393,7 +396,6 @@ struct LinkInfo {
     fleet: String,
     fleet_type: Option<String>,
     doctrine: Option<String>,
-    creator_account: i64,
     creator_name: String,
     /// The FC's main when they created it.
     creator_id: i64,
@@ -402,6 +404,10 @@ struct LinkInfo {
     reopened: i64,
     fats: i64,
     open: bool,
+    /// Closed, never reopened, and within the reopen grace time.
+    reopenable: bool,
+    /// Within 24 hours of its creation and never reopened: manual FATs.
+    manual: bool,
     /// Set for a link following an ESI fleet.
     esi: Option<Tracking>,
 }
@@ -421,7 +427,10 @@ const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.c
      l.creator_name, l.created_at, l.expires_at, l.reopened, \
      (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, l.expires_at > now(), \
      l.esi_state, l.esi_character_name, l.esi_stop_reason, l.esi_polled_at, \
-     l.esi_started_at > now() - interval '6 hours', l.esi_character_id, l.creator_id"; // TRACK_CAP
+     l.esi_started_at > now() - interval '6 hours', l.esi_character_id, l.creator_id, \
+     l.reopened = 0 AND l.expires_at <= now() AND l.expires_at > now() - make_interval(mins => \
+         coalesce((SELECT reopen_grace_minutes FROM settings WHERE id = 1), 60)), \
+     l.reopened = 0 AND l.created_at > now() - interval '24 hours'"; // TRACK_CAP, MANUAL_FAT_HOURS
 
 fn link_info(row: &[Db]) -> LinkInfo {
     LinkInfo {
@@ -430,7 +439,6 @@ fn link_info(row: &[Db]) -> LinkInfo {
         fleet: text(row, 2),
         fleet_type: maybe_text(row, 3),
         doctrine: maybe_text(row, 4),
-        creator_account: int(row, 5),
         creator_name: text(row, 6),
         creator_id: int(row, 18),
         created_at: text(row, 7),
@@ -438,6 +446,8 @@ fn link_info(row: &[Db]) -> LinkInfo {
         reopened: int(row, 9),
         fats: int(row, 10),
         open: flag(row, 11),
+        reopenable: flag(row, 19),
+        manual: flag(row, 20),
         esi: maybe_text(row, 12).map(|state| Tracking {
             character_id: int(row, 17),
             character_name: text(row, 13),
@@ -758,6 +768,7 @@ fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Resul
     if let Some(note) = note {
         page = page.text(note);
     }
+    let expiry = settings()?.expiry_minutes;
     let mut form = Form::new("create", "Create FAT link")
         .field(Field::text("fleet", "Fleet name", MAX_FLEET).required())
         .field(
@@ -768,8 +779,8 @@ fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Resul
         .field(
             Field::number("expiry", "Open for (minutes)")
                 .range(Some(1.0), Some(MAX_EXPIRY_MINUTES as f64), true)
-                .value(DEFAULT_EXPIRY_MINUTES.to_string())
-                .help("After this, nobody can register and ESI tracking stops; you can close it sooner or reopen it once.")
+                .value(expiry.to_string())
+                .help("After this, nobody can register and ESI tracking stops; it can be closed sooner, or reopened once soon after.")
                 .required(),
         );
     let trackable = trackable_characters(viewer);
@@ -971,7 +982,7 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
         ));
     }
     let manage = viewer.can("manage_afat");
-    let edit = can_edit(viewer, &link);
+    let settings = settings()?;
     let register = format!("links/{}/add", link.hash);
     let mut card = Card::new("FAT link");
     // aa-afat's "Copy FAT link to clipboard", while members can register.
@@ -1013,25 +1024,17 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             card = card.field("Fleet last read", time(at.clone()));
         }
     }
-    let buttons = if edit {
-        link_actions(viewer, &link)
-    } else {
-        Vec::new()
-    };
+    let buttons = link_actions(viewer, &link, &settings);
     if !buttons.is_empty() {
         card = card.field("Actions", actions(buttons));
     }
-    // Ships and systems are where pilots were (intel): only for the link's
-    // FC and managers, not every FC.
-    let intel = edit;
     let mut columns = vec![
         Column::text("Character"),
         Column::text("Corporation"),
         Column::text("Alliance"),
+        Column::text("Ship"),
+        Column::text("System"),
     ];
-    if intel {
-        columns.extend([Column::text("Ship"), Column::text("System")]);
-    }
     columns.extend([Column::numeric("Registered"), Column::text("How")]);
     // Managers remove a FAT from its row.
     if manage {
@@ -1052,14 +1055,12 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 corporation_cell,
                 named(alliance, text(r, 3), int(r, 7), "Alliance"),
             ];
-            if intel {
-                row.push(named(item_type, text(r, 8), int(r, 11), "Type"));
-                row.push(match (text(r, 9), int(r, 12)) {
-                    (name, _) if !name.is_empty() => name.into(),
-                    (_, 0) => "".into(),
-                    (_, id) => format!("System {id}").into(),
-                });
-            }
+            row.push(named(item_type, text(r, 8), int(r, 11), "Type"));
+            row.push(match (text(r, 9), int(r, 12)) {
+                (name, _) if !name.is_empty() => name.into(),
+                (_, 0) => "".into(),
+                (_, id) => format!("System {id}").into(),
+            });
             row.push(time(text(r, 4)));
             row.push(match (maybe_text(r, 5), flag(r, 10)) {
                 (Some(by), _) => format!("Added by {by}").into(),
@@ -1087,11 +1088,15 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             link.fats
         ));
     }
-    if !edit {
-        return Ok(page.text("Only the FC who created this link, or a manager, can change it."));
-    }
-    if !link.open && !manage && link.reopened >= REOPEN_LIMIT {
-        page = page.text("You've reopened this link once already; a manager can reopen it again.");
+    if !link.open && !link.reopenable {
+        page = page.text(if link.reopened > 0 {
+            "This link was reopened once already, and can't be reopened again.".to_owned()
+        } else {
+            format!(
+                "A link can be reopened only within {} minutes of closing.",
+                settings.reopen_grace_minutes
+            )
+        });
     }
     page = page.tab(
         "Edit",
@@ -1116,20 +1121,29 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                 ),
         )],
     );
-    page = page.tab(
-        "Add FAT",
-        vec![Section::Form(
-            Form::new("add_fat", "Add FAT")
-                .description(
-                    "For a pilot who was in fleet but didn't register. Works after the link closes.",
-                )
-                .field(
-                    Field::text("character", "Character name or ID", 40)
-                        .help("A character that has used Fleet Activity Tracking, by exact name, or any character by its ID.")
-                        .required(),
-                ),
-        )],
-    );
+    // aa-afat's manual FATs: within 24 hours, and before a reopen.
+    if link.manual {
+        page = page.tab(
+            "Add FAT",
+            vec![Section::Form(
+                Form::new("add_fat", "Add FAT")
+                    .description(format!(
+                        "For a pilot who was in fleet but didn't register, within {MANUAL_FAT_HOURS} \
+                         hours of the link's creation and before it's reopened."
+                    ))
+                    .field(
+                        Field::text("character", "Character name or ID", 40)
+                            .help("A character that has used Fleet Activity Tracking, by exact name, or any character by its ID.")
+                            .required(),
+                    ),
+            )],
+        );
+    } else {
+        page = page.text(format!(
+            "FATs can be added by hand only within {MANUAL_FAT_HOURS} hours of the link's \
+             creation and before it's reopened."
+        ));
+    }
     // Attendees beyond those listed (each with its Remove) by name.
     if manage && link.fats > MAX_ATTENDEES {
         page = page.tab(
@@ -1145,7 +1159,7 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
 
 /// A link's buttons for its FC and managers, as aa-afat's: stop or resume
 /// ESI tracking, close or reopen it, delete it. Each posts to `change_link`.
-fn link_actions(viewer: &Viewer, link: &LinkInfo) -> Vec<Action> {
+fn link_actions(viewer: &Viewer, link: &LinkInfo, settings: &Settings) -> Vec<Action> {
     let manage = viewer.can("manage_afat");
     let mut buttons = Vec::new();
     if let Some(esi) = &link.esi
@@ -1171,19 +1185,11 @@ fn link_actions(viewer: &Viewer, link: &LinkInfo) -> Vec<Action> {
     }
     if link.open {
         buttons.push(action("Close", "close").confirm("Nobody can register once it's closed."));
-    } else if manage || link.reopened < REOPEN_LIMIT {
-        buttons.push(
-            action("Reopen", "reopen")
-                .field("expiry", DEFAULT_EXPIRY_MINUTES.to_string())
-                .confirm(if manage {
-                    format!("Members can register again for {DEFAULT_EXPIRY_MINUTES} minutes.")
-                } else {
-                    format!(
-                        "Members can register again for {DEFAULT_EXPIRY_MINUTES} minutes. You can \
-                         reopen a link once; after that, ask a manager."
-                    )
-                }),
-        );
+    } else if link.reopenable {
+        buttons.push(action("Reopen", "reopen").confirm(format!(
+            "Members can register again for {} minutes. A link is reopened once only.",
+            settings.reopen_duration_minutes
+        )));
     }
     if manage {
         buttons.push(
@@ -1205,7 +1211,7 @@ fn change_link(
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
     let link = load_link(hash)?;
-    if !can_edit(viewer, &link) {
+    if !can_create(viewer) {
         return Err(PageError::Forbidden);
     }
     let manage = viewer.can("manage_afat");
@@ -1337,27 +1343,29 @@ fn change_link(
             if link.open {
                 return Ok(back());
             }
-            if !manage && link.reopened >= REOPEN_LIMIT {
-                return Err(PageError::Forbidden);
-            }
-            let expiry = minutes(submission, "expiry")?;
-            let expires = Utc::now() + Duration::minutes(expiry);
-            // Checked again as it's changed, so two posts at once can't
-            // both reopen it; logged in the same statement.
+            let settings = settings()?;
+            // aa-afat's rule, checked again as it's changed (so two posts
+            // at once can't both reopen it): once, within the grace time,
+            // for the reopen duration. Logged in the same statement.
             let reopened = storage::execute(
                 "WITH reopened AS ( \
-                     UPDATE links SET expires_at = $2, reopened = reopened + 1 \
-                     WHERE id = $1 AND expires_at <= now() AND ($3 OR reopened < $4) RETURNING hash) \
+                     UPDATE links SET expires_at = now() + make_interval(mins => $3::int), \
+                            reopened = reopened + 1 \
+                     WHERE id = $1 AND reopened = 0 AND expires_at <= now() \
+                       AND expires_at > now() - make_interval(mins => $2::int) RETURNING hash) \
                  INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
-                 SELECT 'Reopen FAT Link', $5, $6, hash, $7 FROM reopened",
+                 SELECT 'Reopen FAT Link', $4, $5, hash, $6 FROM reopened",
                 &[
                     link.id.into(),
-                    Db::timestamp(rfc3339(expires)),
-                    manage.into(),
-                    REOPEN_LIMIT.into(),
+                    settings.reopen_grace_minutes.into(),
+                    settings.reopen_duration_minutes.into(),
                     viewer.main.id.into(),
                     viewer.main.name.clone().into(),
-                    format!("\"{}\" reopened for {expiry} minutes", link.fleet).into(),
+                    format!(
+                        "\"{}\" reopened for {} minutes",
+                        link.fleet, settings.reopen_duration_minutes
+                    )
+                    .into(),
                 ],
             )
             .map_err(|e| failed("reopening the link", e))?;
@@ -1365,7 +1373,10 @@ fn change_link(
                 return Ok(SubmitResult::Page(details_page(
                     viewer,
                     hash,
-                    Some("The link was already reopened or is open again."),
+                    Some(
+                        "The link can't be reopened: it's open, was reopened once already, or \
+                         closed too long ago.",
+                    ),
                 )?));
             }
             Ok(back())
@@ -1443,6 +1454,18 @@ fn change_link(
 /// A manual FAT: by the exact name of a character the app has seen, or by
 /// any character's id.
 fn add_fat(viewer: &Viewer, link: &LinkInfo, who: &str) -> Result<SubmitResult, PageError> {
+    // The form is drawn only while it's allowed; a post from an old page
+    // is told why.
+    if !link.manual {
+        return Ok(SubmitResult::Page(details_page(
+            viewer,
+            &link.hash,
+            Some(&format!(
+                "FATs can be added by hand only within {MANUAL_FAT_HOURS} hours of the link's \
+                 creation and before it's reopened."
+            )),
+        )?));
+    }
     let rows = query(
         "SELECT character_id, name, corporation_id, alliance_id FROM characters \
          WHERE lower(name) = lower($1) OR character_id::text = $1 ORDER BY seen_at DESC LIMIT 1",
@@ -1479,11 +1502,14 @@ fn add_fat(viewer: &Viewer, link: &LinkInfo, who: &str) -> Result<SubmitResult, 
             )),
         )?));
     };
-    // The FAT and its log entry together, only if it wasn't there yet.
+    // The FAT and its log entry together, only if it wasn't there yet and
+    // the link still takes manual FATs.
     let added = storage::execute(
         "WITH added AS ( \
              INSERT INTO fats (link_id, character_id, character_name, corporation_id, alliance_id, added_by) \
-             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (link_id, character_id) DO NOTHING RETURNING 1) \
+             SELECT $1, $2, $3, $4, $5, $6 FROM links \
+             WHERE id = $1 AND reopened = 0 AND created_at > now() - interval '24 hours' \
+             ON CONFLICT (link_id, character_id) DO NOTHING RETURNING 1) \
          INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
          SELECT 'Manual FAT Added', $7, $6, $8, $9 FROM added",
         &[
@@ -1564,7 +1590,7 @@ fn register_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page
             .description("This FAT link is closed.")
             .text("Registration closed with the link. If you were in the fleet, ask the FC to reopen it or to add your FAT."));
     }
-    let mut left: Vec<_> = viewer
+    let left: Vec<_> = viewer
         .characters
         .iter()
         .filter(|c| !done.contains(&c.id))
@@ -1572,21 +1598,93 @@ fn register_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page
     if left.is_empty() {
         return Ok(page.description("All your characters are registered for this fleet."));
     }
+    // As aa-afat, a FAT needs the character's location scopes: only the
+    // characters registered for this app can be ticked.
+    let app: Vec<i64> = esi::characters().iter().map(|c| c.id).collect();
+    let (mut ready, unregistered): (Vec<_>, Vec<_>) =
+        left.into_iter().partition(|c| app.contains(&c.id));
+    page = page.description(
+        "Register your attendance while the link is open. Each character must be online in EVE: \
+         Tether asks ESI, and records its system and ship.",
+    );
+    if !unregistered.is_empty() {
+        let names: Vec<&str> = unregistered.iter().map(|c| c.name.as_str()).collect();
+        page = page
+            .text(format!(
+                "Not registered for Fleet Activity Tracking: {}. Register them (EVE asks to let \
+                 Tether see whether they're online, where they are and what they fly), then \
+                 open this link again.",
+                names.join(", ")
+            ))
+            .cards(CardGrid::new().register());
+    }
+    if ready.is_empty() {
+        return Ok(page);
+    }
     // The main first, then by name.
-    left.sort_by_key(|c| (c.id != viewer.main.id, c.name.to_lowercase()));
+    ready.sort_by_key(|c| (c.id != viewer.main.id, c.name.to_lowercase()));
     let mut form = Form::new("register", "Register")
         .title("Your characters in this fleet")
-        .description("Tick every character you brought.");
-    for character in left.iter().take(MAX_FORM_CHARACTERS) {
+        .description("Tick every character you brought. Each must be logged in to EVE.");
+    for character in ready.iter().take(MAX_FORM_CHARACTERS) {
         form = form.field(Field::checkbox(
             format!("c_{}", character.id),
             character.name.clone(),
-            character.id == viewer.main.id || left.len() == 1,
+            character.id == viewer.main.id || ready.len() == 1,
         ));
     }
-    Ok(page
-        .description("Register your attendance while the link is open.")
-        .form(form))
+    Ok(page.form(form))
+}
+
+/// Where a character is, as aa-afat checks before a FAT.
+enum Presence {
+    /// Online, in this system and ship (each if ESI said).
+    Online {
+        system: Option<i64>,
+        ship: Option<i64>,
+    },
+    Offline,
+    /// Not registered for this app (no token with its scopes).
+    NotRegistered,
+    /// Its login expired or was revoked.
+    Token,
+    /// ESI or Tether trouble; try again.
+    Trouble,
+}
+
+/// A character endpoint's JSON, or why not.
+fn character_json(endpoint: &str, id: i64) -> Result<serde_json::Value, Presence> {
+    match esi::get(endpoint, Subject::Character(id), &[], None) {
+        Ok(response) => Ok(serde_json::from_str(&response.body).unwrap_or_default()),
+        Err(esi::Error::NotRegistered | esi::Error::NotAllowed(_)) => Err(Presence::NotRegistered),
+        Err(esi::Error::Token) => Err(Presence::Token),
+        Err(err) => {
+            log::warn(format!("{endpoint} for a FAT: {err:?}"));
+            Err(Presence::Trouble)
+        }
+    }
+}
+
+/// aa-afat's add_fat: the character must be online; its system and ship
+/// are recorded (if ESI can't say, the FAT goes without them).
+fn presence(id: i64) -> Presence {
+    let online = match character_json("character-online", id) {
+        Ok(json) => json["online"].as_bool() == Some(true),
+        Err(why) => return why,
+    };
+    if !online {
+        return Presence::Offline;
+    }
+    let field = |endpoint: &str, name: &str| {
+        character_json(endpoint, id)
+            .ok()
+            .and_then(|json| json[name].as_i64())
+            .filter(|n| *n > 0)
+    };
+    Presence::Online {
+        system: field("character-location", "solar_system_id"),
+        ship: field("character-ship", "ship_type_id"),
+    }
 }
 
 fn register(
@@ -1595,48 +1693,89 @@ fn register(
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
     let link = load_link(hash)?;
-    let chosen: Vec<serde_json::Value> = viewer
+    let ticked: Vec<_> = viewer
         .characters
         .iter()
         .filter(|c| submission.checked(&format!("c_{}", c.id)))
-        .map(|c| {
-            serde_json::json!({
-                "character_id": c.id,
-                "character_name": c.name,
-                "corporation_id": c.corporation_id,
-                "alliance_id": c.alliance_id,
-            })
-        })
         .collect();
-    if chosen.is_empty() {
+    if ticked.is_empty() {
         return Ok(SubmitResult::Page(register_page(
             viewer,
             hash,
             Some("Tick at least one character."),
         )?));
     }
-    // Only while the link is open, checked by the database as it inserts;
-    // a character already registered is left alone.
-    let added = query(
-        "INSERT INTO fats (link_id, character_id, character_name, corporation_id, alliance_id) \
-         SELECT l.id, x.character_id, x.character_name, NULLIF(x.corporation_id, 0), NULLIF(x.alliance_id, 0) \
-         FROM json_to_recordset($1::json) AS x(character_id bigint, character_name text, corporation_id bigint, alliance_id bigint) \
-         JOIN links l ON l.id = $2 AND l.expires_at > now() \
-         ON CONFLICT (link_id, character_id) DO NOTHING RETURNING corporation_id, alliance_id",
-        &[
-            Db::json(serde_json::Value::Array(chosen).to_string()),
-            link.id.into(),
-        ],
-    )?;
-    if added.is_empty() && !load_link(hash)?.open {
+    if !link.open {
         return Ok(SubmitResult::Page(register_page(
             viewer,
             hash,
             Some("The link closed before you registered."),
         )?));
     }
-    let ids: Vec<i64> = added.iter().flat_map(|r| [int(r, 0), int(r, 1)]).collect();
+    // aa-afat's check, character by character (at most three ESI calls
+    // each, and a form holds 30 characters: within the host's 100).
+    let mut chosen = Vec::new();
+    let mut problems = Vec::new();
+    for c in ticked.iter().take(MAX_FORM_CHARACTERS) {
+        let why = match presence(c.id) {
+            Presence::Online { system, ship } => {
+                chosen.push(serde_json::json!({
+                    "character_id": c.id,
+                    "character_name": c.name,
+                    "corporation_id": c.corporation_id,
+                    "alliance_id": c.alliance_id,
+                    "system_id": system,
+                    "ship_type_id": ship,
+                }));
+                continue;
+            }
+            Presence::Offline => "isn't online in EVE; log in and try again",
+            Presence::NotRegistered => "isn't registered for Fleet Activity Tracking",
+            Presence::Token => "needs to log in to Tether again (its login expired)",
+            Presence::Trouble => "couldn't be checked with ESI just now; try again",
+        };
+        problems.push(format!("{} {why}.", c.name));
+    }
+    // Only while the link is open, checked by the database as it inserts;
+    // a character already registered is left alone.
+    let added = if chosen.is_empty() {
+        Vec::new()
+    } else {
+        query(
+            "INSERT INTO fats (link_id, character_id, character_name, corporation_id, alliance_id, \
+                               system_id, ship_type_id) \
+             SELECT l.id, x.character_id, x.character_name, NULLIF(x.corporation_id, 0), \
+                    NULLIF(x.alliance_id, 0), x.system_id, x.ship_type_id \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, character_name text, \
+                  corporation_id bigint, alliance_id bigint, system_id bigint, ship_type_id bigint) \
+             JOIN links l ON l.id = $2 AND l.expires_at > now() \
+             ON CONFLICT (link_id, character_id) DO NOTHING \
+             RETURNING corporation_id, alliance_id, system_id, ship_type_id",
+            &[
+                Db::json(serde_json::Value::Array(chosen).to_string()),
+                link.id.into(),
+            ],
+        )?
+    };
+    if problems.is_empty() && added.is_empty() && !load_link(hash)?.open {
+        return Ok(SubmitResult::Page(register_page(
+            viewer,
+            hash,
+            Some("The link closed before you registered."),
+        )?));
+    }
+    let ids: Vec<i64> = added
+        .iter()
+        .flat_map(|r| [int(r, 0), int(r, 1), int(r, 2), int(r, 3)])
+        .collect();
     learn_names(&ids);
+    if !problems.is_empty() {
+        return Ok(SubmitResult::Page(register_page(
+            viewer,
+            hash,
+            Some(&problems.join(" ")),
+        )?));
+    }
     Ok(SubmitResult::Redirect(format!("links/{}/add", link.hash)))
 }
 
@@ -2182,6 +2321,116 @@ fn change_fleet_types(
     }
 }
 
+// ---- settings --------------------------------------------------------------
+
+/// aa-afat's Setting, one row (defaults as aa-afat's if it can't be read).
+struct Settings {
+    expiry_minutes: i64,
+    reopen_grace_minutes: i64,
+    reopen_duration_minutes: i64,
+    log_days: i64,
+}
+
+fn settings() -> Result<Settings, PageError> {
+    let rows = query(
+        "SELECT expiry_minutes, reopen_grace_minutes, reopen_duration_minutes, log_days \
+         FROM settings WHERE id = 1",
+        &[],
+    )?;
+    let row = rows.first();
+    let or = |i: usize| row.map_or(60, |r| int(r, i));
+    Ok(Settings {
+        expiry_minutes: or(0),
+        reopen_grace_minutes: or(1),
+        reopen_duration_minutes: or(2),
+        log_days: or(3),
+    })
+}
+
+/// aa-afat's settings (in Django's admin there), for `manage_afat`.
+fn settings_page() -> Result<Page, PageError> {
+    let settings = settings()?;
+    let minutes = |name: &str, label: &str, value: i64, min: f64, help: &str| {
+        Field::number(name, label)
+            .range(Some(min), Some(MAX_EXPIRY_MINUTES as f64), true)
+            .value(value.to_string())
+            .help(help)
+            .required()
+    };
+    Ok(Page::new("Settings")
+        .description("aa-afat's settings, for every FAT link.")
+        .form(
+            Form::new("settings", "Save")
+                .field(minutes(
+                    "expiry_minutes",
+                    "Default FAT link expiry time (minutes)",
+                    settings.expiry_minutes,
+                    1.0,
+                    "What Create FAT Link offers; the FC can change it. aa-afat's default: 60",
+                ))
+                .field(minutes(
+                    "reopen_grace_minutes",
+                    "Default FAT link reopen grace time (minutes)",
+                    settings.reopen_grace_minutes,
+                    0.0,
+                    "How long after closing a link can be reopened (once). 0: never. aa-afat's default: 60",
+                ))
+                .field(minutes(
+                    "reopen_duration_minutes",
+                    "Default FAT link reopen duration (minutes)",
+                    settings.reopen_duration_minutes,
+                    1.0,
+                    "How long a reopened link stays open. aa-afat's default: 60",
+                ))
+                .field(
+                    Field::number("log_days", "Default log duration (days)")
+                        .range(Some(1.0), Some(3650.0), true)
+                        .value(settings.log_days.to_string())
+                        .help("How long log entries are kept. aa-afat's default: 60")
+                        .required(),
+                ),
+        ))
+}
+
+fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    if !viewer.can("manage_afat") {
+        return Err(PageError::Forbidden);
+    }
+    // The host checks the form's ranges; the table's checks back them up.
+    let number = |name: &str| -> Result<i64, PageError> {
+        submission
+            .value(name)
+            .parse::<i64>()
+            .map_err(|_| PageError::Failed(format!("{name} wasn't a whole number")))
+    };
+    let (expiry, grace, duration, days) = (
+        number("expiry_minutes")?,
+        number("reopen_grace_minutes")?,
+        number("reopen_duration_minutes")?,
+        number("log_days")?,
+    );
+    run(
+        &[
+            Statement::new(
+                "UPDATE settings SET expiry_minutes = $1, reopen_grace_minutes = $2, \
+                 reopen_duration_minutes = $3, log_days = $4 WHERE id = 1",
+                vec![expiry.into(), grace.into(), duration.into(), days.into()],
+            ),
+            log_entry(
+                viewer,
+                "Settings Changed",
+                None,
+                format!(
+                    "Settings: expiry {expiry} minutes, reopen grace {grace} minutes, reopen \
+                     duration {duration} minutes, logs kept {days} days"
+                ),
+            ),
+        ],
+        "saving the settings",
+    )?;
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
 // ---- logs ------------------------------------------------------------------
 
 fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
@@ -2193,9 +2442,10 @@ fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
         &[],
     )?;
     let links = can_create(viewer);
+    let days = settings()?.log_days;
     Ok(Page::new("Logs")
         .description(format!(
-            "What FCs and managers did, newest first. Kept for {LOG_DAYS} days."
+            "What FCs and managers did, newest first. Kept for {days} days."
         ))
         .table(with_rows(
             Table::new(vec![
@@ -2227,7 +2477,6 @@ fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
 
 // ---- jobs ------------------------------------------------------------------
 
-/// Daily: logs older than LOG_DAYS go.
 /// Secure Groups' FAT filter: each character's FATs in the last `days`,
 /// for every setting a smart group uses.
 fn report_filters() -> Result<(), JobError> {
@@ -2256,9 +2505,11 @@ fn report_filters() -> Result<(), JobError> {
     Ok(())
 }
 
+/// Daily: logs older than the settings' days go.
 fn housekeeping() -> Result<(), JobError> {
     let removed = storage::execute(
-        &format!("DELETE FROM logs WHERE at < now() - interval '{LOG_DAYS} days'"),
+        "DELETE FROM logs WHERE at < now() - make_interval(days => \
+             coalesce((SELECT log_days FROM settings WHERE id = 1), 60))",
         &[],
     )
     .map_err(|e| JobError::Retry(format!("clearing old logs: {e:?}")))?;

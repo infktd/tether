@@ -5,7 +5,10 @@
 //! pilot, corporation, alliance and month behind aa-afat's permissions.
 //! ESI-tracked fleets through the fleet boss an FC adds from Create FAT
 //! Link (AA style: no approval), with mocked `/characters/{id}/fleet` and
-//! `/fleets/{id}/members`.
+//! `/fleets/{id}/members`. aa-afat's rules: registering needs the character
+//! online (mocked `/online`, `/location` and `/ship`, with the app's
+//! location scopes), any FC changes any link, a link reopens once within
+//! the grace time, manual FATs within 24 hours, and aa-afat's settings.
 
 use std::sync::OnceLock;
 
@@ -16,7 +19,7 @@ use sqlx::PgPool;
 use tether_core::states::{Builtin, EntityKind};
 use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
 use tether_plugins::testing::{self, Key};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, ResponseTemplate};
 
 const ID: &str = "tether.fleet-activity-tracking";
@@ -60,6 +63,7 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let first = plugin_file("migrations/0001_fleet_activity_tracking.sql");
     let second = plugin_file("migrations/0002_esi_fleet_tracking.sql");
+    let third = plugin_file("migrations/0003_settings.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -69,6 +73,7 @@ async fn install(h: &Harness, owner: &str) {
             first.as_bytes(),
         ),
         ("migrations/0002_esi_fleet_tracking.sql", second.as_bytes()),
+        ("migrations/0003_settings.sql", third.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -107,7 +112,53 @@ async fn setup(db: PgPool) -> (Harness, String, String) {
     // Line brings an alt.
     let line = log_in_as(&h, &format!("{LINE}:Line Member"), None).await;
     let line = log_in_as(&h, &format!("{ALT}:Line Alt"), Some(&line)).await;
+    // Everyone so far registered for the app (its location scopes), and
+    // online in a Rokh in Jita.
+    grant_location_scopes(&h).await;
+    mount_online(&h, true, 10).await;
     (h, owner, line)
+}
+
+/// aa-afat's add_fat scopes, the app's user scopes.
+const LOCATION_SCOPES: [&str; 3] = [
+    "esi-location.read_location.v1",
+    "esi-location.read_ship_type.v1",
+    "esi-location.read_online.v1",
+];
+
+/// Every character logged in so far registers for the app.
+async fn grant_location_scopes(h: &Harness) {
+    sqlx::query("UPDATE core.character_tokens SET scopes = scopes || $1::text[]")
+        .bind(LOCATION_SCOPES.map(str::to_owned).to_vec())
+        .execute(&h.db)
+        .await
+        .unwrap();
+}
+
+/// Every character's `/online`, `/location` and `/ship`: online (or not),
+/// in Jita, in a Rokh. A lower `priority` wins over earlier mounts.
+async fn mount_online(h: &Harness, online: bool, priority: u8) {
+    for (route, body) in [
+        (
+            r"^/characters/\d+/online/?$",
+            serde_json::json!({ "online": online }),
+        ),
+        (
+            r"^/characters/\d+/location/?$",
+            serde_json::json!({ "solar_system_id": JITA }),
+        ),
+        (
+            r"^/characters/\d+/ship/?$",
+            serde_json::json!({ "ship_type_id": ROKH, "ship_item_id": 1, "ship_name": "Rokh" }),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path_regex(route))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .with_priority(priority)
+            .mount(&h.esi_server)
+            .await;
+    }
 }
 
 async fn grant(h: &Harness, owner: &str, permission: &str, state: i64) {
@@ -422,14 +473,9 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
         ]
     );
 
-    // Reopening lets members register again.
-    let res = post(
-        &h,
-        &format!("links/{late}"),
-        "_form=reopen&expiry=60",
-        &owner,
-    )
-    .await;
+    // Reopening (within the grace time) lets members register again, for
+    // the reopen duration; after it, no more manual FATs (aa-afat).
+    let res = post(&h, &format!("links/{late}"), "_form=reopen", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let res = post(
         &h,
@@ -440,6 +486,25 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(fats(&h, &late).await.len(), 3);
+    // The FAT records where the pilot was, and in what.
+    let details = open(&h, &format!("links/{late}"), &owner).await;
+    assert!(details.body.contains("Rokh"), "{}", details.body);
+    assert!(details.body.contains("Jita"), "{}", details.body);
+    assert!(
+        details
+            .body
+            .contains("FATs can be added by hand only within 24 hours"),
+        "{}",
+        details.body
+    );
+    let res = post(
+        &h,
+        &format!("links/{late}"),
+        "_form=add_fat&character=Line+Member",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
 
     // Managers remove FATs and delete links.
     let res = post(
@@ -533,7 +598,7 @@ async fn permissions_follow_aa_afat(db: PgPool) {
         open(&h, &format!("links/{hash}"), &line).await.status,
         StatusCode::FORBIDDEN
     );
-    for at in ["fleet-types", "logs"] {
+    for at in ["fleet-types", "settings", "logs"] {
         assert_eq!(
             open(&h, at, &line).await.status,
             StatusCode::NOT_FOUND,
@@ -541,7 +606,7 @@ async fn permissions_follow_aa_afat(db: PgPool) {
         );
     }
 
-    // FCs (add_fatlink) create links and change their own, not others'.
+    // FCs (add_fatlink) create links and change any link, as aa-afat.
     grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
     let own = create_link(&h, &line, "Line's roam", "").await;
     let res = post(
@@ -554,8 +619,7 @@ async fn permissions_follow_aa_afat(db: PgPool) {
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let theirs = open(&h, &format!("links/{hash}"), &line).await;
     assert_eq!(theirs.status, StatusCode::OK, "{}", theirs.body);
-    assert!(theirs.body.contains("Only the FC who created this link"));
-    // (The host refuses forms the page doesn't draw for that viewer.)
+    assert!(!theirs.body.contains("Only the FC who created this link"));
     let res = post(
         &h,
         &format!("links/{hash}"),
@@ -563,9 +627,10 @@ async fn permissions_follow_aa_afat(db: PgPool) {
         &line,
     )
     .await;
-    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    // An FC adds a missed pilot to their own link, but only managers
-    // remove FATs or delete links.
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // (The host refuses forms the page doesn't draw for that viewer.)
+    // An FC adds a missed pilot, but only managers remove FATs or delete
+    // links.
     let res = post(
         &h,
         &format!("links/{own}"),
@@ -584,22 +649,22 @@ async fn permissions_follow_aa_afat(db: PgPool) {
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     let res = post(&h, &format!("links/{own}"), "_form=delete", &line).await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    // An FC reopens their own link once; then only a manager can.
-    expire(&h, &own).await;
-    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=60", &line).await;
+    // A link reopens once, by any FC; then not even a manager can.
+    expire(&h, &hash).await;
+    let res = post(&h, &format!("links/{hash}"), "_form=reopen", &line).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let res = post(&h, &format!("links/{own}"), "_form=close", &line).await;
+    let res = post(&h, &format!("links/{hash}"), "_form=close", &line).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let res = post(&h, &format!("links/{own}"), "_form=reopen&expiry=60", &line).await;
-    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
-    let res = post(
-        &h,
-        &format!("links/{own}"),
-        "_form=reopen&expiry=60",
-        &owner,
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    for token in [&line, &owner] {
+        let res = post(&h, &format!("links/{hash}"), "_form=reopen", token).await;
+        assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    }
+    let closed = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        closed.body.contains("reopened once already"),
+        "{}",
+        closed.body
+    );
 
     no_problems(&plugin_problems(&h).await);
 }
@@ -995,12 +1060,12 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     assert!(details.body.contains("ESI fleet"));
     assert!(details.body.contains("Tracking"));
     assert!(details.body.contains("Line Alt"));
-    // Other FCs see who, not where: ships and systems are intel.
+    // Every FC sees the same, as in aa-afat.
     grant(&h, &owner, "add_fatlink", MEMBER_STATE).await;
     let other_fc = open(&h, &format!("links/{hash}"), &line).await;
     assert_eq!(other_fc.status, StatusCode::OK, "{}", other_fc.body);
     assert!(other_fc.body.contains("Line Alt"));
-    assert!(!other_fc.body.contains("Rokh"), "{}", other_fc.body);
+    assert!(other_fc.body.contains("Rokh"), "{}", other_fc.body);
 
     // Removing a FAT while tracking would be undone by the next read.
     let res = post(
@@ -1088,13 +1153,7 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     assert_eq!(queued_polls(&h).await, 0);
 
     // Reopened and resumed, it tracks again, until the six-hour cap.
-    let res = post(
-        &h,
-        &format!("links/{hash}"),
-        "_form=reopen&expiry=60",
-        &owner,
-    )
-    .await;
+    let res = post(&h, &format!("links/{hash}"), "_form=reopen", &owner).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     age_poll(&h, &hash).await;
     let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
@@ -1549,4 +1608,168 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
     assert!(main.contains(">active</span>"), "{main}");
     assert!(!main.contains("/approve"), "{main}");
     assert!(!main.contains("waiting for an admin"), "{main}");
+}
+
+/// aa-afat's Setting and its rules: the reopen grace time and duration,
+/// manual FATs within 24 hours, the log duration, all from the settings.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn aa_afat_settings_and_rules(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let schema = schema(&h).await;
+
+    // The defaults, as aa-afat's, and Create FAT Link offers the expiry.
+    let settings = open(&h, "settings", &owner).await;
+    assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
+    assert!(settings.body.contains("Default FAT link reopen grace time"));
+    let res = post(
+        &h,
+        "settings",
+        "_form=settings&expiry_minutes=45&reopen_grace_minutes=30&reopen_duration_minutes=15&log_days=90",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let create = open(&h, "links/create", &owner).await;
+    assert!(
+        create.body.contains("name=\"expiry\" value=\"45\""),
+        "{}",
+        create.body
+    );
+
+    // Closed longer ago than the grace time: no reopening.
+    let hash = create_link(&h, &owner, "Old fleet", "").await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET expires_at = now() - interval '31 minutes' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        details
+            .body
+            .contains("reopened only within 30 minutes of closing"),
+        "{}",
+        details.body
+    );
+    let res = post(&h, &format!("links/{hash}"), "_form=reopen", &owner).await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    // Within it: reopened for the reopen duration.
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET expires_at = now() - interval '29 minutes' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = post(&h, &format!("links/{hash}"), "_form=reopen", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let minutes: f64 = sqlx::query_scalar(sql!(
+        "SELECT extract(epoch FROM expires_at - now())::float8 / 60 FROM \"{schema}\".links WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!((14.0..=15.0).contains(&minutes), "{minutes}");
+
+    // Manual FATs only within 24 hours of the link's creation.
+    let day_old = create_link(&h, &owner, "Yesterday", "").await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET created_at = now() - interval '25 hours' WHERE hash = $1"
+    ))
+    .bind(&day_old)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = post(
+        &h,
+        &format!("links/{day_old}"),
+        "_form=add_fat&character=Line+Member",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert!(fats(&h, &day_old).await.is_empty());
+
+    // A pilot who isn't online can't register; nor can a character not
+    // registered for the app (not offered, and refused if posted).
+    let open_link = create_link(&h, &owner, "Now", "").await;
+    mount_online(&h, false, 9).await;
+    let res = post(
+        &h,
+        &format!("links/{open_link}/add"),
+        &format!("_form=register&c_{LINE}=on"),
+        &line,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body.contains("Line Member isn&#39;t online in EVE"),
+        "{}",
+        res.body
+    );
+    assert!(fats(&h, &open_link).await.is_empty());
+    mount_online(&h, true, 8).await;
+    let line = log_in_as(&h, &format!("{GIGX}:gigX"), Some(&line)).await;
+    // (Logging in asks for what Member requires; gigX declined it.)
+    sqlx::query("UPDATE core.character_tokens SET scopes = '{}' WHERE character_id = $1")
+        .bind(GIGX)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let register = open(&h, &format!("links/{open_link}/add"), &line).await;
+    assert!(
+        register
+            .body
+            .contains("Not registered for Fleet Activity Tracking: gigX"),
+        "{}",
+        register.body
+    );
+    assert!(
+        register.body.contains("href=\"/register"),
+        "{}",
+        register.body
+    );
+    assert!(!register.body.contains(&format!("name=\"c_{GIGX}\"")));
+    let res = post(
+        &h,
+        &format!("links/{open_link}/add"),
+        &format!("_form=register&c_{LINE}=on"),
+        &line,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(fats(&h, &open_link).await, vec![(LINE, None)]);
+
+    // Logs are kept for the settings' days: 61 days old stays at 90.
+    sqlx::query(sql!(
+        "INSERT INTO \"{schema}\".logs (at, event, actor_id, actor_name, description) \
+         VALUES (now() - interval '61 days', 'Create FAT Link', 1, 'Old FC', 'old'), \
+                (now() - interval '91 days', 'Create FAT Link', 1, 'Older FC', 'older')"
+    ))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE core.schedules SET next_run_at = now() - interval '1 minute' WHERE name = $1",
+    )
+    .bind(format!("plugin:{ID}:housekeeping"))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    tether_jobs::schedule::run_due(&h.db).await.unwrap();
+    work(&h).await;
+    let old: Vec<String> = sqlx::query_scalar(sql!(
+        "SELECT actor_name FROM \"{schema}\".logs WHERE at < now() - interval '1 day'"
+    ))
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(old, vec!["Old FC".to_owned()]);
+    let logs = open(&h, "logs", &owner).await;
+    assert!(logs.body.contains("Kept for 90 days"), "{}", logs.body);
+    assert!(logs.body.contains("Settings Changed"), "{}", logs.body);
+    no_problems(&plugin_problems(&h).await);
 }
