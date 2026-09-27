@@ -86,7 +86,8 @@ jobs:
       # Only the tests the dev features change (the rest ran just above):
       # rerunning the whole web suite with them doubled this job's time.
       - name: Tests with the dev features
-        run: cargo test -p tether-web --features dev-login,dev-docs --test it -- dev_login:: openapi::
+        run: |
+          cargo test -p tether-web --features dev-login,dev-docs --test it -- dev_login:: openapi::
 
   # dev-login signs anyone in without SSO; dev-docs loads Scalar from a CDN;
   # dev-upload installs apps from an uploaded .zip; plugin-http-test sends
