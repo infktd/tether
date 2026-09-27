@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(max(seq), 0) AS \"n!\" FROM core.plugin_download_parts\n           WHERE plugin_id = $1 AND name = $2 AND version = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a19f994e32bca5723108792e3d2615f5b210cbcba3635aaa640c8673ef630546"
+}

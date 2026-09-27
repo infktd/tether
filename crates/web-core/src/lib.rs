@@ -32,6 +32,7 @@ pub mod pages;
 pub mod personal_tokens;
 pub mod pings;
 pub mod plugin_consent;
+pub mod plugin_downloads;
 pub mod plugin_github;
 pub mod plugin_http;
 pub mod plugin_jobs;

@@ -17,6 +17,7 @@
 
 use tether_plugin_sdk::discord::{self, Mention};
 use tether_plugin_sdk::doctrines;
+use tether_plugin_sdk::downloads;
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::http;
 use tether_plugin_sdk::identity;
@@ -177,6 +178,60 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 .join("\n"),
             Err(e) => format!("err {e:?}"),
         },
+        // download-build?name=&title=&permission=&header=<JSON>&rows=<JSON>&finish=no
+        // (&stale=yes: begins twice, then carries on with the first build)
+        "download-build" => {
+            let json = |key: &str| -> Vec<serde_json::Value> {
+                serde_json::from_str(&arg(key).unwrap_or_default()).unwrap_or_default()
+            };
+            let cells = |v: &serde_json::Value| -> Vec<String> {
+                v.as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|c| c.as_str().unwrap_or_default().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let header = json("header")
+                .iter()
+                .map(|c| c.as_str().unwrap_or_default().to_owned())
+                .collect::<Vec<_>>();
+            let rows: Vec<Vec<String>> = json("rows").iter().map(cells).collect();
+            let name = arg("name").unwrap_or_default();
+            let begin = || {
+                downloads::begin(
+                    &name,
+                    &arg("title").unwrap_or_default(),
+                    &arg("permission").unwrap_or_default(),
+                    &header,
+                )
+            };
+            let built = begin()
+                .and_then(|build| {
+                    if arg("stale").as_deref() == Some("yes") {
+                        begin()?;
+                    }
+                    Ok(build)
+                })
+                .and_then(|build| downloads::append(&name, build, &rows).map(|()| build))
+                .and_then(|build| {
+                    if arg("finish").as_deref() == Some("no") {
+                        Ok(())
+                    } else {
+                        downloads::finish(&name, build)
+                    }
+                });
+            match built {
+                Ok(()) => "ok".to_owned(),
+                Err(e) => format!("err {e:?}"),
+            }
+        }
+        "download-files" => downloads::files()
+            .iter()
+            .map(|f| format!("{} {} {}", f.name, f.title, f.rows))
+            .collect::<Vec<_>>()
+            .join("\n"),
         // http?url=&method=post&body=&secret=&h=<name>:<value>
         "http" => {
             let url = arg("url").unwrap_or_default();

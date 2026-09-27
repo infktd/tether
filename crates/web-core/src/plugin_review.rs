@@ -153,6 +153,14 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         ),
         None => {}
     }
+    if c.downloads {
+        add(
+            "Downloads",
+            "Offers files for download (CSV Tether writes from rows the app hands over), each \
+             only to holders of the permission it names; every download is audited"
+                .to_owned(),
+        );
+    }
     if c.groups {
         add(
             "Groups",

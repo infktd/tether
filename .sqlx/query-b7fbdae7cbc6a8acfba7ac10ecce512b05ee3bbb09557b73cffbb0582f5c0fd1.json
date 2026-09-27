@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT seq, csv FROM core.plugin_download_parts WHERE plugin_id = $1 AND name = $2 AND version = $3 AND seq > $4 ORDER BY seq LIMIT $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_download_parts",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "csv",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_download_parts",
+            "name": "csv"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b7fbdae7cbc6a8acfba7ac10ecce512b05ee3bbb09557b73cffbb0582f5c0fd1"
+}

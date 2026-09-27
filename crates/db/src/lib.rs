@@ -9,6 +9,7 @@ pub mod compliance;
 pub mod corpstats;
 pub mod discord;
 pub mod doctrines;
+pub mod downloads;
 pub mod esi_cache;
 pub mod groups;
 pub mod menu;

@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT name, ready_title AS \"title!\", ready_permission AS \"permission!\",\n               ready_version AS \"version!\", ready_rows AS rows, ready_bytes AS bytes,\n               built_at AS \"built_at!\"\n        FROM core.plugin_downloads\n        WHERE plugin_id = $1 AND ready_version IS NOT NULL\n        ORDER BY name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "ready_title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "permission!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "ready_permission"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "version!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "ready_version"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "rows",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "ready_rows"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "ready_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "built_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "built_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "8c6a091d50b6ee8c874522a70e9d26bef92b57615802d1435b4ae2085d804c9d"
+}

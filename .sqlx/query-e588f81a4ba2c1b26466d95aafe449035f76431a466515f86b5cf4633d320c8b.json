@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.plugin_downloads (plugin_id, name) VALUES ($1, $2) ON CONFLICT (plugin_id, name) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e588f81a4ba2c1b26466d95aafe449035f76431a466515f86b5cf4633d320c8b"
+}

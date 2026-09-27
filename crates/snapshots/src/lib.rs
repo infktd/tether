@@ -584,7 +584,16 @@ impl Snapshots {
             ])
             // Quoted: an exact name, not a pattern.
             .arg(format!("--schema=\"{schema}\""))
-            .arg(format!("--snapshot={exported}"))
+            .arg(format!("--snapshot={exported}"));
+        if matches!(kind, Kind::Core) {
+            // Apps' downloads: members' data, up to gigabytes, and rebuilt by
+            // the apps anyway; a restore starts without them.
+            command.args([
+                "--exclude-table-data=core.plugin_downloads",
+                "--exclude-table-data=core.plugin_download_parts",
+            ]);
+        }
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

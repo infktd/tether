@@ -82,6 +82,7 @@ storage = true
 discord = ["send_message"]
 http = ["janice.e-351.com"]         # exact HTTPS hostnames, at most 10
 groups = true                       # which groups each viewer is in (see Who's looking)
+downloads = true                    # CSV files to download (see Downloads)
 
 [capabilities.esi]
 user = ["esi-wallet.read_character_wallet.v1"]              # pilots register characters for your app with these
@@ -668,6 +669,12 @@ Timers one app publishes and another shows (aa-structures feeding the timerboard
 
 Doctrines one app publishes for others to offer (allianceauth-fittings' doctrines in aa-fleetpings and aa-fat). With `doctrines = "publish"` under `[capabilities]`, `doctrines::publish(&[Doctrine { key, name, link, groups }], see_all)` replaces your published doctrines (at most 500, in the order given): `key` your own id (1 to 100 characters, each once), `name` (1 to 100, one line), `link` one of your pages (a link path), and `groups` `None` for everyone or `Some(ids)` (`identity::groups` ids, at most 100) for members of any of them. `see_all`, one of your own permissions or `None`, sees every one (Fittings passes `Some("manage")`, AA's `fittings.manage`). Not from pages. With `doctrines = "read"`, `doctrines::published()` returns the running apps' doctrines the viewer may see, each with its name, its page's address (`/plugins/<id>/<link>`) and the source app's name; none in a job. Tether's Fleet Pings offers them too, when an admin turns on "Use doctrines from Fittings".
 
+## Downloads
+
+CSV files your app offers for download (aa-memberaudit's data exports). With `downloads = true` under `[capabilities]`, build a file in a job or submit: `let build = downloads::begin(name, title, permission, &header)?`, then `downloads::append(name, build, &rows)` as often as needed (at most 5,000 rows a call, each with as many cells as the header, at most 10,000 calls), then `downloads::finish(name, build)`. The finished file replaces the last one only at `finish`, so pilots always get a whole file. Calling `begin` again starts a newer build and drops an unfinished one: the older build's `append` and `finish` then return `Error::Superseded`, and that chain should stop quietly (carry `build` in your continuation jobs' payloads, and give them their own job keys, so a new start and a continuation don't replace each other). `name` is 1 to 50 lowercase letters, digits and dashes; `title` one line of up to 100 characters; `permission` one of your own permissions, which a pilot needs to download it. At most 20 downloads, 50 MB each, 60 columns, 10,000 characters a cell.
+
+Tether writes the CSV itself: cells are quoted as needed, lines end CRLF, and a cell a spreadsheet would run as a formula (starting `=`, `+`, `-`, `@`, a tab or a carriage return, and not a number) gets a leading `'`. It serves the file at `/plugins/<id>/downloads/<name>` (so `downloads/` isn't one of your page paths); link to it as `downloads/<name>` from your pages, and Tether renders the link as a download. Pilots without the permission, or without a main, don't get it; every download is audited. Downloads aren't in Tether's snapshots and backups, so after a rollback they're gone until your next build. `downloads::files()` lists your finished files (name, title, rows, when built) for your pages. Build large files over several jobs (enqueue the next chunk from each), since each call has its time limits. Not from pages.
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
@@ -699,7 +706,8 @@ API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0
 - `jobs`: schedules and one-off jobs (see Jobs);
 - `identity`, `esi` and `discord` (see above);
 - `http`: HTTPS to hosts an admin approved (see HTTP);
-- `filters` and `timers`: Secure Groups filters and shared timers (see above).
+- `filters`, `timers` and `doctrines`: Secure Groups filters, shared timers and shared doctrines (see above);
+- `downloads`: CSV files to download (see Downloads).
 
 ## Checklist before publishing
 

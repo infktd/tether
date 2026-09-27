@@ -1126,6 +1126,11 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/plugins/tether.member-audit/downloads/wallet-journal
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/plugins/acme.hello
 Origin: {{base}}
 [Form]

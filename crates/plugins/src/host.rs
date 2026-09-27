@@ -396,6 +396,61 @@ impl tether::plugin::doctrines::Host for CallState {
     }
 }
 
+impl tether::plugin::downloads::Host for CallState {
+    async fn begin(
+        &mut self,
+        name: String,
+        title: String,
+        permission: String,
+        header: Vec<String>,
+    ) -> Result<u32, services::DownloadError> {
+        let services = self.downloads_building()?;
+        services
+            .downloads_begin(self.plugin.clone(), name, title, permission, header)
+            .await
+    }
+
+    async fn append(
+        &mut self,
+        name: String,
+        build: u32,
+        rows: Vec<Vec<String>>,
+    ) -> Result<(), services::DownloadError> {
+        let services = self.downloads_building()?;
+        services
+            .downloads_append(self.plugin.clone(), name, build, rows)
+            .await
+    }
+
+    async fn finish(&mut self, name: String, build: u32) -> Result<(), services::DownloadError> {
+        let services = self.downloads_building()?;
+        services
+            .downloads_finish(self.plugin.clone(), name, build)
+            .await
+    }
+
+    async fn files(&mut self) -> Vec<services::DownloadFile> {
+        match self.services.clone() {
+            Some(services) => services.downloads_files(self.plugin.clone()).await,
+            None => Vec::new(),
+        }
+    }
+}
+
+impl CallState {
+    /// Downloads are built in jobs and submits, never while a page draws.
+    fn downloads_building(&self) -> Result<services::Shared, services::DownloadError> {
+        if self.jobs_refused {
+            return Err(services::DownloadError::Invalid(
+                "pages can't build downloads: do that in a job or submit".to_owned(),
+            ));
+        }
+        self.services
+            .clone()
+            .ok_or(services::DownloadError::Unavailable)
+    }
+}
+
 impl tether::plugin::http::Host for CallState {
     async fn send(
         &mut self,

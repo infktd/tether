@@ -903,6 +903,46 @@ interface doctrines {
     published: func() -> result<list<shared>, error>;
 }
 
+/// Files an app offers for download, as aa-memberaudit's data exports: the
+/// app hands over rows (in a job, or a submit), the host writes the CSV
+/// (quoting cells and defusing spreadsheet formulas), keeps it, and serves
+/// it at the app's `downloads/<name>` to holders of the permission it
+/// names, each download audited. Needs `downloads = true`.
+interface downloads {
+    variant error {
+        /// Not allowed (the capability, a page), or a limit; which.
+        invalid(string),
+        /// Past the size a download may have.
+        too-large,
+        /// A newer build of it began (the daily run, or an update someone
+        /// asked for): stop this one, the newer one carries on.
+        superseded,
+        unavailable,
+    }
+
+    record file {
+        name: string,
+        title: string,
+        /// Rows, the header not counted.
+        rows: u64,
+        /// When it was finished (RFC 3339).
+        built-at: string,
+    }
+
+    /// Starts building the download `name` (letters, digits, `-`; a new
+    /// build replaces one left unfinished): its title, the app's own
+    /// permission that may download it, and its column names. Returns the
+    /// build, which `append` and `finish` name (carry it between jobs).
+    begin: func(name: string, title: string, permission: string, header: list<string>) -> result<u32, error>;
+    /// Adds rows to the build (at most 5,000 a call, each as many cells as
+    /// the header).
+    append: func(name: string, build: u32, rows: list<list<string>>) -> result<_, error>;
+    /// Makes the build the file people download, replacing the last.
+    finish: func(name: string, build: u32) -> result<_, error>;
+    /// This app's finished downloads.
+    files: func() -> list<file>;
+}
+
 world plugin {
     import log;
     import storage;
@@ -914,6 +954,7 @@ world plugin {
     import filters;
     import timers;
     import doctrines;
+    import downloads;
     use jobs.{job, job-error};
     use page.{page, request, page-error, submission, submit-result};
 

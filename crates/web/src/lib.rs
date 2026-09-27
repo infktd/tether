@@ -397,6 +397,10 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/plugins/{id}/downloads/{name}",
+            get(pages::plugin_pages::download),
+        )
+        .route(
             "/plugins/{id}/{*path}",
             get(pages::plugin_pages::sub_page).merge(
                 post(pages::plugin_pages::post_sub)

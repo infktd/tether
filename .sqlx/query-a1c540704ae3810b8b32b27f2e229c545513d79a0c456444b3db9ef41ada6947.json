@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ready_version, building_version, building_bytes FROM core.plugin_downloads WHERE plugin_id = $1 AND name = $2 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ready_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "ready_version"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "building_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "building_version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "building_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_downloads",
+            "name": "building_bytes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "a1c540704ae3810b8b32b27f2e229c545513d79a0c456444b3db9ef41ada6947"
+}

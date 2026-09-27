@@ -231,6 +231,10 @@ pub struct Capabilities {
     /// aa-fat): `publish` or `read`.
     #[serde(default)]
     pub doctrines: Option<TimersAccess>,
+    /// Files for download (aa-memberaudit's data exports), built from
+    /// rows the app hands over and served by the host.
+    #[serde(default)]
+    pub downloads: bool,
     /// The viewer's groups and the groups to offer them (`identity.groups`,
     /// `identity.all-groups`), to limit things to groups.
     #[serde(default)]
@@ -591,13 +595,20 @@ pub fn check_key(key: &str) -> Result<(), ManifestError> {
     Ok(())
 }
 
-/// A page path as plugins write them: what link paths allow.
+/// A page path as plugins write them: what link paths allow, outside
+/// `downloads/`, where Tether serves the app's downloads.
 fn check_page_path(what: &str, path: &str) -> Result<(), ManifestError> {
     crate::page::check_link_path(path).map_err(|_| {
         bad(format!(
             "{what} {path:?} isn't a page path (like \"moons/old\")"
         ))
-    })
+    })?;
+    if path.starts_with("downloads/") {
+        return Err(bad(format!(
+            "{what} {path:?}: downloads/ is where Tether serves your downloads"
+        )));
+    }
+    Ok(())
 }
 
 /// Names of permissions, schedules and secrets: `view`, `sync_mining`.
@@ -1069,6 +1080,7 @@ manage = "Manage the mining ledger"
             "[permissions]\nview = \"x\"\n[[pages]]\npath = \"/abs\"\npermission = \"view\"\n",
             "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",
+            "[[navigation]]\nlabel = \"Files\"\npath = \"downloads/wallet\"\n",
             "[[navigation]]\nlabel = \"A\"\npath = \"\"\n[[navigation]]\nlabel = \"B\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"mining\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"Fleet\"\n",

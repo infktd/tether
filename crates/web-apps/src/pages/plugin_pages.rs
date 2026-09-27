@@ -57,6 +57,9 @@ pub struct ValueView {
     pub href: Option<String>,
     /// A link drawn as a primary button.
     pub primary: bool,
+    /// A link to one of the app's downloads: fetched as a file, not
+    /// swapped in as a page.
+    pub download: bool,
     /// A badge, and its Basecoat variant ("" for the default).
     pub badge: Option<&'static str>,
     /// Buttons that post; empty for other values.
@@ -480,6 +483,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         title: None,
         href: None,
         primary: false,
+        download: false,
         badge: None,
         mono: false,
         entity: None,
@@ -520,6 +524,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         Value::Link(link) => ValueView {
             href: Some(page_href(plugin, &link.path)),
             primary: link.primary,
+            download: link.path.starts_with("downloads/"),
             ..plain(link.label.clone())
         },
         Value::Action(action) => ValueView {
@@ -1618,6 +1623,70 @@ pub async fn post_sub(
     Form(posted): Form<Vec<(String, String)>>,
 ) -> Result<Response, PageError> {
     post(state, session, id, path, raw, headers, posted).await
+}
+
+/// `GET /plugins/{id}/downloads/{name}`: a file the app offers (its
+/// `downloads`, as aa-memberaudit's data exports), for holders of the
+/// app's permission named with it, gated by the main as the app's pages
+/// are. Written by the host from the app's rows, streamed from Postgres;
+/// each download audited.
+pub async fn download(
+    State(state): State<AppState>,
+    Path((id, name)): Path<(String, String)>,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    // 404 whether it's missing or just not for this account, as pages.
+    let missing = || AppError::not_found("No such download.");
+    manifest::check_id(&id).map_err(|_| missing())?;
+    state
+        .plugins
+        .running(&id)
+        .filter(|r| r.manifest.capabilities.downloads)
+        .ok_or_else(missing)?;
+    let file = tether_db::downloads::files(&state.db, &id)
+        .await?
+        .into_iter()
+        .find(|f| f.name == name)
+        .ok_or_else(missing)?;
+    let held = tether_db::permissions::effective(&state.db, session.account).await?;
+    if !held.contains(&format!("plugin.{id}.{}", file.permission)) {
+        return Err(missing().into());
+    }
+    tether_db::accounts::get(&state.db, session.account)
+        .await?
+        .and_then(|a| a.main)
+        .ok_or_else(|| AppError::bad_request("Choose a main character first (Change Main)."))?;
+    if let Err(retry) = state
+        .limits
+        .plugin_pages
+        .check((session.account.0, id.clone()), std::time::Instant::now())
+    {
+        return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
+    }
+    tether_db::audit::record(
+        &state.db,
+        tether_db::audit::Actor::Account(session.account),
+        "plugin.download",
+        Some(&format!("plugin:{id}")),
+        serde_json::json!({ "name": file.name, "rows": file.rows }),
+    )
+    .await
+    .map_err(AppError::from)?;
+    let parts = tether_web_core::plugin_downloads::PartsStream::new(state.db.clone(), &id, &file);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}.csv\"", file.name),
+            ),
+            (header::CONTENT_LENGTH, file.bytes.to_string()),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        axum::body::Body::from_stream(parts),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

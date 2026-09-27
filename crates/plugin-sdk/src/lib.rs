@@ -336,6 +336,46 @@ pub mod doctrines {
     }
 }
 
+/// Files you offer for download (aa-memberaudit's data exports), with
+/// `downloads = true`: hand over rows in a job or submit, and Tether writes
+/// the CSV and serves it at your `downloads/<name>` (link to it) to holders
+/// of the permission you name.
+pub mod downloads {
+    pub use crate::bindings::tether::plugin::downloads::{Error, File};
+
+    /// Rows one [`append`] may add.
+    pub const MAX_ROWS_PER_APPEND: usize = 5_000;
+
+    /// Starts building `name` (lowercase letters, digits, `-`): its title,
+    /// your permission that may download it, and its column names. Returns
+    /// the build, for [`append`] and [`finish`]; carry it between jobs.
+    /// [`Error::Superseded`] from either means a newer build began: stop.
+    pub fn begin(
+        name: &str,
+        title: &str,
+        permission: &str,
+        header: &[String],
+    ) -> Result<u32, Error> {
+        crate::bindings::tether::plugin::downloads::begin(name, title, permission, header)
+    }
+
+    /// Adds rows (at most [`MAX_ROWS_PER_APPEND`], each as many cells as
+    /// the header).
+    pub fn append(name: &str, build: u32, rows: &[Vec<String>]) -> Result<(), Error> {
+        crate::bindings::tether::plugin::downloads::append(name, build, rows)
+    }
+
+    /// Makes the build the file people download.
+    pub fn finish(name: &str, build: u32) -> Result<(), Error> {
+        crate::bindings::tether::plugin::downloads::finish(name, build)
+    }
+
+    /// Your finished downloads.
+    pub fn files() -> Vec<File> {
+        crate::bindings::tether::plugin::downloads::files()
+    }
+}
+
 /// Outbound HTTPS to the hosts in `capabilities.http` that an admin
 /// approved. The host sends the request, sets the User-Agent, adds a
 /// secret you name (you never see its value), follows redirects only

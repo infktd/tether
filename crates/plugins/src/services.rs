@@ -12,6 +12,7 @@ pub use crate::host::tether::plugin::discord::{Channel, Error as DiscordError, M
 pub use crate::host::tether::plugin::doctrines::{
     Doctrine, Error as DoctrineError, Shared as SharedDoctrine,
 };
+pub use crate::host::tether::plugin::downloads::{Error as DownloadError, File as DownloadFile};
 pub use crate::host::tether::plugin::esi::{
     Error as EsiError, Named, Response as EsiResponse, Subject,
 };
@@ -138,6 +139,28 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         doctrines: Vec<Doctrine>,
         see_all: Option<String>,
     ) -> Fut<Result<(), DoctrineError>>;
+    fn downloads_begin(
+        &self,
+        plugin: String,
+        name: String,
+        title: String,
+        permission: String,
+        header: Vec<String>,
+    ) -> Fut<Result<u32, DownloadError>>;
+    fn downloads_append(
+        &self,
+        plugin: String,
+        name: String,
+        build: u32,
+        rows: Vec<Vec<String>>,
+    ) -> Fut<Result<(), DownloadError>>;
+    fn downloads_finish(
+        &self,
+        plugin: String,
+        name: String,
+        build: u32,
+    ) -> Fut<Result<(), DownloadError>>;
+    fn downloads_files(&self, plugin: String) -> Fut<Vec<DownloadFile>>;
     /// Shared doctrines `account` may see, for `plugin` to offer; none
     /// without an account (a job).
     fn doctrines_published(

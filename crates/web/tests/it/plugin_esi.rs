@@ -2012,3 +2012,131 @@ async fn a_character_dropped_from_member_audit_notifies_holders_in_scope(db: PgP
     .unwrap();
     assert_eq!(told, 1);
 }
+
+// ---- downloads (aa-memberaudit's data exports) --------------------------------
+
+async fn install_files(h: &Harness, owner: &str) {
+    let key = Key::new(8);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.files\"\nname = \"Files\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[capabilities]\ndownloads = true\n\n\
+         [permissions]\nview = \"See\"\nexports = \"Download\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = probe_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
+async fn build_download(
+    h: &Harness,
+    rows: serde_json::Value,
+    extra: &[(&str, &str)],
+    as_page: bool,
+) -> String {
+    let mut query = vec![
+        ("name".to_owned(), "wallet".to_owned()),
+        ("title".to_owned(), "Wallet journal".to_owned()),
+        ("permission".to_owned(), "exports".to_owned()),
+        (
+            "header".to_owned(),
+            serde_json::json!(["date", "amount", "description"]).to_string(),
+        ),
+        ("rows".to_owned(), rows.to_string()),
+    ];
+    for (k, v) in extra {
+        query.retain(|(key, _)| key != k);
+        query.push(((*k).to_owned(), (*v).to_owned()));
+    }
+    run_probe(h, "acme.files", "download-build", query, as_page).await
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_offer_csv_downloads_the_host_writes(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    install_files(&h, &owner).await;
+    let rows = serde_json::json!([
+        ["2026-09-27", "-1500.50", "=HYPERLINK(\"x\")"],
+        ["2026-09-26", "2000", "a, b"],
+    ]);
+
+    // Not while a page draws, and only for one of the app's permissions.
+    let out = build_download(&h, rows.clone(), &[], true).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let out = build_download(&h, rows.clone(), &[("permission", "admin")], false).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let out = build_download(&h, serde_json::json!([["only one cell"]]), &[], false).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    assert_eq!(build_download(&h, rows.clone(), &[], false).await, "ok");
+    assert_eq!(
+        run_probe(&h, "acme.files", "download-files", Vec::new(), true).await,
+        "wallet Wallet journal 2"
+    );
+
+    // The host's CSV: quoted, formulas defused, numbers kept.
+    const CSV: &str = "date,amount,description\r\n\
+                       2026-09-27,-1500.50,\"'=HYPERLINK(\"\"x\"\")\"\r\n\
+                       2026-09-26,2000,\"a, b\"\r\n";
+    let res = page(&h, "/plugins/acme.files/downloads/wallet", &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body, CSV);
+    assert_eq!(res.headers["content-type"], "text/csv; charset=utf-8");
+    assert_eq!(
+        res.headers["content-disposition"],
+        "attachment; filename=\"wallet.csv\""
+    );
+    // A build under way doesn't change what's served.
+    let out = build_download(&h, serde_json::json!([]), &[("finish", "no")], false).await;
+    assert_eq!(out, "ok");
+    assert_eq!(
+        page(&h, "/plugins/acme.files/downloads/wallet", &owner)
+            .await
+            .body,
+        CSV
+    );
+
+    // A chain a newer build overtook is told to stop, and the file stays whole.
+    let out = build_download(&h, rows.clone(), &[("stale", "yes")], false).await;
+    assert_eq!(out, "err Error::Superseded");
+    assert_eq!(
+        page(&h, "/plugins/acme.files/downloads/wallet", &owner)
+            .await
+            .body,
+        CSV
+    );
+
+    // Only for holders of its permission, to others as if missing;
+    // signed out, to the login.
+    let res = page(&h, "/plugins/acme.files/downloads/wallet", &pilot).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let signed_out = send(&h.app, get("/plugins/acme.files/downloads/wallet", &[])).await;
+    assert_eq!(signed_out.location(), "/login");
+    let pilot_account: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+            .bind(MITTANI)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+        .bind("plugin.acme.files.exports")
+        .bind(pilot_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = page(&h, "/plugins/acme.files/downloads/wallet", &pilot).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = page(&h, "/plugins/acme.files/downloads/nothing", &owner).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
+    let audited: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.audit_log WHERE action = 'plugin.download'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(audited, 4);
+}

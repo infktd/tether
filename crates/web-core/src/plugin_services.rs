@@ -27,10 +27,10 @@ use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
-    Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, EsiError, EsiReply,
-    EsiResponse, FilterError, FilterValue, FilterWanted, Fut, Group, HttpError, HttpRequest,
-    HttpResponse, Mention, Named, Owner, Services, SharedDoctrine, SharedTimer, State, Subject,
-    Timer, TimerError,
+    Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
+    DownloadFile, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted, Fut,
+    Group, HttpError, HttpRequest, HttpResponse, Mention, Named, Owner, Services, SharedDoctrine,
+    SharedTimer, State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -886,6 +886,59 @@ impl Services for PluginServices {
         Box::pin(
             async move { crate::plugin_shared::publish(&db, &plugins, &plugin, &timers).await },
         )
+    }
+
+    fn downloads_begin(
+        &self,
+        plugin: String,
+        name: String,
+        title: String,
+        permission: String,
+        header: Vec<String>,
+    ) -> Fut<Result<u32, DownloadError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_downloads::begin(
+                &db,
+                &plugins,
+                &plugin,
+                &name,
+                &title,
+                &permission,
+                &header,
+            )
+            .await
+        })
+    }
+
+    fn downloads_append(
+        &self,
+        plugin: String,
+        name: String,
+        build: u32,
+        rows: Vec<Vec<String>>,
+    ) -> Fut<Result<(), DownloadError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_downloads::append(&db, &plugins, &plugin, &name, build, &rows).await
+        })
+    }
+
+    fn downloads_finish(
+        &self,
+        plugin: String,
+        name: String,
+        build: u32,
+    ) -> Fut<Result<(), DownloadError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_downloads::finish(&db, &plugins, &plugin, &name, build).await
+        })
+    }
+
+    fn downloads_files(&self, plugin: String) -> Fut<Vec<DownloadFile>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move { crate::plugin_downloads::files(&db, &plugins, &plugin).await })
     }
 
     fn doctrines_publish(

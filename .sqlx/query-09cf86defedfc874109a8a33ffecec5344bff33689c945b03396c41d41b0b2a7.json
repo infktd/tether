@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.plugin_downloads SET ready_version = building_version, ready_title = building_title, ready_permission = building_permission, ready_rows = building_rows, ready_bytes = building_bytes, built_at = now(), building_version = NULL, building_title = NULL, building_permission = NULL, building_columns = 0, building_rows = 0, building_bytes = 0 WHERE plugin_id = $1 AND name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09cf86defedfc874109a8a33ffecec5344bff33689c945b03396c41d41b0b2a7"
+}
