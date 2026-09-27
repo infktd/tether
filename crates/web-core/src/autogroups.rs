@@ -60,7 +60,7 @@ pub fn desired(
 /// Brings one account's Auto Groups in line, in the caller's transaction.
 /// Returns whether some group it should be in doesn't exist yet (the sync
 /// job creates it).
-pub(crate) async fn reconcile_in(
+pub async fn reconcile_in(
     tx: &mut sqlx::PgConnection,
     account: AccountId,
     state: StateId,

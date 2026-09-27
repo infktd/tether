@@ -953,7 +953,7 @@ fn check_applied(
     Ok(())
 }
 
-pub(crate) fn sha256(bytes: &[u8]) -> Vec<u8> {
+pub fn sha256(bytes: &[u8]) -> Vec<u8> {
     use sha2::Digest;
     sha2::Sha256::digest(bytes).to_vec()
 }

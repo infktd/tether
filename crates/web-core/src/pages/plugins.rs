@@ -702,7 +702,7 @@ impl Changes {
     /// update that changes nothing here asks for nothing an admin didn't
     /// approve already, which is what lets Tether apply a bundled one
     /// itself ([`crate::plugins::Plugins::start`]).
-    pub(crate) fn new(old: &Manifest, new: &Manifest) -> Self {
+    pub fn new(old: &Manifest, new: &Manifest) -> Self {
         let (before, after) = (capabilities(old), capabilities(new));
         let (rules_before, rules_after) = (page_rules(old), page_rules(new));
         let id = &new.plugin.id;
@@ -770,7 +770,7 @@ impl Changes {
         }
     }
 
-    pub(crate) fn unchanged(&self) -> bool {
+    pub fn unchanged(&self) -> bool {
         self.permissions_renamed.is_empty()
             && self.added.is_empty()
             && self.removed.is_empty()

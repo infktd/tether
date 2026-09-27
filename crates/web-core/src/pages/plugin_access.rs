@@ -67,7 +67,7 @@ fn time(at: chrono::DateTime<chrono::Utc>) -> String {
 /// blacklisted, or the character left the account that added it), or
 /// `moved` (it changed corporation since it was added, or its corporation
 /// wasn't known: adding it again brings it up to date).
-pub(crate) fn source_state(d: &plugin_esi::DataSource) -> &'static str {
+pub fn source_state(d: &plugin_esi::DataSource) -> &'static str {
     if d.in_use() {
         "active"
     } else if !d.account_ok {
@@ -158,7 +158,7 @@ pub async fn owners(
     Ok(Some(owners))
 }
 
-pub(crate) fn gone_row(g: plugin_esi::GoneSource) -> GoneRow {
+pub fn gone_row(g: plugin_esi::GoneSource) -> GoneRow {
     let who = g.actor_name.unwrap_or_else(|| "Someone".to_owned());
     GoneRow {
         name: g

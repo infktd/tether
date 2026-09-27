@@ -125,7 +125,7 @@ fn header_is(headers: &HeaderMap, name: &str, value: &str) -> bool {
 
 /// The page the browser is on (htmx's `HX-Current-URL`), as a path with
 /// its query, when it's this site and a safe path.
-pub(crate) fn current_page(origin: &str, headers: &HeaderMap) -> Option<String> {
+pub fn current_page(origin: &str, headers: &HeaderMap) -> Option<String> {
     let url = headers.get("hx-current-url")?.to_str().ok()?;
     let rest = url.strip_prefix(origin)?;
     let rest = rest.split('#').next().unwrap_or(rest);
@@ -139,7 +139,7 @@ fn path_of(url: &str) -> &str {
 /// Where a redirect after an action should take the browser: the page it
 /// was on, with that page's query, when the redirect is back to the same
 /// page and names no query of its own; otherwise where the handler said.
-pub(crate) fn destination(location: &str, current: Option<&str>) -> String {
+pub fn destination(location: &str, current: Option<&str>) -> String {
     match current {
         Some(current) if !location.contains('?') && path_of(current) == location => {
             current.to_owned()

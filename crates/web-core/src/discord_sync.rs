@@ -67,7 +67,7 @@ struct SyncAll {
 /// Anything that might be fixed later is retried: an outage, and also a
 /// bad bot token or incomplete setup, since a dead job would forget any
 /// role it was meant to take back.
-pub(crate) fn discord_failure(err: DiscordError) -> JobError {
+pub fn discord_failure(err: DiscordError) -> JobError {
     match err {
         DiscordError::Unavailable(_) | DiscordError::BadBotToken | DiscordError::Config(_) => {
             JobError::retry(err)

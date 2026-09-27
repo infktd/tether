@@ -223,7 +223,7 @@ pub async fn check_privileged(
 /// was refused for want of a recent login, a page (or htmx) request goes
 /// to the confirmation page instead, naming the action and the page it came
 /// from; the JSON API keeps its 403.
-pub(crate) async fn layer(
+pub async fn layer(
     state: &AppState,
     session: &CurrentSession,
     request: axum::extract::Request,

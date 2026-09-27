@@ -392,17 +392,13 @@ fn mapping_details(role_id: i64, role_name: &str, grantee: Grantee) -> serde_jso
 }
 
 /// How long a guild check is reused while linking and syncing.
-pub(crate) const CHECK_TTL: Duration = Duration::from_secs(60);
+pub const CHECK_TTL: Duration = Duration::from_secs(60);
 
 /// The roles to give an account now, checked against the server as it is:
 /// a role that has since gained Administrator, moved above the bot, or
 /// gained moderation powers while only Guest or Open groups get it, is
 /// skipped (and logged) rather than handed out.
-pub(crate) fn grantable(
-    wanted: &[db::RoleFor],
-    check: &GuildCheck,
-    account: AccountId,
-) -> Vec<u64> {
+pub fn grantable(wanted: &[db::RoleFor], check: &GuildCheck, account: AccountId) -> Vec<u64> {
     let mut roles = Vec::new();
     for want in wanted {
         let Ok(id) = u64::try_from(want.role_id) else {

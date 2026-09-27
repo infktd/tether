@@ -30,7 +30,7 @@ pub const NEXT_COOKIE: &str = "__Host-tether_next";
 const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
 /// How long a signed-out browser's destination waits for it to log in.
 const DESTINATION_TTL: Duration = Duration::from_secs(15 * 60);
-pub(crate) const SESSION_TTL: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+pub const SESSION_TTL: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const SESSION_TOUCH_EVERY: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +70,7 @@ pub async fn login(
 }
 
 /// Sends the browser to EVE SSO asking for `scopes`, remembering why.
-pub(crate) async fn start_login(
+pub async fn start_login(
     state: &AppState,
     jar: CookieJar,
     return_to: &str,
@@ -542,7 +542,7 @@ pub struct CurrentSession {
 pub const PAT_PREFIX: &str = "tether_pat_";
 
 /// The bearer token on a request, if it carries one of ours.
-pub(crate) fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
+pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)?
         .to_str()
@@ -708,7 +708,7 @@ async fn sso_config(state: &AppState) -> Result<SsoConfig, AppError> {
 /// Parsed from a header string because `Cookie::max_age` takes a
 /// `time::Duration`, which axum-extra doesn't re-export. Values are hex
 /// tokens, so nothing needs escaping.
-pub(crate) fn cookie(
+pub fn cookie(
     name: &str,
     value: &Secret<String>,
     ttl: Duration,
@@ -723,7 +723,7 @@ pub(crate) fn cookie(
 
 /// Removal cookies need the same attributes, or browsers ignore them for
 /// `__Host-` names.
-pub(crate) fn removal(name: &'static str) -> Cookie<'static> {
+pub fn removal(name: &'static str) -> Cookie<'static> {
     Cookie::build(name)
         .http_only(true)
         .secure(true)
@@ -739,7 +739,7 @@ pub(crate) fn removal(name: &'static str) -> Cookie<'static> {
 /// own path is percent-encoded already), at most 512 bytes, and never back
 /// into logging in. Nothing else becomes a redirect, so there's no open
 /// redirect.
-pub(crate) fn safe_path(path: &str) -> Option<&str> {
+pub fn safe_path(path: &str) -> Option<&str> {
     let loops = path == "/login" || path.starts_with("/login?") || path.starts_with("/auth/");
     (path.starts_with('/')
         && !path.contains("//")

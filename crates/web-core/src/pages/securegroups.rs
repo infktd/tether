@@ -299,6 +299,6 @@ pub async fn remove(
 }
 
 /// For the templates.
-pub(crate) fn date(at: &chrono::DateTime<chrono::Utc>) -> String {
+pub fn date(at: &chrono::DateTime<chrono::Utc>) -> String {
     when(at)
 }

@@ -86,10 +86,7 @@ async fn queue_check(tx: &mut sqlx::PgTransaction<'_>) -> Result<(), sqlx::Error
 
 /// Queues a job unless one is already waiting or running: repeated clicks
 /// mustn't turn into repeated calls to GitHub.
-pub(crate) async fn queue_job(
-    tx: &mut sqlx::PgTransaction<'_>,
-    kind: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn queue_job(tx: &mut sqlx::PgTransaction<'_>, kind: &str) -> Result<(), sqlx::Error> {
     let pending: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM core.jobs WHERE kind = $1 AND state IN ('queued', 'running')"#,
         kind

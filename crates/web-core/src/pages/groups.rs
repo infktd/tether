@@ -17,7 +17,7 @@ use crate::error::AppError;
 use crate::groups::{self, Decision, Joined, Left};
 
 /// A group's badge: Internal, Open or Requestable (AA's labels).
-pub(crate) fn label(group: &Group) -> &'static str {
+pub fn label(group: &Group) -> &'static str {
     group.flags.label()
 }
 

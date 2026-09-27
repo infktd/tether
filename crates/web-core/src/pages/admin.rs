@@ -21,7 +21,7 @@ use crate::auth::CurrentSession;
 use crate::error::AppError;
 
 /// Signed in (else the login page) and holding `permission` (else 403).
-pub(crate) async fn guard(
+pub async fn guard(
     state: &AppState,
     session: Option<CurrentSession>,
     permission: &str,
@@ -39,7 +39,7 @@ pub struct StateOption {
     pub name: String,
 }
 
-pub(crate) async fn state_options(state: &AppState) -> Result<Vec<StateOption>, AppError> {
+pub async fn state_options(state: &AppState) -> Result<Vec<StateOption>, AppError> {
     Ok(tether_db::states::all(&state.db)
         .await?
         .into_iter()
@@ -51,7 +51,7 @@ pub(crate) async fn state_options(state: &AppState) -> Result<Vec<StateOption>, 
 }
 
 /// A state's name for display, from a list loaded once.
-pub(crate) fn state_name(states: &[StateOption], id: tether_core::states::StateId) -> String {
+pub fn state_name(states: &[StateOption], id: tether_core::states::StateId) -> String {
     states
         .iter()
         .find(|s| s.id == id.0)
@@ -1389,7 +1389,7 @@ pub struct GrantForm {
 }
 
 /// A `<select>` value: `state:<id>` or `group:<id>`.
-pub(crate) fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
+pub fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
     let choose = || AppError::bad_request("Choose a state or a group.");
     match value.split_once(':') {
         Some(("state", id)) => id

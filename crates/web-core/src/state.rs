@@ -37,7 +37,7 @@ pub struct AppState {
 /// flight (the lock is held across it).
 #[derive(Debug, Default)]
 pub struct StripStatus {
-    pub(crate) last: tokio::sync::Mutex<Option<(std::time::Instant, Option<i64>)>>,
+    pub last: tokio::sync::Mutex<Option<(std::time::Instant, Option<i64>)>>,
 }
 
 /// Rate limits for endpoints worth guessing at.

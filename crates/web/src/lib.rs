@@ -15,55 +15,17 @@ compile_error!("the dev-upload feature must never be enabled in release builds")
 #[cfg(all(feature = "plugin-http-test", not(debug_assertions)))]
 compile_error!("the plugin-http-test feature must never be enabled in release builds");
 
-pub mod admin;
-pub mod admin_nav;
+pub use tether_web_core::*;
+
 mod api;
-pub mod auth;
-pub mod autogroups;
-pub mod backups;
-pub mod blacklist;
-pub mod bundled;
-pub mod compliance;
-mod csrf;
 #[cfg(feature = "dev-login")]
 mod dev_login;
-pub mod discord;
-pub mod discord_sync;
-mod error;
-pub mod groups;
-pub mod maintenance;
-pub mod menu;
-pub mod notifications;
 pub mod openapi;
-pub mod ownership;
-pub mod pages;
-pub mod personal_tokens;
-pub mod pings;
-pub mod plugin_consent;
-pub mod plugin_github;
-pub mod plugin_http;
-pub mod plugin_jobs;
-pub mod plugin_services;
-pub mod plugin_shared;
-pub mod plugins;
-mod ratelimit;
-pub mod setup;
-pub mod smart_groups;
-mod state;
-pub mod state_admin;
-pub mod states;
-pub mod sudo;
-pub mod sync;
-pub mod theme;
-pub mod tokens;
-pub mod updates;
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Router, middleware};
-
-pub use state::{AppState, Limits, Site, StripStatus};
 
 /// Whether this build includes fixture logins (never true in release).
 pub const DEV_LOGIN: bool = cfg!(feature = "dev-login");

@@ -87,7 +87,7 @@ pub fn initials(name: &str) -> String {
 }
 
 /// Renders a template, or a plain 500 if rendering itself fails.
-pub(crate) fn render(status: StatusCode, template: &impl Template) -> Response {
+pub fn render(status: StatusCode, template: &impl Template) -> Response {
     match template.render() {
         Ok(html) => (status, Html(html)).into_response(),
         Err(err) => AppError::internal(err).into_response(),
@@ -97,14 +97,14 @@ pub(crate) fn render(status: StatusCode, template: &impl Template) -> Response {
 /// A page shown again with a problem on it (a refused form): with htmx,
 /// the problem in a toast too, since the page keeps its scroll position
 /// and its alert may be out of view.
-pub(crate) fn with_problem(problem: Option<String>, response: Response) -> Response {
+pub fn with_problem(problem: Option<String>, response: Response) -> Response {
     match problem {
         Some(message) => stay::with_toast(response, stay::Toast::problem(message)),
         None => response,
     }
 }
 
-pub(crate) fn is_htmx(headers: &HeaderMap) -> bool {
+pub fn is_htmx(headers: &HeaderMap) -> bool {
     headers.get("hx-request").is_some_and(|v| v == "true")
 }
 
@@ -142,7 +142,7 @@ impl IntoResponse for PageError {
     }
 }
 
-pub(crate) fn error_page(status: StatusCode, message: &str) -> Response {
+pub fn error_page(status: StatusCode, message: &str) -> Response {
     let mut response = render(
         status,
         &ErrorPage {
@@ -198,7 +198,7 @@ pub struct Shell {
 
 /// The sidebar items an account may see: built-in pages by its
 /// permissions, then apps' pages.
-pub(crate) fn menu_items(
+pub fn menu_items(
     nav: &AdminNav,
     group_management: Option<i64>,
     plugin_nav: &[PluginNavLink],
@@ -423,7 +423,7 @@ struct ProfilePage {
 
 /// The app whose first widget, My Characters, leads the Dashboard when
 /// it's installed and the viewer may open it.
-pub(crate) const CHARACTER_AUDIT: &str = "tether.member-audit";
+pub const CHARACTER_AUDIT: &str = "tether.member-audit";
 
 /// A character's registration status as a chip: "Registered", or what
 /// it's missing (which links to Register Character).
@@ -479,7 +479,7 @@ impl StatusChip {
 /// The footers Tether adds to the Dashboard's cards of the account's own
 /// characters: status, and Make main where it can (a working token, not
 /// the main already).
-pub(crate) async fn card_feet(
+pub async fn card_feet(
     state: &AppState,
     account: accounts::AccountId,
 ) -> Result<std::collections::HashMap<i64, plugin_pages::CardFoot>, AppError> {
@@ -520,14 +520,14 @@ pub struct DashboardWidget {
     pub url: String,
 }
 
-pub(crate) struct Loaded {
-    pub(crate) shell: Shell,
+pub struct Loaded {
+    pub shell: Shell,
     state: AccessState,
     is_owner: bool,
     characters: Vec<CharacterRow>,
 }
 
-pub(crate) async fn load(
+pub async fn load(
     state: &AppState,
     session: &CurrentSession,
     active: &'static str,

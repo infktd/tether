@@ -274,7 +274,7 @@ pub async fn revoke(state: &AppState, actor: AccountId, id: i64) -> Result<(), A
     Ok(())
 }
 
-pub(crate) fn grant_details(permission: &str, grantee: Grantee) -> Value {
+pub fn grant_details(permission: &str, grantee: Grantee) -> Value {
     match grantee {
         Grantee::State(state) => json!({ "permission": permission, "state_id": state.0 }),
         Grantee::Group(group) => json!({ "permission": permission, "group_id": group.0 }),

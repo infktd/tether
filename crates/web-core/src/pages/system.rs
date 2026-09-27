@@ -251,7 +251,7 @@ pub async fn retry_job(
 
 /// Runs a schedule now for an admin (the System page's or an app page's
 /// Run now), audited as `schedule.run_now`.
-pub(crate) async fn run_schedule(
+pub async fn run_schedule(
     state: &AppState,
     actor: tether_db::accounts::AccountId,
     name: &str,
@@ -293,7 +293,7 @@ struct RunNowResult<'a> {
 
 /// Run now's answer to htmx: swapped in place of the button, so the page
 /// isn't reloaded.
-pub(crate) fn run_now_fragment(result: &Result<(), AppError>) -> Response {
+pub fn run_now_fragment(result: &Result<(), AppError>) -> Response {
     let (queued, message) = match result {
         Ok(()) => (true, ""),
         Err(err) => (false, err.message()),

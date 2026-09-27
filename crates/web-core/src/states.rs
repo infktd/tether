@@ -101,7 +101,7 @@ pub async fn evaluate_account(db: &PgPool, account: AccountId) -> Result<Evaluat
 /// Evaluates and stores one account's state inside the caller's
 /// transaction, auditing a change. `from` names the previous state when
 /// it no longer exists (a deleted state).
-pub(crate) async fn evaluate_in(
+pub async fn evaluate_in(
     tx: &mut sqlx::PgConnection,
     rules: &StateRules,
     account: AccountId,

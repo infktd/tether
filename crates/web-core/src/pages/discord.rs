@@ -433,7 +433,7 @@ pub struct DiscordCard {
     pub may_join: bool,
 }
 
-pub(crate) async fn card(
+pub async fn card(
     state: &AppState,
     account: tether_db::accounts::AccountId,
 ) -> Result<Option<DiscordCard>, PageError> {

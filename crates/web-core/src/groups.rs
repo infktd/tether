@@ -45,7 +45,7 @@ async fn load_locked(
     load(tx, group).await
 }
 
-pub(crate) async fn standing(
+pub async fn standing(
     tx: &mut sqlx::PgConnection,
     account: AccountId,
 ) -> Result<Standing, AppError> {
@@ -70,7 +70,7 @@ pub fn auto_group() -> AppError {
     )
 }
 
-pub(crate) fn owner_only() -> AppError {
+pub fn owner_only() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
         "This group is Restricted: only a superuser adds or removes its members directly, or \
@@ -82,7 +82,7 @@ pub(crate) fn owner_only() -> AppError {
 /// adds and removes a Restricted group's members from the admin pages,
 /// and only freshly logged in (sudo mode). Group Management (leaders and
 /// `group_management`) handles its requests and members as any group's.
-pub(crate) fn restricted_owner(is_owner: bool) -> Result<(), AppError> {
+pub fn restricted_owner(is_owner: bool) -> Result<(), AppError> {
     if !is_owner {
         return Err(owner_only());
     }
@@ -94,7 +94,7 @@ pub(crate) fn restricted_owner(is_owner: bool) -> Result<(), AppError> {
 /// accepting a request, an admin appointing leaders, opening it or making
 /// it a compliance group) must already hold all of those permissions:
 /// group rights mustn't be a path to more.
-pub(crate) async fn require_grants(
+pub async fn require_grants(
     tx: &mut sqlx::PgConnection,
     actor: AccountId,
     group: GroupId,
@@ -125,7 +125,7 @@ pub(crate) async fn require_grants(
 /// Taking people out of a group that grants a sensitive permission (itself
 /// or through a group it leads) takes it away, as revoking would (sudo
 /// mode): a stale session mustn't strip the other admins.
-pub(crate) async fn gate_sensitive_removal(
+pub async fn gate_sensitive_removal(
     tx: &mut sqlx::PgConnection,
     group: GroupId,
 ) -> Result<(), AppError> {

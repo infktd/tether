@@ -286,7 +286,7 @@ fn short_isk(amount: f64) -> String {
 }
 
 /// `1,240,000,000`.
-pub(crate) fn grouped(n: i64) -> String {
+pub fn grouped(n: i64) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -1371,7 +1371,7 @@ pub async fn widget(
 }
 
 /// Percent-encodes a query component.
-pub(crate) fn encode(text: &str) -> String {
+pub fn encode(text: &str) -> String {
     text.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
