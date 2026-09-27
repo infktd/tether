@@ -232,7 +232,7 @@ pub const TYPES: [(&str, &str, Severity); 28] = [
     (
         "StructureLostShields",
         "Upwell structure lost shields",
-        Severity::Warning,
+        Severity::Danger,
     ),
     (
         "StructureLostArmor",
@@ -244,7 +244,7 @@ pub const TYPES: [(&str, &str, Severity); 28] = [
         "Upwell structure destroyed",
         Severity::Danger,
     ),
-    ("TowerAlertMsg", "Starbase under attack", Severity::Danger),
+    ("TowerAlertMsg", "Starbase under attack", Severity::Warning),
     (STARBASE_REINFORCED, "Starbase reinforced", Severity::Danger),
     (
         "OrbitalAttacked",
@@ -264,7 +264,7 @@ pub const TYPES: [(&str, &str, Severity); 28] = [
     (
         "SkyhookLostShields",
         "Skyhook lost shields",
-        Severity::Warning,
+        Severity::Danger,
     ),
     ("SkyhookDestroyed", "Skyhook destroyed", Severity::Danger),
     (
@@ -819,6 +819,11 @@ mod tests {
         }
         assert_eq!(severity("StructureLostArmor"), Severity::Danger);
         assert_eq!(severity("StructureOnline"), Severity::Info);
+        // As aa-structures' embeds: losing shields is danger, a starbase
+        // under attack a warning.
+        assert_eq!(severity("StructureLostShields"), Severity::Danger);
+        assert_eq!(severity("SkyhookLostShields"), Severity::Danger);
+        assert_eq!(severity("TowerAlertMsg"), Severity::Warning);
         assert_eq!(category("TowerResourceAlertMsg"), Some(Category::Fuel));
 
         // 133090848000000000 is 2022-10-01 08:00.
