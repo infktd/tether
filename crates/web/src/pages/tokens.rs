@@ -69,20 +69,23 @@ async fn tokens_page(
 ) -> Result<Response, PageError> {
     let loaded = load(state, session, "tokens").await?;
     let registration = crate::compliance::registration(&state.db, session.account).await?;
-    // Apps read a character's scopes only for pilots holding one of their
-    // permissions (F16).
+    // Apps read a character's scopes only while it's registered for them,
+    // for pilots holding one of their permissions (F16).
     let mut plugins = Vec::new();
     for p in tether_db::compliance::plugin_scopes(&state.db).await? {
         if !p.scopes.is_empty()
             && tether_db::compliance::holds_app_permission(&state.db, session.account, &p.id)
                 .await?
         {
-            plugins.push(p);
+            let registered =
+                tether_db::compliance::registered_for_app(&state.db, session.account, &p.id)
+                    .await?;
+            plugins.push((p, registered));
         }
     }
     let target = registration.target.as_ref().map(|t| t.name.clone());
     // What uses a scope: the state's requirement, apps, Corporation Stats.
-    let used_by = |scope: &str| {
+    let used_by = |character: i64, scope: &str| {
         let mut users: Vec<String> = Vec::new();
         if registration.required.contains(scope)
             && let Some(target) = &target
@@ -92,8 +95,10 @@ async fn tokens_page(
         users.extend(
             plugins
                 .iter()
-                .filter(|p| p.scopes.iter().any(|s| s.as_str() == scope))
-                .map(|p| p.name.clone()),
+                .filter(|(p, registered)| {
+                    registered.contains(&character) && p.scopes.iter().any(|s| s.as_str() == scope)
+                })
+                .map(|(p, _)| p.name.clone()),
         );
         if scope == tether_core::scopes::CORP_MEMBERSHIP {
             users.push("Corporation Stats".to_owned());
@@ -129,7 +134,7 @@ async fn tokens_page(
                     .iter()
                     .map(|s| ScopeRow {
                         description: tether_core::scopes::describe(s).to_owned(),
-                        used_by: used_by(s),
+                        used_by: used_by(t.character_id, s),
                         scope: s.clone(),
                     })
                     .collect(),

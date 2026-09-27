@@ -915,6 +915,12 @@ async fn member_account(h: &Harness, characters: &[(i64, &str, i64, Option<i64>)
         .execute(&mut *tx)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO core.app_characters (plugin_id, character_id) VALUES ($1, $2)")
+            .bind(ID)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         sqlx::query(
             r#"INSERT INTO "plugin_tether.member-audit".characters
                (character_id, name, corporation_id, alliance_id, synced_at)

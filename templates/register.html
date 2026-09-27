@@ -10,7 +10,7 @@
     {% if done %}
     <p class="text-muted-foreground mt-1">Every character on your account is registered for {{ a.name }}: it reads them all.</p>
     {% else %}
-    <p class="text-muted-foreground mt-1 max-w-3xl">{{ a.name }} reads each of your characters whose EVE access includes everything below. Register a character by logging in with it on EVE's site: it grants that access.</p>
+    <p class="text-muted-foreground mt-1 max-w-3xl">{{ a.name }} reads only the characters you register for it here. Register one by logging in with it on EVE's site, which grants the access below; unregister it and {{ a.name }} stops reading it.</p>
     {% endif %}
     {% if flagged %}{% if let Some(target) = target %}
     <p class="text-sm text-muted-foreground mt-2 max-w-3xl">Your state, <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>, also needs something from your characters: <a class="underline underline-offset-4" href="/register">see what</a>. Registering here grants that too.</p>
@@ -33,7 +33,7 @@
 
   {% if !required.is_empty() %}
   <section class="card">
-    <header><h2>What registering grants</h2><p>Tether keeps the token encrypted and never shows it to anyone, apps included. {% if let Some(a) = app %}{{ a.name }} reads only what these allow, through Tether, and only while you hold one of its permissions. A character registered for another app (or your state) with all of these is read too. You can revoke access on EVE's site at any time; {{ a.name }} then stops reading that character.{% else %}You can revoke it on EVE's site at any time; your account is then flagged as not compliant again.{% endif %}</p></header>
+    <header><h2>What registering grants</h2><p>Tether keeps the token encrypted and never shows it to anyone, apps included. {% if let Some(a) = app %}{{ a.name }} reads only what these allow, through Tether, of the characters registered for it, and only while you hold one of its permissions. Unregister a character below, or revoke its access on EVE's site, and {{ a.name }} stops reading it.{% else %}You can revoke it on EVE's site at any time; your account is then flagged as not compliant again.{% endif %}</p></header>
     <section>
       <ul class="grid gap-2 text-sm" role="list">
         {% for s in required %}
@@ -71,11 +71,19 @@
             {% endif %}
           </td>
           <td class="text-right">
+            <div class="flex justify-end gap-2">
             {% if c.problem.is_some() %}
             <form method="post" action="{{ start_action }}">
               <button type="submit" class="btn" data-variant="primary" data-size="sm">Register {{ c.name }}</button>
             </form>
             {% endif %}
+            {% if c.unregister %}{% if let Some(a) = app %}
+            <form method="post" action="/register/unregister?app={{ a.id }}" hx-confirm="Unregister {{ c.name }}? {{ a.name }} stops reading it.">
+              <input type="hidden" name="character_id" value="{{ c.id }}">
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Unregister</button>
+            </form>
+            {% endif %}{% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -90,7 +98,7 @@
 
   {% if !apps.is_empty() %}
   <section class="card data-card">
-    <header><h2>Apps</h2><p>Apps you may use that read characters: each reads your characters whose EVE access includes all of its scopes.</p></header>
+    <header><h2>Apps</h2><p>Apps you may use that read characters: each reads only the characters you register for it.</p></header>
     <table class="table">
       <thead><tr><th scope="col">App</th><th scope="col">Registered</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>

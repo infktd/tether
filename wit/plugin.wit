@@ -510,8 +510,9 @@ interface esi {
         /// Not an endpoint Tether offers plugins, or its scope isn't one
         /// this plugin was approved for, or the wrong kind of subject.
         not-allowed(string),
-        /// Not one of the plugin's characters: its account holds none of
-        /// the plugin's permissions, or its token lacks a user scope.
+        /// Not one of the plugin's characters: not registered for it, its
+        /// account holds none of the plugin's permissions, or its token
+        /// lacks a user scope.
         not-registered,
         /// Not a data source of this plugin (in use).
         not-a-data-source,
@@ -539,9 +540,9 @@ interface esi {
     /// Calls a catalogue endpoint (see AGENTS.md) as `subject`. `params`
     /// are the endpoint's extra ids; `page` is for paged endpoints.
     get: func(endpoint: string, subject: subject, params: list<tuple<string, string>>, page: option<u32>) -> result<response, error>;
-    /// The plugin's characters: on accounts holding one of its
-    /// permissions (any state, as Alliance Auth's apps), with tokens
-    /// carrying every one of its user scopes (registered for it).
+    /// The plugin's characters: registered for it, on accounts holding
+    /// one of its permissions (any state, as Alliance Auth's apps), with
+    /// tokens carrying every one of its user scopes.
     characters: func() -> list<character>;
     /// This plugin's data-source characters in use.
     data-sources: func() -> list<character>;

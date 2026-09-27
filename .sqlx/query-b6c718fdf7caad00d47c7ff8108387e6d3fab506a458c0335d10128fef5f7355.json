@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.app_characters r\n        USING core.characters c\n        WHERE r.plugin_id = $1 AND r.character_id = $2\n          AND c.id = r.character_id AND c.account_id = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b6c718fdf7caad00d47c7ff8108387e6d3fab506a458c0335d10128fef5f7355"
+}

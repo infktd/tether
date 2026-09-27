@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.app_characters (plugin_id, character_id, registered_by)\n        SELECT $1, c.id, $3 FROM core.characters c WHERE c.id = $2 AND c.account_id = $3\n        FOR SHARE\n        ON CONFLICT DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ddcdfff41e54ad732c75b7198c939bd7fce65db6c83054c7131829ca7e8ba5bb"
+}

@@ -219,9 +219,9 @@ pub fn app_scopes(running: &crate::plugins::Running) -> Vec<String> {
     scopes
 }
 
-/// The running apps whose characters `character` is among (F16): its
-/// account holds one of the app's permissions, and its token carries all
-/// of the app's user scopes.
+/// The running apps whose characters `character` is among (F16): it is
+/// registered for the app, its account holds one of the app's
+/// permissions, and its token carries all of the app's user scopes.
 pub async fn apps_serving(
     state: &AppState,
     character: i64,
@@ -347,10 +347,13 @@ pub struct AppRegistration {
     pub scopes: BTreeSet<String>,
     /// Each character, with what it still needs for the app.
     pub characters: Vec<CharacterStatus>,
+    /// The account's characters registered for it (read while their token
+    /// carries the app's scopes).
+    pub registered: BTreeSet<i64>,
 }
 
 impl AppRegistration {
-    pub fn registered(&self) -> usize {
+    pub fn ready(&self) -> usize {
         self.characters
             .iter()
             .filter(|c| c.problem.is_none())
@@ -383,6 +386,10 @@ async fn app_registration_of(
         return Ok(None);
     }
     let tokens = db::account_tokens(&state.db, account).await?;
+    let registered: BTreeSet<i64> = db::registered_for_app(&state.db, account, id)
+        .await?
+        .into_iter()
+        .collect();
     let pairs: Vec<(i64, scopes::Token)> = tokens.iter().map(|c| (c.id, c.token.clone())).collect();
     let problems: BTreeMap<i64, Problem> = scopes::check(&scopes, &pairs).into_iter().collect();
     Ok(Some(AppRegistration {
@@ -391,7 +398,13 @@ async fn app_registration_of(
         characters: tokens
             .into_iter()
             .map(|c| CharacterStatus {
-                problem: problems.get(&c.id).cloned(),
+                // Not registered for the app, whatever its token carries
+                // (aa-memberaudit reads only characters added to it).
+                problem: if registered.contains(&c.id) {
+                    problems.get(&c.id).cloned()
+                } else {
+                    Some(Problem::NotRegistered)
+                },
                 scopes: match c.token {
                     scopes::Token::Valid(scopes) => scopes,
                     _ => Vec::new(),
@@ -402,6 +415,7 @@ async fn app_registration_of(
             })
             .collect(),
         scopes,
+        registered,
     }))
 }
 
@@ -447,18 +461,80 @@ pub async fn start_register(
 ) -> Result<Response, AppError> {
     let current = registration(&state.db, account).await?;
     let mut wanted = current.required;
-    let back = match app {
+    let (back, purpose) = match app {
         Some(id) => {
             let app = app_registration(state, account, id)
                 .await?
                 .ok_or_else(|| AppError::not_found("No app you may register characters for."))?;
             wanted.extend(app.scopes);
-            format!("/register?app={}", app.id)
+            (
+                format!("/register?app={}", app.id),
+                Purpose::RegisterApp(app.id),
+            )
         }
-        None => "/register".to_owned(),
+        None => ("/register".to_owned(), Purpose::Register),
     };
     let scopes = ask_scopes(&state.db, account, wanted).await?;
-    crate::auth::start_login(state, jar, &back, Purpose::Register, &scopes, Some(account)).await
+    crate::auth::start_login(state, jar, &back, purpose, &scopes, Some(account)).await
+}
+
+/// After a login started from an app's Register Character stored the
+/// character's token: registers the character for the app, if the account
+/// still holds one of its permissions and the token carries all its scopes
+/// (otherwise the app's page says what's missing). Audited.
+pub async fn finish_app_registration(
+    state: &AppState,
+    account: AccountId,
+    character: i64,
+    plugin: &str,
+) -> Result<(), sqlx::Error> {
+    let Some(app) = app_registration(state, account, plugin).await? else {
+        return Ok(());
+    };
+    let carries = tether_db::compliance::account_tokens(&state.db, account)
+        .await?
+        .into_iter()
+        .find(|c| c.id == character)
+        .is_some_and(|c| scopes::check(&app.scopes, &[(c.id, c.token)]).is_empty());
+    if !carries {
+        return Ok(());
+    }
+    let mut tx = state.db.begin().await?;
+    if db::register_app_character(&mut *tx, &app.id, character, account).await? {
+        audit::record(
+            &mut *tx,
+            Actor::Account(account),
+            "plugin.character_registered",
+            Some(&format!("plugin:{}", app.id)),
+            json!({ "character_id": character }),
+        )
+        .await?;
+    }
+    tx.commit().await
+}
+
+/// Unregisters one of the account's characters from an app (its Register
+/// page): the app stops reading it at once. Audited.
+pub async fn unregister_app_character(
+    db: &PgPool,
+    account: AccountId,
+    plugin: &str,
+    character: i64,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let removed = db::unregister_app_character(&mut *tx, plugin, character, account).await?;
+    if removed {
+        audit::record(
+            &mut *tx,
+            Actor::Account(account),
+            "plugin.character_unregistered",
+            Some(&format!("plugin:{plugin}")),
+            json!({ "character_id": character }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(removed)
 }
 
 // ---- jobs ------------------------------------------------------------------

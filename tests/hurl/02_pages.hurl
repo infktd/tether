@@ -1098,6 +1098,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/register/unregister?app=tether.member-audit
+Origin: {{base}}
+[Form]
+character_id: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/states/1/scopes/app
 Origin: {{base}}
 [Form]

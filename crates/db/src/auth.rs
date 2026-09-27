@@ -27,6 +27,9 @@ pub enum Purpose {
     Login,
     /// Registering a character with its state's required scopes.
     Register,
+    /// Registering a character for a plugin (and with its state's required
+    /// scopes too).
+    RegisterApp(String),
     /// Offering a character as a plugin's data source.
     DataSource(String),
     /// Change Main by logging in with the character (Alliance Auth's
@@ -43,6 +46,7 @@ impl Purpose {
         match self {
             Self::Login => ("login", None),
             Self::Register => ("register", None),
+            Self::RegisterApp(plugin) => ("register_app", Some(plugin)),
             Self::DataSource(plugin) => ("data_source", Some(plugin)),
             Self::ChangeMain => ("change_main", None),
             Self::Reauth(_) => ("reauth", None),
@@ -60,6 +64,7 @@ impl Purpose {
         match (purpose, plugin) {
             ("reauth", _) => Self::Reauth(action),
             ("register", _) => Self::Register,
+            ("register_app", Some(plugin)) => Self::RegisterApp(plugin),
             ("data_source", Some(plugin)) => Self::DataSource(plugin),
             ("change_main", _) => Self::ChangeMain,
             _ => Self::Login,

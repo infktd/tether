@@ -318,11 +318,12 @@ pub async fn set_group_member(
     Ok(changed.rows_affected() == 1)
 }
 
-/// Whether the character is one of the app's characters (N8, F16): its
-/// account holds one of the app's permissions (as Alliance Auth gates
-/// apps, whatever the state) and its token is valid and carries every one
-/// of `scopes`, the app's user scopes. What an app's user-scope call
-/// needs.
+/// Whether the character is one of the app's characters (N8, F16): it is
+/// registered for the app (`core.app_characters`, as aa-memberaudit's own
+/// character list), its account holds one of the app's permissions (as
+/// Alliance Auth gates apps, whatever the state), and its token is valid
+/// and carries every one of `scopes`, the app's user scopes. What an app's
+/// user-scope call needs.
 pub async fn character_may_serve(
     pool: &PgPool,
     plugin_id: &str,
@@ -334,6 +335,7 @@ pub async fn character_may_serve(
         SELECT true AS "ok!"
         FROM core.characters c
         JOIN core.character_tokens t ON t.character_id = c.id
+        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $2
         WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)
           AND t.state = 'valid' AND t.scopes @> $3
         "#,
@@ -346,8 +348,9 @@ pub async fn character_may_serve(
     Ok(found.is_some())
 }
 
-/// The app's characters: on accounts holding one of its permissions, with
-/// tokens carrying every one of `scopes` (its user scopes).
+/// The app's characters: registered for it, on accounts holding one of its
+/// permissions, with tokens carrying every one of `scopes` (its user
+/// scopes).
 pub async fn serving_characters(
     pool: &PgPool,
     plugin_id: &str,
@@ -359,6 +362,7 @@ pub async fn serving_characters(
         SELECT c.id, c.name, c.corporation_id, c.alliance_id
         FROM core.characters c
         JOIN core.character_tokens t ON t.character_id = c.id
+        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1
         WHERE core.holds_app_permission(c.account_id, $1)
           AND t.state = 'valid' AND t.scopes @> $2
         ORDER BY c.name
@@ -384,6 +388,73 @@ pub async fn holds_app_permission<'e>(
     )
     .fetch_one(executor)
     .await
+}
+
+/// The account's characters registered for the app.
+pub async fn registered_for_app<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    plugin_id: &str,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT r.character_id FROM core.app_characters r
+        JOIN core.characters c ON c.id = r.character_id
+        WHERE c.account_id = $1 AND r.plugin_id = $2
+        "#,
+        account.0,
+        plugin_id,
+    )
+    .fetch_all(executor)
+    .await
+}
+
+/// Registers the account's character for the app; true if it wasn't yet.
+/// Only a character on `by`'s own account.
+pub async fn register_app_character<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+    character_id: i64,
+    by: AccountId,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO core.app_characters (plugin_id, character_id, registered_by)
+        SELECT $1, c.id, $3 FROM core.characters c WHERE c.id = $2 AND c.account_id = $3
+        FOR SHARE
+        ON CONFLICT DO NOTHING
+        "#,
+        plugin_id,
+        character_id,
+        by.0,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Unregisters the account's own character from the app; true if it was
+/// registered.
+pub async fn unregister_app_character<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+    character_id: i64,
+    account: AccountId,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        r#"
+        DELETE FROM core.app_characters r
+        USING core.characters c
+        WHERE r.plugin_id = $1 AND r.character_id = $2
+          AND c.id = r.character_id AND c.account_id = $3
+        "#,
+        plugin_id,
+        character_id,
+        account.0,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 /// Who owns one of [`serving_characters`]: the account's main and state.
@@ -414,6 +485,7 @@ pub async fn serving_owners(
         JOIN core.states s ON s.id = a.state_id
         JOIN core.character_tokens t ON t.character_id = c.id
         JOIN core.characters m ON m.id = a.main_character_id
+        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1
         WHERE core.holds_app_permission(a.id, $1)
           AND t.state = 'valid' AND t.scopes @> $2
         ORDER BY c.id

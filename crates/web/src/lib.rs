@@ -431,6 +431,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/register", get(pages::compliance::register))
         .route("/register/start", post(pages::compliance::start))
+        .route("/register/unregister", post(pages::compliance::unregister))
         .route("/compliance", get(pages::compliance::page))
         .route("/admin/states/{id}/scopes", post(pages::states::add_scope))
         .route(

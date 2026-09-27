@@ -211,6 +211,16 @@ async fn user_scopes_need_a_character_registered_for_the_app(db: PgPool) {
     assert!(characters.contains("Chribba"), "{characters}");
     let checklist = page(&h, "/register?app=acme.esi", &owner).await.body;
     assert!(checklist.contains("Registered"), "{checklist}");
+    assert!(
+        checklist.contains("/register/unregister?app=acme.esi"),
+        "{checklist}"
+    );
+    // Registering for the state alone registers for no app.
+    let registered: i64 = sqlx::query_scalar("SELECT count(*) FROM core.app_characters")
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(registered, 1);
 
     // Not approved for this plugin, or the wrong kind of subject.
     let out = esi(&h, "character-assets", ("character", CHRIBBA)).await;
@@ -241,14 +251,32 @@ async fn user_scopes_need_a_character_registered_for_the_app(db: PgPool) {
             .contains("acme.esi")
     );
 
-    // Given one of its permissions, whatever the state (AA's): served.
+    // Given one of its permissions, whatever the state (AA's): the token
+    // carries the scope, but the character isn't registered for the app,
+    // so it isn't read until its pilot registers it.
     grant_to_guests(&h, &owner, "view").await;
+    let out = esi(&h, "character-skills", ("character", 443630591)).await;
+    assert_eq!(out, "err Error::NotRegistered");
+    let checklist = page(&h, "/register?app=acme.esi", &pilot).await;
+    assert_eq!(checklist.status, StatusCode::OK, "{}", checklist.body);
+    assert!(
+        checklist.body.contains("Register The Mittani"),
+        "{}",
+        checklist.body
+    );
+    let (_, pilot) = grant(&h, &pilot, REGISTER, "443630591:The Mittani").await;
     let out = esi(&h, "character-skills", ("character", 443630591)).await;
     assert!(!out.contains("NotRegistered"), "{out}");
     let characters = probe(&h, "characters", &[]).await;
     assert!(characters.contains("The Mittani"), "{characters}");
-    let checklist = page(&h, "/register?app=acme.esi", &pilot).await;
-    assert_eq!(checklist.status, StatusCode::OK, "{}", checklist.body);
+    let registered: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'plugin.character_registered' \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(registered["character_id"], 443630591);
     assert!(
         page(&h, "/register", &pilot)
             .await
@@ -297,6 +325,40 @@ async fn user_scopes_need_a_character_registered_for_the_app(db: PgPool) {
         .execute(&h.db)
         .await
         .unwrap();
+
+    // Unregistering (the app's page): not read any more, audited. Only
+    // one's own characters.
+    let res = send(
+        &h.app,
+        form(
+            "/register/unregister?app=acme.esi",
+            &format!("character_id={CHRIBBA}"),
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            "/register/unregister?app=acme.esi",
+            &format!("character_id={CHRIBBA}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), "/register?app=acme.esi");
+    let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
+    assert_eq!(out, "err Error::NotRegistered");
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.audit_log WHERE action = 'plugin.character_unregistered'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    let (_, owner) = grant(&h, &owner, REGISTER, "196379789:Chribba").await;
 
     // A revoked token stops the plugin at once.
     sqlx::query("UPDATE core.character_tokens SET state = 'revoked' WHERE character_id = $1")
@@ -608,7 +670,27 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
     )
     .await;
     assert_eq!(state_of(&h, &owner).await, "Member");
-    // Everyone may list Chribba...
+    // Registered for Member Audit only: another app reading the same scope
+    // doesn't read him (aa-memberaudit reads only characters added to it).
+    for id in [ID, "acme.bundled"] {
+        let characters = run_probe(&h, id, "characters", Vec::new(), false).await;
+        assert!(!characters.contains("Chribba"), "{id}: {characters}");
+    }
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.bundled",
+        "196379789:Chribba",
+    )
+    .await;
+    grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
+    // Once registered, every app may list Chribba...
     for id in [ID, "acme.bundled", "tether.member-audit"] {
         let characters = run_probe(&h, id, "characters", Vec::new(), false).await;
         assert!(characters.contains("Chribba"), "{id}: {characters}");
@@ -1312,6 +1394,38 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
         .split_once("-- Whether an account holds")
         .expect("the function follows the upgrade step");
     sqlx::raw_sql(keep).execute(&h.db).await.unwrap();
+    // And registers for each app every character it could read until now
+    // (a Member's, with all its scopes); nobody else's.
+    let (_, register) = migration
+        .split_once("-- Nothing changes on upgrade")
+        .expect("the registration step");
+    let _pilot = log_in_as(&h, "1887431749:gigX", None).await;
+    sqlx::query("UPDATE core.character_tokens SET scopes = $1")
+        .bind(vec![SKILLS])
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM core.app_characters")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let (_, register) = register.split_once('\n').expect("the comment's first line");
+    sqlx::raw_sql(register).execute(&h.db).await.unwrap();
+    let registered: Vec<(String, i64)> =
+        sqlx::query_as("SELECT plugin_id, character_id FROM core.app_characters")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(registered, [(ID.to_owned(), CHRIBBA)]);
+    let audit: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'plugin.characters_registered'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(audit["characters"], 1);
+    let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
     let required: Vec<(i64, String)> =
         sqlx::query_as("SELECT state_id, scope FROM core.state_scopes")
             .fetch_all(&h.db)

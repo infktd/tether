@@ -8,8 +8,8 @@
 //!   corporation ones);
 //! - the subject is one of the plugin's characters (user; F16): its
 //!   account holds one of the plugin's permissions, whatever its state,
-//!   and it registered for the plugin (its token carries every one of the
-//!   plugin's user scopes); or a data source in use (corporation);
+//!   it is registered for the plugin, and its token carries every one of
+//!   the plugin's user scopes; or a data source in use (corporation);
 //! - its token carries the scope.
 //!
 //! The host fills in the ids; the plugin only names the endpoint and the

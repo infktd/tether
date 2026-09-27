@@ -221,8 +221,8 @@ pub mod esi {
     }
 
     /// Characters you can call user-scope endpoints as: this plugin's
-    /// characters, those on accounts holding one of its permissions (any
-    /// state) whose tokens carry all of its user scopes.
+    /// characters: registered for it by pilots holding one of its
+    /// permissions (any state), with tokens carrying all its user scopes.
     pub fn characters() -> Vec<Character> {
         crate::bindings::tether::plugin::esi::characters()
     }

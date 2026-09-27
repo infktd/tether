@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.character_id FROM core.app_characters r\n        JOIN core.characters c ON c.id = r.character_id\n        WHERE c.account_id = $1 AND r.plugin_id = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "character_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.app_characters",
+            "name": "character_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "da54ea7fa20af69e7edf932468a660e2763b15a8be0df047c70abc040ad43c52"
+}

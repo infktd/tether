@@ -73,8 +73,8 @@ fn capabilities(manifest: &Manifest) -> Vec<Capability> {
             format!(
                 "{}. Whoever holds one of its permissions (below), whatever their state, may \
                  register characters for it: one EVE login from the app grants these. It reads \
-                 every character of theirs whose EVE access includes all of them, and no one \
-                 else's. {}No state requires them unless you choose to (States: Require {}'s \
+                 only the characters registered for it, while their pilots hold one of its \
+                 permissions. {}No state requires them unless you choose to (States: Require {}'s \
                  scopes).",
                 c.esi.user.join(", "),
                 if manifest.permissions.is_empty() {

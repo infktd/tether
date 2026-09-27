@@ -1,9 +1,11 @@
 -- Apps read characters as Alliance Auth's do (K3, Jay 2026-09-27): whoever
--- holds one of an app's permissions, whatever their state, may register
--- characters for it, and the app reads the characters whose token carries
--- every one of its user scopes. Member no longer requires every installed
--- app's user scopes by itself; admins require scopes per state, as AA's
--- Member Audit compliance groups do.
+-- holds one of an app's permissions, whatever their state, registers
+-- characters for it (as aa-memberaudit's Register Character), and the app
+-- reads exactly the characters registered for it, while their account
+-- holds one of its permissions and their token carries every one of its
+-- user scopes. Member no longer requires every installed app's user scopes
+-- by itself; admins require scopes per state, as AA's Member Audit
+-- compliance groups do.
 --
 -- Nobody's compliance changes on upgrade: the app scopes Member required
 -- until now become Member's own requirements (as if an admin had added
@@ -53,3 +55,59 @@ LANGUAGE sql STABLE AS $$
                        OR g.account_id = a.id)))
         FROM core.accounts a WHERE a.id = for_account), false)
 $$;
+
+-- The characters registered for each app, and by whom (NULL: the system,
+-- at this upgrade). A character leaves every app when it leaves its
+-- account (removed, sold, moved: a deleted character's rows go with it,
+-- and a moved one's are dropped below), and an app's with the app.
+CREATE TABLE core.app_characters (
+    plugin_id text NOT NULL REFERENCES core.plugins (id) ON DELETE CASCADE,
+    character_id bigint NOT NULL REFERENCES core.characters (id) ON DELETE CASCADE,
+    registered_at timestamptz NOT NULL DEFAULT now(),
+    registered_by bigint REFERENCES core.accounts (id) ON DELETE SET NULL,
+    PRIMARY KEY (plugin_id, character_id)
+);
+CREATE INDEX app_characters_character_idx ON core.app_characters (character_id);
+
+CREATE FUNCTION core.app_characters_follow_account() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM core.app_characters WHERE character_id = NEW.id;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER characters_leave_apps AFTER UPDATE OF account_id ON core.characters
+    FOR EACH ROW WHEN (OLD.account_id IS DISTINCT FROM NEW.account_id)
+    EXECUTE FUNCTION core.app_characters_follow_account();
+
+-- Registering for an app is its own login purpose (the app in plugin_id).
+ALTER TABLE core.login_attempts DROP CONSTRAINT login_attempts_purpose_check;
+ALTER TABLE core.login_attempts ADD CONSTRAINT login_attempts_purpose_check
+    CHECK (purpose IN ('login', 'register', 'register_app', 'data_source', 'change_main', 'reauth'));
+
+-- Nothing changes on upgrade: every character an app could read until now
+-- (a Member account's, its token carrying all the app's user scopes) is
+-- registered for it, by the system, audited per app. A revoked token counts
+-- with the scopes it carried: it is read again once its pilot logs in, as
+-- before.
+WITH registered AS (
+    INSERT INTO core.app_characters (plugin_id, character_id, registered_by)
+    SELECT p.id, c.id, NULL
+    FROM core.plugins p
+    JOIN core.characters c ON true
+    JOIN core.accounts a ON a.id = c.account_id
+    JOIN core.states s ON s.id = a.state_id
+    JOIN core.character_tokens t ON t.character_id = c.id
+    WHERE cardinality(p.user_scopes) > 0
+      AND s.builtin = 'member'
+      AND t.scopes @> p.user_scopes
+    ON CONFLICT DO NOTHING
+    RETURNING plugin_id, character_id
+)
+INSERT INTO core.audit_log (actor_account_id, action, target, details)
+SELECT NULL, 'plugin.characters_registered', 'plugin:' || plugin_id,
+       jsonb_build_object(
+           'characters', count(*),
+           'reason', 'upgrade: apps now read only the characters registered for them, so those they read until now were registered'
+       )
+FROM registered
+GROUP BY plugin_id;

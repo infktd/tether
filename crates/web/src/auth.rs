@@ -399,6 +399,15 @@ pub async fn callback(
                 "re-authenticated"
             );
         }
+        db::Purpose::RegisterApp(plugin) => {
+            crate::compliance::finish_app_registration(
+                &state,
+                account,
+                identity.character_id,
+                plugin,
+            )
+            .await?;
+        }
         db::Purpose::Login | db::Purpose::Register => {}
     }
 
@@ -474,8 +483,7 @@ pub async fn callback(
     // what to do (F11). A re-authentication goes back where it came from,
     // and registering for an app to the app's checklist (which says so).
     let return_to = if !reauth
-        && !(attempt.purpose == db::Purpose::Register
-            && attempt.return_to.starts_with("/register?app="))
+        && !matches!(attempt.purpose, db::Purpose::RegisterApp(_))
         && tether_db::compliance::not_compliant_state(&state.db, account)
             .await?
             .is_some()

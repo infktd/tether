@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"ok!\"\n        FROM core.characters c\n        JOIN core.character_tokens t ON t.character_id = c.id\n        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $2\n        WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)\n          AND t.state = 'valid' AND t.scopes @> $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f9cf92cea8b157f88c32a7af502398b3eacbdf445634f1574f54e86a7fb7fa86"
+}

@@ -49,6 +49,8 @@ pub struct CheckRow {
     pub is_main: bool,
     /// What's wrong, or `None` when it's done.
     pub problem: Option<String>,
+    /// Registered for the app shown: it can be unregistered.
+    pub unregister: bool,
 }
 
 /// An app the pilot may register characters for, on the checklist.
@@ -93,6 +95,7 @@ fn rows(characters: &[compliance::CharacterStatus]) -> Vec<CheckRow> {
             name: c.name.clone(),
             is_main: c.is_main,
             problem: c.problem.as_ref().map(problem_text),
+            unregister: false,
         })
         .collect()
 }
@@ -138,9 +141,15 @@ pub async fn register(
                 target_style,
                 target,
                 flagged: status.flagged,
-                done: app.registered() == app.characters.len(),
+                done: app.ready() == app.characters.len(),
                 required: required(&app.scopes),
-                characters: rows(&app.characters),
+                characters: rows(&app.characters)
+                    .into_iter()
+                    .map(|mut row| {
+                        row.unregister = app.registered.contains(&row.id);
+                        row
+                    })
+                    .collect(),
                 start_action: format!("/register/start?app={}", app.id),
                 app: Some(AppView {
                     id: app.id,
@@ -163,7 +172,7 @@ pub async fn register(
                 .await?
                 .into_iter()
                 .map(|a| AppLine {
-                    registered: a.registered(),
+                    registered: a.ready(),
                     characters: a.characters.len(),
                     id: a.id,
                     name: a.name,
@@ -191,6 +200,43 @@ pub async fn start(
     let session = session.ok_or_else(AppError::unauthorized)?;
     let app = form.app.as_deref().filter(|a| !a.is_empty());
     Ok(compliance::start_register(&state, jar, session.account, app).await?)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnregisterForm {
+    character_id: i64,
+}
+
+/// `POST /register/unregister?app=<id>`: stop an app reading one of the
+/// pilot's own characters (aa-memberaudit's Remove character). Back to the
+/// app's checklist.
+pub async fn unregister(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Query(query): Query<StartForm>,
+    axum::Form(form): axum::Form<UnregisterForm>,
+) -> Result<Response, PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    let id = query
+        .app
+        .as_deref()
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| AppError::not_found("No app you may register characters for."))?;
+    // Withdrawing consent needs no permission, and works while the app is
+    // stopped too: only the pilot's own characters, whatever else holds.
+    if !compliance::unregister_app_character(&state.db, session.account, id, form.character_id)
+        .await?
+    {
+        return Err(AppError::not_found("That character isn't registered for this app.").into());
+    }
+    let back = match compliance::app_registration(&state, session.account, id).await? {
+        Some(app) => crate::pages::stay::back(
+            &format!("/register?app={}", app.id),
+            format!("{} no longer reads that character.", app.name),
+        ),
+        None => crate::pages::stay::back("/register", "That app no longer reads that character."),
+    };
+    Ok(back)
 }
 
 // ---- the officers' page ------------------------------------------------------
