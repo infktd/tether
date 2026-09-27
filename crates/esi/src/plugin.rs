@@ -299,6 +299,14 @@ pub const ENDPOINTS: &[Endpoint] = &[
         paged: false,
         params: &[],
     },
+    Endpoint {
+        // Whether the character is logged in (aa-afat's check before a FAT).
+        name: "character-online",
+        scope: "esi-location.read_online.v1",
+        about: About::Character,
+        paged: false,
+        params: &[],
+    },
     // A full character viewer (SeAT's and aa-memberaudit's): everything
     // below reads the one character the plugin names, with its own token,
     // and passes ESI's JSON through, unless it says otherwise. Optional
@@ -1862,6 +1870,11 @@ impl Esi {
             "character-location" => get!(
                 client
                     .get_characters_character_id_location()
+                    .character_id(character)
+            ),
+            "character-online" => get!(
+                client
+                    .get_characters_character_id_online()
                     .character_id(character)
             ),
             // The character viewer's entries, in a function of their own:

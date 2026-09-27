@@ -484,6 +484,7 @@ let names = esi::names(&[40161234, 30000142])?;
 | `character-clones` | `esi-clones.read_clones.v1` | character | no | |
 | `character-implants` | `esi-clones.read_implants.v1` | character | no | |
 | `character-location` | `esi-location.read_location.v1` | character | no | |
+| `character-online` | `esi-location.read_online.v1` | character | no | |
 | `character-wallet-transactions` | `esi-wallet.read_character_wallet.v1` | character | no | optional `from_id` |
 | `character-contracts` | `esi-contracts.read_character_contracts.v1` | character | yes | |
 | `character-contract-items` | `esi-contracts.read_character_contracts.v1` | character | no | `contract_id` |
