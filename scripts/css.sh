@@ -31,4 +31,9 @@ if [ ! -x "$bin" ]; then
     mv "$bin.tmp" "$bin"
 fi
 
-exec "$bin" -i assets/app.css -o static/app.css --minify "$@"
+# Not minified or optimized: in v4.3.3 that step (lightningcss) now and then
+# drops a rule or a declaration, so builds of the same input differed (CI's
+# check failed while local builds passed). The raw output is reproducible;
+# it keeps native CSS nesting, which every current browser reads, and Caddy
+# compresses it.
+exec "$bin" -i assets/app.css -o static/app.css "$@"
