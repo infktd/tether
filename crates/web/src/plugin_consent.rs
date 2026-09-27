@@ -9,6 +9,7 @@
 //! characters for the app (see `compliance`). Also the Discord channels a plugin may post to.
 //! Every change is audited.
 
+use axum::http::StatusCode;
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
 use serde_json::json;
@@ -21,6 +22,7 @@ use tether_plugins::manifest::Manifest;
 
 use crate::AppState;
 use crate::error::AppError;
+use crate::states;
 
 fn target(plugin: &str) -> String {
     format!("plugin:{plugin}")
@@ -125,7 +127,8 @@ pub async fn start_offer(
 
 /// After an Add owner login, in the callback: adds the character, in use
 /// at once, if it's on the signed-in account and SSO granted every scope
-/// the plugin needs; then the app's schedules run now, so it reads its
+/// the plugin needs, for the corporation EVE says it's in now (a character
+/// new to Tether too); then the app's schedules run now, so it reads its
 /// new owner at once.
 pub async fn finish(
     state: &AppState,
@@ -163,12 +166,46 @@ pub async fn finish(
             "That character isn't on your account.",
         ));
     }
+    // The source is for the corporation the character is in now. One
+    // Tether has just met has none stored yet (the login's state refresh
+    // comes after this), so ask EVE first: the owner is in use from the
+    // first add. If EVE doesn't answer, a known character keeps its stored
+    // corporation.
+    if let Err(err) = states::refresh_affiliations(
+        &state.db,
+        &state.esi,
+        &[identity.character_id],
+        tether_esi::Priority::Interactive,
+    )
+    .await
+    {
+        tracing::warn!(
+            character_id = identity.character_id,
+            error = %err,
+            "affiliation for a new owner failed"
+        );
+    }
     let mut tx = state.db.begin().await?;
-    let Some(corporation) =
-        db::add_data_source(&mut *tx, plugin, identity.character_id, account).await?
-    else {
-        return Err(AppError::not_found("That character isn't known."));
-    };
+    let corporation =
+        match db::add_data_source(&mut *tx, plugin, identity.character_id, account).await? {
+            Some(Some(corporation)) => corporation,
+            Some(None) => {
+                // No corporation to read for: added, it would be in use
+                // for nothing. Nothing is written (the transaction drops),
+                // but the character stays linked with its token, as after
+                // a login during an ESI outage: its state now from what's
+                // stored, and the account's affiliations again shortly.
+                drop(tx);
+                states::enqueue_refresh(&state.db, account).await?;
+                states::evaluate_account(&state.db, account).await?;
+                return Err(AppError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "EVE didn't say which corporation that character is in just now. Add it \
+                     again in a few minutes.",
+                ));
+            }
+            None => return Err(AppError::not_found("That character isn't known.")),
+        };
     audit::record(
         &mut *tx,
         Actor::Account(account),

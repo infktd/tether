@@ -38,8 +38,21 @@ pub async fn refresh_account(
     priority: Priority,
 ) -> Result<StateId, StateError> {
     let ids = db::character_ids(db, account).await?;
+    refresh_affiliations(db, esi, &ids, priority).await?;
+    Ok(evaluate_account(db, account).await?.state)
+}
+
+/// Fetches and stores the current affiliations of `ids` (one bulk ESI
+/// call), without evaluating any state: for a character that must be
+/// placed in its corporation before the rest of a login runs (Add owner).
+pub async fn refresh_affiliations(
+    db: &PgPool,
+    esi: &Esi,
+    ids: &[i64],
+    priority: Priority,
+) -> Result<(), StateError> {
     let fresh: Vec<(i64, Affiliation)> = esi
-        .affiliations(&ids, priority)
+        .affiliations(ids, priority)
         .await?
         .into_iter()
         .map(|a| {
@@ -54,7 +67,7 @@ pub async fn refresh_account(
         })
         .collect();
     db::update_affiliations(db, &fresh).await?;
-    Ok(evaluate_account(db, account).await?.state)
+    Ok(())
 }
 
 /// A state evaluation's result.

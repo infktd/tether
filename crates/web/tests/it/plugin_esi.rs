@@ -495,6 +495,79 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     assert!(main.contains("Withdrawn by Chribba"), "{main}");
 }
 
+/// A character Tether has never seen, added as an owner: its corporation
+/// is learnt before the source is written, so the first add is in use at
+/// once. One whose corporation EVE won't give isn't added at all.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_new_character_added_as_owner_is_in_use_at_once(db: PgPool) {
+    const GIGX: i64 = 1887431749;
+    const GIGX_CORP: i64 = 98133756;
+    const NOBODY: i64 = 2112000001;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporation/{GIGX_CORP}/mining/extractions")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(serde_json::json!([{
+                    "chunk_arrival_time": "2026-09-30T18:05:00Z",
+                    "extraction_start_time": "2026-09-24T00:00:00Z",
+                    "moon_id": 40165678,
+                    "natural_decay_time": "2026-09-30T21:05:00Z",
+                    "structure_id": 1030000000002i64
+                }])),
+        )
+        .mount(&h.esi_server)
+        .await;
+
+    // gigX comes to Tether through Add owner, once.
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "1887431749:gigX").await;
+    let corporation: Option<i64> = sqlx::query_scalar(
+        "SELECT corporation_id FROM core.plugin_data_sources WHERE plugin_id = $1 \
+         AND character_id = $2",
+    )
+    .bind(ID)
+    .bind(GIGX)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(corporation, Some(GIGX_CORP));
+    let out = esi(&h, "corporation-mining-extractions", ("source", GIGX)).await;
+    assert!(out.starts_with("ok pages=1"), "{out}");
+    assert!(out.contains("40165678"), "{out}");
+    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
+    assert!(
+        main.contains("gigX") && main.contains(">active</span>"),
+        "{main}"
+    );
+
+    // Not in the affiliation fixture: EVE names no corporation, so nothing
+    // is added (and nothing is in use for no corporation).
+    let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let login = res.cookie_value(LOGIN);
+    let state = query_param(res.location(), "state").to_owned();
+    let res = send(
+        &h.app,
+        get(
+            &format!("/auth/callback?code=ok:{NOBODY}:Nobody&state={state}"),
+            &[(LOGIN, &login), (SESSION, &owner)],
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE, "{}", res.body);
+    assert!(res.body.contains("Add it again"), "{}", res.body);
+    let sources: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.plugin_data_sources WHERE character_id = $1")
+            .bind(NOBODY)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(sources, 0);
+}
+
 async fn grant_to_guests(h: &Harness, owner: &str, permission: &str) {
     let res = send(
         &h.app,
