@@ -30,23 +30,48 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         );
     }
     if !c.esi.user.is_empty() {
+        let writes: Vec<&str> = c
+            .esi
+            .user
+            .iter()
+            .map(String::as_str)
+            .filter(|s| tether_core::scopes::is_write(s))
+            .collect();
         add(
             "ESI access to the characters registered for it",
             format!(
                 "{}. Whoever holds one of its permissions (below), whatever their state, may \
                  register characters for it: one EVE login from the app grants these. It reads \
                  only the characters registered for it, while their pilots hold one of its \
-                 permissions. {}No state requires them unless you choose to (States: Require {}'s \
-                 scopes).",
+                 permissions. {}{}",
                 c.esi.user.join(", "),
                 if manifest.permissions.is_empty() {
                     "It adds no permissions, so only the owner can. "
                 } else {
                     ""
                 },
-                manifest.plugin.name
+                if writes.is_empty() {
+                    format!(
+                        "No state requires them unless you choose to (States: Require {}'s \
+                         scopes).",
+                        manifest.plugin.name
+                    )
+                } else {
+                    "No state can require them.".to_owned()
+                }
             ),
         );
+        if !writes.is_empty() {
+            add(
+                "Changes pilots' characters in EVE",
+                format!(
+                    "{}: it can save fittings to a pilot's own registered characters, only when \
+                     that pilot presses one of its buttons, one change per press. Each change is \
+                     on the audit log as the pilot.",
+                    writes.join(", ")
+                ),
+            );
+        }
     }
     if !c.esi.data_source.is_empty() {
         let adders: Vec<&str> = crate::plugin_consent::owner_permissions(manifest);

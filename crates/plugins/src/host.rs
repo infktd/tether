@@ -64,6 +64,10 @@ pub struct CallState {
     /// Whether this plugin, as loaded, may learn who owns characters.
     sees_owners: bool,
     esi_calls: usize,
+    /// Only `submit_as` sets it: a pilot's own form post, the one place a
+    /// plugin may write to EVE (`esi.post`).
+    writes_allowed: bool,
+    esi_writes: usize,
     discord_sends: usize,
     filter_reports: usize,
     http_calls: usize,
@@ -85,6 +89,8 @@ impl CallState {
             all_groups: None,
             sees_owners: false,
             esi_calls: 0,
+            writes_allowed: false,
+            esi_writes: 0,
             discord_sends: 0,
             filter_reports: 0,
             http_calls: 0,
@@ -180,6 +186,60 @@ impl tether::plugin::esi::Host for CallState {
             .await?;
         // Requests it made beyond its cost count too: the next call over
         // the limit is refused. This answer is already fetched.
+        self.esi_calls += reply.extra_calls;
+        Ok(reply.response)
+    }
+
+    async fn post(
+        &mut self,
+        endpoint: String,
+        subject: services::Subject,
+        body: String,
+    ) -> Result<services::EsiResponse, services::EsiError> {
+        // A pilot's own form post (only `submit_as` allows writes), with
+        // someone looking.
+        let viewer = match (&self.viewer, self.writes_allowed) {
+            (Some(viewer), true) => viewer.clone(),
+            _ => {
+                tracing::warn!(plugin = %self.plugin, "plugin ESI write refused: not a form post");
+                return Err(services::EsiError::NotAllowed(
+                    "ESI writes happen only while a pilot submits one of the plugin's forms"
+                        .to_owned(),
+                ));
+            }
+        };
+        // One per press of a button.
+        self.esi_writes += 1;
+        if self.esi_writes > services::MAX_ESI_WRITES {
+            return Err(services::EsiError::NotAllowed(format!(
+                "at most {} ESI write per form post",
+                services::MAX_ESI_WRITES
+            )));
+        }
+        let services::Subject::Character(character) = subject else {
+            return Err(services::EsiError::NotAllowed(
+                "an ESI write is for one of the pilot's own characters".to_owned(),
+            ));
+        };
+        if !viewer.characters.iter().any(|c| c.id == character) {
+            tracing::warn!(plugin = %self.plugin, "plugin ESI write refused: not the pilot's character");
+            return Err(services::EsiError::NotAllowed(
+                "that isn't one of this pilot's characters".to_owned(),
+            ));
+        }
+        if body.len() > services::MAX_ESI_BODY {
+            return Err(services::EsiError::TooLarge);
+        }
+        let services = self.esi()?;
+        let reply = services
+            .esi_post(
+                self.plugin.clone(),
+                endpoint,
+                character,
+                viewer.account_id,
+                body,
+            )
+            .await?;
         self.esi_calls += reply.extra_calls;
         Ok(reply.response)
     }
@@ -712,6 +772,7 @@ impl Host {
     ) -> Result<Submitted, RenderError> {
         let mut state = self.call_state(plugin);
         state.viewer = viewer;
+        state.writes_allowed = true;
         let store = self.runtime.store(state, limits);
         let (answer, logs) = self
             .runtime

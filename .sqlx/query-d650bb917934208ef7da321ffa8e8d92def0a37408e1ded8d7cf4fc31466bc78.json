@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT user_scopes FROM core.plugins WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_scopes",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "user_scopes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d650bb917934208ef7da321ffa8e8d92def0a37408e1ded8d7cf4fc31466bc78"
+}

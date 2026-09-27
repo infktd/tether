@@ -60,8 +60,12 @@ pub async fn required_in(
     let admin = db::admin_scopes(&mut *conn, state.id).await?;
     let member = state.builtin == Some(Builtin::Member);
     let mut required = scopes::required(member, &admin);
+    // An app asking for a scope that acts as the character can't be
+    // required (see `plugins::apply`); should one be, its scopes aren't.
     for app in db::state_apps(&mut *conn, state.id).await? {
-        required.extend(app.scopes);
+        if !app.scopes.iter().any(|s| scopes::is_write(s)) {
+            required.extend(app.scopes);
+        }
     }
     Ok(required)
 }
@@ -84,6 +88,7 @@ pub async fn required_apps_in(
     Ok(apps
         .into_iter()
         .filter(|app| !app.scopes.is_empty())
+        .filter(|app| !app.scopes.iter().any(|s| scopes::is_write(s)))
         .map(|app| scopes::RequiredApp {
             registered: registrations
                 .iter()
@@ -134,6 +139,7 @@ pub fn allowed_plugin_scopes(scopes: &[String]) -> Vec<String> {
 pub fn is_catalogue_character_scope(scope: &str) -> bool {
     tether_esi::plugin::ENDPOINTS
         .iter()
+        .chain(tether_esi::plugin::WRITE_ENDPOINTS)
         .any(|e| e.about == tether_esi::plugin::About::Character && e.scope == scope)
 }
 

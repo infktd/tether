@@ -91,6 +91,47 @@ pub async fn plugin_scopes<'e>(
     .await
 }
 
+/// The user scopes an installed plugin asks pilots for, as recorded.
+pub async fn plugin_user_scopes<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    Ok(sqlx::query_scalar!(
+        "SELECT user_scopes FROM core.plugins WHERE id = $1",
+        plugin_id
+    )
+    .fetch_optional(executor)
+    .await?
+    .unwrap_or_default())
+}
+
+/// How many states require the plugin (its registration, with its scopes).
+pub async fn states_requiring<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT count(*) AS "n!" FROM core.state_apps WHERE plugin_id = $1"#,
+        plugin_id
+    )
+    .fetch_one(executor)
+    .await
+}
+
+/// Unregisters every character from the plugin; how many were.
+pub async fn clear_app_characters<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query!(
+        "DELETE FROM core.app_characters WHERE plugin_id = $1",
+        plugin_id
+    )
+    .execute(executor)
+    .await?
+    .rows_affected())
+}
+
 /// Records a plugin's user scopes; true if they changed.
 pub async fn set_plugin_scopes<'e>(
     executor: impl sqlx::PgExecutor<'e>,

@@ -207,6 +207,14 @@ pub mod esi {
         crate::bindings::tether::plugin::esi::get(endpoint, subject, params, page)
     }
 
+    /// Changes something in EVE: one of Tether's write endpoints
+    /// (`character-fitting-save`, with ESI's fitting JSON as `body`). Only
+    /// in `submit`, for one of the viewer's own characters that is one of
+    /// this plugin's characters. Sent once, never retried.
+    pub fn post(endpoint: &str, subject: Subject, body: &str) -> Result<Response, Error> {
+        crate::bindings::tether::plugin::esi::post(endpoint, subject, body)
+    }
+
     /// Every page of a paged endpoint, concatenated (for JSON arrays).
     pub fn get_all(
         endpoint: &str,

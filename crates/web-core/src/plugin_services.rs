@@ -343,6 +343,105 @@ async fn esi_get(
     Ok(reply(body, &response))
 }
 
+/// A write for `character`, one of `account`'s characters (the host
+/// checked that, and that it's the pilot's own form post; checked again
+/// here against the database): the endpoint is a write the plugin was
+/// approved for, the character is one of the plugin's, and its token
+/// carries the scope. Audited as the pilot before it's sent: nothing
+/// reaches EVE unrecorded.
+async fn esi_post(
+    deps: &Deps,
+    plugins: &Weak<Plugins>,
+    plugin: &str,
+    name: &str,
+    character: i64,
+    account: i64,
+    body: &str,
+) -> Result<EsiReply, EsiError> {
+    let running = plugins
+        .upgrade()
+        .and_then(|p| p.running(plugin))
+        .ok_or(EsiError::Unavailable)?;
+    let endpoint = tether_esi::plugin::write_endpoint(name)
+        .ok_or_else(|| EsiError::NotAllowed(format!("{name:?} isn't a write plugins can make")))?;
+    let approved = &running.manifest.capabilities.esi;
+    if !approved.user.iter().any(|s| s == endpoint.scope) {
+        return Err(EsiError::NotAllowed(format!(
+            "{} needs {}, which isn't one of this plugin's user scopes",
+            endpoint.name, endpoint.scope
+        )));
+    }
+    let unavailable = |e: sqlx::Error| {
+        tracing::error!(plugin, error = %e, "plugin ESI checks");
+        EsiError::Unavailable
+    };
+    let owner = db::character_account(&deps.db, character)
+        .await
+        .map_err(unavailable)?;
+    if owner.map(|a| a.0) != Some(account) {
+        return Err(EsiError::NotAllowed(
+            "that isn't one of this pilot's characters".to_owned(),
+        ));
+    }
+    let scopes = crate::compliance::allowed_plugin_scopes(approved.user.as_slice());
+    if !tether_db::compliance::character_may_serve(&deps.db, plugin, character, &scopes)
+        .await
+        .map_err(unavailable)?
+    {
+        return Err(EsiError::NotRegistered);
+    }
+    // A body that isn't the endpoint's never goes, so it isn't audited.
+    tether_esi::plugin::check_write_body(endpoint, body).map_err(|e| match e {
+        tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+        _ => EsiError::Unavailable,
+    })?;
+    let token = deps
+        .vault
+        .access_token(character, &[endpoint.scope])
+        .await
+        .map_err(|e| match e {
+            VaultError::NoToken | VaultError::Revoked | VaultError::MissingScopes(_) => {
+                EsiError::Token
+            }
+            other => {
+                tracing::warn!(plugin, error = %other, "plugin ESI token");
+                EsiError::Unavailable
+            }
+        })?;
+    // It changes something in EVE for this pilot: on the audit log, as
+    // them, before it goes. If that can't be written, it doesn't go.
+    tether_db::audit::record(
+        &deps.db,
+        tether_db::audit::Actor::Account(tether_db::accounts::AccountId(account)),
+        "plugin.esi_write",
+        Some(&format!("plugin:{plugin}")),
+        serde_json::json!({ "endpoint": endpoint.name, "character_id": character }),
+    )
+    .await
+    .map_err(unavailable)?;
+    let target = Target {
+        character_id: character,
+        corporation_id: 0,
+    };
+    let response = deps
+        .esi
+        .plugin_post(endpoint, &token, target, body)
+        .await
+        .map_err(|e| match e {
+            tether_esi::EsiError::Status(status) => EsiError::Status(status),
+            tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+            other => {
+                tracing::warn!(plugin, error = %other, "plugin ESI write");
+                EsiError::Unavailable
+            }
+        })?;
+    let body = response.body.to_string();
+    if body.len() > MAX_BODY_BYTES {
+        return Err(EsiError::TooLarge);
+    }
+    Ok(reply(body, &response))
+}
+
 fn reply(body: String, response: &tether_esi::plugin::Response) -> EsiReply {
     EsiReply {
         response: EsiResponse {
@@ -504,6 +603,51 @@ impl Services for PluginServices {
             }
             result
         })
+    }
+
+    fn esi_post(
+        &self,
+        plugin: String,
+        endpoint: String,
+        character: i64,
+        account: i64,
+        body: String,
+    ) -> Fut<Result<EsiReply, EsiError>> {
+        let (deps, plugins, throttle) = (
+            self.deps.clone(),
+            self.plugins.clone(),
+            self.throttle.clone(),
+        );
+        // In its own task: once a write is on its way, the plugin's deadline
+        // (which drops this call) can't cut it off unlogged.
+        let task = tokio::spawn(async move {
+            if throttle.blocked(&plugin) {
+                return Err(EsiError::Unavailable);
+            }
+            let result = esi_post(
+                &deps, &plugins, &plugin, &endpoint, character, account, &body,
+            )
+            .await;
+            if matches!(result, Err(EsiError::Status(_))) {
+                throttle.error(&plugin);
+            }
+            let logged_endpoint = tether_esi::plugin::write_endpoint(&endpoint)
+                .map_or("(unknown endpoint)", |e| e.name)
+                .to_owned();
+            if let Err(err) = db::log_access(
+                &deps.db,
+                &plugin,
+                Some(character),
+                &logged_endpoint,
+                &outcome(&result),
+            )
+            .await
+            {
+                tracing::error!(plugin, error = %err, "plugin access log");
+            }
+            result
+        });
+        Box::pin(async move { task.await.unwrap_or(Err(EsiError::Unavailable)) })
     }
 
     fn esi_characters(&self, plugin: String) -> Fut<Vec<Character>> {

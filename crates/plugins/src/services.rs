@@ -23,6 +23,10 @@ pub use crate::host::tether::plugin::timers::{Error as TimerError, Shared as Sha
 
 /// ESI calls in one job run or form submission.
 pub const MAX_ESI_CALLS: usize = 100;
+/// ESI writes in one form post: one button, one change in EVE.
+pub const MAX_ESI_WRITES: usize = 1;
+/// The largest body a plugin may send ESI (a fitting is a few KiB).
+pub const MAX_ESI_BODY: usize = 64 * 1024;
 /// ESI calls in one page render: pages run on every view.
 pub const MAX_ESI_CALLS_PAGE: usize = 20;
 
@@ -72,6 +76,16 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         subject: Subject,
         params: Vec<(String, String)>,
         page: Option<u32>,
+    ) -> Fut<Result<EsiReply, EsiError>>;
+    /// A write ([`crate::host`] has checked it's the pilot's own form post
+    /// and `character` one of `account`'s characters).
+    fn esi_post(
+        &self,
+        plugin: String,
+        endpoint: String,
+        character: i64,
+        account: i64,
+        body: String,
     ) -> Fut<Result<EsiReply, EsiError>>;
     fn esi_characters(&self, plugin: String) -> Fut<Vec<Character>>;
     fn esi_data_sources(&self, plugin: String) -> Fut<Vec<Character>>;

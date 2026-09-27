@@ -1649,3 +1649,246 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
         .unwrap();
     assert!(compliant(&h).await);
 }
+
+// ---- writes (Save to EVE) -------------------------------------------------------
+
+const WRITE_FITTINGS: &str = "esi-fittings.write_fittings.v1";
+const FITTING: &str = r#"{"name":"Fast Tackle","description":"","ship_type_id":587,"items":[{"flag":"LoSlot0","quantity":1,"type_id":2048}]}"#;
+
+/// The probe, asking pilots for the fitting write scope.
+async fn install_writer(h: &Harness, owner: &str) {
+    let key = Key::new(1);
+    let manifest = format!(
+        "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[capabilities.esi]\nuser = [\"{WRITE_FITTINGS}\"]\n\n\
+         [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = probe_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
+/// Someone looking: Chribba's account, with his one character.
+async fn chribba_looking(h: &Harness) -> tether_plugins::services::Viewer {
+    use tether_plugins::services::{Builtin, Character, State, Viewer};
+    let account: i64 = sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+        .bind(CHRIBBA)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    let me = Character {
+        id: CHRIBBA,
+        name: "Chribba".to_owned(),
+        corporation_id: CHRIBBA_CORP,
+        alliance_id: Some(159826257),
+    };
+    Viewer {
+        account_id: account,
+        main: me.clone(),
+        characters: vec![me],
+        state: State {
+            name: "Member".to_owned(),
+            builtin: Some(Builtin::Member),
+        },
+        permissions: vec!["view".to_owned()],
+    }
+}
+
+async fn save_fitting(
+    h: &Harness,
+    viewer: Option<tether_plugins::services::Viewer>,
+    as_page: bool,
+    character: i64,
+    body: &str,
+) -> String {
+    let query = vec![
+        ("endpoint".to_owned(), "character-fitting-save".to_owned()),
+        ("character".to_owned(), character.to_string()),
+        ("body".to_owned(), body.to_owned()),
+    ];
+    run_probe_as(h, ID, "esi-post", query, viewer, as_page).await
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_write_to_eve_only_for_the_pilot_at_their_own_click(db: PgPool) {
+    use tether_core::states::{Builtin, EntityKind};
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install_writer(&h, &owner).await;
+    run_jobs(&h).await;
+    // Two fittings reach ESI, whatever else is tried: one press each.
+    Mock::given(method("POST"))
+        .and(path(format!("/characters/{CHRIBBA}/fittings")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "fitting_id": 42
+        })))
+        .expect(2)
+        .mount(&h.esi_server)
+        .await;
+    let chribba = chribba_looking(&h).await;
+
+    // Not registered for the app yet.
+    let out = save_fitting(&h, Some(chribba.clone()), false, CHRIBBA, FITTING).await;
+    assert_eq!(out, "err Error::NotRegistered");
+    let (asked, _) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
+    assert!(asked.contains(&WRITE_FITTINGS.to_owned()), "{asked:?}");
+
+    // Nobody looking (as in a job), or a page render: never.
+    let out = save_fitting(&h, None, false, CHRIBBA, FITTING).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    let out = save_fitting(&h, Some(chribba.clone()), true, CHRIBBA, FITTING).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    // Only the pilot's own characters.
+    let out = save_fitting(&h, Some(chribba.clone()), false, MITTANI, FITTING).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    // A read can't reach a write, and the body must be ESI's fitting.
+    let out = esi(&h, "character-fitting-save", ("character", CHRIBBA)).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    let out = save_fitting(&h, Some(chribba.clone()), false, CHRIBBA, "{}").await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let out = save_fitting(&h, Some(chribba.clone()), false, CHRIBBA, "not json").await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let unknown = vec![
+        ("endpoint".to_owned(), "character-contacts-save".to_owned()),
+        ("character".to_owned(), CHRIBBA.to_string()),
+        ("body".to_owned(), FITTING.to_owned()),
+    ];
+    let out = run_probe_as(&h, ID, "esi-post", unknown, Some(chribba.clone()), false).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+
+    // The pilot's own click, for their own registered character: saved,
+    // logged, and on the audit log as them.
+    let out = save_fitting(&h, Some(chribba.clone()), false, CHRIBBA, FITTING).await;
+    assert_eq!(out, r#"ok {"fitting_id":42}"#);
+    assert!(
+        access_log(&h.db)
+            .await
+            .contains(&("character-fitting-save".to_owned(), "ok".to_owned()))
+    );
+    let audited: Vec<(Option<i64>, serde_json::Value)> = sqlx::query_as(
+        "SELECT actor_account_id, details FROM core.audit_log WHERE action = 'plugin.esi_write'",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        audited,
+        vec![(
+            Some(chribba.account_id),
+            serde_json::json!({ "endpoint": "character-fitting-save", "character_id": CHRIBBA })
+        )]
+    );
+
+    // One change in EVE per press of a button.
+    let twice = vec![
+        ("endpoint".to_owned(), "character-fitting-save".to_owned()),
+        ("character".to_owned(), CHRIBBA.to_string()),
+        ("body".to_owned(), FITTING.to_owned()),
+        ("times".to_owned(), "2".to_owned()),
+    ];
+    let out = run_probe_as(&h, ID, "esi-post", twice, Some(chribba.clone()), false).await;
+    let (first, second) = out.split_once(" | ").unwrap();
+    assert_eq!(first, r#"ok {"fitting_id":42}"#);
+    assert!(second.starts_with("err Error::NotAllowed"), "{second}");
+}
+
+/// The probe at `version`, asking pilots for `user` scopes.
+fn probe_package(version: &str, user: &[&str]) -> (Vec<u8>, String) {
+    let key = Key::new(1);
+    let user = user
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let manifest = format!(
+        "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"{version}\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[capabilities]\ndiscord = [\"send_message\"]\n\n\
+         [capabilities.esi]\nuser = [{user}]\ndata_source = [\"{MINING}\"]\n\n\
+         [permissions]\nview = \"See\"\nmanage = \"Manage\"\nadd_owner = \"Add owners\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = probe_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    let signature = key.sign(&bytes);
+    (bytes, signature)
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_new_write_scope_asks_pilots_again_and_no_state_may_require_it(db: PgPool) {
+    let (h, owner) = member_with_plugin(db).await;
+    let chribba = chribba_looking(&h).await;
+    // Not one of the app's scopes: no writes.
+    let out = save_fitting(&h, Some(chribba.clone()), false, CHRIBBA, FITTING).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+
+    // Registered for reading, and required of Member.
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
+    let registered = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.app_characters")
+            .fetch_one(&h.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(registered().await, 1);
+    let require = format!("/admin/states/{MEMBER_STATE}/scopes/app");
+    let applied = send(&h.app, form(&require, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(applied.location(), "/admin/states", "{}", applied.body);
+
+    // A version that also writes: refused while a state requires the app.
+    let (bytes, signature) = probe_package("1.1.0", &[SKILLS, WRITE_FITTINGS]);
+    let res = upload(&h, &owner, &bytes, &signature).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let review_at = res.location().to_owned();
+    let review = page(&h, &review_at, &owner).await.body;
+    assert!(
+        review.contains("Changes pilots&#39;") || review.contains("Changes pilots'"),
+        "{review}"
+    );
+    let refused = send(&h.app, form(&format!("{review_at}/approve"), "", &owner)).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    assert!(
+        refused.body.contains("Stop requiring ESI probe"),
+        "{}",
+        refused.body
+    );
+    assert_eq!(registered().await, 1);
+
+    // Not required: it installs, and pilots register again to consent to it.
+    let stop = format!("/admin/states/{MEMBER_STATE}/scopes/app/remove");
+    let res = send(&h.app, form(&stop, "plugin=acme.esi", &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    install_package(&h, &owner, &bytes, &signature).await;
+    assert_eq!(registered().await, 0);
+    let cleared: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'plugin.registrations_cleared'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(cleared["characters"], 1);
+    let out = save_fitting(&h, Some(chribba), false, CHRIBBA, FITTING).await;
+    assert_eq!(out, "err Error::NotRegistered");
+    // And the States page no longer offers to require it.
+    let states = page(&h, "/admin/states", &owner).await.body;
+    assert!(!states.contains("Require ESI probe"), "{states}");
+}

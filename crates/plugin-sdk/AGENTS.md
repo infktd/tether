@@ -564,6 +564,20 @@ let names = esi::names(&[40161234, 30000142])?;
 - Values CCP adds to ESI's lists after this Tether was built (a new location flag, role, notification or contract type) don't break a read of the endpoints from `character-wallet-transactions` on, nor of `corporation-structure-assets`: the answer is read a second time as it is, and they pass through as text. That second read counts as one more of the 100 (or 20) calls, and is skipped (`Unavailable`) while ESI's error budget is low. Ids you give are positive numbers; anything else is `Invalid`, without asking ESI.
 - Every call is recorded in your plugin's access log, which admins see. An admin must also enable your scopes on Tether's EVE application.
 
+### Writes
+
+A few endpoints change something in EVE. Call them with `esi::post(endpoint, Subject::Character(id), body)`; `esi::get` can't reach them, and they aren't in the table above.
+
+| Endpoint | Scope | Body |
+|---|---|---|
+| `character-fitting-save` | `esi-fittings.write_fittings.v1` | ESI's fitting JSON: `name` (1 to 50 characters), `description` (at most 500), `ship_type_id`, and `items`, 1 to 512 of `{"flag", "quantity", "type_id"}` with ESI's slot flags (`HiSlot0`, `MedSlot0`, `LoSlot0`, `RigSlot0`, `SubSystemSlot0`, `ServiceSlot0`... `DroneBay`, `FighterBay`, `Cargo`) and a quantity of 1 to 1,000,000. Answers `{"fitting_id"}`. |
+
+- Only in `submit`, while a pilot posts one of your forms: never in `render`, a widget or a job (`NotAllowed`). The pilot presses your button; you save to their character.
+- Only for one of that pilot's own characters (`identity::viewer()`'s `characters`) that is one of your app's characters (registered for it with the write scope): anyone else's is `NotAllowed`, an unregistered one `NotRegistered`.
+- The host parses the body into ESI's type and sends that: a body that isn't ESI's fitting is `Invalid` before anything reaches ESI. At most 64 KiB.
+- Sent once, never retried: a failure saves nothing, and the pilot may press again. Each write is in your access log and, as the pilot, on the audit log.
+- A write scope can't be required of a state: an app asking for one can't be required on the States page.
+
 ## Discord
 
 With `discord = ["send_message"]`, a plugin can post to the channels an admin assigned it (`discord::channels()`):

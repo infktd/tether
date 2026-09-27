@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.app_characters WHERE plugin_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "67e10eaede90c438ed69d10bb6a8799479539b552d0c8b1a006db4cd1b43b6f2"
+}

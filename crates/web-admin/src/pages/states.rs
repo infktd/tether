@@ -145,12 +145,11 @@ async fn states_page(
     }
     // Guest is last; the one above it can't move down past it.
     let movable = states.iter().filter(|s| !s.is_guest()).count();
-    let cards =
-        states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                Card {
+    let cards = states
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Card {
             id: s.id.0,
             name: s.name.clone(),
             style: s.style(),
@@ -210,6 +209,12 @@ async fn states_page(
                 plugins
                     .iter()
                     .filter(|p| !p.scopes.is_empty())
+                    // An app with a scope that acts as the character (Save to
+                    // EVE's) can't be required: Tether never requires those.
+                    .filter(|p| {
+                        !p.scopes.iter().any(|sc| tether_core::scopes::is_write(sc))
+                            || state_apps.iter().any(|(id, plugin)| *id == s.id && *plugin == p.id)
+                    })
                     .map(|p| AppChip {
                         id: p.id.clone(),
                         name: p.name.clone(),
@@ -231,8 +236,8 @@ async fn states_page(
                 .map(|info| chip(info.scope, String::new()))
                 .collect(),
         }
-            })
-            .collect();
+        })
+        .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(

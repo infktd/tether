@@ -833,6 +833,18 @@ pub async fn run_probe(
     query: Vec<(String, String)>,
     as_page: bool,
 ) -> String {
+    run_probe_as(h, id, path, query, None, as_page).await
+}
+
+/// As [`run_probe`], with someone looking.
+pub async fn run_probe_as(
+    h: &Harness,
+    id: &str,
+    path: &str,
+    query: Vec<(String, String)>,
+    viewer: Option<tether_plugins::services::Viewer>,
+    as_page: bool,
+) -> String {
     use tether_plugins::host::{Request as PageRequest, Section, Submission, SubmitResult};
     let plugin = h.plugins.get(id).expect("the plugin is running");
     let request = PageRequest {
@@ -842,7 +854,7 @@ pub async fn run_probe(
     let page = if as_page {
         h.plugins
             .host()
-            .render(&plugin, request, &Default::default())
+            .render_as(&plugin, request, viewer, &Default::default())
             .await
             .unwrap()
             .page
@@ -850,13 +862,14 @@ pub async fn run_probe(
         let submitted = h
             .plugins
             .host()
-            .submit(
+            .submit_as(
                 &plugin,
                 Submission {
                     request,
                     form: "probe".to_owned(),
                     values: Vec::new(),
                 },
+                viewer,
                 &Default::default(),
             )
             .await

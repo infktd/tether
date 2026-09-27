@@ -127,6 +127,26 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 Err(e) => format!("err {e:?}"),
             }
         }
+        // esi-post?endpoint=&character=<id>&body=&times=<n, 1 if absent>
+        "esi-post" => {
+            let character = arg("character")
+                .and_then(|c| c.parse().ok())
+                .unwrap_or_default();
+            let times: usize = arg("times").and_then(|t| t.parse().ok()).unwrap_or(1);
+            (0..times)
+                .map(|_| {
+                    match esi::post(
+                        &arg("endpoint").unwrap_or_default(),
+                        Subject::Character(character),
+                        &arg("body").unwrap_or_default(),
+                    ) {
+                        Ok(r) => format!("ok {}", r.body),
+                        Err(e) => format!("err {e:?}"),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
         // http?url=&method=post&body=&secret=&h=<name>:<value>
         "http" => {
             let url = arg("url").unwrap_or_default();

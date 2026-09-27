@@ -631,6 +631,13 @@ interface esi {
     /// Calls a catalogue endpoint (see AGENTS.md) as `subject`. `params`
     /// are the endpoint's extra ids; `page` is for paged endpoints.
     get: func(endpoint: string, subject: subject, params: list<tuple<string, string>>, page: option<u32>) -> result<response, error>;
+    /// Changes something in EVE: one of Tether's few write endpoints
+    /// (see AGENTS.md; today `character-fitting-save`), with its JSON
+    /// `body`, which the host checks. Only while a pilot submits one of
+    /// the plugin's forms, and only for one of that pilot's own characters
+    /// that is one of the plugin's characters: never in a page render or a
+    /// job, never for anyone else. Sent once, never retried.
+    post: func(endpoint: string, subject: subject, body: string) -> result<response, error>;
     /// The plugin's characters: registered for it, on accounts holding
     /// one of its permissions (any state, as Alliance Auth's apps), with
     /// tokens carrying every one of its user scopes.

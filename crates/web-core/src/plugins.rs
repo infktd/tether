@@ -1866,6 +1866,42 @@ async fn apply_manifest(
             Vec::new()
         }
     };
+    // A scope that acts as the character (Save to EVE's) that this version
+    // adds: no state may require it, and characters registered before
+    // consented to the app reading, not to this. They register again.
+    let before = tether_db::compliance::plugin_user_scopes(&mut *tx, id).await?;
+    let new_writes: Vec<&String> = manifest
+        .capabilities
+        .esi
+        .user
+        .iter()
+        .filter(|s| tether_core::scopes::is_write(s) && !before.contains(s))
+        .collect();
+    if !new_writes.is_empty() {
+        if tether_db::compliance::states_requiring(&mut *tx, id).await? > 0 {
+            return Err(AppError::bad_request(format!(
+                "This version asks pilots for a scope that acts as their character ({}), which \
+                 no state may require. Stop requiring {} on the States page first.",
+                new_writes
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                manifest.plugin.name
+            )));
+        }
+        let cleared = tether_db::compliance::clear_app_characters(&mut *tx, id).await?;
+        if cleared > 0 {
+            tether_db::audit::record(
+                &mut *tx,
+                tether_db::audit::Actor::System,
+                "plugin.registrations_cleared",
+                Some(&format!("plugin:{id}")),
+                serde_json::json!({ "characters": cleared, "write_scopes": new_writes }),
+            )
+            .await?;
+        }
+    }
     // A state requiring the app requires its new scopes: re-evaluate.
     if tether_db::compliance::set_plugin_scopes(&mut *tx, id, &manifest.capabilities.esi.user)
         .await?

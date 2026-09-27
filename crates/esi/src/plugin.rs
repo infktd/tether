@@ -605,6 +605,83 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
 ];
 
+/// Endpoints that change something in EVE, which plugins call with
+/// `esi.post`. Kept apart from [`ENDPOINTS`] so no read reaches one. The
+/// host allows a write only while the pilot submits one of the plugin's
+/// forms, and only for one of that pilot's own characters registered for
+/// the plugin with the endpoint's scope.
+pub const WRITE_ENDPOINTS: &[Endpoint] = &[Endpoint {
+    // Saves a fitting to the character (allianceauth-fittings' Save to
+    // EVE). The body is ESI's fitting JSON, parsed here into ESI's type:
+    // what reaches ESI is what that type holds, nothing else.
+    name: "character-fitting-save",
+    scope: "esi-fittings.write_fittings.v1",
+    about: About::Character,
+    paged: false,
+    params: &[],
+}];
+
+pub fn write_endpoint(name: &str) -> Option<&'static Endpoint> {
+    WRITE_ENDPOINTS.iter().find(|e| e.name == name)
+}
+
+/// Items a saved fitting may hold: every slot, drones, fighters and cargo
+/// of any hull with room to spare.
+pub const MAX_FITTING_ITEMS: usize = 512;
+/// The most of one item a fitting line may hold.
+const MAX_FITTING_QUANTITY: i64 = 1_000_000;
+
+/// `character-fitting-save`'s body: ESI's fitting (a name of 1 to 50
+/// characters, a description of up to 500, a hull, and 1 to
+/// [`MAX_FITTING_ITEMS`] items, each in one of ESI's slots with a positive
+/// quantity).
+fn fitting_body(
+    body: &str,
+) -> Result<eve_esi_client::types::PostCharactersCharacterIdFittingsBody, EsiError> {
+    let fitting: eve_esi_client::types::PostCharactersCharacterIdFittingsBody =
+        serde_json::from_str(body)
+            .map_err(|e| EsiError::InvalidInput(format!("the body isn't ESI's fitting: {e}")))?;
+    if fitting
+        .name
+        .chars()
+        .chain(fitting.description.chars())
+        .any(|c| c.is_control() && c != '\n')
+    {
+        return Err(EsiError::InvalidInput(
+            "the name and description may not hold control characters".into(),
+        ));
+    }
+    if fitting.ship_type_id <= 0 {
+        return Err(EsiError::InvalidInput(
+            "ship_type_id must be a type id".into(),
+        ));
+    }
+    if fitting.items.is_empty() || fitting.items.len() > MAX_FITTING_ITEMS {
+        return Err(EsiError::InvalidInput(format!(
+            "a fitting holds 1 to {MAX_FITTING_ITEMS} items"
+        )));
+    }
+    if fitting
+        .items
+        .iter()
+        .any(|i| i.type_id <= 0 || !(1..=MAX_FITTING_QUANTITY).contains(&i.quantity))
+    {
+        return Err(EsiError::InvalidInput(format!(
+            "each item needs a type id and a quantity of 1 to {MAX_FITTING_QUANTITY}"
+        )));
+    }
+    Ok(fitting)
+}
+
+/// Whether `body` is what the write `endpoint` takes, before anything is
+/// recorded or sent.
+pub fn check_write_body(endpoint: &Endpoint, body: &str) -> Result<(), EsiError> {
+    match endpoint.name {
+        "character-fitting-save" => fitting_body(body).map(|_| ()),
+        other => Err(EsiError::InvalidInput(format!("no write endpoint {other}"))),
+    }
+}
+
 /// Names `universe-ids` takes at once (ESI's own limit).
 pub const MAX_NAMES: usize = 500;
 /// The `names` parameter, at most.
@@ -1417,6 +1494,38 @@ impl Esi {
             other => Err(EsiError::InvalidInput(format!(
                 "no public endpoint {other}"
             ))),
+        }
+    }
+
+    /// Calls a write endpoint ([`WRITE_ENDPOINTS`]) for `target` with that
+    /// character's token. Sent once: a write isn't retried, so a failure
+    /// can't save twice. Interactive: a pilot pressed a button and waits,
+    /// so it doesn't queue behind bulk work.
+    pub async fn plugin_post(
+        &self,
+        endpoint: &Endpoint,
+        token: &Secret<String>,
+        target: Target,
+        body: &str,
+    ) -> Result<Response, EsiError> {
+        match endpoint.name {
+            "character-fitting-save" => {
+                let fitting = fitting_body(body)?;
+                let client = self.with_token(token)?;
+                let request = client
+                    .post_characters_character_id_fittings()
+                    .character_id(target.character_id)
+                    .body(fitting);
+                let response = self
+                    .call_full(Priority::Interactive, request.send())
+                    .await?;
+                Ok(Response {
+                    body: json(&response.into_inner())?,
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            other => Err(EsiError::InvalidInput(format!("no write endpoint {other}"))),
         }
     }
 
@@ -2273,6 +2382,37 @@ mod tests {
         assert_eq!(positive_id(&p("12"), "from_id").unwrap(), Some(12));
         assert!(positive_id(&p("0"), "from_id").is_err());
         assert!(positive_id(&p("x"), "from_id").is_err());
+    }
+
+    #[test]
+    fn writes_are_their_own_catalogue() {
+        use tether_core::scopes;
+        for e in WRITE_ENDPOINTS {
+            assert!(scopes::is_write(e.scope), "{}", e.name);
+            assert_eq!(e.about, About::Character, "{}", e.name);
+            assert!(endpoint(e.name).is_none(), "a read can't reach {}", e.name);
+        }
+        assert!(write_endpoint("character-skills").is_none());
+    }
+
+    #[test]
+    fn a_fitting_body_is_esis_fitting() {
+        let good = r#"{"name":"Fast Tackle","description":"","ship_type_id":587,
+            "items":[{"flag":"LoSlot0","quantity":1,"type_id":2048},
+                     {"flag":"DroneBay","quantity":3,"type_id":2486}]}"#;
+        let fitting = fitting_body(good).unwrap();
+        assert_eq!(fitting.items.len(), 2);
+        // ESI's limits and slots, and ours.
+        let long = good.replace("Fast Tackle", &"x".repeat(51));
+        assert!(fitting_body(&long).is_err());
+        assert!(fitting_body(&good.replace("LoSlot0", "Wherever")).is_err());
+        assert!(fitting_body(&good.replace("\"quantity\":3", "\"quantity\":0")).is_err());
+        assert!(fitting_body(&good.replace("587", "0")).is_err());
+        assert!(
+            fitting_body(r#"{"name":"x","description":"","ship_type_id":587,"items":[]}"#).is_err()
+        );
+        assert!(fitting_body("not json").is_err());
+        assert!(fitting_body(&good.replace("Fast Tackle", "Fast\\u0007Tackle")).is_err());
     }
 
     #[test]
