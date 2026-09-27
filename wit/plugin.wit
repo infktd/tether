@@ -130,6 +130,11 @@ interface page {
         action(action),
         /// Several, side by side (at most 4): a row's actions.
         actions(list<action>),
+        /// One of the plugin's own pages as its full address, to share
+        /// outside Tether (a FAT link's register page, in fleet chat): a
+        /// link path, as for `link`. The host writes the site's address
+        /// before it and draws it read-only with a Copy button.
+        share(string),
     }
 
     record stat {

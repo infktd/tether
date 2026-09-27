@@ -28,7 +28,7 @@ use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
     SubmitResult, Table, Tone, Value, action, actions, badge, character, isk, item_type, link, log,
-    time,
+    share, time,
 };
 
 const MAX_NAME: u32 = 150;
@@ -837,10 +837,13 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
         .field("SRP Code", f.code.clone())
         .field("Added by", f.created_by.clone());
     if !f.completed {
-        about = about.field(
-            "Request link",
-            link("Request SRP", format!("request/{}", f.code)),
-        );
+        // aa-srp's "Copy SRP link to clipboard": for fleet chat or Discord.
+        about = about
+            .field("Link to share", share(format!("request/{}", f.code)))
+            .field(
+                "Request link",
+                link("Request SRP", format!("request/{}", f.code)),
+            );
     }
     if !f.aar.is_empty() {
         about = about.field("After Action Report", cut(&f.aar, 1500));

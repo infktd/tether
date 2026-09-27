@@ -672,6 +672,12 @@ fn check_value(value: &Value, budget: &mut Budget) -> Result<(), PageProblem> {
             budget.bytes(link.path.len())
         }
         Value::Entity(entity) => budget.text("an entity name", &entity.name),
+        // Only the plugin's own pages: the host writes the site's address
+        // before it, so a page can't hand out any other address.
+        Value::Share(path) => {
+            check_link_path(path)?;
+            budget.bytes(path.len())
+        }
         Value::Progress(progress) => check_progress(progress, budget),
         Value::Action(action) => check_action(action, budget),
         Value::Actions(actions) => {
@@ -1018,6 +1024,31 @@ mod tests {
             caption: None,
         }]));
         assert!(check(&p).is_err());
+    }
+
+    #[test]
+    fn links_to_share_are_the_plugins_own_pages() {
+        let shared = |path: &str| {
+            let mut p = page();
+            p.sections.push(card(Value::Share(path.to_owned())));
+            check(&p)
+        };
+        for ok in ["links/0f3a/add", "request/ABC123", ""] {
+            assert_eq!(shared(ok), Ok(()), "{ok}");
+        }
+        for bad in [
+            "https://evil.example/x",
+            "//evil.example",
+            "/admin",
+            "../core",
+            "a?b=c",
+            "javascript:alert(1)",
+            "a#b",
+            "a%2e%2e",
+            "a\\b",
+        ] {
+            assert!(shared(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -276,6 +276,14 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
             .body
             .contains(&format!("/plugins/{ID}/links/{hash}/add"))
     );
+    // aa-afat's copy link: the register page's full address, while open.
+    assert!(
+        details.body.contains(&format!(
+            "value=\"{SITE}/plugins/{ID}/links/{hash}/add\" readonly"
+        )),
+        "{}",
+        details.body
+    );
 
     // A member opens the link and registers both characters.
     let register = open(&h, &format!("links/{hash}/add"), &line).await;

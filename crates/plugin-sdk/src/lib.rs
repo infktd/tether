@@ -1153,6 +1153,13 @@ pub fn badge(label: impl Into<String>, tone: Tone) -> Badge {
     }
 }
 
+/// One of this plugin's pages as its full address, to share outside
+/// Tether (a register link in fleet chat): read-only, with a Copy button.
+/// `path` is a link path; Tether writes the site's address before it.
+pub fn share(path: impl Into<String>) -> Value {
+    Value::Share(path.into())
+}
+
 /// A link to another page of this plugin, relative to its pages.
 pub fn link(label: impl Into<String>, path: impl Into<String>) -> Link {
     Link {

@@ -59,7 +59,7 @@ cargo build --target wasm32-wasip2 --release
 
 No other tooling is needed: `wasm32-wasip2` produces a component directly. Forgetting `export!` only fails when linking the `.wasm`, so always build for `wasm32-wasip2` (and run `cargo clippy --target wasm32-wasip2`), not just for your own machine.
 
-`examples/hello-plugin` in the repository is a complete example with every kind of section and value: a profile, a card grid, entities, countdowns, progress bars, row actions, text to copy, page links and a live page.
+`examples/hello-plugin` in the repository is a complete example with every kind of section and value: a profile, a card grid, entities, countdowns, progress bars, row actions, text to copy, a link to share, page links and a live page.
 
 ## plugin.toml
 
@@ -194,7 +194,8 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
   - entities: `character(id, name)`, `corporation(...)`, `alliance(...)`, `faction(...)` and `item_type(...)` (items and ships), drawn as the 20px portrait, logo or icon from CCP's image server and the name. Tether builds the image address from the kind and id; you never give a URL. An id of 0 or less gets initials;
   - `countdown(rfc3339)`: the time left ("2d 4h 13m"), ticking in the browser, the EVE time on hover, "done" once it's passed;
   - `progress(fraction)`: a thin bar, 0 to 1, with `.label(...)`; `.between(from, to)` (two RFC 3339 instants) makes it fill live, e.g. for a skill in training;
-  - `action(label, form)` and `actions(vec![...])` (at most 4 side by side): buttons that post, for row actions (see Forms).
+  - `action(label, form)` and `actions(vec![...])` (at most 4 side by side): buttons that post, for row actions (see Forms);
+  - `share(path)`: one of your pages as its full address, to paste outside Tether (a register link in fleet chat), read-only with a Copy button. You give a link path; Tether writes the site's address before it (you never learn it, and can't give any other address).
 - Use `Tone::Accent` for the single most important thing on a screen, and nothing else.
 - Page links: `.link(label, path)` adds one of your pages beside the title (at most 8, sub-pages such as "Skill Sets · Character Finder · Reports"); the page shown is marked. `.button(label, path)` adds one as a primary button ("Create timer"). Put sub-page links here rather than in a card at the bottom.
 - Live pages: `.refresh(seconds)` (5 to 300; anything else is brought into that range) makes Tether reload the page's content in place at that interval, for as long as your render keeps asking: say "Syncing..." and fill in as a job stores data, then leave it out. Pages with a form never reload (someone may be typing). Each reload is a page view (the 120 a minute count).
@@ -260,6 +261,7 @@ The host refuses a page (and logs why, for admins) if it breaks these rules:
 | Actions | 4 in one `actions` value; each has a form id (not the id of a form on the page) and at most 10 hidden fields, names as for form fields |
 | Progress | fraction 0 to 1; `from` and `to` both or neither, real instants, `to` after `from` |
 | Code blocks | 16 KiB of text |
+| Links to share | a link path, as for links |
 | Values (stats, cells, card fields) on a page | 10,000 |
 | Any one piece of text | 2 KiB |
 | The whole page: all text, link paths and times, plus 16 bytes per value | 1 MiB |

@@ -27,7 +27,7 @@ use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission,
     SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character, corporation,
-    item_type, link, log, time,
+    item_type, link, log, share, time,
 };
 
 /// A new link's expiry unless the FC picks another (aa-afat's default).
@@ -928,10 +928,16 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
     }
     let manage = viewer.can("manage_afat");
     let edit = can_edit(viewer, &link);
-    let mut card = Card::new("FAT link")
+    let register = format!("links/{}/add", link.hash);
+    let mut card = Card::new("FAT link");
+    // aa-afat's "Copy FAT link to clipboard", while members can register.
+    if link.open {
+        card = card.field("Link to share", share(register.clone()));
+    }
+    card = card
         .field(
             "Register link",
-            tether_plugin_sdk::link("Register attendance", format!("links/{}/add", link.hash)),
+            tether_plugin_sdk::link("Register attendance", register),
         )
         .field("Fleet", link.fleet.clone())
         .field(

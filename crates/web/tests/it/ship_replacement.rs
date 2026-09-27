@@ -388,6 +388,14 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     assert_eq!(fleet_page.status, StatusCode::OK, "{}", fleet_page.body);
     assert!(fleet_page.body.contains("Pilot A"), "{}", fleet_page.body);
     assert!(!fleet_page.body.contains("Mark Completed"));
+    // The request link to share, as the site's full address.
+    assert!(
+        fleet_page.body.contains(&format!(
+            "value=\"{SITE}/plugins/{ID}/request/{code}\" readonly"
+        )),
+        "{}",
+        fleet_page.body
+    );
     let review = format!("review/{r1}");
     let res = post(
         &h,

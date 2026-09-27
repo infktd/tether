@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tether_plugin_sdk::{
     Card, CardGrid, CodeBlock, Column, Page, PageError, Plugin, Profile, Request, Section, Stat,
     Submission, SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character,
-    corporation, countdown, isk, item_type, link, log, progress, time,
+    corporation, countdown, isk, item_type, link, log, progress, share, time,
 };
 
 struct Hello;
@@ -193,7 +193,8 @@ fn main_page() -> Page {
         .card(
             Card::new("Links")
                 .description("Pages of the same plugin link to each other.")
-                .field("More", link("About this example", "about")),
+                .field("More", link("About this example", "about"))
+                .field("Share", share("about")),
         )
         .tab(
             "Notes",

@@ -421,6 +421,9 @@ async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
         r#"<span title="Ally &#60;script&#62;alert(1)&#60;/script&#62;"><img src="https://images.evetech.net/alliances/99000001/logo?size=64""#,
         r#"<a class="hover:underline underline-offset-4" href="/plugins/acme.pages/values">Card &#60;script&#62;"#,
         r#"<h3 class="grid-card-name">Unlinked Pilot</h3>"#,
+        // A link to share: the site's address and the app's page, never
+        // one the app wrote, with its Copy button.
+        r#"<input class="input num text-xs min-w-0 flex-1" value="https://tether.test/plugins/acme.pages/values" readonly aria-label="Link to share"><button type="button" class="btn" data-variant="outline" data-size="sm" data-copy data-copied-label="Copied">Copy</button>"#,
         // The script that keeps them live, bundled.
         r#"<script src="/static/live.js" defer></script>"#,
     ] {

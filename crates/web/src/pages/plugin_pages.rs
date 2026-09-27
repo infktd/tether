@@ -65,6 +65,9 @@ pub struct ValueView {
     pub entity: Option<EntityView>,
     pub countdown: Option<CountdownView>,
     pub progress: Option<ProgressView>,
+    /// A link to share: one of the plugin's pages as its full address,
+    /// which the host builds from the site's origin.
+    pub share: Option<String>,
 }
 
 /// A character, corporation, alliance, faction or type: its picture from
@@ -377,16 +380,20 @@ pub struct Ctx<'a> {
     /// Whether the app reads members' characters (user scopes), so its
     /// card grids may start with Tether's Register Character card.
     pub registers: bool,
+    /// The site's origin (as the direct join link's): links to share start
+    /// with it.
+    pub site: &'a str,
     next: std::cell::Cell<usize>,
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(plugin: &'a str, action: &'a str, prefix: String) -> Self {
+    pub fn new(plugin: &'a str, action: &'a str, prefix: String, site: &'a str) -> Self {
         Self {
             plugin,
             action,
             prefix,
             registers: false,
+            site,
             next: std::cell::Cell::new(0),
         }
     }
@@ -433,6 +440,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         countdown: None,
         progress: None,
         actions: Vec::new(),
+        share: None,
     };
     let mono = |text: String| ValueView {
         mono: true,
@@ -475,6 +483,12 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         Value::Entity(e) => ValueView {
             entity: Some(entity(e, false)),
             ..plain(e.name.clone())
+        },
+        // A checked link path, under the plugin's own pages: the address
+        // is the site's and the plugin's, never one the plugin wrote.
+        Value::Share(path) => ValueView {
+            share: Some(format!("{}{}", ctx.site, page_href(plugin, path))),
+            ..plain(String::new())
         },
         Value::Countdown(text) => match utc(text) {
             Some(at) => {
@@ -706,6 +720,8 @@ struct Opened {
     /// The page's own address, with its query: forms post back here.
     href: String,
     owners: Option<super::plugin_access::Owners>,
+    /// The site's origin, for links to share.
+    site: String,
 }
 
 /// Everything before the plugin is called. Anything that doesn't pass is
@@ -775,6 +791,7 @@ async fn open(
             tab,
             href,
             owners,
+            site: state.site.origin().to_owned(),
         },
     ))
 }
@@ -960,7 +977,7 @@ fn draw(
         parts.push(format!("{TAB}={i}"));
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
-    let ctx = Ctx::new(&id, &opened.href, "page".to_owned())
+    let ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
         .registering(!opened.running.manifest.capabilities.esi.user.is_empty());
     let sections: Vec<SectionView> = page.sections.iter().map(|s| section(&ctx, s)).collect();
     let tab_sections: Vec<SectionView> = page
@@ -1116,10 +1133,13 @@ pub async fn widget(
                         sections: {
                             // Popover ids unique among the Dashboard's
                             // widgets.
-                            let ctx = Ctx::new(&id, &opened.href, format!("widget-{index}-{id}"))
-                                .registering(
-                                    !opened.running.manifest.capabilities.esi.user.is_empty(),
-                                );
+                            let ctx = Ctx::new(
+                                &id,
+                                &opened.href,
+                                format!("widget-{index}-{id}"),
+                                &opened.site,
+                            )
+                            .registering(!opened.running.manifest.capabilities.esi.user.is_empty());
                             page.sections.iter().map(|s| section(&ctx, s)).collect()
                         },
                         href,
@@ -1409,8 +1429,13 @@ mod tests {
             register: true,
         });
         let drawn = |registers: bool| {
-            let ctx =
-                Ctx::new("acme.x", "/plugins/acme.x", "page".to_owned()).registering(registers);
+            let ctx = Ctx::new(
+                "acme.x",
+                "/plugins/acme.x",
+                "page".to_owned(),
+                "https://a.example",
+            )
+            .registering(registers);
             match section(&ctx, &grid) {
                 SectionView::Cards(cards) => cards.register,
                 _ => panic!("not a card grid"),
@@ -1418,5 +1443,21 @@ mod tests {
         };
         assert!(drawn(true));
         assert!(!drawn(false));
+    }
+
+    #[test]
+    fn links_to_share_are_the_sites_own_address() {
+        let ctx = Ctx::new(
+            "acme.fat",
+            "/plugins/acme.fat",
+            "page".to_owned(),
+            "https://auth.example.com",
+        );
+        let view = value(&ctx, &Value::Share("links/0f3a/add".to_owned()));
+        assert_eq!(
+            view.share.as_deref(),
+            Some("https://auth.example.com/plugins/acme.fat/links/0f3a/add")
+        );
+        assert!(view.href.is_none());
     }
 }
