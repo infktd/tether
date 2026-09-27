@@ -1,19 +1,25 @@
 //! Ship Replacement (Alliance Auth's srp; PRD F23).
 //!
-//! - **SRP fleets** (`add_srpfleetmain` adds them): a fleet name, doctrine,
-//!   fleet commander and EVE time, an after action report, and an SRP
-//!   code pilots request with. Open until SRP staff mark them Completed.
-//! - **Request SRP** (`access_srp`): a pilot pastes a zKillboard or ESI
-//!   killmail link for a loss on an open fleet and picks the character
-//!   who lost the ship. The loss comes from ESI's public killmail endpoint
-//!   (through Tether), its value from zKillboard (over the app's approved
-//!   HTTPS host). The victim must be the chosen character, one of the
-//!   pilot's own; each loss can be requested once.
-//! - **Reviewing**: SRP staff (`manage_srp`) see a fleet's requests,
-//!   approve (the payout defaults to zKillboard's value) or reject them
-//!   with a comment, and mark approved ones paid; `change_srpuserrequest`
-//!   adjusts payouts. Totals per fleet (requested, approved, paid) and
-//!   overall.
+//! AA's permissions and rules (Jay, 2026-09-27):
+//!
+//! - **SRP fleets** (`add_srpfleetmain` or `srp_management` adds them): a
+//!   fleet name, doctrine, fleet commander and EVE time, an after action
+//!   report, and an SRP code pilots request with. Open until SRP managers
+//!   mark them Completed.
+//! - Everyone with `access_srp` sees the open fleets with their Total ISK
+//!   Cost and pending requests, and opens any fleet's requests (pilots,
+//!   ships, amounts, status), as AA; `srp_management` also has View All
+//!   (completed fleets too).
+//! - **Request SRP** (`access_srp`): a pilot pastes a zKillboard link for
+//!   a loss on an open fleet. The loss comes from ESI's public killmail
+//!   endpoint (through Tether), its value from zKillboard (over the app's
+//!   approved HTTPS host). The victim must be one of the pilot's own
+//!   characters; each loss is requested once while its request exists.
+//! - **Managing** (`srp_management`, AA's `auth.srp_management`): approve
+//!   (the payout defaults to zKillboard's value) or reject with a comment,
+//!   update the payout at any time, mark approved ones paid (aa-srp's),
+//!   complete and remove fleets. As AA, nothing stops a manager deciding
+//!   their own request.
 //!
 //! zKillboard asks for gentle use: a kill's value is fetched once and
 //! kept, and only when a pilot requests SRP for it.
@@ -56,10 +62,11 @@ impl Plugin for ShipReplacement {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let parts: Vec<&str> = request.path.split('/').collect();
         let page = match parts.as_slice() {
-            [""] => srp_fleets(&viewer),
+            [""] => srp_fleets(&viewer, false),
+            ["all"] => srp_fleets(&viewer, true),
             ["add"] => add_page(&viewer, None),
             ["fleet", fleet] => fleet_page(&viewer, id(fleet)?, None),
-            ["request", code] => request_page(&viewer, code, None),
+            ["request", code] => request_page(code, None),
             ["review", request] => review_page(&viewer, id(request)?, None),
             _ => Err(PageError::NotFound),
         }?;
@@ -86,11 +93,14 @@ impl Plugin for ShipReplacement {
 
 tether_plugin_sdk::export!(ShipReplacement);
 
-/// Beside the title, as AA's SRP navbar: the fleet list, and Add SRP Fleet
-/// for those who may add one.
+/// Beside the title, as AA's SRP navbar: the fleet list, View All for
+/// managers, and Add SRP Fleet for those who may add one.
 fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let page = page.link("SRP Fleets", "");
-    if viewer.can("add_srpfleetmain") {
+    let mut page = page.link("SRP Fleets", "");
+    if manager(viewer) {
+        page = page.link("View All", "all");
+    }
+    if can_add(viewer) {
         page.button("Add SRP Fleet", "add")
     } else {
         page
@@ -195,9 +205,15 @@ fn parse_eve_time(text: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.and_utc())
 }
 
-/// Who may see fleets' requests: SRP staff.
-fn staff(viewer: &Viewer) -> bool {
-    viewer.can("manage_srp") || viewer.can("change_srpuserrequest")
+/// AA's `auth.srp_management`: decides, prices and pays requests, and
+/// completes and removes fleets.
+fn manager(viewer: &Viewer) -> bool {
+    viewer.can("srp_management")
+}
+
+/// AA's Add SRP Fleet: `srp_management` or `add_srpfleetmain`.
+fn can_add(viewer: &Viewer) -> bool {
+    manager(viewer) || viewer.can("add_srpfleetmain")
 }
 
 /// Pages behind the `""` rule need `access_srp` too; staff pages more.
@@ -276,18 +292,21 @@ fn fleet_by_code(code: &str) -> Result<Fleet, PageError> {
     .ok_or(PageError::NotFound)
 }
 
-/// Sums over a fleet's requests (or all of them): requested (zKillboard's
-/// value), approved and paid payouts, and counts.
+/// Sums over a fleet's requests (or a list's): requested (zKillboard's
+/// value), AA's Total ISK Cost (every payout set), approved and paid
+/// payouts, and counts.
 struct Totals {
     requests: i64,
     pending: i64,
     requested: f64,
+    cost: f64,
     approved: f64,
     paid: f64,
 }
 
 const TOTALS: &str = "SELECT count(*), count(*) FILTER (WHERE status = 'pending'), \
      coalesce(sum(kb_total_loss), 0)::float8, \
+     coalesce(sum(payout), 0)::float8, \
      coalesce(sum(payout) FILTER (WHERE status = 'approved'), 0)::float8, \
      coalesce(sum(payout) FILTER (WHERE status = 'approved' AND paid), 0)::float8 \
      FROM requests";
@@ -297,8 +316,9 @@ fn totals(row: &[Db]) -> Totals {
         requests: int(row, 0),
         pending: int(row, 1),
         requested: float(row, 2).unwrap_or_default(),
-        approved: float(row, 3).unwrap_or_default(),
-        paid: float(row, 4).unwrap_or_default(),
+        cost: float(row, 3).unwrap_or_default(),
+        approved: float(row, 4).unwrap_or_default(),
+        paid: float(row, 5).unwrap_or_default(),
     }
 }
 
@@ -307,59 +327,56 @@ fn total_stats(t: &Totals) -> Vec<Stat> {
         Stat::new("Requests", t.requests),
         Stat::new("Pending", t.pending).caption("waiting for a decision"),
         Stat::new("Losses", isk(t.requested)).caption("zKillboard's value"),
-        Stat::new("Total ISK Cost", isk(t.approved)).caption("approved payouts"),
+        Stat::new("Total ISK Cost", isk(t.cost)).caption("every payout set"),
         Stat::new("Paid", isk(t.paid)),
         Stat::new("Outstanding", isk(t.approved - t.paid)).caption("approved, not paid"),
     ]
 }
 
-fn srp_fleets(viewer: &Viewer) -> Result<Page, PageError> {
-    let staff = staff(viewer);
+/// AA's SRP fleet list: the open fleets, or (View All) every fleet, with
+/// their Total ISK Cost and pending requests, for everyone with
+/// `access_srp`.
+fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
     let fleets: Vec<(Fleet, i64, f64)> = query(
         &format!(
             "SELECT {FLEET_COLUMNS}, \
              (SELECT count(*) FROM requests r WHERE r.fleet_id = f.id AND r.status = 'pending'), \
-             (SELECT coalesce(sum(r.payout), 0)::float8 FROM requests r \
-                WHERE r.fleet_id = f.id AND r.status = 'approved') \
-             FROM fleets f ORDER BY f.completed, f.fleet_time DESC, f.id DESC LIMIT $1"
+             (SELECT coalesce(sum(r.payout), 0)::float8 FROM requests r WHERE r.fleet_id = f.id) \
+             FROM fleets f WHERE $2 OR NOT f.completed \
+             ORDER BY f.completed, f.fleet_time DESC, f.id DESC LIMIT $1"
         ),
-        &[FLEET_ROWS.into()],
+        &[FLEET_ROWS.into(), all.into()],
     )?
     .iter()
     .map(|r| (fleet(r), int(r, 9), float(r, 10).unwrap_or_default()))
     .collect();
-    let mut columns = vec![
+    let columns = vec![
         Column::text("Fleet Name"),
         Column::numeric("Fleet Time"),
         Column::text("Doctrine"),
         Column::text("Fleet Commander"),
         Column::text("Status"),
+        Column::numeric("Pending"),
+        Column::numeric("Total ISK Cost"),
+        Column::text("SRP"),
     ];
-    if staff {
-        columns.push(Column::numeric("Pending"));
-        columns.push(Column::numeric("Total ISK Cost"));
-    }
-    columns.push(Column::text("SRP"));
     let mut table = Table::new(columns)
-        .title("SRP Fleets")
-        .empty("No SRP fleets yet.");
-    for (f, pending, cost) in &fleets {
-        let name: Value = if staff {
-            link(f.name.clone(), format!("fleet/{}", f.id)).into()
+        .title(if all { "All SRP Fleets" } else { "SRP Fleets" })
+        .empty(if all {
+            "No SRP fleets yet."
         } else {
-            f.name.clone().into()
-        };
+            "No open SRP fleets."
+        });
+    for (f, pending, cost) in &fleets {
         let mut row = vec![
-            name,
+            link(f.name.clone(), format!("fleet/{}", f.id)).into(),
             time_or(f.time, ""),
             f.doctrine.clone().into(),
             f.fleet_commander.clone().into(),
             f.status().into(),
+            (*pending).into(),
+            isk(*cost),
         ];
-        if staff {
-            row.push((*pending).into());
-            row.push(isk(*cost));
-        }
         row.push(if f.completed {
             "Closed".into()
         } else {
@@ -400,17 +417,19 @@ fn srp_fleets(viewer: &Viewer) -> Result<Page, PageError> {
 
     let mut page = Page::new("Ship Replacement")
         .description("SRP fleets, and your requests for your losses on them");
-    if staff {
-        let all = query(TOTALS, &[])?;
-        if let Some(row) = all.first() {
-            page = page.stats(total_stats(&totals(row)));
-        }
+    // AA's Total ISK Cost, over the fleets listed.
+    let sums = query(
+        &format!("{TOTALS} WHERE $1 OR fleet_id IN (SELECT id FROM fleets WHERE NOT completed)"),
+        &[all.into()],
+    )?;
+    if let Some(row) = sums.first() {
+        page = page.stats(total_stats(&totals(row)));
     }
     Ok(page.table(table).table(my))
 }
 
 fn add_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
-    need(viewer.can("add_srpfleetmain"))?;
+    need(can_add(viewer))?;
     let now = Utc::now().format("%Y-%m-%d %H:%M").to_string();
     let form = Form::new("add_fleet", "Create SRP Fleet")
         .description("Pilots request SRP with the fleet's SRP code, until you mark it Completed.")
@@ -439,7 +458,7 @@ fn add_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
 }
 
 fn add_fleet(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
-    need(viewer.can("add_srpfleetmain"))?;
+    need(can_add(viewer))?;
     let again = |text: &str| Ok(SubmitResult::Page(add_page(viewer, Some(text))?));
     let name = submission.value("name").trim().to_owned();
     let doctrine = submission.value("doctrine").trim().to_owned();
@@ -481,19 +500,13 @@ fn add_fleet(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, P
         "SRP fleet {fleet_id} ({name}) added by {} ({})",
         viewer.main.name, viewer.main.id
     ));
-    Ok(SubmitResult::Redirect(if staff(viewer) {
-        format!("fleet/{fleet_id}")
-    } else {
-        String::new()
-    }))
+    Ok(SubmitResult::Redirect(format!("fleet/{fleet_id}")))
 }
 
 // ---- requests ----------------------------------------------------------------
 
 struct Req {
     id: i64,
-    account_id: i64,
-    fleet_time: Option<DateTime<Utc>>,
     fleet_id: i64,
     fleet_name: String,
     character_name: String,
@@ -539,8 +552,6 @@ fn request(row: &[Db]) -> Req {
         created_at: when(row, 14),
         decided_at: when(row, 15),
         paid_at: when(row, 16),
-        account_id: int(row, 17),
-        fleet_time: when(row, 18),
         character_id: int(row, 19),
         ship_type_id: int(row, 20),
     }
@@ -557,7 +568,7 @@ impl Req {
     }
 }
 
-fn request_page(viewer: &Viewer, code: &str, note: Option<&str>) -> Result<Page, PageError> {
+fn request_page(code: &str, note: Option<&str>) -> Result<Page, PageError> {
     let f = fleet_by_code(code)?;
     let about = Card::new(f.name.clone())
         .field("Doctrine", f.doctrine.clone())
@@ -572,24 +583,17 @@ fn request_page(viewer: &Viewer, code: &str, note: Option<&str>) -> Result<Page,
     if f.completed {
         return Ok(page.text("This fleet's SRP is completed: it takes no more requests."));
     }
-    let characters = viewer
-        .characters
-        .iter()
-        .take(100)
-        .map(|c| (c.id.to_string(), c.name.clone()))
-        .collect();
     Ok(page.form(
         Form::new("request", "Request SRP")
             .description(
                 "Tether reads the loss from EVE and its value from zKillboard. It must be a loss \
-                 of the character you pick, and each loss can be requested once.",
+                 of one of your characters, and each loss can be requested once.",
             )
             .field(
                 Field::text("killboard_link", "Killboard Link", MAX_LINK)
                     .required()
-                    .help("zKillboard (https://zkillboard.com/kill/…) or an ESI killmail link"),
+                    .help("zKillboard's link to the kill: https://zkillboard.com/kill/…"),
             )
-            .field(Field::select("character", "Character", characters).required())
             .field(
                 Field::textarea("additional_info", "Additional Info", MAX_INFO)
                     .help("Anything SRP staff should know."),
@@ -666,20 +670,15 @@ fn request_srp(
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
     let f = fleet_by_code(code)?;
-    let again = |text: &str| Ok(SubmitResult::Page(request_page(viewer, code, Some(text))?));
+    let again = |text: &str| Ok(SubmitResult::Page(request_page(code, Some(text))?));
     if f.completed {
         return again("This fleet's SRP is completed: it takes no more requests.");
     }
     let link_text = submission.value("killboard_link").trim().to_owned();
     let Some(link) = killmail::parse_link(&link_text) else {
         return again(
-            "That isn't a killmail link: paste a zKillboard kill (https://zkillboard.com/kill/…) \
-             or an ESI killmail link.",
+            "That isn't a zKillboard link: paste the kill's link, https://zkillboard.com/kill/….",
         );
-    };
-    let chosen: i64 = submission.value("character").parse().unwrap_or_default();
-    let Some(character) = viewer.characters.iter().find(|c| c.id == chosen) else {
-        return Err(PageError::Forbidden);
     };
     let recent_failures = query(
         "SELECT count(*) FROM failed_lookups WHERE account_id = $1 \
@@ -708,29 +707,22 @@ fn request_srp(
         .map_err(|e| failed("noting a failed lookup", e))?;
         again(text)
     };
+    // AA's duplicate check: a loss with a request (on any fleet).
     if !query(
-        "SELECT 1 FROM claimed_kills WHERE killmail_id = $1",
+        "SELECT 1 FROM requests WHERE killmail_id = $1",
         &[link.id.into()],
     )?
     .is_empty()
     {
         return again("SRP has already been requested for this loss.");
     }
-    let zkb = zkb_value(link.id)?;
-    let hash = match (&link.hash, &zkb) {
-        // A hash zKillboard contradicts isn't worth asking EVE about.
-        (Some(hash), Some(zkb)) if *hash != zkb.hash => {
-            return refused("That link's hash doesn't match the kill: check the link.");
-        }
-        (Some(hash), _) => hash.clone(),
-        (None, Some(zkb)) => zkb.hash.clone(),
-        (None, None) => {
-            return refused(
-                "zKillboard doesn't know that kill yet, or couldn't be reached. Try again in a few \
-                 minutes, or paste the ESI killmail link from the game.",
-            );
-        }
+    let Some(zkb) = zkb_value(link.id)? else {
+        return refused(
+            "zKillboard doesn't know that kill yet, or couldn't be reached. Try again in a few \
+             minutes.",
+        );
     };
+    let hash = zkb.hash.clone();
     let params = vec![
         ("killmail_id".to_owned(), link.id.to_string()),
         ("killmail_hash".to_owned(), hash.clone()),
@@ -756,38 +748,29 @@ fn request_srp(
             "ESI's killmail couldn't be read".to_owned(),
         ));
     };
-    // The victim must be one of the pilot's own characters, the one they
-    // picked.
-    match km.victim_character_id {
-        Some(victim) if victim == character.id => {}
-        Some(victim) => {
-            return match viewer.characters.iter().find(|c| c.id == victim) {
-                Some(other) => again(&format!(
-                    "That loss is {}'s: pick {} as the character.",
-                    other.name, other.name
-                )),
-                None => refused("That loss isn't one of your characters'."),
-            };
-        }
+    // The victim must be one of the pilot's own characters (as AA).
+    let character = match km.victim_character_id {
+        Some(victim) => match viewer.characters.iter().find(|c| c.id == victim) {
+            Some(character) => character,
+            None => return refused("That loss isn't one of your characters'."),
+        },
         None => {
             return refused("That loss has no pilot: SRP is for ships your characters lost.");
         }
-    }
+    };
     let ship_name = esi::names(&[km.ship_type_id])
         .ok()
         .and_then(|names| names.into_iter().find(|n| n.id == km.ship_type_id))
         .map_or_else(|| format!("Type {}", km.ship_type_id), |n| n.name);
-    // The claim and the request together: each loss once, ever.
+    // Once per loss while its request exists (killmail_id is unique), and
+    // only on a fleet still open.
     let added = storage::query(
-        "WITH claim AS ( \
-           INSERT INTO claimed_kills (killmail_id) \
-           SELECT $5 WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed) \
-           ON CONFLICT (killmail_id) DO NOTHING RETURNING killmail_id) \
-         INSERT INTO requests (fleet_id, account_id, character_id, character_name, killmail_id, \
+        "INSERT INTO requests (fleet_id, account_id, character_id, character_name, killmail_id, \
              killmail_hash, killboard_link, ship_type_id, ship_name, solar_system_id, \
              killmail_time, kb_total_loss, additional_info) \
-         SELECT $1, $2, $3, $4, claim.killmail_id, $6, $7, $8, $9, $10, $11, $12, $13 \
-         FROM claim RETURNING id",
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13 \
+         WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed) \
+         ON CONFLICT (killmail_id) DO NOTHING RETURNING id",
         &[
             f.id.into(),
             viewer.account_id.into(),
@@ -800,7 +783,7 @@ fn request_srp(
             ship_name.clone().into(),
             km.solar_system_id.into(),
             Db::timestamp(rfc3339(km.time)),
-            zkb.map(|z| z.total_value).into(),
+            zkb.total_value.into(),
             submission.value("additional_info").trim().to_owned().into(),
         ],
     )
@@ -817,8 +800,9 @@ fn request_srp(
 
 // ---- fleet view ----------------------------------------------------------------
 
+/// A fleet's requests, for everyone with `access_srp` (AA's fleet view);
+/// managers' buttons and the requests' own pages for `srp_management`.
 fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page, PageError> {
-    need(staff(viewer))?;
     let f = fleet_by_id(fleet_id)?;
     let requests: Vec<Req> = query(
         &format!("{REQUEST_SELECT} WHERE r.fleet_id = $1 ORDER BY r.created_at, r.id LIMIT $2"),
@@ -848,7 +832,7 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
     if !f.aar.is_empty() {
         about = about.field("After Action Report", cut(&f.aar, 1500));
     }
-    let manage = viewer.can("manage_srp");
+    let manage = manager(viewer);
     if manage {
         about = about.field("Actions", actions(fleet_buttons(&f)));
     }
@@ -857,6 +841,7 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
         Column::text("Character"),
         Column::text("Ship"),
         Column::numeric("Killmail"),
+        Column::text("Additional Info"),
         Column::numeric("Loss value"),
         Column::numeric("Payout"),
         Column::text("Status"),
@@ -869,18 +854,24 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
         .title("SRP Requests")
         .empty("No requests yet.");
     for r in &requests {
+        let who: Value = if manage {
+            link(r.character_name.clone(), format!("review/{}", r.id)).into()
+        } else {
+            pilot(r.character_id, &r.character_name)
+        };
         let mut row = vec![
             time_or(r.created_at, ""),
-            link(r.character_name.clone(), format!("review/{}", r.id)).into(),
+            who,
             ship(r.ship_type_id, &r.ship_name),
             r.killmail_id.into(),
+            cut(&r.info, 200).into(),
             isk_or(r.kb_total_loss, "unknown"),
             isk_or(r.payout, ""),
             r.status().into(),
         ];
         if manage {
             // A value holds 1 to 4 buttons: an empty cell for none.
-            let buttons = request_buttons(viewer, r);
+            let buttons = request_buttons(r);
             row.push(if buttons.is_empty() {
                 "".into()
             } else {
@@ -910,21 +901,18 @@ fn fleet_buttons(f: &Fleet) -> Vec<Action> {
                 .confirm("No more requests: finish reviewing the ones in.")
         },
         action("Mark Approved Paid", "pay_all")
-            .confirm("Every approved request of this fleet is marked paid now, except your own."),
+            .confirm("Every approved request of this fleet is marked paid now."),
         action("Remove Fleet", "remove").tone(Tone::Danger).confirm(
-            "The fleet, its requests and their comments are removed. Their losses stay claimed: \
-             they can't be requested again.",
+            "The fleet, its requests and their comments are removed. Their losses can then be \
+             requested again, as in AA.",
         ),
     ]
 }
 
-/// A request's buttons in its fleet's table, for SRP managers: Approve
-/// and Reject until it's paid, Mark Paid once approved; none on their own
-/// request. Each posts to `fleet_action` with the request's id.
-fn request_buttons(viewer: &Viewer, r: &Req) -> Vec<Action> {
-    if r.paid || r.account_id == viewer.account_id {
-        return Vec::new();
-    }
+/// A request's buttons in its fleet's table, for SRP managers: Approve,
+/// Reject and, once approved, Mark Paid. Each posts to `fleet_action` with
+/// the request's id.
+fn request_buttons(r: &Req) -> Vec<Action> {
     let on = |a: Action| a.field("request", r.id.to_string());
     let mut buttons = Vec::new();
     if r.status != "approved" {
@@ -936,12 +924,13 @@ fn request_buttons(viewer: &Viewer, r: &Req) -> Vec<Action> {
                 .field("decision", "reject")
                 .tone(Tone::Danger)
                 .confirm(format!(
-                    "{}'s request for their {} is rejected; they see it on their SRP page.",
+                    "{}'s request for their {} is rejected (and no longer paid, if it was); they \
+                     see it on their SRP page.",
                     r.character_name, r.ship_name
                 )),
         );
     }
-    if r.status == "approved" {
+    if r.status == "approved" && !r.paid {
         buttons.push(on(action("Mark Paid", "paid")).confirm(format!(
             "{}'s {} is marked paid.",
             r.character_name, r.ship_name
@@ -955,7 +944,7 @@ fn fleet_action(
     fleet_id: i64,
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
-    need(viewer.can("manage_srp"))?;
+    need(manager(viewer))?;
     let f = fleet_by_id(fleet_id)?;
     let back = || Ok(SubmitResult::Redirect(format!("fleet/{fleet_id}")));
     let who = format!("{} ({})", viewer.main.name, viewer.main.id);
@@ -977,11 +966,10 @@ fn fleet_action(
             back()
         }
         "pay_all" => {
-            // Not the manager's own: someone else pays those.
             let paid = storage::execute(
                 "UPDATE requests SET paid = true, paid_at = now() \
-                 WHERE fleet_id = $1 AND status = 'approved' AND NOT paid AND account_id <> $2",
-                &[f.id.into(), viewer.account_id.into()],
+                 WHERE fleet_id = $1 AND status = 'approved' AND NOT paid",
+                &[f.id.into()],
             )
             .map_err(|e| failed("marking paid", e))?;
             log::info(format!(
@@ -996,15 +984,11 @@ fn fleet_action(
             log::info(format!("SRP fleet {} ({}) removed by {who}", f.id, f.name));
             Ok(SubmitResult::Redirect(String::new()))
         }
-        // A request's row buttons: one of this fleet's, not the manager's
-        // own.
+        // A request's row buttons: one of this fleet's.
         form @ ("decide" | "paid") => {
             let r = request_by_id(id(submission.value("request"))?)?;
             if r.fleet_id != f.id {
                 return Err(PageError::NotFound);
-            }
-            if r.account_id == viewer.account_id {
-                return Err(PageError::Forbidden);
             }
             let problem = if form == "paid" {
                 mark_paid(viewer, &r)?
@@ -1042,7 +1026,7 @@ fn request_by_id(request_id: i64) -> Result<Req, PageError> {
 }
 
 fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<Page, PageError> {
-    need(staff(viewer))?;
+    need(manager(viewer))?;
     let r = request_by_id(request_id)?;
     let mut about = Card::new("SRP Request")
         .field(
@@ -1073,17 +1057,7 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
     if !r.info.is_empty() {
         about = about.field("Additional Info", cut(&r.info, 1500));
     }
-    // Flagged, not refused (as AA): a loss far from the fleet's time.
-    if let (Some(lost), Some(fleet)) = (r.killmail_time, r.fleet_time)
-        && (lost - fleet).num_hours().abs() >= 24
-    {
-        about = about.field(
-            "Check",
-            badge("Lost more than a day from the fleet time", Tone::Warning),
-        );
-    }
-    let own = r.account_id == viewer.account_id;
-    if viewer.can("manage_srp") && r.status == "approved" && !r.paid && !own {
+    if r.status == "approved" && !r.paid {
         about = about.field(
             "Payment",
             action("Mark Paid", "paid").confirm(format!(
@@ -1119,47 +1093,38 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
         page = page.text(note);
     }
     page = page.card(about).table(table);
-    if own {
-        page = page.text("This is your own request: someone else on SRP staff decides it.");
-    }
-    if viewer.can("manage_srp") && !r.paid && !own {
-        page = page.form(
-            Form::new("decide", "Save Decision")
-                .description(
-                    "Approving without a payout set pays zKillboard's value. The pilot sees the \
-                     decision on their SRP page.",
+    page = page.form(
+        Form::new("decide", "Save Decision")
+            .description(
+                "Approving without a payout set pays zKillboard's value; rejecting a paid request \
+                 unmarks it paid. The pilot sees the decision on their SRP page.",
+            )
+            .field(
+                Field::select(
+                    "decision",
+                    "Decision",
+                    vec![
+                        ("approve".to_owned(), "Approve".to_owned()),
+                        ("reject".to_owned(), "Reject".to_owned()),
+                    ],
                 )
-                .field(
-                    Field::select(
-                        "decision",
-                        "Decision",
-                        vec![
-                            ("approve".to_owned(), "Approve".to_owned()),
-                            ("reject".to_owned(), "Reject".to_owned()),
-                        ],
-                    )
-                    .required(),
-                )
-                .field(Field::textarea("comment", "Comment", MAX_COMMENT)),
-        );
+                .required(),
+            )
+            .field(Field::textarea("comment", "Comment", MAX_COMMENT)),
+    );
+    // AA's update amount: at any time, whatever the status.
+    let mut amount = Field::number("payout", "Payout (ISK)")
+        .range(Some(0.0), Some(MAX_PAYOUT), true)
+        .required();
+    if let Some(p) = r.payout.or(r.kb_total_loss) {
+        amount = amount.value(format!("{}", p.round() as i64));
     }
-    if viewer.can("change_srpuserrequest") && !r.paid && r.status != "rejected" && !own {
-        let mut amount = Field::number("payout", "Payout (ISK)")
-            .range(Some(0.0), Some(MAX_PAYOUT), true)
-            .required();
-        if let Some(p) = r.payout.or(r.kb_total_loss) {
-            amount = amount.value(format!("{}", p.round() as i64));
-        }
-        page = page.form(
-            Form::new("payout", "Update Payout")
-                .description(
-                    "What this loss pays out, whole ISK. Changing an approved payout sends it \
-                     back to pending, for a manager to approve again.",
-                )
-                .field(amount)
-                .field(Field::textarea("comment", "Comment", MAX_COMMENT)),
-        );
-    }
+    page = page.form(
+        Form::new("payout", "Update Payout")
+            .description("What this loss pays out, whole ISK. The status stays as it is.")
+            .field(amount)
+            .field(Field::textarea("comment", "Comment", MAX_COMMENT)),
+    );
     Ok(page.form(
         Form::new("comment", "Add Comment")
             .description("Only SRP staff see comments.")
@@ -1186,32 +1151,33 @@ fn add_comment(viewer: &Viewer, request_id: i64, body: &str) -> Result<bool, Pag
 }
 
 /// Approves or rejects a request, with the comment (if any) on the
-/// record. Callers check `manage_srp` and that it isn't the viewer's own.
-/// What went wrong, for the page, if it couldn't be decided.
+/// record. Callers check `srp_management`. What went wrong, for the page,
+/// if it couldn't be decided.
 fn decide(
     viewer: &Viewer,
     r: &Req,
     approve: bool,
     comment: &str,
 ) -> Result<Option<&'static str>, PageError> {
-    // Not once paid, nor by its own pilot. Approving keeps a payout set
-    // earlier, else pays zKillboard's value.
+    // At any time, as AA. Approving keeps a payout set earlier, else pays
+    // zKillboard's value; rejecting unmarks a paid request (only approved
+    // ones are paid).
     let changed = storage::execute(
         "UPDATE requests SET status = $2, \
            payout = CASE WHEN $3 THEN coalesce(payout, kb_total_loss) ELSE payout END, \
+           paid = paid AND $3, paid_at = CASE WHEN $3 THEN paid_at END, \
            reviewer_name = $4, decided_at = now() \
-         WHERE id = $1 AND NOT paid AND account_id <> $5",
+         WHERE id = $1",
         &[
             r.id.into(),
             if approve { "approved" } else { "rejected" }.into(),
             approve.into(),
             viewer.main.name.clone().into(),
-            viewer.account_id.into(),
         ],
     )
     .map_err(|e| failed("saving the decision", e))?;
     if changed == 0 {
-        return Ok(Some("It's paid already: nothing to decide."));
+        return Ok(Some("That request is gone."));
     }
     // Every decision is on the record, with the comment if any.
     let word = if approve { "Approved" } else { "Rejected" };
@@ -1235,13 +1201,12 @@ fn decide(
     Ok(None)
 }
 
-/// Marks an approved request paid, once. Callers check `manage_srp` and
-/// that it isn't the viewer's own.
+/// Marks an approved request paid, once. Callers check `srp_management`.
 fn mark_paid(viewer: &Viewer, r: &Req) -> Result<Option<&'static str>, PageError> {
     let changed = storage::execute(
         "UPDATE requests SET paid = true, paid_at = now() \
-         WHERE id = $1 AND status = 'approved' AND NOT paid AND account_id <> $2",
-        &[r.id.into(), viewer.account_id.into()],
+         WHERE id = $1 AND status = 'approved' AND NOT paid",
+        &[r.id.into()],
     )
     .map_err(|e| failed("marking paid", e))?;
     if changed == 0 {
@@ -1260,7 +1225,7 @@ fn review_action(
     request_id: i64,
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
-    need(staff(viewer))?;
+    need(manager(viewer))?;
     let r = request_by_id(request_id)?;
     let back = || Ok(SubmitResult::Redirect(format!("review/{request_id}")));
     let note = |text: &str| {
@@ -1272,13 +1237,8 @@ fn review_action(
     };
     let who = format!("{} ({})", viewer.main.name, viewer.main.id);
     let comment = submission.value("comment").trim().to_owned();
-    // Nobody decides, prices or pays their own request.
-    if r.account_id == viewer.account_id && submission.form != "comment" {
-        return Err(PageError::Forbidden);
-    }
     match submission.form.as_str() {
         "decide" => {
-            need(viewer.can("manage_srp"))?;
             let approve = match submission.value("decision") {
                 "approve" => true,
                 "reject" => false,
@@ -1290,7 +1250,6 @@ fn review_action(
             }
         }
         "payout" => {
-            need(viewer.can("change_srpuserrequest"))?;
             let amount: f64 = submission
                 .value("payout")
                 .parse()
@@ -1298,26 +1257,19 @@ fn review_action(
             if !(0.0..=MAX_PAYOUT).contains(&amount) {
                 return note("That payout is out of range.");
             }
-            // An approved request goes back to pending: a manager approves
-            // the new amount before it can be paid.
+            // AA's update amount: the status stays.
             let changed = storage::execute(
-                "UPDATE requests SET payout = $2, status = 'pending', decided_at = NULL \
-                 WHERE id = $1 AND NOT paid AND status <> 'rejected' AND account_id <> $3",
-                &[r.id.into(), amount.into(), viewer.account_id.into()],
+                "UPDATE requests SET payout = $2 WHERE id = $1",
+                &[r.id.into(), amount.into()],
             )
             .map_err(|e| failed("saving the payout", e))?;
             if changed == 0 {
-                return note("Paid or rejected requests keep their payout.");
+                return note("That request is gone.");
             }
-            let again = if r.status == "approved" {
-                " Back to pending."
-            } else {
-                ""
-            };
             let line = if comment.is_empty() {
-                format!("Payout set to {amount:.0} ISK.{again}")
+                format!("Payout set to {amount:.0} ISK.")
             } else {
-                format!("Payout set to {amount:.0} ISK: {comment}{again}")
+                format!("Payout set to {amount:.0} ISK: {comment}")
             };
             // A note for the record; a full comment list doesn't block it.
             add_comment(viewer, r.id, &line)?;
@@ -1327,13 +1279,10 @@ fn review_action(
             ));
             back()
         }
-        "paid" => {
-            need(viewer.can("manage_srp"))?;
-            match mark_paid(viewer, &r)? {
-                Some(problem) => note(problem),
-                None => back(),
-            }
-        }
+        "paid" => match mark_paid(viewer, &r)? {
+            Some(problem) => note(problem),
+            None => back(),
+        },
         "comment" => {
             if comment.is_empty() {
                 return note("Write a comment first.");

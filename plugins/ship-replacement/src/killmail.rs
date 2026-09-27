@@ -3,16 +3,13 @@
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
-/// A kill named by a link: its id, and its hash when the link has it
-/// (ESI links do; zKillboard's don't).
+/// A kill named by a zKillboard link: its id (zKillboard gives the hash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub id: i64,
-    pub hash: Option<String>,
 }
 
-/// `https://zkillboard.com/kill/<id>/`, or an ESI killmail link
-/// `https://esi.evetech.net/[latest|v1/]killmails/<id>/<hash>/`.
+/// `https://zkillboard.com/kill/<id>/`: zKillboard links only, as AA.
 pub fn parse_link(link: &str) -> Option<Link> {
     let link = link.trim();
     let rest = link
@@ -23,25 +20,9 @@ pub fn parse_link(link: &str) -> Option<Link> {
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     match host.to_ascii_lowercase().as_str() {
         "zkillboard.com" | "www.zkillboard.com" => match parts.as_slice() {
-            ["kill", id] => Some(Link {
-                id: kill_id(id)?,
-                hash: None,
-            }),
+            ["kill", id] => Some(Link { id: kill_id(id)? }),
             _ => None,
         },
-        "esi.evetech.net" => {
-            let parts = match parts.as_slice() {
-                [version, rest @ ..] if *version == "latest" || version.starts_with('v') => rest,
-                all => all,
-            };
-            match parts {
-                ["killmails", id, hash] if is_hash(hash) => Some(Link {
-                    id: kill_id(id)?,
-                    hash: Some(hash.to_ascii_lowercase()),
-                }),
-                _ => None,
-            }
-        }
         _ => None,
     }
 }
@@ -122,37 +103,12 @@ mod tests {
 
     #[test]
     fn links() {
-        for (text, id, hash) in [
-            ("https://zkillboard.com/kill/128570923/", 128570923, None),
-            ("https://zkillboard.com/kill/128570923", 128570923, None),
-            ("  http://www.zkillboard.com/kill/5/#top ", 5, None),
-            (
-                &format!("https://esi.evetech.net/latest/killmails/7/{HASH}/"),
-                7,
-                Some(HASH),
-            ),
-            (
-                &format!("https://esi.evetech.net/v1/killmails/7/{HASH}/?datasource=tranquility"),
-                7,
-                Some(HASH),
-            ),
-            (
-                &format!(
-                    "https://esi.evetech.net/killmails/7/{}",
-                    HASH.to_uppercase()
-                ),
-                7,
-                Some(HASH),
-            ),
+        for (text, id) in [
+            ("https://zkillboard.com/kill/128570923/", 128570923),
+            ("https://zkillboard.com/kill/128570923", 128570923),
+            ("  http://www.zkillboard.com/kill/5/#top ", 5),
         ] {
-            assert_eq!(
-                parse_link(text),
-                Some(Link {
-                    id,
-                    hash: hash.map(str::to_owned)
-                }),
-                "{text}"
-            );
+            assert_eq!(parse_link(text), Some(Link { id }), "{text}");
         }
         for bad in [
             "",
@@ -164,6 +120,8 @@ mod tests {
             "https://evil.example/kill/1/",
             "https://esi.evetech.net/latest/killmails/7/short/",
             "https://esi.evetech.net/latest/killmails/7/",
+            // ESI links: zKillboard only, as AA.
+            &format!("https://esi.evetech.net/latest/killmails/7/{HASH}/"),
             "ftp://zkillboard.com/kill/1/",
         ] {
             assert_eq!(parse_link(bad), None, "{bad}");
