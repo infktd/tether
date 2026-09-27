@@ -18,7 +18,7 @@ async fn lists_who_holds_a_permission_and_through_what(db: PgPool) {
     let denied = page(&h, "/admin/permissions/audit", &pilot).await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
 
-    // A group grants fleet.ping; the pilot joins it.
+    // A group grants fleetpings.basic_access; the pilot joins it.
     let group = send(
         &h.app,
         post_json("/api/admin/groups", &owner, r#"{"name":"FCs"}"#),
@@ -32,7 +32,7 @@ async fn lists_who_holds_a_permission_and_through_what(db: PgPool) {
         post_json(
             "/api/admin/permissions/grants",
             &owner,
-            &format!(r#"{{"permission":"fleet.ping","group_id":{group}}}"#),
+            &format!(r#"{{"permission":"fleetpings.basic_access","group_id":{group}}}"#),
         ),
     )
     .await;
@@ -53,17 +53,22 @@ async fn lists_who_holds_a_permission_and_through_what(db: PgPool) {
     assert_eq!(list.status, StatusCode::OK);
     assert!(
         list.body
-            .contains(r#"href="/admin/permissions/audit/fleet.ping""#),
+            .contains(r#"href="/admin/permissions/audit/fleetpings.basic_access""#),
         "{}",
         list.body
     );
-    let held = tether_db::permissions_audit::counts(&h.db, "fleet.ping")
+    let held = tether_db::permissions_audit::counts(&h.db, "fleetpings.basic_access")
         .await
         .unwrap();
     // The group, and the owner plus the pilot.
     assert_eq!((held.groups, held.accounts), (1, 2));
 
-    let one = page(&h, "/admin/permissions/audit/fleet.ping", &owner).await;
+    let one = page(
+        &h,
+        "/admin/permissions/audit/fleetpings.basic_access",
+        &owner,
+    )
+    .await;
     assert_eq!(one.status, StatusCode::OK);
     assert!(one.body.contains("Group: FCs"), "{}", one.body);
     assert!(one.body.contains(">Superuser<"), "{}", one.body);
@@ -74,7 +79,12 @@ async fn lists_who_holds_a_permission_and_through_what(db: PgPool) {
         .execute(&h.db)
         .await
         .unwrap();
-    let one = page(&h, "/admin/permissions/audit/fleet.ping", &owner).await;
+    let one = page(
+        &h,
+        "/admin/permissions/audit/fleetpings.basic_access",
+        &owner,
+    )
+    .await;
     assert!(!one.body.contains("Group: FCs"), "{}", one.body);
 
     let missing = page(&h, "/admin/permissions/audit/no.such", &owner).await;

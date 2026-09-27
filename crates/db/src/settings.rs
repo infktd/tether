@@ -27,6 +27,13 @@ pub const THEME_ACCENT: &str = "theme.accent";
 /// aa-fleetpings: whether pings may target @here and @everyone. On unless
 /// set.
 pub const PINGS_MASS_MENTIONS: &str = "pings.mass_mentions";
+/// aa-fleetpings' `use_default_fleet_types`: whether the form offers
+/// Roaming, Home Defense, StratOP and CTA beside the configured fleet
+/// types. On unless set.
+pub const PINGS_DEFAULT_FLEET_TYPES: &str = "pings.use_default_fleet_types";
+/// aa-fleetpings' `default_embed_color`: the ping card's colour when its
+/// fleet type has none (`#rrggbb`). `#faa61a` unless set.
+pub const PINGS_DEFAULT_EMBED_COLOR: &str = "pings.default_embed_color";
 
 /// AA's `GROUPMANAGEMENT_AUTO_LEAVE`: `true` lets members leave
 /// requestable groups without approval. Off unless set.

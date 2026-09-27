@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde::Deserialize;
-use tether_core::permissions::{ADMIN_DISCORD, FLEET_PING};
+use tether_core::permissions::{ADMIN_DISCORD, FLEETPINGS_ACCESS};
 use tether_db::ping_options::{self, Kind, PingOption, Restriction};
 use tether_db::pings::{self as db, Target};
 
@@ -158,7 +158,7 @@ pub async fn pings_page(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, FLEET_PING, "pings").await?;
+    let (session, shell) = guard(&state, session, FLEETPINGS_ACCESS, "pings").await?;
     page(&state, &session, shell, PingForm::default(), None).await
 }
 
@@ -168,7 +168,7 @@ pub async fn send(
     session: Option<CurrentSession>,
     Form(form): Form<PingForm>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, FLEET_PING, "pings").await?;
+    let (session, shell) = guard(&state, session, FLEETPINGS_ACCESS, "pings").await?;
     match pings::send(&state, session.account, &form).await {
         Ok(_) => Ok(super::stay::back("/pings", "Ping sent.")),
         Err(err) => page(&state, &session, shell, form, Some(err)).await,
@@ -190,7 +190,7 @@ pub async fn preview(
     Form(form): Form<PingForm>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
-    session.require(&state, FLEET_PING).await?;
+    session.require(&state, FLEETPINGS_ACCESS).await?;
     let offer = pings::offer(&state, session.account).await?;
     let fragment = match pings::details(&form, &offer) {
         Ok(details) => PreviewFragment {
@@ -220,7 +220,8 @@ pub struct Limitable {
 #[template(path = "admin_pings.html")]
 struct SettingsPage {
     shell: Shell,
-    mass_mentions: bool,
+    settings: pings::PingSettings,
+    default_fleet_types: &'static [(&'static str, &'static str)],
     channels: Vec<Limitable>,
     targets: Vec<Limitable>,
     fleet_types: Vec<Limitable>,
@@ -311,12 +312,8 @@ async fn settings_page(
             code,
             &SettingsPage {
                 shell,
-                mass_mentions: tether_db::settings::get_bool_or(
-                    &state.db,
-                    tether_db::settings::PINGS_MASS_MENTIONS,
-                    true,
-                )
-                .await?,
+                settings: pings::ping_settings(&state.db).await?,
+                default_fleet_types: pings::DEFAULT_FLEET_TYPES,
                 channels,
                 targets,
                 fleet_types,
@@ -352,20 +349,28 @@ pub async fn settings(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct MassForm {
+pub struct SettingsForm {
     #[serde(default)]
     mass_mentions: Option<String>,
+    #[serde(default)]
+    default_fleet_types: Option<String>,
+    #[serde(default)]
+    default_embed_color: String,
 }
 
 /// `POST /admin/pings/settings`
 pub async fn save_settings(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Form(form): Form<MassForm>,
+    Form(form): Form<SettingsForm>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_DISCORD, "pings_settings").await?;
-    let result =
-        pings::set_mass_mentions(&state, session.account, form.mass_mentions.is_some()).await;
+    let settings = pings::PingSettings {
+        mass_mentions: form.mass_mentions.is_some(),
+        default_fleet_types: form.default_fleet_types.is_some(),
+        default_color: form.default_embed_color,
+    };
+    let result = pings::save_settings(&state, session.account, &settings).await;
     done(&state, shell, result).await
 }
 

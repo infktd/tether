@@ -138,6 +138,47 @@ pub struct Offer {
     /// Configured doctrines this account may not use: their names can't be
     /// typed in either.
     pub closed_doctrines: Vec<String>,
+    /// aa-fleetpings' default embed colour: the card's colour when the
+    /// fleet type has none, `#rrggbb`.
+    pub default_color: String,
+}
+
+/// aa-fleetpings' default fleet types and their embed colours, offered to
+/// everyone who can ping while `use_default_fleet_types` is on.
+pub const DEFAULT_FLEET_TYPES: &[(&str, &str)] = &[
+    ("Roaming", "#81fd2d"),
+    ("Home Defense", "#f1c40f"),
+    ("StratOP", "#e67e22"),
+    ("CTA", "#e91e63"),
+];
+
+/// aa-fleetpings' default `default_embed_color`.
+pub const DEFAULT_EMBED_COLOR: &str = "#faa61a";
+
+/// Whether a colour is `#` and six hex digits.
+pub fn valid_color(color: &str) -> bool {
+    color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The Fleet Pings settings (aa-fleetpings' `Setting`), as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PingSettings {
+    /// `use_default_ping_targets`: @here and @everyone.
+    pub mass_mentions: bool,
+    pub default_fleet_types: bool,
+    pub default_color: String,
+}
+
+pub async fn ping_settings(db: &tether_db::PgPool) -> Result<PingSettings, AppError> {
+    use tether_db::settings as s;
+    Ok(PingSettings {
+        mass_mentions: s::get_bool_or(db, s::PINGS_MASS_MENTIONS, true).await?,
+        default_fleet_types: s::get_bool_or(db, s::PINGS_DEFAULT_FLEET_TYPES, true).await?,
+        default_color: s::get_string(db, s::PINGS_DEFAULT_EMBED_COLOR)
+            .await?
+            .filter(|c| valid_color(c))
+            .unwrap_or_else(|| DEFAULT_EMBED_COLOR.to_owned()),
+    })
 }
 
 /// A target's key in `core.ping_restrictions`; `None` pings nobody and is
@@ -165,9 +206,8 @@ pub async fn offer(state: &AppState, account: AccountId) -> Result<Offer, AppErr
         .is_some_and(|a| a.is_owner);
     let access = ping_options::access(&state.db, account).await?;
     let may = |item: &str| owner || access.may_use(item);
-    let mass =
-        tether_db::settings::get_bool_or(&state.db, tether_db::settings::PINGS_MASS_MENTIONS, true)
-            .await?;
+    let settings = ping_settings(&state.db).await?;
+    let mass = settings.mass_mentions;
     let mut offer = Offer {
         channels: channels
             .into_iter()
@@ -179,9 +219,31 @@ pub async fn offer(state: &AppState, account: AccountId) -> Result<Offer, AppErr
             .filter(|t| mass || !matches!(t, Target::Here | Target::Everyone))
             .filter(|t| target_item(t).is_none_or(|item| may(&item)))
             .collect(),
+        default_color: settings.default_color,
         ..Offer::default()
     };
-    for option in ping_options::list(&state.db).await? {
+    let options = ping_options::list(&state.db).await?;
+    // aa-fleetpings' defaults come first, open to everyone who can ping; a
+    // configured fleet type of the same name takes its place (and its
+    // limits).
+    if settings.default_fleet_types {
+        for (i, (name, color)) in (1..).zip(DEFAULT_FLEET_TYPES) {
+            if options
+                .iter()
+                .any(|o| o.kind == Kind::FleetType && o.name.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
+            offer.fleet_types.push(PingOption {
+                id: -i,
+                kind: Kind::FleetType,
+                name: (*name).to_owned(),
+                link: None,
+                color: Some((*color).to_owned()),
+            });
+        }
+    }
+    for option in options {
         let open = may(&option.item());
         match option.kind {
             Kind::FleetType if open => offer.fleet_types.push(option),
@@ -297,7 +359,7 @@ pub fn details(form: &PingForm, offer: &Offer) -> Result<Details, AppError> {
         }
         Some(at)
     };
-    Ok(Details {
+    let mut details = Details {
         pre_ping: form.pre_ping.is_some(),
         embed_color: fleet_type.and_then(|t| t.color.clone()),
         fleet_type: fleet_type.map(|t| t.name.clone()),
@@ -314,7 +376,13 @@ pub fn details(form: &PingForm, offer: &Offer) -> Result<Details, AppError> {
             "no" => Some(false),
             _ => None,
         },
-    })
+    };
+    // A detailed ping's card takes the default colour when its fleet type
+    // has none (aa-fleetpings' `default_embed_color`).
+    if details.embed_color.is_none() && !details.is_empty() {
+        details.embed_color = Some(offer.default_color.clone());
+    }
+    Ok(details)
 }
 
 /// Records the ping and sends it. Returns its id.
@@ -462,10 +530,7 @@ pub async fn add_option(
         (Kind::FleetType, "") | (_, "") => None,
         (Kind::FleetType, color) => {
             let color = color.to_ascii_lowercase();
-            let valid = color.len() == 7
-                && color.starts_with('#')
-                && color[1..].chars().all(|c| c.is_ascii_hexdigit());
-            if !valid {
+            if !valid_color(&color) {
                 return Err(AppError::bad_request("A colour is # and six hex digits."));
             }
             Some(color)
@@ -611,17 +676,38 @@ pub async fn unrestrict(state: &AppState, actor: AccountId, id: i64) -> Result<(
     Ok(())
 }
 
-/// Turns @here and @everyone on or off for every ping.
-pub async fn set_mass_mentions(
+/// Saves the Fleet Pings settings (aa-fleetpings' `Setting`).
+pub async fn save_settings(
     state: &AppState,
     actor: AccountId,
-    on: bool,
+    settings: &PingSettings,
 ) -> Result<(), AppError> {
+    use tether_db::settings as s;
+    // Empty: aa-fleetpings' own default.
+    let color = match settings.default_color.trim() {
+        "" => DEFAULT_EMBED_COLOR.to_owned(),
+        color => color.to_ascii_lowercase(),
+    };
+    if !valid_color(&color) {
+        return Err(AppError::bad_request("A colour is # and six hex digits."));
+    }
     let mut tx = state.db.begin().await?;
-    tether_db::settings::set(
+    s::set(
         &mut *tx,
-        tether_db::settings::PINGS_MASS_MENTIONS,
-        serde_json::Value::Bool(on),
+        s::PINGS_MASS_MENTIONS,
+        serde_json::Value::Bool(settings.mass_mentions),
+    )
+    .await?;
+    s::set(
+        &mut *tx,
+        s::PINGS_DEFAULT_FLEET_TYPES,
+        serde_json::Value::Bool(settings.default_fleet_types),
+    )
+    .await?;
+    s::set(
+        &mut *tx,
+        s::PINGS_DEFAULT_EMBED_COLOR,
+        serde_json::Value::String(color.clone()),
     )
     .await?;
     audit::record(
@@ -629,7 +715,11 @@ pub async fn set_mass_mentions(
         Actor::Account(actor),
         "ping.settings",
         None,
-        json!({ "mass_mentions": on }),
+        json!({
+            "mass_mentions": settings.mass_mentions,
+            "default_fleet_types": settings.default_fleet_types,
+            "default_embed_color": color,
+        }),
     )
     .await?;
     tx.commit().await?;

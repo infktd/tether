@@ -8,7 +8,8 @@ pub const ADMIN_AUDIT: &str = "admin.audit";
 pub const ADMIN_DISCORD: &str = "admin.discord";
 pub const ADMIN_SYSTEM: &str = "admin.system";
 pub const ADMIN_PLUGINS: &str = "admin.plugins";
-pub const FLEET_PING: &str = "fleet.ping";
+/// aa-fleetpings' permission: send fleet pings.
+pub const FLEETPINGS_ACCESS: &str = "fleetpings.basic_access";
 pub const COMPLIANCE_VIEW: &str = "compliance.view";
 /// AA's Corporation Stats views: the main's own corporation, its
 /// alliance's corporations, or the corporations the main's state covers.
@@ -95,8 +96,8 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
         "Set up the Discord bot and choose which roles states and groups get",
     ),
     (
-        FLEET_PING,
-        "Send fleet pings to Discord, including @everyone",
+        FLEETPINGS_ACCESS,
+        "Fleet Pings: send fleet pings to Discord, including @everyone",
     ),
     (
         COMPLIANCE_VIEW,
@@ -113,7 +114,7 @@ pub fn is_known(permission: &str) -> bool {
 /// whole server.
 pub fn is_sensitive(permission: &str) -> bool {
     permission.starts_with("admin.")
-        || permission == FLEET_PING
+        || permission == FLEETPINGS_ACCESS
         || permission == COMPLIANCE_VIEW
         || permission == GROUP_MANAGEMENT
         // Who holds what maps out the admins.

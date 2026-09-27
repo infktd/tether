@@ -39,7 +39,7 @@ expression: "me(&h, &after_alt).await"
     "corpstats.view_corp_corpstats",
     "corpstats.view_state_corpstats",
     "discord.access_discord",
-    "fleet.ping",
+    "fleetpings.basic_access",
     "group_management",
     "permissions_tool.audit_permissions",
     "request_groups"

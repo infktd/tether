@@ -75,8 +75,13 @@
   {% include "admin_error.html" %}
 
   <form class="card" method="post" action="/admin/pings/settings">
-    <header><h2>Mass pings</h2></header>
-    <section><label class="label gap-2 font-normal"><input type="checkbox" class="input" name="mass_mentions" value="on"{% if mass_mentions %} checked{% endif %}> Allow @here and @everyone</label></section>
+    <header><h2>Settings</h2></header>
+    <section class="grid gap-4">
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="mass_mentions" value="on"{% if settings.mass_mentions %} checked{% endif %}> Use default ping targets: @here and @everyone</label>
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="default_fleet_types" value="on"{% if settings.default_fleet_types %} checked{% endif %}> Use default fleet types: {% for (name, _) in default_fleet_types %}{% if !loop.first %}, {% endif %}{{ name }}{% endfor %}</label>
+      <p class="text-sm text-muted-foreground -mt-2">Open to everyone who can ping. A fleet type below with the same name takes a default one's place.</p>
+      <div class="grid gap-1.5 max-w-xs"><label class="label" for="default_embed_color">Default embed colour</label><input class="input w-28" id="default_embed_color" name="default_embed_color" value="{{ settings.default_color }}" placeholder="#faa61a" maxlength="7" required><p class="text-sm text-muted-foreground">The ping card's colour when its fleet type has none.</p></div>
+    </section>
     <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
   </form>
 
@@ -94,7 +99,7 @@
     {% call add_form("fleet_type", "fleet type", true, false) %}{% endcall %}
   </section>
   <section class="card data-card">
-    <header><h2>Doctrines</h2><p>Suggested on the form, with their link in the ping. A limited doctrine can't be typed in by anyone else either.</p></header>
+    <header><h2>Doctrines</h2><p>Suggested on the form, with their link in the ping. A limited doctrine can't be typed in by anyone else either. They're kept here, not read from the Fittings app: an app's data stays with the app.</p></header>
     {% call limits(doctrines, "None yet: pilots type the doctrine in.") %}{% endcall %}
     {% call add_form("doctrine", "doctrine", false, true) %}{% endcall %}
   </section>

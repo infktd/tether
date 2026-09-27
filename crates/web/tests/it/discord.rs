@@ -1422,14 +1422,16 @@ async fn fleet_pings_need_the_permission(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=fleet.ping&grantee=state:3",
+            "permission=fleetpings.basic_access&grantee=state:3",
             &owner,
         ),
     )
     .await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert!(
-        refused.body.contains("fleet.ping can&#39;t go to Guest"),
+        refused
+            .body
+            .contains("fleetpings.basic_access can&#39;t go to Guest"),
         "{}",
         refused.body
     );
@@ -2092,7 +2094,7 @@ async fn limits_decide_who_may_use_what(db: PgPool) {
         &h.app,
         form(
             "/admin/permissions/grant",
-            "permission=fleet.ping&grantee=state:1",
+            "permission=fleetpings.basic_access&grantee=state:1",
             &owner,
         ),
     )
@@ -2290,4 +2292,79 @@ async fn mass_pings_can_be_switched_off_and_settings_are_checked(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn fleet_pings_follow_aa_fleetpings_settings(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    // aa-fleetpings' default fleet types are on unless switched off; a
+    // configured one of the same name takes a default one's place.
+    add_option(
+        &h,
+        &owner,
+        &format!("kind=fleet_type&name=CTA&color={}", enc("#123456")),
+    )
+    .await;
+    let form_page = page(&h, "/pings", &owner).await.body;
+    for name in ["Roaming", "Home Defense", "StratOP", "CTA"] {
+        assert!(
+            form_page.contains(&format!(">{name}<")),
+            "{name}: {form_page}"
+        );
+    }
+    assert_eq!(form_page.matches(">CTA<").count(), 1, "{form_page}");
+
+    // Off, only the configured ones are offered; a detailed ping whose
+    // fleet type has no colour takes the default embed colour.
+    let res = send(
+        &h.app,
+        form(
+            "/admin/pings/settings",
+            &format!("mass_mentions=on&default_embed_color={}", enc("#ABCDEF")),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/pings", "{}", res.body);
+    let settings = page(&h, "/admin/pings", &owner).await.body;
+    assert!(settings.contains(r##"value="#abcdef""##), "{settings}");
+    let form_page = page(&h, "/pings", &owner).await.body;
+    assert!(!form_page.contains(">Roaming<"), "{form_page}");
+    assert!(form_page.contains(">CTA<"), "{form_page}");
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&fleet_type=Roaming&message=go"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "embeds": [{ "color": 0xabcdef }],
+        })))
+        .respond_with(message_posted("900000000000000010"))
+        .expect(1)
+        .mount(&h.discord_server)
+        .await;
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&fc_name=Chribba&message=go"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
+    let res = send(
+        &h.app,
+        form("/admin/pings/settings", "default_embed_color=red", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
 }

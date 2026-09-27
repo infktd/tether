@@ -190,7 +190,7 @@ async fn a_users_admin_cant_deactivate_someone_holding_more(db: PgPool) {
         landing.body
     );
 
-    // A second account holding fleet.ping, which the pilot doesn't.
+    // A second account holding fleetpings.basic_access, which the pilot doesn't.
     let other: i64 =
         sqlx::query_scalar("INSERT INTO core.accounts (state_id) VALUES ($1) RETURNING id")
             .bind(MEMBER_STATE)
@@ -198,7 +198,7 @@ async fn a_users_admin_cant_deactivate_someone_holding_more(db: PgPool) {
             .await
             .unwrap();
     sqlx::query(
-        "INSERT INTO core.permission_grants (permission, state_id) VALUES ('fleet.ping', $1)",
+        "INSERT INTO core.permission_grants (permission, state_id) VALUES ('fleetpings.basic_access', $1)",
     )
     .bind(MEMBER_STATE)
     .execute(&h.db)
@@ -210,7 +210,7 @@ async fn a_users_admin_cant_deactivate_someone_holding_more(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
-    assert!(res.body.contains("fleet.ping"), "{}", res.body);
+    assert!(res.body.contains("fleetpings.basic_access"), "{}", res.body);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -249,7 +249,7 @@ async fn reactivating_counts_the_groups_the_account_rejoins(db: PgPool) {
         post_json(
             "/api/admin/permissions/grants",
             &owner,
-            &format!(r#"{{"permission":"fleet.ping","group_id":{compliant}}}"#),
+            &format!(r#"{{"permission":"fleetpings.basic_access","group_id":{compliant}}}"#),
         ),
     )
     .await;
@@ -259,8 +259,8 @@ async fn reactivating_counts_the_groups_the_account_rejoins(db: PgPool) {
             .as_array()
             .unwrap()
             .iter()
-            .any(|p| p == "fleet.ping"),
-        "compliant, so it holds fleet.ping"
+            .any(|p| p == "fleetpings.basic_access"),
+        "compliant, so it holds fleetpings.basic_access"
     );
 
     let res = send(
@@ -274,7 +274,7 @@ async fn reactivating_counts_the_groups_the_account_rejoins(db: PgPool) {
     .await;
     assert_eq!(res.location(), format!("/admin/users/{pilot_account}"));
 
-    // Back in, it would rejoin Compliant and hold fleet.ping, which the
+    // Back in, it would rejoin Compliant and hold fleetpings.basic_access, which the
     // users admin doesn't: refused, and nothing changes.
     let res = send(
         &h.app,
@@ -286,7 +286,7 @@ async fn reactivating_counts_the_groups_the_account_rejoins(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
-    assert!(res.body.contains("fleet.ping"), "{}", res.body);
+    assert!(res.body.contains("fleetpings.basic_access"), "{}", res.body);
     let active: bool = sqlx::query_scalar("SELECT active FROM core.accounts WHERE id = $1")
         .bind(pilot_account)
         .fetch_one(&h.db)

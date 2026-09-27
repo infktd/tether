@@ -551,7 +551,7 @@ pub(crate) async fn load(
         users: perms.contains(tether_core::permissions::ADMIN_USERS),
         blacklist: perms.contains(tether_core::permissions::BLACKLIST_VIEW),
         permissions_audit: perms.contains(tether_core::permissions::PERMISSIONS_AUDIT),
-        pings: perms.contains(tether_core::permissions::FLEET_PING),
+        pings: perms.contains(tether_core::permissions::FLEETPINGS_ACCESS),
         services: perms.contains(tether_core::permissions::DISCORD_ACCESS),
         setup: account.is_owner,
     };

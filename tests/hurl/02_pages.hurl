@@ -662,7 +662,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/admin/permissions/audit/fleet.ping
+GET {{base}}/admin/permissions/audit/fleetpings.basic_access
 HTTP 303
 [Asserts]
 header "Location" == "/login"
@@ -831,7 +831,7 @@ HTTP 400
 header "Content-Type" contains "text/html"
 body contains "expired or was already used"
 
-# Fleet pings need a session (and fleet.ping).
+# Fleet pings need a session (and fleetpings.basic_access).
 GET {{base}}/pings
 HTTP 303
 [Asserts]

@@ -109,7 +109,7 @@ async fn a_blacklisted_account_holds_nothing(db: PgPool) {
         post_json(
             "/api/admin/permissions/grants",
             &owner,
-            &format!(r#"{{"permission":"fleet.ping","state_id":{blacklist_state}}}"#),
+            &format!(r#"{{"permission":"fleetpings.basic_access","state_id":{blacklist_state}}}"#),
         ),
     )
     .await;

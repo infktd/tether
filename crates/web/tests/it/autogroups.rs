@@ -279,7 +279,7 @@ async fn guest_is_never_covered_and_configured_groups_stay(db: PgPool) {
 
     // Granted something, then emptied: kept (with its grant) for when
     // members come back.
-    let grant = format!(r#"{{"permission":"fleet.ping","group_id":{group}}}"#);
+    let grant = format!(r#"{{"permission":"fleetpings.basic_access","group_id":{group}}}"#);
     let res = send(
         &h.app,
         post_json("/api/admin/permissions/grants", &owner, &grant),
