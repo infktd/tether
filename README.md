@@ -88,6 +88,8 @@ cargo test --workspace
 
 Tether is licensed under the [GNU General Public License v2.0 or later](LICENSE). The app SDK (`crates/plugin-sdk`) and the app interface (`wit/`) are licensed under MIT or Apache-2.0, at your option.
 
-EVE Online and all related logos and designs are trademarks or registered trademarks of CCP ehf. Tether is not affiliated with or endorsed by CCP.
+Tether matches the behaviour of Alliance Auth and several of its community apps without using their code; [NOTICE.md](NOTICE.md) keeps the notices their licenses ask for, and [docs/LEGAL.md](docs/LEGAL.md) covers their licenses and CCP's Developer License Agreement.
+
+© 2014 CCP hf. All rights reserved. "EVE", "EVE Online", "CCP", and all related logos and images are trademarks or registered trademarks of CCP hf. Tether is not affiliated with or endorsed by CCP.
 
 o7

@@ -62,6 +62,11 @@ async fn login_page(db: PgPool) {
     assert!(res.body.contains("Log in with EVE Online"));
     assert!(res.body.contains("Admins log in here too"));
     assert_only_allowed_external_urls(&res.body);
+    // CCP's proprietary notice (its Developer License Agreement, 7.1).
+    const NOTICE: &str = "© 2014 CCP hf. All rights reserved. &quot;EVE&quot;, &quot;EVE Online&quot;, \
+                          &quot;CCP&quot;, and all related logos and images are trademarks or \
+                          registered trademarks of CCP hf.";
+    assert!(res.body.contains(NOTICE), "{}", res.body);
 
     let token = log_in_owner(&h, "196379789:Chribba").await;
     assert_eq!(

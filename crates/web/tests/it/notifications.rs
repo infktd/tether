@@ -97,6 +97,14 @@ async fn only_the_recipient_sees_opens_and_deletes(db: PgPool) {
         "{}",
         listed.body
     );
+    // CCP's proprietary notice at the foot of every page.
+    assert!(
+        listed
+            .body
+            .contains("trademarks or registered trademarks of CCP hf."),
+        "{}",
+        listed.body
+    );
     let opened = page(&h, &format!("/notifications/{id}"), &pilot).await;
     assert_eq!(opened.status, StatusCode::OK);
     assert!(opened.body.contains("Body"));
