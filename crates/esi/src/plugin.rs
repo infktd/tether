@@ -125,8 +125,36 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["planet_id"],
     },
     Endpoint {
+        // Sovereignty campaigns (public): who defends which system, the
+        // scores and when it starts, for aa-sov-timer's list.
+        name: "sovereignty-campaigns",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // ESI's own status, route by route (public): each route's method,
+        // path and status, for aa-esi-status.
+        name: "esi-status",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // A constellation's name and region (public; /universe/names
+        // doesn't say which region a constellation is in).
+        name: "universe-constellation",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["constellation_id"],
+    },
+    Endpoint {
         // Which alliance holds sovereignty where (public): only system
-        // and alliance ids, for claims by alliances.
+        // and alliance ids, for claims by alliances, and the system's
+        // activity defense multiplier (ADM).
         name: "sovereignty-systems",
         scope: "",
         about: About::Public,
@@ -849,6 +877,9 @@ pub fn names_corporation(text: &str, corporation: i64) -> bool {
     })
 }
 
+/// ESI's status (/meta/status) at most: it's some 30 KB.
+const MAX_STATUS_BYTES: usize = 1024 * 1024;
+
 /// A character notification, read loosely (see
 /// `corporation-structure-notifications`).
 #[derive(serde::Deserialize)]
@@ -1292,6 +1323,14 @@ impl Esi {
                 .filter(|id| *id > 0)
                 .ok_or_else(|| EsiError::InvalidInput(format!("{name} must be a number")))
         };
+        // An id in the range EVE gives its kind: one out of it is a request
+        // that can only fail, spending the shared error budget.
+        let in_range = |name: &str, range: std::ops::Range<i64>| -> Result<i64, EsiError> {
+            positive(name)
+                .ok()
+                .filter(|id| range.contains(id))
+                .ok_or_else(|| EsiError::InvalidInput(format!("{name} isn't one EVE gives")))
+        };
         match endpoint.name {
             "killmail" => {
                 let id: i64 = param("killmail_id")
@@ -1335,7 +1374,7 @@ impl Esi {
                 })
             }
             "universe-moon" => {
-                let id = positive("moon_id")?;
+                let id = in_range("moon_id", 40_000_000..50_000_000)?;
                 let moon = self
                     .call_full(
                         Priority::Bulk,
@@ -1352,8 +1391,150 @@ impl Esi {
                     refetched: 0,
                 })
             }
+            "sovereignty-campaigns" => {
+                // Read loosely: an event type CCP adds after this client was
+                // generated would fail the typed read, and every campaign
+                // with it.
+                let request = self.client().get_sovereignty_campaigns().send();
+                let request = async move {
+                    match request.await {
+                        Ok(response) => {
+                            let (status, headers) = (response.status(), response.headers().clone());
+                            let value =
+                                serde_json::to_value(response.into_inner()).unwrap_or_default();
+                            Ok(ResponseValue::new(value, status, headers))
+                        }
+                        // Only a list: an error answer (4xx, 5xx) whose body
+                        // doesn't read as ESI's error comes here too, and is
+                        // never a list.
+                        Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
+                            match serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
+                                Ok(items) => Ok(ResponseValue::new(
+                                    serde_json::Value::Array(items),
+                                    reqwest::StatusCode::OK,
+                                    HeaderMap::new(),
+                                )),
+                                Err(_) => {
+                                    Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err))
+                                }
+                            }
+                        }
+                        Err(other) => Err(other),
+                    }
+                };
+                let campaigns = self.call_full(Priority::Bulk, request).await?.into_inner();
+                let items: Vec<serde_json::Value> = campaigns
+                    .as_array()
+                    .map(|all| {
+                        all.iter()
+                            .map(|c| {
+                                serde_json::json!({
+                                    "campaign_id": c["campaign_id"],
+                                    "event_type": c["event_type"],
+                                    "solar_system_id": c["solar_system_id"],
+                                    "constellation_id": c["constellation_id"],
+                                    "structure_id": c["structure_id"],
+                                    "defender_id": c["defender_id"],
+                                    "defender_score": c["defender_score"],
+                                    "attackers_score": c["attackers_score"],
+                                    "start_time": c["start_time"],
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(Response {
+                    body: serde_json::Value::Array(items),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "esi-status" => {
+                // /meta/status isn't in the generated client: read as JSON,
+                // through `call_full` like every call (budget, limits).
+                let client = self.client();
+                let url = format!("{}/meta/status", client.baseurl());
+                let http = client.client().clone();
+                let request = async move {
+                    let response = http
+                        .get(&url)
+                        .header("X-Compatibility-Date", eve_esi_client::COMPATIBILITY_DATE)
+                        .send()
+                        .await
+                        .map_err(eve_esi_client::Error::<()>::CommunicationError)?;
+                    let (status, headers) = (response.status(), response.headers().clone());
+                    if !status.is_success() {
+                        return Err(eve_esi_client::Error::UnexpectedResponse(response));
+                    }
+                    // Read to a cap: the status is some 30 KB.
+                    let mut response = response;
+                    let mut body = Vec::new();
+                    while let Some(chunk) = response
+                        .chunk()
+                        .await
+                        .map_err(eve_esi_client::Error::ResponseBodyError)?
+                    {
+                        body.extend_from_slice(&chunk);
+                        if body.len() > MAX_STATUS_BYTES {
+                            return Err(eve_esi_client::Error::InvalidRequest(
+                                "ESI's status is larger than expected".to_owned(),
+                            ));
+                        }
+                    }
+                    let bytes = eve_esi_client::cache::Bytes::from(body);
+                    let value: serde_json::Value = serde_json::from_slice(&bytes)
+                        .map_err(|e| eve_esi_client::Error::InvalidResponsePayload(bytes, e))?;
+                    Ok(ResponseValue::new(value, status, headers))
+                };
+                let answer = self.call_full(Priority::Bulk, request).await?.into_inner();
+                // Only each route's method, path and status.
+                let routes: Vec<serde_json::Value> = answer["routes"]
+                    .as_array()
+                    .map(|all| {
+                        all.iter()
+                            .filter_map(|r| {
+                                Some(serde_json::json!({
+                                    "method": r["method"].as_str()?,
+                                    "path": r["path"].as_str()?,
+                                    "status": r["status"].as_str().unwrap_or("Unknown"),
+                                }))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(Response {
+                    body: serde_json::json!({
+                        "compatibility_date": eve_esi_client::COMPATIBILITY_DATE,
+                        "routes": routes,
+                    }),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
+            "universe-constellation" => {
+                let id = in_range("constellation_id", 20_000_000..30_000_000)?;
+                let constellation = self
+                    .call_full(
+                        Priority::Bulk,
+                        self.uncached()
+                            .get_universe_constellations_constellation_id()
+                            .constellation_id(id)
+                            .send(),
+                    )
+                    .await?
+                    .into_inner();
+                Ok(Response {
+                    body: serde_json::json!({
+                        "constellation_id": constellation.constellation_id,
+                        "name": constellation.name,
+                        "region_id": constellation.region_id,
+                    }),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
             "universe-planet" => {
-                let id = positive("planet_id")?;
+                let id = in_range("planet_id", 40_000_000..50_000_000)?;
                 let planet = self
                     .call_full(
                         Priority::Bulk,
@@ -1400,6 +1581,8 @@ impl Esi {
                                 Some(serde_json::json!({
                                     "system_id": system,
                                     "alliance_id": alliance,
+                                    "adm": s["claim"]["alliance"]["development"]
+                                        ["activity_defense_multiplier"].as_f64(),
                                 }))
                             })
                             .collect()

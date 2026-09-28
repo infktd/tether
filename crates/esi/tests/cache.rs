@@ -260,3 +260,36 @@ async fn pruning_drops_long_expired_entries_and_keeps_the_newest(db: PgPool) {
         ["https://esi.test/etag-only", "https://esi.test/fresh-2"]
     );
 }
+
+/// `sovereignty-campaigns` is read loosely: an event type newer than the
+/// generated client still comes through; an error answer whose body isn't
+/// ESI's error shape stays an error (never an empty list).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn campaigns_are_read_loosely_but_errors_stay_errors(db: PgPool) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/sovereignty/campaigns"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "campaign_id": 7, "event_type": "something_new", "solar_system_id": 30000474,
+            "constellation_id": 20000069, "structure_id": 1, "start_time": "2026-09-27T12:00:00Z",
+        }])))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    let esi = esi(&server, &db);
+    let endpoint = tether_esi::plugin::endpoint("sovereignty-campaigns").unwrap();
+    let answer = esi.plugin_get_public(endpoint, &[]).await.unwrap();
+    assert_eq!(answer.body[0]["event_type"], "something_new");
+    assert_eq!(answer.body[0]["campaign_id"], 7);
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/sovereignty/campaigns"))
+        .respond_with(
+            ResponseTemplate::new(503).set_body_json(serde_json::json!({ "message": "down" })),
+        )
+        .mount(&server)
+        .await;
+    let esi = self::esi(&server, &db);
+    assert!(esi.plugin_get_public(endpoint, &[]).await.is_err());
+}
