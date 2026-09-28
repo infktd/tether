@@ -1280,6 +1280,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "freight"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tether-plugin-sdk",
+]
+
+[[package]]
 name = "fs-set-times"
 version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

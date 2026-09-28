@@ -1,0 +1,63 @@
+# Freight, a first-party Tether plugin (aa-freight).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.freight"
+name = "Freight"
+version = "0.1.0"
+host_api = "1"
+description = "A central freight service: priced routes, a reward calculator, the courier contracts checked against the pricing, statistics, and notices to pilots and customers on Discord."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+discord = ["send_message"]
+
+# Approved by Jay (2026-09-27): the contract handler's corporation's
+# courier contracts. AA's setup_contract_handler adds it (aa-freight's
+# "Setup contract handler").
+[capabilities.esi]
+data_source = ["esi-contracts.read_corporation_contracts.v1"]
+owner_permissions = ["setup_contract_handler"]
+
+# Every ten minutes, as aa-freight's contract sync.
+[[capabilities.schedules]]
+name = "sync"
+every = "10m"
+
+# aa-freight's permission names; `manage` stands for its admin site
+# (pricing, settings).
+[permissions]
+basic_access = "Can access this app"
+use_calculator = "Can use the calculator"
+view_contracts = "Can view the contracts list"
+view_statistics = "Can view freight statistics"
+add_location = "Can add / update locations"
+setup_contract_handler = "Can setup contract handler"
+manage = "Manage pricing and settings (aa-freight's admin site)"
+
+[[pages]]
+path = ""
+permission = "basic_access"
+
+[[pages]]
+path = "contracts"
+permission = "view_contracts"
+
+[[pages]]
+path = "statistics"
+permission = "view_statistics"
+
+[[pages]]
+path = "locations"
+permission = "add_location"
+
+[[pages]]
+path = "pricing"
+permission = "manage"
+
+[[navigation]]
+label = "Freight"
+path = ""

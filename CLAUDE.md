@@ -123,7 +123,7 @@ cargo test -p tether-web --test it groups::   # the web tests are one binary (cr
 cargo clean   # safe any time; target/ grows with every feature set and toolchain, and a fresh test build is ~4 GB
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-cargo clippy -p hello-plugin -p moon-mining -p member-audit -p fleet-activity-tracking -p structure-timers -p hr-applications -p structures -p ship-replacement -p fleet-operations -p fittings -p timezones -p sov-timer -p esi-status -p bulletin-board -p contacts -p tether-plugin-sdk --target wasm32-wasip2 -- -D warnings   # plus the tether-plugins-test-guest* crates
+cargo clippy -p hello-plugin -p moon-mining -p member-audit -p fleet-activity-tracking -p structure-timers -p hr-applications -p structures -p ship-replacement -p fleet-operations -p fittings -p timezones -p sov-timer -p esi-status -p bulletin-board -p contacts -p freight -p tether-plugin-sdk --target wasm32-wasip2 -- -D warnings   # plus the tether-plugins-test-guest* crates
 cargo build -p hello-plugin --target wasm32-wasip2 --release   # the plugin tests build their guests themselves
 scripts/package-plugin.sh plugins/moon-mining ~/.minisign/tether.key   # first-party plugins (plugins/*) -> dist/<id>-<version>.zip + .minisig
 scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image bundles them (deploy/Dockerfile). A first-party app whose code changes should still bump its version at release; rebuilds at the same version are applied automatically only when they ask for nothing new

@@ -20,6 +20,7 @@ mod esi_status;
 mod fittings;
 mod fleet_activity_tracking;
 mod fleet_operations;
+mod freight;
 mod github;
 mod groups;
 mod hr_applications;

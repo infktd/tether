@@ -22,6 +22,7 @@ members = [
     "plugins/esi-status",
     "plugins/bulletin-board",
     "plugins/contacts",
+    "plugins/freight",
 ]
 
 [workspace.package]
