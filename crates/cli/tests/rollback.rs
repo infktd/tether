@@ -686,6 +686,14 @@ async fn rollback_refuses_while_tether_runs(db: PgPool) {
     assert!(err.to_string().contains("Tether is running"), "{err}");
 
     server.close().await.unwrap();
+    // Postgres ends the closed connection's backend a moment later: wait
+    // for it to leave pg_stat_activity (a busy CI runner can be slow).
+    for _ in 0..100 {
+        if tether_snapshots::server_connections(&db).await.unwrap() == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     // Stopped, it gets as far as finding no snapshot.
     let err = rollback(&db, &snapshots, args(), "").await.unwrap_err();
     assert!(err.to_string().contains("no snapshot of core"), "{err}");
