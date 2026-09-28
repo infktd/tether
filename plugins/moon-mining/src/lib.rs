@@ -817,11 +817,18 @@ fn ledger() -> Result<(), JobError> {
         let rows = concat(&bodies);
         storage::transaction(&[
             Statement::new(
+                // ESI gives a row per corporation a pilot mined for that
+                // day (and pages can repeat one): one ledger row each of
+                // pilot, ore and day, under the corporation with the most.
                 "INSERT INTO ledger (observer_id, character_id, type_id, day, corporation_id, quantity) \
-                 SELECT $2, character_id, type_id, last_updated, recorded_corporation_id, quantity \
-                 FROM json_to_recordset($1::json) AS x(character_id bigint, type_id bigint, last_updated date, \
-                      recorded_corporation_id bigint, quantity bigint) \
-                 ON CONFLICT (observer_id, character_id, type_id, day) DO UPDATE SET quantity = EXCLUDED.quantity",
+                 SELECT $2, character_id, type_id, last_updated, \
+                        (array_agg(recorded_corporation_id ORDER BY quantity DESC))[1], sum(quantity)::bigint \
+                 FROM (SELECT DISTINCT character_id, type_id, last_updated, recorded_corporation_id, quantity \
+                       FROM json_to_recordset($1::json) AS x(character_id bigint, type_id bigint, \
+                            last_updated date, recorded_corporation_id bigint, quantity bigint)) x \
+                 GROUP BY character_id, type_id, last_updated \
+                 ON CONFLICT (observer_id, character_id, type_id, day) DO UPDATE SET \
+                     quantity = EXCLUDED.quantity, corporation_id = EXCLUDED.corporation_id",
                 vec![Db::json(rows.clone()), observer.into()],
             ),
             Statement::new(

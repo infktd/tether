@@ -170,8 +170,14 @@ async fn mount_esi(h: &Harness) {
             "/corporation/{CHRIBBA_CORP}/mining/observers/{ATHANOR}"
         )))
         .respond_with(json(serde_json::json!([
+            // One day's mining split across two corporations (the pilot
+            // moved), and a row a later page repeated: 12,500 in all.
             { "character_id": CHRIBBA, "last_updated": now.date_naive().to_string(),
-              "quantity": 12500, "recorded_corporation_id": CHRIBBA_CORP, "type_id": SYLVITE },
+              "quantity": 10000, "recorded_corporation_id": CHRIBBA_CORP, "type_id": SYLVITE },
+            { "character_id": CHRIBBA, "last_updated": now.date_naive().to_string(),
+              "quantity": 2500, "recorded_corporation_id": 98000009, "type_id": SYLVITE },
+            { "character_id": CHRIBBA, "last_updated": now.date_naive().to_string(),
+              "quantity": 2500, "recorded_corporation_id": 98000009, "type_id": SYLVITE },
         ])))
         .mount(&h.esi_server)
         .await;
