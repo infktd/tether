@@ -30,8 +30,9 @@
   <aside class="app-sidebar" id="main-nav" popover>
     <nav class="flex-1 overflow-y-auto px-3 py-5 flex flex-col gap-5" aria-label="Main">
       {% for section in shell.menu %}
-      <div class="flex flex-col gap-1">
-        <div class="nav-heading">{{ section.label }}</div>
+      <details class="nav-section" data-section="{{ section.reference }}"{% if !section.folded(shell.folded, shell.active, shell.active_href) %} open{% endif %}>
+        <summary class="nav-heading"><span>{{ section.label }}</span>{% call icons::icon("chevron-right") %}{% endcall %}</summary>
+        <div class="flex flex-col gap-1">
         {% for n in section.nodes %}
         {% if n.is_folder() %}
         <details class="nav-folder"{% if n.open(shell.active, shell.active_href) %} open{% endif %}>
@@ -44,7 +45,8 @@
         {% call nav_link(n) %}{% endcall %}
         {% endif %}
         {% endfor %}
-      </div>
+        </div>
+      </details>
       {% endfor %}
     </nav>
     <div class="border-t p-2">

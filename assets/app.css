@@ -1179,6 +1179,71 @@
     height: 1px;
     background: var(--border);
   }
+  /* A sidebar section folds from its heading: the label, the hairline,
+     then a small chevron at the end (turned down while open). */
+  .nav-section > summary {
+    cursor: pointer;
+    list-style: none;
+    transition: color 150ms ease-out;
+  }
+  .nav-section > summary::-webkit-details-marker {
+    display: none;
+  }
+  .nav-section > summary::after {
+    order: 1;
+  }
+  .nav-section > summary > svg {
+    order: 2;
+    width: 10px;
+    height: 10px;
+    opacity: 0.5;
+    transition:
+      transform 150ms ease-out,
+      opacity 150ms ease-out;
+  }
+  .nav-section[open] > summary > svg {
+    transform: rotate(90deg);
+  }
+  .nav-section > summary:hover {
+    color: var(--foreground-soft);
+  }
+  .nav-section > summary:hover > svg {
+    opacity: 1;
+  }
+  /* A small disclosure inside text (an owners card's scopes, an app's
+     error): a 6px chevron before its words, turned down while open. */
+  .inline-disclosure > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    cursor: pointer;
+    list-style: none;
+    transition: color 150ms ease-out;
+  }
+  .inline-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .inline-disclosure > summary::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-right: 1px solid currentColor;
+    border-bottom: 1px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms ease-out;
+  }
+  .inline-disclosure[open] > summary::before {
+    transform: rotate(45deg);
+  }
+  .inline-disclosure > summary:hover {
+    color: var(--foreground-soft);
+  }
+  /* A panel's placeholder while it loads: its labels, and a dash where
+     each value goes, so the page doesn't move when it arrives. */
+  .stat-value.is-loading {
+    color: var(--muted-foreground);
+  }
   .nav-item {
     height: 32px;
     border-radius: 0;
@@ -1681,6 +1746,60 @@
   .admin-tile:nth-child(4) { animation-delay: 75ms; }
   .admin-tile:nth-child(n + 5) { animation-delay: 100ms; }
 
+  /* The page's sections follow each other a little (20ms apart, 60ms at
+     most), and the cards of a readout row or a card grid 25ms apart. */
+  main > :nth-child(2) { animation-delay: 20ms; }
+  main > :nth-child(3) { animation-delay: 40ms; }
+  main > :nth-child(n + 4) { animation-delay: 60ms; }
+  .stat,
+  .grid-card {
+    animation: tether-enter 180ms cubic-bezier(0.2, 0, 0, 1) backwards;
+  }
+  :is(.stat, .grid-card):nth-child(2) { animation-delay: 25ms; }
+  :is(.stat, .grid-card):nth-child(3) { animation-delay: 50ms; }
+  :is(.stat, .grid-card):nth-child(4) { animation-delay: 75ms; }
+  :is(.stat, .grid-card):nth-child(n + 5) { animation-delay: 100ms; }
+  html[data-stay] :is(.stat, .grid-card, .admin-tile) {
+    animation-duration: 0s;
+  }
+
+  /* Popovers ease in: the confirmation rises 4px, the phone sidebar
+     slides 8px in from its edge. */
+  .confirm-popover:popover-open {
+    animation: tether-enter 150ms cubic-bezier(0.2, 0, 0, 1) backwards;
+  }
+  .confirm-popover::backdrop,
+  .app-sidebar::backdrop {
+    animation: tether-fade 150ms ease-out backwards;
+  }
+  @media (max-width: 767px) {
+    .app-sidebar[popover]:popover-open {
+      animation: tether-slide 150ms cubic-bezier(0.2, 0, 0, 1) backwards;
+    }
+  }
+
+  /* A button gives under the pointer. */
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  /* Disclosures and sidebar sections open and close like folders. */
+  @supports (interpolate-size: allow-keywords) {
+    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure) {
+      interpolate-size: allow-keywords;
+    }
+    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure)::details-content {
+      height: 0;
+      overflow: clip;
+      transition:
+        height 150ms ease-out,
+        content-visibility 150ms allow-discrete;
+    }
+    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure)[open]::details-content {
+      height: auto;
+    }
+  }
+
   /* Content htmx swaps in fades in (htmx-added is on it for the settle). */
   :where(main) :where(*) {
     transition-property: opacity;
@@ -1716,6 +1835,19 @@
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+}
+
+@keyframes tether-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes tether-slide {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
   }
 }
 

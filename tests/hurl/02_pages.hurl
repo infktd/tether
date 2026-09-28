@@ -137,6 +137,8 @@ header "Content-Type" == "text/css; charset=utf-8"
 header "ETag" exists
 body contains "--accent-surface"
 body contains ".toaster"
+body contains ".nav-section"
+body contains "prefers-reduced-motion"
 
 GET {{base}}/static/htmx.min.js
 HTTP 200
@@ -277,6 +279,8 @@ body contains "data-countdown"
 # Toasts and in-place swaps (DESIGN.md, Page hygiene and state).
 body contains "addEventListener(\"toast\""
 body contains "htmx:beforeSwap"
+# Folded sidebar sections are remembered for the server (DESIGN.md, Sidebar).
+body contains "tether_nav_folded="
 
 GET {{base}}/corpstats
 HTTP 303

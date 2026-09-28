@@ -190,6 +190,23 @@
     if (event.target.id === "confirm" && event.newState === "closed") pending = null;
   }, true);
 
+  // Sidebar sections fold from their headings. A cookie remembers which
+  // (a preference, read by the server so the next page arrives folded).
+  // Clicks only: browsers also fire "toggle" for sections that load open.
+  document.addEventListener("click", (event) => {
+    const summary = event.target instanceof Element && event.target.closest("details.nav-section > summary");
+    if (!summary) return;
+    const name = summary.parentElement.dataset.section;
+    if (!name) return;
+    const folding = summary.parentElement.open;
+    const cookie = document.cookie.match(/(?:^|; )tether_nav_folded=([^;]*)/);
+    // Only what the server accepts, so nothing else lingers in it.
+    const folded = (cookie ? cookie[1] : "").split("~").filter((r) => /^[A-Za-z0-9:_-]{1,64}$/.test(r) && r !== name);
+    if (folding) folded.push(name);
+    const secure = location.protocol === "https:" ? "; secure" : "";
+    document.cookie = `tether_nav_folded=${folded.slice(-30).join("~")}; path=/; max-age=31536000; samesite=lax${secure}`;
+  });
+
   // Copy buttons: the text is the <pre> in the same block, or its
   // read-only field (a group's direct join link).
   document.addEventListener("click", (event) => {

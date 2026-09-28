@@ -147,7 +147,10 @@ pub struct PinRow {
 #[template(path = "admin_plugins.html")]
 struct PluginsPage {
     shell: Shell,
-    plugins: Vec<PluginRow>,
+    /// Installed apps, by name.
+    installed: Vec<PluginRow>,
+    /// Included with Tether and not installed yet, by name.
+    available: Vec<PluginRow>,
     uploads: Vec<UploadRow>,
     pins: Vec<PinRow>,
     upload_hours: i32,
@@ -274,7 +277,9 @@ async fn list_page(
             });
         }
     }
-    plugins.sort_by(|a, b| (!a.is_installed, &a.name).cmp(&(!b.is_installed, &b.name)));
+    plugins.sort_by(|a, b| a.name.cmp(&b.name));
+    let (installed, available): (Vec<PluginRow>, Vec<PluginRow>) =
+        plugins.into_iter().partition(|p| p.is_installed);
     let uploads = db::list_uploads(&state.db)
         .await?
         .into_iter()
@@ -301,7 +306,8 @@ async fn list_page(
         code,
         &PluginsPage {
             shell,
-            plugins,
+            installed,
+            available,
             uploads,
             pins,
             upload_hours: plugins::UPLOAD_HOURS,

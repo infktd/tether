@@ -536,6 +536,37 @@ pub struct CurrentSession {
     /// A browser session's last login with the account's main (sudo
     /// mode); `None` for a token.
     pub reauthenticated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Sidebar sections this browser folded (a preference cookie, not
+    /// part of the session: see [`folded_sections`]).
+    pub folded: Vec<String>,
+}
+
+/// The cookie remembering which sidebar sections a browser folded, so the
+/// page arrives already folded (`assets/live.js` writes it). A preference,
+/// not a secret.
+pub const FOLDED_COOKIE: &str = "tether_nav_folded";
+
+/// The sidebar sections in the folded cookie: menu references (`section:…`
+/// or `id:…`), separated by `~`; the last 30 (the newest, as `live.js`
+/// keeps them). Anything else is ignored.
+pub fn folded_sections(jar: &CookieJar) -> Vec<String> {
+    let Some(cookie) = jar.get(FOLDED_COOKIE) else {
+        return Vec::new();
+    };
+    let valid: Vec<&str> = cookie
+        .value()
+        .split('~')
+        .filter(|r| {
+            !r.is_empty()
+                && r.len() <= 64
+                && r.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-'))
+        })
+        .collect();
+    valid[valid.len().saturating_sub(30)..]
+        .iter()
+        .map(|r| (*r).to_owned())
+        .collect()
 }
 
 /// Personal access tokens start with this.
@@ -623,6 +654,7 @@ impl FromRequestParts<AppState> for CurrentSession {
                 account: scope.account,
                 token_scopes: Some(scope.scopes),
                 reauthenticated_at: None,
+                folded: Vec::new(),
             });
         }
         let jar = CookieJar::from_headers(&parts.headers);
@@ -634,6 +666,7 @@ impl FromRequestParts<AppState> for CurrentSession {
             account: record.account,
             token_scopes: None,
             reauthenticated_at: record.reauthenticated_at,
+            folded: folded_sections(&jar),
         })
     }
 }
@@ -881,7 +914,30 @@ fn is_token(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_path;
+    #![allow(clippy::unwrap_used)] // test code
+
+    use super::{FOLDED_COOKIE, folded_sections, safe_path};
+    use axum_extra::extract::CookieJar;
+
+    #[test]
+    fn folded_sections_take_only_menu_references() {
+        let jar = |value: &str| {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                axum::http::header::COOKIE,
+                format!("{FOLDED_COOKIE}={value}").parse().unwrap(),
+            );
+            CookieJar::from_headers(&headers)
+        };
+        assert_eq!(
+            folded_sections(&jar("section:fleet~id:12~~bad/one~<x>")),
+            ["section:fleet", "id:12"]
+        );
+        let many = (0..40).map(|i| format!("id:{i}")).collect::<Vec<_>>();
+        let kept = folded_sections(&jar(&many.join("~")));
+        assert_eq!((kept.len(), kept[0].as_str()), (30, "id:10"));
+        assert!(folded_sections(&CookieJar::new()).is_empty());
+    }
 
     #[test]
     fn return_to_only_allows_local_paths() {

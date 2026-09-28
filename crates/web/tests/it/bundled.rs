@@ -86,8 +86,14 @@ async fn a_bundled_app_installs_after_review_with_no_signature(db: PgPool) {
 
     let res = page(&h, "/admin/plugins", &owner).await;
     assert_eq!(res.status, StatusCode::OK);
-    assert!(res.body.contains("Not installed"), "{}", res.body);
-    assert!(res.body.contains(&format!("/admin/plugin-bundled/{ID}")));
+    // Nothing installed yet; the app waits under Included with Tether.
+    assert!(res.body.contains("None yet."), "{}", res.body);
+    let included = res.body.find("Included with Tether").unwrap();
+    let offer = res
+        .body
+        .find(&format!("/admin/plugin-bundled/{ID}"))
+        .unwrap();
+    assert!(included < offer, "{}", res.body);
     assert!(res.body.contains("Review and install"));
 
     // The same review as any app: what it asks for, no publisher key.
@@ -150,9 +156,10 @@ async fn a_bundled_app_installs_after_review_with_no_signature(db: PgPool) {
     let nav = h.plugins.navigation();
     assert_eq!(nav[0].section, "industry");
 
-    // Installed: nothing to approve again.
+    // Installed: nothing to approve again, and nothing left to include.
     let res = page(&h, "/admin/plugins", &owner).await;
     assert!(!res.body.contains("Review and install"));
+    assert!(!res.body.contains("Included with Tether"), "{}", res.body);
     let res = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
     assert_eq!(res.status, StatusCode::OK);
     assert!(res.body.contains("Included with Tether"));

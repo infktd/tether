@@ -127,7 +127,7 @@ async fn plugin_admin_needs_admin_plugins(db: PgPool) {
         list.body.contains(r#"href="/admin/plugins""#),
         "sidebar link"
     );
-    assert!(list.body.contains("No apps yet"));
+    assert!(list.body.contains("None yet."));
     assert_eq!(
         page(&h, "/admin/plugins/Not.An.Id", &owner).await.status,
         StatusCode::NOT_FOUND

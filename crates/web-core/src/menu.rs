@@ -350,6 +350,18 @@ fn reference(entry: &Entry) -> String {
     }
 }
 
+impl Section {
+    /// Whether the sidebar shows this section folded: this browser folded
+    /// it, and it doesn't hold the page being shown.
+    pub fn folded(&self, folded: &[String], active: &str, active_href: &str) -> bool {
+        folded.contains(&self.reference)
+            && !self
+                .nodes
+                .iter()
+                .any(|n| n.is_current(active, active_href) || n.open(active, active_href))
+    }
+}
+
 /// Sections with everything in them, hidden entries included.
 pub fn build(entries: &[Entry], items: Vec<Available>) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
@@ -1031,6 +1043,22 @@ mod tests {
         assert_eq!(shown[0].nodes[0].label, "Moon Mining");
         let apps: Vec<&str> = shown[1].nodes.iter().map(|n| n.label.as_str()).collect();
         assert_eq!(apps, ["Hello", "Odd"]);
+    }
+
+    #[test]
+    fn a_folded_section_opens_while_it_holds_the_page() {
+        let items = vec![plugin_item(
+            "Moon Mining",
+            "/plugins/tether.moon-mining",
+            "industry",
+        )];
+        let shown = visible(build(&[], items));
+        let industry = &shown[0];
+        assert_eq!(industry.reference, "section:industry");
+        let folded = vec!["section:industry".to_owned()];
+        assert!(industry.folded(&folded, "dashboard", ""));
+        assert!(!industry.folded(&folded, "plugin", "/plugins/tether.moon-mining"));
+        assert!(!industry.folded(&[], "dashboard", ""));
     }
 
     #[test]

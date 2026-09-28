@@ -195,6 +195,8 @@ pub struct Shell {
     /// On Administration's pages: the rail of admin pages this account
     /// may open.
     pub admin_rail: Option<Vec<crate::admin_nav::Listed>>,
+    /// Sidebar sections this browser folded.
+    pub folded: Vec<String>,
 }
 
 /// The sidebar items an account may see: built-in pages by its
@@ -581,6 +583,7 @@ pub async fn load(
             group_management,
             unread: tether_db::notifications::unread(&state.db, session.account).await?,
             admin_rail: crate::admin_nav::rail(&nav, active),
+            folded: session.folded.clone(),
         },
         state: access,
         is_owner: account.is_owner,

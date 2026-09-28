@@ -171,6 +171,38 @@ async fn admins_arrange_the_sidebar(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_browser_folds_sidebar_sections(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let open = page(&h, "/dashboard", &owner).await.body;
+    let nav = sidebar(&open);
+    assert!(
+        nav.contains(r#"data-section="section:admin" open>"#),
+        "{nav}"
+    );
+    // The browser folded Account and Admin (its preference cookie): Admin
+    // arrives folded, Account stays open while it holds the page shown.
+    let folded = send(
+        &h.app,
+        get(
+            "/dashboard",
+            &[
+                (SESSION, owner.as_str()),
+                ("tether_nav_folded", "section:account~section:admin~<bad>"),
+            ],
+        ),
+    )
+    .await
+    .body;
+    let nav = sidebar(&folded);
+    assert!(nav.contains(r#"data-section="section:admin">"#), "{nav}");
+    assert!(
+        nav.contains(r#"data-section="section:account" open>"#),
+        "{nav}"
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn links_and_names_are_checked(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;

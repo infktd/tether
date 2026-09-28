@@ -1,5 +1,27 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- macro app_table(rows, statuses) -%}
+<table class="table">
+  <thead><tr><th scope="col">App</th><th scope="col">Version</th>{% if statuses %}<th scope="col">Status</th>{% endif %}<th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+  <tbody>
+    {% for p in rows %}
+    <tr>
+      <td class="w-full whitespace-normal">
+        <div class="font-medium flex items-center gap-2">{% if p.is_installed %}<a href="/admin/plugins/{{ p.id }}" class="hover:underline">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}{% if !p.included %} <span class="badge" data-variant="outline">Third party</span>{% endif %}</div>
+        {% if let Some(d) = p.description %}<div class="text-xs text-muted-foreground">{{ d }}</div>{% else %}<div class="text-xs text-muted-foreground num">{{ p.id }}</div>{% endif %}
+      </td>
+      <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div class="text-xs"><span class="badge" data-variant="secondary"><span class="num">{{ v }}</span> available</span></div>{% else if p.rebuilt %}<div class="text-xs"><span class="badge" data-variant="secondary">Rebuilt with this Tether</span></div>{% endif %}</td>
+      {% if statuses %}<td class="whitespace-normal"><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span>{% if let Some(why) = p.incompatible %}<div class="text-xs text-muted-foreground mt-1">Built for a different version of Tether's app interface. {% if p.review.is_some() || p.update.is_some() %}Review its update to run it again.{% else %}Install a version built for this Tether.{% endif %}</div><details class="inline-disclosure text-xs mt-1"><summary>The error</summary><p class="mt-1 break-words num">{{ why }}</p></details>{% endif %}</td>{% endif %}
+      <td class="text-right">
+        {% if !p.is_installed %}{% if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">Review and install</a>{% endif %}
+        {% else if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">{% if p.rebuilt %}Review rebuild{% else %}Review update{% endif %}</a>
+        {% else %}<a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ p.id }}">Manage</a>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{%- endmacro -%}
 {% block title %}Apps{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Apps</span>{% endblock %}
 {% block content %}
@@ -34,32 +56,20 @@
   {% endif %}
 
   <section class="card data-card">
-    <header class="flex items-start justify-between gap-4"><div><h2>Apps <span class="num text-muted-foreground font-normal">{{ plugins.len() }}</span></h2><p>Apps included with Tether need no signing: review what each asks for, then install it. Newer versions and rebuilds of them come with newer versions of Tether: one that asks for nothing new is applied when Tether starts, the rest are reviewed the same way.</p></div>{% if included_updates >= 2 %}<a class="btn shrink-0" data-variant="primary" data-size="sm" href="/admin/plugin-bundled-updates">Approve all included updates</a>{% endif %}</header>
-    {% if plugins.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No apps yet.{% if github %} Install one from GitHub below.{% endif %}</p>
+    <header class="flex items-start justify-between gap-4"><div><h2>Installed <span class="num text-muted-foreground font-normal">{{ installed.len() }}</span></h2><p>Updates to included apps come with Tether: one that asks for nothing new applies itself when Tether starts; the rest wait here for your review.</p></div>{% if included_updates >= 2 %}<a class="btn shrink-0" data-variant="primary" data-size="sm" href="/admin/plugin-bundled-updates">Approve all included updates</a>{% endif %}</header>
+    {% if installed.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">None yet.{% if !available.is_empty() %} Install one of those included with Tether below.{% else if github %} Install one from GitHub below.{% endif %}</p>
     {% else %}
-    <table class="table">
-      <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>
-        {% for p in plugins %}
-        <tr>
-          <td class="w-full whitespace-normal">
-            <div class="font-medium flex items-center gap-2">{% if p.is_installed %}<a href="/admin/plugins/{{ p.id }}" class="hover:underline">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}{% if p.included %} <span class="badge" data-variant="outline">Included</span>{% endif %}</div>
-            {% if let Some(d) = p.description %}<div class="text-xs text-muted-foreground">{{ d }}</div>{% else %}<div class="text-xs text-muted-foreground num">{{ p.id }}</div>{% endif %}
-          </td>
-          <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div class="text-xs"><span class="badge" data-variant="secondary"><span class="num">{{ v }}</span> available</span></div>{% else if p.rebuilt %}<div class="text-xs"><span class="badge" data-variant="secondary">Rebuilt with this Tether</span></div>{% endif %}</td>
-          <td class="whitespace-normal"><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span>{% if let Some(why) = p.incompatible %}<div class="text-xs text-muted-foreground mt-1">Built for a different version of Tether's app interface. {% if p.review.is_some() || p.update.is_some() %}Review its update to run it again.{% else %}Install a version built for this Tether.{% endif %}</div><details class="text-xs mt-1"><summary>The error</summary><p class="mt-1 break-words num">{{ why }}</p></details>{% endif %}</td>
-          <td class="text-right">
-            {% if !p.is_installed %}{% if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">Review and install</a>{% endif %}
-            {% else if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">{% if p.rebuilt %}Review rebuild{% else %}Review update{% endif %}</a>
-            {% else %}<a class="btn" data-variant="outline" data-size="sm" href="/admin/plugins/{{ p.id }}">Manage</a>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    {% call app_table(installed, true) %}{% endcall %}
     {% endif %}
   </section>
+
+  {% if !available.is_empty() %}
+  <section class="card data-card">
+    <header><h2>Included with Tether <span class="num text-muted-foreground font-normal">{{ available.len() }}</span></h2><p>Ready to install, no signing needed: review what each asks for, then install it.</p></header>
+    {% call app_table(available, false) %}{% endcall %}
+  </section>
+  {% endif %}
 
   {% if github %}
   <form class="card" method="post" action="/admin/plugin-github">
