@@ -190,6 +190,15 @@
     if (event.target.id === "confirm" && event.newState === "closed") pending = null;
   }, true);
 
+  // Permissions: one row's picker open at a time.
+  document.addEventListener("toggle", (event) => {
+    const picker = event.target;
+    if (!(picker instanceof HTMLDetailsElement) || !picker.classList.contains("grant-picker") || !picker.open) return;
+    for (const other of document.querySelectorAll("details.grant-picker[open]")) {
+      if (other !== picker) other.open = false;
+    }
+  }, true);
+
   // Sidebar sections fold from their headings. A cookie remembers which
   // (a preference, read by the server so the next page arrives folded).
   // Clicks only: browsers also fire "toggle" for sections that load open.

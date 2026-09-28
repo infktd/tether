@@ -1280,6 +1280,18 @@ pub struct PermissionRow {
     pub name: String,
     pub description: String,
     pub grants: Vec<GrantBadge>,
+    /// Its states and groups, as picker values (`state:<id>`,
+    /// `group:<id>`).
+    pub holders: Vec<String>,
+    /// An admin permission (or another that mustn't go where anyone can
+    /// be): not to Guest, public states or Open groups.
+    pub sensitive: bool,
+}
+
+impl PermissionRow {
+    pub fn holds(&self, value: &str) -> bool {
+        self.holders.iter().any(|h| h == value)
+    }
 }
 
 pub struct GroupOption {
@@ -1287,22 +1299,52 @@ pub struct GroupOption {
     pub name: String,
 }
 
+/// A state or group in a row's picker.
+pub struct GrantChoice {
+    /// `state:<id>` or `group:<id>`.
+    pub value: String,
+    pub label: String,
+    pub is_group: bool,
+    /// Anyone can be in it (Guest, a public or blacklist state, an Open
+    /// group): sensitive permissions can't go there.
+    pub open_to_anyone: bool,
+}
+
 #[derive(Template)]
 #[template(path = "admin_permissions.html")]
 struct PermissionsPage {
     shell: Shell,
     rows: Vec<PermissionRow>,
-    states: Vec<StateOption>,
-    groups: Vec<GroupOption>,
+    choices: Vec<GrantChoice>,
+    /// The filter, as typed.
+    q: String,
+    /// How many permissions there are, filtered or not.
+    total: usize,
     error: Option<String>,
+}
+
+impl PermissionsPage {
+    fn has_groups(&self) -> bool {
+        self.choices.iter().any(|c| c.is_group)
+    }
+}
+
+fn grantee_value(grantee: Grantee) -> Option<String> {
+    match grantee {
+        Grantee::State(id) => Some(format!("state:{}", id.0)),
+        Grantee::Group(id) => Some(format!("group:{}", id.0)),
+        Grantee::Account(_) => None,
+    }
 }
 
 async fn permissions_page(
     state: &AppState,
     shell: Shell,
+    q: &str,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let grants = permissions::list(&state.db).await?;
+    let all_states = tether_db::states::all(&state.db).await?;
     let states = state_options(state).await?;
     let all_groups = groups::summaries(&state.db).await?;
     let group_name = |id: GroupId| {
@@ -1322,73 +1364,99 @@ async fn permissions_page(
             user_names.insert(account, name);
         }
     }
-    let rows = permissions::available(&state.db)
-        .await?
+    let available = permissions::available(&state.db).await?;
+    let total = available.len();
+    let needle = q.trim().to_lowercase();
+    let rows = available
         .into_iter()
-        .map(|(name, description)| PermissionRow {
-            grants: grants
-                .iter()
-                .filter(|g| g.permission == name)
-                .map(|g| match g.grantee {
-                    Grantee::State(id) => GrantBadge {
-                        id: g.id,
-                        label: state_name(&states, id),
-                        kind: "state",
-                        account_id: 0,
-                    },
-                    Grantee::Group(group) => GrantBadge {
-                        id: g.id,
-                        label: group_name(group),
-                        kind: "group",
-                        account_id: 0,
-                    },
-                    Grantee::Account(account) => GrantBadge {
-                        id: g.id,
-                        label: user_names.get(&account).cloned().unwrap_or_default(),
-                        kind: "user",
-                        account_id: account.0,
-                    },
-                })
-                .collect(),
-            name,
-            description,
+        .filter(|(name, description)| {
+            needle.is_empty()
+                || name.to_lowercase().contains(&needle)
+                || description.to_lowercase().contains(&needle)
         })
+        .map(|(name, description)| {
+            let mine: Vec<&permissions::Grant> =
+                grants.iter().filter(|g| g.permission == name).collect();
+            PermissionRow {
+                grants: mine
+                    .iter()
+                    .map(|g| match g.grantee {
+                        Grantee::State(id) => GrantBadge {
+                            id: g.id,
+                            label: state_name(&states, id),
+                            kind: "state",
+                            account_id: 0,
+                        },
+                        Grantee::Group(group) => GrantBadge {
+                            id: g.id,
+                            label: group_name(group),
+                            kind: "group",
+                            account_id: 0,
+                        },
+                        Grantee::Account(account) => GrantBadge {
+                            id: g.id,
+                            label: user_names.get(&account).cloned().unwrap_or_default(),
+                            kind: "user",
+                            account_id: account.0,
+                        },
+                    })
+                    .collect(),
+                holders: mine
+                    .iter()
+                    .filter_map(|g| grantee_value(g.grantee))
+                    .collect(),
+                sensitive: tether_core::permissions::is_sensitive(&name),
+                name,
+                description,
+            }
+        })
+        .collect();
+    let choices = all_states
+        .iter()
+        .map(|s| GrantChoice {
+            value: format!("state:{}", s.id.0),
+            label: s.name.clone(),
+            is_group: false,
+            open_to_anyone: s.is_guest() || s.is_blacklist() || s.public,
+        })
+        .chain(all_groups.iter().map(|g| GrantChoice {
+            value: format!("group:{}", g.group.id.0),
+            label: g.group.name.clone(),
+            is_group: true,
+            open_to_anyone: g.group.flags.anyone_can_join(),
+        }))
         .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = PermissionsPage {
         shell,
         rows,
-        states,
-        groups: all_groups
-            .iter()
-            .map(|g| GroupOption {
-                id: g.group.id.0,
-                name: g.group.name.clone(),
-            })
-            .collect(),
+        choices,
+        q: q.to_owned(),
+        total,
         error: error.map(|e| e.message().to_owned()),
     };
     Ok(super::with_problem(problem, render(status, &page)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PermissionsQuery {
+    #[serde(default)]
+    q: String,
 }
 
 /// `GET /admin/permissions`
 pub async fn permissions(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(query): Query<PermissionsQuery>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
-    permissions_page(&state, shell, None).await
+    let q: String = query.q.chars().take(100).collect();
+    permissions_page(&state, shell, &q, None).await
 }
 
-#[derive(Debug, Deserialize)]
-pub struct GrantForm {
-    permission: String,
-    /// `state:<id>` or `group:<id>`.
-    grantee: String,
-}
-
-/// A `<select>` value: `state:<id>` or `group:<id>`.
+/// A `<select>` or picker value: `state:<id>` or `group:<id>`.
 pub fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
     let choose = || AppError::bad_request("Choose a state or a group.");
     match value.split_once(':') {
@@ -1404,22 +1472,110 @@ pub fn parse_grantee(value: &str) -> Result<Grantee, AppError> {
     }
 }
 
-/// `POST /admin/permissions/grant`
-pub async fn grant(
+/// `POST /admin/permissions/set`: one permission's states and groups, as
+/// its row's picker saves them. What was ticked when the page was drawn
+/// (`was`) is compared with what is ticked now (`grantee`): only those
+/// changes are made, so a grant someone else made meanwhile stays. Each is
+/// its own grant or revoke, checked and audited as ever.
+pub async fn set_grants(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Form(form): Form<GrantForm>,
+    Form(fields): Form<Fields>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
-    let result = match parse_grantee(&form.grantee) {
-        Ok(grantee) => admin::grant(&state, session.account, &form.permission, grantee)
-            .await
-            .map(|_| ()),
-        Err(err) => Err(err),
+    match apply_grants(&state, session.account, &fields).await {
+        Ok(done) => Ok(super::stay::back("/admin/permissions", done)),
+        Err(err) => permissions_page(&state, shell, "", Some(err)).await,
+    }
+}
+
+async fn apply_grants(
+    state: &AppState,
+    actor: AccountId,
+    fields: &Fields,
+) -> Result<String, AppError> {
+    let permission = field(fields, "permission");
+    if permission.is_empty() || permission.len() > 200 {
+        return Err(AppError::bad_request("Choose a permission."));
+    }
+    // Capped before anything else is done with them.
+    let values = |name: &str| -> Result<Vec<Grantee>, AppError> {
+        let posted: Vec<&str> = fields
+            .iter()
+            .filter(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+            .collect();
+        if posted.len() > 200 {
+            return Err(AppError::bad_request("Too many states and groups at once."));
+        }
+        let mut out: Vec<Grantee> = Vec::new();
+        for value in posted {
+            let grantee = parse_grantee(value)?;
+            if !out.contains(&grantee) {
+                out.push(grantee);
+            }
+        }
+        Ok(out)
     };
-    match result {
-        Ok(()) => Ok(super::stay::back("/admin/permissions", "Granted.")),
-        Err(err) => permissions_page(&state, shell, Some(err)).await,
+    let (was, now) = (values("was")?, values("grantee")?);
+    let states = state_options(state).await?;
+    let all_groups = groups::summaries(&state.db).await?;
+    let label = |grantee: Grantee| match grantee {
+        Grantee::State(id) => state_name(&states, id),
+        Grantee::Group(id) => all_groups
+            .iter()
+            .find(|g| g.group.id == id)
+            .map_or_else(|| format!("group {}", id.0), |g| g.group.name.clone()),
+        Grantee::Account(_) => String::new(),
+    };
+    let current = permissions::list(&state.db).await?;
+    let mut revoked: Vec<String> = Vec::new();
+    let mut granted: Vec<String> = Vec::new();
+    // What was done before a refusal is said along with it: grants are
+    // access, and the admin must know where things stand.
+    let stopped = |err: AppError, granted: &[String], revoked: &[String]| {
+        if granted.is_empty() && revoked.is_empty() {
+            err
+        } else {
+            let done = summary(permission, granted, revoked);
+            AppError::new(err.status(), format!("{done} Then: {}", err.message()))
+        }
+    };
+    for gone in was.iter().filter(|g| !now.contains(g)) {
+        // Already gone (someone else revoked it) is what was asked for.
+        let Some(grant) = current
+            .iter()
+            .find(|g| g.permission == permission && g.grantee == *gone)
+        else {
+            continue;
+        };
+        match admin::revoke(state, actor, grant.id).await {
+            Ok(()) => revoked.push(label(*gone)),
+            Err(err) if err.status() == StatusCode::NOT_FOUND => {}
+            Err(err) => return Err(stopped(err, &granted, &revoked)),
+        }
+    }
+    for new in now.iter().filter(|g| !was.contains(g)) {
+        match admin::grant(state, actor, permission, *new).await {
+            Ok(_) => granted.push(label(*new)),
+            // Someone else granted it meanwhile: it's what was asked for.
+            Err(err) if err.status() == StatusCode::CONFLICT => {}
+            Err(err) => return Err(stopped(err, &granted, &revoked)),
+        }
+    }
+    Ok(summary(permission, &granted, &revoked))
+}
+
+fn summary(permission: &str, granted: &[String], revoked: &[String]) -> String {
+    match (granted.is_empty(), revoked.is_empty()) {
+        (true, true) => format!("No change to {permission}."),
+        (false, true) => format!("{permission} granted to {}.", granted.join(", ")),
+        (true, false) => format!("{permission} revoked from {}.", revoked.join(", ")),
+        (false, false) => format!(
+            "{permission} granted to {}; revoked from {}.",
+            granted.join(", "),
+            revoked.join(", ")
+        ),
     }
 }
 
@@ -1432,6 +1588,6 @@ pub async fn revoke(
     let (session, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
     match admin::revoke(&state, session.account, grant_id).await {
         Ok(()) => Ok(super::stay::back("/admin/permissions", "Revoked.")),
-        Err(err) => permissions_page(&state, shell, Some(err)).await,
+        Err(err) => permissions_page(&state, shell, "", Some(err)).await,
     }
 }

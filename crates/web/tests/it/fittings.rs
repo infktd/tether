@@ -56,7 +56,7 @@ async fn grant(h: &Harness, owner: &str, permission: &str, state: i64) {
     let res = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=plugin.{ID}.{permission}&grantee=state:{state}"),
             owner,
         ),

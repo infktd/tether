@@ -213,7 +213,7 @@ pub fn router(state: AppState) -> Router {
             "/admin/permissions/audit/{permission}",
             get(pages::permissions_audit::show),
         )
-        .route("/admin/permissions/grant", post(pages::admin::grant))
+        .route("/admin/permissions/set", post(pages::admin::set_grants))
         .route(
             "/admin/permissions/{grant_id}/revoke",
             post(pages::admin::revoke),

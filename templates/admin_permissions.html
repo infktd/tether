@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}Permissions{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Permissions</span>{% endblock %}
 {% block content %}
@@ -9,9 +10,20 @@
   </div>
   {% include "admin_error.html" %}
 
+  <form method="get" action="/admin/permissions" class="flex flex-wrap gap-2 items-end" role="search">
+    <div class="grid gap-1.5 min-w-64 flex-1 max-w-md">
+      <label class="label" for="q">Permission</label>
+      <input class="input" type="search" id="q" name="q" value="{{ q }}" placeholder="Name or what it allows, e.g. blacklist" maxlength="100">
+    </div>
+    <button type="submit" class="btn" data-variant="outline">Filter</button>
+  </form>
+
   <section class="card data-card">
-    <header><h2>Grants</h2></header>
-    <table class="table">
+    <header><h2>Grants <span class="num text-muted-foreground font-normal">{% if q.is_empty() %}{{ total }}{% else %}{{ rows.len() }} of {{ total }}{% endif %}</span></h2><p>Edit on a row ticks the states and groups that hold it; Save changes only what you changed.</p></header>
+    {% if rows.is_empty() %}
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No permission matches “{{ q }}”.</p>
+    {% else %}
+    <table class="table permissions-table">
       <thead><tr><th scope="col">Permission</th><th scope="col">Granted to</th></tr></thead>
       <tbody>
         {% for row in rows %}
@@ -20,47 +32,47 @@
             <div class="font-medium num">{{ row.name }}</div>
             <div class="text-xs text-muted-foreground">{{ row.description }}</div>
           </td>
-          <td>
-            {% if row.grants.is_empty() %}<span class="text-sm text-muted-foreground">Superusers only</span>{% endif %}
-            <div class="flex flex-wrap gap-2">
+          <td class="grants-cell">
+            <div class="flex flex-wrap items-center gap-2">
+              {% if row.grants.is_empty() %}<span class="text-sm text-muted-foreground">Superusers only</span>{% endif %}
               {% for g in row.grants %}
               <form method="post" action="/admin/permissions/{{ g.id }}/revoke" class="grant-chip" hx-confirm="Revoke {{ row.name }} from {{ g.label }}?">
                 <span>{% if g.kind == "state" %}State: {% else if g.kind == "group" %}Group: {% else %}User: <a class="underline underline-offset-4" href="/admin/users/{{ g.account_id }}">{% endif %}{{ g.label }}{% if g.kind == "user" %}</a>{% endif %}</span>
                 <button type="submit" aria-label="Revoke {{ row.name }} from {{ g.label }}" title="Revoke">×</button>
               </form>
               {% endfor %}
+            {#- Who holds it, as a checklist: what was ticked goes along
+                as `was`, so Save changes only what this viewer changed. -#}
+            <details class="grant-picker">
+              <summary class="btn" data-variant="ghost" data-size="sm">{% call icons::icon("plus") %}{% endcall %} Edit<span class="sr-only"> who holds {{ row.name }}</span></summary>
+              <form method="post" action="/admin/permissions/set" class="grant-picker-panel">
+                <input type="hidden" name="permission" value="{{ row.name }}">
+                {% for c in choices %}{% if row.holds(c.value) %}<input type="hidden" name="was" value="{{ c.value }}">{% endif %}{% endfor %}
+                <fieldset>
+                  <legend>States</legend>
+                  {% for c in choices %}{% if !c.is_group %}
+                  <label class="grant-option"><input type="checkbox" class="input" name="grantee" value="{{ c.value }}"{% if row.holds(c.value) %} checked{% endif %}{% if row.sensitive && c.open_to_anyone && !row.holds(c.value) %} disabled{% endif %}> <span>{{ c.label }}</span></label>
+                  {% endif %}{% endfor %}
+                </fieldset>
+                {% if has_groups() %}
+                <fieldset>
+                  <legend>Groups</legend>
+                  {% for c in choices %}{% if c.is_group %}
+                  <label class="grant-option"><input type="checkbox" class="input" name="grantee" value="{{ c.value }}"{% if row.holds(c.value) %} checked{% endif %}{% if row.sensitive && c.open_to_anyone && !row.holds(c.value) %} disabled{% endif %}> <span>{{ c.label }}</span></label>
+                  {% endif %}{% endfor %}
+                </fieldset>
+                {% endif %}
+                {% if row.sensitive %}<p class="text-xs text-muted-foreground">Not to Guest, a public state or an Open group: anyone can be in those.</p>{% endif %}
+                <div><button type="submit" class="btn" data-variant="primary" data-size="sm">Save</button></div>
+              </form>
+            </details>
             </div>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% endif %}
   </section>
-
-  <form class="card" method="post" action="/admin/permissions/grant" hx-confirm="Grant this permission? Everyone in that state or group gets it.">
-    <header><h2>Grant a permission</h2><p>Admin permissions and fleet pings can't go to Guest, a public state or an Open group: anyone can be in those.</p></header>
-    <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
-      <div class="grid gap-2">
-        <label class="label" for="permission">Permission</label>
-        <select class="select input" id="permission" name="permission">
-          {% for row in rows %}<option value="{{ row.name }}">{{ row.name }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="grid gap-2">
-        <label class="label" for="grantee">To</label>
-        <select class="select input" id="grantee" name="grantee">
-          <optgroup label="States">
-            {% for s in states %}<option value="state:{{ s.id }}">{{ s.name }}</option>{% endfor %}
-          </optgroup>
-          {% if !groups.is_empty() %}
-          <optgroup label="Groups">
-            {% for g in groups %}<option value="group:{{ g.id }}">{{ g.name }}</option>{% endfor %}
-          </optgroup>
-          {% endif %}
-        </select>
-      </div>
-    </section>
-    <footer><button type="submit" class="btn" data-variant="primary">Grant</button></footer>
-  </form>
 </div>
 {% endblock %}

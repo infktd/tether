@@ -158,7 +158,7 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
     send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.states&grantee=group:{group_id}"),
             &owner,
         ),
@@ -460,7 +460,7 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.audit&grantee=state:{MEMBER_STATE}"),
             &owner,
         ),
@@ -469,7 +469,7 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.groups&grantee=group:{group_id}"),
             &owner,
         ),
@@ -487,7 +487,7 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     let bad = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             "permission=admin.audit&grantee=everyone",
             &owner,
         ),
@@ -509,6 +509,88 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     assert_eq!(me(&h, &pilot).await["permissions"], serde_json::json!([]));
 }
 
+/// A permission's grants to states and groups, as picker values.
+async fn holders(h: &Harness, permission: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT CASE WHEN state_id IS NOT NULL THEN 'state:' || state_id \
+                ELSE 'group:' || group_id END \
+         FROM core.permission_grants WHERE permission = $1 AND account_id IS NULL ORDER BY 1",
+    )
+    .bind(permission)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_rows_picker_saves_only_what_changed(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    let group = create_group(&h, &owner, "Officers", "internal").await;
+    let g = group.rsplit('/').next().unwrap().to_owned();
+    // From the page (boosted), so the answer carries its toast.
+    let set = |body: String| {
+        send(
+            &h.app,
+            boosted(
+                form("/admin/permissions/set", &body, &owner),
+                "/admin/permissions",
+            ),
+        )
+    };
+
+    // Two at once, from a row that held nothing.
+    let res = set(format!(
+        "permission=admin.audit&grantee=state:{MEMBER_STATE}&grantee=group:{g}"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let (message, _) = toast(&res).expect("a toast");
+    assert_eq!(message, "admin.audit granted to Member, Officers.");
+    assert_eq!(
+        holders(&h, "admin.audit").await,
+        [format!("group:{g}"), format!("state:{MEMBER_STATE}")]
+    );
+
+    // Someone else grants it to Blue meanwhile; this page still shows
+    // Member and Officers ticked, and the admin unticks Member: only
+    // Member goes, Blue stays.
+    set(format!("permission=admin.audit&grantee=state:{BLUE_STATE}")).await;
+    let res = set(format!(
+        "permission=admin.audit&was=state:{MEMBER_STATE}&was=group:{g}&grantee=group:{g}"
+    ))
+    .await;
+    assert_eq!(
+        toast(&res).expect("a toast").0,
+        "admin.audit revoked from Member."
+    );
+    assert_eq!(
+        holders(&h, "admin.audit").await,
+        [format!("group:{g}"), format!("state:{BLUE_STATE}")]
+    );
+
+    // The page: a picker on each row, Guest not offered for an admin
+    // permission, and a filter.
+    let listed = page(&h, "/admin/permissions", &owner).await.body;
+    assert!(listed.contains(r#"action="/admin/permissions/set""#));
+    assert!(
+        listed.contains(&format!(
+            r#"name="grantee" value="state:{GUEST_STATE}" disabled>"#
+        )),
+        "{listed}"
+    );
+    assert!(
+        !listed.contains("Grant a permission"),
+        "the old form is gone"
+    );
+    let filtered = page(&h, "/admin/permissions?q=blacklist", &owner)
+        .await
+        .body;
+    assert!(filtered.contains("blacklist.view_eve_blacklist"));
+    assert!(!filtered.contains(">admin.audit<"), "{filtered}");
+    assert!(filtered.contains(" of "), "shown of all");
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn admin_permissions_never_go_to_guest_or_open_groups(db: PgPool) {
     let h = harness(db, true).await;
@@ -519,7 +601,7 @@ async fn admin_permissions_never_go_to_guest_or_open_groups(db: PgPool) {
     let guest = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.audit&grantee=state:{GUEST_STATE}"),
             &owner,
         ),
@@ -531,7 +613,7 @@ async fn admin_permissions_never_go_to_guest_or_open_groups(db: PgPool) {
     let open_grant = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.permissions&grantee=group:{open_id}"),
             &owner,
         ),
@@ -571,7 +653,7 @@ async fn group_managers_cannot_add_anyone_to_a_group_with_more_power_than_theirs
     send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.groups&grantee=group:{officers_id}"),
             &owner,
         ),
@@ -583,7 +665,7 @@ async fn group_managers_cannot_add_anyone_to_a_group_with_more_power_than_theirs
     send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=admin.permissions&grantee=group:{admins_id}"),
             &owner,
         ),

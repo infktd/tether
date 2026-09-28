@@ -314,6 +314,66 @@
     @apply rounded-sm px-1 text-muted-foreground hover:bg-accent hover:text-destructive;
   }
 
+  /* Permissions: a row's picker (DESIGN.md, Administration). Edit opens
+     a checklist of states and groups under the row's grants. */
+  .grants-cell {
+    min-width: 240px;
+  }
+  .permissions-table td {
+    vertical-align: top;
+  }
+  /* Inline after the chips; open, it takes the whole line under them. */
+  .grant-picker[open] {
+    flex-basis: 100%;
+  }
+  .grant-picker > summary {
+    width: fit-content;
+    list-style: none;
+    cursor: pointer;
+  }
+  .grant-picker > summary::-webkit-details-marker {
+    display: none;
+  }
+  .grant-picker-panel {
+    display: grid;
+    gap: 12px;
+    max-width: 380px;
+    margin-top: 8px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    background: var(--background);
+  }
+  .grant-picker-panel fieldset {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 12px;
+  }
+  .grant-picker-panel legend {
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .grant-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .grant-option > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .grant-option:has(input:disabled) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   /* App pages (DESIGN.md, Plugins). The header: title on the left, the
      page's own links on the right. */
   .page-header {
@@ -1785,17 +1845,17 @@
 
   /* Disclosures and sidebar sections open and close like folders. */
   @supports (interpolate-size: allow-keywords) {
-    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure) {
+    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure, .grant-picker) {
       interpolate-size: allow-keywords;
     }
-    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure)::details-content {
+    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure, .grant-picker)::details-content {
       height: 0;
       overflow: clip;
       transition:
         height 150ms ease-out,
         content-visibility 150ms allow-discrete;
     }
-    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure)[open]::details-content {
+    :is(.card-disclosure, .install-file, .nav-section, .inline-disclosure, .grant-picker)[open]::details-content {
       height: auto;
     }
   }

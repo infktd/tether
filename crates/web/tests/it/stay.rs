@@ -20,7 +20,7 @@ async fn a_redirect_back_reloads_the_page_in_place_keeping_its_query(db: PgPool)
     // Without JavaScript: the redirect it always was.
     let plain = send(
         &h.app,
-        form("/admin/permissions/grant", &grant("admin.states"), &owner),
+        form("/admin/permissions/set", &grant("admin.states"), &owner),
     )
     .await;
     assert_eq!(plain.status, StatusCode::SEE_OTHER);
@@ -31,7 +31,7 @@ async fn a_redirect_back_reloads_the_page_in_place_keeping_its_query(db: PgPool)
     let res = send(
         &h.app,
         boosted(
-            form("/admin/permissions/grant", &grant("admin.groups"), &owner),
+            form("/admin/permissions/set", &grant("admin.groups"), &owner),
             here,
         ),
     )
@@ -43,7 +43,7 @@ async fn a_redirect_back_reloads_the_page_in_place_keeping_its_query(db: PgPool)
     assert_eq!(to["swap"], "innerHTML show:none");
     assert_eq!(to["push"], "false");
     let (message, tone) = toast(&res).expect("a toast");
-    assert!(message.contains("Granted"), "{message}");
+    assert!(message.contains("granted to Member"), "{message}");
     assert_eq!(tone, "done");
 
     // Posted from another page (or a forged address elsewhere): where the
@@ -53,7 +53,7 @@ async fn a_redirect_back_reloads_the_page_in_place_keeping_its_query(db: PgPool)
         ("https://evil.test/admin/permissions?q=x", "admin.audit"),
     ] {
         let mut req = boosted(
-            form("/admin/permissions/grant", &grant(permission), &owner),
+            form("/admin/permissions/set", &grant(permission), &owner),
             "/",
         );
         req.headers_mut().insert(

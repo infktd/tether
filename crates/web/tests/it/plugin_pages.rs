@@ -300,7 +300,7 @@ async fn plugin_permissions_are_granted_like_core_ones(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=plugin.acme.pages.view&grantee=state%3A{MEMBER_STATE}"),
             &owner,
         ),
@@ -310,7 +310,7 @@ async fn plugin_permissions_are_granted_like_core_ones(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             &format!("permission=plugin.acme.pages.nope&grantee=state%3A{MEMBER_STATE}"),
             &owner,
         ),

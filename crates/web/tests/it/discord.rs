@@ -1421,7 +1421,7 @@ async fn fleet_pings_need_the_permission(db: PgPool) {
     let refused = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             "permission=fleetpings.basic_access&grantee=state:3",
             &owner,
         ),
@@ -2093,7 +2093,7 @@ async fn limits_decide_who_may_use_what(db: PgPool) {
     let granted = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             "permission=fleetpings.basic_access&grantee=state:1",
             &owner,
         ),
@@ -2510,7 +2510,7 @@ async fn pings_offer_the_doctrines_apps_share_to_whoever_may_see_them(db: PgPool
     let res = send(
         &h.app,
         form(
-            "/admin/permissions/grant",
+            "/admin/permissions/set",
             "permission=fleetpings.basic_access&grantee=state:1",
             &owner,
         ),

@@ -754,7 +754,7 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-POST {{base}}/admin/permissions/grant
+POST {{base}}/admin/permissions/set
 Origin: {{base}}
 [Form]
 permission: admin.audit
