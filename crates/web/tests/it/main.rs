@@ -12,6 +12,7 @@ mod blacklist;
 mod bulletin_board;
 mod bundled;
 mod compliance;
+mod contacts;
 mod dashboard;
 mod dev_login;
 mod discord;

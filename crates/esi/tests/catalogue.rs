@@ -23,6 +23,7 @@ fn target() -> Target {
     Target {
         character_id: CHARACTER,
         corporation_id: 0,
+        alliance_id: None,
     }
 }
 

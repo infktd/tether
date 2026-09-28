@@ -1,0 +1,48 @@
+# Contacts, a first-party Tether plugin (aa-contacts).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.contacts"
+name = "Contacts"
+version = "0.1.0"
+host_api = "1"
+description = "Alliance and corporation contacts with their standings and labels, notes and server links, for the members of each."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# Approved by Jay (2026-09-27): each owner's corporation's and alliance's
+# contacts. AA's manage permissions add the owners, as aa-contacts' tokens;
+# unlike aa-contacts, an owner brings both, whichever of them added it (apps
+# don't learn who added an owner).
+[capabilities.esi]
+data_source = ["esi-alliances.read_contacts.v1", "esi-corporations.read_contacts.v1"]
+owner_permissions = ["manage_alliance_contacts", "manage_corporation_contacts"]
+
+# Hourly, as aa-contacts' task.
+[[capabilities.schedules]]
+name = "update"
+every = "1h"
+
+# aa-contacts' permission names.
+[permissions]
+manage_alliance_contacts = "Can add tokens for the alliance and trigger manual updates"
+manage_corporation_contacts = "Can add tokens for the corporation and trigger manual updates"
+view_alliance_notes = "Can view notes on alliance contacts"
+view_corporation_notes = "Can view notes on corporation contacts"
+view_alliance_server_links = "Can view server links (and their passwords) on alliance contacts"
+view_corporation_server_links = "Can view server links (and their passwords) on corporation contacts"
+
+# Anyone signed in sees the alliances and corporations they have a
+# character in, as aa-contacts.
+[[pages]]
+path = ""
+signed_in = true
+
+[[navigation]]
+label = "Contacts"
+path = ""
+section = "corporation"

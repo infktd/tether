@@ -35,15 +35,7 @@ fn target(plugin: &str) -> String {
 /// `add_fatlink` (whose FCs add their fleet boss). In AA only these add
 /// owners, not an app's general management permission.
 pub fn owner_permissions(manifest: &Manifest) -> Vec<&str> {
-    match &manifest.capabilities.esi.owner_permissions {
-        Some(named) => named.iter().map(String::as_str).collect(),
-        None => manifest
-            .permissions
-            .keys()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("add_"))
-            .collect(),
-    }
+    manifest.owner_permissions()
 }
 
 /// Who may add a character as an app's data source (AA's Add Owner):

@@ -21,6 +21,7 @@ members = [
     "plugins/sov-timer",
     "plugins/esi-status",
     "plugins/bulletin-board",
+    "plugins/contacts",
 ]
 
 [workspace.package]

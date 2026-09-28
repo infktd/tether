@@ -279,6 +279,7 @@ async fn esi_get(
             Target {
                 character_id: id,
                 corporation_id: 0,
+                alliance_id: None,
             }
         }
         (About::Corporation, Subject::DataSource(id)) => {
@@ -292,9 +293,18 @@ async fn esi_get(
                 .await
                 .map_err(unavailable)?
                 .ok_or(EsiError::NotADataSource)?;
+            // Alliance endpoints read the source's own alliance.
+            let alliance = if endpoint.name.starts_with("alliance-") {
+                db::approved_source_alliance(&deps.db, plugin, id)
+                    .await
+                    .map_err(unavailable)?
+            } else {
+                None
+            };
             Target {
                 character_id: id,
                 corporation_id: corporation,
+                alliance_id: alliance,
             }
         }
         (About::Character, _) => {
@@ -424,6 +434,7 @@ async fn esi_post(
     let target = Target {
         character_id: character,
         corporation_id: 0,
+        alliance_id: None,
     };
     let response = deps
         .esi

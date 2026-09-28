@@ -151,7 +151,17 @@ pub fn permission_renames(from: Option<&Manifest>, to: &Manifest) -> Vec<(String
             && from.is_none_or(|f| {
                 f.permissions.contains_key(&old) && !f.permissions.contains_key(&new)
             });
-        if fits && !out.iter().any(|(o, n)| *o == old || *n == new) {
+        // A rename mustn't hand adding owners to everyone who held a
+        // permission that didn't: grants onto one of `to`'s owner
+        // permissions move only from one of `from`'s (unknown `from`: as
+        // `to` would count it). Otherwise the old grants just go.
+        let owners_before = match from {
+            Some(f) => f.owner_permissions(),
+            None => to.owner_permissions_by_prefix(),
+        };
+        let hands_owners = to.owner_permissions().contains(&new.as_str())
+            && !owners_before.contains(&old.as_str());
+        if fits && !hands_owners && !out.iter().any(|(o, n)| *o == old || *n == new) {
             out.push((old, new));
         }
     }
@@ -170,6 +180,28 @@ pub enum PageAccess {
 }
 
 impl Manifest {
+    /// The permissions that add owners: those `owner_permissions` names
+    /// (for AA names such as aa-contacts' `manage_alliance_contacts`), else
+    /// the `add_…` ones, as AA's `add_refinery_owner` and aa-afat's
+    /// `add_fatlink`. In AA only these add owners, not an app's general
+    /// management permission.
+    pub fn owner_permissions(&self) -> Vec<&str> {
+        match &self.capabilities.esi.owner_permissions {
+            Some(named) => named.iter().map(String::as_str).collect(),
+            None => self.owner_permissions_by_prefix(),
+        }
+    }
+
+    /// The `add_…` permissions: the owner permissions of a manifest that
+    /// names none.
+    fn owner_permissions_by_prefix(&self) -> Vec<&str> {
+        self.permissions
+            .keys()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("add_"))
+            .collect()
+    }
+
     /// Who may open a page: its rule's permission, any signed-in pilot,
     /// or admins when no rule covers it.
     pub fn page_access(&self, path: &str) -> PageAccess {
@@ -511,20 +543,20 @@ impl Manifest {
                     "[renamed_permissions] {old:?} becomes {new:?}, which [permissions] doesn't declare"
                 )));
             }
-            // Holding `manage`, an `add_*` permission or one the manifest
-            // names in `owner_permissions` lets an account offer the app
-            // data sources: a rename mustn't hand that to everyone who held
-            // something else.
-            let named = self
-                .capabilities
-                .esi
-                .owner_permissions
-                .as_deref()
-                .unwrap_or(&[]);
-            let offers = |name: &str| {
-                name == "manage" || name.starts_with("add_") || named.iter().any(|n| n == name)
-            };
-            if offers(new) && !offers(old) {
+            // Holding an `add_*` permission or one the manifest names in
+            // `owner_permissions` lets an account offer the app data
+            // sources (and `manage` everything else): a rename mustn't hand
+            // that to everyone who held something else. Counted
+            // conservatively for the new name. The old one may have added
+            // owners only as an `add_*` (a named one is in [permissions]
+            // and the old name isn't); whether it did in the version
+            // actually replaced, `permission_renames` checks.
+            let named = self.capabilities.esi.owner_permissions.as_deref();
+            let offers_new = new == "manage"
+                || new.starts_with("add_")
+                || named.unwrap_or(&[]).iter().any(|n| n == new);
+            let offered_old = old.starts_with("add_");
+            if offers_new && !offered_old {
                 return Err(bad(format!(
                     "[renamed_permissions] {old:?} can't become {new:?}: a manage or add_ permission starts with nobody holding it"
                 )));
@@ -901,6 +933,73 @@ mod tests {
         let text = serde_json::to_string(&new).unwrap();
         assert!(text.contains("renamed_permissions"), "{text}");
         assert!(!serde_json::to_string(&old).unwrap().contains("renamed"));
+    }
+
+    #[test]
+    fn renames_never_hand_out_adding_owners() {
+        let esi = "[capabilities.esi]\ndata_source = [\"esi-corporations.read_contacts.v1\"]\n\
+                   owner_permissions = [\"manage_contacts\"]\n";
+        // Onto a named owner permission from one that never added owners:
+        // refused outright.
+        let onto = Manifest::parse(&manifest(
+            "[permissions]\nmanage_contacts = \"x\"\nmanage_contacts2 = \"x\"\n\
+             [renamed_permissions]\nnote = \"manage_contacts2\"\n\
+             [capabilities.esi]\ndata_source = [\"esi-corporations.read_contacts.v1\"]\n\
+             owner_permissions = [\"manage_contacts\", \"manage_contacts2\"]\n",
+        ));
+        assert!(onto.is_err(), "{onto:?}");
+        // Away from one is fine going forward; rolling back over it would
+        // move the new name's grants onto the owner permission, so they go.
+        let old = Manifest::parse(&manifest(&format!(
+            "[permissions]\nmanage_contacts = \"x\"\nnotes = \"x\"\n{esi}"
+        )))
+        .unwrap();
+        let new = Manifest::parse(&manifest(&format!(
+            "[permissions]\nmanage_contacts = \"x\"\nview_notes = \"x\"\n\
+             [renamed_permissions]\nnotes = \"view_notes\"\n{esi}"
+        )))
+        .unwrap();
+        assert_eq!(permission_renames(Some(&old), &new).len(), 1);
+        assert_eq!(permission_renames(Some(&new), &old).len(), 1);
+        let sneaky = Manifest::parse(&manifest(
+            "[permissions]\nmanage_contacts2 = \"x\"\nview_notes = \"x\"\n\
+             [renamed_permissions]\nmanage_contacts = \"view_notes\"\n\
+             [capabilities.esi]\ndata_source = [\"esi-corporations.read_contacts.v1\"]\n\
+             owner_permissions = [\"manage_contacts2\"]\n",
+        ))
+        .unwrap();
+        let back = Manifest::parse(&manifest(&format!(
+            "[permissions]\nmanage_contacts = \"x\"\nmanage_contacts2 = \"x\"\n{esi}"
+        )))
+        .unwrap();
+        // Rolling back from `sneaky` would turn view_notes into
+        // manage_contacts, an owner permission view_notes wasn't.
+        assert!(permission_renames(Some(&sneaky), &back).is_empty());
+        // Forward, an add_ permission may become a named owner permission.
+        let was = Manifest::parse(&manifest(
+            "[permissions]\nadd_owner = \"x\"\n[capabilities.esi]\n\
+             data_source = [\"esi-corporations.read_contacts.v1\"]\n",
+        ))
+        .unwrap();
+        let named = Manifest::parse(&manifest(&format!(
+            "[permissions]\nmanage_contacts = \"x\"\n\
+             [renamed_permissions]\nadd_owner = \"manage_contacts\"\n{esi}"
+        )))
+        .unwrap();
+        assert_eq!(permission_renames(Some(&was), &named).len(), 1);
+        // But not an add_ permission that didn't add owners there.
+        let other = Manifest::parse(&manifest(&format!(
+            "[permissions]\nadd_owner = \"x\"\nmanage_contacts = \"x\"\n{esi}"
+        )))
+        .unwrap();
+        let renamed = Manifest::parse(&manifest(
+            "[permissions]\nmanage_contacts = \"x\"\nmanage_contacts2 = \"x\"\n\
+             [renamed_permissions]\nadd_owner = \"manage_contacts2\"\n\
+             [capabilities.esi]\ndata_source = [\"esi-corporations.read_contacts.v1\"]\n\
+             owner_permissions = [\"manage_contacts\", \"manage_contacts2\"]\n",
+        ))
+        .unwrap();
+        assert!(permission_renames(Some(&other), &renamed).is_empty());
     }
 
     fn manifest(extra: &str) -> String {

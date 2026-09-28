@@ -164,6 +164,30 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
         .collect())
 }
 
+/// A data source's alliance (the character's own), for alliance endpoints;
+/// none when it's in none or isn't an approved source.
+pub async fn approved_source_alliance<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    plugin_id: &str,
+    character_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    let alliance = sqlx::query_scalar!(
+        r#"
+        SELECT c.alliance_id FROM core.plugin_data_sources d
+        JOIN core.characters c ON c.id = d.character_id
+        JOIN core.accounts a ON a.id = c.account_id
+        WHERE d.plugin_id = $1 AND d.character_id = $2 AND d.approved_at IS NOT NULL
+          AND d.corporation_id IS NOT NULL AND c.corporation_id = d.corporation_id
+          AND a.id = d.offered_by AND a.active AND NOT core.blacklisted(a.id)
+        "#,
+        plugin_id,
+        character_id
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(alliance.flatten())
+}
+
 /// The corporation a data source reads, if the character is still in the
 /// corporation it was added for, on the account that added it.
 pub async fn approved_source_corporation<'e>(

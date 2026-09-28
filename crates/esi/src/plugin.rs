@@ -125,6 +125,47 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["planet_id"],
     },
     Endpoint {
+        // The data source's corporation's contracts (aa-freight; approved
+        // by Jay, 2026-09-27): its courier contracts, to price-check.
+        name: "corporation-contracts",
+        scope: "esi-contracts.read_corporation_contracts.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // The data source's corporation's contacts and their standings
+        // (aa-contacts; approved by Jay, 2026-09-27).
+        name: "corporation-contacts",
+        scope: "esi-corporations.read_contacts.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        name: "corporation-contact-labels",
+        scope: "esi-corporations.read_contacts.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // The data source's alliance's contacts (aa-contacts; approved by
+        // Jay, 2026-09-27): its own alliance, found by the host.
+        name: "alliance-contacts",
+        scope: "esi-alliances.read_contacts.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        name: "alliance-contact-labels",
+        scope: "esi-alliances.read_contacts.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
         // Sovereignty campaigns (public): who defends which system, the
         // scores and when it starts, for aa-sov-timer's list.
         name: "sovereignty-campaigns",
@@ -132,6 +173,15 @@ pub const ENDPOINTS: &[Endpoint] = &[
         about: About::Public,
         paged: false,
         params: &[],
+    },
+    Endpoint {
+        // Characters' corporations and alliances (public; up to 1,000,
+        // comma-separated): aa-freight asks which alliance an issuer is in.
+        name: "character-affiliation",
+        scope: "",
+        about: About::Public,
+        paged: false,
+        params: &["character_ids"],
     },
     Endpoint {
         // ESI's own status, route by route (public): each route's method,
@@ -956,6 +1006,8 @@ pub fn endpoint(name: &str) -> Option<&'static Endpoint> {
 pub struct Target {
     pub character_id: i64,
     pub corporation_id: i64,
+    /// A data source's alliance, for alliance endpoints; none otherwise.
+    pub alliance_id: Option<i64>,
 }
 
 /// A response: the JSON body, and how many pages there are.
@@ -1449,6 +1501,41 @@ impl Esi {
                     refetched: 0,
                 })
             }
+            "character-affiliation" => {
+                let ids: Vec<i64> = param("character_ids")
+                    .map(|v| {
+                        v.split(',')
+                            .map(|id| id.trim().parse::<i64>())
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()
+                    .ok()
+                    .flatten()
+                    .filter(|ids| (1..=1000).contains(&ids.len()) && ids.iter().all(|id| *id > 0))
+                    .ok_or_else(|| {
+                        EsiError::InvalidInput(
+                            "character_ids must be 1 to 1,000 character ids, comma-separated"
+                                .to_owned(),
+                        )
+                    })?;
+                let affiliations = self.affiliations(&ids, Priority::Bulk).await?;
+                Ok(Response {
+                    body: serde_json::Value::Array(
+                        affiliations
+                            .into_iter()
+                            .map(|a| {
+                                serde_json::json!({
+                                    "character_id": a.character_id,
+                                    "corporation_id": a.corporation_id,
+                                    "alliance_id": a.alliance_id,
+                                })
+                            })
+                            .collect(),
+                    ),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
             "esi-status" => {
                 // /meta/status isn't in the generated client: read as JSON,
                 // through `call_full` like every call (budget, limits).
@@ -1713,7 +1800,7 @@ impl Esi {
                 })
             }
             "universe-station" => {
-                let id = positive("station_id")?;
+                let id = in_range("station_id", 60_000_000..64_000_000)?;
                 let client = self.uncached();
                 let again = Again::new(&client, format!("/universe/stations/{id}"));
                 let request = client.get_universe_stations_station_id().station_id(id);
@@ -1816,6 +1903,12 @@ impl Esi {
         let client = self.with_token(token)?;
         let character = target.character_id;
         let corporation = target.corporation_id;
+        // Alliance endpoints: the data source's alliance, or nothing to read.
+        let alliance = || {
+            target.alliance_id.ok_or_else(|| {
+                EsiError::InvalidInput("the data source is in no alliance".to_owned())
+            })
+        };
         let priority = Priority::Bulk;
         // The request is built and run in `typed`, off this frame (see
         // `fetch`).
@@ -1834,7 +1927,51 @@ impl Esi {
                 }
             }};
         }
+        // As `paged!`, read loosely (contacts' types are an enum a newer
+        // ESI may add to); `$path` is the endpoint's.
+        macro_rules! loose_paged {
+            ($request:expr, $path:expr) => {{
+                let p = page.map_or(1, std::num::NonZeroU32::get);
+                let again = Again::new(&client, $path).with("page", p);
+                let request = $request.page(p);
+                loosely(self, move || request.send(), again).await
+            }};
+        }
         match endpoint.name {
+            "corporation-contracts" => loose_paged!(
+                client
+                    .get_corporations_corporation_id_contracts()
+                    .corporation_id(corporation),
+                format!("/corporations/{corporation}/contracts")
+            ),
+            "corporation-contacts" => loose_paged!(
+                client
+                    .get_corporations_corporation_id_contacts()
+                    .corporation_id(corporation),
+                format!("/corporations/{corporation}/contacts")
+            ),
+            "corporation-contact-labels" => get!(
+                client
+                    .get_corporations_corporation_id_contacts_labels()
+                    .corporation_id(corporation)
+            ),
+            "alliance-contacts" => {
+                let alliance = alliance()?;
+                loose_paged!(
+                    client
+                        .get_alliances_alliance_id_contacts()
+                        .alliance_id(alliance),
+                    format!("/alliances/{alliance}/contacts")
+                )
+            }
+            "alliance-contact-labels" => {
+                let alliance = alliance()?;
+                get!(
+                    client
+                        .get_alliances_alliance_id_contacts_labels()
+                        .alliance_id(alliance)
+                )
+            }
             "corporation-mining-extractions" => paged!(
                 client
                     .get_corporation_corporation_id_mining_extractions()
