@@ -10,6 +10,41 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};
 
+/// A Territorial Claim Unit and an Infrastructure Hub.
+const TCU: i64 = 32226;
+const IHUB: i64 = 32458;
+
+/// Keys naming a character, corporation, alliance or constellation.
+const ENTITY_KEYS: [&str; 27] = [
+    "charID",
+    "aggressorID",
+    "aggressorCorpID",
+    "aggressorAllianceID",
+    "allianceID",
+    "corpID",
+    "creditorID",
+    "debtorID",
+    "allyID",
+    "enemyID",
+    "defenderID",
+    "entityID",
+    "mercID",
+    "offeredID",
+    "ownerID1",
+    "ownerID2",
+    "declaredByID",
+    "againstID",
+    "opponentID",
+    "quitterID",
+    "invokingCharID",
+    "creator_id",
+    "closer_id",
+    "corporation_id",
+    "oldOwnerCorpID",
+    "newOwnerCorpID",
+    "constellationID",
+];
+
 /// Seconds between 1601-01-01 (Windows file time, which EVE uses) and
 /// the Unix epoch.
 const FILETIME_EPOCH: i64 = 11_644_473_600;
@@ -21,6 +56,9 @@ const TICKS: i64 = 10_000_000;
 pub struct Fields {
     scalars: BTreeMap<String, String>,
     lists: BTreeMap<String, Vec<String>>,
+    /// Lists of lists (`- - a` then `  - b` lines), as
+    /// StructuresReinforcementChanged's `allStructureInfo`.
+    nested: BTreeMap<String, Vec<Vec<String>>>,
 }
 
 /// A value without its anchor or quotes.
@@ -40,21 +78,39 @@ impl Fields {
     pub fn parse(text: &str) -> Self {
         let mut fields = Self::default();
         let mut list: Option<String> = None;
+        let mut nested_open = false;
         for line in text.lines() {
             if line.trim().is_empty() {
                 continue;
             }
             // A list item of the key above (EVE writes them unindented or
-            // indented by two). Nested lists aren't read.
+            // indented by two); `- - a` starts an inner list, whose other
+            // items are indented `  - b`.
             if let Some(item) = line.trim_start().strip_prefix("- ") {
-                if let Some(key) = &list
-                    && !item.starts_with("- ")
-                {
-                    fields
-                        .lists
-                        .entry(key.clone())
-                        .or_default()
-                        .push(clean(item));
+                if let Some(key) = &list {
+                    if let Some(first) = item.strip_prefix("- ") {
+                        nested_open = true;
+                        fields
+                            .nested
+                            .entry(key.clone())
+                            .or_default()
+                            .push(vec![clean(first)]);
+                    } else if nested_open && line.starts_with("  ") {
+                        if let Some(inner) = fields
+                            .nested
+                            .get_mut(key)
+                            .and_then(|lists| lists.last_mut())
+                        {
+                            inner.push(clean(item));
+                        }
+                    } else {
+                        nested_open = false;
+                        fields
+                            .lists
+                            .entry(key.clone())
+                            .or_default()
+                            .push(clean(item));
+                    }
                 }
                 continue;
             }
@@ -67,6 +123,7 @@ impl Fields {
             };
             let key = key.trim().to_owned();
             let value = clean(value);
+            nested_open = false;
             if value.is_empty() {
                 list = Some(key);
             } else {
@@ -87,6 +144,11 @@ impl Fields {
 
     pub fn float(&self, key: &str) -> Option<f64> {
         self.text(key).and_then(|v| v.parse().ok())
+    }
+
+    /// A list of lists (`allStructureInfo`).
+    pub fn nested(&self, key: &str) -> &[Vec<String>] {
+        self.nested.get(key).map_or(&[], Vec::as_slice)
     }
 
     pub fn ints(&self, key: &str) -> Vec<i64> {
@@ -122,22 +184,33 @@ impl Fields {
         self.int("structureTypeID").or_else(|| self.int("typeID"))
     }
 
+    /// A sovereignty notification's structure type: its own, or by its
+    /// campaign (1 a TCU, 2 an IHub, as aa-structures).
+    pub fn sov_type_id(&self) -> Option<i64> {
+        self.int("structureTypeID")
+            .or_else(|| match self.int("campaignEventType") {
+                Some(1) => Some(TCU),
+                Some(2) => Some(IHUB),
+                _ => None,
+            })
+    }
+
     /// Every id `/universe/names` can name: the system, the structure's
-    /// type, the attacker, and the services that went offline. Moons and
-    /// planets aren't among them (Structures names those itself).
+    /// type, the characters, corporations and alliances involved, and the
+    /// services that went offline. Moons and planets aren't among them
+    /// (Structures names those itself); goal and war ids aren't names.
     pub fn ids(&self) -> Vec<i64> {
-        let mut ids: Vec<i64> = [
-            self.system_id(),
-            self.type_id(),
-            self.int("charID"),
-            self.int("aggressorID"),
-            self.int("aggressorCorpID"),
-            self.int("aggressorAllianceID"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let mut ids: Vec<i64> = [self.system_id(), self.type_id(), self.sov_type_id()]
+            .into_iter()
+            .flatten()
+            .collect();
+        ids.extend(ENTITY_KEYS.iter().filter_map(|key| self.int(key)));
         ids.extend(self.ints("listOfServiceModuleIDs"));
+        ids.extend(
+            self.nested("allStructureInfo")
+                .iter()
+                .filter_map(|info| info.get(2)?.parse::<i64>().ok()),
+        );
         ids.retain(|id| *id > 0);
         ids
     }
@@ -177,14 +250,23 @@ pub enum Category {
     State,
     /// Moon drills.
     Moon,
+    /// Sovereignty, and the bills that keep it.
+    Sov,
+    /// Wars.
+    War,
+    /// Members joining and leaving, applications, projects.
+    Corp,
 }
 
 impl Category {
-    pub const ALL: [Category; 4] = [
+    pub const ALL: [Category; 7] = [
         Category::Attack,
         Category::Fuel,
         Category::State,
         Category::Moon,
+        Category::Sov,
+        Category::War,
+        Category::Corp,
     ];
 
     /// Its name in storage (`owner_channels.category`).
@@ -194,6 +276,9 @@ impl Category {
             Category::Fuel => "fuel",
             Category::State => "state",
             Category::Moon => "moon",
+            Category::Sov => "sov",
+            Category::War => "war",
+            Category::Corp => "corp",
         }
     }
 
@@ -204,6 +289,9 @@ impl Category {
             Category::Fuel => "Fuel and services",
             Category::State => "State changes",
             Category::Moon => "Moon extractions",
+            Category::Sov => "Sovereignty and bills",
+            Category::War => "Wars",
+            Category::Corp => "Members and projects",
         }
     }
 }
@@ -222,157 +310,522 @@ pub enum Severity {
 pub const STARBASE_REINFORCED: &str = "TowerReinforcedExtra";
 
 /// Every notification type Structures sends, as aa-structures' webhook
-/// filters list them: its type, what a manager sees, and its severity.
-pub const TYPES: [(&str, &str, Severity); 28] = [
+/// filters list them: its type, what a manager sees, its severity
+/// (aa-structures' embed colour; its "success" pings nobody, as info
+/// here), and the channel kind it goes to.
+pub const TYPES: [(&str, &str, Severity, Category); 75] = [
     (
         "StructureUnderAttack",
         "Upwell structure under attack",
         Severity::Danger,
+        Category::Attack,
     ),
     (
         "StructureLostShields",
         "Upwell structure lost shields",
         Severity::Danger,
+        Category::Attack,
     ),
     (
         "StructureLostArmor",
         "Upwell structure lost armor",
         Severity::Danger,
+        Category::Attack,
     ),
     (
         "StructureDestroyed",
         "Upwell structure destroyed",
         Severity::Danger,
+        Category::Attack,
     ),
-    ("TowerAlertMsg", "Starbase under attack", Severity::Warning),
-    (STARBASE_REINFORCED, "Starbase reinforced", Severity::Danger),
+    (
+        "TowerAlertMsg",
+        "Starbase under attack",
+        Severity::Warning,
+        Category::Attack,
+    ),
+    (
+        STARBASE_REINFORCED,
+        "Starbase reinforced",
+        Severity::Danger,
+        Category::Attack,
+    ),
     (
         "OrbitalAttacked",
         "Customs office under attack",
         Severity::Warning,
+        Category::Attack,
     ),
     (
         "OrbitalReinforced",
         "Customs office reinforced",
         Severity::Danger,
+        Category::Attack,
     ),
     (
         "SkyhookUnderAttack",
         "Skyhook under attack",
         Severity::Danger,
+        Category::Attack,
     ),
     (
         "SkyhookLostShields",
         "Skyhook lost shields",
         Severity::Danger,
+        Category::Attack,
     ),
-    ("SkyhookDestroyed", "Skyhook destroyed", Severity::Danger),
+    (
+        "SkyhookDestroyed",
+        "Skyhook destroyed",
+        Severity::Danger,
+        Category::Attack,
+    ),
     (
         "StructureFuelAlert",
         "Upwell structure fuel alert",
         Severity::Warning,
+        Category::Fuel,
+    ),
+    (
+        "StructureJumpFuelAlert",
+        "Jump gate low on liquid ozone",
+        Severity::Warning,
+        Category::Fuel,
+    ),
+    (
+        "StructureRefueledExtra",
+        "Upwell structure refueled",
+        Severity::Info,
+        Category::Fuel,
     ),
     (
         "StructureServicesOffline",
         "Upwell structure services went offline",
         Severity::Danger,
+        Category::Fuel,
     ),
     (
         "StructureWentLowPower",
         "Upwell structure went low power",
         Severity::Warning,
+        Category::Fuel,
     ),
     (
         "StructureLowReagentsAlert",
         "Metenox low on reagents",
         Severity::Warning,
+        Category::Fuel,
     ),
     (
         "StructureNoReagentsAlert",
         "Metenox out of reagents",
         Severity::Danger,
+        Category::Fuel,
     ),
     (
         "TowerResourceAlertMsg",
         "Starbase fuel alert",
         Severity::Warning,
+        Category::Fuel,
+    ),
+    (
+        "TowerRefueledExtra",
+        "Starbase refueled",
+        Severity::Info,
+        Category::Fuel,
     ),
     (
         "StructureWentHighPower",
         "Upwell structure went high power",
         Severity::Info,
+        Category::State,
     ),
-    ("StructureOnline", "Upwell structure online", Severity::Info),
+    (
+        "StructureOnline",
+        "Upwell structure online",
+        Severity::Info,
+        Category::State,
+    ),
     (
         "StructureAnchoring",
         "Upwell structure anchoring",
         Severity::Info,
+        Category::State,
     ),
     (
         "StructureUnanchoring",
         "Upwell structure unanchoring",
         Severity::Info,
+        Category::State,
     ),
-    ("SkyhookDeployed", "Skyhook deployed", Severity::Info),
-    ("SkyhookOnline", "Skyhook online", Severity::Info),
+    (
+        "OwnershipTransferred",
+        "Upwell structure ownership transferred",
+        Severity::Info,
+        Category::State,
+    ),
+    (
+        "StructuresReinforcementChanged",
+        "Upwell structure reinforcement time changed",
+        Severity::Info,
+        Category::State,
+    ),
+    (
+        "SkyhookDeployed",
+        "Skyhook deployed",
+        Severity::Info,
+        Category::State,
+    ),
+    (
+        "SkyhookOnline",
+        "Skyhook online",
+        Severity::Info,
+        Category::State,
+    ),
     (
         "MoonminingExtractionStarted",
         "Moon extraction started",
         Severity::Info,
+        Category::Moon,
     ),
     (
         "MoonminingExtractionFinished",
         "Moon extraction finished",
         Severity::Info,
+        Category::Moon,
     ),
     (
         "MoonminingAutomaticFracture",
         "Moon automatic fracture",
         Severity::Info,
+        Category::Moon,
     ),
-    ("MoonminingLaserFired", "Moon laser fired", Severity::Info),
+    (
+        "MoonminingLaserFired",
+        "Moon laser fired",
+        Severity::Info,
+        Category::Moon,
+    ),
     (
         "MoonminingExtractionCancelled",
         "Moon extraction cancelled",
         Severity::Warning,
+        Category::Moon,
+    ),
+    (
+        "SovStructureReinforced",
+        "Sovereignty structure reinforced",
+        Severity::Danger,
+        Category::Sov,
+    ),
+    (
+        "SovStructureDestroyed",
+        "Sovereignty structure destroyed",
+        Severity::Danger,
+        Category::Sov,
+    ),
+    (
+        "EntosisCaptureStarted",
+        "Sovereignty entosis capture started",
+        Severity::Warning,
+        Category::Sov,
+    ),
+    (
+        "SovCommandNodeEventStarted",
+        "Sovereignty command nodes decloaking",
+        Severity::Warning,
+        Category::Sov,
+    ),
+    (
+        "SovAllClaimAquiredMsg",
+        "Sovereignty claimed",
+        Severity::Info,
+        Category::Sov,
+    ),
+    (
+        "SovAllClaimLostMsg",
+        "Sovereignty lost",
+        Severity::Info,
+        Category::Sov,
+    ),
+    (
+        "AllAnchoringMsg",
+        "Structure anchoring in alliance space",
+        Severity::Warning,
+        Category::Sov,
+    ),
+    (
+        "InfrastructureHubBillAboutToExpire",
+        "IHub bill about to expire",
+        Severity::Danger,
+        Category::Sov,
+    ),
+    (
+        "IHubDestroyedByBillFailure",
+        "IHub destroyed by bill failure",
+        Severity::Danger,
+        Category::Sov,
+    ),
+    (
+        "BillOutOfMoneyMsg",
+        "Bill out of money",
+        Severity::Warning,
+        Category::Sov,
+    ),
+    (
+        "CorpAllBillMsg",
+        "Bill issued",
+        Severity::Warning,
+        Category::Sov,
+    ),
+    (
+        "WarDeclared",
+        "War declared",
+        Severity::Danger,
+        Category::War,
+    ),
+    (
+        "DeclareWar",
+        "War declared (by a corporation)",
+        Severity::Danger,
+        Category::War,
+    ),
+    (
+        "WarInherited",
+        "War inherited",
+        Severity::Danger,
+        Category::War,
+    ),
+    (
+        "WarAdopted",
+        "War adopted",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "AcceptedAlly",
+        "War ally accepted",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "AllyJoinedWarAggressorMsg",
+        "War ally joined the aggressor",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "AllyJoinedWarAllyMsg",
+        "War ally joined an ally",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "AllyJoinedWarDefenderMsg",
+        "War ally joined the defender",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "AllWarCorpJoinedAllianceMsg",
+        "Corporation at war joined an alliance",
+        Severity::Info,
+        Category::War,
+    ),
+    (
+        "AllWarSurrenderMsg",
+        "War surrendered",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "CorpWarSurrenderMsg",
+        "War party surrendered",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "OfferedSurrender",
+        "War surrender offered by you",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "WarSurrenderOfferMsg",
+        "War surrender offered",
+        Severity::Info,
+        Category::War,
+    ),
+    (
+        "OfferedToAlly",
+        "War offered to become ally",
+        Severity::Info,
+        Category::War,
+    ),
+    (
+        "MercOfferedNegotiationMsg",
+        "War mercenary offer",
+        Severity::Info,
+        Category::War,
+    ),
+    (
+        "MercOfferRetractedMsg",
+        "War mercenary offer retracted",
+        Severity::Info,
+        Category::War,
+    ),
+    (
+        "WarHQRemovedFromSpace",
+        "War HQ removed from space",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "WarInvalid",
+        "War invalid",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "WarRetractedByConcord",
+        "War retracted by CONCORD",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "CorpBecameWarEligible",
+        "Became eligible for war",
+        Severity::Warning,
+        Category::War,
+    ),
+    (
+        "CorpNoLongerWarEligible",
+        "No longer eligible for war",
+        Severity::Info,
+        Category::War,
+    ),
+    (
+        "CorpAppNewMsg",
+        "Character submitted application",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CorpAppInvitedMsg",
+        "Character invited to join corporation",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CharAppWithdrawMsg",
+        "Character withdrew application",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CharAppRejectMsg",
+        "Application rejected",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CorpAppRejectCustomMsg",
+        "Application rejected with a message",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CharAppAcceptMsg",
+        "Character joins corporation",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CharLeftCorpMsg",
+        "Character leaves corporation",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CorporationGoalCreated",
+        "Corporation project created",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CorporationGoalCompleted",
+        "Corporation project completed",
+        Severity::Info,
+        Category::Corp,
+    ),
+    (
+        "CorporationGoalClosed",
+        "Corporation project closed",
+        Severity::Info,
+        Category::Corp,
     ),
 ];
+
+/// Types aa-structures sends only for an owner marked alliance main
+/// (`is_alliance_main`): every corporation of an alliance gets them.
+const ALLIANCE_LEVEL: [&str; 20] = [
+    "BillOutOfMoneyMsg",
+    "InfrastructureHubBillAboutToExpire",
+    "IHubDestroyedByBillFailure",
+    "SovAllClaimAquiredMsg",
+    "SovAllClaimLostMsg",
+    "SovCommandNodeEventStarted",
+    "EntosisCaptureStarted",
+    "SovStructureDestroyed",
+    "SovStructureReinforced",
+    "AllyJoinedWarAggressorMsg",
+    "AllyJoinedWarAllyMsg",
+    "AllyJoinedWarDefenderMsg",
+    "CorpWarSurrenderMsg",
+    "CorpBecameWarEligible",
+    "CorpNoLongerWarEligible",
+    "WarAdopted",
+    "WarDeclared",
+    "WarInherited",
+    "WarRetractedByConcord",
+    "WarSurrenderOfferMsg",
+];
+
+/// Whether only an alliance main's notifications of this type are sent.
+pub fn alliance_level(kind: &str) -> bool {
+    ALLIANCE_LEVEL.contains(&kind)
+}
+
+/// Types Tether makes itself rather than reads from ESI.
+pub const GENERATED: [&str; 4] = [
+    STARBASE_REINFORCED,
+    "StructureJumpFuelAlert",
+    "StructureRefueledExtra",
+    "TowerRefueledExtra",
+];
+
+/// Whether a notification is about one of the owner's structures (sent
+/// once that structure is known), rather than the corporation.
+pub fn structure_related(kind: &str) -> bool {
+    matches!(
+        category(kind),
+        Some(Category::Attack | Category::Fuel | Category::State | Category::Moon)
+    ) && kind != "StructuresReinforcementChanged"
+}
 
 /// A type's severity (info for any not listed).
 pub fn severity(kind: &str) -> Severity {
     TYPES
         .iter()
-        .find(|(k, _, _)| *k == kind)
-        .map_or(Severity::Info, |(_, _, s)| *s)
+        .find(|(k, _, _, _)| *k == kind)
+        .map_or(Severity::Info, |(_, _, s, _)| *s)
 }
 
 pub fn category(kind: &str) -> Option<Category> {
-    Some(match kind {
-        "StructureUnderAttack"
-        | "StructureLostShields"
-        | "StructureLostArmor"
-        | "StructureDestroyed" => Category::Attack,
-        "TowerAlertMsg" | "OrbitalAttacked" | "OrbitalReinforced" | "SkyhookUnderAttack"
-        | "SkyhookLostShields" | "SkyhookDestroyed" | STARBASE_REINFORCED => Category::Attack,
-        "StructureFuelAlert"
-        | "StructureServicesOffline"
-        | "StructureWentLowPower"
-        | "StructureLowReagentsAlert"
-        | "StructureNoReagentsAlert"
-        | "TowerResourceAlertMsg" => Category::Fuel,
-        "StructureWentHighPower"
-        | "StructureOnline"
-        | "StructureAnchoring"
-        | "StructureUnanchoring"
-        | "SkyhookDeployed"
-        | "SkyhookOnline" => Category::State,
-        "MoonminingExtractionStarted"
-        | "MoonminingExtractionFinished"
-        | "MoonminingAutomaticFracture"
-        | "MoonminingLaserFired"
-        | "MoonminingExtractionCancelled" => Category::Moon,
-        _ => return None,
-    })
+    TYPES
+        .iter()
+        .find(|(k, _, _, _)| *k == kind)
+        .map(|(_, _, _, c)| *c)
 }
 
 /// A timer a notification announces.
@@ -415,20 +868,48 @@ pub fn timer(kind: &str, fields: &Fields, at: DateTime<Utc>) -> Option<Timer> {
     })
 }
 
+/// A sovereignty structure reinforced: when its command nodes decloak,
+/// and which structure (aa-structures' timer names: TCU, I-HUB).
+pub fn sov_timer(kind: &str, fields: &Fields) -> Option<(&'static str, DateTime<Utc>)> {
+    if kind != "SovStructureReinforced" {
+        return None;
+    }
+    let structure = match fields.int("campaignEventType") {
+        Some(1) => "TCU",
+        Some(2) => "I-HUB",
+        _ => "Other",
+    };
+    Some((structure, fields.filetime("decloakTime")?))
+}
+
+/// An infrastructure hub's bill, or another.
+fn bill(fields: &Fields) -> &'static str {
+    match fields.int("billTypeID") {
+        Some(7) => "Infrastructure Hub bill",
+        _ => "bill",
+    }
+}
+
 /// What the message needs to know besides the notification.
 pub struct Context<'a> {
     /// The structure's name, if Structures has it.
     pub structure: Option<String>,
+    /// Who sent it (sovereignty's name the alliance holding it), if known.
+    pub sender: Option<String>,
     /// A name for an id, if known.
     pub name: &'a dyn Fn(i64) -> Option<String>,
 }
 
-/// A player-chosen name made safe for Discord: no links or code spans
-/// built from its brackets or backticks.
+/// A player-chosen name made safe for Discord: no links, code spans,
+/// emphasis, spoilers or strikethrough built from its characters (each
+/// escaped, backslashes too).
 pub fn escape(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
-        if matches!(c, '[' | ']' | '(' | ')' | '`') {
+        if matches!(
+            c,
+            '[' | ']' | '(' | ')' | '`' | '\\' | '*' | '_' | '~' | '|'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -436,8 +917,89 @@ pub fn escape(name: &str) -> String {
     out
 }
 
+/// Whether a notification names its holder by its sender (sovereignty).
+pub fn names_sender(kind: &str) -> bool {
+    matches!(
+        kind,
+        "SovStructureReinforced"
+            | "SovStructureDestroyed"
+            | "EntosisCaptureStarted"
+            | "SovCommandNodeEventStarted"
+    )
+}
+
+/// A message cut to `max` characters, marked where it was cut.
+pub fn clip(message: &str, max: usize) -> String {
+    if message.chars().count() <= max {
+        return message.to_owned();
+    }
+    let mut cut: String = message.chars().take(max.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
 fn eve(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// ISK with thousands separators, as a whole number.
+fn isk(value: Option<f64>) -> String {
+    let Some(value) = value else {
+        return "?".to_owned();
+    };
+    let digits = format!("{:.0}", value.abs());
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if value < 0.0 {
+        out.insert(0, '-');
+    }
+    out
+}
+
+/// Text a player wrote (an application, a project's name, a war HQ): no
+/// markup, made safe as names are, and cut to `max` characters.
+fn player_text(text: &str, max: usize) -> String {
+    let mut plain = String::new();
+    let mut in_tag = false;
+    for c in text.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            c if !in_tag => plain.push(c),
+            _ => {}
+        }
+    }
+    let mut cut: String = plain.trim().chars().take(max).collect();
+    if plain.trim().chars().count() > max {
+        cut.push('…');
+    }
+    // No links from what a player wrote: Discord doesn't link an escaped
+    // scheme.
+    escape(&cut).replace("://", "\\://")
+}
+
+/// Player text as a Discord quote, line by line; no heading, list or
+/// nested quote from a line's start.
+fn quote(text: &str) -> String {
+    let text = player_text(text, 500);
+    if text.is_empty() {
+        return String::new();
+    }
+    text.lines()
+        .map(|line| {
+            let line = line.trim_start();
+            if line.starts_with(['#', '-', '>', '+']) {
+                format!("\n> \\{line}")
+            } else {
+                format!("\n> {line}")
+            }
+        })
+        .collect()
 }
 
 fn percent(value: Option<f64>) -> String {
@@ -651,6 +1213,339 @@ pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>)
         "MoonminingExtractionCancelled" => {
             format!("Extraction cancelled: {place}, {}.", fields.moon())
         }
+        _ => return other(kind, fields, cx),
+    };
+    Some(text)
+}
+
+/// Notifications about the corporation rather than one of its
+/// structures: sovereignty and bills, wars, members and projects, and an
+/// owner's structures changing hands or reinforcement hour, as
+/// aa-structures words them.
+fn other(kind: &str, fields: &Fields, cx: &Context<'_>) -> Option<String> {
+    let name = |id: Option<i64>| id.and_then(|id| (cx.name)(id)).map(|n| escape(&n));
+    let who = |key: &str| name(fields.int(key)).unwrap_or_else(|| "someone".to_owned());
+    let system = name(fields.system_id()).unwrap_or_else(|| "a system".to_owned());
+    let when = |key: &str| {
+        fields.filetime(key).map_or_else(
+            || "at an unknown time".to_owned(),
+            |t| format!("{} EVE", eve(t)),
+        )
+    };
+    let sov_type = name(fields.sov_type_id()).unwrap_or_else(|| "sovereignty structure".to_owned());
+    let owner = cx
+        .sender
+        .as_deref()
+        .map_or_else(|| "(unknown)".to_owned(), escape);
+    let text = match kind {
+        // Sovereignty and bills.
+        "SovStructureReinforced" => format!(
+            "Sovereignty structure reinforced: the {sov_type} in {system} belonging to {owner} \
+             was reinforced by hostile forces. Its command nodes begin decloaking {}.",
+            when("decloakTime")
+        ),
+        "SovStructureDestroyed" => format!(
+            "Sovereignty structure destroyed: the command nodes for the {sov_type} in {system} \
+             belonging to {owner} were destroyed by hostile forces."
+        ),
+        "EntosisCaptureStarted" => format!(
+            "Entosis capture started: a capsuleer is influencing the {sov_type} in {system} \
+             belonging to {owner} with an Entosis Link."
+        ),
+        "SovCommandNodeEventStarted" => format!(
+            "Command nodes decloaking: command nodes for the {sov_type} in {system} belonging to \
+             {owner} can now be found throughout the {} constellation.",
+            name(fields.int("constellationID")).unwrap_or_else(|| "system's".to_owned())
+        ),
+        "SovAllClaimAquiredMsg" => format!(
+            "Sovereignty claimed: DED acknowledges that member corporation {} has claimed \
+             sovereignty on behalf of {} in {system}.",
+            who("corpID"),
+            who("allianceID")
+        ),
+        "SovAllClaimLostMsg" => format!(
+            "Sovereignty lost: member corporation {} has lost its claim to sovereignty on behalf \
+             of {} in {system}.",
+            who("corpID"),
+            who("allianceID")
+        ),
+        "AllAnchoringMsg" => {
+            let by = match name(fields.int("allianceID")) {
+                Some(alliance) => format!("{} ({alliance})", who("corpID")),
+                None => who("corpID"),
+            };
+            let near = fields
+                .moon_id()
+                .map(|id| {
+                    format!(
+                        " near {}",
+                        name(Some(id)).unwrap_or_else(|| format!("moon {id}"))
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "Anchored in alliance space: a {} from {by} anchored in {system}{near}.",
+                name(fields.type_id()).unwrap_or_else(|| "structure".to_owned())
+            )
+        }
+        "InfrastructureHubBillAboutToExpire" => format!(
+            "IHub bill about to expire: the maintenance bill for the Infrastructure Hub in {system} \
+             expires {}; unpaid, the Infrastructure Hub self-destructs.",
+            when("dueDate")
+        ),
+        "IHubDestroyedByBillFailure" => {
+            let hub = name(fields.type_id()).unwrap_or_else(|| "Infrastructure Hub".to_owned());
+            format!(
+                "{hub} self-destructed: the {hub} in {system} self-destructed, as its maintenance \
+                 bills weren't paid."
+            )
+        }
+        "BillOutOfMoneyMsg" => format!(
+            "Insufficient funds for bill: the corporation wallet division for automatic payments \
+             can't pay the {} due {}. Transfer funds to it to meet pending automatic bills.",
+            bill(fields),
+            when("dueDate")
+        ),
+        "CorpAllBillMsg" => format!(
+            "Bill issued: a bill of {} ISK, due {}, owed by {} to {}, was issued {}. It's for {}.",
+            isk(fields.float("amount")),
+            when("dueDate"),
+            who("debtorID"),
+            who("creditorID"),
+            when("currentDate"),
+            bill(fields)
+        ),
+        // Wars.
+        "WarDeclared" => format!(
+            "War declared: {} declared war on {} with {} as war headquarters. Within {} hours \
+             fighting can legally occur between those involved.",
+            who("declaredByID"),
+            who("againstID"),
+            player_text(fields.text("warHQ").unwrap_or("an unknown structure"), 200),
+            fields.int("delayHours").unwrap_or(24)
+        ),
+        "DeclareWar" => format!(
+            "War declared: {} declared war on {}. Within 24 hours fighting can legally occur \
+             between those involved.",
+            who("entityID"),
+            who("defenderID")
+        ),
+        "WarInherited" => format!(
+            "War inherited: {alliance} inherited the war between {} and {} from newly joined {}. \
+             Within 24 hours fighting can legally occur with {alliance}.",
+            who("declaredByID"),
+            who("againstID"),
+            who("quitterID"),
+            alliance = who("allianceID")
+        ),
+        "WarAdopted" => format!(
+            "War adopted: {against} is no longer a member of {}, so a new war between {} and \
+             {against} has begun.",
+            who("allianceID"),
+            who("declaredByID"),
+            against = who("againstID")
+        ),
+        "AcceptedAlly" => format!(
+            "Ally accepted: {} joined the war against {}; {} accepted the offer {} for {} ISK.",
+            who("allyID"),
+            who("enemyID"),
+            who("charID"),
+            when("time"),
+            isk(fields.float("iskValue"))
+        ),
+        "AllyJoinedWarAggressorMsg" | "AllyJoinedWarAllyMsg" | "AllyJoinedWarDefenderMsg" => {
+            format!(
+                "Ally joined a war: {} joined {} in the war against {}, from {}.",
+                who("allyID"),
+                who("defenderID"),
+                who("aggressorID"),
+                when("startTime")
+            )
+        }
+        "AllWarCorpJoinedAllianceMsg" => format!(
+            "At war with a corporation joining an alliance: {corp} is joining {alliance}. As \
+             you're at war with {corp}, in 24 hours you're at war with {alliance} too.",
+            corp = who("corpID"),
+            alliance = who("allianceID")
+        ),
+        "AllWarSurrenderMsg" => format!(
+            "Surrendered: {} surrendered in the war against {}.",
+            who("declaredByID"),
+            who("againstID")
+        ),
+        "CorpWarSurrenderMsg" => format!(
+            "War ending: one party surrendered, so the war between {} and {} ends in about 24 \
+             hours.",
+            who("againstID"),
+            who("declaredByID")
+        ),
+        "OfferedSurrender" => format!(
+            "Surrender offered: {} offered to surrender to {}, offering {} ISK. If accepted, the \
+             war ends in 24 hours and neither can declare war on the other for 2 weeks.",
+            who("charID"),
+            who("offeredID"),
+            isk(fields.float("iskValue"))
+        ),
+        "WarSurrenderOfferMsg" => format!(
+            "Surrender offered: {} offered to end the war with {} for {} ISK. If accepted, the \
+             war ends in 24 hours and neither can declare war on the other for 2 weeks.",
+            who("ownerID1"),
+            who("ownerID2"),
+            isk(fields.float("iskValue"))
+        ),
+        "OfferedToAlly" => format!(
+            "Offered to ally: {} offered to ally with {} in the war against {}, for {} ISK.",
+            who("mercID"),
+            who("defenderID"),
+            who("aggressorID"),
+            isk(fields.float("iskValue"))
+        ),
+        "MercOfferedNegotiationMsg" => format!(
+            "Mercenary offer: {} offered {} its services in the war against {} for {} ISK.",
+            who("mercID"),
+            who("defenderID"),
+            who("aggressorID"),
+            isk(fields.float("iskValue"))
+        ),
+        "MercOfferRetractedMsg" => format!(
+            "Mercenary offer retracted: {} retracted its offer to support {} in the war against {}.",
+            who("mercID"),
+            who("defenderID"),
+            who("aggressorID")
+        ),
+        "WarHQRemovedFromSpace" => format!(
+            "War HQ lost: the war HQ {} is gone, so CONCORD declared the war by {} against {}, \
+             declared {}, invalid; it's in its cooldown period.",
+            player_text(fields.text("warHQ").unwrap_or("?"), 200),
+            who("declaredByID"),
+            who("againstID"),
+            when("timeDeclared")
+        ),
+        "WarInvalid" => format!(
+            "War invalid: CONCORD retracted the war between {} and {}, as a party became \
+             ineligible for war declarations. Fighting must cease {}.",
+            who("declaredByID"),
+            who("againstID"),
+            when("endDate")
+        ),
+        "WarRetractedByConcord" => format!(
+            "War retracted: CONCORD retracted the war between {} and {}. After {} CONCORD \
+             responds to hostilities between them in full force.",
+            who("declaredByID"),
+            who("againstID"),
+            when("endDate")
+        ),
+        "CorpBecameWarEligible" => "Eligible for war: your corporation or alliance can now take \
+             part in formal war declarations, for example because it (or a corporation in the \
+             alliance) owns a structure in space."
+            .to_owned(),
+        "CorpNoLongerWarEligible" => "No longer eligible for war: your corporation or alliance \
+             can no longer take part in formal war declarations, as none of its corporations owns \
+             a structure in space. A formal war it's in ends in 24 hours."
+            .to_owned(),
+        // Members and projects.
+        "CorpAppNewMsg" => format!(
+            "New application: {} applied to join {}.{}",
+            who("charID"),
+            who("corpID"),
+            quote(fields.text("applicationText").unwrap_or(""))
+        ),
+        "CorpAppInvitedMsg" => format!(
+            "Invited: {} was invited to join {} by {}.{}",
+            who("charID"),
+            who("corpID"),
+            who("invokingCharID"),
+            quote(fields.text("applicationText").unwrap_or(""))
+        ),
+        "CharAppWithdrawMsg" => format!(
+            "Application withdrawn: {} withdrew their application to join {}.{}",
+            who("charID"),
+            who("corpID"),
+            quote(fields.text("applicationText").unwrap_or(""))
+        ),
+        "CharAppRejectMsg" => format!(
+            "Application rejected: the application from {} to join {} was rejected.",
+            who("charID"),
+            who("corpID")
+        ),
+        "CorpAppRejectCustomMsg" => {
+            let reason = quote(fields.text("customMessage").unwrap_or(""));
+            format!(
+                "Application rejected: the application from {} to join {} was rejected.{}{}",
+                who("charID"),
+                who("corpID"),
+                quote(fields.text("applicationText").unwrap_or("")),
+                if reason.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nThe reply:{reason}")
+                }
+            )
+        }
+        "CharAppAcceptMsg" => format!(
+            "Joined: {} is now a member of {}.",
+            who("charID"),
+            who("corpID")
+        ),
+        "CharLeftCorpMsg" => format!(
+            "Left: {} is no longer a member of {}.",
+            who("charID"),
+            who("corpID")
+        ),
+        "CorporationGoalCreated" => format!(
+            "New project: {} created the project {}, open for contributions.",
+            who("creator_id"),
+            player_text(fields.text("goal_name").unwrap_or("?"), 200)
+        ),
+        "CorporationGoalCompleted" => format!(
+            "Project completed: {}, created by {}, reached its target.",
+            player_text(fields.text("goal_name").unwrap_or("?"), 200),
+            who("creator_id")
+        ),
+        "CorporationGoalClosed" => format!(
+            "Project closed: {} closed the project {}; it takes no further contributions.",
+            who("closer_id"),
+            player_text(fields.text("goal_name").unwrap_or("?"), 200)
+        ),
+        // An owner's structures.
+        "OwnershipTransferred" => format!(
+            "Ownership transferred: the {} {} in {system} was transferred from {} to {} by {}.",
+            name(fields.type_id()).unwrap_or_else(|| "structure".to_owned()),
+            player_text(fields.text("structureName").unwrap_or("?"), 200),
+            who("oldOwnerCorpID"),
+            who("newOwnerCorpID"),
+            who("charID")
+        ),
+        "StructuresReinforcementChanged" => {
+            const LISTED: usize = 20;
+            let all = fields.nested("allStructureInfo");
+            let mut list: Vec<String> = all
+                .iter()
+                .take(LISTED)
+                .map(|info| {
+                    let structure = player_text(info.get(1).map_or("?", String::as_str), 200);
+                    match name(info.get(2).and_then(|t| t.parse().ok())) {
+                        Some(kind) => format!("{structure} ({kind})"),
+                        None => structure,
+                    }
+                })
+                .collect();
+            if all.len() > LISTED {
+                list.push(format!("and {} more", all.len() - LISTED));
+            }
+            format!(
+                "Reinforcement hour changed to {}:00 for {}. It takes effect {}.",
+                fields
+                    .int("hour")
+                    .map_or_else(|| "?".to_owned(), |h| h.to_string()),
+                if list.is_empty() {
+                    "the owner's structures".to_owned()
+                } else {
+                    list.join(", ")
+                },
+                when("timestamp")
+            )
+        }
         _ => return None,
     };
     Some(text)
@@ -713,6 +1608,7 @@ mod tests {
         let f = Fields::parse(ATTACK);
         let cx = Context {
             structure: Some("Jita - Keep".into()),
+            sender: None,
             name: &names,
         };
         let text = message("StructureUnderAttack", &f, Utc::now(), &cx).unwrap();
@@ -733,6 +1629,7 @@ mod tests {
         assert_eq!(t.at, at("2026-09-28T12:00:00Z"));
         let cx = Context {
             structure: None,
+            sender: None,
             name: &names,
         };
         let text = message("StructureLostShields", &f, when, &cx).unwrap();
@@ -748,6 +1645,7 @@ mod tests {
         let f = Fields::parse(STARTED);
         let cx = Context {
             structure: None,
+            sender: None,
             name: &names,
         };
         let text = message("MoonminingExtractionStarted", &f, Utc::now(), &cx).unwrap();
@@ -760,7 +1658,8 @@ mod tests {
             category("MoonminingExtractionStarted"),
             Some(Category::Moon)
         );
-        assert_eq!(category("CorpAppNewMsg"), None);
+        assert_eq!(category("CorpAppNewMsg"), Some(Category::Corp));
+        assert_eq!(category("NotAType"), None);
     }
 
     #[test]
@@ -771,6 +1670,7 @@ mod tests {
         );
         let cx = Context {
             structure: Some("[Keep](https://evil.example)".into()),
+            sender: None,
             name: &names,
         };
         let text = message(
@@ -803,6 +1703,7 @@ mod tests {
         assert_eq!(tower.moon_id(), Some(40009081));
         let cx = Context {
             structure: Some("Home Tower".into()),
+            sender: None,
             name: &lookup,
         };
         let text = message("TowerAlertMsg", &tower, Utc::now(), &cx).unwrap();
@@ -813,9 +1714,9 @@ mod tests {
         );
         assert_eq!(category("TowerAlertMsg"), Some(Category::Attack));
         // Every type the settings list is one Structures sends, once.
-        for (i, (kind, _, _)) in TYPES.iter().enumerate() {
+        for (i, (kind, _, _, _)) in TYPES.iter().enumerate() {
             assert!(category(kind).is_some(), "{kind}");
-            assert!(!TYPES[..i].iter().any(|(k, _, _)| k == kind), "{kind}");
+            assert!(!TYPES[..i].iter().any(|(k, _, _, _)| k == kind), "{kind}");
         }
         assert_eq!(severity("StructureLostArmor"), Severity::Danger);
         assert_eq!(severity("StructureOnline"), Severity::Info);
@@ -837,6 +1738,7 @@ mod tests {
         assert_eq!(t.at, at("2022-10-01T08:00:00Z"));
         let cx = Context {
             structure: Some("Customs Office (Jita IV)".into()),
+            sender: None,
             name: &lookup,
         };
         let text = message("OrbitalReinforced", &reinforced, Utc::now(), &cx).unwrap();
@@ -860,6 +1762,7 @@ mod tests {
         let f = Fields::parse(OFFLINE);
         let cx = Context {
             structure: Some("Drill".into()),
+            sender: None,
             name: &names,
         };
         let text = message("StructureNoReagentsAlert", &f, Utc::now(), &cx).unwrap();
@@ -874,6 +1777,7 @@ mod tests {
         let f = Fields::parse(OFFLINE);
         let cx = Context {
             structure: None,
+            sender: None,
             name: &names,
         };
         let text = message("StructureServicesOffline", &f, Utc::now(), &cx).unwrap();
@@ -881,5 +1785,208 @@ mod tests {
             text.ends_with(": Standup Cloning Center I, type 35878."),
             "{text}"
         );
+    }
+
+    /// aa-structures' own test notifications (tests/testdata), and names.
+    fn entities(id: i64) -> Option<String> {
+        Some(
+            match id {
+                1001 => "Bruce Wayne",
+                1011 => "Lex Luthor",
+                2001 => "Wayne Technologies",
+                2002 => "Wayne Food",
+                2021 => "Quitter Corp",
+                3001 => "Wayne Enterprises",
+                3002 => "Justice League",
+                3011 => "LexCorp",
+                30000474 => "1-PGSG",
+                20000345 => "Oasa Constellation",
+                32226 => "Territorial Claim Unit",
+                35825 => "Raitaru",
+                16213 => "Caldari Control Tower",
+                _ => return None,
+            }
+            .to_owned(),
+        )
+    }
+
+    fn render(kind: &str, text: &str, sender: Option<&str>) -> String {
+        let cx = Context {
+            structure: None,
+            sender: sender.map(str::to_owned),
+            name: &entities,
+        };
+        message(kind, &Fields::parse(text), Utc::now(), &cx)
+            .unwrap_or_else(|| panic!("{kind} has no message"))
+    }
+
+    #[test]
+    fn sovereignty_names_the_holder_and_gives_a_timer() {
+        let text =
+            "campaignEventType: 1\ndecloakTime: 131897990021334067\nsolarSystemID: 30000474\n";
+        let message = render("SovStructureReinforced", text, Some("Wayne Enterprises"));
+        assert!(
+            message.starts_with(
+                "Sovereignty structure reinforced: the Territorial Claim Unit in 1-PGSG belonging \
+                 to Wayne Enterprises was reinforced by hostile forces."
+            ),
+            "{message}"
+        );
+        let (structure, at) = sov_timer("SovStructureReinforced", &Fields::parse(text)).unwrap();
+        assert_eq!(structure, "TCU");
+        assert!(message.contains(&eve(at)), "{message}");
+        assert!(Fields::parse(text).ids().contains(&32226));
+        assert!(alliance_level("SovStructureReinforced"));
+        assert_eq!(category("SovStructureReinforced"), Some(Category::Sov));
+        assert_eq!(severity("SovStructureReinforced"), Severity::Danger);
+        let nodes = render(
+            "SovCommandNodeEventStarted",
+            "campaignEventType: 1\nconstellationID: 20000345\nsolarSystemID: 30000474\n",
+            None,
+        );
+        assert!(nodes.contains("belonging to (unknown)"), "{nodes}");
+        assert!(
+            nodes.contains("throughout the Oasa Constellation constellation"),
+            "{nodes}"
+        );
+    }
+
+    #[test]
+    fn wars_name_both_sides() {
+        let declared = render(
+            "WarDeclared",
+            "againstID: 3001\ncost: 100000000\ndeclaredByID: 3011\ndelayHours: 24\n\
+             hostileState: false\ntimeStarted: 132192693000000000\n\
+             warHQ: <b>Amamake - Test Structure Alpha</b>\nwarHQ_IdType:\n- 1000000000001\n- 35835\n",
+            None,
+        );
+        assert_eq!(
+            declared,
+            "War declared: LexCorp declared war on Wayne Enterprises with Amamake - Test Structure \
+             Alpha as war headquarters. Within 24 hours fighting can legally occur between those \
+             involved."
+        );
+        let surrender = render(
+            "WarSurrenderOfferMsg",
+            "iskValue: 10000000.0\nownerID1: 3001\nownerID2: 3011\nwarNegotiationID: 1234567\n",
+            None,
+        );
+        assert!(surrender.contains("for 10,000,000 ISK"), "{surrender}");
+        assert!(
+            !Fields::parse("warNegotiationID: 1234567\n")
+                .ids()
+                .contains(&1234567)
+        );
+        assert!(render("CorpBecameWarEligible", "{}\n", None).starts_with("Eligible for war"));
+        assert!(!alliance_level("DeclareWar"));
+        assert_eq!(category("DeclareWar"), Some(Category::War));
+    }
+
+    #[test]
+    fn members_and_projects_quote_what_players_wrote() {
+        let new = render(
+            "CorpAppNewMsg",
+            "applicationText: 'Hi [there](https://x)'\ncharID: 1011\ncorpID: 2001\n",
+            None,
+        );
+        assert_eq!(
+            new,
+            "New application: Lex Luthor applied to join Wayne Technologies.\n\
+             > Hi \\[there\\]\\(https\\://x\\)"
+        );
+        let custom = render(
+            "CorpAppRejectCustomMsg",
+            "applicationText: example1\ncharID: 1011\ncorpID: 2001\ncustomMessage: example2\n",
+            None,
+        );
+        assert!(
+            custom.ends_with("\n> example1\nThe reply:\n> example2"),
+            "{custom}"
+        );
+        let goal = render(
+            "CorporationGoalClosed",
+            "closer_id: 1011\ncorporation_id: 2001\ncreator_id: 1001\n\
+             goal_id: 287804106856621566338600488094573709306\ngoal_name: Strawberry Jam\n",
+            None,
+        );
+        assert_eq!(
+            goal,
+            "Project closed: Lex Luthor closed the project Strawberry Jam; it takes no further \
+             contributions."
+        );
+        assert_eq!(category("CharLeftCorpMsg"), Some(Category::Corp));
+        assert!(!structure_related("CharLeftCorpMsg"));
+    }
+
+    #[test]
+    fn reinforcement_changes_list_their_structures() {
+        let text = "allStructureInfo:\n- - 1000000000001\n  - Hadozeko - 56 LARGE SHIPS\n  - 35825\n\
+                    hour: 19\nnumStructures: 1\ntimestamp: 132141703753688216\nweekday: 255\n";
+        let f = Fields::parse(text);
+        assert_eq!(
+            f.nested("allStructureInfo"),
+            [vec![
+                "1000000000001".to_owned(),
+                "Hadozeko - 56 LARGE SHIPS".to_owned(),
+                "35825".to_owned()
+            ]]
+        );
+        assert!(f.ids().contains(&35825));
+        let message = render("StructuresReinforcementChanged", text, None);
+        assert!(
+            message.starts_with(
+                "Reinforcement hour changed to 19:00 for Hadozeko - 56 LARGE SHIPS (Raitaru)."
+            ),
+            "{message}"
+        );
+        assert!(!structure_related("StructuresReinforcementChanged"));
+        assert!(structure_related("OwnershipTransferred"));
+        let bill = render(
+            "CorpAllBillMsg",
+            "amount: 6000000\nbillTypeID: 5\ncreditorID: 2011\ncurrentDate: 133462502887835953\n\
+             debtorID: 2001\ndueDate: 133488422887817240\nexternalID: 3001\nexternalID2: -1\n",
+            None,
+        );
+        assert!(
+            bill.starts_with("Bill issued: a bill of 6,000,000 ISK"),
+            "{bill}"
+        );
+        assert!(
+            bill.contains("owed by Wayne Technologies to someone"),
+            "{bill}"
+        );
+    }
+
+    #[test]
+    fn player_text_makes_no_markup_or_links() {
+        assert_eq!(escape("a_b*c~d|e\\f"), "a\\_b\\*c\\~d\\|e\\\\f");
+        let new = render(
+            "CorpAppNewMsg",
+            "applicationText: '# Hi https://evil.example'\ncharID: 1011\ncorpID: 2001\n",
+            None,
+        );
+        assert!(new.ends_with("\n> \\# Hi https\\://evil.example"), "{new}");
+        assert_eq!(clip("abcdef", 4), "abc…");
+        assert_eq!(clip("abc", 4), "abc");
+        assert!(names_sender("SovStructureDestroyed"));
+        assert!(!names_sender("CorpAppNewMsg"));
+    }
+
+    #[test]
+    fn every_esi_type_has_a_message() {
+        let cx = Context {
+            structure: None,
+            sender: None,
+            name: &entities,
+        };
+        for (kind, _, _, _) in TYPES {
+            if GENERATED.contains(&kind) {
+                continue;
+            }
+            assert!(
+                message(kind, &Fields::parse("{}\n"), Utc::now(), &cx).is_some(),
+                "{kind}"
+            );
+        }
     }
 }

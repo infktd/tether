@@ -57,6 +57,7 @@ async fn install(h: &Harness, owner: &str) {
     let second = plugin_file("migrations/0002_timers_corporation_only.sql");
     let third = plugin_file("migrations/0003_starbases_orbitals_tags.sql");
     let fourth = plugin_file("migrations/0004_aa_routing_fuel_alerts_sync.sql");
+    let fifth = plugin_file("migrations/0005_all_notification_types.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -73,6 +74,10 @@ async fn install(h: &Harness, owner: &str) {
         (
             "migrations/0004_aa_routing_fuel_alerts_sync.sql",
             fourth.as_bytes(),
+        ),
+        (
+            "migrations/0005_all_notification_types.sql",
+            fifth.as_bytes(),
         ),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
@@ -522,7 +527,9 @@ async fn structures_end_to_end(db: PgPool) {
     assert!(timers.body.contains("<td>Armor</td>"), "{}", timers.body);
     // One armor timer: the state's and the notification's are the same.
     assert_eq!(count(&h, "timers").await, 1);
-    // The host passed on known structure notifications only.
+    // The host passed on the types Structures relays only: not a type
+    // newer than its ESI client, nor an application to a corporation
+    // other than the owner's.
     assert_eq!(count(&h, "notifications").await, 5);
     let by_owner = page(&h, &format!("/plugins/{ID}/owner/{CHRIBBA_CORP}"), &owner).await;
     assert_eq!(by_owner.status, StatusCode::OK, "{}", by_owner.body);
@@ -1177,7 +1184,8 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
         form(
             &url,
             "_form=owner_routes&attack_channel=default&fuel_channel=none&state_channel=default\
-             &moon_channel=default&mention=default&pocos_public=on",
+             &moon_channel=default&sov_channel=default&war_channel=default\
+             &corp_channel=default&mention=default&pocos_public=on",
             &owner,
         ),
     )
@@ -1188,7 +1196,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     assert!(problems.is_empty(), "{problems:?}");
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(
-        settings.body.contains("Its own for 1 of 4 kinds"),
+        settings.body.contains("Its own for 1 of 7 kinds"),
         "{}",
         settings.body
     );
@@ -1292,7 +1300,8 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
         form(
             &url,
             "_form=owner_routes&attack_channel=default&fuel_channel=default&state_channel=default\
-             &moon_channel=default&mention=default&pocos_public=on",
+             &moon_channel=default&sov_channel=default&war_channel=default\
+             &corp_channel=default&mention=default&pocos_public=on",
             &owner,
         ),
     )
@@ -1503,7 +1512,8 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
         form(
             &url,
             "_form=owner_routes&attack_channel=default&fuel_channel=default&state_channel=default\
-             &moon_channel=default&mention=default",
+             &moon_channel=default&sov_channel=default&war_channel=default\
+             &corp_channel=default&mention=default",
             &owner,
         ),
     )
@@ -1604,15 +1614,26 @@ async fn aa_structures_rules(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
-    // This owner sends only lost shields (and fuel alerts), its own types.
-    let res = post(
-        &h,
-        &owner,
-        &format!("settings/owner/{CHRIBBA_CORP}"),
-        "_form=owner_types&types_from=own&t_structurelostshields=on&t_structurefuelalert=on",
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // This owner sends only lost shields (and fuel alerts), its own types
+    // (each kind's form: saving one makes the types its own).
+    for (kind, ticked) in [
+        ("attack", "&t_structurelostshields=on"),
+        ("fuel", "&t_structurefuelalert=on"),
+        ("state", ""),
+        ("moon", ""),
+        ("sov", ""),
+        ("war", ""),
+        ("corp", ""),
+    ] {
+        let res = post(
+            &h,
+            &owner,
+            &format!("settings/owner/{CHRIBBA_CORP}"),
+            &format!("_form=owner_types_{kind}{ticked}"),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
     // Another fuel alert: under 100 hours, every hour, pinging danger.
     let res = post(
         &h,
@@ -1813,4 +1834,263 @@ async fn aa_structures_rules(db: PgPool) {
     assert_eq!(discord_messages(&h).await.len(), before + 1);
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(settings.body.contains("Chribba Alt"), "{}", settings.body);
+}
+
+const JUMP_GATE: i64 = 1_035_466_617_949;
+
+/// aa-structures' other notification types: the corporation's own (sent at
+/// once, to their kind's channel), alliance-wide ones only through the
+/// alliance main owner, sovereignty timers for Structure Timers, and the
+/// notices Tether makes itself (refuelled, jump gates low on ozone).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    crate::structure_timers::install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    // A jump gate with 50,000 units of liquid ozone in its fuel bay.
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(json(serde_json::json!([{
+            "structure_id": JUMP_GATE, "name": "Jita » Perimeter", "corporation_id": CHRIBBA_CORP,
+            "type_id": 35841, "system_id": SYSTEM, "profile_id": 1,
+            "fuel_expires": rfc(now + Duration::days(10)), "state": "shield_vulnerable",
+        }])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/assets")))
+        .respond_with(json(serde_json::json!([{
+            "item_id": 9001, "type_id": 16273, "location_id": JUMP_GATE,
+            "location_flag": "StructureFuel", "location_type": "item",
+            "quantity": 50000, "is_singleton": false,
+        }])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_esi(&h, now, &times).await;
+    let decloak = now + Duration::hours(30);
+    let sent = |id: i64, kind: &str, text: String, sender: i64| {
+        let mut n = notification(id, kind, now - Duration::minutes(3), &text);
+        n["sender_id"] = sender.into();
+        n
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([
+            sent(
+                5001,
+                "CharAppAcceptMsg",
+                format!("applicationText: hi\ncharID: {ATTACKER}\ncorpID: {CHRIBBA_CORP}\n"),
+                ATTACKER,
+            ),
+            // The character's own application to another corporation:
+            // never passed on.
+            sent(
+                5004,
+                "CorpAppRejectCustomMsg",
+                format!(
+                    "applicationText: me\ncharID: {CHRIBBA}\ncorpID: {GIGX_CORP}\n\
+                     customMessage: no\n"
+                ),
+                GIGX_CORP,
+            ),
+            sent(
+                5002,
+                "WarDeclared",
+                format!(
+                    "againstID: {ALLIANCE}\ncost: 100000000\ndeclaredByID: {CHRIBBA_CORP}\n\
+                     delayHours: 24\nhostileState: false\nwarHQ: <b>Jita - Keep</b>\n"
+                ),
+                1000125,
+            ),
+            sent(
+                5003,
+                "SovStructureReinforced",
+                format!(
+                    "campaignEventType: 1\ndecloakTime: {}\nsolarSystemID: {SYSTEM}\n",
+                    filetime(decloak)
+                ),
+                ALLIANCE,
+            ),
+        ])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(&h, &owner).await;
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+    let c = DISCORD_PING_CHANNEL;
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        &format!(
+            "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}&moon_channel={c}\
+             &sov_channel={c}&war_channel={c}&corp_channel={c}"
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        "_form=add_jump_fuel_alert&threshold=100000&ping=warning",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let alliance: Option<i64> = sqlx::query_scalar(
+        r#"SELECT alliance_id FROM "plugin_tether.structures".owners WHERE character_id = $1"#,
+    )
+    .bind(CHRIBBA)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(alliance, Some(ALLIANCE));
+    // Stored per corporation (each of an alliance's gets its copy), and not
+    // the application to another corporation.
+    let stored: Vec<(String, String)> = sqlx::query_as(
+        r#"SELECT type, event_key FROM "plugin_tether.structures".notifications ORDER BY type"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(stored.len(), 3, "{stored:?}");
+    assert!(
+        stored
+            .iter()
+            .all(|(kind, key)| key.starts_with(&format!("{kind}:{CHRIBBA_CORP}:"))),
+        "{stored:?}"
+    );
+    let messages = discord_messages(&h).await;
+    // The corporation's own, at once.
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Joined: Some Pilot is now a member of Otherworld Enterprises."),
+        "{messages:?}"
+    );
+    // Alliance-wide: not until this owner is the alliance's main.
+    assert!(
+        !messages.iter().any(|m| m.starts_with("War declared")),
+        "{messages:?}"
+    );
+    assert!(
+        shared_timers(&h)
+            .await
+            .iter()
+            .all(|t| !t.key.starts_with("sov:"))
+    );
+    // A jump gate below the alert: once, pinging the warning role's
+    // (pings are off by default, so no mention).
+    let ozone: Vec<&String> = messages
+        .iter()
+        .filter(|m| m.starts_with("Jump gate low on liquid ozone"))
+        .collect();
+    assert_eq!(ozone.len(), 1, "{messages:?}");
+    assert!(
+        ozone[0].contains("Jita » Perimeter") && ozone[0].contains("50000 units left"),
+        "{ozone:?}"
+    );
+
+    let url = format!("settings/owner/{CHRIBBA_CORP}");
+    let routing = page(&h, &format!("/plugins/{ID}/{url}"), &owner).await;
+    assert!(routing.body.contains("Alliance main"), "{}", routing.body);
+    let res = post(
+        &h,
+        &owner,
+        &url,
+        "_form=owner_routes&attack_channel=default&fuel_channel=default&state_channel=default\
+         &moon_channel=default&sov_channel=default&war_channel=default&corp_channel=default\
+         &mention=default&alliance_main=on",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // As if they'd just arrived.
+    sqlx::query(r#"UPDATE "plugin_tether.structures".notifications SET handled = false"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    // Refuelled since the last look: its fuel lasts longer than then.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".structures SET refuel_seen = now() + interval '1 day'
+           WHERE structure_id = $1"#,
+    )
+    .bind(JUMP_GATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let messages = discord_messages(&h).await;
+    assert!(
+        messages.iter().any(|m| m.starts_with(
+            "War declared: Otherworld Enterprises declared war on Otherworld Empire with \
+             Jita - Keep as war headquarters."
+        )),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.starts_with(
+            "Sovereignty structure reinforced: the Territorial Claim Unit in Jita belonging to \
+             Otherworld Empire"
+        ) || m.starts_with(
+            "Sovereignty structure reinforced: the sovereignty structure in Jita belonging to \
+             Otherworld Empire"
+        )),
+        "{messages:?}"
+    );
+    // Each once, though handled again.
+    assert_eq!(
+        messages.iter().filter(|m| m.starts_with("Joined:")).count(),
+        1,
+        "{messages:?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.starts_with("Jump gate low"))
+            .count(),
+        1,
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("Refuelled: Jita » Perimeter")),
+        "{messages:?}"
+    );
+    let shared = shared_timers(&h).await;
+    assert!(
+        shared
+            .iter()
+            .any(|t| t.key.starts_with("sov:") && t.title == "TCU in Jita: sov timer"),
+        "{shared:?}"
+    );
 }

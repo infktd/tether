@@ -12,7 +12,7 @@ use crate::notification::{Category, Severity};
 use crate::{Settings, int, text};
 
 pub struct Routes {
-    defaults: [Option<String>; 4],
+    defaults: [Option<String>; 7],
     default_pings: bool,
     danger_ping: Option<String>,
     warning_ping: Option<String>,
@@ -31,6 +31,9 @@ fn index(category: Category) -> usize {
         Category::Fuel => 1,
         Category::State => 2,
         Category::Moon => 3,
+        Category::Sov => 4,
+        Category::War => 5,
+        Category::Corp => 6,
     }
 }
 

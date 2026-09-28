@@ -85,6 +85,8 @@ const NOTIFICATIONS_JOB: &str = "notifications";
 const NOTIFICATIONS_GAP: Duration = Duration::seconds(60);
 /// Timers published for Structure Timers (the host's limit).
 const MAX_PUBLISHED: i64 = 500;
+/// A relayed message's characters, at most: under the host's 1,500.
+const MAX_MESSAGE_CHARS: usize = 1_400;
 /// The one-off job that publishes timers at once (after a settings change).
 const PUBLISH_JOB: &str = "publish_timers";
 
@@ -202,14 +204,21 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         return match submission.form.as_str() {
             "owner_routes" => save_owner_settings(viewer, corp, submission),
             "owner_types" => save_owner_types(viewer, corp, submission),
-            _ => Err(PageError::NotFound),
+            form => match types_category(form.strip_prefix("owner_")) {
+                Some(category) => save_owner_category(viewer, corp, category, submission),
+                None => Err(PageError::NotFound),
+            },
         };
     }
     match (path, submission.form.as_str()) {
         ("settings", "settings") => save_settings(viewer, submission),
-        ("settings", "types") => save_types(viewer, submission),
+        ("settings", form) if types_category(Some(form)).is_some() => {
+            save_types(viewer, types_category(Some(form)), submission)
+        }
         ("settings", "add_fuel_alert") => add_fuel_alert(viewer, submission),
         ("settings", "delete_fuel_alert") => delete_fuel_alert(viewer, submission),
+        ("settings", "add_jump_fuel_alert") => add_jump_fuel_alert(viewer, submission),
+        ("settings", "delete_jump_fuel_alert") => delete_jump_fuel_alert(viewer, submission),
         // A row's Retry now, in the settings' owner table.
         ("settings", "retry") => retry_owner(viewer, submission),
         ("settings/tags", "save_tag") => tags::save_tag(viewer, submission),
@@ -318,6 +327,9 @@ struct Settings {
     fuel: Option<String>,
     state: Option<String>,
     moon: Option<String>,
+    sov: Option<String>,
+    war: Option<String>,
+    corp: Option<String>,
     /// aa-structures' default pings: danger and warning notifications
     /// mention the roles below.
     default_pings: bool,
@@ -342,6 +354,9 @@ impl Settings {
             Category::Fuel => self.fuel.as_deref(),
             Category::State => self.state.as_deref(),
             Category::Moon => self.moon.as_deref(),
+            Category::Sov => self.sov.as_deref(),
+            Category::War => self.war.as_deref(),
+            Category::Corp => self.corp.as_deref(),
         }
     }
 }
@@ -351,7 +366,8 @@ fn settings() -> Result<Settings, storage::Error> {
         "SELECT attack_channel, fuel_channel, state_channel, moon_channel, danger_ping, default_pings, \
                 timers_corporation_only, default_tags_filter, warning_ping, \
                 array_to_string(notification_types, ','), \
-                coalesce((SELECT max(start_hours) FROM fuel_alert_configs WHERE enabled), 72)::bigint \
+                coalesce((SELECT max(start_hours) FROM fuel_alert_configs WHERE enabled), 72)::bigint, \
+                sov_channel, war_channel, corp_channel \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -367,6 +383,9 @@ fn settings() -> Result<Settings, storage::Error> {
         fuel: channel(1),
         state: channel(2),
         moon: channel(3),
+        sov: channel(11),
+        war: channel(12),
+        corp: channel(13),
         danger_ping: channel(4),
         warning_ping: channel(8),
         notification_types: routing::type_list(row.and_then(|r| r.get(9))),
@@ -574,7 +593,7 @@ fn read_notifications(budget: &mut Budget, corp: i64) -> Result<bool, JobError> 
         false,
     );
     if let Outcome::Ok(bodies) = &outcome {
-        store_notifications(corp, bodies)?;
+        store_notifications(corp, owner, bodies)?;
     }
     record(owner, Read::Notifications, &outcome)?;
     Ok(matches!(outcome, Outcome::Ok(_)))
@@ -726,11 +745,18 @@ fn sync_steps() -> Result<(), JobError> {
     handle_notifications()?;
     orbitals::starbase_reinforcements()?;
     fuel_alerts()?;
+    refuelled()?;
+    jump_fuel_alerts()?;
     storage::execute(
         "DELETE FROM timers WHERE at < now() - interval '7 days'",
         &[],
     )
     .map_err(|e| retry("expiring timers", e))?;
+    storage::execute(
+        "DELETE FROM sov_timers WHERE at < now() - interval '7 days'",
+        &[],
+    )
+    .map_err(|e| retry("expiring sovereignty timers", e))?;
     storage::execute(
         "DELETE FROM notifications WHERE at < now() - interval '60 days'",
         &[],
@@ -809,6 +835,8 @@ fn sync_owners() -> Result<Vec<i64>, JobError> {
              FROM json_to_recordset($1::json) AS x(character_id bigint, character_name text, \
                   corporation_id bigint, alliance_id bigint) \
              ON CONFLICT (character_id) DO UPDATE SET character_name = EXCLUDED.character_name, \
+             corporation_since = CASE WHEN owners.corporation_id IS DISTINCT FROM EXCLUDED.corporation_id \
+                 THEN now() ELSE owners.corporation_since END, \
              corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id",
             vec![Db::json(serde_json::Value::Array(rows).to_string())],
         ),
@@ -840,11 +868,29 @@ struct Notification {
     timestamp: String,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    sender_id: Option<i64>,
+}
+
+/// FNV-1a: a stable key for a notification that names no structure (the
+/// same event reaches each owner character with its own id).
+fn text_hash(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, b| {
+        (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// New notifications, stored once by id (and once per event, whichever
-/// owner character saw it).
-fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
+/// of the corporation's owner characters saw it). Ones about a
+/// corporation from before `owner` joined this one are its last
+/// corporation's, and left out.
+fn store_notifications(corp: i64, owner: i64, bodies: &[String]) -> Result<(), JobError> {
+    let since = storage::query(
+        "SELECT corporation_since FROM owners WHERE character_id = $1",
+        &[owner.into()],
+    )
+    .map_err(|e| retry("reading the owner", e))?;
+    let since = since.rows.first().and_then(|r| when(r, 0));
     let mut rows = Vec::new();
     for body in bodies {
         let Ok(items) = serde_json::from_str::<Vec<Notification>>(body) else {
@@ -854,7 +900,10 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
             continue;
         };
         for n in items {
-            if notification::category(&n.kind).is_none() {
+            // Types Structures sends, but not ones it makes itself.
+            if notification::category(&n.kind).is_none()
+                || notification::GENERATED.contains(&n.kind.as_str())
+            {
                 continue;
             }
             let Some(at) = parse_time(&n.timestamp) else {
@@ -862,10 +911,30 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
             };
             let text = n.text.unwrap_or_default();
             let fields = Fields::parse(&text);
-            let about = fields
-                .structure_id()
-                .or_else(|| fields.moon_id())
-                .or_else(|| fields.planet_id());
+            let related = notification::structure_related(&n.kind);
+            if !related && since.is_some_and(|since| at < since) {
+                continue;
+            }
+            let event_key = if related {
+                let about = fields
+                    .structure_id()
+                    .or_else(|| fields.moon_id())
+                    .or_else(|| fields.planet_id());
+                format!(
+                    "{}:{}:{}",
+                    n.kind,
+                    about.unwrap_or_default(),
+                    at.timestamp()
+                )
+            } else {
+                // Per corporation: each of an alliance's gets its own copy.
+                format!(
+                    "{}:{corp}:{:x}:{}",
+                    n.kind,
+                    text_hash(&text),
+                    at.timestamp()
+                )
+            };
             rows.push(serde_json::json!({
                 "notification_id": n.notification_id,
                 "type": n.kind,
@@ -873,8 +942,10 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
                 "structure_id": fields.structure_id(),
                 "moon_id": fields.moon_id(),
                 "planet_id": fields.planet_id(),
-                "event_key": format!("{}:{}:{}", n.kind, about.unwrap_or_default(), at.timestamp()),
+                "event_key": event_key,
                 "text": text,
+                "sender_id": n.sender_id,
+                "structure_related": related,
             }));
         }
     }
@@ -883,10 +954,12 @@ fn store_notifications(corp: i64, bodies: &[String]) -> Result<(), JobError> {
     }
     storage::execute(
         "INSERT INTO notifications (notification_id, corporation_id, type, at, structure_id, moon_id, \
-             planet_id, event_key, text) \
-         SELECT notification_id, $2, type, at, structure_id, moon_id, planet_id, event_key, text \
+             planet_id, event_key, text, sender_id, structure_related) \
+         SELECT notification_id, $2, type, at, structure_id, moon_id, planet_id, event_key, text, \
+             sender_id, structure_related \
          FROM json_to_recordset($1::json) AS x(notification_id bigint, type text, at timestamptz, \
-              structure_id bigint, moon_id bigint, planet_id bigint, event_key text, text text) \
+              structure_id bigint, moon_id bigint, planet_id bigint, event_key text, text text, \
+              sender_id bigint, structure_related boolean) \
          ON CONFLICT DO NOTHING",
         &[
             Db::json(serde_json::Value::Array(rows).to_string()),
@@ -1049,12 +1122,17 @@ fn learn_names(budget: &mut Budget) -> Result<(), JobError> {
     .map_err(|e| retry("finding names", e))?;
     let mut ids: Vec<i64> = known.rows.iter().map(|r| int(r, 0)).collect();
     let pending = storage::query(
-        "SELECT text FROM notifications WHERE NOT handled ORDER BY at LIMIT 500",
+        "SELECT text, sender_id, type FROM notifications WHERE NOT handled ORDER BY at LIMIT 500",
         &[],
     )
     .map_err(|e| retry("reading notifications", e))?;
     for row in &pending.rows {
         ids.extend(Fields::parse(&text(row, 0)).ids());
+        // Only a holder of sovereignty is named by its sender (a sender
+        // may be one /universe/names doesn't know, failing the batch).
+        if notification::names_sender(&text(row, 2)) {
+            ids.extend(opt_int(row, 1));
+        }
     }
     ids.retain(|id| *id > 0);
     ids.sort_unstable();
@@ -1127,11 +1205,16 @@ fn handle_notifications() -> Result<(), JobError> {
     .map_err(|e| retry("matching notifications", e))?;
     let rows = storage::query(
         "SELECT n.notification_id, n.type, n.at, n.text, n.structure_id, n.corporation_id, s.name, \
-                so.structure_id IS NOT NULL \
+                so.structure_id IS NOT NULL, n.sender_id, n.structure_related, \
+                (SELECT a.alliance_id FROM owners a WHERE a.corporation_id = n.corporation_id \
+                     AND a.alliance_id IS NOT NULL LIMIT 1), \
+                w.alliance_main \
          FROM notifications n \
          LEFT JOIN structure_owners so ON so.structure_id = n.structure_id AND so.corporation_id = n.corporation_id \
          LEFT JOIN structures s ON s.structure_id = n.structure_id AND s.corporation_id = n.corporation_id \
-         WHERE NOT n.handled AND (so.structure_id IS NOT NULL OR n.at < now() - interval '2 hours') \
+         LEFT JOIN owner_settings w ON w.corporation_id = n.corporation_id \
+         WHERE NOT n.handled AND (so.structure_id IS NOT NULL OR NOT n.structure_related \
+             OR n.at < now() - interval '2 hours') \
          ORDER BY n.at LIMIT 200",
         &[],
     )
@@ -1146,6 +1229,9 @@ fn handle_notifications() -> Result<(), JobError> {
             // Moons and planets Structures named itself.
             ids.extend(fields.moon_id());
             ids.extend(fields.planet_id());
+            if notification::names_sender(&text(r, 1)) {
+                ids.extend(opt_int(r, 8));
+            }
             fields
         })
         .collect();
@@ -1159,8 +1245,25 @@ fn handle_notifications() -> Result<(), JobError> {
         let corp = int(row, 5);
         // Only structures seen in the corporation the owner read them for
         // (not one it left). One not seen yet waits two hours for the
-        // structure list, then is dropped.
-        let ours = row.get(7).and_then(Db::as_bool).unwrap_or(false);
+        // structure list, then is dropped. One about the corporation
+        // (sovereignty, wars, members) is the owner's own.
+        let related = row.get(9).and_then(Db::as_bool).unwrap_or(true);
+        let ours = !related || row.get(7).and_then(Db::as_bool).unwrap_or(false);
+        // Alliance-wide types go only through the alliance's main owner,
+        // as aa-structures' is_alliance_main.
+        let alliance = opt_int(row, 10);
+        let alliance_elsewhere = notification::alliance_level(&kind)
+            && alliance.is_some()
+            && opt_int(row, 11) != alliance;
+        // Members, applications and projects: of this corporation only
+        // (the host checks too).
+        let other_corporation = notification::category(&kind) == Some(Category::Corp)
+            && fields
+                .int("corpID")
+                .or_else(|| fields.int("corporation_id"))
+                != Some(corp);
+        let ours = ours && !alliance_elsewhere && !other_corporation;
+        let sender = opt_int(row, 8).and_then(lookup);
         let mut statements = vec![Statement::new(
             "UPDATE notifications SET handled = true WHERE notification_id = $1",
             vec![id.into()],
@@ -1183,6 +1286,23 @@ fn handle_notifications() -> Result<(), JobError> {
                 ],
             ));
         }
+        if let (Some((structure, decloak)), Some(system)) =
+            (notification::sov_timer(&kind, fields), fields.system_id())
+            && ours
+            && decloak > now
+        {
+            statements.push(Statement::new(
+                "INSERT INTO sov_timers (system_id, structure, at, corporation_id, holder) \
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+                vec![
+                    system.into(),
+                    structure.into(),
+                    Db::timestamp(rfc3339(decloak)),
+                    corp.into(),
+                    sender.clone().unwrap_or_default().into(),
+                ],
+            ));
+        }
         let category = notification::category(&kind);
         let channel = category.and_then(|c| routes.channel(corp, c));
         if let (Some(_), Some(channel)) = (category, channel)
@@ -1192,9 +1312,12 @@ fn handle_notifications() -> Result<(), JobError> {
         {
             let cx = Context {
                 structure: row.get(6).and_then(Db::as_text).map(str::to_owned),
+                sender: sender.clone(),
                 name: &lookup,
             };
-            if let Some(message) = notification::message(&kind, fields, at, &cx) {
+            if let Some(message) = notification::message(&kind, fields, at, &cx)
+                .map(|m| notification::clip(&m, MAX_MESSAGE_CHARS))
+            {
                 statements.push(Statement::new(
                     "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
                      ON CONFLICT (key) DO NOTHING",
@@ -1339,6 +1462,171 @@ fn fuel_alerts() -> Result<(), JobError> {
     Ok(())
 }
 
+/// A structure as messages name it: its name, type and system.
+fn place_of(structure: i64) -> Result<Option<String>, JobError> {
+    let rows = storage::query(
+        "SELECT s.name, coalesce(t.name, ''), coalesce(y.name, n.name, '') \
+         FROM structures s LEFT JOIN names t ON t.id = s.type_id \
+         LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names n ON n.id = s.system_id \
+         WHERE s.structure_id = $1",
+        &[structure.into()],
+    )
+    .map_err(|e| retry("reading a structure", e))?;
+    Ok(rows.rows.first().map(|row| {
+        let (name, type_name, system) = (text(row, 0), text(row, 1), text(row, 2));
+        let mut place = notification::escape(&name);
+        if !type_name.is_empty() {
+            place.push_str(&format!(" ({type_name})"));
+        }
+        if !system.is_empty() {
+            place.push_str(&format!(" in {system}"));
+        }
+        place
+    }))
+}
+
+/// aa-structures' refueled notifications (StructureRefueledExtra and
+/// TowerRefueledExtra): a structure burning fuel whose fuel now lasts
+/// longer than when last seen, by more than half an hour (Upwell) or two
+/// hours (a starbase, whose expiry is estimated), as its thresholds.
+fn refuelled() -> Result<(), JobError> {
+    let settings = settings().map_err(|e| retry("reading settings", e))?;
+    let routes = Routes::load(&settings).map_err(|e| retry("reading routes", e))?;
+    let due = storage::query(
+        "SELECT s.structure_id, s.corporation_id, s.kind, s.fuel_expires FROM structures s \
+         WHERE s.kind IN ('upwell', 'starbase') AND s.fuel_expires > now() AND s.refuel_seen IS NOT NULL \
+           AND s.fuel_expires > s.refuel_seen + CASE WHEN s.kind = 'starbase' \
+               THEN interval '2 hours' ELSE interval '30 minutes' END \
+           AND (s.kind = 'upwell' OR s.state IN ('online', 'reinforced')) \
+         ORDER BY s.structure_id LIMIT 200",
+        &[],
+    )
+    .map_err(|e| retry("finding refuelled structures", e))?;
+    for row in &due.rows {
+        let (structure, corp) = (int(row, 0), int(row, 1));
+        let Some(expires) = when(row, 3) else {
+            continue;
+        };
+        let (kind, what) = if text(row, 2) == "starbase" {
+            ("TowerRefueledExtra", "Starbase refuelled")
+        } else {
+            ("StructureRefueledExtra", "Refuelled")
+        };
+        let Some(channel) = routes.channel(corp, Category::Fuel) else {
+            continue;
+        };
+        if !routes.sends(corp, kind) {
+            continue;
+        }
+        let Some(place) = place_of(structure)? else {
+            continue;
+        };
+        storage::execute(
+            "INSERT INTO outbox (key, channel, message) VALUES ($1, $2, $3) \
+             ON CONFLICT (key) DO NOTHING",
+            &[
+                format!("refuel:{structure}:{}", expires.timestamp()).into(),
+                channel.into(),
+                format!(
+                    "{what}: {place} was refuelled; its fuel lasts until {} EVE.",
+                    expires.format("%Y-%m-%d %H:%M")
+                )
+                .into(),
+            ],
+        )
+        .map_err(|e| retry("queuing a refuel notice", e))?;
+    }
+    // What's seen now is what the next run compares with (the first time
+    // too, which sends nothing).
+    storage::execute(
+        "UPDATE structures SET refuel_seen = fuel_expires \
+         WHERE fuel_expires IS NOT NULL AND refuel_seen IS DISTINCT FROM fuel_expires",
+        &[],
+    )
+    .map_err(|e| retry("noting fuel", e))?;
+    Ok(())
+}
+
+/// An Ansiblex Jump Bridge, and the liquid ozone it burns.
+const JUMP_GATE: i64 = 35841;
+const LIQUID_OZONE: i64 = 16273;
+
+/// aa-structures' jump fuel alert configs: once a jump gate burning fuel
+/// has less liquid ozone in its fuel bay than a config's threshold (as the
+/// corporation's assets last said), an alert, until it's topped up above
+/// it.
+fn jump_fuel_alerts() -> Result<(), JobError> {
+    let settings = settings().map_err(|e| retry("reading settings", e))?;
+    let routes = Routes::load(&settings).map_err(|e| retry("reading routes", e))?;
+    let ozone = format!(
+        "(SELECT structure_id, sum(quantity)::bigint AS quantity FROM structure_items \
+          WHERE type_id = {LIQUID_OZONE} AND flag = 'StructureFuel' GROUP BY structure_id)"
+    );
+    storage::execute(
+        &format!(
+            "DELETE FROM jump_fuel_alerts_sent a USING jump_fuel_alert_configs c, {ozone} q \
+             WHERE c.id = a.config_id AND q.structure_id = a.structure_id AND q.quantity >= c.threshold"
+        ),
+        &[],
+    )
+    .map_err(|e| retry("resetting jump fuel alerts", e))?;
+    let due = storage::query(
+        &format!(
+            "SELECT s.structure_id, s.corporation_id, c.id, c.threshold, c.ping, q.quantity \
+             FROM structures s JOIN {ozone} q ON q.structure_id = s.structure_id \
+             JOIN jump_fuel_alert_configs c ON c.enabled \
+             LEFT JOIN jump_fuel_alerts_sent a ON a.structure_id = s.structure_id AND a.config_id = c.id \
+             WHERE s.kind = 'upwell' AND s.type_id = {JUMP_GATE} AND s.fuel_expires > now() \
+               AND q.quantity > 0 AND q.quantity < c.threshold AND a.structure_id IS NULL \
+             ORDER BY q.quantity, c.id LIMIT 200"
+        ),
+        &[],
+    )
+    .map_err(|e| retry("finding jump gates low on liquid ozone", e))?;
+    for alert in &due.rows {
+        let (structure, corp, config) = (int(alert, 0), int(alert, 1), int(alert, 2));
+        let kind = "StructureJumpFuelAlert";
+        let Some(channel) = routes.channel(corp, Category::Fuel) else {
+            continue;
+        };
+        if !routes.sends(corp, kind) {
+            continue;
+        }
+        let Some(place) = place_of(structure)? else {
+            continue;
+        };
+        let ping = match text(alert, 4).as_str() {
+            "danger" => routes.ping(corp, notification::Severity::Danger),
+            "warning" => routes.ping(corp, notification::Severity::Warning),
+            _ => None,
+        };
+        let (threshold, quantity) = (int(alert, 3), int(alert, 5));
+        storage::transaction(&[
+            Statement::new(
+                "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (key) DO NOTHING",
+                vec![
+                    format!("jump-fuel:{structure}:{config}:{quantity}").into(),
+                    channel.into(),
+                    format!(
+                        "Jump gate low on liquid ozone: {place} has {quantity} units left, below \
+                         the {threshold}-unit alert."
+                    )
+                    .into(),
+                    ping.map(str::to_owned).into(),
+                ],
+            ),
+            Statement::new(
+                "INSERT INTO jump_fuel_alerts_sent (structure_id, config_id) VALUES ($1, $2) \
+                 ON CONFLICT DO NOTHING",
+                vec![structure.into(), config.into()],
+            ),
+        ])
+        .map_err(|e| retry("queuing a jump fuel alert", e))?;
+    }
+    Ok(())
+}
+
 /// A structure's name or a name ESI gave, made fit for a shared timer: one
 /// line, at most `max` characters.
 fn one_line(text: &str, max: usize) -> String {
@@ -1402,6 +1690,39 @@ fn publish_timers() -> Result<(), JobError> {
             })
         })
         .collect();
+    let mut timers = timers;
+    // Sovereignty timers (a TCU or IHub reinforced), as aa-structures'
+    // "Sov timer": when its command nodes decloak.
+    let sov = storage::query(
+        &format!(
+            "SELECT t.system_id, t.structure, t.at, coalesce(y.name, n.name, ''), t.holder, t.corporation_id \
+             FROM sov_timers t LEFT JOIN systems y ON y.system_id = t.system_id \
+             LEFT JOIN names n ON n.id = t.system_id \
+             WHERE t.at > now() - interval '1 day' ORDER BY t.at LIMIT {MAX_PUBLISHED}"
+        ),
+        &[],
+    )
+    .map_err(|e| retry("publishing timers: reading sovereignty timers", e))?;
+    timers.extend(sov.rows.iter().filter_map(|r| {
+        let at = when(r, 2)?;
+        let (system, structure) = (one_line(&text(r, 3), 100), one_line(&text(r, 1), 20));
+        let holder = one_line(&text(r, 4), 100);
+        Some(tether_plugin_sdk::timers::Timer {
+            key: format!("sov:{}:{structure}:{}", int(r, 0), at.timestamp()),
+            title: format!("{structure} in {system}: sov timer"),
+            at: rfc3339(at),
+            system,
+            details: if holder.is_empty() {
+                "Sov timer: its command nodes decloak. From its notification.".to_owned()
+            } else {
+                format!("Sov timer of {holder}: its command nodes decloak. From its notification.")
+            },
+            objective: "friendly".to_owned(),
+            corporation_id: settings.timers_corporation_only.then(|| int(r, 5)),
+        })
+    }));
+    timers.sort_by(|a, b| a.at.cmp(&b.at));
+    timers.truncate(usize::try_from(MAX_PUBLISHED).unwrap_or(500));
     tether_plugin_sdk::timers::publish(&timers).map_err(|e| retry("publishing timers", e))
 }
 
@@ -2164,12 +2485,11 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
                     badge("Yes", Tone::Success).into(),
                     rate(&details, "alliance_tax_rate"),
                 )
-            } else if details["allow_access_with_standings"]
-                .as_bool()
-                .unwrap_or(false)
-            {
+            } else if neutrals_admitted(&details) {
+                // As aa-structures: the neutral rate, not confident (the
+                // owner's standings towards the pilot aren't known).
                 (
-                    badge("By standing", Tone::Warning).into(),
+                    badge("Yes (?)", Tone::Warning).into(),
                     rate(&details, "neutral_standing_tax_rate"),
                 )
             } else {
@@ -2193,10 +2513,27 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
         .description("Customs offices their owners opened to everyone who may open Structures")
         .table(table)
         .text(
-            "Access and tax for your main's corporation and alliance. \"By standing\" depends on \
-             the owner's standings towards you, which Tether doesn't know: the tax shown is the \
-             neutral standing rate.",
+            "Access and tax for your main's corporation and alliance. As aa-structures, access \
+             and tax for pilots in neither (\"Yes (?)\": the neutral standing rate) may not be \
+             accurate: they depend on the owner's standings towards you, which Tether doesn't \
+             know.",
         ))
+}
+
+/// Whether a customs office lets in pilots of neither its corporation nor
+/// its alliance, as aa-structures judges it: access with standings on, the
+/// standing it asks for at most neutral, and a neutral rate set.
+fn neutrals_admitted(details: &serde_json::Value) -> bool {
+    details["allow_access_with_standings"]
+        .as_bool()
+        .unwrap_or(false)
+        // A level ESI doesn't say (or one unknown) is aa-structures' "none",
+        // the lowest.
+        && !matches!(
+            details["standing_level"].as_str(),
+            Some("good" | "excellent")
+        )
+        && details["neutral_standing_tax_rate"].as_f64().is_some()
 }
 
 fn channel_field(name: &str, label: &str, help: &str, value: Option<&str>) -> Field {
@@ -2251,13 +2588,15 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         .field(channel_field(
             "fuel_channel",
             "Fuel and services",
-            "EVE's fuel alerts, services offline, low power, and the fuel alerts below.",
+            "EVE's fuel alerts, services offline, low power, refuelled structures, and the fuel \
+             and jump fuel alerts below.",
             settings.fuel.as_deref(),
         ))
         .field(channel_field(
             "state_channel",
             "State changes",
-            "Online, high power, anchoring and unanchoring.",
+            "Online, high power, anchoring and unanchoring, ownership transferred, reinforcement \
+             hour changed.",
             settings.state.as_deref(),
         ))
         .field(channel_field(
@@ -2265,6 +2604,25 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             "Moon extractions",
             "Extractions started, chunks arrived, fractures and cancellations.",
             settings.moon.as_deref(),
+        ))
+        .field(channel_field(
+            "sov_channel",
+            "Sovereignty and bills",
+            "Sovereignty structures reinforced, destroyed or captured, claims, anchoring in \
+             alliance space, and bills. Alliance-wide ones go only through the alliance main owner.",
+            settings.sov.as_deref(),
+        ))
+        .field(channel_field(
+            "war_channel",
+            "Wars",
+            "Wars declared, allies, surrenders, CONCORD retracting them, war eligibility.",
+            settings.war.as_deref(),
+        ))
+        .field(channel_field(
+            "corp_channel",
+            "Members and projects",
+            "Applications, members joining and leaving, corporation projects.",
+            settings.corp.as_deref(),
         ))
         .field(
             Field::checkbox("default_pings", "Default pings", settings.default_pings).help(
@@ -2372,7 +2730,9 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         "SELECT o.corporation_id, coalesce(n.name, 'Corporation ' || o.corporation_id::text), \
              (SELECT count(*) FROM owner_channels c WHERE c.corporation_id = o.corporation_id), \
              coalesce(w.mention, 'default'), coalesce(w.pocos_public, false), \
-             cardinality(w.notification_types) \
+             cardinality(w.notification_types), \
+             coalesce(w.alliance_main = (SELECT a.alliance_id FROM owners a \
+                 WHERE a.corporation_id = o.corporation_id AND a.alliance_id IS NOT NULL LIMIT 1), false) \
          FROM (SELECT DISTINCT corporation_id FROM owners) o \
          LEFT JOIN names n ON n.id = o.corporation_id \
          LEFT JOIN owner_settings w ON w.corporation_id = o.corporation_id ORDER BY 2",
@@ -2386,6 +2746,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::text("Types"),
             Column::text("Pings"),
             Column::text("Customs offices public"),
+            Column::text("Alliance main"),
         ])
         .title("Owners' Discord routing")
         .empty("No owners yet."),
@@ -2396,7 +2757,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                 if own == 0 {
                     "The defaults above".to_owned()
                 } else {
-                    format!("Its own for {own} of 4 kinds")
+                    format!("Its own for {own} of {} kinds", Category::ALL.len())
                 }
                 .into(),
                 match opt_int(r, 5) {
@@ -2416,30 +2777,35 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                     "No"
                 }
                 .into(),
+                if r.get(6).and_then(Db::as_bool).unwrap_or(false) {
+                    "Yes"
+                } else {
+                    "No"
+                }
+                .into(),
             ]
         }),
     );
-    let mut types = Form::new("types", "Save types")
-        .title("Notification types")
-        .description(
-            "Which notification types are sent (aa-structures' webhook filters), with their \
-             severity. These are the defaults; an owner can pick its own.",
+    let mut page = page.form(form);
+    for (i, category) in Category::ALL.into_iter().enumerate() {
+        let mut types = type_form(
+            &format!("types_{}", category.name()),
+            category,
+            settings.notification_types.as_ref(),
         );
-    for (kind, label, severity) in notification::TYPES {
-        types = types.field(Field::checkbox(
-            type_field(kind),
-            format!("{label} ({})", severity_name(severity)),
-            settings
-                .notification_types
-                .as_ref()
-                .is_none_or(|t| t.iter().any(|k| k == kind)),
-        ));
+        if i == 0 {
+            types = types.description(
+                "Which notification types are sent (aa-structures' webhook filters), with their \
+                 severity, by kind. These are the defaults; an owner can pick its own.",
+            );
+        }
+        page = page.form(types);
     }
     Ok(page
-        .form(form)
-        .form(types)
         .table(fuel_alert_table()?)
         .form(fuel_alert_form())
+        .table(jump_fuel_alert_table()?)
+        .form(jump_fuel_alert_form())
         .table(routing_table)
         .table(owner_table)
         .text(
@@ -2468,7 +2834,8 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     storage::execute(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
          moon_channel = $4, default_pings = $5, danger_ping = $6, warning_ping = $9, \
-         timers_corporation_only = $7, default_tags_filter = $8 WHERE id = 1",
+         timers_corporation_only = $7, default_tags_filter = $8, sov_channel = $10, \
+         war_channel = $11, corp_channel = $12 WHERE id = 1",
         &[
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
@@ -2479,6 +2846,9 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             submission.checked("timers_corporation_only").into(),
             submission.checked("default_tags_filter").into(),
             channel("warning_ping").into(),
+            channel("sov_channel").into(),
+            channel("war_channel").into(),
+            channel("corp_channel").into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
@@ -2487,6 +2857,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         .map_err(|e| failed("queuing the timers", e))?;
     log::info(format!(
         "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, \
+         sovereignty {:?}, wars {:?}, members {:?}, \
          default pings {} (danger {:?}, warning {:?}), timers corporation-only {}",
         viewer.main.name,
         viewer.main.id,
@@ -2494,6 +2865,9 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         channel("fuel_channel"),
         channel("state_channel"),
         channel("moon_channel"),
+        channel("sov_channel"),
+        channel("war_channel"),
+        channel("corp_channel"),
         submission.checked("default_pings"),
         channel("danger_ping"),
         channel("warning_ping"),
@@ -2517,29 +2891,125 @@ fn severity_name(severity: notification::Severity) -> &'static str {
 
 /// The types ticked on a types form, as stored (a comma list; all of
 /// them is stored as none, meaning every type, new ones included).
-fn ticked_types(submission: &Submission) -> Option<String> {
-    let ticked: Vec<&str> = notification::TYPES
+/// A kind's notification types as a form of checkboxes, ticked as in
+/// `list` (none: all of them).
+fn type_form(name: &str, category: Category, list: Option<&Vec<String>>) -> Form {
+    let mut form = Form::new(name, "Save types").title(format!("Types: {}", category.label()));
+    for (kind, label, severity, _) in notification::TYPES
         .iter()
-        .map(|(kind, _, _)| *kind)
-        .filter(|kind| submission.checked(&type_field(kind)))
-        .collect();
-    (ticked.len() < notification::TYPES.len()).then(|| ticked.join(","))
+        .filter(|(_, _, _, c)| *c == category)
+    {
+        form = form.field(Field::checkbox(
+            type_field(kind),
+            format!("{label} ({})", severity_name(*severity)),
+            list.is_none_or(|t| t.iter().any(|k| k == kind)),
+        ));
+    }
+    form
 }
 
-fn save_types(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
-    let types = ticked_types(submission);
+/// The kind a types form is for (`types_attack`, ...).
+fn types_category(form: Option<&str>) -> Option<Category> {
+    let name = form?.strip_prefix("types_")?;
+    Category::ALL.into_iter().find(|c| c.name() == name)
+}
+
+fn every_type() -> Vec<String> {
+    notification::TYPES
+        .iter()
+        .map(|(k, _, _, _)| (*k).to_owned())
+        .collect()
+}
+
+fn settings_now() -> Result<Settings, PageError> {
+    settings().map_err(|e| failed("reading settings", e))
+}
+
+/// The settings' types, spelled out.
+fn default_types(settings: &Settings) -> Vec<String> {
+    settings
+        .notification_types
+        .clone()
+        .unwrap_or_else(every_type)
+}
+
+/// `list` with one kind's types as ticked on its form.
+fn with_ticked(list: Vec<String>, category: Category, submission: &Submission) -> Vec<String> {
+    let mut list: Vec<String> = list
+        .into_iter()
+        .filter(|k| notification::category(k) != Some(category))
+        .collect();
+    list.extend(
+        notification::TYPES
+            .iter()
+            .filter(|(kind, _, _, c)| *c == category && submission.checked(&type_field(kind)))
+            .map(|(kind, _, _, _)| (*kind).to_owned()),
+    );
+    list
+}
+
+fn save_types(
+    viewer: &Viewer,
+    category: Option<Category>,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let category = category.ok_or(PageError::NotFound)?;
+    let list = with_ticked(default_types(&settings_now()?), category, submission);
+    // Every type is stored as none: every type, new ones included.
+    let types = (list.len() < notification::TYPES.len()).then(|| list.join(","));
     storage::execute(
         "UPDATE settings SET notification_types = string_to_array($1, ',') WHERE id = 1",
         &[types.clone().into()],
     )
     .map_err(|e| failed("saving the types", e))?;
     log::info(format!(
-        "notification types set by {} ({}): {}",
+        "notification types ({}) set by {} ({}): {}",
+        category.name(),
         viewer.main.name,
         viewer.main.id,
         types.as_deref().unwrap_or("every type")
     ));
     Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// An owner's own types, if it has them.
+fn owner_types(corp: i64) -> Result<Option<Vec<String>>, PageError> {
+    let own = storage::query(
+        "SELECT array_to_string(notification_types, ',') FROM owner_settings WHERE corporation_id = $1",
+        &[corp.into()],
+    )
+    .map_err(|e| failed("reading the owner's types", e))?;
+    Ok(own.rows.first().and_then(|r| routing::type_list(r.first())))
+}
+
+fn save_owner_category(
+    viewer: &Viewer,
+    corp: i64,
+    category: Category,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    if owner_name(corp)?.is_none() {
+        return Err(PageError::NotFound);
+    }
+    let base = match owner_types(corp)? {
+        Some(own) => own,
+        None => default_types(&settings_now()?),
+    };
+    let types = with_ticked(base, category, submission).join(",");
+    storage::execute(
+        "INSERT INTO owner_settings (corporation_id, notification_types) \
+         VALUES ($1, string_to_array($2, ',')) \
+         ON CONFLICT (corporation_id) DO UPDATE SET notification_types = EXCLUDED.notification_types",
+        &[corp.into(), types.clone().into()],
+    )
+    .map_err(|e| failed("saving the owner's types", e))?;
+    log::info(format!(
+        "owner {corp} types ({}) set by {} ({}): {types}",
+        category.name(),
+        viewer.main.name,
+        viewer.main.id,
+    ));
+    Ok(SubmitResult::Redirect(format!("settings/owner/{corp}")))
 }
 
 // ---- fuel alert configs ------------------------------------------------------
@@ -2700,6 +3170,133 @@ fn delete_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitR
     Ok(SubmitResult::Redirect("settings".into()))
 }
 
+/// Liquid ozone a jump fuel alert may name, at most.
+const MAX_OZONE: i64 = 1_000_000;
+
+fn jump_fuel_alert_table() -> Result<Table, PageError> {
+    let rows = storage::query(
+        &format!(
+            "SELECT id, threshold, ping FROM jump_fuel_alert_configs ORDER BY threshold DESC, id LIMIT {}",
+            MAX_FUEL_CONFIGS * 2
+        ),
+        &[],
+    )
+    .map_err(|e| failed("reading jump fuel alerts", e))?;
+    Ok(with_rows(
+        Table::new(vec![
+            Column::numeric("Below (units of liquid ozone)"),
+            Column::text("Ping"),
+            Column::text(""),
+        ])
+        .title("Jump fuel alerts")
+        .empty("No jump fuel alerts: add one below."),
+        rows.rows.iter().map(|r| {
+            let threshold = int(r, 1);
+            vec![
+                threshold.into(),
+                match text(r, 2).as_str() {
+                    "danger" => "Danger role",
+                    "warning" => "Warning role",
+                    _ => "None",
+                }
+                .into(),
+                action("Delete", "delete_jump_fuel_alert")
+                    .field("config", int(r, 0).to_string())
+                    .tone(Tone::Danger)
+                    .confirm(format!(
+                        "The alert below {threshold} units of liquid ozone is deleted."
+                    ))
+                    .into(),
+            ]
+        }),
+    ))
+}
+
+fn jump_fuel_alert_form() -> Form {
+    Form::new("add_jump_fuel_alert", "Add jump fuel alert")
+        .description(
+            "aa-structures' jump fuel alert configs: an alert on the owner's fuel channel once a \
+             jump gate's fuel bay has less liquid ozone than this (as the corporation's assets \
+             last said), until it's topped up above it.",
+        )
+        .field(
+            Field::number("threshold", "Below (units of liquid ozone)")
+                .range(Some(1.0), Some(MAX_OZONE as f64), true)
+                .help("e.g. 100000")
+                .required(),
+        )
+        .field(
+            Field::select(
+                "ping",
+                "Ping",
+                vec![
+                    ("none".to_owned(), "None".to_owned()),
+                    ("warning".to_owned(), "Warning role (@here)".to_owned()),
+                    ("danger".to_owned(), "Danger role (@everyone)".to_owned()),
+                ],
+            )
+            .value("none")
+            .required(),
+        )
+}
+
+fn add_jump_fuel_alert(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let threshold: i64 = submission
+        .value("threshold")
+        .parse()
+        .map_err(|_| PageError::Failed("threshold wasn't a whole number".to_owned()))?;
+    let ping = submission.value("ping");
+    if !matches!(ping, "none" | "warning" | "danger") {
+        return Err(PageError::NotFound);
+    }
+    if !(1..=MAX_OZONE).contains(&threshold) {
+        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+            "A jump fuel alert's threshold is a whole number from 1 to {MAX_OZONE}."
+        )))?));
+    }
+    let added = storage::execute(
+        &format!(
+            "INSERT INTO jump_fuel_alert_configs (threshold, ping) \
+             SELECT $1, $2 WHERE (SELECT count(*) FROM jump_fuel_alert_configs) < {MAX_FUEL_CONFIGS}"
+        ),
+        &[threshold.into(), ping.into()],
+    )
+    .map_err(|e| failed("adding the jump fuel alert", e))?;
+    if added == 0 {
+        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+            "At most {MAX_FUEL_CONFIGS} jump fuel alerts: delete one first."
+        )))?));
+    }
+    log::info(format!(
+        "jump fuel alert below {threshold} (ping {ping}) added by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+fn delete_jump_fuel_alert(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let config: i64 = submission
+        .value("config")
+        .parse()
+        .map_err(|_| PageError::NotFound)?;
+    storage::execute(
+        "DELETE FROM jump_fuel_alert_configs WHERE id = $1",
+        &[config.into()],
+    )
+    .map_err(|e| failed("deleting the jump fuel alert", e))?;
+    log::info(format!(
+        "jump fuel alert {config} deleted by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
 /// A channel choice for an owner: the default, not sent, or a channel.
 fn owner_channel_field(
     category: Category,
@@ -2766,7 +3363,9 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
     )
     .map_err(|e| failed("reading routes", e))?;
     let own = storage::query(
-        "SELECT mention, pocos_public, array_to_string(notification_types, ',') \
+        "SELECT mention, pocos_public, array_to_string(notification_types, ','), \
+             alliance_main IS NOT NULL AND alliance_main = (SELECT o.alliance_id FROM owners o \
+                 WHERE o.corporation_id = $1 AND o.alliance_id IS NOT NULL LIMIT 1) \
          FROM owner_settings WHERE corporation_id = $1",
         &[corp.into()],
     )
@@ -2780,6 +3379,12 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
         .rows
         .first()
         .and_then(|r| r.get(1))
+        .and_then(Db::as_bool)
+        .unwrap_or(false);
+    let alliance_main = own
+        .rows
+        .first()
+        .and_then(|r| r.get(3))
         .and_then(Db::as_bool)
         .unwrap_or(false);
     let channels = discord::channels();
@@ -2831,10 +3436,21 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
                 "List this owner's customs offices, with access and tax, for everyone who may \
                  open Structures (aa-structures' public customs offices).",
             ),
+        )
+        .field(
+            Field::checkbox("alliance_main", "Alliance main", alliance_main).help(
+                "Send alliance-wide notifications (sovereignty, most wars, bills) through this \
+                 owner, as aa-structures' is alliance main: every corporation of the alliance gets \
+                 them, so only one owner of it should send them. Ticking it unticks the \
+                 alliance's others.",
+            ),
         );
-    let mut types = Form::new("owner_types", "Save types")
+    let types = Form::new("owner_types", "Save")
         .title("Notification types")
-        .description("Which types this owner sends: the settings' defaults, or its own.")
+        .description(
+            "Which types this owner sends: the settings' defaults, or its own. Saving a kind's \
+             types below makes them its own.",
+        )
         .field(
             Field::select(
                 "types_from",
@@ -2852,17 +3468,18 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
             .required(),
         );
     let shown = own_types.or_else(|| settings.notification_types.clone());
-    for (kind, label, severity) in notification::TYPES {
-        types = types.field(Field::checkbox(
-            type_field(kind),
-            format!("{label} ({})", severity_name(severity)),
-            shown.as_ref().is_none_or(|t| t.iter().any(|k| k == kind)),
-        ));
-    }
-    Ok(Page::new(format!("Structures owner: {name}"))
+    let mut page = Page::new(format!("Structures owner: {name}"))
         .description("Discord routing for one owner")
         .form(form)
-        .form(types))
+        .form(types);
+    for category in Category::ALL {
+        page = page.form(type_form(
+            &format!("owner_types_{}", category.name()),
+            category,
+            shown.as_ref(),
+        ));
+    }
+    Ok(page)
 }
 
 fn save_owner_types(
@@ -2873,19 +3490,18 @@ fn save_owner_types(
     if owner_name(corp)?.is_none() {
         return Err(PageError::NotFound);
     }
-    // Its own list (every type ticked is stored as the empty-but-set
-    // list of all of them, so new types stay off for it).
+    // Its own list starts as the defaults, spelled out (every type
+    // included is stored as the list of all of them, so new types stay
+    // off for it).
     let types = match submission.value("types_from") {
         "default" => None,
-        "own" => Some(ticked_types(submission).unwrap_or_else(|| {
-            notification::TYPES
-                .iter()
-                .map(|(k, _, _)| *k)
-                .collect::<Vec<_>>()
-                .join(",")
-        })),
+        "own" => Some(match owner_types(corp)? {
+            Some(own) => own,
+            None => default_types(&settings_now()?),
+        }),
         _ => return Err(PageError::NotFound),
-    };
+    }
+    .map(|t| t.join(","));
     storage::execute(
         "INSERT INTO owner_settings (corporation_id, notification_types) \
          VALUES ($1, string_to_array($2, ',')) \
@@ -2935,19 +3551,38 @@ fn save_owner_settings(
     if !matches!(mention, "default" | "on" | "off") {
         return Err(PageError::NotFound);
     }
+    let alliance_main = submission.checked("alliance_main");
+    // The alliance it's main of (none without one).
+    let alliance = "(SELECT o.alliance_id FROM owners o WHERE o.corporation_id = $1 \
+                    AND o.alliance_id IS NOT NULL LIMIT 1)";
+    if alliance_main {
+        // One alliance main per alliance, as aa-structures.
+        statements.push(Statement::new(
+            format!(
+                "UPDATE owner_settings SET alliance_main = NULL \
+                 WHERE corporation_id <> $1 AND alliance_main = {alliance}"
+            ),
+            vec![corp.into()],
+        ));
+    }
     statements.push(Statement::new(
-        "INSERT INTO owner_settings (corporation_id, mention, pocos_public) VALUES ($1, $2, $3) \
-         ON CONFLICT (corporation_id) DO UPDATE SET mention = EXCLUDED.mention, \
-             pocos_public = EXCLUDED.pocos_public",
+        format!(
+            "INSERT INTO owner_settings (corporation_id, mention, pocos_public, alliance_main) \
+             VALUES ($1, $2, $3, CASE WHEN $4 THEN {alliance} END) \
+             ON CONFLICT (corporation_id) DO UPDATE SET mention = EXCLUDED.mention, \
+                 pocos_public = EXCLUDED.pocos_public, alliance_main = EXCLUDED.alliance_main"
+        ),
         vec![
             corp.into(),
             mention.into(),
             submission.checked("pocos_public").into(),
+            alliance_main.into(),
         ],
     ));
     storage::transaction(&statements).map_err(|e| failed("saving the owner", e))?;
     log::info(format!(
-        "owner {corp} routing set by {} ({}): {}, mention {mention}, customs offices public {}",
+        "owner {corp} routing set by {} ({}): {}, mention {mention}, customs offices public {}, \
+         alliance main {alliance_main}",
         viewer.main.name,
         viewer.main.id,
         summary.join(", "),
@@ -2981,6 +3616,29 @@ fn retry_owner(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neutrals_are_admitted_as_aa_structures_judges() {
+        let office = |standing: &str, rate: serde_json::Value| {
+            serde_json::json!({
+                "allow_access_with_standings": true,
+                "standing_level": standing,
+                "neutral_standing_tax_rate": rate,
+            })
+        };
+        assert!(neutrals_admitted(&office("neutral", 0.1.into())));
+        assert!(neutrals_admitted(&office("terrible", 0.1.into())));
+        // Good standing asked for: neutrals stay out.
+        assert!(!neutrals_admitted(&office("good", 0.1.into())));
+        assert!(!neutrals_admitted(&office(
+            "neutral",
+            serde_json::Value::Null
+        )));
+        assert!(!neutrals_admitted(&serde_json::json!({
+            "allow_access_with_standings": false, "standing_level": "neutral",
+            "neutral_standing_tax_rate": 0.1,
+        })));
+    }
 
     #[test]
     fn time_left_reads_short() {

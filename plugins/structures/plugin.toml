@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.structures"
 name = "Structures"
-version = "0.4.2"
+version = "0.5.0"
 host_api = "1"
 description = "Owners' Upwell structures, starbases, customs offices and skyhooks with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner by type with pings by severity, and fuel alerts."
 
