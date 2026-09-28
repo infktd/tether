@@ -831,15 +831,23 @@ async fn open(
     raw_query: Option<&str>,
 ) -> Result<(CurrentSession, Opened), PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
+    // Browser sessions only. The token layer keeps personal access tokens
+    // off /plugins already; this holds even if a route ever let one
+    // through, since apps would take it for its account (a superuser's,
+    // say), whatever the token's scopes.
+    if session.token_scopes.is_some() {
+        return Err(missing());
+    }
     manifest::check_id(id).map_err(|_| missing())?;
     let running = state.plugins.running(id).ok_or_else(missing)?;
     page_rules::check_link_path(path).map_err(|_| missing())?;
-    let needed = running
-        .manifest
-        .page_permission(path)
-        .unwrap_or_else(|| tether_core::permissions::ADMIN_PLUGINS.to_owned());
     let perms = tether_db::permissions::effective(&state.db, session.account).await?;
-    if !perms.contains(&needed) {
+    let access = running.manifest.page_access(path);
+    let blacklisted = access == manifest::PageAccess::SignedIn
+        && tether_db::states::account_state(&state.db, session.account)
+            .await?
+            .is_some_and(|s| s.is_blacklist());
+    if !tether_web_core::plugins::may_open(&access, blacklisted, |p| perms.contains(p)) {
         return Err(missing());
     }
     let viewer = viewer(state, &session, &running, &perms).await?;

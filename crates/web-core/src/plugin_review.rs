@@ -225,8 +225,9 @@ pub fn permissions(manifest: &Manifest) -> Vec<PermissionRow> {
 pub struct PageRuleRow {
     /// "All its pages", or "Pages under <path>".
     pub pages: String,
-    /// The permission they need, by its full name.
-    pub permission: String,
+    /// The permission they need, by its full name; none when any
+    /// signed-in pilot may open them.
+    pub permission: Option<String>,
     /// Every view is written to the audit log.
     pub audited: bool,
 }
@@ -241,7 +242,10 @@ pub fn page_rules(manifest: &Manifest) -> Vec<PageRuleRow> {
             } else {
                 format!("Pages under {}", rule.path)
             },
-            permission: format!("plugin.{}.{}", manifest.plugin.id, rule.permission),
+            permission: rule
+                .permission
+                .as_ref()
+                .map(|p| format!("plugin.{}.{p}", manifest.plugin.id)),
             audited: rule.audit,
         })
         .collect()
@@ -388,5 +392,30 @@ impl Changes {
         !self.removed.is_empty()
             || !self.permissions_removed.is_empty()
             || !self.pages_removed.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(main_page: &str) -> Manifest {
+        Manifest::parse(&format!(
+            "[plugin]\nid = \"acme.hr\"\nname = \"HR\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+             [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\n{main_page}\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn opening_pages_to_everyone_signed_in_asks_again() {
+        let before = manifest("permission = \"view\"");
+        let after = manifest("signed_in = true");
+        let changes = Changes::new(&before, &after);
+        assert!(!changes.unchanged());
+        assert!(changes.any_added());
+        assert_eq!(changes.pages_added.len(), 1);
+        assert_eq!(changes.pages_added[0].permission, None);
+        assert!(Changes::new(&after, &after).unchanged());
     }
 }

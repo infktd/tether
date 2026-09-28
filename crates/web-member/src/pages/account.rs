@@ -96,16 +96,15 @@ pub async fn profile(
     annotate(&state, session.account, &mut loaded.characters).await?;
     let groups = tether_db::groups::names_for(&state.db, session.account).await?;
     let held = permissions::effective(&state.db, session.account).await?;
+    let blacklisted = tether_db::states::account_state(&state.db, session.account)
+        .await?
+        .is_some_and(|s| s.is_blacklist());
     let mut widgets: Vec<(String, usize, DashboardWidget)> = state
         .plugins
         .widgets()
         .into_iter()
         .filter(|w| {
-            held.contains(
-                w.permission
-                    .as_deref()
-                    .unwrap_or(tether_core::permissions::ADMIN_PLUGINS),
-            )
+            tether_web_core::plugins::may_open(&w.access, blacklisted, |p| held.contains(p))
         })
         .map(|w| {
             (

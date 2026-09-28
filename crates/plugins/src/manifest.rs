@@ -57,12 +57,17 @@ pub struct Manifest {
 }
 
 /// `[[pages]]`: pages under `path` (a page path; `""` for all) need
-/// `permission`, one of `[permissions]`. The longest matching path wins.
+/// `permission`, one of `[permissions]`, or, with `signed_in = true`,
+/// only a signed-in account with a main (as AA's `login_required` views,
+/// such as applying to a corporation). The longest matching path wins.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PageRule {
     pub path: String,
-    pub permission: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub signed_in: bool,
     /// Every view of a page under this rule is written to Tether's audit
     /// log (`plugin.page_view`: who, which page), for pages showing
     /// private data such as mail.
@@ -153,12 +158,30 @@ pub fn permission_renames(from: Option<&Manifest>, to: &Manifest) -> Vec<(String
     out
 }
 
+/// Who may open a page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageAccess {
+    /// No rule covers it: app admins (core's `admin.plugins`) only.
+    Admins,
+    /// Any signed-in account with a main (`signed_in = true`).
+    SignedIn,
+    /// Holders of this permission (its full name, `plugin.<id>.<name>`).
+    Permission(String),
+}
+
 impl Manifest {
-    /// The permission (full name, `plugin.<id>.<name>`) a page needs, or
-    /// `None` if no rule covers it: admins only.
-    pub fn page_permission(&self, path: &str) -> Option<String> {
-        self.page_rule(path)
-            .map(|rule| format!("plugin.{}.{}", self.plugin.id, rule.permission))
+    /// Who may open a page: its rule's permission, any signed-in pilot,
+    /// or admins when no rule covers it.
+    pub fn page_access(&self, path: &str) -> PageAccess {
+        match self.page_rule(path) {
+            None => PageAccess::Admins,
+            Some(rule) => match &rule.permission {
+                Some(permission) => {
+                    PageAccess::Permission(format!("plugin.{}.{permission}", self.plugin.id))
+                }
+                None => PageAccess::SignedIn,
+            },
+        }
     }
 
     /// The `[[pages]]` rule that covers a page: the longest matching path.
@@ -485,11 +508,22 @@ impl Manifest {
         let mut paths = std::collections::BTreeSet::new();
         for rule in &self.pages {
             check_page_path("[[pages]] path", &rule.path)?;
-            if !self.permissions.contains_key(&rule.permission) {
-                return Err(bad(format!(
-                    "[[pages]] {:?} needs permission {:?}, which [permissions] doesn't declare",
-                    rule.path, rule.permission
-                )));
+            match (&rule.permission, rule.signed_in) {
+                (Some(permission), false) => {
+                    if !self.permissions.contains_key(permission) {
+                        return Err(bad(format!(
+                            "[[pages]] {:?} needs permission {permission:?}, which [permissions] doesn't declare",
+                            rule.path
+                        )));
+                    }
+                }
+                (None, true) => {}
+                _ => {
+                    return Err(bad(format!(
+                        "[[pages]] {:?} needs either a permission or signed_in = true",
+                        rule.path
+                    )));
+                }
             }
             if !paths.insert(rule.path.as_str()) {
                 return Err(bad(format!("[[pages]] path {:?} appears twice", rule.path)));
@@ -1059,24 +1093,43 @@ manage = "Manage the mining ledger"
              [[navigation]]\nlabel = \"Moons\"\npath = \"\"\n",
         ))
         .unwrap();
-        let view = Some("plugin.acme.mining-ledger.view".to_owned());
-        let manage = Some("plugin.acme.mining-ledger.manage".to_owned());
-        assert_eq!(m.page_permission(""), view);
-        assert_eq!(m.page_permission("moons/1"), view);
-        assert_eq!(m.page_permission("admin"), manage);
-        assert_eq!(m.page_permission("admin/keys"), manage);
+        let view = PageAccess::Permission("plugin.acme.mining-ledger.view".to_owned());
+        let manage = PageAccess::Permission("plugin.acme.mining-ledger.manage".to_owned());
+        assert_eq!(m.page_access(""), view);
+        assert_eq!(m.page_access("moons/1"), view);
+        assert_eq!(m.page_access("admin"), manage);
+        assert_eq!(m.page_access("admin/keys"), manage);
         // A prefix is whole segments only.
-        assert_eq!(m.page_permission("administrator"), view);
+        assert_eq!(m.page_access("administrator"), view);
 
         let admins_only = Manifest::parse(&manifest(
             "[permissions]\nmanage = \"Manage\"\n\n[[pages]]\npath = \"admin\"\npermission = \"manage\"\n",
         ))
         .unwrap();
-        assert_eq!(admins_only.page_permission(""), None);
-        assert_eq!(admins_only.page_permission("other"), None);
+        assert_eq!(admins_only.page_access(""), PageAccess::Admins);
+        assert_eq!(admins_only.page_access("other"), PageAccess::Admins);
+
+        // Pages open to any signed-in pilot (AA's login_required views).
+        let open = Manifest::parse(&manifest(
+            "[permissions]\nview = \"See\"\n\n\
+             [[pages]]\npath = \"\"\npermission = \"view\"\n\n\
+             [[pages]]\npath = \"apply\"\nsigned_in = true\n",
+        ))
+        .unwrap();
+        assert_eq!(open.page_access("apply/3"), PageAccess::SignedIn);
+        assert_eq!(
+            open.page_access("mine"),
+            PageAccess::Permission("plugin.acme.mining-ledger.view".to_owned())
+        );
+        // Left out, it isn't written back either.
+        let written = serde_json::to_string(&m).unwrap();
+        assert!(!written.contains("signed_in"), "{written}");
 
         for bad in [
             "[[pages]]\npath = \"\"\npermission = \"undeclared\"\n",
+            "[[pages]]\npath = \"\"\n",
+            "[permissions]\nview = \"x\"\n[[pages]]\npath = \"\"\npermission = \"view\"\nsigned_in = true\n",
+            "[[pages]]\npath = \"\"\nsigned_in = false\n",
             "[permissions]\nview = \"x\"\n[[pages]]\npath = \"/abs\"\npermission = \"view\"\n",
             "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",

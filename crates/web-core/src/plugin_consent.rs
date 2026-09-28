@@ -49,10 +49,10 @@ pub fn may_offer(manifest: &Manifest, holds: impl Fn(&str) -> bool) -> bool {
     if manifest.capabilities.esi.data_source.is_empty() {
         return false;
     }
-    let main_page = manifest
-        .page_permission("")
-        .unwrap_or_else(|| tether_core::permissions::ADMIN_PLUGINS.to_owned());
-    if !holds(&main_page) {
+    // Not knowing the Blacklist here is fine: offering needs one of the
+    // app's add_ permissions (or admin.plugins) anyway, which the
+    // Blacklist holds only if an admin granted it.
+    if !crate::plugins::may_open(&manifest.page_access(""), false, &holds) {
         return false;
     }
     let id = &manifest.plugin.id;

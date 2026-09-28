@@ -531,11 +531,7 @@ pub async fn load(
         .navigation()
         .into_iter()
         .filter(|item| {
-            let needed = item
-                .permission
-                .as_deref()
-                .unwrap_or(tether_core::permissions::ADMIN_PLUGINS);
-            perms.contains(needed)
+            crate::plugins::may_open(&item.access, access.is_blacklist(), |p| perms.contains(p))
         })
         .map(|item| PluginNavLink {
             label: item.label,

@@ -203,6 +203,23 @@ pub struct Running {
     pub origin: db::Origin,
 }
 
+/// Whether an account holding what `holds` says may open an app page
+/// with this access: its permission, anyone signed in (with a main, which
+/// app pages ask for anyway) but the Blacklist, or app admins when no rule
+/// covers it. The Blacklist holds nothing unless an admin grants it, and
+/// `signed_in` mustn't be the one door that grants can't close.
+pub fn may_open(
+    access: &manifest::PageAccess,
+    blacklisted: bool,
+    holds: impl Fn(&str) -> bool,
+) -> bool {
+    match access {
+        manifest::PageAccess::Admins => holds(tether_core::permissions::ADMIN_PLUGINS),
+        manifest::PageAccess::SignedIn => !blacklisted,
+        manifest::PageAccess::Permission(permission) => holds(permission),
+    }
+}
+
 /// A Dashboard widget of a running plugin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WidgetItem {
@@ -210,9 +227,8 @@ pub struct WidgetItem {
     /// Its place in the manifest's `[[widgets]]`.
     pub index: usize,
     pub title: String,
-    /// What opening its page needs: a plugin permission, or `None` for
-    /// admins.
-    pub permission: Option<String>,
+    /// Who may open its page.
+    pub access: manifest::PageAccess,
 }
 
 /// A sidebar link to a running plugin's page.
@@ -222,8 +238,8 @@ pub struct NavItem {
     pub label: String,
     /// `/plugins/<id>/<path>`.
     pub href: String,
-    /// What opening it needs: a plugin permission, or `None` for admins.
-    pub permission: Option<String>,
+    /// Who may open it.
+    pub access: manifest::PageAccess,
     /// Its default sidebar section (`[[navigation]] section`).
     pub section: &'static str,
 }
@@ -379,7 +395,7 @@ impl Plugins {
                 let id = r.manifest.plugin.id.clone();
                 r.manifest.navigation.iter().map(move |entry| NavItem {
                     href: page_href(&id, &entry.path),
-                    permission: r.manifest.page_permission(&entry.path),
+                    access: r.manifest.page_access(&entry.path),
                     section: entry.section(),
                     label: entry.label.clone(),
                     plugin_id: id.clone(),
@@ -402,7 +418,7 @@ impl Plugins {
                         plugin_id: id.clone(),
                         index,
                         title: widget.title.clone(),
-                        permission: r.manifest.page_permission(&widget.path),
+                        access: r.manifest.page_access(&widget.path),
                     })
                     .collect::<Vec<_>>()
             })
