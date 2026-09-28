@@ -1,0 +1,38 @@
+# Bulletin Board, a first-party Tether plugin (aa-bulletin-board).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.bulletin-board"
+name = "Bulletin Board"
+version = "0.1.0"
+host_api = "1"
+description = "Bulletins for everyone, or only for members of some groups, newest first."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+# Which groups a bulletin is limited to, and whether the viewer is in one.
+groups = true
+
+# aa-bulletin-board's permission names.
+[permissions]
+basic_access = "Can access this app"
+manage_bulletins = "Can manage (add/change/remove) bulletins"
+
+[[pages]]
+path = ""
+permission = "basic_access"
+
+[[pages]]
+path = "new"
+permission = "manage_bulletins"
+
+[[pages]]
+path = "edit"
+permission = "manage_bulletins"
+
+[[navigation]]
+label = "Bulletin Board"
+path = ""

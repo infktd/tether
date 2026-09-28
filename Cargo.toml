@@ -18,6 +18,9 @@ members = [
     "plugins/fleet-operations",
     "plugins/fittings",
     "plugins/timezones",
+    "plugins/sov-timer",
+    "plugins/esi-status",
+    "plugins/bulletin-board",
 ]
 
 [workspace.package]

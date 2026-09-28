@@ -1,0 +1,29 @@
+# ESI Status, a first-party Tether plugin (aa-esi-status).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.esi-status"
+name = "ESI Status"
+version = "0.1.0"
+host_api = "1"
+description = "ESI's status route by route (OK, degraded, down, recovering), as ESI reports it, and how it went over the last 24 hours."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# Every five minutes: ESI's status, kept for 24 hours.
+[[capabilities.schedules]]
+name = "check"
+every = "5m"
+
+# aa-esi-status has no permissions: anyone logged in, as here.
+[[pages]]
+path = ""
+signed_in = true
+
+[[navigation]]
+label = "ESI Status"
+path = ""
