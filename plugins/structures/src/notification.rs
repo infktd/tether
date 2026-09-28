@@ -227,14 +227,16 @@ impl Fields {
         at.checked_add_signed(Duration::seconds(ticks / TICKS))
     }
 
-    /// A moon's name from its link (`<a href="showinfo:14//4016...">Name</a>`).
-    fn moon(&self) -> String {
+    /// A moon's name from its link (`<a href="showinfo:14//4016...">Name</a>`),
+    /// or as ESI names its id (not every notification links it).
+    pub fn moon(&self, name: &dyn Fn(i64) -> Option<String>) -> String {
         self.text("moonLink")
             .and_then(|l| l.split_once('>'))
             .and_then(|(_, rest)| rest.split_once('<'))
             .map(|(name, _)| escape(name.trim()))
             .filter(|n| !n.is_empty())
-            .or_else(|| self.int("moonID").map(|id| format!("moon {id}")))
+            .or_else(|| self.moon_id().and_then(name).map(|n| escape(&n)))
+            .or_else(|| self.moon_id().map(|id| format!("moon {id}")))
             .unwrap_or_else(|| "a moon".to_owned())
     }
 }
@@ -1194,24 +1196,27 @@ pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>)
             match (ready, auto) {
                 (Some(r), Some(a)) => format!(
                     "Extraction started: {place}, {}. The chunk arrives {r} EVE and fractures automatically {a} EVE.",
-                    fields.moon()
+                    fields.moon(cx.name)
                 ),
-                _ => format!("Extraction started: {place}, {}.", fields.moon()),
+                _ => format!("Extraction started: {place}, {}.", fields.moon(cx.name)),
             }
         }
         "MoonminingExtractionFinished" => match fields.filetime("autoTime").map(eve) {
             Some(a) => format!(
                 "Chunk arrived: {place}, {}. It fractures automatically {a} EVE.",
-                fields.moon()
+                fields.moon(cx.name)
             ),
-            None => format!("Chunk arrived: {place}, {}.", fields.moon()),
+            None => format!("Chunk arrived: {place}, {}.", fields.moon(cx.name)),
         },
         "MoonminingAutomaticFracture" => {
-            format!("Moon fractured automatically: {place}, {}.", fields.moon())
+            format!(
+                "Moon fractured automatically: {place}, {}.",
+                fields.moon(cx.name)
+            )
         }
-        "MoonminingLaserFired" => format!("Moon fractured: {place}, {}.", fields.moon()),
+        "MoonminingLaserFired" => format!("Moon fractured: {place}, {}.", fields.moon(cx.name)),
         "MoonminingExtractionCancelled" => {
-            format!("Extraction cancelled: {place}, {}.", fields.moon())
+            format!("Extraction cancelled: {place}, {}.", fields.moon(cx.name))
         }
         _ => return other(kind, fields, cx),
     };
@@ -1660,6 +1665,15 @@ mod tests {
         );
         assert_eq!(category("CorpAppNewMsg"), Some(Category::Corp));
         assert_eq!(category("NotAType"), None);
+
+        // No link: the moon as ESI names it, else its id.
+        let unlinked = Fields::parse(&STARTED.replace(
+            "moonLink: <a href=\"showinfo:14//40009081\">Jita IV - Moon 4</a>\n",
+            "",
+        ));
+        let named = |id: i64| (id == 40009081).then(|| "Jita IV - Moon 4".to_owned());
+        assert_eq!(unlinked.moon(&named), "Jita IV - Moon 4");
+        assert_eq!(unlinked.moon(&names), "moon 40009081");
     }
 
     #[test]

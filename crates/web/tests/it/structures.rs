@@ -58,6 +58,7 @@ async fn install(h: &Harness, owner: &str) {
     let third = plugin_file("migrations/0003_starbases_orbitals_tags.sql");
     let fourth = plugin_file("migrations/0004_aa_routing_fuel_alerts_sync.sql");
     let fifth = plugin_file("migrations/0005_all_notification_types.sql");
+    let sixth = plugin_file("migrations/0006_outbox_cards.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -79,6 +80,7 @@ async fn install(h: &Harness, owner: &str) {
             "migrations/0005_all_notification_types.sql",
             fifth.as_bytes(),
         ),
+        ("migrations/0006_outbox_cards.sql", sixth.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -163,6 +165,15 @@ async fn mount_nothing_else(h: &Harness) {
 
 /// Structures, systems and names; notifications are mounted by each test.
 async fn mount_esi(h: &Harness, now: DateTime<Utc>, times: &Times) {
+    // The drill's moon, named for its messages.
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/moons/{MOON}")))
+        .respond_with(json(serde_json::json!({
+            "moon_id": MOON, "name": "Jita IV - Moon 4", "system_id": SYSTEM,
+            "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+        })))
+        .mount(&h.esi_server)
+        .await;
     Mock::given(method("GET"))
         .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
         .respond_with(json(serde_json::json!([
@@ -294,7 +305,39 @@ async fn discord_messages(h: &Harness) -> Vec<String> {
         .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
         .map(|r| {
             let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
-            body["content"].as_str().unwrap().to_owned()
+            let content = body["content"].as_str().unwrap().to_owned();
+            // A card reads as its message did, "Headline: the rest", but
+            // for the rest starting with a capital.
+            match body["embeds"].get(0) {
+                Some(card) => {
+                    let text = format!(
+                        "{}: {}",
+                        card["title"].as_str().unwrap(),
+                        card["description"].as_str().unwrap_or_default()
+                    );
+                    if content.is_empty() {
+                        text
+                    } else {
+                        format!("{content} {text}")
+                    }
+                }
+                None => content,
+            }
+        })
+        .collect()
+}
+
+/// The cards posted, in order.
+async fn discord_cards(h: &Harness) -> Vec<serde_json::Value> {
+    h.discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
+        .map(|r| {
+            let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+            body["embeds"][0].clone()
         })
         .collect()
 }
@@ -565,6 +608,37 @@ async fn structures_end_to_end(db: PgPool) {
     assert!(sent[1].starts_with("<@&"), "{sent:?}");
     assert!(!sent[2].contains("<@&"), "{sent:?}");
     assert!(sent[2].contains("Jita IV - Moon 4"), "{sent:?}");
+    // Each a card, as notification bots post them: the drill's green,
+    // under its owner, with its render and a countdown to the chunk.
+    let drill = &discord_cards(&h).await[2];
+    assert_eq!(drill["title"], "Extraction started", "{drill}");
+    assert_eq!(drill["color"], 0x2e_cc71, "{drill}");
+    assert_eq!(
+        drill["author"]["icon_url"],
+        format!("https://images.evetech.net/corporations/{CHRIBBA_CORP}/logo?size=64"),
+        "{drill}"
+    );
+    assert_eq!(
+        drill["thumbnail"]["url"], "https://images.evetech.net/types/35835/render?size=128",
+        "{drill}"
+    );
+    assert!(
+        drill["description"]
+            .as_str()
+            .unwrap()
+            .contains(" EVE · <t:"),
+        "{drill}"
+    );
+    assert!(
+        drill["fields"].as_array().unwrap().contains(
+            &serde_json::json!({ "name": "Moon", "value": "Jita IV - Moon 4", "inline": true })
+        ),
+        "{drill}"
+    );
+    assert_eq!(
+        drill["footer"]["text"],
+        "Structures · Moon extraction started"
+    );
     assert!(
         sent[3].starts_with("Low fuel: Jita - Keep (Astrahus) in Jita"),
         "{sent:?}"
@@ -2058,10 +2132,10 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
     );
     assert!(
         messages.iter().any(|m| m.starts_with(
-            "Sovereignty structure reinforced: the Territorial Claim Unit in Jita belonging to \
+            "Sovereignty structure reinforced: The Territorial Claim Unit in Jita belonging to \
              Otherworld Empire"
         ) || m.starts_with(
-            "Sovereignty structure reinforced: the sovereignty structure in Jita belonging to \
+            "Sovereignty structure reinforced: The sovereignty structure in Jita belonging to \
              Otherworld Empire"
         )),
         "{messages:?}"

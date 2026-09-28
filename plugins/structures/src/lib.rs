@@ -26,6 +26,7 @@
 //!   structures every hour (their cache times), and an owner ESI answers
 //!   403 for (a lost role) is left alone for an hour, doubling to a day.
 
+mod card;
 mod detail;
 mod notification;
 mod orbitals;
@@ -1208,7 +1209,7 @@ fn handle_notifications() -> Result<(), JobError> {
                 so.structure_id IS NOT NULL, n.sender_id, n.structure_related, \
                 (SELECT a.alliance_id FROM owners a WHERE a.corporation_id = n.corporation_id \
                      AND a.alliance_id IS NOT NULL LIMIT 1), \
-                w.alliance_main \
+                w.alliance_main, s.type_id \
          FROM notifications n \
          LEFT JOIN structure_owners so ON so.structure_id = n.structure_id AND so.corporation_id = n.corporation_id \
          LEFT JOIN structures s ON s.structure_id = n.structure_id AND s.corporation_id = n.corporation_id \
@@ -1228,6 +1229,8 @@ fn handle_notifications() -> Result<(), JobError> {
             ids.extend(fields.ids());
             // Moons and planets Structures named itself.
             ids.extend(fields.moon_id());
+            // The owner, above its card.
+            ids.push(int(r, 5));
             ids.extend(fields.planet_id());
             if notification::names_sender(&text(r, 1)) {
                 ids.extend(opt_int(r, 8));
@@ -1318,9 +1321,25 @@ fn handle_notifications() -> Result<(), JobError> {
             if let Some(message) = notification::message(&kind, fields, at, &cx)
                 .map(|m| notification::clip(&m, MAX_MESSAGE_CHARS))
             {
+                let card = card::Card {
+                    kind: kind.clone(),
+                    at: card::at(at),
+                    corporation_id: corp,
+                    corporation: lookup(corp),
+                    structure: cx
+                        .structure
+                        .clone()
+                        .or_else(|| fields.text("structureName").map(str::to_owned)),
+                    type_id: fields
+                        .type_id()
+                        .or_else(|| fields.sov_type_id())
+                        .or_else(|| opt_int(row, 12)),
+                    system: fields.system_id().and_then(lookup),
+                    moon: fields.moon_id().map(|_| fields.moon(&lookup)),
+                };
                 statements.push(Statement::new(
-                    "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
-                     ON CONFLICT (key) DO NOTHING",
+                    "INSERT INTO outbox (key, channel, message, mention_state, card) \
+                     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key) DO NOTHING",
                     vec![
                         format!("notification:{id}").into(),
                         channel.into(),
@@ -1329,6 +1348,7 @@ fn handle_notifications() -> Result<(), JobError> {
                             .ping(corp, notification::severity(&kind))
                             .map(str::to_owned)
                             .into(),
+                        card_json(&card),
                     ],
                 ));
             }
@@ -1434,8 +1454,8 @@ fn fuel_alerts() -> Result<(), JobError> {
         );
         storage::transaction(&[
             Statement::new(
-                "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
-                 ON CONFLICT (key) DO NOTHING",
+                "INSERT INTO outbox (key, channel, message, mention_state, card) \
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key) DO NOTHING",
                 vec![
                     // Once per alert, low-fuel episode (the expiry) and
                     // repeat (after the last one sent).
@@ -1448,6 +1468,7 @@ fn fuel_alerts() -> Result<(), JobError> {
                     channel.into(),
                     message.into(),
                     ping.map(str::to_owned).into(),
+                    structure_card(kind, structure, corp)?,
                 ],
             ),
             Statement::new(
@@ -1482,6 +1503,39 @@ fn place_of(structure: i64) -> Result<Option<String>, JobError> {
             place.push_str(&format!(" in {system}"));
         }
         place
+    }))
+}
+
+/// A card's JSON for the outbox.
+fn card_json(card: &card::Card) -> Db {
+    Db::json(serde_json::to_string(card).unwrap_or_else(|_| "null".to_owned()))
+}
+
+/// The card for Structures' own alerts about one structure, as now.
+fn structure_card(kind: &str, structure: i64, corp: i64) -> Result<Db, JobError> {
+    let rows = storage::query(
+        "SELECT s.name, s.type_id, coalesce(y.name, n.name), m.name, c.name \
+         FROM structures s LEFT JOIN systems y ON y.system_id = s.system_id \
+         LEFT JOIN names n ON n.id = s.system_id LEFT JOIN names m ON m.id = s.moon_id \
+         LEFT JOIN names c ON c.id = $2 WHERE s.structure_id = $1",
+        &[structure.into(), corp.into()],
+    )
+    .map_err(|e| retry("reading a structure", e))?;
+    let row = rows.rows.first();
+    let name = |i: usize| {
+        row.and_then(|r| r.get(i))
+            .and_then(Db::as_text)
+            .map(str::to_owned)
+    };
+    Ok(card_json(&card::Card {
+        kind: kind.to_owned(),
+        at: card::at(Utc::now()),
+        corporation_id: corp,
+        corporation: name(4),
+        structure: name(0),
+        type_id: row.and_then(|r| opt_int(r, 1)),
+        system: name(2),
+        moon: name(3),
     }))
 }
 
@@ -1522,7 +1576,7 @@ fn refuelled() -> Result<(), JobError> {
             continue;
         };
         storage::execute(
-            "INSERT INTO outbox (key, channel, message) VALUES ($1, $2, $3) \
+            "INSERT INTO outbox (key, channel, message, card) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (key) DO NOTHING",
             &[
                 format!("refuel:{structure}:{}", expires.timestamp()).into(),
@@ -1532,6 +1586,7 @@ fn refuelled() -> Result<(), JobError> {
                     expires.format("%Y-%m-%d %H:%M")
                 )
                 .into(),
+                structure_card(kind, structure, corp)?,
             ],
         )
         .map_err(|e| retry("queuing a refuel notice", e))?;
@@ -1603,8 +1658,8 @@ fn jump_fuel_alerts() -> Result<(), JobError> {
         let (threshold, quantity) = (int(alert, 3), int(alert, 5));
         storage::transaction(&[
             Statement::new(
-                "INSERT INTO outbox (key, channel, message, mention_state) VALUES ($1, $2, $3, $4) \
-                 ON CONFLICT (key) DO NOTHING",
+                "INSERT INTO outbox (key, channel, message, mention_state, card) \
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key) DO NOTHING",
                 vec![
                     format!("jump-fuel:{structure}:{config}:{quantity}").into(),
                     channel.into(),
@@ -1614,6 +1669,7 @@ fn jump_fuel_alerts() -> Result<(), JobError> {
                     )
                     .into(),
                     ping.map(str::to_owned).into(),
+                    structure_card(kind, structure, corp)?,
                 ],
             ),
             Statement::new(
@@ -1754,7 +1810,8 @@ fn relay() -> Result<(), JobError> {
     )
     .map_err(|e| retry("expiring messages", e))?;
     let waiting = storage::query(
-        "SELECT id, channel, message, coalesce(mention_state, CASE WHEN mention THEN 'Member' END) \
+        "SELECT id, channel, message, coalesce(mention_state, CASE WHEN mention THEN 'Member' END), \
+                card::text \
          FROM outbox WHERE sent_at IS NULL AND failed IS NULL ORDER BY id LIMIT $1",
         &[count(SENDS_PER_RUN).into()],
     )
@@ -1776,22 +1833,28 @@ fn relay() -> Result<(), JobError> {
         }
         let (channel, message) = (text(row, 1), text(row, 2));
         let mention = row.get(3).and_then(Db::as_text).map(str::to_owned);
+        // A card around the message, when it was queued with one.
+        let embed = row
+            .get(4)
+            .and_then(Db::as_text)
+            .and_then(|c| serde_json::from_str::<card::Card>(c).ok())
+            .map(|c| card::embed(&message, &c));
+        let post = |mention: Mention| match &embed {
+            Some(embed) => discord::send_embed(&channel, embed, mention),
+            None => discord::send(&channel, &message, mention),
+        };
         sends += 1;
-        let mut result = discord::send(
-            &channel,
-            &message,
-            match &mention {
-                Some(state) => Mention::State(state.clone()),
-                None => Mention::None,
-            },
-        );
+        let mut result = post(match &mention {
+            Some(state) => Mention::State(state.clone()),
+            None => Mention::None,
+        });
         // No role mapped to that state: send it without the mention.
         if mention.is_some()
             && matches!(result, Err(discord::Error::NotAllowed(_)))
             && sends < SENDS_PER_RUN
         {
             sends += 1;
-            result = discord::send(&channel, &message, Mention::None);
+            result = post(Mention::None);
         }
         match result {
             Ok(()) => {}
