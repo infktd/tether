@@ -1,0 +1,32 @@
+[package]
+name = "timezones"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Time Zones for Tether (aa-timezones): EVE time beside other time zones, and times adjusted for timers and planned fleets."
+
+# CI builds and lints every crate tagged like this for its target.
+[package.metadata.tether]
+target = "wasm32-wasip2"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Same as the workspace lints minus `unsafe_code = "forbid"`: wit-bindgen's
+# generated ABI glue needs `unsafe`, and a crate can't partially override
+# workspace lints. Guest code is sandboxed by Wasmtime regardless.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+[dependencies]
+chrono.workspace = true
+# The IANA time zone database, for daylight saving time (approved by Jay,
+# 2026-09-27, for this app only: its data lives in this app's .wasm).
+chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
+tether-plugin-sdk.workspace = true

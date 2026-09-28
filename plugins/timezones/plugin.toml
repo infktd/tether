@@ -1,0 +1,33 @@
+# Time Zones, a first-party Tether plugin (aa-timezones).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.timezones"
+name = "Time Zones"
+version = "0.1.0"
+host_api = "1"
+description = "EVE time beside other time zones, and every one of them at a time you pick: a reinforcement timer or a planned fleet, with a link to share."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# aa-timezones has no permissions (anyone logged in, as here); its panels
+# are set in AA's admin site, here by `manage`.
+[permissions]
+manage = "Configure the time zone panels"
+
+# Anyone signed in with a main, as aa-timezones.
+[[pages]]
+path = ""
+signed_in = true
+
+[[pages]]
+path = "panels"
+permission = "manage"
+
+[[navigation]]
+label = "Time Zones"
+path = ""

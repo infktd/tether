@@ -48,6 +48,7 @@ mod sudo;
 mod sync;
 mod system;
 mod theme;
+mod timezones;
 mod tokens;
 mod transfers;
 mod upgrades;
