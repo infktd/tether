@@ -134,10 +134,12 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
     Endpoint {
-        // The data-source character's own notifications, trimmed to those
-        // about its corporation's structures and moon drills
-        // (`STRUCTURE_NOTIFICATIONS`): never mail, wars, contracts, kills
-        // or anything else personal. Structures relays them to Discord.
+        // The data-source character's own notifications, trimmed to the
+        // ones aa-structures relays (`STRUCTURE_NOTIFICATIONS`): its
+        // corporation's structures and moon drills, and (Jay, 2026-09-27)
+        // sovereignty, wars, bills and the corporation's members and
+        // applications. Never mail, contracts, kills or anything else
+        // personal. Structures relays them to Discord.
         name: "corporation-structure-notifications",
         scope: "esi-characters.read_notifications.v1",
         about: About::Corporation,
@@ -731,10 +733,13 @@ fn names_param(params: &[(String, String)]) -> Result<Vec<String>, EsiError> {
 }
 
 /// The notification types `corporation-structure-notifications` passes
-/// on: Upwell structures' attacks, reinforcements, fuel, services, power
-/// and anchoring, Metenox reagents, starbases, customs offices, Orbital
-/// Skyhooks, and moon drills. Everything else a character receives
-/// stays with the host.
+/// on, aa-structures' types: Upwell structures' attacks, reinforcements,
+/// fuel, services, power, anchoring, ownership and reinforcement hour,
+/// Metenox reagents, starbases, customs offices, Orbital Skyhooks, moon
+/// drills; and (approved by Jay, 2026-09-27) sovereignty, wars, bills, and
+/// the corporation's members, applications and projects. Everything else
+/// a character receives (mail, contracts, kills, its own affairs) stays
+/// with the host.
 pub const STRUCTURE_NOTIFICATIONS: &[&str] = &[
     "StructureUnderAttack",
     "StructureLostShields",
@@ -767,7 +772,82 @@ pub const STRUCTURE_NOTIFICATIONS: &[&str] = &[
     "MoonminingAutomaticFracture",
     "MoonminingLaserFired",
     "MoonminingExtractionCancelled",
+    // Upwell structures changing hands or reinforcement hour.
+    "OwnershipTransferred",
+    "StructuresReinforcementChanged",
+    // Sovereignty and its bills.
+    "SovStructureReinforced",
+    "SovStructureDestroyed",
+    "EntosisCaptureStarted",
+    "SovCommandNodeEventStarted",
+    "SovAllClaimAquiredMsg",
+    "SovAllClaimLostMsg",
+    "AllAnchoringMsg",
+    "InfrastructureHubBillAboutToExpire",
+    "IHubDestroyedByBillFailure",
+    "BillOutOfMoneyMsg",
+    "CorpAllBillMsg",
+    // Wars.
+    "WarDeclared",
+    "DeclareWar",
+    "WarInherited",
+    "WarAdopted",
+    "AcceptedAlly",
+    "AllyJoinedWarAggressorMsg",
+    "AllyJoinedWarAllyMsg",
+    "AllyJoinedWarDefenderMsg",
+    "AllWarCorpJoinedAllianceMsg",
+    "AllWarSurrenderMsg",
+    "CorpWarSurrenderMsg",
+    "OfferedSurrender",
+    "WarSurrenderOfferMsg",
+    "OfferedToAlly",
+    "MercOfferedNegotiationMsg",
+    "MercOfferRetractedMsg",
+    "WarHQRemovedFromSpace",
+    "WarInvalid",
+    "WarRetractedByConcord",
+    "CorpBecameWarEligible",
+    "CorpNoLongerWarEligible",
+    // The corporation's members, applications and projects.
+    "CorpAppNewMsg",
+    "CorpAppInvitedMsg",
+    "CharAppWithdrawMsg",
+    "CharAppRejectMsg",
+    "CorpAppRejectCustomMsg",
+    "CharAppAcceptMsg",
+    "CharLeftCorpMsg",
+    "CorporationGoalCreated",
+    "CorporationGoalCompleted",
+    "CorporationGoalClosed",
 ];
+
+/// Of `STRUCTURE_NOTIFICATIONS`, those about a corporation's members,
+/// applications and projects: passed on only when they name the
+/// corporation they're read for.
+pub const MEMBER_NOTIFICATIONS: &[&str] = &[
+    "CorpAppNewMsg",
+    "CorpAppInvitedMsg",
+    "CharAppWithdrawMsg",
+    "CharAppRejectMsg",
+    "CorpAppRejectCustomMsg",
+    "CharAppAcceptMsg",
+    "CharLeftCorpMsg",
+    "CorporationGoalCreated",
+    "CorporationGoalCompleted",
+    "CorporationGoalClosed",
+];
+
+/// Whether a notification's text (EVE's YAML, flat `key: value` lines)
+/// names `corporation` as its `corpID` or `corporation_id`.
+pub fn names_corporation(text: &str, corporation: i64) -> bool {
+    text.lines().any(|line| {
+        line.split_once(':').is_some_and(|(key, value)| {
+            matches!(key, "corpID" | "corporation_id")
+                && value.trim().parse::<i64>() == Ok(corporation)
+        })
+    })
+}
 
 /// A character notification, read loosely (see
 /// `corporation-structure-notifications`).
@@ -779,6 +859,8 @@ struct Notification {
     timestamp: String,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    sender_id: Option<i64>,
 }
 
 /// Where `corporation-structure-assets` looks. Slots and bays only
@@ -1796,9 +1878,12 @@ impl Esi {
                                 .iter()
                                 .map(|n| Notification {
                                     notification_id: n.notification_id,
-                                    kind: n.type_.to_string(),
+                                    // Trimmed: ESI spells "WarAdopted "
+                                    // with a trailing space.
+                                    kind: n.type_.to_string().trim().to_owned(),
                                     timestamp: n.timestamp.to_rfc3339(),
                                     text: n.text.clone(),
+                                    sender_id: Some(n.sender_id),
                                 })
                                 .collect::<Vec<_>>();
                             Ok(ResponseValue::new(items, status, headers))
@@ -1806,7 +1891,13 @@ impl Esi {
                         Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
                             match serde_json::from_slice::<Vec<Notification>>(&bytes) {
                                 Ok(items) => Ok(ResponseValue::new(
-                                    items,
+                                    items
+                                        .into_iter()
+                                        .map(|n| Notification {
+                                            kind: n.kind.trim().to_owned(),
+                                            ..n
+                                        })
+                                        .collect(),
                                     reqwest::StatusCode::OK,
                                     HeaderMap::new(),
                                 )),
@@ -1819,18 +1910,27 @@ impl Esi {
                     }
                 };
                 let response = self.call_full(priority, request).await?;
-                // Only structure notifications, and only what's needed of
-                // them (not the sender or whether it was read).
+                // Only those types, and only what's needed of them: the
+                // sender (sovereignty names the alliance holding it), not
+                // whether it was read.
                 let notifications: Vec<serde_json::Value> = response
                     .into_inner()
                     .into_iter()
                     .filter(|n| STRUCTURE_NOTIFICATIONS.contains(&n.kind.as_str()))
+                    // Members, applications and projects only of the
+                    // corporation it's read for: never the character's own
+                    // dealings with others, nor its last corporation's.
+                    .filter(|n| {
+                        !MEMBER_NOTIFICATIONS.contains(&n.kind.as_str())
+                            || names_corporation(n.text.as_deref().unwrap_or(""), corporation)
+                    })
                     .map(|n| {
                         serde_json::json!({
                             "notification_id": n.notification_id,
                             "type": n.kind,
                             "timestamp": n.timestamp,
                             "text": n.text,
+                            "sender_id": n.sender_id,
                         })
                     })
                     .collect();
@@ -2246,14 +2346,40 @@ mod tests {
     #[test]
     fn structure_notifications_are_esi_types() {
         for name in STRUCTURE_NOTIFICATIONS {
-            let kind: Kind = name.parse().unwrap();
-            // The filter compares the type's text: it must round-trip.
-            assert_eq!(kind.to_string(), *name);
+            // ESI spells one with a trailing space; the host trims them.
+            let esi = if *name == "WarAdopted" {
+                "WarAdopted "
+            } else {
+                name
+            };
+            let kind: Kind = esi.parse().unwrap();
+            // The filter compares the type's text, trimmed: it must
+            // round-trip.
+            assert_eq!(kind.to_string().trim(), *name);
         }
     }
 
     fn names(text: &str) -> Result<Vec<String>, EsiError> {
         names_param(&[("names".to_owned(), text.to_owned())])
+    }
+
+    #[test]
+    fn member_notifications_must_name_the_corporation() {
+        for name in MEMBER_NOTIFICATIONS {
+            assert!(STRUCTURE_NOTIFICATIONS.contains(name), "{name}");
+        }
+        let text = "applicationText: hi\ncharID: 1011\ncorpID: 2001\n";
+        assert!(names_corporation(text, 2001));
+        assert!(!names_corporation(text, 2002));
+        assert!(names_corporation(
+            "corporation_id: 2001\ngoal_name: x\n",
+            2001
+        ));
+        // A line of the application text can't pass for the key.
+        assert!(!names_corporation(
+            "applicationText: 'corpID: 2001'\ncorpID: 5\n",
+            2001
+        ));
     }
 
     #[test]
