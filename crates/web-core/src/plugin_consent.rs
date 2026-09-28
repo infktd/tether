@@ -28,17 +28,22 @@ fn target(plugin: &str) -> String {
     format!("plugin:{plugin}")
 }
 
-/// The app's permissions that add owners: its `add_…` ones, as AA's
+/// The app's permissions that add owners: those its manifest names
+/// (`owner_permissions`, for AA names such as aa-contacts'
+/// `manage_alliance_contacts`), else its `add_…` ones, as AA's
 /// `add_refinery_owner` and `add_structure_owner` and aa-afat's
 /// `add_fatlink` (whose FCs add their fleet boss). In AA only these add
 /// owners, not an app's general management permission.
 pub fn owner_permissions(manifest: &Manifest) -> Vec<&str> {
-    manifest
-        .permissions
-        .keys()
-        .map(String::as_str)
-        .filter(|name| name.starts_with("add_"))
-        .collect()
+    match &manifest.capabilities.esi.owner_permissions {
+        Some(named) => named.iter().map(String::as_str).collect(),
+        None => manifest
+            .permissions
+            .keys()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("add_"))
+            .collect(),
+    }
 }
 
 /// Who may add a character as an app's data source (AA's Add Owner):
@@ -390,6 +395,29 @@ mod tests {
         assert!(!with(&[
             "plugin.acme.mine.view",
             "plugin.acme.other.add_fatlink"
+        ]));
+        // A manifest may name its own (AA's names, as aa-contacts').
+        let named = Manifest::parse(
+            "[plugin]\nid = \"acme.contacts\"\nname = \"C\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+             [capabilities.esi]\ndata_source = [\"esi-corporations.read_contacts.v1\"]\n\
+             owner_permissions = [\"manage_corporation_contacts\"]\n\n\
+             [permissions]\nview = \"v\"\nmanage_corporation_contacts = \"m\"\nadd_other = \"a\"\n\n\
+             [[pages]]\npath = \"\"\npermission = \"view\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            owner_permissions(&named),
+            vec!["manage_corporation_contacts"]
+        );
+        let named_with = |held: &[&str]| may_offer(&named, |p| held.contains(&p));
+        assert!(named_with(&[
+            "plugin.acme.contacts.view",
+            "plugin.acme.contacts.manage_corporation_contacts"
+        ]));
+        // Then add_ ones don't.
+        assert!(!named_with(&[
+            "plugin.acme.contacts.view",
+            "plugin.acme.contacts.add_other"
         ]));
         // Nothing to offer to an app without data sources.
         let none = manifest("view = \"v\"\nmanage = \"m\"", false);

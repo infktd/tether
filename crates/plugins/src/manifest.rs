@@ -349,6 +349,11 @@ pub struct EsiScopes {
     /// Station Manager for corp mining data).
     #[serde(default)]
     pub data_source: Vec<String>,
+    /// Which of the plugin's permissions add data sources (AA's names for
+    /// them, such as aa-contacts' `manage_alliance_contacts`). Left out:
+    /// its `add_…` ones, as AA's `add_structure_owner`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_permissions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -415,6 +420,25 @@ impl Manifest {
             50,
             check_scope,
         )?;
+        if let Some(owners) = &c.esi.owner_permissions {
+            if c.esi.data_source.is_empty() {
+                return Err(bad(
+                    "capabilities.esi.owner_permissions needs data_source scopes to add owners for",
+                ));
+            }
+            if owners.is_empty() || owners.len() > 10 {
+                return Err(bad(
+                    "capabilities.esi.owner_permissions names 1 to 10 permissions",
+                ));
+            }
+            for name in owners {
+                if !self.permissions.contains_key(name) {
+                    return Err(bad(format!(
+                        "capabilities.esi.owner_permissions names {name:?}, which [permissions] doesn't declare"
+                    )));
+                }
+            }
+        }
         check_list("capabilities.discord", &c.discord, 5, |a| {
             if DISCORD_ACTIONS.contains(&a) {
                 Ok(())
@@ -487,10 +511,19 @@ impl Manifest {
                     "[renamed_permissions] {old:?} becomes {new:?}, which [permissions] doesn't declare"
                 )));
             }
-            // Holding `manage` or an `add_*` permission lets an account
-            // offer the app data sources: a rename mustn't hand that to
-            // everyone who held something else.
-            let offers = |name: &str| name == "manage" || name.starts_with("add_");
+            // Holding `manage`, an `add_*` permission or one the manifest
+            // names in `owner_permissions` lets an account offer the app
+            // data sources: a rename mustn't hand that to everyone who held
+            // something else.
+            let named = self
+                .capabilities
+                .esi
+                .owner_permissions
+                .as_deref()
+                .unwrap_or(&[]);
+            let offers = |name: &str| {
+                name == "manage" || name.starts_with("add_") || named.iter().any(|n| n == name)
+            };
             if offers(new) && !offers(old) {
                 return Err(bad(format!(
                     "[renamed_permissions] {old:?} can't become {new:?}: a manage or add_ permission starts with nobody holding it"
@@ -1134,6 +1167,8 @@ manage = "Manage the mining ledger"
             "[[navigation]]\nlabel = \"\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"../core\"\n",
             "[[navigation]]\nlabel = \"Files\"\npath = \"downloads/wallet\"\n",
+            "[permissions]\nview = \"x\"\n[capabilities.esi]\nowner_permissions = [\"view\"]\n",
+            "[permissions]\nview = \"x\"\n[capabilities.esi]\ndata_source = [\"esi-corporations.read_contacts.v1\"]\nowner_permissions = [\"nope\"]\n",
             "[[navigation]]\nlabel = \"A\"\npath = \"\"\n[[navigation]]\nlabel = \"B\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"mining\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"Fleet\"\n",
