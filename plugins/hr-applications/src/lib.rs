@@ -2,12 +2,13 @@
 //!
 //! - **Application forms**, one per corporation, with questions: a written
 //!   answer, one choice, or any of several choices (`manage`, AA's admin).
-//! - **Applications**: pilots (`basic`) apply to a corporation once, follow
-//!   its status on **My Applications**, and may delete it until it's
-//!   decided (as AA, even while in progress).
+//! - **Applications**: any pilot signed in with a main (as AA, no
+//!   permission) applies to a corporation once, follows its status on
+//!   **My Applications**, and may delete it until it's decided (as AA,
+//!   even while in progress).
 //! - **HR Application Management** (`human_resources`): the applications
-//!   to the corporation of the reviewer's main (every corporation with
-//!   `all_corporations`), with the applicant's characters and answers.
+//!   to the corporation of the reviewer's main (every corporation for
+//!   superusers, as AA), with the applicant's characters and answers.
 //!   Reviewers **Mark in Progress** to become an application's reviewer,
 //!   comment with `add_applicationcomment` (as AA), and (as its reviewer)
 //!   approve or reject it with `approve_application` /
@@ -77,12 +78,14 @@ impl Plugin for HrApplications {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let path = submission.request.path.clone();
         let parts: Vec<&str> = path.split('/').collect();
+        // As the manifest's page rules: review and forms need their
+        // permissions; applying needs only a signed-in pilot.
         let needs = match parts.first() {
-            Some(&"review") => "human_resources",
-            Some(&"forms") => "manage",
-            _ => "basic",
+            Some(&"review") => Some("human_resources"),
+            Some(&"forms") => Some("manage"),
+            _ => None,
         };
-        if !viewer.can(needs) {
+        if needs.is_some_and(|needs| !viewer.can(needs)) {
             return Err(PageError::Forbidden);
         }
         let form = submission.form.as_str();
@@ -123,21 +126,14 @@ tether_plugin_sdk::export!(HrApplications);
 /// reviewers' management page and the forms (for those who may open
 /// them), and Create Application as the button.
 fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let basic = viewer.can("basic");
-    let mut page = page;
-    if basic {
-        page = page.link("My Applications", "");
-    }
+    let mut page = page.link("My Applications", "");
     if viewer.can("human_resources") {
         page = page.link("HR Application Management", "review");
     }
     if viewer.can("manage") {
         page = page.link("Application Forms", "forms");
     }
-    if basic {
-        page = page.button("Create Application", "create");
-    }
-    page
+    page.button("Create Application", "create")
 }
 
 /// 1 to 4 buttons side by side, or an empty cell.
@@ -687,14 +683,14 @@ fn delete_own(viewer: &Viewer, app: i64) -> Result<SubmitResult, PageError> {
 // ---- reviewing ---------------------------------------------------------------
 
 /// Applications this reviewer may see: to their main's corporation (every
-/// corporation with `all_corporations`), their own included, as AA. Takes
+/// corporation for superusers), their own included, as AA. Takes
 /// $1 (corporation) and $2 (all).
 const IN_SCOPE: &str = "((f.corporation_id = $1 AND $1 <> 0) OR $2)";
 
 fn scope(viewer: &Viewer) -> Vec<Db> {
     vec![
         viewer.main.corporation_id.into(),
-        viewer.can("all_corporations").into(),
+        identity::superuser().into(),
     ]
 }
 
@@ -753,13 +749,13 @@ fn reviewer(a: &Application) -> Value {
 }
 
 /// A reviewer's buttons on an application, as AA's: Mark in Progress while
-/// nobody reviews it; Approve and Reject for its reviewer (anyone with
-/// `all_corporations`) with those permissions, while it's pending; Delete
+/// nobody reviews it; Approve and Reject for its reviewer (or a
+/// superuser) with those permissions, while it's pending; Delete
 /// with `delete_application`. Each posts the application's id.
 fn review_buttons(viewer: &Viewer, a: &Application) -> Vec<Action> {
     let on = |label: &str, form: &str| action(label, form).field("application", a.id.to_string());
     let mine = a.reviewer_account_id == Some(viewer.account_id);
-    let decides = a.pending() && (mine || viewer.can("all_corporations"));
+    let decides = a.pending() && (mine || identity::superuser());
     let mut list = Vec::new();
     if a.pending() && a.reviewer_account_id.is_none() {
         list.push(on("Mark in Progress", "claim"));
@@ -836,7 +832,7 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
         .filter(|a| a.reviewer_account_id == Some(viewer.account_id))
         .count();
     let mut page = Page::new("HR Application Management")
-        .description(if viewer.can("all_corporations") {
+        .description(if identity::superuser() {
             "Applications to every corporation".to_owned()
         } else {
             "Applications to your main's corporation".to_owned()
@@ -1035,8 +1031,8 @@ fn review_action(
                 _ => return Err(PageError::Forbidden),
             };
             let [account, character, name] = me;
-            // Only its reviewer decides (anyone with all_corporations, as
-            // AA's superusers), and only once.
+            // Only its reviewer decides (or a superuser, as AA), and only
+            // once.
             let decided = storage::execute(
                 "UPDATE applications SET approved = $2, decided_at = now(), \
                  reviewer_account_id = $3, reviewer_character_id = $4, reviewer_name = $5 \
@@ -1047,7 +1043,7 @@ fn review_action(
                     account,
                     character,
                     name,
-                    viewer.can("all_corporations").into(),
+                    identity::superuser().into(),
                 ],
             )
             .map_err(|e| failed("saving the decision", e))?;

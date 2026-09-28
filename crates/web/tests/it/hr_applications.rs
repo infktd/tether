@@ -295,17 +295,42 @@ async fn hr_applications_end_to_end(db: PgPool) {
     let why_q = question(&h, "Why us?").await;
     let tz_q = question(&h, "Timezone").await;
 
-    // Pilots apply once granted basic (Guests too: they're who applies).
+    // Any pilot signed in with a main applies, with no permission, as in
+    // AA (Guests too: they're who applies).
     let pilot = log_in(&h, None).await;
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
     let a = log_in_as(&h, "443630591:Pilot A", None).await;
     let b = log_in_as(&h, "406944591:Pilot B", None).await;
-    assert_eq!(open(&h, &pilot, "").await.status, StatusCode::NOT_FOUND);
-    for state in [GUEST_STATE, BLUE_STATE, MEMBER_STATE] {
-        grant(&h, &owner, "basic", state).await;
-    }
     let mine = open(&h, &pilot, "").await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    // But not the Blacklist, which holds nothing unless an admin grants it.
+    let spy = log_in_as(&h, "90000099:Spy", None).await;
+    sqlx::query(
+        "UPDATE core.accounts SET state_id = (SELECT id FROM core.states WHERE builtin = 'blacklist') \
+         WHERE id = (SELECT account_id FROM core.characters WHERE id = 90000099)",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    for path in ["", "create"] {
+        assert_eq!(open(&h, &spy, path).await.status, StatusCode::NOT_FOUND);
+    }
+    let spy_home = page(&h, "/dashboard", &spy).await;
+    assert_eq!(spy_home.status, StatusCode::OK, "{}", spy_home.body);
+    assert!(
+        !spy_home
+            .body
+            .contains(&format!("href=\"/plugins/{ID}\" class=\"nav-item")),
+        "{}",
+        spy_home.body
+    );
+    // Its sidebar link too, for a pilot holding nothing.
+    assert!(
+        mine.body
+            .contains(&format!("href=\"/plugins/{ID}\" class=\"nav-item")),
+        "{}",
+        mine.body
+    );
     // Create Application is the header's button; it lists the
     // corporations taking applications, with their logos.
     assert!(
@@ -569,6 +594,19 @@ async fn hr_applications_end_to_end(db: PgPool) {
     // The owner (every permission, all corporations): search, reject
     // without marking in progress first, delete, from the queue's rows as
     // AA; their own too, as AA.
+    // Every corporation is for superusers only, as AA: a recruiter holding
+    // every HR permission sees their main's.
+    assert!(
+        open(&h, &owner, "review")
+            .await
+            .body
+            .contains("Applications to every corporation")
+    );
+    assert!(
+        queue
+            .body
+            .contains("Applications to your main&#39;s corporation")
+    );
     let found = post(&h, &owner, "review", "_form=search&q=GIGX").await;
     assert_eq!(found.status, StatusCode::OK, "{}", found.body);
     assert!(found.body.contains(&format!("review/{blue_owner_app}")));
