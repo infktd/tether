@@ -126,7 +126,8 @@ cargo fmt --all
 cargo clippy -p hello-plugin -p moon-mining -p member-audit -p fleet-activity-tracking -p structure-timers -p hr-applications -p structures -p ship-replacement -p fleet-operations -p fittings -p timezones -p sov-timer -p esi-status -p bulletin-board -p contacts -p freight -p tether-plugin-sdk --target wasm32-wasip2 -- -D warnings   # plus the tether-plugins-test-guest* crates
 cargo build -p hello-plugin --target wasm32-wasip2 --release   # the plugin tests build their guests themselves
 scripts/package-plugin.sh plugins/moon-mining ~/.minisign/tether.key   # first-party plugins (plugins/*) -> dist/<id>-<version>.zip + .minisig
-scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image bundles them (deploy/Dockerfile). A first-party app whose code changes should still bump its version at release; rebuilds at the same version are applied automatically only when they ask for nothing new
+scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image bundles them (deploy/Dockerfile)
+scripts/check-app-versions.sh origin/main   # before pushing: any change under plugins/<app> bumps that app's version (0.0.1 for a patch) in plugin.toml and Cargo.toml together; CI's app-versions job fails otherwise (Jay: changed apps under old numbers conflict on the Apps page)
 BUNDLED_APPS_DIR=dist/apps cargo run -p tether-server --features dev   # offer them under "Included with Tether"
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
 deploy/install.sh localhost    # writes deploy/.env once, pins the published image (newest release, else :edge), pulls it and starts the stack (bundled Caddy)
