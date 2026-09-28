@@ -1,0 +1,34 @@
+# Sovereignty Timer, a first-party Tether plugin (aa-sov-timer).
+# `scripts/package-plugin.sh` builds, zips and signs it, putting the
+# publisher's key in below.
+[plugin]
+id = "tether.sov-timer"
+name = "Sovereignty Timer"
+version = "0.1.0"
+host_api = "1"
+description = "Sovereignty campaigns across New Eden: the system, its defender and ADM, when it starts and, once active, how the defense is going."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+
+# Every five minutes: the campaigns' names, regions and ADM. The page reads
+# the scores live.
+[[capabilities.schedules]]
+name = "sync"
+every = "5m"
+
+# AA's permission name.
+[permissions]
+basic_access = "Can access the Sovereignty Timer module"
+
+[[pages]]
+path = ""
+permission = "basic_access"
+
+[[navigation]]
+label = "Sovereignty Timer"
+path = ""
+section = "fleet"
