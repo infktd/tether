@@ -23,6 +23,7 @@
 //!   status changes to the customers' channel, naming only the issuer and
 //!   route (apps can't message people, as aa-freight's direct messages do).
 
+mod card;
 mod pricing;
 
 use chrono::{DateTime, Duration, Utc};
@@ -816,11 +817,12 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             let added = storage::execute(
                 "WITH claimed AS (UPDATE contracts SET notified_at = now() \
                      WHERE contract_id = $1 AND notified_at IS NULL RETURNING 1) \
-                 INSERT INTO outbox (channel, message) SELECT $2, $3 FROM claimed",
+                 INSERT INTO outbox (channel, message, card) SELECT $2, $3, $4 FROM claimed",
                 &[
                     c.id.into(),
                     channel.as_str().into(),
                     pilot_message(c, &names, check.as_ref()).into(),
+                    pilot_card(c, &names, check.as_ref()),
                 ],
             )
             .map_err(|e| retry("queuing a pilot notice", e))?;
@@ -855,12 +857,13 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             let added = storage::execute(
                 "WITH noticed AS (INSERT INTO customer_notices (contract_id, status) \
                      VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1) \
-                 INSERT INTO outbox (channel, message) SELECT $3, $4 FROM noticed",
+                 INSERT INTO outbox (channel, message, card) SELECT $3, $4, $5 FROM noticed",
                 &[
                     c.id.into(),
                     c.status.as_str().into(),
                     channel.as_str().into(),
                     customer_message(c, &names, check.as_ref()).into(),
+                    customer_card(c, &names, check.as_ref()),
                 ],
             )
             .map_err(|e| retry("queuing a customer notice", e))?;
@@ -902,6 +905,96 @@ fn pilot_message(c: &Contract, names: &[(i64, String)], check: Option<&Vec<Strin
     clip(lines.join("\n"))
 }
 
+/// A contract check as a card field, and the card's colour for it.
+fn check_field(check: Option<&Vec<String>>) -> (String, u32) {
+    match check {
+        None => ("No pricing for this route".to_owned(), card::BLUE),
+        Some(issues) if issues.is_empty() => ("OK".to_owned(), card::GREEN),
+        Some(issues) => (escape(&issues.join("; ")), card::ORANGE),
+    }
+}
+
+/// The issuer, as a card's author: "Pilot (Corporation)".
+fn issuer(c: &Contract) -> (String, i64) {
+    (
+        format!("{} ({})", name_of(c.issuer), name_of(c.issuer_corporation)),
+        c.issuer,
+    )
+}
+
+fn pilot_card(c: &Contract, names: &[(i64, String)], check: Option<&Vec<String>>) -> Db {
+    let (check, color) = check_field(check);
+    let mut fields = vec![
+        ("Reward", format!("{} ISK", thousands(c.reward)), true),
+        (
+            "Collateral",
+            format!("{} ISK", thousands(c.collateral)),
+            true,
+        ),
+        ("Volume", m3(c.volume), true),
+    ];
+    if let Some(expires) = c.expires {
+        fields.push((
+            "Expires",
+            format!(
+                "{} · <t:{}:R>",
+                expires.format("%Y-%m-%d %H:%M EVE"),
+                expires.timestamp()
+            ),
+            true,
+        ));
+        fields.push((
+            "Days to complete",
+            c.days_to_complete.unwrap_or_default().to_string(),
+            true,
+        ));
+    }
+    fields.push(("Note", escape(&c.title), false));
+    fields.push(("Contract check", check, false));
+    Db::json(
+        card::Card {
+            title: "New courier contract",
+            description: escape(&c.route(names)),
+            color,
+            author: issuer(c),
+            fields,
+            timestamp: c.issued.map(rfc3339),
+        }
+        .json()
+        .to_string(),
+    )
+}
+
+/// A customer's card: no more than their message says.
+fn customer_card(c: &Contract, names: &[(i64, String)], check: Option<&Vec<String>>) -> Db {
+    let (title, color) = match c.status.as_str() {
+        "outstanding" => ("Contract waiting to be picked up", card::BLUE),
+        "in_progress" => ("Contract accepted", card::BLUE),
+        "finished" => ("Contract delivered", card::GREEN),
+        _ => ("Contract failed", card::RED),
+    };
+    let mut fields = Vec::new();
+    if c.status == "outstanding" {
+        fields.push(("Contract check", check_field(check).0, false));
+    }
+    Db::json(
+        card::Card {
+            title,
+            description: customer_message(c, names, None)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+            color,
+            author: issuer(c),
+            fields,
+            timestamp: None,
+        }
+        .json()
+        .to_string(),
+    )
+}
+
 /// A customer's notice. aa-freight sends these as direct messages; here
 /// they go to a shared channel, so they say no more than a customer needs:
 /// not the collateral, the cargo or who is hauling it (a hauler's route
@@ -935,7 +1028,7 @@ fn relay() -> Result<(), JobError> {
     .map_err(|e| retry("expiring messages", e))?;
     let mut gap = RELAY_GAP_SECONDS;
     let waiting = storage::query(
-        "SELECT id, channel, message FROM outbox WHERE sent_at IS NULL AND failed IS NULL \
+        "SELECT id, channel, message, card::text FROM outbox WHERE sent_at IS NULL AND failed IS NULL \
          ORDER BY id LIMIT $1",
         &[(SENDS_PER_RUN as i64 + 1).into()],
     )
@@ -950,7 +1043,16 @@ fn relay() -> Result<(), JobError> {
         if claimed == 0 {
             continue;
         }
-        match discord::send(&text(row, 1), &text(row, 2), Mention::None) {
+        let card = row
+            .get(3)
+            .and_then(Db::as_text)
+            .and_then(|c| serde_json::from_str(c).ok())
+            .and_then(|c| card::embed(&c));
+        let sent = match &card {
+            Some(card) => discord::send_embed(&text(row, 1), card, Mention::None),
+            None => discord::send(&text(row, 1), &text(row, 2), Mention::None),
+        };
+        match sent {
             Ok(()) => {}
             Err(discord::Error::NotAllowed(why) | discord::Error::Invalid(why)) => {
                 log::warn(format!("a Discord message wasn't sent: {why}"));

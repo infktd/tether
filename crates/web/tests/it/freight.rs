@@ -43,11 +43,13 @@ async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_freight.sql");
+    let cards = plugin_file("migrations/0002_outbox_cards.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_freight.sql", migration.as_bytes()),
+        ("migrations/0002_outbox_cards.sql", cards.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -258,7 +260,24 @@ async fn discord_messages(h: &Harness) -> Vec<String> {
         .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
         .map(|r| {
             let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
-            body["content"].as_str().unwrap().to_owned()
+            // Every notice is a card: its parts, a line each.
+            let card = &body["embeds"][0];
+            let mut lines = vec![
+                card["title"].as_str().unwrap().to_owned(),
+                card["author"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                card["description"].as_str().unwrap_or_default().to_owned(),
+            ];
+            for field in card["fields"].as_array().unwrap() {
+                lines.push(format!(
+                    "{}: {}",
+                    field["name"].as_str().unwrap(),
+                    field["value"].as_str().unwrap()
+                ));
+            }
+            lines.join("\n")
         })
         .collect()
 }
