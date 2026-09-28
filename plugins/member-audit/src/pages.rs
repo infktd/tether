@@ -244,9 +244,10 @@ pub(crate) fn my_characters(viewer: &Viewer) -> Result<Page, PageError> {
     // registered with its scopes (yet), as aa-memberaudit's warning.
     for c in &viewer.characters {
         if !rows.iter().any(|r| int(r, 0) == c.id) {
+            // No status badge: on the Dashboard, Tether's footer under the
+            // card says it and links to Register Character.
             let mut profile = Profile::new(character(c.id, c.name.clone()))
-                .badge(badge("Not registered", Tone::Warning))
-                .subtitle("Register it with Member Audit's scopes to see it here.");
+                .subtitle("Register it to see its skills, assets and wallet here.");
             if c.id == viewer.main.id {
                 profile = profile.badge(badge("Main", Tone::Neutral));
             }
