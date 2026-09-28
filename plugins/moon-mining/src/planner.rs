@@ -1,4 +1,4 @@
-//! The extraction planner, for Station Managers: a pop cadence (one moon
+//! The extraction planner: a pop cadence (one moon
 //! every N hours from an EVE time of day) turned into the duration to set
 //! at each drill so its chunk pops on a free slot, counting the automatic
 //! fracture three hours after the chunk arrives. ESI can't start

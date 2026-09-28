@@ -11,9 +11,10 @@
 //!   aa-moonmining, extractions are for `extractions_access` and everyone
 //!   else opens Moons.
 //! - Mining totals come from the corporations' mining observers.
-//! - Station Managers (in game, from the data sources' corporation roles)
-//!   get an extraction planner: a pop cadence turned into the duration to
-//!   set at each drill.
+//! - An extraction planner for every refinery of the corporations read,
+//!   idle ones first: each corporation's pop cadence, which its Station
+//!   Managers (in game, from the data sources' corporation roles) set,
+//!   turned into the duration to set at each drill.
 //! - Moons (aa-moonmining's): owned moons, every moon, and the moons one
 //!   uploaded, from pasted moon surveys, each with its ores and value.
 //! - Values come from CCP's ore prices (ESI's `/markets/prices/`, read
@@ -106,7 +107,20 @@ impl Plugin for MoonMining {
             "prices" => prices(),
             "places" => {
                 let mut budget = Budget(ESI_BUDGET);
-                places(&mut budget, &sources_by_corporation())
+                places(&mut budget, &sources_by_corporation())?;
+                // A big survey upload: keep naming its moons until done.
+                let left =
+                    storage::query("SELECT 1 FROM moons WHERE checked_at IS NULL LIMIT 1", &[])
+                        .map_err(|e| retry("finding moons to check", e))?;
+                if !left.rows.is_empty() {
+                    jobs::enqueue(
+                        NewJob::new("places")
+                            .key("places")
+                            .at(rfc3339(Utc::now() + PLACES_AGAIN)),
+                    )
+                    .map_err(|e| retry("queuing more moons", e))?;
+                }
+                Ok(())
             }
             "ping" => ping(&job),
             other => Err(JobError::Permanent(format!("no job {other}"))),
@@ -456,8 +470,10 @@ fn sync() -> Result<(), JobError> {
 /// Moons checked with ESI at most per run (one call each), well under the
 /// host's ESI error throttle (30 in 5 minutes), and unknown moons (ESI's
 /// 404s) a run stops after.
-const MOONS_PER_RUN: i64 = 10;
+const MOONS_PER_RUN: i64 = 40;
 const UNKNOWN_MOONS_PER_RUN: usize = 3;
+/// How soon `places` runs again while moons are left to name.
+const PLACES_AGAIN: Duration = Duration::minutes(2);
 /// Systems looked up per run (two calls each).
 const SYSTEMS_PER_RUN: i64 = 15;
 
@@ -474,7 +490,10 @@ struct SystemInfo {
 /// shown.
 fn places(budget: &mut Budget, sources: &[(i64, Subject)]) -> Result<(), JobError> {
     let unchecked = storage::query(
-        "SELECT moon_id FROM moons WHERE checked_at IS NULL ORDER BY moon_id LIMIT $1",
+        // Moons drilled first: they're on the Extractions and the planner.
+        "SELECT m.moon_id FROM moons m WHERE m.checked_at IS NULL \
+         ORDER BY EXISTS (SELECT 1 FROM extractions e WHERE e.moon_id = m.moon_id) DESC, m.moon_id \
+         LIMIT $1",
         &[MOONS_PER_RUN.into()],
     )
     .map_err(|e| retry("finding moons to check", e))?;
@@ -1012,7 +1031,7 @@ fn ping(job: &Job) -> Result<(), JobError> {
 // ---- pages -----------------------------------------------------------------
 
 /// The app's pages beside the title, as aa-moonmining's navbar: those the
-/// viewer may open (the planner for Station Managers), and Upload moon
+/// viewer may open, and Upload moon
 /// surveys as the button. Someone without `extractions_access` gets the
 /// old-moon list in the Extractions' place.
 fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
@@ -1027,9 +1046,7 @@ fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
     }
     if viewer.can("extractions_access") {
         links.push(("Mining totals", "totals"));
-        if !station_manager_corporations(viewer)?.is_empty() {
-            links.push(("Planner", "planner"));
-        }
+        links.push(("Planner", "planner"));
     }
     if viewer.can("manage") {
         links.push(("Settings", "settings"));
@@ -1453,15 +1470,16 @@ fn cadence_for(corp: i64) -> Result<(i64, String), PageError> {
     ))
 }
 
-fn advice_row(drill: &Drill, advice: &Advice) -> Vec<Value> {
-    let (status, pops, action) = match advice {
+/// A drill's status badge, when it pops, and what to do there.
+fn advice_parts(advice: &Advice) -> (Value, Value, Value) {
+    match advice {
         Advice::OnSlot { pop, .. } => (
-            badge("On slot", Tone::Success),
+            badge("On slot", Tone::Success).into(),
             time(rfc3339(*pop)),
             "Leave it".into(),
         ),
         Advice::OffSlot { pop, slot, off } => (
-            badge("Off slot", Tone::Warning),
+            badge("Off slot", Tone::Warning).into(),
             time(rfc3339(*pop)),
             format!(
                 "Pops {} {} its slot ({} EVE); next time, aim for the slot",
@@ -1476,14 +1494,14 @@ fn advice_row(drill: &Drill, advice: &Advice) -> Vec<Value> {
             .into(),
         ),
         Advice::Overlap { pop, with, .. } => (
-            badge("Overlap", Tone::Danger),
+            badge("Overlap", Tone::Danger).into(),
             time(rfc3339(*pop)),
             format!("Pops in the same slot as {with}").into(),
         ),
         Advice::Start {
             arrival, duration, ..
         } => (
-            badge("Idle", Tone::Accent),
+            badge("Idle", Tone::Accent).into(),
             time(rfc3339(*arrival + planner::AUTO_FRACTURE)),
             format!(
                 "Start now: {} (chunk arrives {} EVE)",
@@ -1493,20 +1511,24 @@ fn advice_row(drill: &Drill, advice: &Advice) -> Vec<Value> {
             .into(),
         ),
         Advice::NoSlot => (
-            badge("Idle", Tone::Warning),
+            badge("Idle", Tone::Warning).into(),
             "".into(),
             "No free slot within 56 days: widen the cadence".into(),
         ),
-    };
-    vec![drill.name.clone().into(), status.into(), pops, action]
+    }
 }
 
 /// The plan on a timeline: a lane per drill with its pop (or the start
 /// the planner proposes, dashed), and the cadence's slots shaded.
-fn plan_timeline(advice: &[(Drill, Advice)], cadence: Cadence, now: DateTime<Utc>) -> Timeline {
+fn plan_timeline(
+    advice: &[(Drill, Advice)],
+    cadence: Cadence,
+    now: DateTime<Utc>,
+    title: String,
+) -> Timeline {
     let from = now - Duration::hours(6);
     let to = now + planner::GAP_HORIZON;
-    let mut timeline = Timeline::new(rfc3339(from), rfc3339(to)).title("The next two weeks");
+    let mut timeline = Timeline::new(rfc3339(from), rfc3339(to)).title(title);
     let mut slot = cadence.first_from(from);
     let mut windows = 0;
     while slot <= to && windows < 60 {
@@ -1545,69 +1567,137 @@ fn plan_timeline(advice: &[(Drill, Advice)], cadence: Cadence, now: DateTime<Utc
     timeline
 }
 
+/// One of a corporation's refineries, as the planner lists it.
+struct Refinery {
+    drill: Drill,
+    system: String,
+    /// The moon of its latest extraction: ESI doesn't say which moon an
+    /// idle refinery sits on.
+    moon: String,
+    /// Its last pop, for an idle one.
+    last_pop: Option<DateTime<Utc>>,
+}
+
+fn refineries(corp: i64, now: DateTime<Utc>) -> Result<Vec<Refinery>, PageError> {
+    let rows = storage::query(
+        "SELECT s.structure_id, s.name, \
+                (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id \
+                 AND e.natural_decay > $2 AND e.cancelled_at IS NULL), \
+                coalesce(y.name, ''), \
+                (SELECT coalesce(m.name, 'Moon ' || e.moon_id::text) FROM extractions e \
+                 LEFT JOIN names m ON m.id = e.moon_id WHERE e.structure_id = s.structure_id \
+                 ORDER BY e.chunk_arrival DESC LIMIT 1), \
+                (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id \
+                 AND e.natural_decay <= $2 AND e.cancelled_at IS NULL) \
+         FROM structures s LEFT JOIN names y ON y.id = s.system_id \
+         WHERE s.corporation_id = $1 ORDER BY s.name",
+        &[corp.into(), Db::timestamp(rfc3339(now))],
+    )
+    .map_err(|e| failed("reading structures", e))?;
+    Ok(rows
+        .rows
+        .iter()
+        .map(|r| Refinery {
+            drill: Drill {
+                structure_id: int(r, 0),
+                name: text(r, 1),
+                pop: when(r, 2),
+            },
+            system: text(r, 3),
+            moon: text(r, 4),
+            last_pop: when(r, 5),
+        })
+        .collect())
+}
+
+/// Every refinery of every corporation Moon Mining reads, planned against
+/// its corporation's cadence, the idle ones first. Station Managers set
+/// their corporation's cadence.
 fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
-    let corporations = station_manager_corporations(viewer)?;
-    if corporations.is_empty() {
-        return Ok(Page::new("Extraction planner").text(
-            "The planner is for characters with the Station Manager role in a corporation Moon \
-             Mining reads. Roles are checked once a day.",
+    let managed = station_manager_corporations(viewer)?;
+    let corporations = storage::query(
+        "SELECT c.corporation_id, coalesce(n.name, 'Corporation ' || c.corporation_id::text) \
+         FROM (SELECT DISTINCT corporation_id FROM structures) c \
+         LEFT JOIN names n ON n.id = c.corporation_id ORDER BY 2",
+        &[],
+    )
+    .map_err(|e| failed("reading corporations", e))?;
+    let mut page = Page::new("Extraction planner").description(
+        "Go structure to structure and set each idle drill to the duration shown, so moons pop \
+         on a steady cadence. Pops count the automatic fracture, three hours after the chunk \
+         arrives. Tether can't start extractions: this only advises.",
+    );
+    if corporations.rows.is_empty() {
+        return Ok(page.text(
+            "No refineries yet: the planner lists the Athanors and Tataras of the corporations \
+             Moon Mining reads.",
         ));
     }
     let now = Utc::now();
-    let mut page = Page::new("Extraction planner").description(
-        "Go structure to structure and set each drill to the duration shown, so moons pop on a \
-         steady cadence. Pops count the automatic fracture, three hours after the chunk arrives. \
-         Tether can't start extractions: this only advises.",
-    );
-    for corp in corporations {
+    let mut idle: Vec<Vec<Value>> = Vec::new();
+    let mut plans = Vec::new();
+    for row in &corporations.rows {
+        let (corp, corp_name) = (int(row, 0), text(row, 1));
         let (every, at) = cadence_for(corp)?;
         let cadence = Cadence {
             every: Duration::hours(every),
             at: NaiveTime::parse_from_str(&at, "%H:%M")
                 .unwrap_or(NaiveTime::from_hms_opt(19, 0, 0).unwrap_or_default()),
         };
-        let rows = storage::query(
-            "SELECT s.structure_id, s.name, \
-                    (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id \
-                     AND e.natural_decay > $2 AND e.cancelled_at IS NULL) \
-             FROM structures s WHERE s.corporation_id = $1 ORDER BY s.name",
-            &[corp.into(), Db::timestamp(rfc3339(now))],
-        )
-        .map_err(|e| failed("reading structures", e))?;
-        let drills: Vec<Drill> = rows
-            .rows
-            .iter()
-            .map(|r| Drill {
-                structure_id: int(r, 0),
-                name: text(r, 1),
-                pop: when(r, 2),
-            })
-            .collect();
+        let refineries = refineries(corp, now)?;
+        let drills: Vec<Drill> = refineries.iter().map(|r| r.drill.clone()).collect();
         let plan = planner::plan(&drills, cadence, now);
-        let table = with_rows(
-            Table::new(vec![
-                Column::text("Structure"),
-                Column::text("Status"),
-                Column::numeric("Pops"),
-                Column::text("What to do"),
-            ])
-            .title(format!("Drills of corporation {corp}"))
-            .empty("No refineries seen for this corporation yet."),
-            plan.advice.iter().map(|(d, a)| advice_row(d, a)),
-        );
-        let gaps = with_rows(
-            Table::new(vec![Column::numeric("Slot with no pop")])
-                .title("Gaps in the next two weeks")
-                .empty("Every slot has a pop."),
-            plan.gaps.iter().take(100).map(|g| vec![time(rfc3339(*g))]),
-        );
-        if !plan.advice.is_empty() {
-            page = page.timeline(plan_timeline(&plan.advice, cadence, now));
+        let mut rows = Vec::new();
+        for ((drill, advice), refinery) in plan.advice.iter().zip(&refineries) {
+            let (status, pops, action) = advice_parts(advice);
+            if matches!(advice, Advice::Start { .. } | Advice::NoSlot) {
+                idle.push(vec![
+                    drill.name.clone().into(),
+                    corp_name.clone().into(),
+                    refinery.system.clone().into(),
+                    refinery.moon.clone().into(),
+                    refinery
+                        .last_pop
+                        .map_or_else(|| "".into(), |t| time(rfc3339(t))),
+                    action.clone(),
+                ]);
+            }
+            rows.push(vec![
+                drill.name.clone().into(),
+                refinery.moon.clone().into(),
+                status,
+                pops,
+                action,
+            ]);
         }
-        page = page
-            .form(
+        plans.push((corp, corp_name, every, at, cadence, plan, rows));
+    }
+    page = page.table(with_rows(
+        Table::new(vec![
+            Column::text("Structure"),
+            Column::text("Corporation"),
+            Column::text("System"),
+            Column::text("Last moon"),
+            Column::numeric("Last pop"),
+            Column::text("What to do"),
+        ])
+        .title("Idle refineries")
+        .empty("None idle: every drill has a chunk coming."),
+        idle,
+    ));
+    for (corp, corp_name, every, at, cadence, plan, rows) in plans {
+        if !plan.advice.is_empty() {
+            page = page.timeline(plan_timeline(
+                &plan.advice,
+                cadence,
+                now,
+                format!("{corp_name}: the next two weeks"),
+            ));
+        }
+        if managed.contains(&corp) {
+            page = page.form(
                 Form::new(format!("cadence_{corp}"), "Save cadence")
-                    .title("Cadence")
+                    .title(format!("{corp_name}'s cadence"))
                     .description("One pop every so many hours, lined up on a time of day (EVE).")
                     .field(
                         Field::number("every_hours", "Keep pops apart by (hours)")
@@ -1618,12 +1708,32 @@ fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
                     )
                     .field(
                         Field::text("at_time", "Lined up on (HH:MM EVE)", 5)
-                            .value(at)
+                            .value(at.clone())
                             .required(),
                     ),
-            )
-            .table(table)
-            .table(gaps);
+            );
+        }
+        page = page
+            .table(with_rows(
+                Table::new(vec![
+                    Column::text("Structure"),
+                    Column::text("Last moon"),
+                    Column::text("Status"),
+                    Column::numeric("Pops"),
+                    Column::text("What to do"),
+                ])
+                .title(format!(
+                    "Refineries of {corp_name}: a pop every {every}h at {at} EVE"
+                ))
+                .empty("No refineries seen for this corporation yet."),
+                rows,
+            ))
+            .table(with_rows(
+                Table::new(vec![Column::numeric("Slot with no pop")])
+                    .title(format!("{corp_name}: gaps in the next two weeks"))
+                    .empty("Every slot has a pop."),
+                plan.gaps.iter().take(100).map(|g| vec![time(rfc3339(*g))]),
+            ));
     }
     Ok(page)
 }

@@ -368,6 +368,16 @@ async fn moon_mining_end_to_end(db: PgPool) {
         planner.body
     );
     assert!(planner.body.contains("Save cadence"));
+    // Every refinery Moon Mining reads, the idle ones listed first, under
+    // their corporation's name.
+    assert!(planner.body.contains("Idle refineries"), "{}", planner.body);
+    assert!(
+        !planner
+            .body
+            .contains(&format!("Corporation {CHRIBBA_CORP}")),
+        "{}",
+        planner.body
+    );
     let saved = send(
         &h.app,
         form(
