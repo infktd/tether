@@ -1,11 +1,14 @@
 //! Security headers on every response.
 
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderName, HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
 use crate::AppState;
+
+/// Search engines: don't list it, don't follow its links, keep no copy.
+pub const ROBOTS: &str = "noindex, nofollow, noarchive";
 
 /// Only our own origin, plus character portraits and logos from CCP's image
 /// server (the one external request browsers make, per DESIGN.md). `data:`
@@ -45,6 +48,14 @@ pub async fn security_headers(
     headers.insert(
         header::REFERRER_POLICY,
         HeaderValue::from_static("same-origin"),
+    );
+    // An alliance's own tool: never in search results, and nothing to
+    // follow from it (with its site name, a result would name the
+    // alliance). On every response, as search engines read it on any
+    // file; no robots.txt block, which would keep them from seeing it.
+    headers.insert(
+        HeaderName::from_static("x-robots-tag"),
+        HeaderValue::from_static(ROBOTS),
     );
     if state.site.public_url().starts_with("https://") {
         headers.insert(

@@ -15,6 +15,8 @@ header "Content-Security-Policy" contains "form-action 'self' https://login.eveo
 header "X-Frame-Options" == "DENY"
 header "X-Content-Type-Options" == "nosniff"
 header "Strict-Transport-Security" exists
+header "X-Robots-Tag" == "noindex, nofollow, noarchive"
+body contains "<meta name=\"robots\" content=\"noindex, nofollow, noarchive\">"
 body contains "Enter the setup token"
 body contains "action=\"/setup/unlock\""
 

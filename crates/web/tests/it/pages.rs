@@ -388,7 +388,15 @@ async fn security_headers_on_pages_errors_and_api(db: PgPool) {
             res.headers.contains_key(header::STRICT_TRANSPORT_SECURITY),
             "{uri}"
         );
+        // Never in search results (an instance may carry its alliance's
+        // name), on pages, errors and the API alike.
+        assert_eq!(
+            res.headers["x-robots-tag"], "noindex, nofollow, noarchive",
+            "{uri}"
+        );
     }
+    let login = send(&h.app, get("/login", &[])).await.body;
+    assert!(login.contains(r#"<meta name="robots" content="noindex, nofollow, noarchive">"#));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

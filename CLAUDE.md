@@ -66,6 +66,8 @@ Build and deploy sources are separate. They're what the image build, CI and the 
 
 Inbound, the app's port is reachable only from the reverse proxy: Caddy's Docker network, Traefik's, or 127.0.0.1 on the host (never published on a public address). Tether believes X-Forwarded-For only from loopback and private peers (`crates/web-core/src/ratelimit.rs`).
 
+Nothing is indexed: every response carries `X-Robots-Tag: noindex, nofollow, noarchive` (`crates/web-core/src/pages/headers.rs`) and every page the same robots meta tag, since an instance may carry its alliance's name (Jay, 2026-09-28). No robots.txt block, which would keep crawlers from seeing it.
+
 No telemetry, no analytics, no CDNs, no Google Fonts. Fonts, icons and JS are bundled into the build. The one exception is dev-only tooling (such as Scalar at `/docs`), which may load from a CDN because it is compiled out of release builds. Keep this list in sync with the `doctor` checks and PRD requirement N5.
 
 ## Rust conventions
