@@ -885,7 +885,33 @@ struct PingPayload {
     chunk_arrival: String,
 }
 
-/// At a pop: tell Members on Discord, once.
+/// A player-chosen name made safe for Discord's markdown: no links,
+/// code spans, emphasis, spoilers or strikethrough from its characters.
+fn escape(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if matches!(
+            c,
+            '[' | ']' | '(' | ')' | '`' | '\\' | '*' | '_' | '~' | '|'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Text cut to `max` characters, marked where it was cut.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
+/// At a pop: tell Members on Discord, once, as a card.
 fn ping(job: &Job) -> Result<(), JobError> {
     let payload: PingPayload =
         serde_json::from_str(&job.payload).map_err(|e| JobError::Permanent(e.to_string()))?;
@@ -904,13 +930,18 @@ fn ping(job: &Job) -> Result<(), JobError> {
         "UPDATE extractions e SET pinged = true \
          FROM extractions x \
          LEFT JOIN names m ON m.id = x.moon_id \
+         LEFT JOIN names c ON c.id = x.corporation_id \
          LEFT JOIN structures s ON s.structure_id = x.structure_id \
          LEFT JOIN names y ON y.id = s.system_id \
          WHERE e.structure_id = $1 AND e.chunk_arrival = $2 AND NOT e.pinged AND e.cancelled_at IS NULL \
            AND x.structure_id = e.structure_id AND x.chunk_arrival = e.chunk_arrival \
          RETURNING coalesce(m.name, 'Moon ' || x.moon_id::text), \
                    coalesce(s.name, 'Structure ' || x.structure_id::text), \
-                   coalesce(y.name, ''), x.natural_decay",
+                   coalesce(y.name, ''), x.natural_decay, x.corporation_id, c.name, s.type_id, \
+                   (SELECT string_agg(coalesce(o.name, 'Type ' || p.type_id::text) || ' ' \
+                            || round(p.amount * 100)::text || '%', ', ' ORDER BY p.amount DESC) \
+                    FROM survey_products p LEFT JOIN names o ON o.id = p.type_id \
+                    WHERE p.moon_id = x.moon_id)",
         &[
             payload.structure_id.into(),
             Db::timestamp(&payload.chunk_arrival),
@@ -920,15 +951,43 @@ fn ping(job: &Job) -> Result<(), JobError> {
     let Some(row) = rows.rows.first() else {
         return Ok(());
     };
-    let (moon, structure, system) = (text(row, 0), text(row, 1), text(row, 2));
-    let at = when(row, 3).map_or_else(String::new, |t| t.format("%H:%M").to_string());
-    let place = if system.is_empty() {
-        structure.clone()
-    } else {
-        format!("{structure}, {system}")
-    };
-    let message = format!("Moon popped: {moon} ({place}) fractured at {at} EVE.");
-    match discord::send(&channel, &message, Mention::State("Member".into())) {
+    let (moon, structure, system) = (
+        escape(&text(row, 0)),
+        escape(&text(row, 1)),
+        escape(&text(row, 2)),
+    );
+    let popped = when(row, 3);
+    let at = popped.map_or_else(String::new, |t| t.format("%H:%M").to_string());
+    let mut card = discord::Embed::new(clip(&format!("Moon popped: {}", text(row, 0)), 256))
+        .description(format!(
+            "The chunk at {structure} fractured at {at} EVE. The ore is in space now and can \
+             be mined."
+        ))
+        .color(0x2e_cc71)
+        .field("Structure", clip(&structure, 1024))
+        .field("Moon", clip(&moon, 1024))
+        .footer("Moon Mining");
+    if !system.is_empty() {
+        card = card.field("System", clip(&system, 1024));
+    }
+    let ores = text(row, 7);
+    if !ores.is_empty() {
+        card = card.wide_field("Ore (survey)", clip(&escape(&ores), 1024));
+    }
+    let (corporation, corporation_name) = (int(row, 4), text(row, 5));
+    if !corporation_name.is_empty() {
+        card = card.author(
+            clip(&corporation_name, 256),
+            (corporation > 0).then_some(discord::Image::Corporation(corporation)),
+        );
+    }
+    if let Some(type_id) = row.get(6).and_then(Db::as_integer).filter(|t| *t > 0) {
+        card = card.thumbnail(discord::Image::TypeRender(type_id));
+    }
+    if let Some(t) = popped {
+        card = card.timestamp(t.to_rfc3339_opts(SecondsFormat::Secs, true));
+    }
+    match discord::send_embed(&channel, &card, Mention::State("Member".into())) {
         Ok(()) => Ok(()),
         Err(err) => {
             // Not sent: release the claim for the retry.

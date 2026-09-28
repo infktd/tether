@@ -444,12 +444,28 @@ async fn moon_mining_end_to_end(db: PgPool) {
         .map(|r| serde_json::from_slice(&r.body).unwrap())
         .collect();
     assert_eq!(sent.len(), 1, "{sent:?}");
-    let content = sent[0]["content"].as_str().unwrap();
-    assert!(content.contains("Jita IV - Moon 4"), "{content}");
-    assert!(
-        content.starts_with(&format!("<@&{DISCORD_MEMBER_ROLE}>")),
-        "{content}"
+    // A card under Member's mention: the moon, its drill's render, the
+    // owner above and the survey's ores.
+    assert_eq!(
+        sent[0]["content"],
+        format!("<@&{DISCORD_MEMBER_ROLE}>"),
+        "{sent:?}"
     );
+    let card = &sent[0]["embeds"][0];
+    assert_eq!(card["title"], "Moon popped: Jita IV - Moon 4", "{card}");
+    assert_eq!(card["color"], 0x2e_cc71, "{card}");
+    assert_eq!(
+        card["thumbnail"]["url"], "https://images.evetech.net/types/35835/render?size=128",
+        "{card}"
+    );
+    assert!(
+        card["description"]
+            .as_str()
+            .unwrap()
+            .contains("The ore is in space now"),
+        "{card}"
+    );
+    assert_eq!(card["footer"]["text"], "Moon Mining", "{card}");
 
     // Blue see only the old-moon list, once granted it.
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
