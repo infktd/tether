@@ -298,6 +298,28 @@ impl tether::plugin::discord::Host for CallState {
         text: String,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
+        self.discord(channel, text, None, mention).await
+    }
+
+    async fn send_embed(
+        &mut self,
+        channel: String,
+        embed: services::Embed,
+        mention: services::Mention,
+    ) -> Result<(), services::DiscordError> {
+        self.discord(channel, String::new(), Some(embed), mention)
+            .await
+    }
+}
+
+impl CallState {
+    async fn discord(
+        &mut self,
+        channel: String,
+        text: String,
+        embed: Option<services::Embed>,
+        mention: services::Mention,
+    ) -> Result<(), services::DiscordError> {
         if self.jobs_refused {
             return Err(services::DiscordError::NotAllowed(
                 "pages can't send messages: do that in submit or a job".to_owned(),
@@ -312,7 +334,7 @@ impl tether::plugin::discord::Host for CallState {
             .clone()
             .ok_or(services::DiscordError::Unavailable)?;
         services
-            .discord_send(self.plugin.clone(), channel, text, mention)
+            .discord_send(self.plugin.clone(), channel, text, embed, mention)
             .await
     }
 }

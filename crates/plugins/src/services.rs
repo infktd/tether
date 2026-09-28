@@ -8,7 +8,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-pub use crate::host::tether::plugin::discord::{Channel, Error as DiscordError, Mention};
+pub use crate::host::tether::plugin::discord::{
+    Channel, Embed, EmbedAuthor, EmbedField, Error as DiscordError, Image, Mention,
+};
 pub use crate::host::tether::plugin::doctrines::{
     Doctrine, Error as DoctrineError, Shared as SharedDoctrine,
 };
@@ -107,11 +109,13 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// Whether `account` is an active superuser.
     fn identity_superuser(&self, account: i64) -> Fut<bool>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;
+    /// `text`, or with `embed` a card and no text of its own.
     fn discord_send(
         &self,
         plugin: String,
         channel: String,
         text: String,
+        embed: Option<Embed>,
         mention: Mention,
     ) -> Fut<Result<(), DiscordError>>;
     /// One outbound HTTPS request, to a host approved for `plugin`;

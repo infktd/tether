@@ -262,9 +262,33 @@ pub struct Embed {
     pub description: Option<String>,
     /// `0xRRGGBB`.
     pub color: Option<u32>,
-    /// `(name, value)`, shown three to a row.
-    pub fields: Vec<(String, String)>,
+    /// A line above the title: a name, and an image link beside it.
+    pub author: Option<(String, Option<String>)>,
+    /// An image link, top right.
+    pub thumbnail: Option<String>,
+    pub fields: Vec<EmbedField>,
     pub footer: Option<String>,
+    /// RFC 3339; Discord shows it beside the footer in the reader's time.
+    pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbedField {
+    pub name: String,
+    pub value: String,
+    /// Three to a row; otherwise on its own line.
+    pub inline: bool,
+}
+
+impl EmbedField {
+    /// A field shown three to a row.
+    pub fn inline(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+            inline: true,
+        }
+    }
 }
 
 impl Embed {
@@ -274,7 +298,7 @@ impl Embed {
             "fields": self
                 .fields
                 .iter()
-                .map(|(name, value)| serde_json::json!({ "name": name, "value": value, "inline": true }))
+                .map(|f| serde_json::json!({ "name": f.name, "value": f.value, "inline": f.inline }))
                 .collect::<Vec<_>>(),
         });
         if let Some(description) = &self.description {
@@ -283,8 +307,20 @@ impl Embed {
         if let Some(color) = self.color {
             embed["color"] = color.into();
         }
+        if let Some((name, icon)) = &self.author {
+            embed["author"] = serde_json::json!({ "name": name });
+            if let Some(icon) = icon {
+                embed["author"]["icon_url"] = icon.as_str().into();
+            }
+        }
+        if let Some(thumbnail) = &self.thumbnail {
+            embed["thumbnail"] = serde_json::json!({ "url": thumbnail });
+        }
         if let Some(footer) = &self.footer {
             embed["footer"] = serde_json::json!({ "text": footer });
+        }
+        if let Some(timestamp) = &self.timestamp {
+            embed["timestamp"] = timestamp.as_str().into();
         }
         embed
     }

@@ -255,7 +255,9 @@ pub mod esi {
 
 /// Discord messages to channels an admin assigned this plugin.
 pub mod discord {
-    pub use crate::bindings::tether::plugin::discord::{Channel, Error, Mention};
+    pub use crate::bindings::tether::plugin::discord::{
+        Channel, Embed, EmbedAuthor, EmbedField, Error, Image, Mention,
+    };
 
     pub fn channels() -> Vec<Channel> {
         crate::bindings::tether::plugin::discord::channels()
@@ -266,6 +268,86 @@ pub mod discord {
     /// `Mention::State("Member".into())`). Not from pages.
     pub fn send(channel: &str, text: &str, mention: Mention) -> Result<(), Error> {
         crate::bindings::tether::plugin::discord::send(channel, text, &mention)
+    }
+
+    /// Posts a card (Discord's embed) to an assigned channel; the mention,
+    /// if any, is the text above it. Limits as Discord's: a title of 256
+    /// characters, a description of 2,000, 10 fields. Images are CCP's
+    /// (`Image::Corporation(id)`, `Image::TypeRender(type_id)`, ...).
+    pub fn send_embed(channel: &str, embed: &Embed, mention: Mention) -> Result<(), Error> {
+        crate::bindings::tether::plugin::discord::send_embed(channel, embed, &mention)
+    }
+
+    impl Embed {
+        /// A card with just a title; fill in the rest with the builders.
+        pub fn new(title: impl Into<String>) -> Self {
+            Self {
+                title: title.into(),
+                description: None,
+                color: None,
+                author: None,
+                thumbnail: None,
+                fields: Vec::new(),
+                footer: None,
+                timestamp: None,
+            }
+        }
+
+        pub fn description(mut self, text: impl Into<String>) -> Self {
+            self.description = Some(text.into());
+            self
+        }
+
+        /// The bar down its side, `0xRRGGBB`.
+        pub fn color(mut self, rgb: u32) -> Self {
+            self.color = Some(rgb);
+            self
+        }
+
+        /// A line above the title, with an image beside it.
+        pub fn author(mut self, name: impl Into<String>, icon: Option<Image>) -> Self {
+            self.author = Some(EmbedAuthor {
+                name: name.into(),
+                icon,
+            });
+            self
+        }
+
+        pub fn thumbnail(mut self, image: Image) -> Self {
+            self.thumbnail = Some(image);
+            self
+        }
+
+        /// A field three to a row.
+        pub fn field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+            self.fields.push(EmbedField {
+                name: name.into(),
+                value: value.into(),
+                inline: true,
+            });
+            self
+        }
+
+        /// A field on its own line.
+        pub fn wide_field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+            self.fields.push(EmbedField {
+                name: name.into(),
+                value: value.into(),
+                inline: false,
+            });
+            self
+        }
+
+        pub fn footer(mut self, text: impl Into<String>) -> Self {
+            self.footer = Some(text.into());
+            self
+        }
+
+        /// RFC 3339; shown beside the footer in each reader's own time.
+        pub fn timestamp(mut self, rfc3339: impl Into<String>) -> Self {
+            self.timestamp = Some(rfc3339.into());
+            self
+        }
     }
 }
 

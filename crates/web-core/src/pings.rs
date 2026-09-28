@@ -21,7 +21,7 @@ use tether_db::ping_options::{self, Kind, PingOption};
 use tether_db::pings::{self as db, Details, NewPing, PingChannel, Target};
 use tether_db::{PgPool, discord as discord_db};
 use tether_discord::store;
-use tether_discord::{Discord, DiscordError, Embed, Mention};
+use tether_discord::{Discord, DiscordError, Embed, EmbedField, Mention};
 use tether_jobs::{JobError, NewJob, Registry};
 
 use crate::AppState;
@@ -863,7 +863,7 @@ pub fn embed(ping: &db::Ping) -> Option<Embed> {
                 }
                 _ => defuse(&value),
             };
-            (label.to_owned(), value)
+            EmbedField::inline(label, value)
         })
         .collect();
     let formup_at = if d.formup_now {
@@ -890,6 +890,7 @@ pub fn embed(ping: &db::Ping) -> Option<Embed> {
             .and_then(|c| u32::from_str_radix(c.trim_start_matches('#'), 16).ok()),
         fields,
         footer: Some(format!("Sent by {} via Tether", defuse(&ping.sender_name))),
+        ..Embed::default()
     })
 }
 

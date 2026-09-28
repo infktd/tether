@@ -681,10 +681,65 @@ interface discord {
         unavailable,
     }
 
+    /// A picture from CCP's image server, by what it shows: the host makes
+    /// the link, so a card never points anywhere else.
+    variant image {
+        /// A character's portrait.
+        character(s64),
+        /// A corporation's logo.
+        corporation(s64),
+        /// An alliance's logo.
+        alliance(s64),
+        /// A ship's or structure's render, by type id.
+        type-render(s64),
+        /// An item's icon, by type id.
+        type-icon(s64),
+    }
+
+    record embed-author {
+        /// At most 256 characters.
+        name: string,
+        icon: option<image>,
+    }
+
+    record embed-field {
+        /// At most 256 characters.
+        name: string,
+        /// At most 1,024 characters.
+        value: string,
+        /// Side by side with its neighbours (three to a row), or on its own
+        /// line.
+        inline: bool,
+    }
+
+    /// A card, as Discord draws embeds. Discord's markdown works in the
+    /// description and field values; mentions in it never ping.
+    record embed {
+        /// At most 256 characters.
+        title: string,
+        /// At most 2,000 characters.
+        description: option<string>,
+        /// The bar down its side, `0xRRGGBB`.
+        color: option<u32>,
+        /// A line above the title, such as the owning corporation.
+        author: option<embed-author>,
+        /// Top right.
+        thumbnail: option<image>,
+        /// At most 10.
+        fields: list<embed-field>,
+        /// At most 256 characters.
+        footer: option<string>,
+        /// Shown beside the footer in each reader's own time (RFC 3339).
+        timestamp: option<string>,
+    }
+
     /// The channels an admin assigned this plugin.
     channels: func() -> list<channel>;
     /// Posts `text` (at most 1,500 characters) to an assigned channel.
     send: func(channel: string, text: string, mention: mention) -> result<_, error>;
+    /// Posts a card to an assigned channel. The mention, if any, is the
+    /// message's text above it.
+    send-embed: func(channel: string, embed: embed, mention: mention) -> result<_, error>;
 }
 
 /// Background work on Tether's job queue: the schedules declared in

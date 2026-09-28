@@ -22,15 +22,17 @@ use std::time::{Duration, Instant};
 use tether_core::crypto::EncryptionKey;
 use tether_db::permissions::Grantee;
 use tether_db::{PgPool, discord as discord_db, plugin_esi as db};
-use tether_discord::{Discord, Mention as DiscordMention, store};
+use tether_discord::{
+    Discord, Embed as DiscordEmbed, EmbedField as DiscordField, Mention as DiscordMention, store,
+};
 use tether_esi::Esi;
 use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
-    DownloadFile, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted, Fut,
-    Group, HttpError, HttpRequest, HttpResponse, Mention, Named, Owner, Services, SharedDoctrine,
-    SharedTimer, State, Subject, Timer, TimerError,
+    DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted,
+    Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Mention, Named, Owner, Services,
+    SharedDoctrine, SharedTimer, State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -465,12 +467,135 @@ fn reply(body: String, response: &tether_esi::plugin::Response) -> EsiReply {
     }
 }
 
+/// Discord's limits on a card, as the WIT documents them.
+const MAX_EMBED_TITLE: usize = 256;
+const MAX_EMBED_DESCRIPTION: usize = 2000;
+const MAX_EMBED_FIELDS: usize = 10;
+const MAX_EMBED_VALUE: usize = 1024;
+/// Discord refuses a message whose cards hold more than this in all.
+const MAX_EMBED_TOTAL: usize = 6000;
+
+/// A link to CCP's image server: the only images a plugin's card shows.
+fn image_url(image: &Image) -> Result<String, DiscordError> {
+    let (kind, id, variant, size) = match *image {
+        Image::Character(id) => ("characters", id, "portrait", 64),
+        Image::Corporation(id) => ("corporations", id, "logo", 64),
+        Image::Alliance(id) => ("alliances", id, "logo", 64),
+        Image::TypeRender(id) => ("types", id, "render", 128),
+        Image::TypeIcon(id) => ("types", id, "icon", 64),
+    };
+    if id <= 0 {
+        return Err(DiscordError::Invalid("an image id is positive".to_owned()));
+    }
+    Ok(format!(
+        "https://images.evetech.net/{kind}/{id}/{variant}?size={size}"
+    ))
+}
+
+/// A plugin's card checked against Discord's limits, its text defused.
+fn card(mut embed: Embed) -> Result<DiscordEmbed, DiscordError> {
+    let invalid = |why: &str| DiscordError::Invalid(why.to_owned());
+    let len = |s: &str| s.chars().count();
+    let within = |s: &str, max: usize| !s.trim().is_empty() && len(s) <= max;
+    // Defused first, so the limits hold for what Discord gets.
+    let defuse = crate::pings::defuse;
+    embed.title = defuse(&embed.title);
+    embed.description = embed.description.as_deref().map(defuse);
+    for field in &mut embed.fields {
+        field.name = defuse(&field.name);
+        field.value = defuse(&field.value);
+    }
+    if let Some(author) = &mut embed.author {
+        author.name = defuse(&author.name);
+    }
+    embed.footer = embed.footer.as_deref().map(defuse);
+    if !within(&embed.title, MAX_EMBED_TITLE) {
+        return Err(invalid("a card's title is 1 to 256 characters"));
+    }
+    if embed
+        .description
+        .as_deref()
+        .is_some_and(|d| len(d) > MAX_EMBED_DESCRIPTION)
+    {
+        return Err(invalid("a card's description is at most 2,000 characters"));
+    }
+    if embed.fields.len() > MAX_EMBED_FIELDS {
+        return Err(invalid("a card has at most 10 fields"));
+    }
+    if embed
+        .fields
+        .iter()
+        .any(|f| !within(&f.name, MAX_EMBED_TITLE) || !within(&f.value, MAX_EMBED_VALUE))
+    {
+        return Err(invalid(
+            "a card's field has a name of 1 to 256 characters and a value of 1 to 1,024",
+        ));
+    }
+    if embed
+        .author
+        .as_ref()
+        .is_some_and(|a| !within(&a.name, MAX_EMBED_TITLE))
+    {
+        return Err(invalid("a card's author is 1 to 256 characters"));
+    }
+    if embed
+        .footer
+        .as_deref()
+        .is_some_and(|f| !within(f, MAX_EMBED_TITLE))
+    {
+        return Err(invalid("a card's footer is 1 to 256 characters"));
+    }
+    let total = len(&embed.title)
+        + embed.description.as_deref().map_or(0, len)
+        + embed.author.as_ref().map_or(0, |a| len(&a.name))
+        + embed.footer.as_deref().map_or(0, len)
+        + embed
+            .fields
+            .iter()
+            .map(|f| len(&f.name) + len(&f.value))
+            .sum::<usize>();
+    if total > MAX_EMBED_TOTAL {
+        return Err(invalid("a card holds at most 6,000 characters in all"));
+    }
+    let timestamp = match embed.timestamp {
+        Some(t) => Some(
+            chrono::DateTime::parse_from_rfc3339(&t)
+                .map_err(|_| invalid("a card's timestamp is RFC 3339"))?
+                .to_utc()
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        ),
+        None => None,
+    };
+    Ok(DiscordEmbed {
+        title: embed.title,
+        description: embed.description,
+        color: embed.color.map(|c| c & 0x00ff_ffff),
+        author: embed
+            .author
+            .map(|a| Ok::<_, DiscordError>((a.name, a.icon.as_ref().map(image_url).transpose()?)))
+            .transpose()?,
+        thumbnail: embed.thumbnail.as_ref().map(image_url).transpose()?,
+        fields: embed
+            .fields
+            .into_iter()
+            .map(|f| DiscordField {
+                name: f.name,
+                value: f.value,
+                inline: f.inline,
+            })
+            .collect(),
+        footer: embed.footer,
+        timestamp,
+    })
+}
+
 async fn discord_send(
     deps: &Deps,
     plugins: &Weak<Plugins>,
     plugin: &str,
     channel: &str,
     text: &str,
+    embed: Option<Embed>,
     mention: Mention,
 ) -> Result<(), DiscordError> {
     let running = plugins
@@ -488,7 +613,9 @@ async fn discord_send(
             "this plugin wasn't approved to send Discord messages".to_owned(),
         ));
     }
-    if text.trim().is_empty() || text.chars().count() > MAX_MESSAGE {
+    let embed = embed.map(card).transpose()?;
+    // A card may have no text of its own.
+    if (embed.is_none() && text.trim().is_empty()) || text.chars().count() > MAX_MESSAGE {
         return Err(DiscordError::Invalid(format!(
             "a message is 1 to {MAX_MESSAGE} characters"
         )));
@@ -541,7 +668,7 @@ async fn discord_send(
         }
     };
     let mut content = target.prefix();
-    if !content.is_empty() {
+    if !content.is_empty() && !text.is_empty() {
         content.push(' ');
     }
     content.push_str(&crate::pings::defuse(text));
@@ -556,7 +683,7 @@ async fn discord_send(
             &config,
             u64::try_from(channel_id).map_err(|e| unavailable(e.to_string()))?,
             &content,
-            None,
+            embed.as_ref(),
             target,
             &nonce,
         )
@@ -852,6 +979,7 @@ impl Services for PluginServices {
         plugin: String,
         channel: String,
         text: String,
+        embed: Option<Embed>,
         mention: Mention,
     ) -> Fut<Result<(), DiscordError>> {
         if self.sends.check(plugin.clone(), Instant::now()).is_err() {
@@ -859,7 +987,8 @@ impl Services for PluginServices {
         }
         let (deps, plugins) = (self.deps.clone(), self.plugins.clone());
         Box::pin(async move {
-            let result = discord_send(&deps, &plugins, &plugin, &channel, &text, mention).await;
+            let result =
+                discord_send(&deps, &plugins, &plugin, &channel, &text, embed, mention).await;
             let outcome = if result.is_ok() {
                 "ok"
             } else {

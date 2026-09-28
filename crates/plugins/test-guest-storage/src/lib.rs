@@ -295,6 +295,27 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 Err(e) => format!("err {e:?}"),
             }
         }
+        // embed?title=&channel=&state=&image=: a card with every part.
+        "embed" => {
+            let mention = arg("state").map_or(Mention::None, Mention::State);
+            let channel = arg("channel")
+                .or_else(|| discord::channels().first().map(|c| c.id.clone()))
+                .unwrap_or_default();
+            let image = arg("image").and_then(|i| i.parse().ok()).unwrap_or(35835);
+            let embed = discord::Embed::new(arg("title").unwrap_or_default())
+                .description("Chunk arrives <t:1793592000:R> @everyone")
+                .color(0x2e_cc71)
+                .author("Acme Corp", Some(discord::Image::Corporation(98000001)))
+                .thumbnail(discord::Image::TypeRender(image))
+                .field("System", "Mazitah")
+                .wide_field("Structure", "Mazitah - Refinery")
+                .footer("Structures")
+                .timestamp("2026-11-02T04:00:00+00:00");
+            match discord::send_embed(&channel, &embed, mention) {
+                Ok(()) => "ok".to_owned(),
+                Err(e) => format!("err {e:?}"),
+            }
+        }
         _ => return Err(PageError::NotFound),
     };
     Ok(Page::new("Probe").text(shown(outcome)))

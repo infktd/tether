@@ -486,7 +486,7 @@ async fn messages_ping_only_the_chosen_target_and_carry_a_nonce() {
 
 #[tokio::test]
 async fn messages_can_carry_an_embed() {
-    use tether_discord::{Embed, Mention};
+    use tether_discord::{Embed, EmbedField, Mention};
     let (server, discord) = mock_discord().await;
     Mock::given(method("POST"))
         .and(path("/api/v10/channels/600000000000000001/messages"))
@@ -513,8 +513,9 @@ async fn messages_can_carry_an_embed() {
         title: "Roam".into(),
         description: Some("Bring points".into()),
         color: Some(0x00ff00),
-        fields: vec![("FC".into(), "Dev Owner".into())],
+        fields: vec![EmbedField::inline("FC", "Dev Owner")],
         footer: Some("Sent by Dev Owner".into()),
+        ..Embed::default()
     };
     let id = discord
         .send_message(

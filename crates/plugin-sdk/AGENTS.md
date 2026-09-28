@@ -606,8 +606,25 @@ let channel = discord::channels().first().map(|c| c.id.clone());
 discord::send(&channel.unwrap(), "Moon popped at 1DQ1-A I", Mention::State("Member".into()))?;
 ```
 
-- Mentions are only the Discord role Tether maps to a state, named like `Mention::State("Member".into())`; typed `@everyone` and `@here` are defused, and nobody else can be pinged.
-- From `submit` and jobs only, not pages. At most 1,500 characters, 5 messages per call and 20 a minute per plugin.
+Or a card (Discord's embed), as notification bots post them:
+
+```rust
+use tether_plugin_sdk::discord::{self, Embed, Image, Mention};
+let card = Embed::new("Extraction started")
+    .description("The chunk arrives <t:1793592000:R>.")
+    .color(0x2ecc71)
+    .author("Acme Corp", Some(Image::Corporation(98000001)))
+    .thumbnail(Image::TypeRender(35835))
+    .field("System", "Jita")
+    .wide_field("Structure", "Jita - Refinery")
+    .footer("Moon Mining")
+    .timestamp("2026-11-02T04:00:00Z");
+discord::send_embed(&channel, &card, Mention::State("Member".into()))?;
+```
+
+- Mentions are only the Discord role Tether maps to a state, named like `Mention::State("Member".into())`; typed `@everyone` and `@here` are defused, and nobody else can be pinged. A card's mention is the message's text above it.
+- A card's images are CCP's, by id (`Image::Character`, `Corporation`, `Alliance`, `TypeRender`, `TypeIcon`): the host makes the link. Its limits are Discord's: a title, author, footer and field names of 256 characters, a description of 2,000, 10 fields with values of 1,024, 6,000 in all. `<t:UNIX:R>` in the text shows a time counting down in each reader's clock. Markdown links in the description and fields go where you point them, as in plain messages.
+- From `submit` and jobs only, not pages. At most 1,500 characters, 5 messages per call and 20 a minute per plugin (cards count the same).
 
 ## HTTP
 

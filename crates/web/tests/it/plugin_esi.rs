@@ -978,6 +978,42 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     assert!(out.contains("no Discord role"), "{out}");
     let out = probe(&h, "send", &[("text", "hi"), ("state", "Admirals")]).await;
     assert!(out.contains("no Discord role"), "{out}");
+
+    // A card: the mention is the text above it, the images are CCP's,
+    // and nothing in it can ping.
+    let out = probe(
+        &h,
+        "embed",
+        &[("title", "Extraction started"), ("state", "member")],
+    )
+    .await;
+    assert_eq!(out, "ok");
+    let sent = h.discord_server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&sent.last().unwrap().body).unwrap();
+    assert_eq!(body["content"], format!("<@&{DISCORD_MEMBER_ROLE}>"));
+    assert_eq!(
+        body["embeds"],
+        serde_json::json!([{
+            "title": "Extraction started",
+            "description": "Chunk arrives <t:1793592000:R> @\u{200B}everyone",
+            "color": 0x2e_cc71,
+            "author": {
+                "name": "Acme Corp",
+                "icon_url": "https://images.evetech.net/corporations/98000001/logo?size=64",
+            },
+            "thumbnail": { "url": "https://images.evetech.net/types/35835/render?size=128" },
+            "fields": [
+                { "name": "System", "value": "Mazitah", "inline": true },
+                { "name": "Structure", "value": "Mazitah - Refinery", "inline": false },
+            ],
+            "footer": { "text": "Structures" },
+            "timestamp": "2026-11-02T04:00:00Z",
+        }])
+    );
+    let out = probe(&h, "embed", &[("title", "")]).await;
+    assert!(out.contains("title is 1 to 256"), "{out}");
+    let out = probe(&h, "embed", &[("title", "x"), ("image", "-1")]).await;
+    assert!(out.contains("image id is positive"), "{out}");
 }
 
 // ---- the character viewer's endpoints, and syncing right away --------------
