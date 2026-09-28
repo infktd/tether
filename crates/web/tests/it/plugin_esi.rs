@@ -689,6 +689,27 @@ async fn pages_know_who_is_looking(db: PgPool) {
     assert!(!res.body.contains("admin.plugins"), "{}", res.body);
     // No viewer in a job.
     assert_eq!(probe(&h, "viewer", &[]).await, "None");
+
+    // Whether they're a superuser: the owner is; a pilot holding the app's
+    // permission isn't; nobody is in a job.
+    let res = page(&h, "/plugins/acme.esi/superuser", &owner).await;
+    assert!(res.body.contains(">true<"), "{}", res.body);
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let pilot_account: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = 443630591")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+        .bind("plugin.acme.esi.view")
+        .bind(pilot_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = page(&h, "/plugins/acme.esi/superuser", &pilot).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains(">false<"), "{}", res.body);
+    assert_eq!(probe(&h, "superuser", &[]).await, "false");
 }
 
 /// The probe as a bundled app under `id`: no `[publisher]`, no signature.

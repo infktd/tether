@@ -61,6 +61,8 @@ pub struct CallState {
     /// `identity.groups` and `identity.all-groups`, read once per call.
     groups: Option<Vec<services::Group>>,
     all_groups: Option<Vec<services::Group>>,
+    /// `identity.superuser`, read once per call.
+    superuser: Option<bool>,
     /// Whether this plugin, as loaded, may learn who owns characters.
     sees_owners: bool,
     esi_calls: usize,
@@ -87,6 +89,7 @@ impl CallState {
             viewer: None,
             groups: None,
             all_groups: None,
+            superuser: None,
             sees_owners: false,
             esi_calls: 0,
             writes_allowed: false,
@@ -135,6 +138,20 @@ impl tether::plugin::identity::Host for CallState {
             Ok(services) => services.identity_owners(self.plugin.clone()).await,
             Err(_) => None,
         }
+    }
+
+    async fn superuser(&mut self) -> bool {
+        if let Some(superuser) = self.superuser {
+            return superuser;
+        }
+        // Only the viewer's own account, as the host built it: false in a
+        // job.
+        let superuser = match (&self.viewer, &self.services) {
+            (Some(viewer), Some(services)) => services.identity_superuser(viewer.account_id).await,
+            _ => false,
+        };
+        self.superuser = Some(superuser);
+        superuser
     }
 
     async fn groups(&mut self) -> Vec<services::Group> {

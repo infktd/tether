@@ -153,6 +153,12 @@ pub mod identity {
         crate::bindings::tether::plugin::identity::all_groups()
     }
 
+    /// Whether the viewer is a superuser (AA's `is_superuser`): for what
+    /// AA shows superusers only. False in a job.
+    pub fn superuser() -> bool {
+        crate::bindings::tether::plugin::identity::superuser()
+    }
+
     /// First-party Member Audit only: who owns each of
     /// [`esi::characters`](crate::esi::characters) (their main and state).
     /// Every other app gets `None`: apps never learn which characters

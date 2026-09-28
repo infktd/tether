@@ -165,6 +165,9 @@ permission = "manage"
 path = "mail"          # mail/... needs view too,
 permission = "view"
 audit = true           # and every view of it is in Tether's audit log
+[[pages]]
+path = "apply"         # apply/... is for anyone signed in with a main,
+signed_in = true       # no permission (AA's login_required views)
 
 [[navigation]]         # sidebar links, shown to whoever may open them
 label = "Mining"
@@ -179,6 +182,7 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
 - Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.
 - A `[[navigation]]` link goes in its `section` of the sidebar: `account`, `fleet`, `industry`, `corporation`, `apps` or `admin`. Leave it out for `apps`; any other name gets the package refused. It's only where the link starts out: admins can move, rename or hide it on the Menu page, and a section with nothing in it isn't shown.
 - A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
+- A rule names a `permission` or says `signed_in = true`, never both. `signed_in` pages open to every account signed in with a main, Guests included and the Blacklist not (it holds only what an admin grants it): use it only where AA asks no more than a login (applying to a corporation), and gate what they show and do with `viewer.can(...)` as usual. Admins see such rules at install as "any signed-in pilot", and an upgrade that opens a page asks them again.
 - `audit = true` on a rule writes every view of a page under it (opened, reloaded, shown on the Dashboard, or drawn for a form post) to Tether's audit log as `plugin.page_view`, with who, the path and the query, before your plugin is called. Use it for pages showing someone else's private data, such as their mail. A view that can't be recorded isn't shown.
 - Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
 - Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.
@@ -455,6 +459,8 @@ match submission.form.as_str() {
 ## Who's looking
 
 `identity::viewer()` says who is looking at a page or posting a form: their account id, main, all their characters (with corporation and alliance), access state (`viewer.state.name`, and `viewer.is_member()` / `viewer.is_guest()`; admins can add states above Member, such as a leadership state, so `is_member()` is false for them: gate on your own permissions rather than on state where you can), and which of your plugin's permissions they hold (`viewer.can("manage")`). Jobs have no viewer.
+
+`identity::superuser()` says whether the viewer is a superuser (AA's `is_superuser`; false in jobs), for what AA shows superusers only, such as hrapplications' every corporation. Superusers also hold every permission, so `viewer.can(...)` is already true for them: use `superuser()` only where AA checks `is_superuser` itself, never as a stand-in for a permission admins should grant.
 
 Groups, to limit something to them (allianceauth-fittings' categories are), with `groups = true` in `[capabilities]` (the admin sees it at install: the app learns which groups its users are in): `identity::groups()` is the viewer's own groups (`id` and `name`), Hidden and Internal ones included, and `identity::all_groups()` the groups to offer the viewer when they pick some, as Tether shows groups: every group that is neither Hidden nor Internal, plus the viewer's own; every group but Internal ones for holders of `group_management`; every group for holders of `admin.groups`. Both are empty in jobs, like the viewer, and without the capability. Store group ids, not names (groups can be renamed), and check membership against `groups()` on every view; a group someone else picked may not be in the viewer's `all_groups()`, so keep ids you don't recognise rather than dropping them.
 

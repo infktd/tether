@@ -571,6 +571,11 @@ interface identity {
     /// `admin.groups`. None in a job, and none for a plugin not approved
     /// for `groups`.
     all-groups: func() -> list<group>;
+
+    /// Whether the viewer is a superuser (AA's `is_superuser`), for what
+    /// AA shows superusers only; false in a job. (Superusers also hold
+    /// every permission, so `permissions` lists all of yours for them.)
+    superuser: func() -> bool;
 }
 
 /// ESI, through the host: plugins name an endpoint and whose token to use,

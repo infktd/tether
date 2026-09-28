@@ -104,6 +104,8 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// nor Internal, and its own; all of them for group admins. None
     /// for a `plugin` not approved for `groups`.
     fn identity_all_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>>;
+    /// Whether `account` is an active superuser.
+    fn identity_superuser(&self, account: i64) -> Fut<bool>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;
     fn discord_send(
         &self,

@@ -714,6 +714,20 @@ impl Services for PluginServices {
         })
     }
 
+    fn identity_superuser(&self, account: i64) -> Fut<bool> {
+        let db = self.deps.db.clone();
+        Box::pin(async move {
+            let account = tether_db::accounts::AccountId(account);
+            match tether_db::accounts::get(&db, account).await {
+                Ok(found) => found.is_some_and(|a| a.active && a.is_owner),
+                Err(err) => {
+                    tracing::error!(error = %err, "plugin viewer's superuser flag");
+                    false
+                }
+            }
+        })
+    }
+
     fn identity_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>> {
         let db = self.deps.db.clone();
         let plugins = self.plugins.clone();
