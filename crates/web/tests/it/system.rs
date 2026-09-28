@@ -522,3 +522,88 @@ async fn the_notification_cap_is_a_setting(db: PgPool) {
         3
     );
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    let title = |body: &str| {
+        let start = body.find("<title>").unwrap() + "<title>".len();
+        body[start..start + body[start..].find("</title>").unwrap()].to_owned()
+    };
+    assert_eq!(
+        title(&page(&h, "/dashboard", &owner).await.body),
+        "Dashboard · Tether"
+    );
+
+    // Only System's admins name it.
+    let res = send(
+        &h.app,
+        form("/admin/system/site-name", "site_name=Nope", &pilot),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+
+    let res = send(
+        &h.app,
+        form(
+            "/admin/system/site-name",
+            "site_name=++Some+Alliance++",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/system", "{}", res.body);
+    assert_eq!(
+        title(&page(&h, "/dashboard", &pilot).await.body),
+        "Dashboard · Some Alliance · Tether"
+    );
+    let login = send(&h.app, get("/login", &[])).await.body;
+    assert_eq!(title(&login), "Log in · Some Alliance · Tether");
+    assert!(login.contains(r#"<div class="signin-site">Some Alliance</div>"#));
+    assert!(
+        page(&h, "/admin/system", &owner)
+            .await
+            .body
+            .contains(r#"value="Some Alliance""#)
+    );
+
+    // One short line.
+    let res = send(
+        &h.app,
+        form(
+            "/admin/system/site-name",
+            &format!("site_name={}", "x".repeat(51)),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    // From the setup wizard's last step: back there.
+    let res = send(
+        &h.app,
+        form(
+            "/admin/system/site-name",
+            "site_name=Other+Name&from=setup",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/setup");
+    // Empty: Tether's alone again.
+    send(
+        &h.app,
+        form("/admin/system/site-name", "site_name=", &owner),
+    )
+    .await;
+    assert_eq!(
+        title(&page(&h, "/dashboard", &owner).await.body),
+        "Dashboard · Tether"
+    );
+    let audited: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.audit_log WHERE action = 'site.name'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(audited, 3);
+}

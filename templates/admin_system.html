@@ -104,6 +104,15 @@
     </table>
   </section>
 
+  <form class="card" method="post" action="/admin/system/site-name">
+    <header><h2>Site name</h2><p>Your alliance's or corporation's name, shown in browser tabs and on the sign-in page beside Tether's. The sign-in page is public: anyone who opens it sees this name. Empty: Tether's alone.</p></header>
+    <section class="grid gap-2 max-w-md">
+      <label class="label" for="site_name">Name</label>
+      <input class="input" id="site_name" name="site_name" maxlength="50" value="{% if let Some(site) = shell.site_name %}{{ site }}{% endif %}" placeholder="Your alliance's name" autocomplete="off">
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
   <form class="card" method="post" action="/admin/system/theme">
     <header><h2>Appearance</h2><p>The accent colour marks the one thing that matters most on each screen: unread counts, the next countdown, Member badges.</p></header>
     <section class="flex flex-wrap items-center gap-4 text-sm">

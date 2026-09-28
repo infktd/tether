@@ -307,6 +307,7 @@ struct ConfirmPage<'a> {
     main: Option<String>,
     return_to: &'a str,
     minutes: u64,
+    site_name: Option<String>,
 }
 
 /// `GET /reauthenticate?action=&return_to=`: "Confirm it's you".
@@ -331,6 +332,7 @@ pub async fn page(
             main,
             return_to,
             minutes: WINDOW.as_secs() / 60,
+            site_name: crate::site_name::get(&state.db).await?,
         },
     ))
 }

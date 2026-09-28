@@ -383,6 +383,36 @@ pub async fn set_notifications(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SiteNameForm {
+    #[serde(default)]
+    site_name: String,
+    /// `setup` when saved on the setup wizard's last step, which it goes
+    /// back to.
+    #[serde(default)]
+    from: String,
+}
+
+/// `POST /admin/system/site-name`: the site's own name (empty: Tether's
+/// alone), from System or the setup wizard's last step.
+pub async fn set_site_name(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<SiteNameForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
+    let (back, done) = match form.from.as_str() {
+        "setup" => ("/setup", "Site name saved."),
+        _ => ("/admin/system", "Site name saved."),
+    };
+    match crate::site_name::set(&state, session.account, &form.site_name).await {
+        // The name is in the tab title: reload the page for it.
+        Ok(_) => Ok(super::stay::back(back, done)),
+        Err(err) if back == "/setup" => Err(err.into()),
+        Err(err) => system_page(&state, shell, Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ThemeForm {
     /// A preset's value, or `custom` for `custom_accent`.
     accent: String,

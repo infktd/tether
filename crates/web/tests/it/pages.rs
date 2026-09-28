@@ -279,8 +279,16 @@ async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
     // Onwards: the owner to Administration; anyone signed out to the same
     // EVE login everyone uses (no separate admin login).
     assert!(page.body.contains(r#"href="/admin""#), "{}", page.body);
+    // And names the site, prefilled with the main's alliance.
+    assert!(page.body.contains("Name this site"), "{}", page.body);
+    assert!(
+        page.body.contains(r#"value="Otherworld Empire""#),
+        "{}",
+        page.body
+    );
     let page = send(&h.app, get("/setup", &[])).await;
     assert!(page.body.contains("Setup is complete"));
+    assert!(!page.body.contains("Name this site"));
     assert!(page.body.contains(r#"href="/auth/login""#), "{}", page.body);
 }
 

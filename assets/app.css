@@ -1643,6 +1643,24 @@
     font-size: 16px;
     letter-spacing: 0.2em;
   }
+  /* The site's own name (an alliance's) above the headline: an overline
+     in bone, marked with the signal square. */
+  .signin-site {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--foreground);
+  }
+  .signin-site::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+  }
   .signin-title {
     margin: 0;
     font-size: 54px;

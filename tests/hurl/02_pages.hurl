@@ -484,6 +484,12 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/admin/system/site-name
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/system/notifications
 Origin: {{base}}
 [Form]

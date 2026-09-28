@@ -197,6 +197,8 @@ pub struct Shell {
     pub admin_rail: Option<Vec<crate::admin_nav::Listed>>,
     /// Sidebar sections this browser folded.
     pub folded: Vec<String>,
+    /// The site's own name, for the browser tab (`crate::site_name`).
+    pub site_name: Option<String>,
 }
 
 /// The sidebar items an account may see: built-in pages by its
@@ -584,6 +586,7 @@ pub async fn load(
             unread: tether_db::notifications::unread(&state.db, session.account).await?,
             admin_rail: crate::admin_nav::rail(&nav, active),
             folded: session.folded.clone(),
+            site_name: crate::site_name::get(&state.db).await?,
         },
         state: access,
         is_owner: account.is_owner,

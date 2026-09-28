@@ -38,6 +38,8 @@ struct LoginPage {
     /// EVE SSO has a client id: until then the page points to the setup
     /// wizard instead of a login that can't work.
     sso_ready: bool,
+    /// The site's own name, above the headline and in the tab.
+    site_name: Option<String>,
 }
 
 /// `GET /login`
@@ -57,6 +59,7 @@ pub async fn login(
         &LoginPage {
             setup_complete,
             sso_ready,
+            site_name: crate::site_name::get(&state.db).await?,
         },
     ))
 }

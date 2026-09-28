@@ -54,6 +54,14 @@ struct SetupPage {
     /// Signed in with `admin.states` (the owner has it): the last step
     /// links to Administration.
     can_admin: bool,
+    /// Signed in with `admin.system`: the last step asks for the site's
+    /// name.
+    can_name: bool,
+    /// The site's own name, if set.
+    site_name: Option<String>,
+    /// Before one is saved: the main's alliance (or corporation), to
+    /// prefill it.
+    name_suggestion: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -94,9 +102,30 @@ async fn render_page(
         None => false,
     };
     let view = choose_view(&s, change_sso, can_manage_states);
+    let site_name = crate::site_name::get(&state.db).await?;
     let client_id = settings::get_string(&state.db, settings::SSO_CLIENT_ID)
         .await?
         .unwrap_or_default();
+    // Only on the last step, where the name is asked.
+    let can_name = match session {
+        Some(session) if matches!(view, SetupView::Complete) => session
+            .require(state, tether_core::permissions::ADMIN_SYSTEM)
+            .await
+            .is_ok(),
+        _ => false,
+    };
+    // The prefill is cosmetic: never wait long on ESI for it.
+    let name_suggestion = match session {
+        Some(session) if can_name && site_name.is_none() => tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            crate::setup::suggestion(state, session),
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.name),
+        _ => None,
+    };
     let page = SetupPage {
         steps: steps(&s),
         view,
@@ -106,6 +135,9 @@ async fn render_page(
         error: error.map(|e| e.message().to_owned()),
         signed_in: session.is_some(),
         can_admin: can_manage_states,
+        can_name,
+        name_suggestion,
+        site_name,
     };
     Ok(render(status, &page))
 }

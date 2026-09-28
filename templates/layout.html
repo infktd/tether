@@ -10,7 +10,7 @@
 {% include "head.html" %}
 <script src="/static/notifications.js" defer></script>
 <script src="/static/live.js" defer></script>
-<title>{% block title %}{% endblock %} · Tether</title>
+<title>{% block title %}{% endblock %}{% if let Some(site) = shell.site_name %} · {{ site }}{% endif %} · Tether</title>
 </head>
 <body hx-indicator="#page-progress">
 {#- The sky (DESIGN.md, Motion): one fixed layer behind the page. -#}

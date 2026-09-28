@@ -120,7 +120,9 @@ pub async fn load_status(
     })
 }
 
-async fn suggestion(state: &AppState, session: &CurrentSession) -> Option<Suggestion> {
+/// The account's main's alliance (or corporation): the Member entity to
+/// suggest, and the site name to prefill.
+pub async fn suggestion(state: &AppState, session: &CurrentSession) -> Option<Suggestion> {
     let affiliation = state_db::main(&state.db, session.account)
         .await
         .ok()??

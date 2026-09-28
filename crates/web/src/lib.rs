@@ -276,6 +276,10 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/system/summary", get(pages::system::summary))
         .route("/admin/system/updates", post(pages::system::set_updates))
         .route("/admin/system/theme", post(pages::system::set_theme))
+        .route(
+            "/admin/system/site-name",
+            post(pages::system::set_site_name),
+        )
         .route("/securegroups", get(pages::securegroups::index))
         .route("/securegroups/{id}/join", post(pages::securegroups::join))
         .route("/securegroups/{id}/leave", post(pages::securegroups::leave))

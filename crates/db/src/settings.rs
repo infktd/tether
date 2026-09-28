@@ -21,6 +21,10 @@ pub const DISCORD_SYNC_NAMES: &str = "discord.sync_names";
 /// own (integration) roles and reserved group names. Off unless set.
 pub const DISCORD_STRIP_UNMAPPED: &str = "discord.strip_unmapped";
 
+/// The site's own name (an alliance's, say), shown in browser tabs and on
+/// the sign-in page beside Tether's. None unless set.
+pub const SITE_NAME: &str = "site.name";
+
 /// The accent colour (DESIGN.md), `#rrggbb`. Amber unless set.
 pub const THEME_ACCENT: &str = "theme.accent";
 

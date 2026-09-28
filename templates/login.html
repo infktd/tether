@@ -6,7 +6,7 @@
 <head>
 {% include "head.html" %}
 <script src="/static/live.js" defer></script>
-<title>Log in · Tether</title>
+<title>Log in{% if let Some(site) = site_name %} · {{ site }}{% endif %} · Tether</title>
 </head>
 <body>
 <div class="sky" aria-hidden="true"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>
@@ -14,7 +14,11 @@
   <section class="signin-copy">
     <div class="wordmark signin-wordmark">{% include "wordmark.html" %}</div>
     <div class="flex flex-col gap-7">
+      {% if let Some(site) = site_name %}
+      <div class="signin-site">{{ site }}</div>
+      {% else %}
       <div class="ov">Self-hosted · for EVE Online alliances and corporations</div>
+      {% endif %}
       <h1 class="signin-title">Every pilot,<br>accounted for.</h1>
       {% if sso_ready %}
       <p class="signin-lede">Log in with your EVE character to reach fleets, timers, SRP and the rest of your alliance's tools. You log in on CCP's site; Tether never sees your password.</p>

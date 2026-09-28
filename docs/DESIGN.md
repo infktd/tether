@@ -103,6 +103,8 @@ A 4px base. Common steps: 4, 8, 12, 14, 18, 22, 26, 36.
 | Right rail (detail panels) | 330–372px |
 | Desktop design width | 1440px; layouts must hold down to 1280px |
 
+**Site name**: an instance may name itself (its alliance's or corporation's name, one line of visible text, at most 50 characters, EVE's own limit), asked on the setup wizard's last step and changed on System; both forms say the sign-in page is public. Tether stays Tether: the wordmark never changes. The name joins browser tab titles between the page and Tether ("Dashboard · Some Alliance · Tether"), and on the sign-in page it replaces the overline above the headline, as a 13px/600 uppercase line in bone after a 6px signal square. Error pages keep "· Tether" alone.
+
 Page structure: status strip (wordmark, EVE clock, Tranquility and ESI status, the page's trail, search, bell) → sidebar → page header (overline, title, and on the right readouts or the page's actions) → optional readouts or filter keys → content with an optional right rail.
 
 ## Components

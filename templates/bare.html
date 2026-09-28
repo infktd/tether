@@ -3,7 +3,7 @@
 <head>
 {% include "head.html" %}
 <script src="/static/live.js" defer></script>
-<title>{% block title %}{% endblock %} · Tether</title>
+<title>{% block title %}{% endblock %}{% block site %}{% endblock %} · Tether</title>
 </head>
 <body>
 <div class="sky" aria-hidden="true"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>

@@ -1,5 +1,6 @@
 {% extends "bare.html" %}
 {% block title %}Confirm it's you{% endblock %}
+{% block site %}{% if let Some(site) = site_name %} · {{ site }}{% endif %}{% endblock %}
 {% block content %}
 <section class="card">
   <header>
