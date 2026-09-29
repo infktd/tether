@@ -59,6 +59,9 @@ pub struct Fields {
     /// Lists of lists (`- - a` then `  - b` lines), as
     /// StructuresReinforcementChanged's `allStructureInfo`.
     nested: BTreeMap<String, Vec<Vec<String>>>,
+    /// Maps under a key (`  46676: 1000000.0` lines), as moon drills'
+    /// `oreVolumeByType`.
+    maps: BTreeMap<String, Vec<(String, String)>>,
 }
 
 /// A value without its anchor or quotes.
@@ -115,6 +118,14 @@ impl Fields {
                 continue;
             }
             if line.starts_with(' ') {
+                // An indented `key: value` under a key: a map.
+                if let (Some(key), Some((k, v))) = (&list, line.trim().split_once(':')) {
+                    fields
+                        .maps
+                        .entry(key.clone())
+                        .or_default()
+                        .push((clean(k), clean(v)));
+                }
                 continue;
             }
             let Some((key, value)) = line.split_once(':') else {
@@ -211,8 +222,27 @@ impl Fields {
                 .iter()
                 .filter_map(|info| info.get(2)?.parse::<i64>().ok()),
         );
+        ids.extend(self.ore_volumes().into_iter().map(|(id, _)| id));
         ids.retain(|id| *id > 0);
         ids
+    }
+
+    /// A moon chunk's ores, by type id, with their volume in m³, the
+    /// largest first.
+    pub fn ore_volumes(&self) -> Vec<(i64, f64)> {
+        let mut ores: Vec<(i64, f64)> = self
+            .maps
+            .get("oreVolumeByType")
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|(id, volume)| Some((id.parse().ok()?, volume.parse().ok()?)))
+                    .filter(|(_, volume): &(i64, f64)| volume.is_finite() && *volume > 0.0)
+                    .collect()
+            })
+            .unwrap_or_default();
+        ores.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ores
     }
 
     /// An absolute file time field.
@@ -1036,6 +1066,36 @@ fn damage(fields: &Fields) -> String {
     format!(" {}.", text.join(", "))
 }
 
+/// A volume as Discord shows it: `25.9M m³`, `850k m³`, `900 m³`.
+fn m3(volume: f64) -> String {
+    if volume >= 1_000_000.0 {
+        format!("{:.1}M m³", volume / 1_000_000.0)
+    } else if volume >= 1_000.0 {
+        format!("{:.0}k m³", volume / 1_000.0)
+    } else {
+        format!("{volume:.0} m³")
+    }
+}
+
+/// A chunk's total and its ores, as notification bots put it: " Total
+/// 25.9M m³. Ore: Zeolites (15.9M m³), Sylvite (9.9M m³)." Empty when the
+/// notification says nothing about ore.
+fn ores(fields: &Fields, cx: &Context<'_>) -> String {
+    let ores = fields.ore_volumes();
+    if ores.is_empty() {
+        return String::new();
+    }
+    let total: f64 = ores.iter().map(|(_, v)| v).sum();
+    let each: Vec<String> = ores
+        .iter()
+        .map(|(id, volume)| {
+            let name = (cx.name)(*id).map_or_else(|| format!("type {id}"), |n| escape(&n));
+            format!("{name} ({})", m3(*volume))
+        })
+        .collect();
+    format!(" Total {}. Ore: {}.", m3(total), each.join(", "))
+}
+
 /// The Discord message for a notification.
 pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>) -> Option<String> {
     let name = |id: Option<i64>| id.and_then(|id| (cx.name)(id));
@@ -1193,28 +1253,38 @@ pub fn message(kind: &str, fields: &Fields, at: DateTime<Utc>, cx: &Context<'_>)
         "MoonminingExtractionStarted" => {
             let ready = fields.filetime("readyTime").map(eve);
             let auto = fields.filetime("autoTime").map(eve);
+            let ores = ores(fields, cx);
             match (ready, auto) {
                 (Some(r), Some(a)) => format!(
-                    "Extraction started: {place}, {}. The chunk arrives {r} EVE and fractures automatically {a} EVE.",
+                    "Extraction started: {place}, {}. The chunk arrives {r} EVE and fractures automatically {a} EVE.{ores}",
                     fields.moon(cx.name)
                 ),
-                _ => format!("Extraction started: {place}, {}.", fields.moon(cx.name)),
+                _ => format!(
+                    "Extraction started: {place}, {}.{ores}",
+                    fields.moon(cx.name)
+                ),
             }
         }
-        "MoonminingExtractionFinished" => match fields.filetime("autoTime").map(eve) {
-            Some(a) => format!(
-                "Chunk arrived: {place}, {}. It fractures automatically {a} EVE.",
-                fields.moon(cx.name)
-            ),
-            None => format!("Chunk arrived: {place}, {}.", fields.moon(cx.name)),
-        },
-        "MoonminingAutomaticFracture" => {
-            format!(
-                "Moon fractured automatically: {place}, {}.",
-                fields.moon(cx.name)
-            )
+        "MoonminingExtractionFinished" => {
+            let ores = ores(fields, cx);
+            match fields.filetime("autoTime").map(eve) {
+                Some(a) => format!(
+                    "Chunk arrived: {place}, {}. It fractures automatically {a} EVE.{ores}",
+                    fields.moon(cx.name)
+                ),
+                None => format!("Chunk arrived: {place}, {}.{ores}", fields.moon(cx.name)),
+            }
         }
-        "MoonminingLaserFired" => format!("Moon fractured: {place}, {}.", fields.moon(cx.name)),
+        "MoonminingAutomaticFracture" => format!(
+            "Moon fractured automatically: {place}, {}. The chunk fractured on its own: the ore is in space now and can be mined.{}",
+            fields.moon(cx.name),
+            ores(fields, cx)
+        ),
+        "MoonminingLaserFired" => format!(
+            "Moon fractured: {place}, {}. The ore is in space now and can be mined.{}",
+            fields.moon(cx.name),
+            ores(fields, cx)
+        ),
         "MoonminingExtractionCancelled" => {
             format!("Extraction cancelled: {place}, {}.", fields.moon(cx.name))
         }
@@ -1674,6 +1744,44 @@ mod tests {
         let named = |id: i64| (id == 40009081).then(|| "Jita IV - Moon 4".to_owned());
         assert_eq!(unlinked.moon(&named), "Jita IV - Moon 4");
         assert_eq!(unlinked.moon(&names), "moon 40009081");
+    }
+
+    #[test]
+    fn moon_messages_give_the_chunk_total_and_each_ore() {
+        let text = STARTED.replace(
+            "oreVolumeByType:\n  46676: 1000000.0\n",
+            "oreVolumeByType:\n  45490: 9900000.123\n  45493: 15900000.5\n  1: -3\n",
+        );
+        let f = Fields::parse(&text);
+        assert_eq!(f.ore_volumes(), [(45493, 15900000.5), (45490, 9900000.123)]);
+        // The rest still reads after the map.
+        assert!(f.filetime("readyTime").is_some());
+        assert!(f.ids().contains(&45493));
+        let named = |id: i64| match id {
+            45493 => Some("Zeolites".to_owned()),
+            45490 => Some("Sylvite".to_owned()),
+            other => names(other),
+        };
+        let cx = Context {
+            structure: None,
+            sender: None,
+            name: &named,
+        };
+        let fractured = message("MoonminingAutomaticFracture", &f, Utc::now(), &cx).unwrap();
+        assert!(
+            fractured.ends_with(
+                "The chunk fractured on its own: the ore is in space now and can be mined. \
+                 Total 25.8M m³. Ore: Zeolites (15.9M m³), Sylvite (9.9M m³)."
+            ),
+            "{fractured}"
+        );
+        let started = message("MoonminingExtractionStarted", &f, Utc::now(), &cx).unwrap();
+        assert!(started.contains("Ore: Zeolites (15.9M m³)"), "{started}");
+        // No ore, no ore line.
+        let cancelled = message("MoonminingExtractionCancelled", &f, Utc::now(), &cx).unwrap();
+        assert!(!cancelled.contains("Total"), "{cancelled}");
+        assert_eq!(m3(850_400.0), "850k m³");
+        assert_eq!(m3(900.0), "900 m³");
     }
 
     #[test]

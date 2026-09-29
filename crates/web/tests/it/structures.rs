@@ -629,6 +629,14 @@ async fn structures_end_to_end(db: PgPool) {
             .contains(" EVE · <t:"),
         "{drill}"
     );
+    // The chunk's ore, as the notification gives it.
+    assert!(
+        drill["description"]
+            .as_str()
+            .unwrap()
+            .contains("Total 1.0M m³. Ore: "),
+        "{drill}"
+    );
     assert!(
         drill["fields"].as_array().unwrap().contains(
             &serde_json::json!({ "name": "Moon", "value": "Jita IV - Moon 4", "inline": true })
