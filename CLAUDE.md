@@ -58,10 +58,10 @@ Plugin hosts are separate and per instance: a plugin's `capabilities.http` hosts
 
 Build and deploy sources are separate. They're what the image build, CI and the admin's install fetch, never destinations of the running app. The notable ones:
 
-- crates.io, the Rust toolchain (`static.rust-lang.org`), and Docker Hub for base images (`rust`, `debian`, `timescale/timescaledb`, `caddy`, the `docker/dockerfile` frontend)
+- crates.io, the Rust toolchain (`static.rust-lang.org`), and Docker Hub for base images (`rust`, `debian`, `timescale/timescaledb`, `caddy`, the `docker/dockerfile` frontend, and `docker:28.5.2-cli`, pinned by digest, for the updater)
 - Debian's apt mirrors, and apt.postgresql.org, only while building the image, for `postgresql-client-16`
 - GitHub releases of pinned, checksum-verified CI tools (Tailwind CLI, Hurl)
-- GitHub's container registry (`ghcr.io`), approved by Jay: CI publishes the app image there, and Docker pulls it at install and upgrade
+- GitHub's container registry (`ghcr.io`), approved by Jay: CI publishes the app image there, and Docker pulls it at install and upgrade (from the console too: the updater container asks Docker to pull; the app itself never contacts ghcr.io and never holds the Docker socket)
 - `raw.githubusercontent.com` and `api.github.com`, from the admin's shell only: the deploy files for an install without a clone, and the newest release number when install.sh first pins the image (Jay asked for the install without a clone, 2026-09-26)
 
 Inbound, the app's port is reachable only from the reverse proxy: Caddy's Docker network, Traefik's, or 127.0.0.1 on the host (never published on a public address). Tether believes X-Forwarded-For only from loopback and private peers (`crates/web-core/src/ratelimit.rs`).
@@ -136,6 +136,7 @@ deploy/install.sh localhost    # writes deploy/.env once, pins the published ima
 deploy/install.sh --build localhost   # build the image from this clone instead (tether:local, docker-compose.build.yml); what CI's install test does
 deploy/install.sh --version 1.2.0   # move the pin to another published image (X.Y.Z, X.Y, latest, edge, sha-<commit>), pull and restart: upgrades
 deploy/install.sh --proxy none localhost   # or nginx/traefik: the admin's own proxy, no Caddy; app on 127.0.0.1:8080 (deploy/README.md)
+docker run --rm -v "$PWD/deploy:/src:ro" docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d sh /src/updater-test.sh   # the console updater's script, with a fake docker
 (cd deploy && docker compose pull && docker compose up -d)   # honours COMPOSE_FILE in deploy/.env (proxy and build overrides; a --build install rebuilds on up); `up -f deploy/docker-compose.yml` would not
 git tag v1.2.0 && git push origin v1.2.0   # release: CI publishes ghcr.io/<owner>/tether:1.2.0, :1.2, :latest after its checks; then a GitHub release (deploy/README.md, Releasing)
 docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync; `tether jobs run plugin:<app id>:*` runs an app's schedules now

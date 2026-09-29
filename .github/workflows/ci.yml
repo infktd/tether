@@ -301,13 +301,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
-        run: shellcheck --severity=warning deploy/install.sh
+        run: shellcheck --severity=warning deploy/install.sh deploy/updater.sh deploy/updater-test.sh
+      - name: updater.sh, in its own image with a fake docker
+        run: docker run --rm -v "$PWD/deploy:/src:ro" docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d sh /src/updater-test.sh
       - name: install.sh from the deploy files alone
         run: |
           dir=$RUNNER_TEMP/standalone/deploy
           mkdir -p "$dir"
           for f in docker-compose.yml docker-compose.host-proxy.yml \
-              docker-compose.traefik.yml Caddyfile install.sh .env.example; do
+              docker-compose.traefik.yml Caddyfile install.sh updater.sh .env.example; do
             cp "deploy/$f" "$dir/"
           done
           cd "$dir"
@@ -320,6 +322,10 @@ jobs:
             ./install.sh --version edge --no-start localhost
           fi
           grep -Eqx 'TETHER_IMAGE=ghcr\.io/infktd/tether:(edge|[0-9]+\.[0-9]+\.[0-9]+)' .env
+          # Upgrades from the console: the updater, told where it is.
+          grep -qx COMPOSE_PROFILES=updater .env
+          grep -qx "TETHER_DEPLOY_DIR=$(pwd -P)" .env
+          docker compose config --services | grep -qx updater
           before=$(grep '^TETHER_IMAGE=' .env)
           ./install.sh --no-start
           test "$(grep '^TETHER_IMAGE=' .env)" = "$before"
@@ -408,6 +414,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.licenses=GPL-2.0-or-later
+          build-args: TETHER_REVISION=${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           # Layer cache for main's builds only. Any action in a job on a
           # main push can write the Actions cache, including the read-only

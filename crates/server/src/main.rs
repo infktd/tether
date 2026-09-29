@@ -222,6 +222,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     }
     // Pending migrations on a database with data: snapshot first, so
     // `tether rollback` can undo them (N14). No snapshot, no migration.
+    let mut migration_snapshot = None;
     if config.skip_migration_snapshot {
         tracing::warn!("SKIP_MIGRATION_SNAPSHOT is set: migrating without a snapshot");
     } else if let Some(snapshot) = snapshots
@@ -233,8 +234,14 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         )?
     {
         tracing::info!(snapshot = snapshot.name, "snapshot ready before migrating");
+        migration_snapshot = Some(snapshot.name);
     }
     tether_db::migrate(&db).await?;
+    // What runs, and the snapshot a rollback from the console restores.
+    let updater = std::sync::Arc::new(tether_web::upgrader::Updater::from_env());
+    tether_web::upgrader::record_start(&db, &updater, migration_snapshot.as_deref())
+        .await
+        .context("recording this start")?;
     tracing::info!("database migrations applied");
     snapshots.mark_running(&tether_snapshots::Kind::Core).await;
 
@@ -388,6 +395,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let state = tether_web::AppState {
         notices: notices.clone(),
         strip: Default::default(),
+        updater,
         vault,
         key,
         discord,

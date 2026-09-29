@@ -38,12 +38,19 @@ services:
       SETUP_TOKEN: ${SETUP_TOKEN:?SETUP_TOKEN must be set in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env; re-run deploy/install.sh to add it}
       DATABASE_URL: postgres://tether:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/tether
+      # Shown on the System page, whose Upgrade card asks the updater for
+      # another tag of it.
+      TETHER_IMAGE: ${TETHER_IMAGE:-}
     volumes:
       # Encrypted snapshots (before migrations and app upgrades) and nightly
       # backups, for `tether rollback`. On the same disk as the database:
       # copy backups/ elsewhere (with ENCRYPTION_KEY kept safe separately)
       # to survive losing the disk.
       - snapshots:/var/lib/tether/snapshots
+      # Upgrades from the console: the app asks the updater (below) in one
+      # volume and reads what happened, read-only, in the other.
+      - update-requests:/var/lib/tether/update-requests
+      - update-status:/var/lib/tether/update-status:ro
     depends_on:
       db:
         condition: service_healthy
@@ -72,6 +79,34 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Upgrades and rollbacks from the console (deploy/updater.sh). It holds
+  # the Docker socket, so the app never does: no network, no ports, and it
+  # only acts on requests it checks itself (a published tag of this
+  # install's image, or one step back). install.sh turns it on with the
+  # "updater" profile and records where this directory is
+  # (TETHER_DEPLOY_DIR), mounted at the same path so compose finds its
+  # files as on the host.
+  updater:
+    # Root-equivalent on the host (the socket): pinned by digest, moved
+    # deliberately.
+    image: docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d
+    profiles: [updater]
+    network_mode: none
+    entrypoint: ["sh", "${TETHER_DEPLOY_DIR:-/nonexistent}/updater.sh"]
+    working_dir: ${TETHER_DEPLOY_DIR:-/nonexistent}
+    environment:
+      TETHER_DEPLOY_DIR: ${TETHER_DEPLOY_DIR:-/nonexistent}
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${TETHER_DEPLOY_DIR:-/nonexistent}
+        target: ${TETHER_DEPLOY_DIR:-/nonexistent}
+        bind:
+          create_host_path: false
+      - update-requests:/requests
+      - update-status:/status
+    restart: unless-stopped
+
   # The default proxy. The override files for the other choices give it a
   # profile nobody enables, which turns it off.
   caddy:
@@ -94,5 +129,7 @@ services:
 volumes:
   pgdata:
   snapshots:
+  update-requests:
+  update-status:
   caddy_data:
   caddy_config:

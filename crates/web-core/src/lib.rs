@@ -52,5 +52,6 @@ pub mod sync;
 pub mod theme;
 pub mod tokens;
 pub mod updates;
+pub mod upgrader;
 
 pub use state::{AppState, Limits, Site, StripStatus};

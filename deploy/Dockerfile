@@ -60,7 +60,9 @@ RUN apt-get update \
  && rm -f /etc/apt/sources.list.d/pgdg.sources /etc/apt/sources.list.d/pgdg.list \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tether \
- && install -d -o tether -g tether -m 0700 /var/lib/tether /var/lib/tether/snapshots
+ && install -d -o tether -g tether -m 0700 /var/lib/tether /var/lib/tether/snapshots \
+    /var/lib/tether/update-requests \
+ && install -d -o root -g root -m 0755 /var/lib/tether/update-status
 COPY --from=build /usr/local/bin/tether /usr/local/bin/tether
 # The apps that come with Tether, offered on the Apps page
 # (BUNDLED_APPS_DIR defaults here).
@@ -68,6 +70,10 @@ COPY --from=build /usr/share/tether/apps /usr/share/tether/apps
 # Snapshots and nightly backups (encrypted); a volume in docker-compose.yml.
 # A fresh named volume takes this directory's owner and mode.
 ENV SNAPSHOT_DIR=/var/lib/tether/snapshots
+# The commit this image is built from (CI passes it), shown on the System
+# page beside the version.
+ARG TETHER_REVISION=
+ENV TETHER_REVISION=$TETHER_REVISION
 USER tether
 EXPOSE 8080
 ENTRYPOINT ["tether"]

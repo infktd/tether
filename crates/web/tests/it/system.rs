@@ -607,3 +607,169 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
             .unwrap();
     assert_eq!(audited, 3);
 }
+
+// ---- upgrades from the console ------------------------------------------------
+
+/// The updater's heartbeat, as if it were running.
+fn updater_alive(h: &Harness) {
+    std::fs::write(h.updater.status.join("alive"), "now").unwrap();
+}
+
+fn request(h: &Harness) -> Option<String> {
+    std::fs::read_to_string(h.updater.requests.join("request")).ok()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn upgrades_go_through_the_updater(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    mount_status(&h).await;
+
+    // Only admins, and not without the updater.
+    for (uri, body) in [
+        ("/admin/system/upgrade", "tag=edge"),
+        ("/admin/system/rollback", "confirmation=x"),
+    ] {
+        assert_eq!(
+            send(&h.app, form(uri, body, &pilot)).await.status,
+            StatusCode::FORBIDDEN,
+            "{uri}"
+        );
+    }
+    assert_eq!(
+        page(&h, "/admin/system/upgrade", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let card = page(&h, "/admin/system", &owner).await.body;
+    assert!(card.contains("The updater isn't running"), "{card}");
+    let res = send(&h.app, form("/admin/system/upgrade", "tag=edge", &owner)).await;
+    assert!(
+        res.body.contains("The updater isn't running"),
+        "{}",
+        res.body
+    );
+    assert!(request(&h).is_none());
+
+    // Running: edge offers the newest edge, and nothing else.
+    updater_alive(&h);
+    let card = page(&h, "/admin/system/upgrade", &owner).await.body;
+    assert!(card.contains("Update to the newest edge"), "{card}");
+    assert!(card.contains("ghcr.io/acme/tether:edge"), "{card}");
+    let res = send(&h.app, form("/admin/system/upgrade", "tag=1.2.0", &owner)).await;
+    assert!(
+        res.body.contains("isn&#39;t offered") || res.body.contains("isn't offered"),
+        "{}",
+        res.body
+    );
+    assert!(request(&h).is_none());
+
+    let res = send(&h.app, form("/admin/system/upgrade", "tag=edge", &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let asked = request(&h).unwrap();
+    let lines: Vec<&str> = asked.lines().collect();
+    assert_eq!(lines[1..], ["action=upgrade", "tag=edge"], "{asked}");
+    let id = lines[0].strip_prefix("id=").unwrap();
+    assert!(
+        id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "{id}"
+    );
+    let audited: serde_json::Value =
+        sqlx::query_scalar("SELECT details FROM core.audit_log WHERE action = 'platform.upgrade'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(audited["to"], "edge");
+    assert_eq!(audited["request"], id);
+
+    // One at a time: the card polls until the updater is done.
+    let card = page(&h, "/admin/system/upgrade", &owner).await.body;
+    assert!(card.contains("Under way"), "{card}");
+    assert!(card.contains(r#"hx-trigger="every 3s""#), "{card}");
+    let res = send(&h.app, form("/admin/system/upgrade", "tag=edge", &owner)).await;
+    assert!(res.body.contains("already under way"), "{}", res.body);
+
+    // The updater took it, upgraded, and can go one step back. This start
+    // migrated after a snapshot, which the rollback restores.
+    std::fs::remove_file(h.updater.requests.join("request")).unwrap();
+    std::fs::write(
+        h.updater.status.join("status.json"),
+        r#"{"id":"1","action":"upgrade","state":"done","message":"Upgraded to edge.","at":"2026-09-28T12:00:00Z"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        h.updater.status.join("previous"),
+        "ghcr.io/acme/tether@sha256:aa",
+    )
+    .unwrap();
+    let before = tether_web::upgrader::Updater {
+        revision: Some("abcdef1234".to_owned()),
+        ..(*h.updater).clone()
+    };
+    tether_web::upgrader::record_start(&h.db, &before, None)
+        .await
+        .unwrap();
+    tether_web::upgrader::record_start(&h.db, &h.updater, Some("core-20260928T120000Z.tsnap"))
+        .await
+        .unwrap();
+    // A restart of the same build keeps the snapshot from before it.
+    tether_web::upgrader::record_start(&h.db, &h.updater, None)
+        .await
+        .unwrap();
+    let card = page(&h, "/admin/system/upgrade", &owner).await.body;
+    assert!(card.contains("Upgraded to edge."), "{card}");
+    assert!(card.contains("Roll back to"), "{card}");
+    assert!(card.contains("(abcdef1)"), "{card}");
+    assert!(card.contains("restores the snapshot"), "{card}");
+
+    let res = send(
+        &h.app,
+        form("/admin/system/rollback", "confirmation=nope", &owner),
+    )
+    .await;
+    assert!(res.body.contains("to confirm the rollback"), "{}", res.body);
+    assert!(request(&h).is_none());
+    let confirm = format!(
+        "confirmation={}",
+        urlencoding(&format!("{} (abcdef1)", env!("CARGO_PKG_VERSION")))
+    );
+    let res = send(&h.app, form("/admin/system/rollback", &confirm, &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let asked = request(&h).unwrap();
+    assert!(asked.contains("action=rollback\n"), "{asked}");
+    assert!(
+        asked.contains("snapshot=core-20260928T120000Z.tsnap\n"),
+        "{asked}"
+    );
+}
+
+fn urlencoding(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn upgrading_needs_a_recent_eve_login(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    updater_alive(&h);
+    sqlx::query(
+        "UPDATE core.sessions SET reauthenticated_at = now() - interval '30 minutes' \
+         WHERE token_hash = sha256($1::bytea)",
+    )
+    .bind(owner.as_bytes())
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = send(&h.app, form("/admin/system/upgrade", "tag=edge", &owner)).await;
+    assert!(
+        res.location().contains("action=platform_upgrade"),
+        "{} {}",
+        res.status,
+        res.location()
+    );
+    assert!(request(&h).is_none());
+}

@@ -144,7 +144,7 @@
   </form>
 
   <section class="card">
-    <header><h2>Platform updates</h2><p>Once a day, Tether asks GitHub whether a newer release exists. Upgrading is still yours to do: change the image tag.</p></header>
+    <header><h2>Platform updates</h2><p>Once a day, Tether asks GitHub whether a newer release exists.</p></header>
     <section class="flex flex-col gap-3 text-sm">
       <p>This instance runs <span class="num text-foreground">{{ updates.current }}</span>.
         {% if !updates.enabled %}Update checks are off.
@@ -168,5 +168,7 @@
       {% endif %}
     </footer>
   </section>
+
+  {% include "admin_system_upgrade.html" %}
 </div>
 {% endblock %}

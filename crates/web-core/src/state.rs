@@ -29,6 +29,8 @@ pub struct AppState {
     pub notices: crate::notifications::Notices,
     /// Tranquility's pilots online, for every page's status strip.
     pub strip: Arc<StripStatus>,
+    /// Where upgrades from the console go ([`crate::upgrader`]).
+    pub updater: Arc<crate::upgrader::Updater>,
 }
 
 /// What the status strip shows, asked of ESI at most once a minute however

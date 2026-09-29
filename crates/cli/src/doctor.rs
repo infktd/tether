@@ -224,7 +224,36 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(plugin_hosts(&env.db).await);
     checks.push(snapshots(&env.db, &env.snapshot_dir, env.pg_bin_dir.clone()).await);
     checks.push(backups(&env.snapshot_dir).await);
+    checks.push(updater(&tether_web::upgrader::Updater::from_env()));
     checks
+}
+
+/// Upgrades from the console: whether the updater container runs.
+pub fn updater(updater: &tether_web::upgrader::Updater) -> Check {
+    const NAME: &str = "updater";
+    if updater.image.is_none() {
+        return Check::skip(NAME, "TETHER_IMAGE isn't set: not deploy/'s Docker install");
+    }
+    if updater.from_source() {
+        return Check::skip(
+            NAME,
+            "built from the clone: upgrade on the server with git pull and deploy/install.sh --build",
+        );
+    }
+    if updater.running() {
+        Check::ok(
+            NAME,
+            "running: upgrade and roll back from Administration, System",
+        )
+    } else {
+        Check::warn(
+            NAME,
+            "not running: upgrades from the console are off",
+            "Run deploy/install.sh on the server (with deploy/updater.sh beside it) to add it; \
+             `docker compose logs updater` shows why a running one stopped. Upgrading with \
+             deploy/install.sh --version X.Y.Z works either way.",
+        )
+    }
 }
 
 /// The hosts each enabled app may call over HTTPS, as its admin approved

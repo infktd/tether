@@ -53,6 +53,7 @@ struct SystemPage {
     dead: Vec<DeadJob>,
     schedules: Vec<ScheduleView>,
     updates: updates::Status,
+    upgrade: crate::upgrader::View,
     accent: String,
     presets: Vec<Preset>,
     /// The accent isn't one of the presets.
@@ -153,6 +154,7 @@ async fn system_page(
                 dead,
                 schedules,
                 updates: updates::status(&state.db).await?,
+                upgrade: crate::upgrader::view(state).await?,
                 custom: !crate::theme::PRESETS.iter().any(|(_, v)| *v == accent),
                 presets: crate::theme::PRESETS
                     .iter()
@@ -440,6 +442,72 @@ pub async fn set_theme(
             super::stay::Toast::done("Accent saved."),
         )),
         Ok(()) => Ok(Redirect::to("/admin/system").into_response()),
+        Err(err) => system_page(&state, shell, Some(err)).await,
+    }
+}
+
+#[derive(Template)]
+#[template(path = "admin_system_upgrade.html")]
+struct UpgradeCard {
+    upgrade: crate::upgrader::View,
+}
+
+/// `GET /admin/system/upgrade`: the Upgrade card, which polls itself while
+/// the updater works.
+pub async fn upgrade_card(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let session = session.ok_or_else(AppError::unauthorized)?;
+    session.require(&state, ADMIN_SYSTEM).await?;
+    Ok(render(
+        StatusCode::OK,
+        &UpgradeCard {
+            upgrade: crate::upgrader::view(&state).await?,
+        },
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpgradeForm {
+    tag: String,
+}
+
+/// `POST /admin/system/upgrade`: asks the updater for the version offered.
+pub async fn upgrade(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<UpgradeForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
+    match crate::upgrader::upgrade(&state, session.account, &form.tag).await {
+        Ok(()) => Ok(super::stay::back(
+            "/admin/system",
+            "Upgrade started: Tether restarts in a minute or two.",
+        )),
+        Err(err) => system_page(&state, shell, Some(err)).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollbackForm {
+    #[serde(default)]
+    confirmation: String,
+}
+
+/// `POST /admin/system/rollback`: back to the version before the last
+/// upgrade, typed to confirm.
+pub async fn rollback(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Form(form): Form<RollbackForm>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "system").await?;
+    match crate::upgrader::rollback(&state, session.account, &form.confirmation).await {
+        Ok(()) => Ok(super::stay::back(
+            "/admin/system",
+            "Rollback started: Tether restarts in a minute or two.",
+        )),
         Err(err) => system_page(&state, shell, Some(err)).await,
     }
 }

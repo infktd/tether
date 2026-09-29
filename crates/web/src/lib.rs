@@ -275,6 +275,11 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/system", get(pages::system::system))
         .route("/admin/system/summary", get(pages::system::summary))
         .route("/admin/system/updates", post(pages::system::set_updates))
+        .route(
+            "/admin/system/upgrade",
+            get(pages::system::upgrade_card).post(pages::system::upgrade),
+        )
+        .route("/admin/system/rollback", post(pages::system::rollback))
         .route("/admin/system/theme", post(pages::system::set_theme))
         .route(
             "/admin/system/site-name",
@@ -758,6 +763,7 @@ mod tests {
             plugins,
             notices: crate::notifications::Notices::idle(),
             strip: Default::default(),
+            updater: std::sync::Arc::default(),
         }
     }
 

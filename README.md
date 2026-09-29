@@ -51,7 +51,7 @@ You need a server with Docker (with the compose plugin) and a domain pointing at
 ref=main   # main until the first release; then the release tag, such as v1.2.0
 mkdir -p tether/deploy && cd tether/deploy &&
 curl -fsSL --fail-early -O \
-  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,.env.example}" &&
+  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,updater.sh,.env.example}" &&
 chmod +x install.sh && cd .. && deploy/install.sh alliance.example.com
 ```
 

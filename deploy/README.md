@@ -14,7 +14,7 @@ server.
 ref=main   # main until the first release; then the release tag, such as v1.2.0
 mkdir -p tether/deploy && cd tether/deploy &&
 curl -fsSL --fail-early -O \
-  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,.env.example}" &&
+  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,updater.sh,.env.example}" &&
 chmod +x install.sh && cd .. && deploy/install.sh alliance.example.com
 ```
 
@@ -61,6 +61,19 @@ following edge. Re-running install.sh never changes the pin: only
 
 ## Upgrading
 
+From the console: Administration, System, Upgrade. Tether's updater (the
+`updater` container, which install.sh adds) pulls the new version and
+restarts the app, and the same card rolls back one step, restoring the
+snapshot the upgrade took. It needs a recent EVE login, like other
+sensitive actions. On `edge` it offers the newest build of main; on a
+release, the newest release once the daily check has seen it. The updater
+holds the Docker socket, so the app never does: it has no network or
+ports, and it only acts on a published tag of your image or one step back.
+An install from before it gets it by running `deploy/install.sh` again
+(with `updater.sh` among the deploy files).
+
+Or on the server:
+
 ```bash
 deploy/install.sh --version 1.3.0
 ```
@@ -79,7 +92,7 @@ files, so redo any edits you made to them, but it never touches `.env`:
 ```bash
 ref=v1.3.0
 (cd deploy && curl -fsSL --fail-early -O \
-  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,.env.example}" &&
+  "https://raw.githubusercontent.com/infktd/tether/$ref/deploy/{docker-compose.yml,docker-compose.host-proxy.yml,docker-compose.traefik.yml,Caddyfile,install.sh,updater.sh,.env.example}" &&
   chmod +x install.sh)
 ```
 
@@ -90,7 +103,8 @@ database with new secrets.)
 
 ## Rolling back
 
-Go back to the previous tag, and restore the snapshot the upgrade took:
+The console's Roll back does all of this. On the server: go back to the
+previous tag, and restore the snapshot the upgrade took:
 
 ```bash
 cd deploy

@@ -251,6 +251,9 @@ pub struct Harness {
     pub discord: Arc<Discord>,
     pub key: EncryptionKey,
     pub plugins: Arc<tether_web::plugins::Plugins>,
+    /// The updater's folders, in a temp dir of this harness's own (the
+    /// image follows edge).
+    pub updater: Arc<tether_web::upgrader::Updater>,
 }
 
 /// Serves `tests/fixtures/esi/characters_affiliation.json`, filtered to the
@@ -457,7 +460,21 @@ async fn harness_parts(
             bundled,
         },
     );
+    let updater_dir = std::env::temp_dir().join(format!(
+        "tether-updater-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    std::fs::create_dir_all(updater_dir.join("requests")).unwrap();
+    std::fs::create_dir_all(updater_dir.join("status")).unwrap();
+    let updater = Arc::new(tether_web::upgrader::Updater {
+        requests: updater_dir.join("requests"),
+        status: updater_dir.join("status"),
+        image: Some("ghcr.io/acme/tether:edge".to_owned()),
+        revision: None,
+    });
     let app = router(AppState {
+        updater: updater.clone(),
         key: test_key(),
         discord: discord.clone(),
         db: db.clone(),
@@ -482,6 +499,7 @@ async fn harness_parts(
         discord,
         key: test_key(),
         plugins,
+        updater,
     }
 }
 

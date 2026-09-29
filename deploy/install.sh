@@ -422,6 +422,28 @@ if [ "$image" != "$current_image" ]; then
     echo "App image: $image (in deploy/.env)"
 fi
 [ -z "$image_note" ] || echo "$image_note"
+
+# Upgrades from the console: the updater (docker-compose.yml) mounts this
+# directory at the same path, so it needs to know it. Published images
+# only; a build from the clone upgrades here.
+if [ "$build" = no ] && [ ! -f updater.sh ]; then
+    echo "No deploy/updater.sh here: fetch it with the other deploy files (deploy/README.md) for upgrades from the console."
+    unset_var COMPOSE_PROFILES
+elif [ "$build" = no ]; then
+    deploy_dir=$(pwd -P)
+    case $deploy_dir in
+        *[!A-Za-z0-9._/-]*)
+            echo "Upgrades from the console need this directory's path to be plain letters, digits, '.', '_', '-' and '/', not '$deploy_dir': upgrade here with --version X.Y.Z instead."
+            unset_var COMPOSE_PROFILES
+            ;;
+        *)
+            [ "$(get_var TETHER_DEPLOY_DIR)" = "$deploy_dir" ] || set_var TETHER_DEPLOY_DIR "$deploy_dir"
+            [ "$(get_var COMPOSE_PROFILES)" = updater ] || set_var COMPOSE_PROFILES updater
+            ;;
+    esac
+else
+    unset_var COMPOSE_PROFILES
+fi
 case $image in
     *:edge) [ "$start" = no ] || echo "Following edge: every run pulls the newest main. Pin a release with --version X.Y.Z." ;;
 esac
@@ -662,6 +684,11 @@ if [ "$start" = yes ]; then
         # Caddy from an earlier choice would still hold ports 80 and 443.
         docker compose --profile caddy rm -sf caddy >/dev/null 2>&1 || true
     fi
+    # An updater switched off (a build from the clone, no updater.sh, an
+    # odd path) mustn't keep running with the Docker socket.
+    if [ "$(get_var COMPOSE_PROFILES)" != updater ]; then
+        docker compose --profile updater rm -sf updater >/dev/null 2>&1 || true
+    fi
     if [ "$build" = yes ]; then
         docker compose up -d --build
     else
@@ -732,5 +759,9 @@ echo "  https://$domain/"
 echo "Setup token: $token"
 if [ "$build" = no ]; then
     echo
-    echo "Upgrade later with: deploy/install.sh --version X.Y.Z (deploy/README.md)"
+    if [ "$(get_var COMPOSE_PROFILES)" = updater ]; then
+        echo "Upgrade later from the console (Administration, System), or here with deploy/install.sh --version X.Y.Z (deploy/README.md)"
+    else
+        echo "Upgrade later with: deploy/install.sh --version X.Y.Z (deploy/README.md)"
+    fi
 fi

@@ -967,6 +967,27 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/system/upgrade
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/system/upgrade
+Origin: {{base}}
+[Form]
+tag: edge
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/system/rollback
+Origin: {{base}}
+[Form]
+confirmation: x
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/system/schedules/affiliation.sync/run
 Origin: {{base}}
 HTTP 303
