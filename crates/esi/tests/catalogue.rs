@@ -227,6 +227,8 @@ async fn ids_are_positive_numbers() {
         ("character-planet", "planet_id"),
         ("character-calendar-event", "event_id"),
         ("universe-structure", "structure_id"),
+        ("corporation-contract-items", "contract_id"),
+        ("source-structure", "structure_id"),
     ] {
         for bad in ["0", "-5", "x", ""] {
             let err = get(&esi, name, &[(param, bad)], None).await.unwrap_err();

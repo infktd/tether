@@ -514,6 +514,8 @@ let names = esi::names(&[40161234, 30000142])?;
 | `sovereignty-systems` | none (public) | any | no | |
 | `sovereignty-campaigns` | none (public) | any | no | |
 | `corporation-contracts` | `esi-contracts.read_corporation_contracts.v1` | data source | yes | |
+| `corporation-contract-items` | `esi-contracts.read_corporation_contracts.v1` | data source | no | `contract_id` |
+| `source-structure` | `esi-universe.read_structures.v1` | data source | no | `structure_id` (a structure's name, system and type, as the data source sees it) |
 | `corporation-contacts` | `esi-corporations.read_contacts.v1` | data source | yes | |
 | `corporation-contact-labels` | `esi-corporations.read_contacts.v1` | data source | no | |
 | `alliance-contacts` | `esi-alliances.read_contacts.v1` | data source | yes | |

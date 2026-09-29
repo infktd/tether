@@ -134,6 +134,28 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
     Endpoint {
+        // One of the data source's corporation's contracts' items: what an
+        // item exchange hands over or asks for (Contracts; Jay,
+        // 2026-09-29).
+        name: "corporation-contract-items",
+        scope: "esi-contracts.read_corporation_contracts.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &["contract_id"],
+    },
+    Endpoint {
+        // An Upwell structure's name, system and type, by `structure_id`,
+        // as the data source sees it (ESI answers only for structures it
+        // may dock at): where a contract is, instead of a raw id. Not its
+        // owner or position. As `universe-structure`, with a data
+        // source's token.
+        name: "source-structure",
+        scope: "esi-universe.read_structures.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &["structure_id"],
+    },
+    Endpoint {
         // The data source's corporation's contacts and their standings
         // (aa-contacts; approved by Jay, 2026-09-27).
         name: "corporation-contacts",
@@ -1944,6 +1966,36 @@ impl Esi {
                     .corporation_id(corporation),
                 format!("/corporations/{corporation}/contracts")
             ),
+            // Ids are positive: anything else is a certain ESI error, which
+            // would spend the error budget Tether shares.
+            "corporation-contract-items" => get!(
+                client
+                    .get_corporations_corporation_id_contracts_contract_id_items()
+                    .corporation_id(corporation)
+                    .contract_id(positive_id(params, "contract_id")?.ok_or_else(|| {
+                        EsiError::InvalidInput("contract_id must be a number".to_owned())
+                    })?)
+            ),
+            "source-structure" => {
+                let structure_id = positive_id(params, "structure_id")?.ok_or_else(|| {
+                    EsiError::InvalidInput("structure_id must be a number".to_owned())
+                })?;
+                let request = client
+                    .get_universe_structures_structure_id()
+                    .structure_id(structure_id);
+                let structure = fetch(self, move || request.send()).await?.into_inner();
+                // Where it is and what it is: not whose, or where in space.
+                Ok(Response {
+                    body: serde_json::json!({
+                        "structure_id": structure_id,
+                        "name": structure.name,
+                        "solar_system_id": structure.solar_system_id,
+                        "type_id": structure.type_id,
+                    }),
+                    pages: 1,
+                    refetched: 0,
+                })
+            }
             "corporation-contacts" => loose_paged!(
                 client
                     .get_corporations_corporation_id_contacts()
