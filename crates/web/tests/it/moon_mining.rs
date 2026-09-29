@@ -48,6 +48,7 @@ async fn install(h: &Harness, owner: &str) {
     let first = plugin_file("migrations/0001_moon_mining.sql");
     let second = plugin_file("migrations/0002_surveys_and_prices.sql");
     let third = plugin_file("migrations/0003_tether_rules_optional.sql");
+    let fourth = plugin_file("migrations/0004_old_moons_shown.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -58,6 +59,7 @@ async fn install(h: &Harness, owner: &str) {
             "migrations/0003_tether_rules_optional.sql",
             third.as_bytes(),
         ),
+        ("migrations/0004_old_moons_shown.sql", fourth.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -420,7 +422,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
             &format!("/plugins/{ID}/settings"),
             &format!(
                 "_form=settings&fresh_hours=4&ping_channel={DISCORD_PING_CHANNEL}&pings=on\
-                 &volume_per_day=960400&days_per_month=30.4&stale_hours=12"
+                 &volume_per_day=960400&days_per_month=30.4&stale_hours=12&old_moons_shown=5"
             ),
             &owner,
         ),
@@ -504,6 +506,21 @@ async fn moon_mining_end_to_end(db: PgPool) {
     assert!(seen.body.contains("Old moons"));
     let fresh = page(&h, &format!("/plugins/{ID}"), &owner).await;
     assert!(fresh.body.contains("Fresh moons"), "{}", fresh.body);
+    // Old moons beside the fresh ones, not a tab of their own.
+    let row = fresh
+        .body
+        .split(r#"class="section-row""#)
+        .nth(1)
+        .expect("fresh and old moons side by side");
+    let fresh_at = row.find("Fresh moons").unwrap();
+    let old_at = row.find("Old moons").unwrap();
+    assert!(fresh_at < old_at, "{row}");
+    let tabs = fresh.body.split(r#"aria-label="Tabs""#).nth(1).unwrap();
+    let tabs = &tabs[..tabs.find("</nav>").unwrap()];
+    assert!(
+        tabs.contains(">Past<") && !tabs.contains("Old moons"),
+        "{tabs}"
+    );
     assert!(!seen.body.contains("Jita IV - Moon 4"), "{}", seen.body);
     assert!(!seen.body.contains("Fresh moons"));
     // Blue have the old moons and Moons (as aa-moonmining's navbar), no
@@ -528,7 +545,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
         form(
             &format!("/plugins/{ID}/settings"),
             "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
-             &days_per_month=30.4&stale_hours=12",
+             &days_per_month=30.4&stale_hours=12&old_moons_shown=5",
             &owner,
         ),
     )

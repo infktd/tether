@@ -261,21 +261,26 @@ pub struct TablesView {
 
 impl SectionView {
     /// Fits half a row, and with what: code blocks pair with code blocks
-    /// (EFT beside Buy All), tables of one or two columns with each other.
+    /// (EFT beside Buy All), tables of up to three columns with each other
+    /// (fresh moons beside old ones).
     fn narrow(&self) -> Option<&'static str> {
         match self {
             SectionView::Code(_) => Some("code"),
-            SectionView::Table(t) if t.columns.len() <= 2 => Some("table"),
+            SectionView::Table(t) if t.columns.len() <= NARROW_COLUMNS => Some("table"),
             _ => None,
         }
     }
 }
 
+/// A table this narrow fits half a row; a wider one lines up with the
+/// tables after it that share its columns.
+const NARROW_COLUMNS: usize = 3;
+
 /// Lays an app's sections out the way DESIGN.md's Plugins section says,
 /// without the app asking: titled tables that follow each other with the
-/// same columns (three or more) become one, their columns lined up; and
+/// same columns (four or more) become one, their columns lined up; and
 /// narrow sections of a kind that follow each other (code blocks, or
-/// tables of one or two columns) go side by side, two to a row where
+/// tables of up to three columns) go side by side, two to a row where
 /// there's room. The order never changes.
 pub fn arrange(views: Vec<SectionView>) -> Vec<SectionView> {
     let same = |a: &TableView, b: &[ColumnView]| {
@@ -291,7 +296,7 @@ pub fn arrange(views: Vec<SectionView>) -> Vec<SectionView> {
             (SectionView::Table(t), Some(SectionView::Table(last))) => {
                 t.title.is_some()
                     && last.title.is_some()
-                    && t.columns.len() >= 3
+                    && t.columns.len() > NARROW_COLUMNS
                     && same(t, &last.columns)
             }
             (SectionView::Table(t), Some(SectionView::Tables(set))) => {
@@ -1871,6 +1876,9 @@ mod tests {
             SectionView::Text("note".to_owned()),
             table("Pilots", &["Pilot", "Can fly", "Missing"]),
             table("Other", &["A", "B", "C", "D"]),
+            // Three columns alike: side by side, not one table.
+            table("Fresh moons", &["Moon", "Structure", "Popped"]),
+            table("Old moons", &["Moon", "Structure", "Popped"]),
         ]);
         assert_eq!(
             shape(&arranged),
@@ -1881,6 +1889,7 @@ mod tests {
                 "X",
                 "T:Pilots",
                 "T:Other",
+                "R(T:Fresh moons,T:Old moons)",
             ]
         );
         // Code and tables don't pair with each other; one alone stays wide.

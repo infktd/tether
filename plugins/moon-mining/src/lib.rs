@@ -212,11 +212,14 @@ struct Settings {
     rates: value::Rates,
     /// aa-moonmining's hours until a completed extraction is stale (Past).
     stale: Duration,
+    /// Old moons listed beside the fresh ones on Extractions.
+    old_shown: usize,
 }
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
-        "SELECT fresh_hours, ping_channel, pings, volume_per_day, days_per_month, stale_hours \
+        "SELECT fresh_hours, ping_channel, pings, volume_per_day, days_per_month, stale_hours, \
+                old_moons_shown \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -230,6 +233,7 @@ fn settings() -> Result<Settings, storage::Error> {
                 .unwrap_or(defaults.days_per_month),
         },
         stale: Duration::hours(row.map_or(12, |r| int(r, 5))),
+        old_shown: row.map_or(5, |r| usize::try_from(int(r, 6)).unwrap_or(5)),
         fresh: Duration::hours(row.map_or(0, |r| int(r, 0))),
         channel: row
             .and_then(|r| r.get(1))
@@ -1234,21 +1238,21 @@ fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
     )
 }
 
-/// The pops tables: moon, place and when it popped.
-fn popped_table(title: &str, empty: &str, pops: &[Pop]) -> Table {
+/// The pops tables, newest first, at most `limit`: moon (its name says
+/// the system), structure and when it popped. Three columns, so Tether
+/// draws fresh and old moons side by side.
+fn popped_table(title: &str, empty: &str, pops: &[Pop], limit: usize) -> Table {
     with_rows(
         Table::new(vec![
             Column::text("Moon"),
-            Column::text("System"),
             Column::text("Structure"),
             Column::numeric("Popped"),
         ])
         .title(title)
         .empty(empty),
-        pops.iter().rev().map(|p| {
+        pops.iter().rev().take(limit).map(|p| {
             vec![
                 p.moon.clone().into(),
-                p.system.clone().into(),
                 refinery(&p.structure, p.structure_type),
                 time(rfc3339(p.decay)),
             ]
@@ -1265,14 +1269,15 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let window = settings.window();
     let old = pops(now - OLD_FOR, now - settings.fresh)?;
-    let old_table = popped_table("Old moons", "No moons popped in the last two days.", &old);
+    let no_old = "No moons popped in the last two days.";
     if !viewer.can("extractions_access") {
         if !window {
             return moons::moons_page(viewer, &moons::Filter::default());
         }
+        // Blue's whole page: every old moon.
         return Ok(Page::new("Moon Mining")
             .description("Moons popped a while ago, still worth a visit")
-            .table(old_table));
+            .table(popped_table("Old moons", no_old, &old, usize::MAX)));
     }
     let fresh = pops(now - settings.fresh, now)?;
     let upcoming = pops(now, now + Duration::days(60))?;
@@ -1283,6 +1288,7 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
         "Fresh moons",
         "Nothing popped in the Members-only window.",
         &fresh,
+        usize::MAX,
     );
     let upcoming_table = with_rows(
         Table::new(vec![
@@ -1374,11 +1380,14 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
             .tab("Extractions", vec![Section::Table(upcoming_table)])
             .tab("Past", vec![Section::Table(past_table)]));
     }
+    // Fresh and old moons side by side, the newest old ones only.
+    let mut page = page.table(fresh_table);
+    if settings.old_shown > 0 {
+        page = page.table(popped_table("Old moons", no_old, &old, settings.old_shown));
+    }
     Ok(page
-        .table(fresh_table)
         .tab("Extractions", vec![Section::Table(upcoming_table)])
-        .tab("Past", vec![Section::Table(past_table)])
-        .tab("Old moons", vec![Section::Table(old_table)]))
+        .tab("Past", vec![Section::Table(past_table)]))
 }
 
 fn totals_page() -> Result<Page, PageError> {
@@ -1795,6 +1804,13 @@ fn settings_page() -> Result<Page, PageError> {
                     .value(settings.stale.num_hours().to_string())
                     .help("aa-moonmining's MOONMINING_COMPLETED_EXTRACTIONS_HOURS_UNTIL_STALE: 12")
                     .required(),
+            )
+            .field(
+                Field::number("old_moons_shown", "Old moons shown beside fresh ones")
+                    .range(Some(0.0), Some(50.0), true)
+                    .value(settings.old_shown.to_string())
+                    .help("Not in aa-moonmining: the newest moons popped in the last two days, on Extractions while the Members-only window is on. 0 hides them")
+                    .required(),
             ),
     ))
 }
@@ -1819,9 +1835,13 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         .value("stale_hours")
         .parse()
         .map_err(|_| PageError::Failed("stale_hours wasn't a number".into()))?;
+    let old_shown: i64 = submission
+        .value("old_moons_shown")
+        .parse()
+        .map_err(|_| PageError::Failed("old_moons_shown wasn't a number".into()))?;
     storage::execute(
         "UPDATE settings SET fresh_hours = $1, ping_channel = $2, pings = $3, volume_per_day = $4, \
-         days_per_month = $5, stale_hours = $6 WHERE id = 1",
+         days_per_month = $5, stale_hours = $6, old_moons_shown = $7 WHERE id = 1",
         &[
             hours.into(),
             (!channel.is_empty()).then(|| channel.to_owned()).into(),
@@ -1829,13 +1849,14 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             per_day.into(),
             days.into(),
             stale.into(),
+            old_shown.into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
     // Admins see who changed what in the plugin's log.
     log::info(format!(
         "settings changed by {} ({}): members-only {hours}h, channel {channel:?}, pings {}, \
-         {per_day} m³ a day, {days} days a month, past after {stale}h",
+         {per_day} m³ a day, {days} days a month, past after {stale}h, {old_shown} old moons shown",
         viewer.main.name,
         viewer.main.id,
         submission.checked("pings")
