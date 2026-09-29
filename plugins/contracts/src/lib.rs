@@ -13,7 +13,8 @@
 //! - **Contracts** (`view_contracts`): the latest, with their check.
 //!
 //! A corporation's first read takes what's there as the backlog: nothing
-//! from before is announced as new.
+//! that happened before it is announced (a backlog contract completing or
+//! expiring later is).
 
 mod card;
 mod janice;
@@ -394,17 +395,18 @@ fn read_items(sources: &[(i64, i64)]) -> Result<(), JobError> {
     Ok(())
 }
 
-/// Names for new contracts' stations (public) and structures (as the
-/// owner sees them; one it can't dock at stays a number).
+/// Names for every listed contract's stations (public) and structures (as
+/// the owner sees them; one it can't dock at, or whose owner is gone,
+/// stays a number), the newest contracts' first.
 fn read_locations(sources: &[(i64, i64)]) -> Result<(), JobError> {
     let due = storage::query(
-        "SELECT DISTINCT ON (l.id) l.id, c.corporation_id FROM contracts c \
+        "SELECT l.id, (array_agg(c.corporation_id ORDER BY c.date_issued DESC))[1] \
+         FROM contracts c \
          CROSS JOIN LATERAL (VALUES (c.start_location), (c.end_location)) l(id) \
-         WHERE l.id IS NOT NULL AND NOT c.backlog \
-           AND c.date_issued > now() - make_interval(hours => $2::int) \
+         WHERE l.id IS NOT NULL \
            AND NOT EXISTS (SELECT 1 FROM locations x WHERE x.id = l.id) \
-         ORDER BY l.id LIMIT $1",
-        &[LOCATIONS_PER_RUN.into(), STALE_HOURS.into()],
+         GROUP BY l.id ORDER BY max(c.date_issued) DESC LIMIT $1",
+        &[LOCATIONS_PER_RUN.into()],
     )
     .map_err(|e| retry("finding locations", e))?;
     for row in &due.rows {
@@ -620,7 +622,8 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             Event::Completed,
             format!(
                 "c.status IN {FINISHED} \
-                 AND coalesce(c.date_completed, c.updated_at) > now() - interval '{STALE_HOURS} hours'"
+                 AND coalesce(c.date_completed, c.updated_at) > now() - interval '{STALE_HOURS} hours' \
+                 AND (NOT c.backlog OR c.updated_at > c.first_seen)"
             ),
         ));
     }
@@ -631,7 +634,8 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
                 "((c.status IN {ENDED} AND c.updated_at > now() - interval '{STALE_HOURS} hours' \
                    AND c.updated_at > c.first_seen) \
                   OR (c.status = 'outstanding' AND c.date_expired < now() \
-                      AND c.date_expired > now() - interval '{STALE_HOURS} hours'))"
+                      AND c.date_expired > now() - interval '{STALE_HOURS} hours' \
+                      AND c.date_expired > c.first_seen))"
             ),
         ));
     }

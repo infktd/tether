@@ -22,6 +22,7 @@ const PILOT_A: i64 = 443630591;
 const CORP: i64 = 1164409536;
 const OTHER_CORP: i64 = 98000001;
 const JITA: i64 = 60003760;
+const AMARR: i64 = 60008494;
 const TOWER: i64 = 1_022_734_985_679;
 const BITUMENS: i64 = 62516;
 const ZEOLITES: i64 = 62517;
@@ -167,23 +168,28 @@ async fn mount(h: &Harness) {
         })))
         .mount(&h.esi_server)
         .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/universe/stations/{JITA}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "station_id": JITA,
-            "name": "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
-            "system_id": 30000142,
-            "type_id": 1531,
-            "owner": 1000035,
-            "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
-            "max_dockable_ship_volume": 50000000.0,
-            "office_rental_cost": 10000.0,
-            "reprocessing_efficiency": 0.5,
-            "reprocessing_stations_take": 0.05,
-            "services": ["courier-missions"],
-        })))
-        .mount(&h.esi_server)
-        .await;
+    for (id, name) in [
+        (JITA, "Jita IV - Moon 4 - Caldari Navy Assembly Plant"),
+        (AMARR, "Amarr VIII (Oris) - Emperor Family Academy"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/universe/stations/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "station_id": id,
+                "name": name,
+                "system_id": 30000142,
+                "type_id": 1531,
+                "owner": 1000035,
+                "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+                "max_dockable_ship_volume": 50000000.0,
+                "office_rental_cost": 10000.0,
+                "reprocessing_efficiency": 0.5,
+                "reprocessing_stations_take": 0.05,
+                "services": ["courier-missions"],
+            })))
+            .mount(&h.esi_server)
+            .await;
+    }
     Mock::given(method("POST"))
         .and(path("/universe/names"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -308,13 +314,26 @@ async fn contracts_end_to_end(db: PgPool) {
     // The first read is the backlog: nothing announced.
     contracts_answer(
         &h,
-        serde_json::json!([contract(200, CORP, JITA, "outstanding", 5_000_000.0, "")]),
+        serde_json::json!([
+            contract(200, CORP, JITA, "outstanding", 5_000_000.0, ""),
+            contract(199, CORP, AMARR, "finished", 0.0, ""),
+        ]),
         Some(1),
     )
     .await;
     let owner = add_owner(&h, &owner).await;
     sync(&h).await;
     assert!(cards(&h).await.is_empty());
+    // Listed with its place's name, backlog or not.
+    let listed = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        listed
+            .body
+            .contains("Amarr VIII (Oris) - Emperor Family Academy"),
+        "{}",
+        listed.body
+    );
+    assert!(!listed.body.contains("Location 6000"), "{}", listed.body);
 
     // Then: the backlog's one completed, three new, one not the
     // corporation's.
