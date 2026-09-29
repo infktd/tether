@@ -151,3 +151,30 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# Wasmtime's compiler, optimized even in dev and test builds: unoptimized,
+# Cranelift takes seconds to compile each app, in every test process.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-control]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3
+[profile.dev.package.wasmparser]
+opt-level = 3
+[profile.dev.package.wasmtime]
+opt-level = 3
+[profile.dev.package.cranelift-assembler-x64]
+opt-level = 3
+[profile.dev.package.cranelift-bitset]
+opt-level = 3

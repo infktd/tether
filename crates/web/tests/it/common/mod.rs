@@ -716,28 +716,71 @@ pub async fn log_in_owner(h: &Harness, character: &str) -> String {
 /// Builds a wasm32-wasip2 workspace crate into its own target directory
 /// (so it doesn't wait on the lock of the build running the tests) and
 /// returns the component.
+/// Every guest the tests build: the apps and the test guests.
+const GUESTS: &[&str] = &[
+    "hello-plugin",
+    "bulletin-board",
+    "contacts",
+    "contracts",
+    "esi-status",
+    "fittings",
+    "fleet-activity-tracking",
+    "fleet-operations",
+    "freight",
+    "hr-applications",
+    "member-audit",
+    "moon-mining",
+    "ship-replacement",
+    "sov-timer",
+    "structure-timers",
+    "structures",
+    "timezones",
+    "tether-plugins-test-guest",
+    "tether-plugins-test-guest-hoard",
+    "tether-plugins-test-guest-net",
+    "tether-plugins-test-guest-pages",
+    "tether-plugins-test-guest-storage",
+];
+
+/// A guest's component, built for wasm32-wasip2 in release. Under nextest
+/// (a process per test) the first test to ask builds every guest in one
+/// `cargo build` and marks the run (`NEXTEST_RUN_ID`), so the rest only
+/// read their file instead of each waiting on cargo in turn.
 pub fn build_guest(package: &str) -> Vec<u8> {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let target = root.join("target/test-guests");
     let _lock = guests_lock(&root);
-    let output = std::process::Command::new(env!("CARGO"))
-        .current_dir(&root)
-        .args([
-            "build",
-            "-p",
-            package,
-            "--target",
-            "wasm32-wasip2",
-            "--release",
-        ])
-        .env("CARGO_TARGET_DIR", &target)
-        .output()
-        .expect("running cargo");
-    assert!(
-        output.status.success(),
-        "building {package}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stamp = std::env::var("NEXTEST_RUN_ID")
+        .ok()
+        .filter(|_| GUESTS.contains(&package))
+        .map(|run| target.join(format!("built-{run}")));
+    if !stamp.as_ref().is_some_and(|s| s.exists()) {
+        let packages: &[&str] = if stamp.is_some() { GUESTS } else { &[package] };
+        let mut args = vec!["build", "--target", "wasm32-wasip2", "--release"];
+        for p in packages {
+            args.extend(["-p", p]);
+        }
+        let output = std::process::Command::new(env!("CARGO"))
+            .current_dir(&root)
+            .args(&args)
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .expect("running cargo");
+        assert!(
+            output.status.success(),
+            "building {package}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(stamp) = &stamp {
+            // Earlier runs' marks go.
+            for old in std::fs::read_dir(&target).into_iter().flatten().flatten() {
+                if old.file_name().to_string_lossy().starts_with("built-") {
+                    let _ = std::fs::remove_file(old.path());
+                }
+            }
+            std::fs::write(stamp, "").unwrap();
+        }
+    }
     let file = format!("wasm32-wasip2/release/{}.wasm", package.replace('-', "_"));
     std::fs::read(target.join(file)).unwrap()
 }
