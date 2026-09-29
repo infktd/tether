@@ -587,6 +587,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "contracts"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tether-plugin-sdk",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,54 @@
+# Contracts, a first-party Tether plugin (Jay, 2026-09-29): what Bastion's
+# contract_assigned and contract_delivered notices did. `scripts/package-plugin.sh`
+# builds, zips and signs it, putting the publisher's key in below.
+[plugin]
+id = "tether.contracts"
+name = "Contracts"
+version = "0.1.0"
+host_api = "1"
+description = "Every contract assigned to your corporation, posted to Discord as it comes in, completes or ends, its price checked against the Janice appraisal linked in its description."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+discord = ["send_message"]
+# Approved by Jay (2026-09-29): the appraisal a contract's description
+# links, read once, with the admin's Janice API key.
+http = ["janice.e-351.com"]
+
+[capabilities.secrets.janice_api_key]
+host = "janice.e-351.com"
+header = "X-ApiKey"
+
+# The owners' corporations' contracts (the scope Freight uses), and the
+# names of the structures they're at.
+[capabilities.esi]
+data_source = [
+    "esi-contracts.read_corporation_contracts.v1",
+    "esi-universe.read_structures.v1",
+]
+
+# ESI caches corporation contracts for five minutes.
+[[capabilities.schedules]]
+name = "sync"
+every = "5m"
+
+[permissions]
+view_contracts = "See the contracts assigned to the corporations"
+add_contract_owner = "Add owners: characters whose corporation's contracts are watched"
+manage = "Change the Discord channel, what's posted, and how close a price must be"
+
+[[pages]]
+path = ""
+permission = "view_contracts"
+
+[[pages]]
+path = "settings"
+permission = "manage"
+
+[[navigation]]
+label = "Contracts"
+path = ""
+section = "industry"

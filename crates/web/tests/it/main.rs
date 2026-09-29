@@ -13,6 +13,7 @@ mod bulletin_board;
 mod bundled;
 mod compliance;
 mod contacts;
+mod contracts;
 mod dashboard;
 mod dev_login;
 mod discord;

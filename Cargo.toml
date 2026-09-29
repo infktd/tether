@@ -9,6 +9,7 @@ members = [
     "crates/plugins/test-guest-storage",
     "examples/hello-plugin",
     "plugins/moon-mining",
+    "plugins/contracts",
     "plugins/member-audit",
     "plugins/fleet-activity-tracking",
     "plugins/structure-timers",
