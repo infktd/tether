@@ -504,6 +504,8 @@ async fn moon_mining_end_to_end(db: PgPool) {
     let seen = page(&h, &format!("/plugins/{ID}"), &blue).await;
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(seen.body.contains("Old moons"));
+    // Which moons, never when: that would map out the pop schedule.
+    assert!(!seen.body.contains(">Popped<"), "{}", seen.body);
     let fresh = page(&h, &format!("/plugins/{ID}"), &owner).await;
     assert!(fresh.body.contains("Fresh moons"), "{}", fresh.body);
     // Old moons beside the fresh ones, not a tab of their own.

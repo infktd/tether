@@ -1239,23 +1239,24 @@ fn pops(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Pop>, PageError> {
 }
 
 /// The pops tables, newest first, at most `limit`: moon (its name says
-/// the system), structure and when it popped. Three columns, so Tether
-/// draws fresh and old moons side by side.
-fn popped_table(title: &str, empty: &str, pops: &[Pop], limit: usize) -> Table {
+/// the system), structure and, with `times`, when it popped. Three
+/// columns, so Tether draws fresh and old moons side by side.
+fn popped_table(title: &str, empty: &str, pops: &[Pop], limit: usize, times: bool) -> Table {
+    let mut columns = vec![Column::text("Moon"), Column::text("Structure")];
+    if times {
+        columns.push(Column::numeric("Popped"));
+    }
     with_rows(
-        Table::new(vec![
-            Column::text("Moon"),
-            Column::text("Structure"),
-            Column::numeric("Popped"),
-        ])
-        .title(title)
-        .empty(empty),
+        Table::new(columns).title(title).empty(empty),
         pops.iter().rev().take(limit).map(|p| {
-            vec![
+            let mut row = vec![
                 p.moon.clone().into(),
                 refinery(&p.structure, p.structure_type),
-                time(rfc3339(p.decay)),
-            ]
+            ];
+            if times {
+                row.push(time(rfc3339(p.decay)));
+            }
+            row
         }),
     )
 }
@@ -1274,10 +1275,18 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
         if !window {
             return moons::moons_page(viewer, &moons::Filter::default());
         }
-        // Blue's whole page: every old moon.
+        // Blue's whole page: which moons are open to them, as many as
+        // Members' list shows, and never when they popped (that would map
+        // out the pop schedule).
         return Ok(Page::new("Moon Mining")
             .description("Moons popped a while ago, still worth a visit")
-            .table(popped_table("Old moons", no_old, &old, usize::MAX)));
+            .table(popped_table(
+                "Old moons",
+                no_old,
+                &old,
+                settings.old_shown,
+                false,
+            )));
     }
     let fresh = pops(now - settings.fresh, now)?;
     let upcoming = pops(now, now + Duration::days(60))?;
@@ -1289,6 +1298,7 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
         "Nothing popped in the Members-only window.",
         &fresh,
         usize::MAX,
+        true,
     );
     let upcoming_table = with_rows(
         Table::new(vec![
@@ -1383,7 +1393,13 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
     // Fresh and old moons side by side, the newest old ones only.
     let mut page = page.table(fresh_table);
     if settings.old_shown > 0 {
-        page = page.table(popped_table("Old moons", no_old, &old, settings.old_shown));
+        page = page.table(popped_table(
+            "Old moons",
+            no_old,
+            &old,
+            settings.old_shown,
+            true,
+        ));
     }
     Ok(page
         .tab("Extractions", vec![Section::Table(upcoming_table)])
@@ -1809,7 +1825,7 @@ fn settings_page() -> Result<Page, PageError> {
                 Field::number("old_moons_shown", "Old moons shown beside fresh ones")
                     .range(Some(0.0), Some(50.0), true)
                     .value(settings.old_shown.to_string())
-                    .help("Not in aa-moonmining: the newest moons popped in the last two days, on Extractions while the Members-only window is on. 0 hides them")
+                    .help("Not in aa-moonmining: the newest moons popped in the last two days, beside the fresh ones on Extractions and on Blue's old-moon list (without when they popped), while the Members-only window is on. 0 shows none")
                     .required(),
             ),
     ))
