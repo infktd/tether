@@ -720,6 +720,13 @@ async fn rollback_refuses_while_tether_runs(db: PgPool) {
         .await
         .unwrap();
     assert!(tether_snapshots::rollback_running(&db).await.unwrap());
+    // Released before closing: a closed connection's backend (and its
+    // locks) ends a moment later, too late for the check straight after.
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(0x7465_7468_6572_7262_i64)
+        .execute(&mut restoring)
+        .await
+        .unwrap();
     restoring.close().await.unwrap();
     assert!(!tether_snapshots::rollback_running(&db).await.unwrap());
     std::fs::remove_dir_all(dir).unwrap();
