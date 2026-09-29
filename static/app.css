@@ -7836,6 +7836,30 @@
       }
     }
   }
+  .section-row {
+    display: grid;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (min-width: 1024px) {
+    .section-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .table-set .table-group > th {
+    padding-top: 20px;
+    padding-bottom: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--foreground-soft);
+    background: transparent;
+  }
+  .table-set tbody + tbody .table-group > th {
+    border-top: 1px solid var(--border);
+  }
   .grants-cell {
     min-width: 240px;
   }

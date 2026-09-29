@@ -357,6 +357,22 @@ async fn fittings_end_to_end(db: PgPool) {
     ] {
         assert!(fit.body.contains(text), "{text}: {}", fit.body);
     }
+    // Laid out by Tether: the slots, drones and cargo as one table with
+    // their columns lined up; EFT beside Buy All, Doctrines beside
+    // Required skills.
+    assert_eq!(fit.body.matches("table-set").count(), 1, "{}", fit.body);
+    assert_eq!(
+        fit.body.matches(r#"<tr class="table-group">"#).count(),
+        6,
+        "{}",
+        fit.body
+    );
+    assert_eq!(
+        fit.body.matches(r#"class="section-row""#).count(),
+        2,
+        "{}",
+        fit.body
+    );
     // Cargo needs no skills; the drones do.
     assert!(fit.body.contains(">Drones<"), "{}", fit.body);
     assert!(!fit.body.contains("Skill 3"), "{}", fit.body);

@@ -241,6 +241,114 @@ pub enum SectionView {
     Code(CodeView),
     Cards(CardsView),
     Timeline(super::plugin_visuals::TimelineView),
+    /// Tables in a row with the same columns, drawn as one (see
+    /// [`arrange`]).
+    Tables(TablesView),
+    /// Narrow sections side by side (see [`arrange`]).
+    Row(Vec<SectionView>),
+}
+
+/// Tables that followed each other with the same columns: one table, each
+/// one's title a heading row, so their columns line up. Every group's rows
+/// have exactly `columns.len()` cells: `page::check` refuses any other row
+/// before a page is drawn, and [`arrange`] only joins tables with as many
+/// columns (the template indexes `columns` by cell). The groups' own
+/// `columns` are left empty: read these.
+pub struct TablesView {
+    pub columns: Vec<ColumnView>,
+    pub groups: Vec<TableView>,
+}
+
+impl SectionView {
+    /// Fits half a row, and with what: code blocks pair with code blocks
+    /// (EFT beside Buy All), tables of one or two columns with each other.
+    fn narrow(&self) -> Option<&'static str> {
+        match self {
+            SectionView::Code(_) => Some("code"),
+            SectionView::Table(t) if t.columns.len() <= 2 => Some("table"),
+            _ => None,
+        }
+    }
+}
+
+/// Lays an app's sections out the way DESIGN.md's Plugins section says,
+/// without the app asking: titled tables that follow each other with the
+/// same columns (three or more) become one, their columns lined up; and
+/// narrow sections of a kind that follow each other (code blocks, or
+/// tables of one or two columns) go side by side, two to a row where
+/// there's room. The order never changes.
+pub fn arrange(views: Vec<SectionView>) -> Vec<SectionView> {
+    let same = |a: &TableView, b: &[ColumnView]| {
+        a.columns.len() == b.len()
+            && a.columns
+                .iter()
+                .zip(b)
+                .all(|(x, y)| x.label == y.label && x.numeric == y.numeric)
+    };
+    let mut merged: Vec<SectionView> = Vec::new();
+    for view in views {
+        let joins = match (&view, merged.last()) {
+            (SectionView::Table(t), Some(SectionView::Table(last))) => {
+                t.title.is_some()
+                    && last.title.is_some()
+                    && t.columns.len() >= 3
+                    && same(t, &last.columns)
+            }
+            (SectionView::Table(t), Some(SectionView::Tables(set))) => {
+                t.title.is_some() && same(t, &set.columns)
+            }
+            _ => false,
+        };
+        if !joins {
+            merged.push(view);
+            continue;
+        }
+        let SectionView::Table(mut table) = view else {
+            continue;
+        };
+        match merged.pop() {
+            Some(SectionView::Table(mut first)) => {
+                let columns = std::mem::take(&mut first.columns);
+                table.columns.clear();
+                merged.push(SectionView::Tables(TablesView {
+                    columns,
+                    groups: vec![first, table],
+                }));
+            }
+            Some(SectionView::Tables(mut set)) => {
+                table.columns.clear();
+                set.groups.push(table);
+                merged.push(SectionView::Tables(set));
+            }
+            // `joins` holds only after a table or a set of them.
+            Some(other) => merged.push(other),
+            None => {}
+        }
+    }
+    let mut out: Vec<SectionView> = Vec::new();
+    let mut run: Vec<SectionView> = Vec::new();
+    let flush = |run: &mut Vec<SectionView>, out: &mut Vec<SectionView>| match run.len() {
+        0 => {}
+        1 => out.append(run),
+        _ => out.push(SectionView::Row(std::mem::take(run))),
+    };
+    for view in merged {
+        match view.narrow() {
+            Some(kind) if run.first().and_then(SectionView::narrow) == Some(kind) => {
+                run.push(view);
+            }
+            Some(_) => {
+                flush(&mut run, &mut out);
+                run.push(view);
+            }
+            None => {
+                flush(&mut run, &mut out);
+                out.push(view);
+            }
+        }
+    }
+    flush(&mut run, &mut out);
+    out
 }
 
 pub struct CodeView {
@@ -1181,11 +1289,12 @@ fn draw(
     let ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
         .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
         .adding_owners(owner_back(&opened));
-    let sections: Vec<SectionView> = page.sections.iter().map(|s| section(&ctx, s)).collect();
+    let sections: Vec<SectionView> =
+        arrange(page.sections.iter().map(|s| section(&ctx, s)).collect());
     let tab_sections: Vec<SectionView> = page
         .tabs
         .get(tab)
-        .map(|chosen| chosen.sections.iter().map(|s| section(&ctx, s)).collect())
+        .map(|chosen| arrange(chosen.sections.iter().map(|s| section(&ctx, s)).collect()))
         .unwrap_or_default();
     let tabs = page
         .tabs
@@ -1342,7 +1451,9 @@ pub async fn widget(
                         .with_feet(&feet);
                         WidgetFragment {
                             title: widget.title,
-                            sections: page.sections.iter().map(|s| section(&ctx, s)).collect(),
+                            sections: arrange(
+                                page.sections.iter().map(|s| section(&ctx, s)).collect(),
+                            ),
                             href,
                             failed: false,
                         }
@@ -1700,6 +1811,86 @@ pub async fn download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn table(title: &str, columns: &[&str]) -> SectionView {
+        SectionView::Table(TableView {
+            title: Some(title.to_owned()),
+            columns: columns
+                .iter()
+                .map(|c| ColumnView {
+                    label: (*c).to_owned(),
+                    numeric: false,
+                })
+                .collect(),
+            rows: Vec::new(),
+            empty: None,
+        })
+    }
+
+    fn code(title: &str) -> SectionView {
+        SectionView::Code(CodeView {
+            title: Some(title.to_owned()),
+            text: String::new(),
+            copy_label: "Copy".to_owned(),
+        })
+    }
+
+    /// Each view's shape: `T:title`, `S[a,b]` for tables drawn as one,
+    /// `R(..)` for a row, `C:title` for code, `X` for text.
+    fn shape(views: &[SectionView]) -> Vec<String> {
+        views
+            .iter()
+            .map(|v| match v {
+                SectionView::Table(t) => format!("T:{}", t.title.clone().unwrap_or_default()),
+                SectionView::Tables(set) => format!(
+                    "S[{}]",
+                    set.groups
+                        .iter()
+                        .map(|g| g.title.clone().unwrap_or_default())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                SectionView::Row(members) => format!("R({})", shape(members).join(",")),
+                SectionView::Code(c) => format!("C:{}", c.title.clone().unwrap_or_default()),
+                _ => "X".to_owned(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tables_line_up_and_narrow_sections_pair_up() {
+        let slots = ["Item", "Charge", "Count", "State"];
+        let arranged = arrange(vec![
+            table("High", &slots),
+            table("Mid", &slots),
+            table("Drones", &slots),
+            code("EFT"),
+            code("Buy All"),
+            table("Doctrines", &["Doctrine", "About"]),
+            table("Skills", &["Skill", "Level"]),
+            SectionView::Text("note".to_owned()),
+            table("Pilots", &["Pilot", "Can fly", "Missing"]),
+            table("Other", &["A", "B", "C", "D"]),
+        ]);
+        assert_eq!(
+            shape(&arranged),
+            [
+                "S[High,Mid,Drones]",
+                "R(C:EFT,C:Buy All)",
+                "R(T:Doctrines,T:Skills)",
+                "X",
+                "T:Pilots",
+                "T:Other",
+            ]
+        );
+        // Code and tables don't pair with each other; one alone stays wide.
+        let arranged = arrange(vec![
+            table("Skills", &["Skill", "Level"]),
+            code("EFT"),
+            table("Untitled", &["Item", "Charge", "Count", "State"]),
+        ]);
+        assert_eq!(shape(&arranged), ["T:Skills", "C:EFT", "T:Untitled"]);
+    }
 
     #[test]
     fn isk_and_numbers_read_well() {

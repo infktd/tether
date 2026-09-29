@@ -314,6 +314,35 @@
     @apply rounded-sm px-1 text-muted-foreground hover:bg-accent hover:text-destructive;
   }
 
+  /* An app's narrow sections side by side (DESIGN.md, Plugins): two to
+     a row from 1024px, each as tall as it needs. */
+  .section-row {
+    display: grid;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (min-width: 1024px) {
+    .section-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  /* Tables drawn as one: each one's title a heading row, like a card's
+     header, above its rows. */
+  .table-set .table-group > th {
+    padding-top: 20px;
+    padding-bottom: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--foreground-soft);
+    background: transparent;
+  }
+  .table-set tbody + tbody .table-group > th {
+    border-top: 1px solid var(--border);
+  }
+
   /* Permissions: a row's picker (DESIGN.md, Administration). Edit opens
      a checklist of states and groups under the row's grants. */
   .grants-cell {

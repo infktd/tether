@@ -346,41 +346,33 @@ fn by_place(lines: &[Line]) -> BTreeMap<Place, Vec<Stack>> {
 }
 
 fn place_table(place: Place, stacks: &[Stack]) -> Table {
-    if place.fitted() {
-        let mut table = Table::new(vec![
-            Column::text("Module"),
-            Column::text("Charge"),
-            Column::numeric("Count"),
-            Column::text("State"),
-        ])
-        .title(place.title());
-        for s in stacks {
-            table = table.row(vec![
-                item_type(s.type_id, s.name.clone()).into(),
-                s.charge.as_ref().map_or_else(
-                    || "".into(),
-                    |(id, name)| item_type(*id, name.clone()).into(),
-                ),
-                s.quantity.into(),
-                if s.offline {
-                    badge("Offline", Tone::Warning).into()
-                } else {
-                    "".into()
-                },
-            ]);
-        }
-        table
-    } else {
-        let mut table = Table::new(vec![Column::text("Item"), Column::numeric("Quantity")])
-            .title(place.title());
-        for s in stacks {
-            table = table.row(vec![
-                item_type(s.type_id, s.name.clone()).into(),
-                s.quantity.into(),
-            ]);
-        }
-        table
+    // The same columns for every place, so Tether draws them as one table
+    // with their columns lined up (drones and cargo have no charge or
+    // state).
+    let mut table = Table::new(vec![
+        Column::text("Item"),
+        Column::text("Charge"),
+        Column::numeric("Count"),
+        Column::text("State"),
+    ])
+    .title(place.title());
+    for s in stacks {
+        let fitted = place.fitted();
+        table = table.row(vec![
+            item_type(s.type_id, s.name.clone()).into(),
+            s.charge.as_ref().filter(|_| fitted).map_or_else(
+                || "".into(),
+                |(id, name)| item_type(*id, name.clone()).into(),
+            ),
+            s.quantity.into(),
+            if fitted && s.offline {
+                badge("Offline", Tone::Warning).into()
+            } else {
+                "".into()
+            },
+        ]);
     }
+    table
 }
 
 /// The highest level of each skill the hull and everything but cargo

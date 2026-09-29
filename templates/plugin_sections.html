@@ -68,8 +68,9 @@
 {%- else -%}{{ v.text }}{%- endif -%}
 {%- endmacro %}
 
-{% macro sections(list) %}
-{% for s in list %}
+{#- One section. A row's members come through here too (`sections`
+    below draws the row around them). -#}
+{% macro one(s) %}
 {% match s %}
 {% when SectionView::Stats(stats) %}
 <section class="readouts">
@@ -256,6 +257,39 @@
   </section>
   <footer><button type="submit" class="btn" data-variant="primary">{{ form.submit_label }}</button></footer>
 </form>
+{% when SectionView::Tables(set) %}
+{#- Tables that followed each other with the same columns: one table,
+    each one's title a heading row, so the columns line up. -#}
+<section class="card data-card">
+  <table class="table table-set">
+    <thead><tr>{% for c in set.columns %}<th scope="col"{% if c.numeric %} class="text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
+    {% for g in set.groups %}
+    <tbody>
+      {% if let Some(title) = g.title %}<tr class="table-group"><th scope="colgroup" colspan="{{ set.columns.len() }}">{{ title }}</th></tr>{% endif %}
+      {% if g.rows.is_empty() %}
+      <tr><td colspan="{{ set.columns.len() }}" class="text-sm text-muted-foreground">{% if let Some(empty) = g.empty %}{{ empty }}{% else %}Nothing here yet.{% endif %}</td></tr>
+      {% endif %}
+      {% for row in g.rows %}
+      <tr>{% for v in row %}{% let numeric = set.columns[loop.index0].numeric %}<td{% if numeric %} class="num text-right"{% endif %}>{% call value(v, numeric) %}{% endcall %}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+    {% endfor %}
+  </table>
+</section>
+{% when SectionView::Row(_) %}
 {% endmatch %}
+{% endmacro %}
+
+{#- An app's sections in order; narrow ones that follow each other side
+    by side (DESIGN.md, Plugins). -#}
+{% macro sections(list) %}
+{% for s in list %}
+{% if let SectionView::Row(members) = s %}
+<div class="section-row">
+  {% for m in members %}{% call one(m) %}{% endcall %}{% endfor %}
+</div>
+{% else %}
+{% call one(s) %}{% endcall %}
+{% endif %}
 {% endfor %}
 {% endmacro %}
