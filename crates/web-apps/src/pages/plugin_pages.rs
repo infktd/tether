@@ -1316,10 +1316,14 @@ fn draw(
         href: page_href(&id, &l.path),
         current: l.path == opened.path,
     };
+    // An app's settings open from its Administration page, not from its
+    // own header (configuring an app is an admin's job); once there, its
+    // settings pages link to each other.
+    let in_settings = tether_plugins::manifest::is_settings(&opened.path);
     let links = page
         .links
         .iter()
-        .filter(|l| !l.primary)
+        .filter(|l| !l.primary && (in_settings || !tether_plugins::manifest::is_settings(&l.path)))
         .map(header_link)
         .collect();
     let buttons = page

@@ -951,6 +951,9 @@ struct PluginPage {
     logs: Vec<LogView>,
     about: About,
     enabled: bool,
+    /// It has a settings page (`settings`): opened from here, not from
+    /// the app's own header.
+    settings: bool,
     status: &'static str,
     variant: &'static str,
     failure: Option<String>,
@@ -1209,6 +1212,11 @@ async fn plugin_page(
             access,
             about: About::new(&package, installed.origin == db::Origin::Bundled),
             enabled: installed.enabled,
+            settings: package
+                .manifest
+                .pages
+                .iter()
+                .any(|p| p.path == tether_plugins::manifest::SETTINGS_PATH),
             status: label,
             variant,
             failure: if plugins::sha256(&installed.package) != installed.package_sha256 {

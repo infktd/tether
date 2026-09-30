@@ -324,9 +324,23 @@ async fn moon_mining_end_to_end(db: PgPool) {
     // The app's pages beside the title (the planner for a Station
     // Manager), refineries with their type's icon, and the chunk's arrival
     // counting down.
-    for href in [
-        "moons", "reports", "totals", "planner", "settings", "upload",
-    ] {
+    // Settings open from the app's Administration page instead.
+    assert!(
+        !moons
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/settings\"")),
+        "{}",
+        moons.body
+    );
+    let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(
+        admin
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/settings\"")),
+        "{}",
+        admin.body
+    );
+    for href in ["moons", "reports", "totals", "planner", "upload"] {
         assert!(
             moons
                 .body

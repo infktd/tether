@@ -11,9 +11,12 @@
       <p class="text-muted-foreground mt-1">{% if let Some(d) = about.description %}{{ d }} · {% endif %}Version <span class="num">{{ about.version }}</span>, installed {{ installed }} EVE</p>
     </div>
     {% if enabled %}
-    <form method="post" action="/admin/plugins/{{ about.id }}/disable">
-      <button type="submit" class="btn" data-variant="outline">Disable</button>
-    </form>
+    <div class="flex items-center gap-3">
+      {% if settings %}<a class="btn" data-variant="primary" href="/plugins/{{ about.id }}/settings">Settings</a>{% endif %}
+      <form method="post" action="/admin/plugins/{{ about.id }}/disable">
+        <button type="submit" class="btn" data-variant="outline">Disable</button>
+      </form>
+    </div>
     {% else %}
     <form method="post" action="/admin/plugins/{{ about.id }}/enable">
       <button type="submit" class="btn" data-variant="primary">Enable</button>

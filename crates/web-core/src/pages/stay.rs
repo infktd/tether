@@ -274,7 +274,10 @@ fn leave(response: &Response, origin: &str, asked: &str) -> Option<Response> {
         let location = response.headers().get(header::LOCATION)?.to_str().ok()?;
         let external = location.contains("://")
             && !(location.starts_with(origin)
-                && matches!(location.as_bytes().get(origin.len()), None | Some(b'/' | b'?')));
+                && matches!(
+                    location.as_bytes().get(origin.len()),
+                    None | Some(b'/' | b'?')
+                ));
         if !external {
             return None;
         }
@@ -365,7 +368,10 @@ mod tests {
             HeaderValue::from_static("attachment; filename=\"x.csv\""),
         );
         let away = leave(&download, origin, "/plugins/acme/download/x?y=1").unwrap();
-        assert_eq!(away.headers()["hx-redirect"], "/plugins/acme/download/x?y=1");
+        assert_eq!(
+            away.headers()["hx-redirect"],
+            "/plugins/acme/download/x?y=1"
+        );
         assert!(leave(&StatusCode::OK.into_response(), origin, "/").is_none());
     }
 

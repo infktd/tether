@@ -12,6 +12,15 @@ use serde::{Deserialize, Serialize};
 /// The only host API major version this host speaks.
 pub const HOST_API: &str = "1";
 
+/// An app's settings page (`[[pages]] path = "settings"`): opened from
+/// the app's Administration page, left out of the app's own header.
+pub const SETTINGS_PATH: &str = "settings";
+
+/// A settings page or one under it (`settings/tags`).
+pub fn is_settings(path: &str) -> bool {
+    path == SETTINGS_PATH || path.starts_with("settings/")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("plugin.toml: {0}")]
 pub struct ManifestError(pub String);

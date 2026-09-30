@@ -538,7 +538,25 @@ async fn structures_end_to_end(db: PgPool) {
     }
     // The app's pages beside the title (a manager's too); owners' logos,
     // types' icons, and the reinforced Keep's timer counting down.
-    for href in ["pocos", "settings", "settings/tags"] {
+    // Settings (tags too) open from the app's Administration page.
+    for href in ["settings", "settings/tags"] {
+        assert!(
+            !list
+                .body
+                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
+            "{href}: {}",
+            list.body
+        );
+    }
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/settings/tags\"")),
+        "{}",
+        settings.body
+    );
+    for href in ["pocos"] {
         assert!(
             list.body
                 .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
