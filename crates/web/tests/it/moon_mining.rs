@@ -49,6 +49,7 @@ async fn install(h: &Harness, owner: &str) {
     let second = plugin_file("migrations/0002_surveys_and_prices.sql");
     let third = plugin_file("migrations/0003_tether_rules_optional.sql");
     let fourth = plugin_file("migrations/0004_old_moons_shown.sql");
+    let fifth = plugin_file("migrations/0005_refinery_drills.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -60,6 +61,7 @@ async fn install(h: &Harness, owner: &str) {
             third.as_bytes(),
         ),
         ("migrations/0004_old_moons_shown.sql", fourth.as_bytes()),
+        ("migrations/0005_refinery_drills.sql", fifth.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -111,9 +113,15 @@ async fn mount_esi(h: &Harness) {
         .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
         .respond_with(json(serde_json::json!([
             { "structure_id": ATHANOR, "name": "Jita - Drill One", "system_id": SYSTEM,
-              "type_id": 35835, "corporation_id": CHRIBBA_CORP, "profile_id": 1, "state": "shield_vulnerable" },
+              "type_id": 35835, "corporation_id": CHRIBBA_CORP, "profile_id": 1, "state": "shield_vulnerable",
+              "services": [{ "name": "Moon Drilling", "state": "online" }] },
             { "structure_id": TATARA, "name": "Jita - Drill Two", "system_id": SYSTEM,
-              "type_id": 35836, "corporation_id": CHRIBBA_CORP, "profile_id": 1, "state": "shield_vulnerable" },
+              "type_id": 35836, "corporation_id": CHRIBBA_CORP, "profile_id": 1, "state": "shield_vulnerable",
+              "services": [{ "name": "Moon Drilling", "state": "offline" }, { "name": "Reprocessing", "state": "online" }] },
+            // A refinery without a Moon Drill: reprocessing only.
+            { "structure_id": 1030000000010i64, "name": "Jita - Reprocessing Plant", "system_id": SYSTEM,
+              "type_id": 35835, "corporation_id": CHRIBBA_CORP, "profile_id": 1, "state": "shield_vulnerable",
+              "services": [{ "name": "Reprocessing", "state": "online" }] },
             { "structure_id": 1030000000009i64, "name": "Jita - Market", "system_id": SYSTEM,
               "type_id": 35832, "corporation_id": CHRIBBA_CORP, "profile_id": 1, "state": "shield_vulnerable" },
         ])))
@@ -379,6 +387,12 @@ async fn moon_mining_end_to_end(db: PgPool) {
     // Every refinery Moon Mining reads, the idle ones listed first, under
     // their corporation's name.
     assert!(planner.body.contains("Idle refineries"), "{}", planner.body);
+    // A refinery without a Moon Drill isn't planned.
+    assert!(
+        !planner.body.contains("Reprocessing Plant"),
+        "{}",
+        planner.body
+    );
     assert!(
         !planner
             .body

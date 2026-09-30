@@ -454,12 +454,18 @@ fn sync() -> Result<(), JobError> {
             continue;
         };
         storage::transaction(&[Statement::new(
-            "INSERT INTO structures (structure_id, corporation_id, name, system_id, type_id, updated_at) \
-             SELECT structure_id, $2, coalesce(name, 'Structure ' || structure_id::text), system_id, type_id, now() \
-             FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, system_id bigint, type_id bigint) \
+            // A refinery without a Moon Drill (one for reprocessing, say)
+            // isn't a drill: the planner leaves it out.
+            "INSERT INTO structures (structure_id, corporation_id, name, system_id, type_id, drill, updated_at) \
+             SELECT structure_id, $2, coalesce(name, 'Structure ' || structure_id::text), system_id, type_id, \
+                    EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(services, '[]')) s \
+                            WHERE s ->> 'name' = 'Moon Drilling'), now() \
+             FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, system_id bigint, \
+                  type_id bigint, services jsonb) \
              WHERE type_id = ANY($3::bigint[]) \
              ON CONFLICT (structure_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, \
-             name = EXCLUDED.name, system_id = EXCLUDED.system_id, type_id = EXCLUDED.type_id, updated_at = now()",
+             name = EXCLUDED.name, system_id = EXCLUDED.system_id, type_id = EXCLUDED.type_id, \
+             drill = EXCLUDED.drill, updated_at = now()",
             vec![
                 Db::json(concat(&bodies)),
                 (*corp).into(),
@@ -1622,7 +1628,7 @@ fn refineries(corp: i64, now: DateTime<Utc>) -> Result<Vec<Refinery>, PageError>
                 (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id \
                  AND e.natural_decay <= $2 AND e.cancelled_at IS NULL) \
          FROM structures s LEFT JOIN names y ON y.id = s.system_id \
-         WHERE s.corporation_id = $1 ORDER BY s.name",
+         WHERE s.corporation_id = $1 AND s.drill IS NOT FALSE ORDER BY s.name",
         &[corp.into(), Db::timestamp(rfc3339(now))],
     )
     .map_err(|e| failed("reading structures", e))?;
@@ -1649,7 +1655,7 @@ fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
     let managed = station_manager_corporations(viewer)?;
     let corporations = storage::query(
         "SELECT c.corporation_id, coalesce(n.name, 'Corporation ' || c.corporation_id::text) \
-         FROM (SELECT DISTINCT corporation_id FROM structures) c \
+         FROM (SELECT DISTINCT corporation_id FROM structures WHERE drill IS NOT FALSE) c \
          LEFT JOIN names n ON n.id = c.corporation_id ORDER BY 2",
         &[],
     )
