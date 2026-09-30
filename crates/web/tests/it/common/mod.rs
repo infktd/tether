@@ -254,6 +254,17 @@ pub struct Harness {
     /// The updater's folders, in a temp dir of this harness's own (the
     /// image follows edge).
     pub updater: Arc<tether_web::upgrader::Updater>,
+    /// Removes that temp dir when the test ends.
+    pub _updater_dir: TempDir,
+}
+
+/// A directory removed when dropped.
+pub struct TempDir(pub std::path::PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// Serves `tests/fixtures/esi/characters_affiliation.json`, filtered to the
@@ -500,6 +511,7 @@ async fn harness_parts(
         key: test_key(),
         plugins,
         updater,
+        _updater_dir: TempDir(updater_dir),
     }
 }
 

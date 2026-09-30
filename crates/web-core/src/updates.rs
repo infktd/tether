@@ -2,7 +2,8 @@
 //! release and tell admins on the dashboard if it is newer than this build.
 //! Admins can switch it off; then Tether never contacts GitHub for this,
 //! or for apps' update checks ([`crate::plugin_github`]).
-//! Upgrading stays a manual image-tag change (N14).
+//! Upgrading is the console's (`crate::upgrader`, through the updater
+//! container) or the image tag's on the server (N14).
 
 use std::time::Duration;
 
