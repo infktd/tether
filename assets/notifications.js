@@ -6,6 +6,10 @@
   const source = new EventSource("/notifications/stream");
   source.addEventListener("unread", (event) => {
     const bell = document.getElementById("notification-bell");
-    if (bell) bell.outerHTML = event.data;
+    if (!bell) return;
+    bell.outerHTML = event.data;
+    // The new link is boosted like the rest (no page reload).
+    const fresh = document.getElementById("notification-bell");
+    if (fresh && window.htmx) window.htmx.process(fresh);
   });
 })();

@@ -24,8 +24,10 @@
   {#- Phones: the sidebar is a popover this opens (no script). -#}
   <button type="button" class="nav-toggle btn" data-variant="ghost" data-size="icon" popovertarget="main-nav" aria-label="Menu">{% call icons::icon("menu") %}{% endcall %}</button>
   <a href="/" class="wordmark" aria-label="Tether, home">{% include "wordmark.html" %}</a>
-  <span>EVE <span class="text-foreground" data-eve-clock>--:--:--</span></span>
-  <span id="tq-status" hx-get="/status/strip" hx-trigger="load, every 60s" hx-swap="innerHTML" class="hidden md:flex items-center gap-7"></span>
+  {#- Kept across navigations (hx-preserve): the clock doesn't blank and
+      the status isn't fetched again on every page. -#}
+  <span>EVE <span class="text-foreground" id="eve-clock" data-eve-clock hx-preserve>--:--:--</span></span>
+  <span id="tq-status" hx-get="/status/strip" hx-trigger="load, every 60s" hx-swap="innerHTML" hx-preserve class="hidden md:flex items-center gap-7"></span>
   <nav class="trail" aria-label="Breadcrumb">{% block breadcrumb %}{% endblock %}</nav>
   {% include "notification_bell.html" %}
 </header>
