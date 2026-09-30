@@ -24,11 +24,19 @@
         <td class="text-right">
           {% if c.is_main %}
           <span class="badge" data-variant="outline">{% call icons::icon("check") %}{% endcall %} Main</span>
-          {% else if c.can_be_main %}
-          <form method="post" action="/profile/main">
-            <input type="hidden" name="character_id" value="{{ c.id }}">
-            <button type="submit" class="btn" data-variant="ghost" data-size="sm">Make main</button>
-          </form>
+          {% else %}
+          <div class="flex items-center justify-end gap-2">
+            {% if c.can_be_main %}
+            <form method="post" action="/profile/main">
+              <input type="hidden" name="character_id" value="{{ c.id }}">
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Make main</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/profile/characters/remove" hx-confirm="Remove {{ c.name }} from your account? Its tokens go, and it leaves every app it was registered for. Log in with it again to add it back.">
+              <input type="hidden" name="character_id" value="{{ c.id }}">
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Remove</button>
+            </form>
+          </div>
           {% endif %}
         </td>
       </tr>

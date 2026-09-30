@@ -82,10 +82,13 @@ pub enum Action {
     PlatformUpgrade,
     /// Rolling Tether back from the console.
     PlatformRollback,
+    /// Removing a character from an account: an admin, always; its owner,
+    /// for the same accounts as [`Action::ChangeMain`].
+    RemoveCharacter,
 }
 
 impl Action {
-    pub const ALL: [Action; 17] = [
+    pub const ALL: [Action; 18] = [
         Self::SensitivePermission,
         Self::AppInstall,
         Self::AppRollback,
@@ -103,6 +106,7 @@ impl Action {
         Self::MainToken,
         Self::PlatformUpgrade,
         Self::PlatformRollback,
+        Self::RemoveCharacter,
     ];
 
     /// Its name in URLs and the audit log.
@@ -125,6 +129,7 @@ impl Action {
             Self::MainToken => "main_token",
             Self::PlatformUpgrade => "platform_upgrade",
             Self::PlatformRollback => "platform_rollback",
+            Self::RemoveCharacter => "remove_character",
         }
     }
 
@@ -148,6 +153,7 @@ impl Action {
             Self::MainToken => "Delete your main character's token",
             Self::PlatformUpgrade => "Upgrade Tether",
             Self::PlatformRollback => "Roll Tether back",
+            Self::RemoveCharacter => "Remove a character from an account",
         }
     }
 

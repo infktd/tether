@@ -107,7 +107,7 @@ pub async fn set_active(
     Ok(())
 }
 
-fn refuse_unless_held(
+pub(crate) fn refuse_unless_held(
     mine: &std::collections::BTreeSet<String>,
     theirs: &std::collections::BTreeSet<String>,
 ) -> Result<(), AppError> {

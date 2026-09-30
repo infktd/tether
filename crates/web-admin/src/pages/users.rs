@@ -279,6 +279,25 @@ pub async fn deactivate(
     set_active(state, session, id, false).await
 }
 
+/// `POST /admin/users/{id}/characters/{character}/remove`: a character off
+/// the account at once (not its main), sudo mode.
+pub async fn remove_character(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path((id, character)): Path<(i64, i64)>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_USERS, "users").await?;
+    match crate::ownership::remove_character(&state, session.account, AccountId(id), character)
+        .await
+    {
+        Ok(name) => Ok(super::stay::back(
+            &format!("/admin/users/{id}"),
+            format!("{name} was removed from the account."),
+        )),
+        Err(err) => user_page(&state, &session, shell, id, Some(err)).await,
+    }
+}
+
 /// `POST /admin/users/{id}/reactivate`
 pub async fn reactivate(
     State(state): State<AppState>,

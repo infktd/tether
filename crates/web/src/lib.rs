@@ -29,7 +29,7 @@ pub mod pages {
     pub use tether_web_apps::pages::{plugin_pages, plugin_visuals};
     pub use tether_web_core::pages::*;
     pub use tether_web_member::pages::account::{
-        change_main_login, home, login, make_main, profile, to_dashboard,
+        change_main_login, home, login, make_main, profile, remove_character, to_dashboard,
     };
     pub use tether_web_member::pages::{
         access_tokens, corpstats, groups, notifications, securegroups, tokens,
@@ -76,6 +76,7 @@ pub fn router(state: AppState) -> Router {
         // The old name (before AA's): kept so bookmarks still work.
         .route("/profile", get(pages::to_dashboard))
         .route("/profile/main", post(pages::make_main))
+        .route("/profile/characters/remove", post(pages::remove_character))
         .route("/profile/main/login", post(pages::change_main_login))
         .route("/setup", get(pages::setup::page))
         .route("/setup/unlock", post(pages::setup::unlock))
@@ -184,6 +185,10 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/permissions", get(pages::admin::permissions))
         .route("/admin/users", get(pages::users::index))
         .route("/admin/users/{id}", get(pages::users::show))
+        .route(
+            "/admin/users/{id}/characters/{character}/remove",
+            post(pages::users::remove_character),
+        )
         .route(
             "/admin/users/{id}/deactivate",
             post(pages::users::deactivate),

@@ -277,8 +277,16 @@ async fn change_main_needs_a_working_token(db: PgPool) {
         dashboard.contains("Change Main with EVE login"),
         "{dashboard}"
     );
+    // Only its Remove button names it, not a Make main one.
+    assert_eq!(
+        dashboard
+            .matches(&format!(r#"name="character_id" value="{MITTANI_ID}""#))
+            .count(),
+        1,
+        "{dashboard}"
+    );
     assert!(
-        !dashboard.contains(&format!(r#"name="character_id" value="{MITTANI_ID}""#)),
+        dashboard.contains("/profile/characters/remove"),
         "{dashboard}"
     );
     // Each attempt may call EVE SSO: limited with Token Management's
@@ -773,4 +781,192 @@ async fn a_deactivated_accounts_characters_cant_escape_through_revocation(db: Pg
     let fresh = log_in_as(&h, "90000300:Fresh Alpha", None).await;
     let res = callback_as(&h, MITTANI, Some(&fresh)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn characters_are_removed_by_their_owner_or_an_admin(db: PgPool) {
+    const GIGX_ID: i64 = 1887431749;
+    const FOURTH_ID: i64 = 406944591;
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    // A pilot with two alts.
+    let pilot = log_in_as(&h, "1887431749:gigX", None).await;
+    let pilot = log_in_as(&h, MITTANI, Some(&pilot)).await;
+    let pilot = log_in_as(&h, "406944591:Fourth Pilot", Some(&pilot)).await;
+    let pilot_id = me(&h, &pilot).await["account_id"].as_i64().unwrap();
+    assert_eq!(
+        me(&h, &pilot).await["characters"].as_array().unwrap().len(),
+        3
+    );
+    let remove = |session: &str, character: i64| {
+        form(
+            "/profile/characters/remove",
+            &format!("character_id={character}"),
+            session,
+        )
+    };
+
+    // Not the main, and not someone else's.
+    let res = send(&h.app, remove(&pilot, GIGX_ID)).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(
+        res.body.contains("make another character the main first"),
+        "{}",
+        res.body
+    );
+    let res = send(&h.app, remove(&pilot, CHRIBBA_ID)).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    // An alt goes at once, with its token, audited as the pilot's doing.
+    let res = send(&h.app, remove(&pilot, MITTANI_ID)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let account = me(&h, &pilot).await;
+    assert_eq!(account["characters"].as_array().unwrap().len(), 2);
+    assert_eq!(account["main"]["id"], GIGX_ID);
+    let tokens: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.character_tokens WHERE character_id = $1")
+            .bind(MITTANI_ID)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(tokens, 0);
+    let (actor, details): (Option<i64>, serde_json::Value) = sqlx::query_as(
+        "SELECT actor_account_id, details FROM core.audit_log \
+         WHERE action = 'character.ownership_lost' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(details["reason"], "removed");
+    assert_eq!(actor, Some(pilot_id));
+    let notice: String = sqlx::query_scalar(
+        "SELECT message FROM core.notifications WHERE account_id = $1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(pilot_id)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(notice.contains("was removed from your account"), "{notice}");
+
+    // Admins, from the user's page: only with admin.users, and with a
+    // recent EVE login.
+    let admin_remove = |session: &str| {
+        form(
+            &format!("/admin/users/{pilot_id}/characters/{FOURTH_ID}/remove"),
+            "",
+            session,
+        )
+    };
+    let res = send(&h.app, admin_remove(&pilot)).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    sqlx::query(
+        "UPDATE core.sessions SET reauthenticated_at = now() - interval '30 minutes' \
+         WHERE token_hash = sha256($1::bytea)",
+    )
+    .bind(owner.as_bytes())
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = send(&h.app, admin_remove(&owner)).await;
+    assert!(
+        res.location().contains("action=remove_character"),
+        "{} {}",
+        res.status,
+        res.location()
+    );
+    assert_eq!(
+        me(&h, &pilot).await["characters"].as_array().unwrap().len(),
+        2
+    );
+    sqlx::query(
+        "UPDATE core.sessions SET reauthenticated_at = now() WHERE token_hash = sha256($1::bytea)",
+    )
+    .bind(owner.as_bytes())
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let page = send(
+        &h.app,
+        get(&format!("/admin/users/{pilot_id}"), &[(SESSION, &owner)]),
+    )
+    .await;
+    assert!(
+        page.body.contains(&format!(
+            "/admin/users/{pilot_id}/characters/{FOURTH_ID}/remove"
+        )),
+        "{}",
+        page.body
+    );
+    let res = send(&h.app, admin_remove(&owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        me(&h, &pilot).await["characters"].as_array().unwrap().len(),
+        1
+    );
+
+    // The last one is the main, and an account keeps it.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{pilot_id}/characters/{GIGX_ID}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert!(
+        res.body.contains("make another character the main first"),
+        "{}",
+        res.body
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn only_a_superuser_removes_a_superusers_characters(db: PgPool) {
+    use tether_db::permissions::{Grantee, grant};
+    const FOURTH_ID: i64 = 406944591;
+    let h = member_harness(db).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let owner = log_in_as(&h, "406944591:Fourth Pilot", Some(&owner)).await;
+    let owner_id = me(&h, &owner).await["account_id"].as_i64().unwrap();
+    // A helper with admin.users.
+    let helper = log_in_as(&h, "1887431749:gigX", None).await;
+    let helper_id = me(&h, &helper).await["account_id"].as_i64().unwrap();
+    let group = tether_db::groups::create(
+        &h.db,
+        "Helpers",
+        "",
+        tether_core::groups::Flags {
+            internal: true,
+            hidden: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tether_db::groups::add_member(&h.db, group, tether_db::accounts::AccountId(helper_id))
+        .await
+        .unwrap();
+    grant(&h.db, "admin.users", Grantee::Group(group))
+        .await
+        .unwrap();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/users/{owner_id}/characters/{FOURTH_ID}/remove"),
+            "",
+            &helper,
+        ),
+    )
+    .await;
+    assert!(
+        res.body.contains("Only a superuser can change a superuser"),
+        "{} {}",
+        res.status,
+        res.body
+    );
+    assert_eq!(
+        me(&h, &owner).await["characters"].as_array().unwrap().len(),
+        2
+    );
 }

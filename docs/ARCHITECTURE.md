@@ -188,7 +188,8 @@ EVE SSO is the only login. No email.
   - the Discord settings (application, bot token and client secret);
   - upgrading or rolling Tether back from the console;
   - what only a superuser may do to a Restricted group (as AA's code: set or clear the flag, and add or remove members directly on the admin pages);
-  - for superusers and accounts holding a sensitive permission only: Change Main (picking a character or logging in with one), linking a character (Add Character, registering, offers) and deleting the main's token. The main is what confirms it's them, so a stolen session mustn't plant a character of its own and make it the main. Everyone else does these freely.
+  - removing a character from someone else's account (an admin with `admin.users`, from the user's page, and only an account whose permissions are all the admin's, as deactivating);
+  - for superusers and accounts holding a sensitive permission only: Change Main (picking a character or logging in with one), linking a character (Add Character, registering, offers), deleting the main's token, and removing one of their own characters. The main is what confirms it's them, so a stolen session mustn't plant a character of its own and make it the main. Everyone else does these freely.
   States aren't gated: an admin who changes who a state covers moves accounts in and out of its grants without a fresh login, so keep sensitive permissions on groups rather than states.
   Everyday admin work (states, ordinary groups, pings, the menu, enabling or disabling an app) isn't gated. Personal access tokens aren't browsers and can't log in again, so they're let through, as GitHub's are: making one is gated, each carries the permissions it uses explicitly, and a token never counts as a superuser, so superuser-only actions refuse it anyway. The CLI (run on the host) and background jobs aren't gated either. `tether rollback` is CLI-only.
 

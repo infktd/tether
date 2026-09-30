@@ -67,7 +67,8 @@ pub struct Lost {
     /// could ever administer the instance again).
     pub owner_lost: bool,
     /// `sold` (another owner hash), `moved` (someone else signed in with
-    /// it) or `token` (its token died).
+    /// it), `token` (its token died) or `removed` (its owner or an admin
+    /// removed it).
     pub reason: &'static str,
 }
 
@@ -140,7 +141,13 @@ pub async fn sign_in(
         known => {
             if known.is_some() {
                 // Sold: the old account loses it (AA deletes the ownership).
-                lost = lose(&mut tx, login.character_id, "sold").await?;
+                lost = lose(
+                    &mut tx,
+                    login.character_id,
+                    "sold",
+                    crate::audit::Actor::System,
+                )
+                .await?;
             }
             let returning = sqlx::query!(
                 r#"
@@ -266,7 +273,13 @@ pub async fn link(
             (Linked::Existing, None)
         }
         Some(_) => {
-            let lost = lose(&mut tx, login.character_id, "moved").await?;
+            let lost = lose(
+                &mut tx,
+                login.character_id,
+                "moved",
+                crate::audit::Actor::System,
+            )
+            .await?;
             attach(&mut tx, account, login).await?;
             (Linked::Moved, lost)
         }
@@ -366,9 +379,67 @@ pub async fn lose_ownership(
         LossCause::Sold => "sold",
         LossCause::Token => "token",
     };
-    let lost = lose(&mut tx, character_id, reason).await?;
+    let lost = lose(&mut tx, character_id, reason, crate::audit::Actor::System).await?;
     tx.commit().await?;
     Ok(lost)
+}
+
+/// What removing a character from its account came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removal {
+    /// It left the account, with everything tied to it.
+    Removed(Lost),
+    /// Not one of that account's characters.
+    NotOnAccount,
+    /// The account's main: pick another main first.
+    Main,
+    /// The account's last character: an account keeps one.
+    Last,
+    /// A deactivated account: its characters stay until it's reactivated.
+    Inactive,
+}
+
+/// Removes a character from an account at once, by its owner or an admin
+/// (`actor`): what the ownership check does to a sold one (its tokens and
+/// everything tied to it go), but never the main or the last character.
+/// It can join an account again by logging in with it. Audited as
+/// `character.ownership_lost` with reason `removed`.
+pub async fn remove_character(
+    pool: &PgPool,
+    account: AccountId,
+    character_id: i64,
+    actor: crate::audit::Actor,
+) -> Result<Removal, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    lock(&mut tx).await?;
+    let row = sqlx::query!(
+        r#"
+        SELECT c.account_id, a.main_character_id, a.active,
+               (SELECT count(*) FROM core.characters o WHERE o.account_id = c.account_id) AS "count!"
+        FROM core.characters c JOIN core.accounts a ON a.id = c.account_id
+        WHERE c.id = $1
+        -- Deactivating waits for this, and this for it.
+        FOR SHARE OF a
+        "#,
+        character_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(row) = row.filter(|r| r.account_id == account.0) else {
+        return Ok(Removal::NotOnAccount);
+    };
+    if !row.active {
+        return Ok(Removal::Inactive);
+    }
+    if row.main_character_id == Some(character_id) {
+        return Ok(Removal::Main);
+    }
+    if row.count <= 1 {
+        return Ok(Removal::Last);
+    }
+    let lost = lose(&mut tx, character_id, "removed", actor).await?;
+    tx.commit().await?;
+    Ok(lost.map_or(Removal::NotOnAccount, Removal::Removed))
 }
 
 async fn audit_main(
@@ -399,6 +470,7 @@ async fn lose(
     tx: &mut sqlx::PgTransaction<'_>,
     character_id: i64,
     reason: &'static str,
+    actor: crate::audit::Actor,
 ) -> Result<Option<Lost>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
@@ -439,7 +511,7 @@ async fn lose(
         == 1;
     crate::audit::record(
         &mut **tx,
-        crate::audit::Actor::System,
+        actor,
         "character.ownership_lost",
         Some(&format!("character:{character_id}")),
         serde_json::json!({

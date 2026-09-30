@@ -49,7 +49,7 @@
   <section class="card data-card">
     <header><h2>Characters <span class="num text-muted-foreground font-normal">{{ characters.len() }}</span></h2></header>
     <table class="table">
-      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Token</th><th scope="col">Added</th><th scope="col">Last login</th></tr></thead>
+      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Token</th><th scope="col">Added</th><th scope="col">Last login</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for c in characters %}
         <tr>
@@ -74,6 +74,13 @@
           </td>
           <td class="num">{{ c.added }}</td>
           <td class="num">{% if let Some(l) = c.last_login %}{{ l }}{% else %}<span class="text-muted-foreground">Never</span>{% endif %}</td>
+          <td class="text-right">
+            {% if !c.row.main %}
+            <form method="post" action="/admin/users/{{ id }}/characters/{{ c.row.id }}/remove" hx-confirm="Remove {{ c.row.name }} from {{ main_name }}'s account? Its tokens go, and it leaves every app it was registered for. Logging in with it adds it to an account again.">
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Remove</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

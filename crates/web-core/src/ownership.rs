@@ -61,6 +61,75 @@ pub async fn after_lost(db: &PgPool, lost: &Lost) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Removes one of `account`'s characters at once (not its main or its
+/// last), with its tokens and everything tied to it, as a sale would.
+/// `actor` is the account's owner, or an admin whose caller checked
+/// `admin.users`: an admin needs a recent EVE login (sudo mode) and may
+/// only touch accounts whose permissions are all theirs, as when
+/// deactivating; an owner needs one only if they hold powers. Returns the
+/// character's name.
+pub async fn remove_character(
+    state: &crate::AppState,
+    actor: accounts::AccountId,
+    account: accounts::AccountId,
+    character_id: i64,
+) -> Result<String, crate::error::AppError> {
+    use crate::error::AppError;
+    let db = &state.db;
+    if actor == account {
+        crate::sudo::check_privileged(db, account, crate::sudo::Action::RemoveCharacter).await?;
+    } else {
+        crate::sudo::check(crate::sudo::Action::RemoveCharacter)?;
+        // A superuser's account is a superuser's to change, as with
+        // deactivating.
+        let is_owner = |a: accounts::AccountId| async move {
+            accounts::get(db, a)
+                .await
+                .map(|a| a.is_some_and(|a| a.is_owner))
+        };
+        if is_owner(account).await? && !is_owner(actor).await? {
+            return Err(AppError::new(
+                axum::http::StatusCode::FORBIDDEN,
+                "Only a superuser can change a superuser's account.",
+            ));
+        }
+        let mine = tether_db::permissions::effective(db, actor).await?;
+        let theirs = tether_db::permissions::effective(db, account).await?;
+        crate::admin::refuse_unless_held(&mine, &theirs)?;
+    }
+    let removal = accounts::remove_character(
+        db,
+        account,
+        character_id,
+        tether_db::audit::Actor::Account(actor),
+    )
+    .await?;
+    let lost = match removal {
+        accounts::Removal::Removed(lost) => lost,
+        accounts::Removal::NotOnAccount => {
+            return Err(AppError::not_found("That character isn't on this account."));
+        }
+        accounts::Removal::Main => {
+            return Err(AppError::bad_request(
+                "That's the main: make another character the main first.",
+            ));
+        }
+        accounts::Removal::Last => {
+            return Err(AppError::bad_request(
+                "That's the account's only character: an account keeps one.",
+            ));
+        }
+        accounts::Removal::Inactive => {
+            return Err(AppError::bad_request(
+                "The account is deactivated: its characters stay until it's reactivated.",
+            ));
+        }
+    };
+    state.vault.forget(character_id);
+    after_lost(db, &lost).await?;
+    Ok(lost.character_name)
+}
+
 /// What Change Main to a character already on the account came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChangeMain {

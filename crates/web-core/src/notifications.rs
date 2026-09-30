@@ -229,6 +229,9 @@ pub async fn character_lost(db: &PgPool, lost: &Lost) -> Result<(), sqlx::Error>
     let why = match lost.reason {
         "sold" => format!("{name} now belongs to another EVE account, so it has left yours."),
         "moved" => format!("{name} was signed in to another Tether account, so it moved there."),
+        "removed" => {
+            format!("{name} was removed from your account. Add it again with Add Character.")
+        }
         _ => format!(
             "EVE access for {name} has ended, so it has left your account. Add it again with \
              Add Character."

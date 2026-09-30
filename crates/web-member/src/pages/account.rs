@@ -177,6 +177,36 @@ pub async fn make_main(
     })
 }
 
+/// `POST /profile/characters/remove`: one of the pilot's own characters
+/// off their account at once (not the main).
+pub async fn remove_character(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    headers: HeaderMap,
+    Form(form): Form<MainForm>,
+) -> Result<Response, PageError> {
+    match crate::ownership::remove_character(
+        &state,
+        session.account,
+        session.account,
+        form.character_id,
+    )
+    .await
+    {
+        Ok(name) => Ok(stay::back(
+            "/dashboard",
+            format!("{name} was removed from your account."),
+        )),
+        Err(err) if is_htmx(&headers) && err.status() != StatusCode::FORBIDDEN => {
+            Ok(stay::with_toast(
+                StatusCode::NO_CONTENT.into_response(),
+                stay::Toast::problem(err.message()),
+            ))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// `POST /profile/main/login`: Change Main by logging in with EVE SSO, as
 /// Alliance Auth's (its "add new token" on the Change Main page): the
 /// character joins the account as with Add Character (moving from another

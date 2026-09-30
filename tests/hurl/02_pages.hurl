@@ -88,6 +88,20 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/profile/characters/remove
+Origin: {{base}}
+[Form]
+character_id: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/characters/1/remove
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # A boosted (htmx) post without a session is still sent to log in: the
 # in-place answers are for signed-in pages only.
 POST {{base}}/profile/main
