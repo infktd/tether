@@ -8,7 +8,9 @@
       <h1 class="page-title">{{ c.title }}</h1>
       {% if let Some(d) = c.description %}<p class="text-muted-foreground mt-1">{{ d }}</p>{% endif %}
     </div>
-    <div class="flex shrink-0 flex-wrap items-center gap-3">
+    {#- Always under the title, whatever how many there are: every app's
+        header reads the same (DESIGN.md, Page header). -#}
+    <div class="page-actions">
       {% if !c.links.is_empty() %}
       <nav class="tab-nav" aria-label="Pages">
         {% for l in c.links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}

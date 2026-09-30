@@ -408,6 +408,14 @@
   .page-header {
     @apply flex flex-wrap items-start justify-between gap-4;
   }
+  /* An app's page links and buttons: one row under its title, in every
+     app, however many there are. */
+  .page-header:has(> .page-actions) {
+    @apply flex-col justify-start;
+  }
+  .page-actions {
+    @apply flex w-full flex-wrap items-center gap-3;
+  }
   /* A live page's content: its own element for htmx to swap, laid out as
      if it weren't there (and so never faded on a swap). */
   .plugin-content {
