@@ -81,12 +81,14 @@ impl Updater {
     /// The tag the image follows (`edge`, `1.2.0`), when it's a published
     /// one.
     pub fn tag(&self) -> Option<&str> {
-        let image = self.image.as_deref()?;
-        if image.contains('@') {
-            return None;
-        }
-        let (_, tag) = image.rsplit_once('/')?.1.split_once(':')?;
-        is_tag(tag).then_some(tag)
+        tag_of(self.image.as_deref()?)
+    }
+
+    /// Pinned to one build by digest: what a rollback leaves.
+    pub fn pinned(&self) -> bool {
+        self.image
+            .as_deref()
+            .is_some_and(|i| i.contains("@sha256:"))
     }
 
     /// The updater is running: it wrote its heartbeat lately.
@@ -100,6 +102,16 @@ impl Updater {
             .as_deref()
             .is_some_and(|i| i == "tether:local" || i.ends_with("/tether:local"))
     }
+}
+
+/// The published tag an image names (`ghcr.io/acme/tether:edge` is
+/// `edge`); none for a digest or a local build.
+fn tag_of(image: &str) -> Option<&str> {
+    if image.contains('@') {
+        return None;
+    }
+    let (_, tag) = image.rsplit_once('/')?.1.split_once(':')?;
+    is_tag(tag).then_some(tag)
 }
 
 /// A tag the updater takes: `X.Y.Z`, `X.Y`, `latest` or `edge`.
@@ -146,6 +158,8 @@ struct Start {
     revision: Option<String>,
     #[serde(default)]
     snapshot: Option<String>,
+    #[serde(default)]
+    image: Option<String>,
 }
 
 /// Records this start: what runs and, when it migrated, the snapshot taken
@@ -276,6 +290,18 @@ fn read_status(dir: &Path) -> Option<Status> {
     })
 }
 
+/// The tag this install follows. Rolled back, the image is pinned by
+/// digest: it still follows the tag of the build it left, so edge is
+/// offered again.
+fn follows<'a>(updater: &'a Updater, previous: Option<&'a Start>) -> Option<&'a str> {
+    updater.tag().or_else(|| {
+        updater
+            .pinned()
+            .then(|| previous?.image.as_deref().and_then(tag_of))
+            .flatten()
+    })
+}
+
 pub async fn view(state: &AppState) -> Result<View, AppError> {
     let updater = &state.updater;
     let available = updater.running();
@@ -294,7 +320,7 @@ pub async fn view(state: &AppState) -> Result<View, AppError> {
         .and_then(|v| serde_json::from_value(v).ok());
     let can_roll_back = updater.status.join("previous").is_file();
     let checks = updates::status(&state.db).await?;
-    let upgrade_to = match updater.tag() {
+    let upgrade_to = match follows(updater, previous.as_ref()) {
         // Edge moves: the newest main, whenever asked.
         Some("edge") => Some("edge".to_owned()),
         _ => checks
@@ -485,6 +511,37 @@ mod tests {
         assert_eq!(with("tether:local").tag(), None);
         assert!(with("tether:local").from_source());
         assert!(!with("ghcr.io/acme/tether:edge").from_source());
+
+        // Rolled back: pinned by digest, following the tag it left.
+        let left = |image: &str| Start {
+            image: Some(image.to_owned()),
+            ..Start::default()
+        };
+        let pinned = with("ghcr.io/acme/tether@sha256:abc");
+        assert_eq!(
+            follows(&pinned, Some(&left("ghcr.io/acme/tether:edge"))),
+            Some("edge")
+        );
+        assert_eq!(follows(&pinned, None), None);
+        assert_eq!(
+            follows(&pinned, Some(&left("ghcr.io/acme/tether@sha256:def"))),
+            None
+        );
+        // What the image names wins.
+        assert_eq!(
+            follows(
+                &with("ghcr.io/acme/tether:1.2.0"),
+                Some(&left("ghcr.io/acme/tether:edge"))
+            ),
+            Some("1.2.0")
+        );
+        assert_eq!(
+            follows(
+                &with("tether:local"),
+                Some(&left("ghcr.io/acme/tether:edge"))
+            ),
+            None
+        );
     }
 
     #[test]
