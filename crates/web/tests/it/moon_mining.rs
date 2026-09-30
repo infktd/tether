@@ -242,7 +242,7 @@ async fn mount_prices(h: &Harness) {
         .await;
 }
 
-/// Offers Chribba as the data source (the SSO round trip) and approves it.
+/// Adds Chribba as the data source (the SSO round trip).
 async fn approve_source(h: &Harness, owner: &str) -> String {
     let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", owner)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -340,6 +340,27 @@ async fn moon_mining_end_to_end(db: PgPool) {
         "{}",
         admin.body
     );
+    // Only while it runs: a stopped app's settings page isn't there.
+    let res = send(
+        &h.app,
+        form(&format!("/admin/plugins/{ID}/disable"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    assert!(
+        !admin
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/settings\"")),
+        "{}",
+        admin.body
+    );
+    let res = send(
+        &h.app,
+        form(&format!("/admin/plugins/{ID}/enable"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     for href in ["moons", "reports", "totals", "planner", "upload"] {
         assert!(
             moons

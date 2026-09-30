@@ -1212,11 +1212,13 @@ async fn plugin_page(
             access,
             about: About::new(&package, installed.origin == db::Origin::Bundled),
             enabled: installed.enabled,
-            settings: package
-                .manifest
-                .pages
-                .iter()
-                .any(|p| p.path == tether_plugins::manifest::SETTINGS_PATH),
+            // Only a running app has a settings page to open.
+            settings: matches!(status, Status::Running)
+                && package
+                    .manifest
+                    .pages
+                    .iter()
+                    .any(|p| p.path == tether_plugins::manifest::SETTINGS_PATH),
             status: label,
             variant,
             failure: if plugins::sha256(&installed.package) != installed.package_sha256 {
