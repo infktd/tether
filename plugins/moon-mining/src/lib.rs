@@ -1791,8 +1791,15 @@ fn settings_page() -> Result<Page, PageError> {
                     .required(),
             )
             .field(
-                Field::select("ping_channel", "Ping pops to", channels)
-                    .value(settings.channel.unwrap_or_default())
+                // A channel no longer assigned to the app starts on "No
+                // pings": a select can't start on a value it doesn't list.
+                Field::select("ping_channel", "Ping pops to", channels.clone())
+                    .value(
+                        settings
+                            .channel
+                            .filter(|c| channels.iter().any(|(id, _)| id == c))
+                            .unwrap_or_default(),
+                    )
                     .help("Not in aa-moonmining: no channel, no pings."),
             )
             .field(Field::checkbox(

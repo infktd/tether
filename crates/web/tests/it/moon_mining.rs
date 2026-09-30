@@ -484,6 +484,16 @@ async fn moon_mining_end_to_end(db: PgPool) {
         "{card}"
     );
     assert_eq!(card["footer"]["text"], "Moon Mining", "{card}");
+    // The channel taken away from the app: Settings still opens, on "No
+    // pings".
+    sqlx::query("DELETE FROM core.plugin_channels WHERE plugin_id = $1")
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
+    assert!(settings.body.contains("No pings"), "{}", settings.body);
 
     // Blue see only the old-moon list, once granted it.
     let blue = log_in_as(&h, "1887431749:gigX", None).await;

@@ -2606,9 +2606,13 @@ fn channel_field(name: &str, label: &str, help: &str, value: Option<&str>) -> Fi
             .into_iter()
             .map(|c| (c.id, format!("#{}", c.name))),
     );
-    Field::select(name, label, options)
-        .value(value.unwrap_or_default())
-        .help(help)
+    // A channel no longer assigned starts on "Not sent": a select can't
+    // start on a value it doesn't list.
+    let value = value
+        .filter(|v| options.iter().any(|(id, _)| id == v))
+        .unwrap_or_default()
+        .to_owned();
+    Field::select(name, label, options).value(value).help(help)
 }
 
 fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
