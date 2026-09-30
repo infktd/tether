@@ -169,6 +169,17 @@ pub struct ShellUser {
     pub character_id: i64,
     pub state_name: String,
     pub is_owner: bool,
+    /// Acting as a character other than the main (Change character).
+    pub acting: bool,
+    /// The account's characters to act as, the current one marked.
+    pub switch: Vec<ShellCharacter>,
+}
+
+pub struct ShellCharacter {
+    pub id: i64,
+    pub name: String,
+    pub is_main: bool,
+    pub current: bool,
 }
 
 pub struct Shell {
@@ -564,16 +575,36 @@ pub async fn load(
             Some(id) => state_db::get(&state.db, id).await?.map(|s| s.name),
             None => None,
         };
+    // Change character: one of the account's own, not the main.
+    let main_id = account.main.as_ref().map(|m| m.id);
+    let acting = session
+        .acting
+        .filter(|id| Some(*id) != main_id)
+        .and_then(|id| account.characters.iter().find(|c| c.id == id));
     Ok(Loaded {
         shell: Shell {
             user: ShellUser {
-                name: account
-                    .main
-                    .as_ref()
+                name: acting
+                    .or(account.main.as_ref())
                     .map_or_else(|| "No main character".to_owned(), |m| m.name.clone()),
-                character_id: account.main.as_ref().map_or(0, |m| m.id),
+                character_id: acting.or(account.main.as_ref()).map_or(0, |m| m.id),
                 state_name: access.name.clone(),
                 is_owner: account.is_owner,
+                acting: acting.is_some(),
+                switch: if account.characters.len() > 1 {
+                    account
+                        .characters
+                        .iter()
+                        .map(|c| ShellCharacter {
+                            id: c.id,
+                            name: c.name.clone(),
+                            is_main: main_id == Some(c.id),
+                            current: acting.map_or(main_id == Some(c.id), |a| a.id == c.id),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             },
             active,
             nav,

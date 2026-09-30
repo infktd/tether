@@ -987,6 +987,8 @@ struct Opened {
     account: tether_db::accounts::AccountId,
     /// Who is looking, for `identity.current`.
     viewer: Viewer,
+    /// The character they act as, if not their main (`identity.acting`).
+    acting: Option<Character>,
     path: String,
     query: Vec<(String, String)>,
     tab: usize,
@@ -1029,6 +1031,12 @@ async fn open(
         return Err(missing());
     }
     let viewer = viewer(state, &session, &running, &perms).await?;
+    // Change character: one of the account's own, not the main
+    // (`identity.acting`).
+    let acting = session
+        .acting
+        .filter(|id| *id != viewer.main.id)
+        .and_then(|id| viewer.characters.iter().find(|c| c.id == id).cloned());
     let owners =
         super::plugin_access::owners(state, &session, &running, &perms, path.is_empty()).await?;
     let raw = raw_query.unwrap_or("");
@@ -1076,6 +1084,7 @@ async fn open(
             running,
             account,
             viewer,
+            acting,
             path: path.to_owned(),
             query,
             tab,
@@ -1234,6 +1243,7 @@ async fn render_page(state: &AppState, opened: &Opened, via: Via) -> Result<Page
             &opened.running.plugin,
             request,
             Some(opened.viewer.clone()),
+            opened.acting.clone(),
             &Default::default(),
         )
         .await
@@ -1801,6 +1811,7 @@ async fn post(
             &opened.running.plugin,
             submission,
             Some(opened.viewer.clone()),
+            opened.acting.clone(),
             &Default::default(),
         )
         .await;

@@ -177,6 +177,48 @@ pub async fn make_main(
     })
 }
 
+/// `POST /profile/acting`: Change character. This browser acts as one of
+/// the account's characters (its main clears it): apps see that one as
+/// the viewer's. Permissions and state stay the account's.
+pub async fn act_as(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    jar: axum_extra::extract::CookieJar,
+    Form(form): Form<MainForm>,
+) -> Result<Response, PageError> {
+    let account = tether_db::accounts::get(&state.db, session.account)
+        .await?
+        .ok_or_else(AppError::unauthorized)?;
+    let Some(character) = account
+        .characters
+        .iter()
+        .find(|c| c.id == form.character_id)
+    else {
+        return Err(AppError::not_found("That character isn't on your account.").into());
+    };
+    let is_main = account.main.as_ref().is_some_and(|m| m.id == character.id);
+    let cookie = axum_extra::extract::cookie::Cookie::build((
+        crate::auth::ACTING_COOKIE,
+        character.id.to_string(),
+    ))
+    .path("/")
+    .secure(true)
+    .http_only(true)
+    .same_site(axum_extra::extract::cookie::SameSite::Lax)
+    .build();
+    let jar = if is_main {
+        jar.remove(axum_extra::extract::cookie::Cookie::build(crate::auth::ACTING_COOKIE).path("/"))
+    } else {
+        jar.add(cookie)
+    };
+    let message = if is_main {
+        format!("Back to {}, your main.", character.name)
+    } else {
+        format!("Acting as {}.", character.name)
+    };
+    Ok((jar, stay::back("/dashboard", message)).into_response())
+}
+
 /// `POST /profile/characters/remove`: one of the pilot's own characters
 /// off their account at once (not the main).
 pub async fn remove_character(

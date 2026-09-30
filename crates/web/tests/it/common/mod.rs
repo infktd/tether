@@ -915,7 +915,7 @@ pub async fn run_probe_as(
     let page = if as_page {
         h.plugins
             .host()
-            .render_as(&plugin, request, viewer, &Default::default())
+            .render_as(&plugin, request, viewer, None, &Default::default())
             .await
             .unwrap()
             .page
@@ -931,6 +931,7 @@ pub async fn run_probe_as(
                     values: Vec::new(),
                 },
                 viewer,
+                None,
                 &Default::default(),
             )
             .await

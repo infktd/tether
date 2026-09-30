@@ -277,12 +277,13 @@ async fn change_main_needs_a_working_token(db: PgPool) {
         dashboard.contains("Change Main with EVE login"),
         "{dashboard}"
     );
-    // Only its Remove button names it, not a Make main one.
+    // Only its Remove button and the account menu's Act as name it, not
+    // a Make main one.
     assert_eq!(
         dashboard
             .matches(&format!(r#"name="character_id" value="{MITTANI_ID}""#))
             .count(),
-        1,
+        2,
         "{dashboard}"
     );
     assert!(

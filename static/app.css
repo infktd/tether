@@ -663,6 +663,9 @@
   .text-center {
     text-align: center;
   }
+  .text-left {
+    text-align: left;
+  }
   .text-right {
     text-align: right;
   }
@@ -7941,6 +7944,22 @@
   .pager [aria-disabled="true"] {
     pointer-events: none;
     opacity: 40%;
+  }
+  .user-menu-heading {
+    padding-inline: calc(var(--spacing) * 3);
+    padding-top: calc(var(--spacing) * 2);
+    padding-bottom: var(--spacing);
+    font-size: 11px;
+    --tw-font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-medium);
+    --tw-tracking: 0.14em;
+    letter-spacing: 0.14em;
+    color: var(--color-muted-foreground);
+    text-transform: uppercase;
+  }
+  .user-menu-item[aria-current="true"] {
+    background-color: var(--color-accent);
+    color: var(--color-foreground);
   }
   .page-actions {
     display: flex;

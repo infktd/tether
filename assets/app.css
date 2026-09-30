@@ -421,6 +421,13 @@
   .pager [aria-disabled="true"] {
     @apply pointer-events-none opacity-40;
   }
+  /* The account menu's "Act as" heading (Change character). */
+  .user-menu-heading {
+    @apply px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground;
+  }
+  .user-menu-item[aria-current="true"] {
+    @apply bg-accent text-foreground;
+  }
   .page-actions {
     @apply flex w-full flex-wrap items-center gap-3;
   }

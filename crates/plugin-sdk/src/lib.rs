@@ -138,6 +138,15 @@ pub mod identity {
         crate::bindings::tether::plugin::identity::current()
     }
 
+    /// The character the viewer acts as: the one they chose in their
+    /// account menu (Change character), else their main. Use it where you
+    /// act for them (registering, their fits, their requests); scope what
+    /// they may see by `viewer().main` and permissions, never by this.
+    /// `None` in a job.
+    pub fn acting() -> Option<Character> {
+        crate::bindings::tether::plugin::identity::acting()
+    }
+
     /// The viewer's own groups (none in a job): to show something only to
     /// members of the groups it's limited to.
     pub fn groups() -> Vec<Group> {

@@ -539,6 +539,13 @@ interface identity {
     /// The viewer, or none (in a job).
     current: func() -> option<viewer>;
 
+    /// The character the viewer acts as: the one they chose in their
+    /// account menu (Change character), else their main. Use it where you
+    /// act for them (registering them, their fits, their requests); scope
+    /// what they may see by `current`'s main and permissions, never by
+    /// this. None in a job.
+    acting: func() -> option<character>;
+
     /// Who owns one of `esi.characters`: their account's main and state.
     record owner {
         character-id: s64,

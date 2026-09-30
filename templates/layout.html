@@ -60,11 +60,27 @@
         {% include "avatar.html" %}
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{{ shell.user.name }}</span>
-          <span class="block text-xs text-muted-foreground">{{ shell.user.state_name }}</span>
+          <span class="block text-xs text-muted-foreground">{% if shell.user.acting %}Acting as · {% endif %}{{ shell.user.state_name }}</span>
         </span>
         {% call icons::icon("chevrons") %}{% endcall %}
       </button>
       <nav id="user-menu" class="user-menu" popover aria-label="Account">
+        {% if !shell.user.switch.is_empty() %}
+        {#- Change character: who apps see you as. Permissions stay the
+            account's. -#}
+        <div class="user-menu-heading">Act as</div>
+        {% for c in shell.user.switch %}
+        <form method="post" action="/profile/acting">
+          <input type="hidden" name="character_id" value="{{ c.id }}">
+          <button type="submit" class="user-menu-item w-full"{% if c.current %} aria-current="true"{% endif %}>
+            {% let avatar_name = c.name.as_str() %}{% let avatar_id = c.id %}{% let avatar_size = 32 %}{% let avatar_class = "size-5" %}
+            {% include "avatar.html" %}
+            <span class="min-w-0 flex-1 truncate text-left">{{ c.name }}</span>{% if c.is_main %}<span class="text-xs text-muted-foreground">Main</span>{% endif %}
+          </button>
+        </form>
+        {% endfor %}
+        <div class="border-t mt-1 pt-1"></div>
+        {% endif %}
         <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
         <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
         <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">

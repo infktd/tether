@@ -280,6 +280,7 @@ fn probe(request: Request) -> Result<Page, PageError> {
         // A main page, for the host's parts around it (Add owner).
         "" => "home".to_owned(),
         "viewer" => format!("{:?}", identity::viewer()),
+        "acting" => format!("{:?}", identity::acting()),
         "superuser" => identity::superuser().to_string(),
         "characters" => format!("{:?}", esi::characters()),
         "owners" => format!("{:?}", identity::owners()),

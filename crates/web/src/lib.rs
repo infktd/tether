@@ -29,7 +29,7 @@ pub mod pages {
     pub use tether_web_apps::pages::{plugin_pages, plugin_visuals};
     pub use tether_web_core::pages::*;
     pub use tether_web_member::pages::account::{
-        change_main_login, home, login, make_main, profile, remove_character, to_dashboard,
+        act_as, change_main_login, home, login, make_main, profile, remove_character, to_dashboard,
     };
     pub use tether_web_member::pages::{
         access_tokens, corpstats, groups, notifications, securegroups, tokens,
@@ -77,6 +77,7 @@ pub fn router(state: AppState) -> Router {
         .route("/profile", get(pages::to_dashboard))
         .route("/profile/main", post(pages::make_main))
         .route("/profile/characters/remove", post(pages::remove_character))
+        .route("/profile/acting", post(pages::act_as))
         .route("/profile/main/login", post(pages::change_main_login))
         .route("/setup", get(pages::setup::page))
         .route("/setup/unlock", post(pages::setup::unlock))

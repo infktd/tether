@@ -2197,3 +2197,86 @@ async fn apps_offer_csv_downloads_the_host_writes(db: PgPool) {
             .unwrap();
     assert_eq!(audited, 4);
 }
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_see_the_character_you_act_as(db: PgPool) {
+    use tether_web::auth::ACTING_COOKIE;
+    const MITTANI_ID: i64 = 443630591;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let owner = log_in_as(&h, "443630591:The Mittani", Some(&owner)).await;
+    install(&h, &owner).await;
+    let open = |path: &'static str, acting: Option<String>| {
+        let (h, owner) = (&h, owner.clone());
+        async move {
+            let mut jar = vec![(SESSION, owner.as_str())];
+            if let Some(a) = acting.as_deref() {
+                jar.push((ACTING_COOKIE, a));
+            }
+            send(&h.app, get(&format!("/plugins/acme.esi/{path}"), &jar))
+                .await
+                .body
+        }
+    };
+    // The main, until another is chosen.
+    let body = open("acting", None).await;
+    assert!(body.contains("id: 196379789"), "{body}");
+
+    // Acting as the alt: apps see it through `acting`; the viewer's main,
+    // and everything scoped by it, stays the main.
+    let res = send(
+        &h.app,
+        form(
+            "/profile/acting",
+            &format!("character_id={MITTANI_ID}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let acting = res.cookie_value(ACTING_COOKIE);
+    assert_eq!(acting, MITTANI_ID.to_string());
+    let body = open("acting", Some(acting.clone())).await;
+    assert!(body.contains(&format!("id: {MITTANI_ID}")), "{body}");
+    let body = open("viewer", Some(acting.clone())).await;
+    assert!(body.contains("main: Character { id: 196379789"), "{body}");
+    let dashboard = send(
+        &h.app,
+        get("/dashboard", &[(SESSION, &owner), (ACTING_COOKIE, &acting)]),
+    )
+    .await
+    .body;
+    assert!(dashboard.contains("Acting as"), "{dashboard}");
+
+    // Only the account's own characters count: another's id is ignored.
+    let body = open("acting", Some("1887431749".to_owned())).await;
+    assert!(body.contains("id: 196379789"), "{body}");
+    let res = send(
+        &h.app,
+        form("/profile/acting", "character_id=1887431749", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    // Logging out forgets it.
+    let res = send(
+        &h.app,
+        axum::http::Request::post("/auth/logout")
+            .header(axum::http::header::ORIGIN, SITE)
+            .header(
+                axum::http::header::COOKIE,
+                format!("{SESSION}={owner}; {ACTING_COOKIE}={acting}"),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        res.headers.get_all("set-cookie").iter().any(|c| c
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("{ACTING_COOKIE}=;"))),
+        "{:?}",
+        res.headers
+    );
+}

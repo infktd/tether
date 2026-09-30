@@ -58,6 +58,9 @@ pub struct CallState {
     jobs_refused: bool,
     services: Option<services::Shared>,
     viewer: Option<services::Viewer>,
+    /// The character the viewer acts as, if not their main
+    /// (`identity.acting`).
+    acting: Option<services::Character>,
     /// `identity.groups` and `identity.all-groups`, read once per call.
     groups: Option<Vec<services::Group>>,
     all_groups: Option<Vec<services::Group>>,
@@ -87,6 +90,7 @@ impl CallState {
             jobs_refused: false,
             services: None,
             viewer: None,
+            acting: None,
             groups: None,
             all_groups: None,
             superuser: None,
@@ -124,6 +128,17 @@ impl CallState {
 impl tether::plugin::identity::Host for CallState {
     async fn current(&mut self) -> Option<services::Viewer> {
         self.viewer.clone()
+    }
+
+    async fn acting(&mut self) -> Option<services::Character> {
+        let viewer = self.viewer.as_ref()?;
+        // Only ever one of the viewer's own characters.
+        Some(
+            self.acting
+                .clone()
+                .filter(|a| viewer.characters.iter().any(|c| c.id == a.id))
+                .unwrap_or_else(|| viewer.main.clone()),
+        )
     }
 
     async fn owners(&mut self) -> Option<Vec<services::Owner>> {
@@ -838,7 +853,7 @@ impl Host {
         request: Request,
         limits: &PluginLimits,
     ) -> Result<Rendered, RenderError> {
-        self.render_as(plugin, request, None, limits).await
+        self.render_as(plugin, request, None, None, limits).await
     }
 
     /// Renders a page for `viewer` (what `identity.current` answers).
@@ -847,10 +862,12 @@ impl Host {
         plugin: &LoadedPlugin,
         request: Request,
         viewer: Option<services::Viewer>,
+        acting: Option<services::Character>,
         limits: &PluginLimits,
     ) -> Result<Rendered, RenderError> {
         let mut state = self.render_state(plugin);
         state.viewer = viewer;
+        state.acting = acting;
         let store = self.runtime.store(state, limits);
         let (answer, logs) = self
             .runtime
@@ -887,7 +904,7 @@ impl Host {
         submission: Submission,
         limits: &PluginLimits,
     ) -> Result<Submitted, RenderError> {
-        self.submit_as(plugin, submission, None, limits).await
+        self.submit_as(plugin, submission, None, None, limits).await
     }
 
     /// Handles a form posted by `viewer`.
@@ -896,10 +913,12 @@ impl Host {
         plugin: &LoadedPlugin,
         submission: Submission,
         viewer: Option<services::Viewer>,
+        acting: Option<services::Character>,
         limits: &PluginLimits,
     ) -> Result<Submitted, RenderError> {
         let mut state = self.call_state(plugin);
         state.viewer = viewer;
+        state.acting = acting;
         state.writes_allowed = true;
         let store = self.runtime.store(state, limits);
         let (answer, logs) = self

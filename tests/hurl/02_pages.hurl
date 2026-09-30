@@ -88,6 +88,14 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+POST {{base}}/profile/acting
+Origin: {{base}}
+[Form]
+character_id: 1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/profile/characters/remove
 Origin: {{base}}
 [Form]

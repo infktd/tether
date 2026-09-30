@@ -521,7 +521,10 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Res
     if let Some(session) = jar.get(SESSION_COOKIE) {
         db::delete_session(&state.db, &hash_token(session.value())).await?;
     }
-    let jar = jar.remove(removal(SESSION_COOKIE));
+    // The next sign-in on this browser starts as the main again.
+    let jar = jar
+        .remove(removal(SESSION_COOKIE))
+        .remove(removal(ACTING_COOKIE));
     Ok((jar, Redirect::to("/")).into_response())
 }
 
@@ -539,6 +542,25 @@ pub struct CurrentSession {
     /// Sidebar sections this browser folded (a preference cookie, not
     /// part of the session: see [`folded_sections`]).
     pub folded: Vec<String>,
+    /// The character this browser acts as ([`ACTING_COOKIE`]), if not the
+    /// main. Unchecked: whoever reads it keeps it only if it's one of the
+    /// account's characters.
+    pub acting: Option<i64>,
+}
+
+/// The cookie naming which of the account's characters this browser acts
+/// as (Change character): apps see it as the viewer's character.
+/// Permissions and state stay the account's. A preference, not a secret:
+/// only one of the account's own characters is ever honoured.
+pub const ACTING_COOKIE: &str = "__Host-tether_acting";
+
+/// The character id in the acting cookie, if any.
+pub fn acting_character(jar: &CookieJar) -> Option<i64> {
+    jar.get(ACTING_COOKIE)?
+        .value()
+        .parse()
+        .ok()
+        .filter(|id: &i64| *id > 0)
 }
 
 /// The cookie remembering which sidebar sections a browser folded, so the
@@ -655,6 +677,7 @@ impl FromRequestParts<AppState> for CurrentSession {
                 token_scopes: Some(scope.scopes),
                 reauthenticated_at: None,
                 folded: Vec::new(),
+                acting: None,
             });
         }
         let jar = CookieJar::from_headers(&parts.headers);
@@ -667,6 +690,7 @@ impl FromRequestParts<AppState> for CurrentSession {
             token_scopes: None,
             reauthenticated_at: record.reauthenticated_at,
             folded: folded_sections(&jar),
+            acting: acting_character(&jar),
         })
     }
 }
