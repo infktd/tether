@@ -1143,7 +1143,9 @@ async fn esi_fleet_tracking_adds_members_and_stops(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    for (character, expected) in [(LINE, Some(LINE_CORP)), (ALT, None)] {
+    // Both have their corporation: ESI's affiliation, read with the fleet,
+    // for a pilot the app had never seen too.
+    for (character, expected) in [(LINE, Some(LINE_CORP)), (ALT, Some(1000167))] {
         let corporation: Option<i64> = sqlx::query_scalar(sql!(
             "SELECT f.corporation_id FROM \"{schema}\".fats f JOIN \"{schema}\".links l ON l.id = f.link_id WHERE f.character_id = $1 AND l.hash = $2"
         ))

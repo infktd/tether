@@ -338,6 +338,9 @@ fn remember_characters(viewer: &Viewer) {
     }
 }
 
+/// Refused name look-ups one call to `learn_names` tolerates.
+const NAME_REFUSALS: usize = 6;
+
 /// Stores names for corporation and alliance ids we don't have yet, from
 /// public ESI. Best effort: names fall back to ids.
 fn learn_names(ids: &[i64]) {
@@ -361,13 +364,33 @@ fn learn_names(ids: &[i64]) {
     if missing.is_empty() {
         return;
     }
-    let named = match esi::names(&missing[..missing.len().min(1000)]) {
-        Ok(named) => named,
-        Err(err) => {
-            log::warn(format!("names: {err:?}"));
-            return;
+    // ESI refuses a whole batch for one id it can't name (a deleted
+    // character, say): halve a refused batch to name the rest, giving up
+    // after a few refusals (each is an ESI error).
+    let mut named = Vec::new();
+    let mut todo: Vec<Vec<i64>> = vec![missing[..missing.len().min(1000)].to_vec()];
+    let mut refused = 0;
+    while let Some(chunk) = todo.pop() {
+        match esi::names(&chunk) {
+            Ok(n) => named.extend(n),
+            Err(esi::Error::Status(404)) if chunk.len() > 1 && refused < NAME_REFUSALS => {
+                refused += 1;
+                let (a, b) = chunk.split_at(chunk.len() / 2);
+                todo.push(a.to_vec());
+                todo.push(b.to_vec());
+            }
+            Err(err) => {
+                log::warn(format!("names of {} ids: {err:?}", chunk.len()));
+                refused += 1;
+                if refused >= NAME_REFUSALS {
+                    break;
+                }
+            }
         }
-    };
+    }
+    if named.is_empty() {
+        return;
+    }
     let rows: Vec<serde_json::Value> = named
         .into_iter()
         .map(|n| serde_json::json!({ "id": n.id, "name": n.name, "category": n.category }))
@@ -380,6 +403,86 @@ fn learn_names(ids: &[i64]) {
     ) {
         log::warn(format!("storing names: {err:?}"));
     }
+}
+
+fn retry(what: &str, err: impl std::fmt::Debug) -> JobError {
+    JobError::Retry(format!("{what}: {err:?}"))
+}
+
+/// Characters' corporations and alliances now, from ESI's public
+/// affiliation (a thousand at a time). Best effort: none on trouble.
+fn affiliations(ids: &[i64]) -> Vec<(i64, i64, Option<i64>)> {
+    let mut ids: Vec<i64> = ids.iter().copied().filter(|id| *id > 0).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut out = Vec::new();
+    for chunk in ids.chunks(1000) {
+        let list = chunk
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        match esi::get(
+            "character-affiliation",
+            Subject::Character(0),
+            &[("character_ids".to_owned(), list)],
+            None,
+        ) {
+            Ok(answer) => {
+                let list: serde_json::Value =
+                    serde_json::from_str(&answer.body).unwrap_or_default();
+                out.extend(list.as_array().into_iter().flatten().filter_map(|a| {
+                    Some((
+                        a["character_id"].as_i64()?,
+                        a["corporation_id"].as_i64()?,
+                        a["alliance_id"].as_i64(),
+                    ))
+                }));
+            }
+            Err(err) => log::warn(format!("affiliations: {err:?}")),
+        }
+    }
+    out
+}
+
+/// Hourly: the last week's FATs recorded without a corporation (a pilot
+/// the app hadn't seen) take the one ESI says now, and every corporation
+/// and alliance on a FAT gets its name.
+fn fill_in_affiliations() -> Result<(), JobError> {
+    let unknown = storage::query(
+        "SELECT DISTINCT character_id FROM fats \
+         WHERE corporation_id IS NULL AND created_at > now() - interval '7 days' LIMIT 1000",
+        &[],
+    )
+    .map_err(|e| retry("finding FATs without a corporation", e))?;
+    let ids: Vec<i64> = unknown.rows.iter().map(|r| int(r, 0)).collect();
+    let found = affiliations(&ids);
+    if !found.is_empty() {
+        let rows: Vec<serde_json::Value> = found
+            .iter()
+            .map(|(c, corp, alliance)| {
+                serde_json::json!({ "character_id": c, "corporation_id": corp, "alliance_id": alliance })
+            })
+            .collect();
+        storage::execute(
+            "UPDATE fats f SET corporation_id = x.corporation_id, alliance_id = x.alliance_id \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, corporation_id bigint, alliance_id bigint) \
+             WHERE f.character_id = x.character_id AND f.corporation_id IS NULL \
+               AND f.created_at > now() - interval '7 days'",
+            &[Db::json(serde_json::Value::Array(rows).to_string())],
+        )
+        .map_err(|e| retry("filling in corporations", e))?;
+    }
+    let unnamed = storage::query(
+        "SELECT DISTINCT id FROM ( \
+             SELECT corporation_id AS id FROM fats UNION SELECT alliance_id FROM fats) x \
+         WHERE id IS NOT NULL AND id > 0 AND NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) \
+         LIMIT 1000",
+        &[],
+    )
+    .map_err(|e| retry("finding unnamed corporations", e))?;
+    learn_names(&unnamed.rows.iter().map(|r| int(r, 0)).collect::<Vec<_>>());
+    Ok(())
 }
 
 fn name_of(id: i64, fallback: &str) -> Result<String, PageError> {
@@ -2610,6 +2713,7 @@ fn logs_page(viewer: &Viewer) -> Result<Page, PageError> {
 /// Secure Groups' FAT filter: each character's FATs in the last `days`,
 /// for every setting a smart group uses.
 fn report_filters() -> Result<(), JobError> {
+    fill_in_affiliations()?;
     for setting in tether_plugin_sdk::filters::wanted() {
         if setting.name != "fats" {
             continue;
@@ -2826,37 +2930,56 @@ fn poll(link: &Tracked) -> Result<(), JobError> {
                 .collect()
         })
         .unwrap_or_default();
-    // Names for pilots, ships and systems we don't know yet (one call).
+    // Who each flies for now (public, one call): the fleet's affiliation,
+    // for pilots the app hasn't seen too.
+    let affiliated = affiliations(&members.iter().map(|m| m.0).collect::<Vec<_>>());
+    let of = |c: i64| affiliated.iter().find(|a| a.0 == c).map(|a| (a.1, a.2));
+    // Names for pilots, ships, systems, corporations and alliances we don't
+    // know yet.
     learn_names(
         &members
             .iter()
             .flat_map(|(c, s, y)| [*c, s.unwrap_or_default(), y.unwrap_or_default()])
+            .chain(
+                affiliated
+                    .iter()
+                    .flat_map(|a| [a.1, a.2.unwrap_or_default()]),
+            )
             .collect::<Vec<_>>(),
     );
     let rows: Vec<serde_json::Value> = members
         .iter()
         .map(|(c, s, y)| {
-            serde_json::json!({ "character_id": c, "ship_type_id": s, "solar_system_id": y })
+            let (corporation, alliance) = of(*c).map_or((None, None), |(co, al)| (Some(co), al));
+            serde_json::json!({
+                "character_id": c, "ship_type_id": s, "solar_system_id": y,
+                "corporation_id": corporation, "alliance_id": alliance,
+            })
         })
         .collect();
     // A FAT for everyone not on the link yet; one already there (clicked,
-    // or added by hand) gains the ship and system it lacked. Affiliation
-    // comes from characters the app has seen; others get theirs when they
-    // next use the app.
+    // or added by hand) gains the ship, system and affiliation it lacked.
+    // Affiliation is ESI's now, else what the app last saw.
     storage::transaction(&[
         Statement::new(
             "INSERT INTO fats (link_id, character_id, character_name, corporation_id, alliance_id, \
                                ship_type_id, system_id, esi) \
              SELECT l.id, x.character_id, \
                     coalesce(c.name, n.name, 'Character ' || x.character_id::text), \
-                    c.corporation_id, c.alliance_id, x.ship_type_id, x.solar_system_id, true \
-             FROM json_to_recordset($1::json) AS x(character_id bigint, ship_type_id bigint, solar_system_id bigint) \
+                    coalesce(x.corporation_id, c.corporation_id), \
+                    CASE WHEN x.corporation_id IS NOT NULL THEN x.alliance_id ELSE c.alliance_id END, \
+                    x.ship_type_id, x.solar_system_id, true \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, ship_type_id bigint, \
+                  solar_system_id bigint, corporation_id bigint, alliance_id bigint) \
              JOIN links l ON l.id = $2 AND l.esi_state = 'tracking' AND l.expires_at > now() \
              LEFT JOIN characters c ON c.character_id = x.character_id \
              LEFT JOIN names n ON n.id = x.character_id \
              ON CONFLICT (link_id, character_id) DO UPDATE SET \
                  ship_type_id = coalesce(fats.ship_type_id, EXCLUDED.ship_type_id), \
-                 system_id = coalesce(fats.system_id, EXCLUDED.system_id)",
+                 system_id = coalesce(fats.system_id, EXCLUDED.system_id), \
+                 alliance_id = CASE WHEN fats.corporation_id IS NULL THEN EXCLUDED.alliance_id \
+                     ELSE fats.alliance_id END, \
+                 corporation_id = coalesce(fats.corporation_id, EXCLUDED.corporation_id)",
             vec![
                 Db::json(serde_json::Value::Array(rows).to_string()),
                 link.id.into(),
