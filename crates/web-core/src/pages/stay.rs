@@ -272,7 +272,7 @@ fn stay(
 fn leave(response: &Response, origin: &str, asked: &str) -> Option<Response> {
     let to = if response.status().is_redirection() {
         let location = response.headers().get(header::LOCATION)?.to_str().ok()?;
-        let external = location.contains("://")
+        let external = (location.starts_with("https://") || location.starts_with("http://"))
             && !(location.starts_with(origin)
                 && matches!(
                     location.as_bytes().get(origin.len()),
@@ -362,6 +362,8 @@ mod tests {
         assert_eq!(to("https://auth.example.com/dashboard"), None);
         // Not ours for sharing a prefix.
         assert!(to("https://auth.example.com.evil.example/").is_some());
+        // Only http(s): nothing else becomes a navigation.
+        assert_eq!(to("javascript://%0aalert(1)"), None);
         let mut download = StatusCode::OK.into_response();
         download.headers_mut().insert(
             header::CONTENT_DISPOSITION,

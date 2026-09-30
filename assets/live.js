@@ -6,6 +6,13 @@
 // the page reads fine without it. Nothing here animates: values change in
 // place. Every instant comes from an attribute the host wrote.
 (() => {
+  // Pages are never kept in the browser (htmx-config's historyCacheSize is
+  // 0: Back asks the server, which checks the session). A cache an older
+  // Tether left behind goes.
+  try {
+    localStorage.removeItem("htmx-history-cache");
+  } catch (_) {}
+
   // As plugin_pages.rs's countdown_text.
   const left = (seconds) => {
     if (seconds <= 0) return "done";
