@@ -38,6 +38,11 @@ pub const MAX_FORM_BYTES: usize = 64 * 1024;
 const MAX_FORM_PAIRS: usize = 100;
 /// The host's own query parameter: which tab to show.
 const TAB: &str = "_tab";
+/// The host's per-table page numbers: `_p0=2` is the page's first table on
+/// its second page.
+const TABLE_PAGE: &str = "_p";
+/// Rows a table shows at once (Jay, 2026-09-30).
+pub const ROWS_PER_PAGE: usize = 25;
 /// The host's own form field: which form was posted.
 const FORM: &str = "_form";
 
@@ -191,6 +196,63 @@ pub struct TableView {
     pub columns: Vec<ColumnView>,
     pub rows: Vec<Vec<ValueView>>,
     pub empty: Option<String>,
+    /// Longer than a page: which one this is, and the way to the others.
+    pub pager: Option<Pager>,
+}
+
+/// A long table's place: rows `from` to `to` of `total`.
+pub struct Pager {
+    pub from: usize,
+    pub to: usize,
+    pub total: usize,
+    pub previous: Option<String>,
+    pub next: Option<String>,
+}
+
+/// Which table a `_pN` names, if it's one.
+fn table_page_key(key: &str) -> Option<usize> {
+    key.strip_prefix(TABLE_PAGE)?.parse().ok()
+}
+
+/// Pages every table longer than [`ROWS_PER_PAGE`], numbering the page's
+/// tables in order (a row's too); `href(n, page)` is the address of table
+/// `n` on `page`.
+fn paginate(
+    views: &mut [SectionView],
+    next_index: &mut usize,
+    pages: &[(usize, usize)],
+    href: &dyn Fn(usize, usize) -> String,
+) {
+    for view in views {
+        match view {
+            SectionView::Row(members) => paginate(members, next_index, pages, href),
+            SectionView::Table(table) => {
+                let index = *next_index;
+                *next_index += 1;
+                let total = table.rows.len();
+                if total <= ROWS_PER_PAGE {
+                    continue;
+                }
+                let count = total.div_ceil(ROWS_PER_PAGE);
+                let page = pages
+                    .iter()
+                    .find(|(n, _)| *n == index)
+                    .map_or(1, |(_, p)| *p)
+                    .clamp(1, count);
+                let from = (page - 1) * ROWS_PER_PAGE;
+                let to = (from + ROWS_PER_PAGE).min(total);
+                table.rows = table.rows.drain(from..to).collect();
+                table.pager = Some(Pager {
+                    from: from + 1,
+                    to,
+                    total,
+                    previous: (page > 1).then(|| href(index, page - 1)),
+                    next: (page < count).then(|| href(index, page + 1)),
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 pub struct CardView {
@@ -750,6 +812,7 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
                 .collect(),
         ),
         Section::Table(table) => SectionView::Table(TableView {
+            pager: None,
             title: table.title.clone(),
             columns: table
                 .columns
@@ -927,6 +990,8 @@ struct Opened {
     path: String,
     query: Vec<(String, String)>,
     tab: usize,
+    /// Its tables' pages (`_pN`), which the app never sees.
+    table_pages: Vec<(usize, usize)>,
     /// The page's own address, with its query: forms post back here.
     href: String,
     owners: Option<super::plugin_access::Owners>,
@@ -985,7 +1050,14 @@ async fn open(
         .find(|(k, _)| k == TAB)
         .and_then(|(_, v)| v.parse().ok())
         .unwrap_or(0);
-    let query: Vec<(String, String)> = pairs.into_iter().filter(|(k, _)| k != TAB).collect();
+    let table_pages: Vec<(usize, usize)> = pairs
+        .iter()
+        .filter_map(|(k, v)| Some((table_page_key(k)?, v.parse().ok()?)))
+        .collect();
+    let query: Vec<(String, String)> = pairs
+        .into_iter()
+        .filter(|(k, _)| k != TAB && table_page_key(k).is_none())
+        .collect();
     // Not "plugins": that's the admin page; the plugin's own link is
     // marked through active_href.
     let mut shell = load(state, &session, "plugin-page").await?.shell;
@@ -1007,6 +1079,7 @@ async fn open(
             path: path.to_owned(),
             query,
             tab,
+            table_pages,
             href,
             owners,
             site: state.site.origin().to_owned(),
@@ -1301,6 +1374,35 @@ fn draw(
         .get(tab)
         .map(|chosen| arrange(chosen.sections.iter().map(|s| section(&ctx, s)).collect()))
         .unwrap_or_default();
+    // Long tables a page at a time, each keeping the others' pages.
+    let table_href = |index: usize, number: usize| {
+        let mut parts = base_query.clone();
+        if tab > 0 {
+            parts.push(format!("{TAB}={tab}"));
+        }
+        for (n, p) in &opened.table_pages {
+            if *n != index {
+                parts.push(format!("{TABLE_PAGE}{n}={p}"));
+            }
+        }
+        parts.push(format!("{TABLE_PAGE}{index}={number}"));
+        format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
+    };
+    let mut sections = sections;
+    let mut tab_sections = tab_sections;
+    let mut next_index = 0;
+    paginate(
+        &mut sections,
+        &mut next_index,
+        &opened.table_pages,
+        &table_href,
+    );
+    paginate(
+        &mut tab_sections,
+        &mut next_index,
+        &opened.table_pages,
+        &table_href,
+    );
     let tabs = page
         .tabs
         .iter()
@@ -1823,6 +1925,7 @@ mod tests {
 
     fn table(title: &str, columns: &[&str]) -> SectionView {
         SectionView::Table(TableView {
+            pager: None,
             title: Some(title.to_owned()),
             columns: columns
                 .iter()
@@ -1864,6 +1967,45 @@ mod tests {
                 _ => "X".to_owned(),
             })
             .collect()
+    }
+
+    #[test]
+    fn long_tables_are_paged_each_on_its_own() {
+        let long = |n: usize| {
+            let mut t = table("Long", &["A"]);
+            if let SectionView::Table(t) = &mut t {
+                t.rows = (0..n).map(|_| Vec::new()).collect();
+            }
+            t
+        };
+        let mut views = vec![long(60), long(10), long(26)];
+        let href = |n: usize, p: usize| format!("?_p{n}={p}");
+        let mut next = 0;
+        paginate(&mut views, &mut next, &[(0, 2), (2, 9)], &href);
+        let pager = |v: &SectionView| match v {
+            SectionView::Table(t) => (
+                t.rows.len(),
+                t.pager
+                    .as_ref()
+                    .map(|p| (p.from, p.to, p.total, p.previous.clone(), p.next.clone())),
+            ),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            pager(&views[0]),
+            (
+                25,
+                Some((26, 50, 60, Some("?_p0=1".into()), Some("?_p0=3".into())))
+            )
+        );
+        // Short: whole, no pager.
+        assert_eq!(pager(&views[1]), (10, None));
+        // A page past the end is the last.
+        assert_eq!(
+            pager(&views[2]),
+            (1, Some((26, 26, 26, Some("?_p2=1".into()), None)))
+        );
+        assert_eq!(next, 3);
     }
 
     #[test]

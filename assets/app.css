@@ -413,6 +413,14 @@
   .page-header:has(> .page-actions) {
     @apply flex-col justify-start;
   }
+  /* A long table's pages (DESIGN.md, Tables): where you are, and the
+     way on. */
+  .pager {
+    @apply flex items-center justify-between gap-3 border-t border-border px-5 py-3;
+  }
+  .pager [aria-disabled="true"] {
+    @apply pointer-events-none opacity-40;
+  }
   .page-actions {
     @apply flex w-full flex-wrap items-center gap-3;
   }

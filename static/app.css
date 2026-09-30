@@ -7927,6 +7927,21 @@
     flex-direction: column;
     justify-content: flex-start;
   }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(var(--spacing) * 3);
+    border-top-style: var(--tw-border-style);
+    border-top-width: 1px;
+    border-color: var(--color-border);
+    padding-inline: calc(var(--spacing) * 5);
+    padding-block: calc(var(--spacing) * 3);
+  }
+  .pager [aria-disabled="true"] {
+    pointer-events: none;
+    opacity: 40%;
+  }
   .page-actions {
     display: flex;
     width: 100%;

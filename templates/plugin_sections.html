@@ -96,6 +96,15 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if let Some(p) = table.pager %}
+  <footer class="pager">
+    <span class="num text-xs text-muted-foreground">{{ p.from }}–{{ p.to }} of {{ p.total }}</span>
+    <span class="flex gap-2">
+      {% if let Some(href) = p.previous %}<a class="btn" data-variant="outline" data-size="sm" href="{{ href }}" hx-swap="innerHTML show:none">Previous</a>{% else %}<span class="btn" data-variant="outline" data-size="sm" aria-disabled="true">Previous</span>{% endif %}
+      {% if let Some(href) = p.next %}<a class="btn" data-variant="outline" data-size="sm" href="{{ href }}" hx-swap="innerHTML show:none">Next</a>{% else %}<span class="btn" data-variant="outline" data-size="sm" aria-disabled="true">Next</span>{% endif %}
+    </span>
+  </footer>
+  {% endif %}
   {% endif %}
 </section>
 {% when SectionView::Card(card) %}

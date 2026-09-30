@@ -556,14 +556,11 @@ async fn structures_end_to_end(db: PgPool) {
         "{}",
         settings.body
     );
-    for href in ["pocos"] {
-        assert!(
-            list.body
-                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
-            "{href}: {}",
-            list.body
-        );
-    }
+    assert!(
+        list.body.contains(&format!("href=\"/plugins/{ID}/pocos\"")),
+        "{}",
+        list.body
+    );
     assert!(
         list.body.contains(&format!(
             "images.evetech.net/corporations/{CHRIBBA_CORP}/logo"
