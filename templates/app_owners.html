@@ -16,7 +16,7 @@
     </details>
   </header>
   {% if o.rows.is_empty() %}
-  <p class="px-5 pb-5 text-sm text-muted-foreground">{% if o.can_manage %}No owners yet.{% else %}You haven't added a character yet.{% endif %}{% if o.can_offer %} Add owner, top right, logs in with one.{% endif %}</p>
+  <p class="px-5 pb-5 text-sm text-muted-foreground">{% if o.can_manage %}No owners yet.{% else %}You haven't added a character yet.{% endif %}{% if o.can_offer %} Add owner logs in with one.{% endif %}</p>
   {% else %}
   <table class="table">
     <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Added by</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>

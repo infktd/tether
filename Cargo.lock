@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "hr-applications"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "serde_json",
@@ -3643,7 +3643,7 @@ dependencies = [
 
 [[package]]
 name = "structures"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "chrono",
  "serde",

@@ -812,7 +812,7 @@ fn sync_owners() -> Result<Vec<i64>, JobError> {
         {
             log::warn(
                 "the host lists no data sources, but owners are known: keeping them for now \
-                 (they go if none is approved for an hour)",
+                 (they go if none is listed for an hour)",
             );
             return Ok(Vec::new());
         }
@@ -2490,8 +2490,8 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             vec![
                 Section::Table(owner_table),
                 Section::Text(
-                    "Add owner (top right) logs in with a character with the in-game Station \
-                     Manager role, and an admin approves it. Its corporation's structures show \
+                    "Add owner logs in with a character with the in-game Station Manager role. \
+                     Its corporation's structures show \
                      here within the hour; starbases, customs offices, skyhooks and fittings need \
                      the Director role."
                         .to_owned(),
@@ -2766,7 +2766,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::text(""),
         ])
         .title("Owners' sync characters")
-        .empty("No owners yet: Add owner (top right) logs in with a Station Manager."),
+        .empty("No owners yet: Add owner logs in with a Station Manager."),
         owner_rows,
     );
     let sent_table = with_rows(

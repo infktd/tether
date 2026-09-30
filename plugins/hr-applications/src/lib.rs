@@ -380,7 +380,7 @@ fn my_applications(viewer: &Viewer) -> Result<Page, PageError> {
         Column::text(""),
     ])
     .title("My Applications")
-    .empty("You haven't applied anywhere yet: Create Application (top right) lists the corporations taking applications.");
+    .empty("You haven't applied anywhere yet: Create Application lists the corporations taking applications.");
     for a in &apps {
         mine = mine.row(vec![
             link(a.corporation_name.clone(), format!("view/{}", a.id)).into(),
