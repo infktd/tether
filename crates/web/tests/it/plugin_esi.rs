@@ -2240,6 +2240,8 @@ async fn apps_see_the_character_you_act_as(db: PgPool) {
     assert!(body.contains(&format!("id: {MITTANI_ID}")), "{body}");
     let body = open("viewer", Some(acting.clone())).await;
     assert!(body.contains("main: Character { id: 196379789"), "{body}");
+    // The watermark names the account's main, who took any screenshot.
+    assert!(body.contains("Viewing as Chribba"), "{body}");
     let dashboard = send(
         &h.app,
         get("/dashboard", &[(SESSION, &owner), (ACTING_COOKIE, &acting)]),

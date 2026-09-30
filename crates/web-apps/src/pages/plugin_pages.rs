@@ -1458,9 +1458,11 @@ fn draw(
         .filter(|l| l.primary)
         .map(header_link)
         .collect();
+    // The account's main, whichever character it acts as: a screenshot
+    // names who took it.
     let watermark = format!(
         "Viewing as {} · {} EVE",
-        opened.shell.user.name,
+        opened.viewer.main.name,
         chrono::Utc::now().format("%Y-%m-%d %H:%M")
     );
     let content = ContentView {
