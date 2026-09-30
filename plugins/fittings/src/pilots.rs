@@ -21,12 +21,16 @@ pub(crate) const SKILLS: &str = "skills";
 /// Characters read per run: each is one ESI call of the 100 a run may make.
 const PER_RUN: usize = 90;
 
-/// The viewer's own characters registered for Fittings.
+/// The viewer's own characters registered for Fittings, the one they act
+/// as (Change character) first.
 pub(crate) fn mine(viewer: &Viewer) -> Vec<Character> {
-    esi::characters()
+    let acting = tether_plugin_sdk::identity::acting().map_or(viewer.main.id, |c| c.id);
+    let mut mine: Vec<Character> = esi::characters()
         .into_iter()
         .filter(|c| viewer.characters.iter().any(|v| v.id == c.id))
-        .collect()
+        .collect();
+    mine.sort_by_key(|c| c.id != acting);
+    mine
 }
 
 fn retry(what: &str, err: impl std::fmt::Debug) -> JobError {

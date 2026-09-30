@@ -1224,7 +1224,7 @@ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "fittings"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde_json",
  "tether-plugin-sdk",
@@ -1241,7 +1241,7 @@ dependencies = [
 
 [[package]]
 name = "fleet-activity-tracking"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "chrono",
  "serde_json",
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "ship-replacement"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "serde_json",

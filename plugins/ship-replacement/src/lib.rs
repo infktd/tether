@@ -440,7 +440,11 @@ fn add_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
         .field(
             Field::text("fleet_commander", "Fleet Commander", MAX_FC)
                 .required()
-                .value(viewer.main.name.clone()),
+                // Whoever they act as: an FC's own alt, say.
+                .value(
+                    tether_plugin_sdk::identity::acting()
+                        .map_or_else(|| viewer.main.name.clone(), |c| c.name),
+                ),
         )
         .field(
             Field::text("fleet_time", "Fleet Time (EVE)", 20)

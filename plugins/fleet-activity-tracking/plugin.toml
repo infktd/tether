@@ -3,7 +3,7 @@
 [plugin]
 id = "tether.fleet-activity-tracking"
 name = "Fleet Activity Tracking"
-version = "0.3.2"
+version = "0.3.3"
 host_api = "1"
 description = "FAT links for fleets, with fleet types and expiry, registered by pilots online in EVE (their system and ship recorded), or an FC's ESI fleet tracked while it runs; stats per alliance, corporation, pilot and month."
 

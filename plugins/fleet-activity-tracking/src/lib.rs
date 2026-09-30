@@ -1747,8 +1747,10 @@ fn register_page(
             )
             .cards(CardGrid::new().register());
     }
-    // The main first, then by name.
-    ready.sort_by_key(|c| (c.id != viewer.main.id, c.name.to_lowercase()));
+    // The character they act as (their main unless they chose another)
+    // first and ticked, then by name.
+    let acting = identity::acting().map_or(viewer.main.id, |c| c.id);
+    ready.sort_by_key(|c| (c.id != acting, c.name.to_lowercase()));
     let mut form = Form::new("register", "Register")
         .title("Your characters in this fleet")
         .description("Tick every character you brought. Each must be logged in to EVE.");
@@ -1756,7 +1758,7 @@ fn register_page(
         form = form.field(Field::checkbox(
             format!("c_{}", character.id),
             character.name.clone(),
-            character.id == viewer.main.id || ready.len() == 1,
+            character.id == acting || ready.len() == 1,
         ));
     }
     Ok(page.form(form))
