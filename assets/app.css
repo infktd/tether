@@ -421,6 +421,13 @@
   .pager [aria-disabled="true"] {
     @apply pointer-events-none opacity-40;
   }
+  /* Under one of merged tables, in its own row: the row's line is enough. */
+  .table-set .table-pager > td {
+    @apply p-0;
+  }
+  .table-set .table-pager .pager {
+    @apply border-t-0;
+  }
   /* The account menu's "Act as" heading (Change character). */
   .user-menu-heading {
     @apply px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground;

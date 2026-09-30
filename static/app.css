@@ -7945,6 +7945,13 @@
     pointer-events: none;
     opacity: 40%;
   }
+  .table-set .table-pager > td {
+    padding: 0px;
+  }
+  .table-set .table-pager .pager {
+    border-top-style: var(--tw-border-style);
+    border-top-width: 0px;
+  }
   .user-menu-heading {
     padding-inline: calc(var(--spacing) * 3);
     padding-top: calc(var(--spacing) * 2);

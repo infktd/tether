@@ -68,6 +68,15 @@
 {%- else -%}{{ v.text }}{%- endif -%}
 {%- endmacro %}
 
+{#- A long table's place in its rows, and Previous and Next. -#}
+{% macro pager(p) %}
+<span class="num text-xs text-muted-foreground">{{ p.from }}–{{ p.to }} of {{ p.total }}</span>
+<span class="flex gap-2">
+  {% if let Some(href) = p.previous %}<a class="btn" data-variant="outline" data-size="sm" href="{{ href }}" hx-swap="innerHTML show:none">Previous</a>{% else %}<span class="btn" data-variant="outline" data-size="sm" aria-disabled="true">Previous</span>{% endif %}
+  {% if let Some(href) = p.next %}<a class="btn" data-variant="outline" data-size="sm" href="{{ href }}" hx-swap="innerHTML show:none">Next</a>{% else %}<span class="btn" data-variant="outline" data-size="sm" aria-disabled="true">Next</span>{% endif %}
+</span>
+{% endmacro %}
+
 {#- One section. A row's members come through here too (`sections`
     below draws the row around them). -#}
 {% macro one(s) %}
@@ -96,15 +105,7 @@
       {% endfor %}
     </tbody>
   </table>
-  {% if let Some(p) = table.pager %}
-  <footer class="pager">
-    <span class="num text-xs text-muted-foreground">{{ p.from }}–{{ p.to }} of {{ p.total }}</span>
-    <span class="flex gap-2">
-      {% if let Some(href) = p.previous %}<a class="btn" data-variant="outline" data-size="sm" href="{{ href }}" hx-swap="innerHTML show:none">Previous</a>{% else %}<span class="btn" data-variant="outline" data-size="sm" aria-disabled="true">Previous</span>{% endif %}
-      {% if let Some(href) = p.next %}<a class="btn" data-variant="outline" data-size="sm" href="{{ href }}" hx-swap="innerHTML show:none">Next</a>{% else %}<span class="btn" data-variant="outline" data-size="sm" aria-disabled="true">Next</span>{% endif %}
-    </span>
-  </footer>
-  {% endif %}
+  {% if let Some(p) = table.pager %}<footer class="pager">{% call pager(p) %}{% endcall %}</footer>{% endif %}
   {% endif %}
 </section>
 {% when SectionView::Card(card) %}
@@ -281,6 +282,7 @@
       {% for row in g.rows %}
       <tr>{% for v in row %}{% let numeric = set.columns[loop.index0].numeric %}<td{% if numeric %} class="num text-right"{% endif %}>{% call value(v, numeric) %}{% endcall %}</td>{% endfor %}</tr>
       {% endfor %}
+      {% if let Some(p) = g.pager %}<tr class="table-pager"><td colspan="{{ set.columns.len() }}"><div class="pager">{% call pager(p) %}{% endcall %}</div></td></tr>{% endif %}
     </tbody>
     {% endfor %}
   </table>

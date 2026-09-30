@@ -226,33 +226,47 @@ fn paginate(
     for view in views {
         match view {
             SectionView::Row(members) => paginate(members, next_index, pages, href),
-            SectionView::Table(table) => {
-                let index = *next_index;
-                *next_index += 1;
-                let total = table.rows.len();
-                if total <= ROWS_PER_PAGE {
-                    continue;
+            SectionView::Table(table) => page_table(table, next_index, pages, href),
+            // Merged tables: each its own pages, as it was before.
+            SectionView::Tables(set) => {
+                for table in &mut set.groups {
+                    page_table(table, next_index, pages, href);
                 }
-                let count = total.div_ceil(ROWS_PER_PAGE);
-                let page = pages
-                    .iter()
-                    .find(|(n, _)| *n == index)
-                    .map_or(1, |(_, p)| *p)
-                    .clamp(1, count);
-                let from = (page - 1) * ROWS_PER_PAGE;
-                let to = (from + ROWS_PER_PAGE).min(total);
-                table.rows = table.rows.drain(from..to).collect();
-                table.pager = Some(Pager {
-                    from: from + 1,
-                    to,
-                    total,
-                    previous: (page > 1).then(|| href(index, page - 1)),
-                    next: (page < count).then(|| href(index, page + 1)),
-                });
             }
             _ => {}
         }
     }
+}
+
+/// One table's page, numbered `next_index` (and counted).
+fn page_table(
+    table: &mut TableView,
+    next_index: &mut usize,
+    pages: &[(usize, usize)],
+    href: &dyn Fn(usize, usize) -> String,
+) {
+    let index = *next_index;
+    *next_index += 1;
+    let total = table.rows.len();
+    if total <= ROWS_PER_PAGE {
+        return;
+    }
+    let count = total.div_ceil(ROWS_PER_PAGE);
+    let page = pages
+        .iter()
+        .find(|(n, _)| *n == index)
+        .map_or(1, |(_, p)| *p)
+        .clamp(1, count);
+    let from = (page - 1) * ROWS_PER_PAGE;
+    let to = (from + ROWS_PER_PAGE).min(total);
+    table.rows = table.rows.drain(from..to).collect();
+    table.pager = Some(Pager {
+        from: from + 1,
+        to,
+        total,
+        previous: (page > 1).then(|| href(index, page - 1)),
+        next: (page < count).then(|| href(index, page + 1)),
+    });
 }
 
 pub struct CardView {
@@ -2017,6 +2031,32 @@ mod tests {
             (1, Some((26, 26, 26, Some("?_p2=1".into()), None)))
         );
         assert_eq!(next, 3);
+
+        // Merged tables: each its own pages.
+        let cols = ["A", "B", "C", "D"];
+        let rows = |title: &str, n: usize| {
+            let mut t = table(title, &cols);
+            if let SectionView::Table(t) = &mut t {
+                t.rows = (0..n).map(|_| Vec::new()).collect();
+            }
+            t
+        };
+        let mut views = arrange(vec![rows("High", 30), rows("Mid", 5)]);
+        let mut next = 0;
+        paginate(&mut views, &mut next, &[(0, 2)], &href);
+        let SectionView::Tables(set) = &views[0] else {
+            panic!("not merged: {:?}", shape(&views));
+        };
+        assert_eq!(set.groups[0].rows.len(), 5);
+        assert_eq!(
+            set.groups[0]
+                .pager
+                .as_ref()
+                .map(|p| (p.from, p.to, p.total)),
+            Some((26, 30, 30))
+        );
+        assert!(set.groups[1].pager.is_none());
+        assert_eq!(next, 2);
     }
 
     #[test]
