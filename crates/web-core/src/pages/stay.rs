@@ -293,8 +293,10 @@ fn leave(response: &Response, origin: &str, asked: &str) -> Option<Response> {
         return None;
     };
     let value = HeaderValue::from_str(&to).ok()?;
-    let mut away = StatusCode::OK.into_response();
-    away.headers_mut().insert("hx-redirect", value);
+    // The handler's own headers go too: starting a login sets the cookie
+    // its callback checks.
+    let mut away = no_content(response, [("hx-redirect", value)]);
+    away.headers_mut().remove(header::CONTENT_DISPOSITION);
     Some(away)
 }
 
@@ -358,6 +360,16 @@ mod tests {
             to("https://login.eveonline.com/v2/oauth/authorize?x=1").as_deref(),
             Some("https://login.eveonline.com/v2/oauth/authorize?x=1")
         );
+        // The login cookie the handler set goes with it.
+        let mut login =
+            Redirect::to("https://login.eveonline.com/v2/oauth/authorize").into_response();
+        login.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_static("__Host-login=1"),
+        );
+        let away = leave(&login, origin, "/register/start").unwrap();
+        assert_eq!(away.headers()[header::SET_COOKIE], "__Host-login=1");
+        assert!(away.headers().get(header::LOCATION).is_none());
         assert_eq!(to("/dashboard"), None);
         assert_eq!(to("https://auth.example.com/dashboard"), None);
         // Not ours for sharing a prefix.
@@ -374,6 +386,7 @@ mod tests {
             away.headers()["hx-redirect"],
             "/plugins/acme/download/x?y=1"
         );
+        assert!(away.headers().get(header::CONTENT_DISPOSITION).is_none());
         assert!(leave(&StatusCode::OK.into_response(), origin, "/").is_none());
     }
 

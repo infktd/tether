@@ -186,6 +186,27 @@ async fn make_main_stays_on_the_dashboard(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_boosted_login_start_keeps_its_cookie(db: PgPool) {
+    let h = harness(db, true).await;
+    let token = log_in_owner(&h, "196379789:Chribba").await;
+
+    // Register (a boosted form): off to EVE's login in full, with the
+    // cookie its callback checks.
+    let res = send(
+        &h.app,
+        boosted(
+            form("/register/start", "", &[(SESSION, &token)]),
+            "/register",
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let to = res.headers["hx-redirect"].to_str().unwrap();
+    assert!(to.starts_with("https://login.test/authorize"), "{to}");
+    assert!(!res.cookie_value(LOGIN).is_empty());
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
     let h = harness(db, false).await;
 
