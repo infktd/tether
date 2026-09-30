@@ -2248,6 +2248,38 @@ async fn apps_see_the_character_you_act_as(db: PgPool) {
     .body;
     assert!(dashboard.contains("Acting as"), "{dashboard}");
 
+    // Back to the main: the cookie goes, the way a browser accepts for a
+    // `__Host-` cookie (Secure, Path=/).
+    let res = send(
+        &h.app,
+        axum::http::Request::post("/profile/acting")
+            .header(axum::http::header::ORIGIN, SITE)
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .header(
+                axum::http::header::COOKIE,
+                format!("{SESSION}={owner}; {ACTING_COOKIE}={acting}"),
+            )
+            .body(axum::body::Body::from("character_id=196379789"))
+            .unwrap(),
+    )
+    .await;
+    let cleared = res
+        .headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|c| c.to_str().unwrap().to_owned())
+        .find(|c| c.starts_with(&format!("{ACTING_COOKIE}=")))
+        .unwrap_or_default();
+    assert!(
+        cleared.starts_with(&format!("{ACTING_COOKIE}=;"))
+            && cleared.contains("Secure")
+            && cleared.contains("Path=/"),
+        "{cleared}"
+    );
+
     // Only the account's own characters count: another's id is ignored.
     let body = open("acting", Some("1887431749".to_owned())).await;
     assert!(body.contains("id: 196379789"), "{body}");

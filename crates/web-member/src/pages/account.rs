@@ -207,7 +207,9 @@ pub async fn act_as(
     .same_site(axum_extra::extract::cookie::SameSite::Lax)
     .build();
     let jar = if is_main {
-        jar.remove(axum_extra::extract::cookie::Cookie::build(crate::auth::ACTING_COOKIE).path("/"))
+        // As it was set (Secure, Path=/): browsers refuse to change a
+        // `__Host-` cookie any other way.
+        jar.remove(crate::auth::removal(crate::auth::ACTING_COOKIE))
     } else {
         jar.add(cookie)
     };
