@@ -1065,9 +1065,8 @@ fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
         links.push(("Mining totals", "totals"));
         links.push(("Planner", "planner"));
     }
-    if viewer.can("manage") {
-        links.push(("Settings", "settings"));
-    }
+    // Settings open from the app's Administration page (Tether's own
+    // Settings button), not from here.
     let upload = viewer.can("upload_moon_scan");
     // The old-moon list (with the Members-only window on), for someone who
     // sees it but not the extractions.

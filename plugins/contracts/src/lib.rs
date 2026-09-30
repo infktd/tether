@@ -55,9 +55,10 @@ struct Contracts;
 
 impl Plugin for Contracts {
     fn render(request: Request) -> Result<Page, PageError> {
-        let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
+        // Someone signed in (the host checked the page's permission).
+        identity::viewer().ok_or(PageError::Forbidden)?;
         match request.path.as_str() {
-            "" => index_page(&viewer),
+            "" => index_page(),
             "settings" => settings_page(),
             _ => Err(PageError::NotFound),
         }
@@ -871,7 +872,7 @@ fn status_badge(status: &str, expired: bool) -> Value {
     badge(label, tone).into()
 }
 
-fn index_page(viewer: &Viewer) -> Result<Page, PageError> {
+fn index_page() -> Result<Page, PageError> {
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let rows = storage::query(
         &format!(
@@ -960,9 +961,8 @@ fn index_page(viewer: &Viewer) -> Result<Page, PageError> {
                     .map_or_else(|| Value::from("not yet"), |t| time(rfc3339(t))),
             ),
         ]);
-    if viewer.can("manage") {
-        page = page.link("Settings", "settings");
-    }
+    // Settings open from the app's Administration page (Tether's own
+    // Settings button), not from here.
     if let Some(error) = settings.sync_error {
         page = page.text(format!("The last sync had a problem: {error}"));
     }

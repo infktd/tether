@@ -36,9 +36,8 @@ pub(crate) fn app_links(page: Page, access: &Access) -> Page {
     if access.viewer.can("exports_access") {
         page = page.link("Data Export", "data-export");
     }
-    if manage {
-        page = page.link("Settings", "settings");
-    }
+    // Settings open from the app's Administration page (Tether's own
+    // Settings button), not from here.
     page
 }
 

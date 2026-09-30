@@ -115,9 +115,8 @@ fn with_links(page: Page, viewer: &Viewer) -> Page {
             .link("Statistics", "stats");
     }
     if viewer.can("manage_afat") {
-        page = page
-            .link("Fleet types", "fleet-types")
-            .link("Settings", "settings");
+        // Settings open from the app's Administration page.
+        page = page.link("Fleet types", "fleet-types");
     }
     if viewer.can("log_view") {
         page = page.link("Logs", "logs");
