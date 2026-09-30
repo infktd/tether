@@ -264,6 +264,37 @@ fn stay(
     (response, toast)
 }
 
+/// A boosted request's answer the page can't be swapped with, as a full
+/// navigation instead (`HX-Redirect`): a redirect off the site (EVE SSO,
+/// Discord's authorization), which the browser can't follow in the
+/// background, and a file download, which it would otherwise draw as the
+/// page.
+fn leave(response: &Response, origin: &str, asked: &str) -> Option<Response> {
+    let to = if response.status().is_redirection() {
+        let location = response.headers().get(header::LOCATION)?.to_str().ok()?;
+        let external = location.contains("://")
+            && !(location.starts_with(origin)
+                && matches!(location.as_bytes().get(origin.len()), None | Some(b'/' | b'?')));
+        if !external {
+            return None;
+        }
+        location.to_owned()
+    } else if response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim_start().starts_with("attachment"))
+    {
+        asked.to_owned()
+    } else {
+        return None;
+    };
+    let value = HeaderValue::from_str(&to).ok()?;
+    let mut away = StatusCode::OK.into_response();
+    away.headers_mut().insert("hx-redirect", value);
+    Some(away)
+}
+
 /// The middleware (module docs). Innermost, so it sees handlers' answers
 /// as they gave them.
 pub async fn in_place(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -280,10 +311,18 @@ pub async fn in_place(State(state): State<AppState>, request: Request, next: Nex
     } else {
         None
     };
+    let asked = request
+        .uri()
+        .path_and_query()
+        .map(|p| p.as_str().to_owned())
+        .unwrap_or_default();
     let mut response = next.run(request).await;
     let toast = response.extensions_mut().remove::<Toast>();
     if !htmx {
         return response;
+    }
+    if let Some(away) = leave(&response, state.site.origin(), &asked) {
+        return away;
     }
     let (mut response, toast) = if boosted_post {
         stay(response, current.as_deref(), toast)
@@ -301,6 +340,34 @@ pub async fn in_place(State(state): State<AppState>, request: Request, next: Nex
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn off_site_redirects_and_downloads_navigate_fully() {
+        let origin = "https://auth.example.com";
+        let to = |location: &str| {
+            let mut r = StatusCode::SEE_OTHER.into_response();
+            r.headers_mut()
+                .insert(header::LOCATION, HeaderValue::from_str(location).unwrap());
+            leave(&r, origin, "/here")
+                .map(|r| r.headers()["hx-redirect"].to_str().unwrap().to_owned())
+        };
+        assert_eq!(
+            to("https://login.eveonline.com/v2/oauth/authorize?x=1").as_deref(),
+            Some("https://login.eveonline.com/v2/oauth/authorize?x=1")
+        );
+        assert_eq!(to("/dashboard"), None);
+        assert_eq!(to("https://auth.example.com/dashboard"), None);
+        // Not ours for sharing a prefix.
+        assert!(to("https://auth.example.com.evil.example/").is_some());
+        let mut download = StatusCode::OK.into_response();
+        download.headers_mut().insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment; filename=\"x.csv\""),
+        );
+        let away = leave(&download, origin, "/plugins/acme/download/x?y=1").unwrap();
+        assert_eq!(away.headers()["hx-redirect"], "/plugins/acme/download/x?y=1");
+        assert!(leave(&StatusCode::OK.into_response(), origin, "/").is_none());
+    }
 
     #[test]
     fn toasts_are_ascii_json() {
