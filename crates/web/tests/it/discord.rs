@@ -2008,9 +2008,11 @@ async fn a_detailed_ping_posts_an_embed_and_copy_text(db: PgPool) {
     .await;
     assert_eq!(res.location(), "/admin/pings", "{}", res.body);
 
+    // Tomorrow at 19:00 EVE: formup times are refused more than a day ago.
+    let formup = (chrono::Utc::now() + chrono::Duration::days(1)).date_naive();
     let fields = format!(
         "channel_id={PING_CHANNEL}&target=here&pre_ping=on&fleet_type=Roaming&fc_name=Chribba\
-         &fleet_name={}&formup_location=Jita&formup_time=2026-09-30T19%3A00&comms={}\
+         &fleet_name={}&formup_location=Jita&formup_time={formup}T19%3A00&comms={}\
          &doctrine=caracals&srp=yes&message={}",
         enc("Sunday roam"),
         enc("Mumble: Fleet 1"),
@@ -2019,12 +2021,13 @@ async fn a_detailed_ping_posts_an_embed_and_copy_text(db: PgPool) {
     // The copy-paste text first: nothing is sent.
     let preview = send(&h.app, form("/pings/preview", &fields, &owner)).await;
     assert_eq!(preview.status, StatusCode::OK, "{}", preview.body);
+    let formup_line = format!("Formup Time: {formup} 19:00 EVE");
     for line in [
         "Pre-Ping: Roaming Fleet",
         "FC: Chribba",
         "Fleet Name: Sunday roam",
         "Formup Location: Jita",
-        "Formup Time: 2026-09-30 19:00 EVE",
+        formup_line.as_str(),
         "Comms: Mumble: Fleet 1",
         "Doctrine: caracals",
         "SRP: Yes",
