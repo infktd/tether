@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.schedules (name, kind, payload, every_secs)\n        VALUES ($1, $2, $3, $4)\n        ON CONFLICT (name) DO UPDATE\n        SET kind = EXCLUDED.kind, payload = EXCLUDED.payload,\n            every_secs = EXCLUDED.every_secs, updated_at = now(),\n            next_run_at = LEAST(\n                core.schedules.next_run_at,\n                now() + make_interval(secs => EXCLUDED.every_secs)\n            )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9470d65922c86139b0d31e21b7a0cff91479ad1ff6c5cc701080dea8f293c9f0"
+}

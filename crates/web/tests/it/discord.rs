@@ -1125,6 +1125,30 @@ async fn a_role_whose_mapping_was_removed_is_taken_back(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn everyone_is_synced_every_five_minutes_without_pile_ups(db: PgPool) {
+    let h = harness(db, true).await;
+    let (_, _, account) = linked_pilot(&h).await;
+    let schedules = tether_web::discord_sync::schedules();
+    assert_eq!(schedules[0].every, std::time::Duration::from_secs(300));
+
+    // A run while the last one's syncs still wait (Discord slow or down)
+    // queues nothing more.
+    clear_jobs(&h.db).await;
+    for _ in 0..2 {
+        assert_eq!(
+            tether_web::discord_sync::sync_all(&h.db, None)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+    assert_eq!(
+        jobs_of_kind(&h.db, "discord.sync_member").await,
+        [serde_json::json!({ "account_id": account })]
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn nicknames_follow_the_name_formatter(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, _, account) = linked_pilot(&h).await;

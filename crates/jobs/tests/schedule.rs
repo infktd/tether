@@ -61,18 +61,28 @@ async fn ensure_updates_the_interval_but_keeps_the_clock(pool: PgPool) {
     run_due(&pool).await.unwrap();
     let before = next_run_in(&pool, "sync").await;
 
-    ensure(&pool, &spec("sync", 60)).await.unwrap();
+    // A restart, same interval or longer: the clock is kept.
+    ensure(&pool, &spec("sync", 600)).await.unwrap();
+    assert!(
+        (next_run_in(&pool, "sync").await - before).abs() < 2.0,
+        "restart kept next_run_at"
+    );
+    ensure(&pool, &spec("sync", 3600)).await.unwrap();
+    assert!(
+        (next_run_in(&pool, "sync").await - before).abs() < 2.0,
+        "a longer interval kept next_run_at"
+    );
 
+    // Shortened: never further off than the new interval.
+    ensure(&pool, &spec("sync", 60)).await.unwrap();
     let every: i32 =
         sqlx::query_scalar("SELECT every_secs FROM core.schedules WHERE name = 'sync'")
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(every, 60);
-    assert!(
-        (next_run_in(&pool, "sync").await - before).abs() < 2.0,
-        "restart kept next_run_at"
-    );
+    let next = next_run_in(&pool, "sync").await;
+    assert!((55.0..=60.0).contains(&next), "{next}");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

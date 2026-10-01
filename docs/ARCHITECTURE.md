@@ -224,6 +224,7 @@ Built into the host, not a plugin. REST only (twilight-http): no gateway connect
 
 - Account linking via OAuth from the Dashboard.
 - Tier and group to role mappings, applied automatically as membership changes.
+- Every five minutes everyone linked is synced again (`discord.sync_all`), catching what no trigger sees: a state's rules, permissions, the name format, changes made by hand in Discord. A member whose sync is still waiting gets no second one.
 - Nicknames from AA's Name Formatter: a format per state, such as `[{corp_ticker}] {character_name}`, when nickname sync is on (AA's `DISCORD_SYNC_NAMES`, off by default).
 - Fleet ping broadcasts with channel and role targeting; plugins can send through the same path if declared.
 - Secure Groups run summaries (allianceauth-secure-groups' group update webhooks) go out the same way: the bot posts to a ping channel an admin picks, through the job queue (`smart_groups.post_update`), never to a webhook URL.

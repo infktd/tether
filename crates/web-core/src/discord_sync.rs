@@ -6,8 +6,9 @@
 //!
 //! Database triggers queue `discord.sync_member` whenever an account's
 //! state, main, groups or main's corporation change, and `discord.sync_all`
-//! when a mapping is added or removed. A daily sync catches anything done
-//! by hand in Discord.
+//! when a mapping is added or removed. Every five minutes everyone is
+//! synced again, which catches what no trigger sees (a state's rules,
+//! permissions, the name format, anything done by hand in Discord).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -31,12 +32,14 @@ use crate::discord::{CHECK_TTL, grantable};
 
 pub const SYNC_MEMBER_JOB: &str = "discord.sync_member";
 pub const SYNC_ALL_JOB: &str = "discord.sync_all";
+/// How often every linked member is synced again.
+pub const SYNC_ALL_EVERY: Duration = Duration::from_secs(5 * 60);
 
 pub fn schedules() -> Vec<ScheduleSpec> {
     vec![ScheduleSpec::new(
         "discord.sync_all",
         SYNC_ALL_JOB,
-        Duration::from_secs(24 * 60 * 60),
+        SYNC_ALL_EVERY,
     )]
 }
 
@@ -436,13 +439,21 @@ async fn sync_roles(
     }))
 }
 
-/// Queues a sync for every linked member.
+/// Queues a sync for every linked member: one that's already waiting
+/// counts, so a slow or unreachable Discord doesn't pile them up. A
+/// removed mapping's role goes with each, to take it back.
 pub async fn sync_all(
     db_pool: &PgPool,
     removed_role_id: Option<i64>,
 ) -> Result<usize, sqlx::Error> {
     let accounts = db::linked_accounts(db_pool).await?;
-    let removed: Vec<i64> = removed_role_id.into_iter().collect();
+    let Some(removed_role_id) = removed_role_id else {
+        for account in &accounts {
+            db::queue_sync(db_pool, *account).await?;
+        }
+        return Ok(accounts.len());
+    };
+    let removed = [removed_role_id];
     for account in &accounts {
         tether_jobs::enqueue(
             db_pool,
@@ -480,7 +491,12 @@ pub fn register_jobs(registry: &mut Registry, ctx: SyncContext) {
             let queued = sync_all(&db, payload.removed_role_id)
                 .await
                 .map_err(JobError::retry)?;
-            tracing::info!(members = queued, "queued Discord syncs");
+            // Every five minutes: only worth a line when a mapping moved.
+            if payload.removed_role_id.is_some() {
+                tracing::info!(members = queued, "queued Discord syncs");
+            } else {
+                tracing::debug!(members = queued, "queued Discord syncs");
+            }
             Ok(())
         }
     });

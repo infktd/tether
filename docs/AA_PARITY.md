@@ -162,7 +162,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 - Access is by a permission ("Can access the Discord service", granted to Member and Blue by default), re-checked on state, permission and group changes.
 - **Roles: explicit mapping stays** (AA mirrors groups and states by name and creates roles; a same-named group can then hand out a privileged role). **(decided)** A setting adds AA's behaviour of removing every unmapped role except Discord-managed roles and reserved names **(decided)**, and (stricter than AA) moderation and admin roles, so one checkbox can't strip the server's staff.
 - **Name Formatter**: one format per state; AA's fields (`character_name`, `character_id`, `corp_ticker`, `corp_name`, `corp_id`, `alliance_ticker`, `alliance_name`, `alliance_id`, `alliance_or_corp_name`, `alliance_or_corp_ticker`, `username`) with format specs such as `{character_name:.20}`; default `{character_name}`; 32 characters.
-- The stored Discord username refreshes with the daily sync.
+- The stored Discord username refreshes with every sync (everyone every five minutes).
 
 **Corporation Stats**
 

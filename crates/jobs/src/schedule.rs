@@ -34,7 +34,9 @@ impl ScheduleSpec {
 }
 
 /// Creates the schedule, or updates its kind, payload and interval. An
-/// existing `next_run_at` is kept, so restarts don't reset the clock.
+/// existing `next_run_at` is kept, so restarts don't reset the clock, but
+/// never left further off than one new interval: a shortened schedule
+/// runs on its new clock at once.
 pub async fn ensure(pool: &PgPool, spec: &ScheduleSpec) -> Result<(), sqlx::Error> {
     let every = i32::try_from(spec.every.as_secs().max(1)).unwrap_or(i32::MAX);
     sqlx::query!(
@@ -43,7 +45,11 @@ pub async fn ensure(pool: &PgPool, spec: &ScheduleSpec) -> Result<(), sqlx::Erro
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (name) DO UPDATE
         SET kind = EXCLUDED.kind, payload = EXCLUDED.payload,
-            every_secs = EXCLUDED.every_secs, updated_at = now()
+            every_secs = EXCLUDED.every_secs, updated_at = now(),
+            next_run_at = LEAST(
+                core.schedules.next_run_at,
+                now() + make_interval(secs => EXCLUDED.every_secs)
+            )
         "#,
         spec.name,
         spec.kind,
