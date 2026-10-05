@@ -210,7 +210,8 @@ async fn may_update(state: &AppState, session: &CurrentSession, id: i64) -> Resu
 
 /// `POST /corpstats/{corporation_id}/update`: AA's Update Now, for a
 /// corporation the viewer may see, by officers or the owner of the token
-/// that last read it; at most every 15 minutes.
+/// that last read it; at most every minute while ESI's budget has room,
+/// every 15 minutes while it's low.
 pub async fn update(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -222,7 +223,8 @@ pub async fn update(
         return Err(AppError::forbidden().into());
     }
     let mut tx = state.db.begin().await?;
-    let queued = db::queue_update(&mut tx, id).await?;
+    let gap = crate::compliance::update_gap(&state.esi);
+    let queued = db::queue_update(&mut tx, id, gap).await?;
     tx.commit().await?;
     tracing::info!(
         account = session.account.0,
@@ -241,7 +243,14 @@ pub async fn update(
             &session,
             id,
             "",
-            Some("An update is already waiting, or ran in the last 15 minutes.".to_owned()),
+            Some(if gap.as_secs() <= 60 {
+                "An update is already waiting, or ran a minute ago.".to_owned()
+            } else {
+                format!(
+                    "An update is already waiting, or ran in the last {} minutes (ESI is busy).",
+                    gap.as_secs() / 60
+                )
+            }),
         )
         .await
     }

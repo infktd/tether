@@ -667,9 +667,9 @@ async fn member_audit_end_to_end(db: PgPool) {
     work(&h).await;
     let done = page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &owner).await;
     assert!(done.body.contains("Updated"), "{}", done.body);
-    // Once in ten minutes: the button is back after that.
+    // Once a minute: the button is back after that.
     sqlx::query(
-        r#"UPDATE "plugin_tether.member-audit".characters SET update_requested_at = now() - interval '11 minutes'"#,
+        r#"UPDATE "plugin_tether.member-audit".characters SET update_requested_at = now() - interval '61 seconds'"#,
     )
     .execute(&h.db)
     .await

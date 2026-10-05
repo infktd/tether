@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.jobs (kind, payload, max_attempts)\n        SELECT 'compliance.corp_stats', jsonb_build_object('corporation_id', $1::bigint), 3\n        WHERE NOT EXISTS (\n            SELECT 1 FROM core.jobs WHERE kind = 'compliance.corp_stats'\n              AND (payload->>'corporation_id')::bigint IS NOT DISTINCT FROM $1\n              AND (state IN ('queued', 'running')\n                   OR (finished_at IS NOT NULL AND finished_at > now() - make_interval(secs => $2)))\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "68b95567e0b565aa86c8d3588bc00136e4f141e945d5bda08f5952a135c94ac3"
+}

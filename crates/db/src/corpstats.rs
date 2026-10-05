@@ -196,11 +196,12 @@ pub async fn search(
 }
 
 /// Queues a refresh of one corporation (AA's Update Now), unless one is
-/// waiting, running, or finished in the last 15 minutes. Atomic under a
+/// waiting, running, or finished less than `gap` ago. Atomic under a
 /// per-corporation lock.
 pub async fn queue_update(
     tx: &mut sqlx::PgConnection,
     corporation: i64,
+    gap: std::time::Duration,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query!(
         "SELECT pg_advisory_xact_lock(hashtext('corpstats.update'), ($1::bigint % 2147483647)::int)",
@@ -216,10 +217,11 @@ pub async fn queue_update(
             SELECT 1 FROM core.jobs WHERE kind = 'compliance.corp_stats'
               AND (payload->>'corporation_id')::bigint IS NOT DISTINCT FROM $1
               AND (state IN ('queued', 'running')
-                   OR (finished_at IS NOT NULL AND finished_at > now() - interval '15 minutes'))
+                   OR (finished_at IS NOT NULL AND finished_at > now() - make_interval(secs => $2)))
         )
         "#,
-        corporation
+        corporation,
+        gap.as_secs_f64(),
     )
     .execute(&mut *tx)
     .await?;

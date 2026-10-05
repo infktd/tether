@@ -32,8 +32,11 @@ use crate::{
 
 /// Rows in one table, at most (the host's limit is 500).
 const MAX_ROWS: i64 = 300;
-/// An Update now may be asked for once in this long per character.
-const UPDATE_WAIT: Duration = Duration::minutes(10);
+/// An Update now may be asked for once in this long per character: a
+/// minute (Jay, 2026-10-05: when a change needs ESI, read now). Sections
+/// read in the last few minutes are skipped and ESI's cache answers the
+/// rest, and Tether holds apps' ESI calls back while its budget is low.
+const UPDATE_WAIT: Duration = Duration::minutes(1);
 /// Updates of other pilots' characters one person may ask for an hour.
 const MAX_ASKS_PER_HOUR: i64 = 10;
 

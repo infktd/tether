@@ -791,13 +791,27 @@ pub async fn corp_stats_for(
     Ok(fetched)
 }
 
+/// How soon Corp Stats' Update Now may read a corporation again while
+/// ESI's budget is low; with room, a minute (Jay, 2026-10-05: ESI caches
+/// member lists for an hour, so a read before then costs nothing).
+pub const UPDATE_GAP: Duration = Duration::from_secs(15 * 60);
+
+/// [`UPDATE_GAP`], or a minute while there's room in ESI's budget.
+pub fn update_gap(esi: &tether_esi::Esi) -> Duration {
+    if esi.has_room() {
+        Duration::from_secs(60)
+    } else {
+        UPDATE_GAP
+    }
+}
+
 /// A character just registered: if its corporation has no member list
 /// yet, reads it now rather than at the next daily run (the job checks
 /// the corporation is covered).
 async fn read_first_member_list(db: &PgPool, character: i64) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
     if let Some(corporation) = db::corporation_without_list(&mut *tx, character).await? {
-        tether_db::corpstats::queue_update(&mut tx, corporation).await?;
+        tether_db::corpstats::queue_update(&mut tx, corporation, UPDATE_GAP).await?;
     }
     tx.commit().await
 }
