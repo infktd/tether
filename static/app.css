@@ -8789,6 +8789,28 @@
   .table tbody tr:hover {
     background: var(--accent-surface);
   }
+  .table > thead th:not(:empty) {
+    cursor: pointer;
+    user-select: none;
+  }
+  .table > thead th:not(:empty):hover {
+    color: var(--foreground);
+  }
+  .table > thead th[aria-sort="ascending"]::after {
+    content: " \25B2";
+    color: var(--primary);
+  }
+  .table > thead th[aria-sort="descending"]::after {
+    content: " \25BC";
+    color: var(--primary);
+  }
+  .table-filter {
+    padding: 0 18px 10px;
+  }
+  .table-filter .input {
+    max-width: 280px;
+    height: 32px;
+  }
   .table td {
     white-space: normal;
     overflow-wrap: break-word;

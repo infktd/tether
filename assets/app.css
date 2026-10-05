@@ -995,6 +995,31 @@
   .table tbody tr:hover {
     background: var(--accent-surface);
   }
+  /* Headings sort the rows shown (assets/live.js); the arrow says which
+     way. Empty headings (action columns) don't. */
+  .table > thead th:not(:empty) {
+    cursor: pointer;
+    user-select: none;
+  }
+  .table > thead th:not(:empty):hover {
+    color: var(--foreground);
+  }
+  .table > thead th[aria-sort="ascending"]::after {
+    content: " \25B2";
+    color: var(--primary);
+  }
+  .table > thead th[aria-sort="descending"]::after {
+    content: " \25BC";
+    color: var(--primary);
+  }
+  /* A long table's filter box, above it inside its panel. */
+  .table-filter {
+    padding: 0 18px 10px;
+  }
+  .table-filter .input {
+    max-width: 280px;
+    height: 32px;
+  }
   /* Cells wrap between words, so a table fits its panel; numbers and
      buttons don't. A table still too wide scrolls inside its panel. */
   .table td {

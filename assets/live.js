@@ -223,6 +223,114 @@
     document.cookie = `tether_nav_folded=${folded.slice(-30).join("~")}; path=/; max-age=31536000; samesite=lax${secure}`;
   });
 
+  // Tables (DESIGN.md, Tables): a column heading sorts the rows shown
+  // (again to reverse), and a long table gets a filter box that hides the
+  // rows not matching as you type. All in the browser: nothing is fetched,
+  // and a table Tether pages sorts and filters the page it shows. Group
+  // headings and pagers (rows with a colspan or a heading cell) stay put.
+  const dataRow = (row) => !row.querySelector("th, td[colspan]");
+  const sortKey = (cell) => {
+    const text = (cell ? cell.dataset.sort ?? cell.textContent : "").trim();
+    if (text === "") return [2, ""];
+    // Numbers, with thousands separators and k/M/B/T, ISK or %.
+    const n = text.replace(/,/g, "").match(/^([-\u2212]?\d+(?:\.\d+)?)\s*([kmbt])?\s*(?:isk|%)?$/i);
+    if (n) {
+      const scale = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 }[(n[2] || "").toLowerCase()] || 1;
+      return [0, Number(n[1].replace("\u2212", "-")) * scale];
+    }
+    return [1, text.toLowerCase()];
+  };
+  const compare = (a, b) => {
+    if (a[0] !== b[0]) return a[0] - b[0];
+    if (a[0] === 0) return a[1] - b[1];
+    return a[1].localeCompare(b[1], undefined, { numeric: true });
+  };
+  const sortBy = (heading) => {
+    const table = heading.closest("table");
+    const column = heading.cellIndex;
+    const ascending = heading.getAttribute("aria-sort") !== "ascending";
+    for (const other of heading.parentElement.children) other.removeAttribute("aria-sort");
+    heading.setAttribute("aria-sort", ascending ? "ascending" : "descending");
+    for (const body of table.tBodies) {
+      const rows = [...body.rows];
+      const first = rows.findIndex(dataRow);
+      if (first < 0) continue;
+      let end = first;
+      while (end < rows.length && dataRow(rows[end])) end++;
+      const sorted = rows.slice(first, end).sort((a, b) => {
+        const [ka, kb] = [sortKey(a.cells[column]), sortKey(b.cells[column])];
+        // Empty cells last, whichever way.
+        if ((ka[0] === 2) !== (kb[0] === 2)) return ka[0] === 2 ? 1 : -1;
+        const order = compare(ka, kb);
+        return ascending ? order : -order;
+      });
+      const after = rows[end] || null;
+      for (const row of sorted) body.insertBefore(row, after);
+    }
+  };
+  const sortable = (heading) =>
+    heading instanceof HTMLTableCellElement &&
+    heading.closest("table.table > thead") &&
+    heading.textContent.trim() !== "";
+  document.addEventListener("click", (event) => {
+    const heading = event.target instanceof Element && event.target.closest("th");
+    if (heading && sortable(heading)) sortBy(heading);
+  });
+  document.addEventListener("keydown", (event) => {
+    if ((event.key === "Enter" || event.key === " ") && sortable(event.target)) {
+      event.preventDefault();
+      sortBy(event.target);
+    }
+  });
+  // Tables get keyboard-reachable headings, and a filter box from this
+  // many rows.
+  const FILTER_FROM = 8;
+  const filter = (table, query) => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    for (const body of table.tBodies) {
+      let shown = 0;
+      for (const row of body.rows) {
+        if (!dataRow(row)) continue;
+        const text = row.textContent.toLowerCase();
+        const match = words.every((w) => text.includes(w));
+        row.hidden = !match;
+        if (match) shown++;
+      }
+      // A group (merged tables) with nothing left hides its heading too.
+      for (const row of body.rows) {
+        if (row.classList.contains("table-group")) row.hidden = words.length > 0 && shown === 0;
+      }
+    }
+  };
+  const enhance = (root) => {
+    const tables = root.querySelectorAll ? root.querySelectorAll("table.table") : [];
+    for (const table of tables) {
+      if ("enhanced" in table.dataset) continue;
+      table.dataset.enhanced = "";
+      for (const heading of table.querySelectorAll(":scope > thead th")) {
+        if (sortable(heading)) heading.tabIndex = 0;
+      }
+      const rows = [...table.tBodies].reduce((n, b) => n + [...b.rows].filter(dataRow).length, 0);
+      if (rows < FILTER_FROM) continue;
+      const box = document.createElement("div");
+      box.className = "table-filter";
+      const input = document.createElement("input");
+      input.type = "search";
+      input.className = "input";
+      input.placeholder = "Filter these rows";
+      input.setAttribute("aria-label", "Filter these rows");
+      input.addEventListener("input", () => filter(table, input.value));
+      box.append(input);
+      table.before(box);
+    }
+  };
+  document.addEventListener("htmx:load", (event) => enhance(event.detail.elt));
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => enhance(document));
+  } else {
+    enhance(document);
+  }
+
   // Copy buttons: the text is the <pre> in the same block, or its
   // read-only field (a group's direct join link).
   document.addEventListener("click", (event) => {
