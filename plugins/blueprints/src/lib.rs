@@ -73,7 +73,11 @@ impl Plugin for Blueprints {
                 "" => String::new(),
                 q => format!("?q={}", encode(q)),
             })),
-            ([""], "request") => request_copy(&access, number(submission.value("item"))?),
+            ([""], "request") => request_copy(
+                &access,
+                number(submission.value("item"))?,
+                submission.value("runs"),
+            ),
             (["requests"], "cancel_own") => cancel_own(&access, &submission),
             (["open"], "mark") => mark(&access, &submission),
             (["owners"], "add_owner" | "remove_owner") => personal_owner(&access, &submission),
@@ -454,13 +458,11 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
         cells.push(in_use(access, int(r, 15), opt_int(r, 16), opt_text(r, 17)));
         if access.request {
             cells.push(
+                // Opens the request form below in a popup, for this one.
                 action("Request", "request")
                     .field("item", int(r, 0).to_string())
                     .tone(Tone::Accent)
-                    .confirm(format!(
-                        "Request copies of {name} from {owner}: its builders are told on \
-                         Discord, and you hear back in your notifications."
-                    ))
+                    .confirm(format!("Copies of {name}, from {owner}."))
                     .into(),
             );
         }
@@ -503,7 +505,20 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
             "Showing the first {LISTED} rows: search to find the rest."
         ));
     }
-    Ok(page.table(table))
+    page = page.table(table);
+    // The rows' Request opens this in a popup (not drawn on the page).
+    if access.request {
+        page = page.form(
+            Form::new("request", "Request copies")
+                .title("Request copies")
+                .field(
+                    Field::number("runs", "Runs per copy")
+                        .range(Some(1.0), None, true)
+                        .help("Leave empty for as many as the blueprint allows. Its builders are told on Discord, and you hear back in your notifications."),
+                ),
+        );
+    }
+    Ok(page)
 }
 
 /// Whether a row's blueprints are in use: with `view_industry_jobs`, what
@@ -725,7 +740,7 @@ fn tell(account: i64, title: &str, message: &str, level: Level) {
     }
 }
 
-fn request_copy(access: &Access, item: i64) -> Result<SubmitResult, PageError> {
+fn request_copy(access: &Access, item: i64, runs: &str) -> Result<SubmitResult, PageError> {
     if !access.request {
         return Err(PageError::Forbidden);
     }
@@ -743,8 +758,17 @@ fn request_copy(access: &Access, item: i64) -> Result<SubmitResult, PageError> {
     if visible.rows.is_empty() {
         return Err(PageError::NotFound);
     }
-    // As many runs per copy as the blueprint allows (AA's blank runs).
-    let runs: Option<i64> = None;
+    // Runs per copy; none for as many as the blueprint allows (AA's).
+    let runs = match runs.trim() {
+        "" => None,
+        value => Some(
+            value
+                .parse::<i64>()
+                .ok()
+                .filter(|r| *r > 0 && *r <= i64::from(i32::MAX))
+                .ok_or_else(|| PageError::Failed("runs wasn't a whole number".into()))?,
+        ),
+    };
     let open = storage::query(
         "SELECT count(*) FROM requests WHERE requester_account = $1 AND closed_at IS NULL",
         &[access.account.into()],

@@ -451,13 +451,21 @@ async fn blueprints_end_to_end(db: PgPool) {
         library.body
     );
     assert!(library.body.contains(">Request<"), "{}", library.body);
+    // It opens the request form in a popup (not drawn on the page), led by
+    // which blueprint.
     assert!(
         library
             .body
-            .contains("Request copies of Rifter Blueprint from Otherworld Enterprises"),
+            .contains("Copies of Rifter Blueprint, from Otherworld Enterprises."),
         "{}",
         library.body
     );
+    assert!(
+        library.body.contains(r#"<dialog class="dialog popup""#),
+        "{}",
+        library.body
+    );
+    assert!(library.body.contains("data-opens="), "{}", library.body);
 
     // A pilot in the corporation who may request, without the location or
     // job permissions: the blueprints, not where they are or who's using
@@ -504,7 +512,7 @@ async fn blueprints_end_to_end(db: PgPool) {
     // in the bell, which would reach other corporations' builders). Asking
     // again while it's open is the same request.
     for _ in 0..2 {
-        let res = post(&h, &pilot, "", "_form=request&item=3001").await;
+        let res = post(&h, &pilot, "", "_form=request&item=3001&runs=5").await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     }
     assert!(notices(&h, owner_account).await.is_empty());
@@ -596,6 +604,17 @@ async fn blueprints_end_to_end(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // The popup's runs are kept (none for as many as allowed).
+    let runs: Vec<(i64, Option<i32>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        r#"SELECT item_id, runs FROM "{schema}".requests ORDER BY id"#
+    )))
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(runs, vec![(3001, Some(5)), (3002, None)]);
+    // Hidden values the page didn't offer aren't taken.
+    let forged = post(&h, &pilot, "", "_form=request&item=999&runs=1").await;
+    assert_eq!(forged.status, StatusCode::CONFLICT, "{}", forged.body);
     grant(&h, OUTSIDER, &["manage_requests"]).await;
     let open = page(&h, &format!("/plugins/{ID}/open"), &outsider).await;
     assert!(!open.body.contains("Merlin Blueprint"), "{}", open.body);
