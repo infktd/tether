@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT structure_id, name, solar_system_id, type_id FROM core.structure_names\n        WHERE structure_id = $1 AND read_at > now() - make_interval(secs => $2)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "structure_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.structure_names",
+            "name": "structure_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.structure_names",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "solar_system_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.structure_names",
+            "name": "solar_system_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "type_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.structure_names",
+            "name": "type_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "943742333f170eceb741bb78862de2b2689a18d5860f12890371357073c44876"
+}

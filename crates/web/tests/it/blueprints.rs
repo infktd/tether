@@ -25,6 +25,7 @@ const MERLIN_BP: i64 = 954;
 const RIFTER: i64 = 587;
 const MERLIN: i64 = 603;
 const KEEPSTAR: i64 = 1_055_694_841_377;
+const ATHANOR: i64 = 1_045_000_000_001;
 
 fn component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -131,6 +132,11 @@ async fn mount(h: &Harness) {
                 "item_id": 3003, "type_id": MERLIN_BP, "location_id": 1002,
                 "location_flag": "CorpSAG3", "material_efficiency": 10,
                 "time_efficiency": 20, "quantity": -1, "runs": -1
+            },
+            {
+                "item_id": 3004, "type_id": RIFTER_BP, "location_id": 1003,
+                "location_flag": "CorpSAG4", "material_efficiency": 10,
+                "time_efficiency": 20, "quantity": -1, "runs": -1
             }
         ])))
         .mount(&h.esi_server)
@@ -157,6 +163,8 @@ async fn mount(h: &Harness) {
             asset(3002, MERLIN_BP, "CorpSAG1", 1001, "item"),
             asset(1002, 27, "OfficeFolder", KEEPSTAR, "item"),
             asset(3003, MERLIN_BP, "CorpSAG3", 1002, "item"),
+            asset(1003, 27, "OfficeFolder", ATHANOR, "item"),
+            asset(3004, RIFTER_BP, "CorpSAG4", 1003, "item"),
         ])))
         .mount(&h.esi_server)
         .await;
@@ -173,14 +181,14 @@ async fn mount(h: &Harness) {
         })))
         .mount(&h.esi_server)
         .await;
-    // The structure: refused once (the owner's character may not dock
-    // there yet), then named.
+    // The structure: refused to the owner's character and then to the
+    // member Tether asks next (it may not dock there yet), then named.
     Mock::given(method("GET"))
         .and(path(format!("/universe/structures/{KEEPSTAR}")))
         .respond_with(
             ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "Forbidden" })),
         )
-        .up_to_n_times(1)
+        .up_to_n_times(2)
         .with_priority(1)
         .mount(&h.esi_server)
         .await;
@@ -191,6 +199,29 @@ async fn mount(h: &Harness) {
             "owner_id": CORP,
             "solar_system_id": 30004759,
             "type_id": 35834,
+            "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+        })))
+        .with_priority(2)
+        .mount(&h.esi_server)
+        .await;
+    // Another: refused to the owner's character, named through a member
+    // who may dock there.
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{ATHANOR}")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "Forbidden" })),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{ATHANOR}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Home - Athanor",
+            "owner_id": 98000001,
+            "solar_system_id": 30004759,
+            "type_id": 35835,
             "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
         })))
         .with_priority(2)
@@ -266,6 +297,14 @@ async fn notices(h: &Harness, account: i64) -> Vec<String> {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn blueprints_end_to_end(db: PgPool) {
     let h = harness(db, true).await;
+    // Chribba's corporation is a member corporation.
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Corporation,
+        CORP,
+    )
+    .await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     let owner_account = grant(&h, CHRIBBA, &[]).await;
     install(&h, &owner).await;
@@ -336,6 +375,12 @@ async fn blueprints_end_to_end(db: PgPool) {
     ] {
         assert!(library.body.contains(want), "{want}: {}", library.body);
     }
+    // The Athanor, refused to the owner, was named through a member at once.
+    assert!(
+        library.body.contains("Home - Athanor › Corp Hangar 4"),
+        "{}",
+        library.body
+    );
     // The structure ESI refused is a placeholder for now, and the app's
     // log says why.
     assert!(
@@ -357,6 +402,16 @@ async fn blueprints_end_to_end(db: PgPool) {
             .any(|l| l.contains("not named") && l.contains("403")),
         "{logs:?}"
     );
+    // Tether asked through a member who granted the structure scope (the
+    // only one here is Chribba), and remembers the refusal for a week.
+    let misses: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.structure_name_misses WHERE structure_id = $1",
+    )
+    .bind(KEEPSTAR)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(misses, 1);
     // Within the hour it's tried again, and named.
     let schema: String =
         sqlx::query_scalar("SELECT schema_name FROM core.plugin_storage WHERE plugin_id = $1")
@@ -379,6 +434,14 @@ async fn blueprints_end_to_end(db: PgPool) {
         "{}",
         library.body
     );
+    // The name is kept for every app.
+    let kept: Option<String> =
+        sqlx::query_scalar("SELECT name FROM core.structure_names WHERE structure_id = $1")
+            .bind(KEEPSTAR)
+            .fetch_optional(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(kept.as_deref(), Some("1DQ1-A - Imperial Palace"));
     let one = page(&h, &format!("/plugins/{ID}/blueprint/3001"), &owner).await;
     assert!(one.body.contains("Copying"), "{}", one.body);
     assert!(one.body.contains("The Mittani"), "{}", one.body);
@@ -509,4 +572,68 @@ async fn blueprints_end_to_end(db: PgPool) {
     grant(&h, OUTSIDER, &["manage_requests"]).await;
     let open = page(&h, &format!("/plugins/{ID}/open"), &outsider).await;
     assert!(!open.body.contains("Merlin Blueprint"), "{}", open.body);
+}
+
+/// Structure names are asked only through Member characters: never Blue,
+/// Guest or blacklisted ones, whatever the states' order.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn structure_names_ask_only_members(db: PgPool) {
+    let h = harness(db, true).await;
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Corporation,
+        CORP,
+    )
+    .await;
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Blue,
+        tether_core::states::EntityKind::Corporation,
+        1000167,
+    )
+    .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    log_in_as(&h, "443630591:The Mittani", None).await;
+    let outsider = log_in_as(&h, "1887431749:Outsider", None).await;
+    // Everyone granted the structure scope; the outsider's corporation is
+    // a member one too, but they're blacklisted; and Blue ranks above
+    // Member.
+    sqlx::query(
+        "UPDATE core.character_tokens SET scopes = ARRAY['esi-universe.read_structures.v1']",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Corporation,
+        98133756,
+    )
+    .await;
+    send(
+        &h.app,
+        form(
+            "/blacklist/notes",
+            "who=1887431749&reason=Spy&blacklisted=on&linked=on",
+            &owner,
+        ),
+    )
+    .await;
+    sqlx::query("UPDATE core.states SET priority = 999999 WHERE builtin = 'blue'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let _ = outsider;
+    let asked = tether_db::structure_names::candidates(
+        &h.db,
+        KEEPSTAR,
+        "esi-universe.read_structures.v1",
+        3600.0,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(asked, vec![CHRIBBA]);
 }

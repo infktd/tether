@@ -48,6 +48,7 @@ pub mod smart_groups;
 pub mod state;
 pub mod state_admin;
 pub mod states;
+pub mod structure_names;
 pub mod sudo;
 pub mod sync;
 pub mod theme;

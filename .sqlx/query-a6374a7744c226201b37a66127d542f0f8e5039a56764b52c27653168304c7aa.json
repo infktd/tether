@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.structure_name_misses (structure_id, character_id) VALUES ($1, $2)\n        ON CONFLICT (structure_id, character_id) DO UPDATE SET at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a6374a7744c226201b37a66127d542f0f8e5039a56764b52c27653168304c7aa"
+}

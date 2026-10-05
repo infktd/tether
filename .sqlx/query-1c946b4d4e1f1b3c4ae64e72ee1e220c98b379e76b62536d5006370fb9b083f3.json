@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.structure_name_misses WHERE at < now() - make_interval(secs => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1c946b4d4e1f1b3c4ae64e72ee1e220c98b379e76b62536d5006370fb9b083f3"
+}

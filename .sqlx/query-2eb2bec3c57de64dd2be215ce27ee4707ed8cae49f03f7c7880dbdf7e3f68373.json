@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id FROM core.characters c\n        JOIN core.character_tokens t ON t.character_id = c.id\n        JOIN core.accounts a ON a.id = c.account_id\n        JOIN core.states s ON s.id = a.state_id\n        WHERE a.active AND t.state = 'valid' AND $2 = ANY(t.scopes)\n          AND s.priority >= (SELECT priority FROM core.states WHERE builtin = 'member')\n          AND (s.builtin IS NULL OR s.builtin = 'member')\n          AND NOT core.blacklisted(a.id)\n          AND NOT EXISTS (\n              SELECT 1 FROM core.structure_name_misses m\n              WHERE m.structure_id = $1 AND m.character_id = c.id\n                AND m.at > now() - make_interval(secs => $3))\n        ORDER BY t.last_refreshed_at DESC NULLS LAST, c.id\n        LIMIT $4\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Float8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2eb2bec3c57de64dd2be215ce27ee4707ed8cae49f03f7c7880dbdf7e3f68373"
+}

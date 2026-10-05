@@ -161,6 +161,18 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
                 .to_owned(),
         );
     }
+    let structures = "esi-universe.read_structures.v1";
+    if c.esi.user.iter().any(|s| s == structures)
+        || c.esi.data_source.iter().any(|s| s == structures)
+    {
+        add(
+            "Structure names",
+            "Can name any Upwell structure a member may dock at, by its id: when ESI won't name \
+             one to the app's own character, Tether asks through members' characters that \
+             granted the structure scope (the name, system and type only)."
+                .to_owned(),
+        );
+    }
     if c.notify {
         add(
             "Notifications",

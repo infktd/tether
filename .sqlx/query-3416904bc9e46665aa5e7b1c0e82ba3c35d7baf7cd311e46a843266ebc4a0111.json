@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.structure_names (structure_id, name, solar_system_id, type_id)\n        VALUES ($1, $2, $3, $4)\n        ON CONFLICT (structure_id) DO UPDATE SET name = EXCLUDED.name,\n            solar_system_id = EXCLUDED.solar_system_id, type_id = EXCLUDED.type_id,\n            read_at = now()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3416904bc9e46665aa5e7b1c0e82ba3c35d7baf7cd311e46a843266ebc4a0111"
+}

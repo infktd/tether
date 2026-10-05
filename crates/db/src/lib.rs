@@ -31,6 +31,7 @@ pub mod settings;
 pub mod setup;
 pub mod smart_groups;
 pub mod states;
+pub mod structure_names;
 pub mod tokens;
 pub mod users;
 

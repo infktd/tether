@@ -223,9 +223,11 @@ fn outcome(result: &Result<EsiReply, EsiError>) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn esi_get(
     deps: &Deps,
     plugins: &Weak<Plugins>,
+    throttle: &ErrorThrottle,
     plugin: &str,
     name: &str,
     subject: Subject,
@@ -340,18 +342,78 @@ async fn esi_get(
                 EsiError::Unavailable
             }
         })?;
-    let response = deps
+    let names_structure = matches!(endpoint.name, "source-structure" | "universe-structure");
+    let structure = params
+        .iter()
+        .find(|(k, _)| k == "structure_id")
+        .and_then(|(_, v)| v.parse::<i64>().ok())
+        .filter(|id| *id > 0);
+    // A name kept from an earlier read (any app's, or through a member)
+    // answers without asking ESI, so a structure the app's character may
+    // not dock at doesn't cost an ESI error every time.
+    if names_structure
+        && let Some(named) =
+            crate::structure_names::kept(&deps.db, structure.unwrap_or_default()).await
+    {
+        return Ok(EsiReply {
+            response: EsiResponse {
+                body: crate::structure_names::body(&named).to_string(),
+                pages: 1,
+            },
+            extra_calls: 0,
+        });
+    }
+    let response = match deps
         .esi
         .plugin_get(endpoint, &token, target, params, page)
         .await
-        .map_err(|e| match e {
-            tether_esi::EsiError::Status(status) => EsiError::Status(status),
-            tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
-            other => {
-                tracing::warn!(plugin, error = %other, "plugin ESI call");
-                EsiError::Unavailable
+    {
+        Ok(response) => response,
+        // ESI names a structure only to a character that may dock there:
+        // refused this one, Tether asks through members who may (the name,
+        // system and type only; Jay, 2026-10-05).
+        Err(tether_esi::EsiError::Status(status @ (401 | 403))) if names_structure => {
+            let lookup = match structure {
+                Some(id) => {
+                    crate::structure_names::through_members(&deps.db, &deps.esi, &deps.vault, id)
+                        .await
+                }
+                None => crate::structure_names::Lookup::default(),
+            };
+            // Every refusal spent ESI's error budget: each counts against
+            // the app (its own refusal is counted by the caller when it
+            // gets an error back).
+            for _ in 0..lookup.refused {
+                throttle.error(plugin);
             }
-        })?;
+            return match lookup.named {
+                Some(named) => {
+                    throttle.error(plugin);
+                    Ok(EsiReply {
+                        response: EsiResponse {
+                            body: crate::structure_names::body(&named).to_string(),
+                            pages: 1,
+                        },
+                        extra_calls: lookup.calls,
+                    })
+                }
+                None => Err(EsiError::Status(status)),
+            };
+        }
+        Err(e) => {
+            return Err(match e {
+                tether_esi::EsiError::Status(status) => EsiError::Status(status),
+                tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+                other => {
+                    tracing::warn!(plugin, error = %other, "plugin ESI call");
+                    EsiError::Unavailable
+                }
+            });
+        }
+    };
+    if names_structure {
+        crate::structure_names::remember(&deps.db, &response.body).await;
+    }
     let body = response.body.to_string();
     if body.len() > MAX_BODY_BYTES {
         return Err(EsiError::TooLarge);
@@ -717,7 +779,10 @@ impl Services for PluginServices {
             if throttle.blocked(&plugin) {
                 return Err(EsiError::Unavailable);
             }
-            let result = esi_get(&deps, &plugins, &plugin, &endpoint, subject, &params, page).await;
+            let result = esi_get(
+                &deps, &plugins, &throttle, &plugin, &endpoint, subject, &params, page,
+            )
+            .await;
             // `fleet-members` answers "not in a fleet" for ESI's 404: still
             // an error ESI counted, so it counts here too.
             let not_in_fleet = endpoint == "fleet-members"
