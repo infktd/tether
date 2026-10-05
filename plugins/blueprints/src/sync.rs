@@ -293,6 +293,8 @@ pub fn jobs() -> Result<(), JobError> {
         }
     }
     learn_names()?;
+    // Places that couldn't be named are tried again every hour.
+    name_places(&owners)?;
     set_error("jobs_at", &problems)
 }
 

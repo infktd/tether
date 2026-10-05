@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.blueprints"
 name = "Blueprints"
-version = "0.1.1"
+version = "0.1.2"
 host_api = "1"
 description = "The corporations' and pilots' blueprint library, with ME, TE, runs, where each is and what's running, and requests for copies the owners fulfil."
 
