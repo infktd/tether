@@ -1834,6 +1834,27 @@ async fn post(
     match submitted {
         Ok(submitted) => {
             record_logs(&state.db, &id, &source(&opened.path), &submitted.logs).await;
+            // Settings saved: the app reads with them now while there's
+            // room in ESI's budget (Jay, 2026-10-05), not at its next tick.
+            // In the background, best effort.
+            if tether_plugins::manifest::is_settings(&opened.path)
+                && matches!(submitted.result, SubmitResult::Redirect(_))
+                && state.esi.has_room()
+            {
+                let (db, manifest) = (state.db.clone(), opened.running.manifest.clone());
+                let actor = tether_db::audit::Actor::Account(opened.account);
+                let gap = tether_web_core::plugin_jobs::triggered_gap(&state.esi, false);
+                tokio::spawn(async move {
+                    tether_web_core::plugin_jobs::run_app_schedules(
+                        &db,
+                        &manifest,
+                        actor,
+                        &serde_json::json!({ "reason": "settings_saved" }),
+                        gap,
+                    )
+                    .await;
+                });
+            }
             match submitted.result {
                 // Shown where the form was, under the same tab and query.
                 SubmitResult::Page(mut page) => {
