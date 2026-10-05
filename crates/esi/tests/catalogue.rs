@@ -551,8 +551,8 @@ async fn an_items_place_is_its_station_and_the_containers_between_only() {
             }
         ])
     );
-    // The second page counts as a call.
-    assert_eq!(out.refetched, 1);
+    // Two pages are paid for up front; a third would count as a call.
+    assert_eq!(out.refetched, 0);
     let err = get_corporate(&esi, "corporation-asset-places", &[("item_ids", "0")], None)
         .await
         .unwrap_err();

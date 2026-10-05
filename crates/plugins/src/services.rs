@@ -44,8 +44,12 @@ pub fn esi_cost(endpoint: &str) -> usize {
     match endpoint {
         // Two ESI requests each: fleet then members; system then
         // constellation; an assets page then the structures it's checked
-        // against (cached, one page mostly).
-        "fleet-members" | "universe-system" | "corporation-structure-assets" => 2,
+        // against (cached, one page mostly); the first two assets pages
+        // (the rest are counted once read).
+        "fleet-members"
+        | "universe-system"
+        | "corporation-structure-assets"
+        | "corporation-asset-places" => 2,
         _ => 1,
     }
 }

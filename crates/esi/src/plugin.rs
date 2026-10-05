@@ -303,8 +303,8 @@ pub const ENDPOINTS: &[Endpoint] = &[
         // it's in at the top, and the containers and hangars between
         // (type and flag only), as aa-blueprints shows a blueprint's place
         // (Jay, 2026-10-04). Nothing about any other item. Reads every
-        // page of the assets (at most 50), each counting as a call. CCP
-        // requires the Director role.
+        // page of the assets (at most 50), each counting as a call (two
+        // up front). CCP requires the Director role.
         name: "corporation-asset-places",
         scope: ASSETS,
         about: About::Corporation,
@@ -1468,7 +1468,8 @@ impl Esi {
         Ok(Response {
             body: serde_json::Value::Array(body),
             pages: 1,
-            refetched: extra,
+            // Two pages are paid for up front (`esi_cost`).
+            refetched: extra.saturating_sub(1),
         })
     }
 
