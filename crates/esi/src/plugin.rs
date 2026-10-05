@@ -298,6 +298,39 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &[],
     },
     Endpoint {
+        // Where some of the corporation's own items are, for up to 1,000
+        // `item_ids`: for each one found, the station, structure or system
+        // it's in at the top, and the containers and hangars between
+        // (type and flag only), as aa-blueprints shows a blueprint's place
+        // (Jay, 2026-10-04). Nothing about any other item. Reads every
+        // page of the assets (at most 50), each counting as a call. CCP
+        // requires the Director role.
+        name: "corporation-asset-places",
+        scope: ASSETS,
+        about: About::Corporation,
+        paged: false,
+        params: &["item_ids"],
+    },
+    Endpoint {
+        // The corporation's blueprints, originals and copies, with ME, TE,
+        // runs and where each is (aa-blueprints; Jay, 2026-10-04). CCP
+        // requires the Director role.
+        name: "corporation-blueprints",
+        scope: "esi-corporations.read_blueprints.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        // The corporation's running industry jobs (aa-blueprints' "in
+        // use"; Jay, 2026-10-04). CCP requires the Factory Manager role.
+        name: "corporation-industry-jobs",
+        scope: "esi-industry.read_corporation_jobs.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
         // Names of the corporation's own items (starbases, customs offices
         // as "Customs Office (planet)"), for up to 1,000 `item_ids` (a
         // comma list). ESI names only the corporation's items.
@@ -1060,6 +1093,9 @@ fn pages(headers: &reqwest::header::HeaderMap) -> u32 {
 
 /// Item ids a plugin names, most at once.
 pub const MAX_ITEM_IDS: usize = 1000;
+/// The most pages of a corporation's assets `corporation-asset-places`
+/// reads.
+pub const MAX_ASSET_PAGES: u32 = 50;
 
 /// `item_ids`: 1 to [`MAX_ITEM_IDS`] positive ids, comma-separated, each
 /// once.
@@ -1320,6 +1356,122 @@ impl Esi {
     /// The corporation's Upwell structures' ids, through the same client
     /// and cache (Structures reads the list just before), or none if the
     /// token can't read them (no scope or Station Manager role).
+    /// One page of a corporation's assets, its flags and location types
+    /// as text: a flag CCP adds after this client was generated fails the
+    /// typed read of the whole page, which is then fetched again as it is
+    /// (headers included, for the page count) and read loosely. With the
+    /// page count and whether it was read again.
+    async fn corporation_assets_page(
+        &self,
+        client: &Client,
+        corporation: i64,
+        page: u32,
+        priority: Priority,
+    ) -> Result<(Vec<Asset>, u32, u32), EsiError> {
+        let request = client
+            .get_corporations_corporation_id_assets()
+            .corporation_id(corporation)
+            .page(page)
+            .send();
+        let again =
+            Again::new(client, format!("/corporations/{corporation}/assets")).with("page", page);
+        let request = async move {
+            match request.await {
+                Ok(response) => {
+                    let (status, headers) = (response.status(), response.headers().clone());
+                    let items = response
+                        .into_inner()
+                        .iter()
+                        .map(|a| Asset {
+                            item_id: a.item_id,
+                            type_id: a.type_id,
+                            location_id: a.location_id,
+                            location_flag: a.location_flag.to_string(),
+                            location_type: a.location_type.to_string(),
+                            quantity: a.quantity,
+                        })
+                        .collect::<Vec<_>>();
+                    Ok(ResponseValue::new(items, status, headers))
+                }
+                Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
+                    read_again::<Vec<Asset>, _>(
+                        again,
+                        eve_esi_client::Error::InvalidResponsePayload(bytes, err),
+                    )
+                    .await
+                }
+                Err(other) => Err(other),
+            }
+        };
+        let response = self.call_full(priority, request).await?;
+        let pages = pages(response.headers());
+        let again = refetched(response.headers());
+        Ok((response.into_inner(), pages, again))
+    }
+
+    /// `corporation-asset-places`: every page of the assets read (at most
+    /// [`MAX_ASSET_PAGES`]), then each asked item found walked up through
+    /// its containers to the place at the top. Only the asked items and
+    /// what holds them are answered. Pages past the first count as calls
+    /// (`refetched`).
+    async fn asset_places(
+        &self,
+        client: &Client,
+        corporation: i64,
+        ids: &[i64],
+        priority: Priority,
+    ) -> Result<Response, EsiError> {
+        let mut assets = std::collections::HashMap::new();
+        let mut page = 1u32;
+        let mut extra = 0u32;
+        loop {
+            let (items, last, again) = self
+                .corporation_assets_page(client, corporation, page, priority)
+                .await?;
+            extra += again;
+            assets.extend(items.into_iter().map(|a| (a.item_id, a)));
+            if page >= last || page >= MAX_ASSET_PAGES {
+                break;
+            }
+            page += 1;
+            extra += 1;
+        }
+        let body: Vec<serde_json::Value> = ids
+            .iter()
+            .filter_map(|id| assets.get(id))
+            .map(|item| {
+                let mut within = Vec::new();
+                let mut at = item;
+                // Containers in containers, a few deep at most; a loop in
+                // the data stops at the limit.
+                while at.location_type == "item" && within.len() < 10 {
+                    match assets.get(&at.location_id) {
+                        Some(holder) => {
+                            within.push(serde_json::json!({
+                                "type_id": holder.type_id,
+                                "location_flag": holder.location_flag,
+                            }));
+                            at = holder;
+                        }
+                        None => break,
+                    }
+                }
+                serde_json::json!({
+                    "item_id": item.item_id,
+                    "location_flag": item.location_flag,
+                    "within": within,
+                    "place_id": at.location_id,
+                    "place_type": at.location_type,
+                })
+            })
+            .collect();
+        Ok(Response {
+            body: serde_json::Value::Array(body),
+            pages: 1,
+            refetched: extra,
+        })
+    }
+
     async fn upwell_ids(&self, client: &Client, corporation: i64) -> Option<Vec<i64>> {
         let mut ids = Vec::new();
         let mut page = 1u32;
@@ -2110,53 +2262,13 @@ impl Esi {
             ),
             "corporation-structure-assets" => {
                 let page = page.map_or(1, std::num::NonZeroU32::get);
-                let request = client
-                    .get_corporations_corporation_id_assets()
-                    .corporation_id(corporation)
-                    .page(page)
-                    .send();
-                // `location_flag` is read as text: a flag CCP adds after
-                // this client was generated fails the typed read of the
-                // whole page. That page is then fetched again as it is
-                // (headers included, for the page count) and read loosely.
-                let again = Again::new(&client, format!("/corporations/{corporation}/assets"))
-                    .with("page", page);
-                let request = async move {
-                    match request.await {
-                        Ok(response) => {
-                            let (status, headers) = (response.status(), response.headers().clone());
-                            let items = response
-                                .into_inner()
-                                .iter()
-                                .map(|a| Asset {
-                                    item_id: a.item_id,
-                                    type_id: a.type_id,
-                                    location_id: a.location_id,
-                                    location_flag: a.location_flag.to_string(),
-                                    location_type: a.location_type.to_string(),
-                                    quantity: a.quantity,
-                                })
-                                .collect::<Vec<_>>();
-                            Ok(ResponseValue::new(items, status, headers))
-                        }
-                        Err(eve_esi_client::Error::InvalidResponsePayload(bytes, err)) => {
-                            read_again::<Vec<Asset>, _>(
-                                again,
-                                eve_esi_client::Error::InvalidResponsePayload(bytes, err),
-                            )
-                            .await
-                        }
-                        Err(other) => Err(other),
-                    }
-                };
-                let response = self.call_full(priority, request).await?;
-                let pages = pages(response.headers());
-                let again = refetched(response.headers());
+                let (assets, pages, again) = self
+                    .corporation_assets_page(&client, corporation, page, priority)
+                    .await?;
                 // Slots and bays ships share pass only for the
                 // corporation's own Upwell structures: never its ships'
                 // fittings (nor their item ids, which asset names and
                 // locations would take).
-                let assets = response.into_inner();
                 let upwell = if assets.iter().any(Asset::in_shared_slot) {
                     self.upwell_ids(&client, corporation).await
                 } else {
@@ -2181,6 +2293,32 @@ impl Esi {
                     pages,
                     refetched: again,
                 })
+            }
+            "corporation-asset-places" => {
+                let ids = item_ids(params)?;
+                self.asset_places(&client, corporation, &ids, priority)
+                    .await
+            }
+            "corporation-blueprints" => loose_paged!(
+                client
+                    .get_corporations_corporation_id_blueprints()
+                    .corporation_id(corporation),
+                format!("/corporations/{corporation}/blueprints")
+            ),
+            "corporation-industry-jobs" => {
+                let p = page.map_or(1, std::num::NonZeroU32::get);
+                let again = Again::new(
+                    &client,
+                    format!("/corporations/{corporation}/industry/jobs"),
+                )
+                .with("include_completed", false)
+                .with("page", p);
+                let request = client
+                    .get_corporations_corporation_id_industry_jobs()
+                    .corporation_id(corporation)
+                    .include_completed(false)
+                    .page(p);
+                loosely(self, move || request.send(), again).await
             }
             "corporation-asset-locations" => {
                 let ids = item_ids(params)?;

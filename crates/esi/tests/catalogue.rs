@@ -467,3 +467,141 @@ async fn names_become_type_ids_and_a_type_has_its_dogma() {
             .all(|r| !r.headers.contains_key("authorization"))
     );
 }
+
+const CORPORATION: i64 = 98000001;
+
+async fn get_corporate(
+    esi: &Esi,
+    name: &str,
+    pairs: &[(&str, &str)],
+    page: Option<u32>,
+) -> Result<Response, EsiError> {
+    let endpoint = endpoint(name).unwrap();
+    let target = Target {
+        character_id: CHARACTER,
+        corporation_id: CORPORATION,
+        alliance_id: None,
+    };
+    esi.plugin_get(endpoint, &token(), target, &params(pairs), page)
+        .await
+}
+
+#[tokio::test]
+async fn an_items_place_is_its_station_and_the_containers_between_only() {
+    let (server, esi) = esi().await;
+    let asset = |item: i64, type_id: i64, flag: &str, at: i64, kind: &str| {
+        json!({
+            "is_singleton": true, "item_id": item, "type_id": type_id, "quantity": 1,
+            "location_flag": flag, "location_id": at, "location_type": kind
+        })
+    };
+    // The office in Jita 4-4, a container in its second hangar, a
+    // blueprint in that; and something else of the corporation's.
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/assets")))
+        .and(query_param("page", "1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "2")
+                .set_body_json(json!([
+                    asset(1001, 27, "OfficeFolder", 60003760, "station"),
+                    asset(2001, 17366, "CorpSAG2", 1001, "item"),
+                ])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/assets")))
+        .and(query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "2")
+                .set_body_json(json!([
+                    asset(3001, 1000, "Unlocked", 2001, "item"),
+                    asset(4001, 34, "Hangar", 60008494, "station"),
+                ])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let out = get_corporate(
+        &esi,
+        "corporation-asset-places",
+        &[("item_ids", "3001,1001,9999")],
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out.body,
+        // In id order; 9999 isn't the corporation's, and 4001 wasn't asked.
+        json!([
+            {
+                "item_id": 1001, "location_flag": "OfficeFolder", "within": [],
+                "place_id": 60003760, "place_type": "station"
+            },
+            {
+                "item_id": 3001, "location_flag": "Unlocked",
+                "within": [
+                    {"type_id": 17366, "location_flag": "CorpSAG2"},
+                    {"type_id": 27, "location_flag": "OfficeFolder"}
+                ],
+                "place_id": 60003760, "place_type": "station"
+            }
+        ])
+    );
+    // The second page counts as a call.
+    assert_eq!(out.refetched, 1);
+    let err = get_corporate(&esi, "corporation-asset-places", &[("item_ids", "0")], None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, EsiError::InvalidInput(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn corporation_blueprints_and_running_jobs_are_esis() {
+    let (server, esi) = esi().await;
+    let blueprint = json!({
+        "item_id": 3001, "type_id": 1000, "location_id": 2001, "location_flag": "CorpSAG2",
+        "material_efficiency": 10, "time_efficiency": 20, "quantity": -1, "runs": -1
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/blueprints")))
+        .and(header("authorization", "Bearer character-token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(json!([blueprint])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let out = get_corporate(&esi, "corporation-blueprints", &[], None)
+        .await
+        .unwrap();
+    assert_eq!(out.body, json!([blueprint]));
+    let job = json!({
+        "activity_id": 5, "blueprint_id": 3001, "blueprint_location_id": 2001,
+        "blueprint_type_id": 1000, "duration": 3600, "end_date": "2026-10-05T12:00:00Z",
+        "facility_id": 60003760, "installer_id": CHARACTER, "job_id": 77,
+        "location_id": 60003760, "output_location_id": 2001, "runs": 10,
+        "start_date": "2026-10-05T11:00:00Z", "status": "active"
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/industry/jobs")))
+        .and(query_param("include_completed", "false"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(json!([job])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let out = get_corporate(&esi, "corporation-industry-jobs", &[], None)
+        .await
+        .unwrap();
+    assert_eq!(out.body[0]["job_id"], 77);
+    assert_eq!(out.body[0]["activity_id"], 5);
+}
