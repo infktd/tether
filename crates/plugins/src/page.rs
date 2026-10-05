@@ -856,6 +856,47 @@ pub fn check_link_path(path: &str) -> Result<(), PageProblem> {
     }
 }
 
+/// The longest query a redirect may carry: with `/plugins/<id>/`, the
+/// longest path and the host's `&_tab=`, the address stays within what
+/// Tether follows in place (512 bytes).
+pub const MAX_REDIRECT_QUERY: usize = 200;
+/// The most pairs it may have (the host opens pages with at most 20).
+pub const MAX_REDIRECT_PAIRS: usize = 10;
+
+/// Where a submit may send the browser: one of the plugin's pages (a link
+/// path), with a query of its own if it likes (`fits?q=rifter`), so a
+/// search stays in the address. The query is `name=value` pairs joined by
+/// `&`: names lowercase letters, digits and `_`, starting with a letter
+/// (`_tab` and the tables' `_p…` are the host's), values already
+/// percent-encoded (letters, digits, `-._~%+`), at most
+/// [`MAX_REDIRECT_QUERY`] bytes and [`MAX_REDIRECT_PAIRS`] pairs.
+pub fn check_redirect(to: &str) -> Result<(), PageProblem> {
+    let (path, query) = to.split_once('?').unwrap_or((to, ""));
+    check_link_path(path)?;
+    let pair = |p: &str| {
+        let (name, value) = p.split_once('=').unwrap_or((p, ""));
+        name.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+            && name.len() <= 40
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            && value.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'%' | b'+')
+            })
+    };
+    if query.len() <= MAX_REDIRECT_QUERY
+        && query.split('&').count() <= MAX_REDIRECT_PAIRS
+        && (query.is_empty() || query.split('&').all(pair))
+    {
+        Ok(())
+    } else {
+        Err(problem(format!(
+            "{:?} isn't a query a redirect may carry (name=value pairs, values percent-encoded)",
+            printable_prefix(query)
+        )))
+    }
+}
+
 fn printable_prefix(text: &str) -> String {
     text.chars()
         .take(60)
@@ -866,6 +907,32 @@ fn printable_prefix(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirects_may_carry_a_plain_query() {
+        for fine in [
+            "",
+            "fits",
+            "fits?q=rifter",
+            "?q=Rifter%20Blueprint&kind=bpo",
+            "a/b?x=",
+        ] {
+            assert!(check_redirect(fine).is_ok(), "{fine}");
+        }
+        for bad in [
+            "/fits?q=x",
+            "fits?_tab=2",
+            "fits?q=a b",
+            "fits?q=<x>",
+            "fits?Q=x",
+            "fits?q=x#frag",
+            "../x?q=1",
+        ] {
+            assert!(check_redirect(bad).is_err(), "{bad}");
+        }
+        assert!(check_redirect(&format!("?q={}", "a".repeat(300))).is_err());
+        assert!(check_redirect(&["a=1"; 11].join("&")).is_err());
+    }
     use crate::host::{Card, Column, Link, Stat, Table, Tone};
 
     fn card(value: Value) -> Section {

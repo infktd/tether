@@ -998,7 +998,7 @@ impl Host {
         })?;
         match &result {
             SubmitResult::Page(page) => page::check(page)?,
-            SubmitResult::Redirect(path) => page::check_link_path(path)?,
+            SubmitResult::Redirect(path) => page::check_redirect(path)?,
         }
         Ok(Submitted { result, logs })
     }

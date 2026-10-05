@@ -1458,6 +1458,7 @@ impl Esi {
                 }
                 serde_json::json!({
                     "item_id": item.item_id,
+                    "type_id": item.type_id,
                     "location_flag": item.location_flag,
                     "within": within,
                     "place_id": at.location_id,

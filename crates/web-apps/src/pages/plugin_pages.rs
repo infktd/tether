@@ -1862,11 +1862,20 @@ async fn post(
                     Ok(from.answer(opened, &page, StatusCode::OK, None, done))
                 }
                 SubmitResult::Redirect(to) => {
-                    let mut href = page_href(&id, &to);
+                    // A page of the app, with the query it chose (checked
+                    // by the host: plain pairs, percent-encoded).
+                    let (to_path, to_query) = to.split_once('?').unwrap_or((&to, ""));
+                    let mut href = page_href(&id, to_path);
+                    if !to_query.is_empty() {
+                        href.push('?');
+                        href.push_str(to_query);
+                    }
                     // Back to this page: under the tab it was on.
                     if href.split('?').next() == Some(page_href(&id, &path).as_str())
                         && opened.tab > 0
-                        && !to.contains(&format!("{TAB}="))
+                        && !to_query
+                            .split('&')
+                            .any(|p| p.starts_with(&format!("{TAB}=")))
                     {
                         href.push(if href.contains('?') { '&' } else { '?' });
                         href.push_str(&format!("{TAB}={}", opened.tab));

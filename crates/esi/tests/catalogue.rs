@@ -538,11 +538,11 @@ async fn an_items_place_is_its_station_and_the_containers_between_only() {
         // In id order; 9999 isn't the corporation's, and 4001 wasn't asked.
         json!([
             {
-                "item_id": 1001, "location_flag": "OfficeFolder", "within": [],
+                "item_id": 1001, "type_id": 27, "location_flag": "OfficeFolder", "within": [],
                 "place_id": 60003760, "place_type": "station"
             },
             {
-                "item_id": 3001, "location_flag": "Unlocked",
+                "item_id": 3001, "type_id": 1000, "location_flag": "Unlocked",
                 "within": [
                     {"type_id": 17366, "location_flag": "CorpSAG2"},
                     {"type_id": 27, "location_flag": "OfficeFolder"}
