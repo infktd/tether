@@ -11,7 +11,7 @@
         <div class="text-xs text-muted-foreground">{{ r.kind }} · <span class="num">{{ r.id }}</span></div>
       </div>
     </div>
-    <form method="post" action="/admin/states/{{ state_id }}/covers" hx-boost="true">
+    <form method="post" action="/admin/states/{{ state_id }}/covers" hx-boost="true" data-in-place="#covers-{{ state_id }} #search-{{ state_id }} .state-accounts">
       <input type="hidden" name="entity_id" value="{{ r.id }}">
       <button type="submit" class="btn" data-variant="outline" data-size="sm">Add to {{ state_name }}</button>
     </form>

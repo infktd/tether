@@ -22,7 +22,7 @@
         <p>{{ c.about }}</p>
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <span class="text-sm text-muted-foreground"><span class="num text-foreground">{{ c.accounts }}</span> {% if c.accounts == 1 %}account{% else %}accounts{% endif %}</span>
+        <span class="text-sm text-muted-foreground"><span class="state-accounts" id="accounts-{{ c.id }}"><span class="num text-foreground">{{ c.accounts }}</span> {% if c.accounts == 1 %}account{% else %}accounts{% endif %}</span></span>
         {% if !c.guest %}
         <form method="post" action="/admin/states/{{ c.id }}/move">
           <input type="hidden" name="direction" value="up">
@@ -39,7 +39,9 @@
       {% if c.guest %}
       <p class="text-sm text-muted-foreground flex items-center gap-2">{% call icons::icon("lock") %}{% endcall %} Guest lists nobody and is always last.</p>
       {% else %}
-      <div>
+      {#- Covering someone can move accounts between states: every
+          count follows (DESIGN.md, Editing in place). -#}
+      <div id="covers-{{ c.id }}" data-in-place="#covers-{{ c.id }} .state-accounts">
         <h3 class="label mb-2">Covers</h3>
         {% if c.covers.is_empty() %}
         <p class="text-sm text-muted-foreground">Nobody yet. Find an alliance, corporation, character or faction below.</p>
@@ -58,7 +60,7 @@
         </ul>
         {% endif %}
       </div>
-      <div>
+      <div id="scopes-{{ c.id }}" data-in-place>
         <h3 class="label mb-2">Required on every character</h3>
         {% if c.core_scopes.is_empty() && c.admin_scopes.is_empty() %}
         <p class="text-sm text-muted-foreground">Nothing: pilots only need to log in.</p>

@@ -113,3 +113,69 @@ async fn a_page_answering_a_post_is_swapped_in_place(db: PgPool) {
     assert_eq!(res.headers["hx-reswap"], "innerHTML show:none");
     assert_eq!(res.headers["hx-push-url"], "false");
 }
+
+/// Editing in place (DESIGN.md): a form in a `data-in-place` region names
+/// it in `HX-In-Place`; back to the very page it was on, only that region
+/// (and what it names besides) is taken from the page and swapped.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_row_edited_in_place_swaps_only_that_row(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let here = "/admin/permissions?q=states";
+    let row = "perm-admin_2e_states";
+    let shown = page(&h, here, &owner).await;
+    assert!(
+        shown
+            .body
+            .contains(&format!(r#"<tr id="{row}" data-in-place>"#)),
+        "{}",
+        shown.body
+    );
+
+    let post = |grantee: &str, regions: &str| {
+        let mut req = boosted(
+            form(
+                "/admin/permissions/set",
+                &format!("permission=admin.states&grantee={grantee}"),
+                &owner,
+            ),
+            here,
+        );
+        req.headers_mut()
+            .insert("hx-in-place", regions.parse().unwrap());
+        req
+    };
+    let res = send(&h.app, post("state:1", &format!("#{row}"))).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let to = hx_location(&res).expect("HX-Location");
+    assert_eq!(to["path"], here);
+    assert_eq!(to["target"], format!("#{row}"));
+    assert_eq!(to["select"], format!("#{row}"));
+    assert_eq!(to["swap"], "outerHTML show:none");
+    assert_eq!(to["push"], "false");
+    assert!(to.get("selectOOB").is_none(), "{to}");
+    assert!(toast(&res).is_some());
+    // The page it's taken from has the row, now granted.
+    let after = page(&h, here, &owner).await;
+    let at = after.body.find(&format!(r#"id="{row}""#)).unwrap();
+    assert!(after.body[at..].contains("State: Member"), "{}", after.body);
+
+    // A name that isn't plain: the whole page, as ever.
+    let res = send(&h.app, post("state:1", "#a [onclick]")).await;
+    let to = hx_location(&res).expect("HX-Location");
+    assert_eq!(to["target"], "body");
+    assert!(to.get("select").is_none(), "{to}");
+
+    // States: covering someone swaps the covers and every count.
+    let states = page(&h, "/admin/states", &owner).await;
+    assert!(
+        states.body.contains(r##"data-in-place="#covers-"##),
+        "{}",
+        states.body
+    );
+    assert!(
+        states
+            .body
+            .contains(r#"class="state-accounts" id="accounts-"#)
+    );
+}

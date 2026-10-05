@@ -1292,6 +1292,21 @@ impl PermissionRow {
     pub fn holds(&self, value: &str) -> bool {
         self.holders.iter().any(|h| h == value)
     }
+
+    /// The row's element id, for editing it in place: the name with every
+    /// character but a lowercase letter or digit spelled `_<hex>_`, so two
+    /// names never share one.
+    pub fn dom_id(&self) -> String {
+        let mut id = String::from("perm-");
+        for c in self.name.chars() {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                id.push(c);
+            } else {
+                id.push_str(&format!("_{:x}_", u32::from(c)));
+            }
+        }
+        id
+    }
 }
 
 pub struct GroupOption {

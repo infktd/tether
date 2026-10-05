@@ -17,6 +17,14 @@
 //!   own address isn't a page to go back to), keeping the scroll position,
 //!   unless the handler marks it as a [`NewPage`] (a confirmation).
 //!
+//! Editing in place (DESIGN.md, Editing in place): a form inside a
+//! `data-in-place` region (a table row, a card's list) says so in
+//! `HX-In-Place` (`assets/live.js`), naming the region and anything its
+//! change moves (a count). Back to the very page it was on, only those are
+//! taken from the page and swapped, so the rest (a table's sort and
+//! filter, an open picker, what's typed elsewhere) stays as it was. A
+//! region the page no longer has (a member removed) goes.
+//!
 //! A handler asks for a toast by putting a [`Toast`] in the response's
 //! extensions ([`with_toast`], [`back`]); for any htmx request it goes out
 //! as an `HX-Trigger` event that `assets/live.js` draws. Without htmx
@@ -148,11 +156,56 @@ pub fn destination(location: &str, current: Option<&str>) -> String {
     }
 }
 
-/// `HX-Location` for a boosted post's redirect to `location`.
-fn follow(location: &str, current: Option<&str>) -> Option<HeaderValue> {
+/// Regions named in `HX-In-Place`: `#id`s, the first what's swapped, the
+/// rest swapped too, by id (htmx's `selectOOB` takes nothing else; a
+/// `.class` in a page's `data-in-place` is sent as the ids it covers). At
+/// most [`MAX_REGIONS`], each a plain name, or none at all.
+pub fn regions(headers: &HeaderMap) -> Option<Vec<String>> {
+    let value = headers.get("hx-in-place")?.to_str().ok()?;
+    let names: Vec<&str> = value.split_ascii_whitespace().collect();
+    let plain = |name: &str| {
+        let mut chars = name.chars();
+        chars.next() == Some('#')
+            && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && name.len() <= MAX_REGION_NAME
+            && name[1..]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    };
+    let ok = !names.is_empty() && names.len() <= MAX_REGIONS && names.iter().all(|n| plain(n));
+    ok.then(|| names.into_iter().map(str::to_owned).collect())
+}
+
+/// Regions one form may name (a state's covers, its search and every
+/// state's count).
+pub const MAX_REGIONS: usize = 24;
+/// The longest region name, `#` included (a permission's row).
+pub const MAX_REGION_NAME: usize = 160;
+
+/// `HX-Location` for a boosted post's redirect to `location`: only
+/// `regions` swapped when it's back to the very page shown.
+fn follow(
+    location: &str,
+    current: Option<&str>,
+    regions: Option<&[String]>,
+) -> Option<HeaderValue> {
     let to = destination(location, current);
     let same_page = current.is_some_and(|c| path_of(c) == path_of(&to));
-    let spec = if same_page {
+    let spec = if let Some([first, also @ ..]) = regions
+        && current == Some(to.as_str())
+    {
+        let mut spec = serde_json::json!({
+            "path": to,
+            "target": first,
+            "select": first,
+            "swap": "outerHTML show:none",
+            "push": "false",
+        });
+        if !also.is_empty() {
+            spec["selectOOB"] = also.join(",").into();
+        }
+        spec
+    } else if same_page {
         serde_json::json!({
             "path": to,
             "target": "body",
@@ -202,6 +255,7 @@ fn this_site(location: &str) -> bool {
 fn stay(
     response: Response,
     current: Option<&str>,
+    regions: Option<&[String]>,
     toast: Option<Toast>,
 ) -> (Response, Option<Toast>) {
     let status = response.status();
@@ -215,7 +269,7 @@ fn stay(
             return (response, toast);
         };
         if let Some(path) = safe_path(&location) {
-            return match follow(path, current) {
+            return match follow(path, current, regions) {
                 Some(value) => (no_content(&response, [("hx-location", value)]), toast),
                 None => (response, toast),
             };
@@ -316,6 +370,7 @@ pub async fn in_place(State(state): State<AppState>, request: Request, next: Nex
     } else {
         None
     };
+    let regions = if boosted_post { regions(headers) } else { None };
     let asked = request
         .uri()
         .path_and_query()
@@ -330,7 +385,7 @@ pub async fn in_place(State(state): State<AppState>, request: Request, next: Nex
         return away;
     }
     let (mut response, toast) = if boosted_post {
-        stay(response, current.as_deref(), toast)
+        stay(response, current.as_deref(), regions.as_deref(), toast)
     } else {
         (response, toast)
     };
@@ -345,6 +400,66 @@ pub async fn in_place(State(state): State<AppState>, request: Request, next: Nex
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editing_in_place_swaps_only_the_named_regions_of_the_same_page() {
+        let named = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("hx-in-place", HeaderValue::from_str(value).unwrap());
+            regions(&headers)
+        };
+        assert_eq!(
+            named("#member-7 #members-count #accounts-1"),
+            Some(vec![
+                "#member-7".into(),
+                "#members-count".into(),
+                "#accounts-1".into()
+            ])
+        );
+        for refused in [
+            "",
+            ".first-is-a-class",
+            "#a .a-class",
+            "#a b",
+            "#a #b,#c",
+            "#a [x]",
+            "#7starts-with-a-digit",
+            &(0..=MAX_REGIONS)
+                .map(|i| format!("#r{i}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+            &format!("#{}", "a".repeat(MAX_REGION_NAME)),
+        ] {
+            assert_eq!(named(refused), None, "{refused}");
+        }
+
+        let spec = |location: &str, current: &str, regions: &[String]| -> serde_json::Value {
+            let value = follow(location, Some(current), Some(regions)).unwrap();
+            serde_json::from_str(value.to_str().unwrap()).unwrap()
+        };
+        let row = ["#member-7".to_owned(), "#members-count".to_owned()];
+        let answer = spec("/groups/1", "/groups/1?q=x", &row);
+        assert_eq!(answer["path"], "/groups/1?q=x");
+        assert_eq!(answer["target"], "#member-7");
+        assert_eq!(answer["select"], "#member-7");
+        assert_eq!(answer["selectOOB"], "#members-count");
+        let all = spec(
+            "/groups/1",
+            "/groups/1",
+            &["#a".into(), "#b".into(), "#c".into()],
+        );
+        assert_eq!(all["selectOOB"], "#b,#c");
+        assert_eq!(answer["swap"], "outerHTML show:none");
+        // Elsewhere, or the page with another query: the whole page.
+        for (location, current) in [
+            ("/groups/2", "/groups/1"),
+            ("/groups/1?q=y", "/groups/1?q=x"),
+        ] {
+            let answer = spec(location, current, &row);
+            assert_eq!(answer["target"], "body", "{location}");
+            assert!(answer.get("select").is_none(), "{location}");
+        }
+    }
 
     #[test]
     fn off_site_redirects_and_downloads_navigate_fully() {
@@ -425,7 +540,7 @@ mod tests {
         let headers = original.headers_mut();
         headers.append(header::SET_COOKIE, HeaderValue::from_static("a=1"));
         headers.append(header::SET_COOKIE, HeaderValue::from_static("b=2"));
-        let (answer, _) = stay(original, Some("/register"), None);
+        let (answer, _) = stay(original, Some("/register"), None, None);
         assert_eq!(answer.status(), StatusCode::NO_CONTENT);
         assert_eq!(
             answer.headers().get_all(header::SET_COOKIE).iter().count(),
@@ -439,12 +554,12 @@ mod tests {
         // Nothing a browser could read as another host goes out as this
         // site's.
         for location in ["/\\evil.test", "//evil.test", "/\\/evil"] {
-            let (answer, _) = stay(Redirect::to(location).into_response(), None, None);
+            let (answer, _) = stay(Redirect::to(location).into_response(), None, None, None);
             assert!(answer.headers().get("hx-redirect").is_none(), "{location}");
             assert!(answer.headers().get("hx-location").is_none(), "{location}");
         }
         // Logging in is a navigation.
-        let (answer, _) = stay(Redirect::to("/login").into_response(), None, None);
+        let (answer, _) = stay(Redirect::to("/login").into_response(), None, None, None);
         assert_eq!(answer.headers()["hx-redirect"], "/login");
     }
 

@@ -223,6 +223,28 @@
     document.cookie = `tether_nav_folded=${folded.slice(-30).join("~")}; path=/; max-age=31536000; samesite=lax${secure}`;
   });
 
+  // Editing in place (DESIGN.md, Editing in place): a form inside a
+  // data-in-place region names it (its own id, or the list in the
+  // attribute) to the server, which then swaps only those once it's done.
+  // A .class stands for the ids of the elements on the page that have it
+  // (htmx swaps the others by id alone).
+  document.addEventListener("htmx:configRequest", (event) => {
+    const elt = event.detail.elt;
+    if (event.detail.verb === "get" || !(elt instanceof Element)) return;
+    const region = elt.closest("[data-in-place]");
+    if (!region) return;
+    const listed = region.dataset.inPlace.trim() || (region.id ? `#${region.id}` : "");
+    const names = listed.split(/\s+/).filter(Boolean).flatMap((name) => {
+      if (!name.startsWith(".")) return [name];
+      try {
+        return [...document.querySelectorAll(`${name}[id]`)].map((el) => `#${el.id}`);
+      } catch (_) {
+        return [];
+      }
+    });
+    if (names.length) event.detail.headers["HX-In-Place"] = names.join(" ");
+  });
+
   // Popups (DESIGN.md, Popups): a button opening one of the page's forms
   // puts its hidden values into the form, its sentence at the top, and
   // shows it; Cancel, Escape or a click outside closes it. The form posts
@@ -373,6 +395,13 @@
     }
   };
   document.addEventListener("htmx:load", (event) => enhance(event.detail.elt));
+  // A row swapped in place under a filter is filtered like the rest.
+  document.addEventListener("htmx:load", (event) => {
+    const table = event.detail.elt instanceof Element && event.detail.elt.closest("table.table");
+    const box = table && table.previousElementSibling;
+    const query = box?.classList.contains("table-filter") ? box.querySelector("input").value : "";
+    if (query) filter(table, query);
+  });
 
   // An app page fetched again in place (its own timed reload, or a live
   // refresh below) keeps each table's sort and filter.

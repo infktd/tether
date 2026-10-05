@@ -66,7 +66,7 @@
     </footer>
   </form>
 
-  <section class="card data-card">
+  <section class="card data-card" id="discord-roles" data-in-place>
     <header><h2>Roles</h2><p>Who gets which Discord role. Pilots in any state but Guest get these when they link, and Tether keeps them in step as states and groups change. Roles it doesn't manage are left alone.</p></header>
     {% if mappings.is_empty() %}
     <p class="px-5 pb-5 text-sm text-muted-foreground">No roles mapped yet.</p>
@@ -91,7 +91,7 @@
   </section>
 
   {% if !roles.is_empty() %}
-  <form class="card" method="post" action="/admin/discord/mappings">
+  <form class="card" id="map-role" method="post" action="/admin/discord/mappings" data-in-place="#discord-roles #map-role">
     <header><h2>Map a role</h2><p>The bot can only give roles below its own. Tether never gives out Administrator, and roles with moderation or server-management permissions never go to Guest or Open groups.</p></header>
     <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
       <div class="grid gap-2">
@@ -118,7 +118,7 @@
   </form>
   {% endif %}
 
-  <section class="card data-card">
+  <section class="card data-card" id="ping-channels" data-in-place>
     <header><h2>Ping channels</h2><p>Where fleet pings may go. The bot needs View Channel and Send Messages there, and Mention Everyone for @everyone and @here. Pingers see the history of the channels they may use. Fleet types, doctrines and who may use which channel are in <a class="underline underline-offset-4" href="/admin/pings">Fleet Pings settings</a>.</p></header>
     {% if ping_channels.is_empty() %}
     <p class="px-5 pb-5 text-sm text-muted-foreground">None yet: fleet pings are off.</p>
@@ -150,7 +150,7 @@
     {% endif %}
   </section>
 
-  <form class="card" method="post" action="/admin/discord/options">
+  <form class="card" id="discord-options" method="post" action="/admin/discord/options" data-in-place>
     <header><h2>Service settings</h2></header>
     <section class="grid gap-3">
       <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="sync_names" value="on"{% if options.sync_names %} checked{% endif %}> <span><span class="font-medium">Set nicknames</span> · every linked member's server nickname comes from the Name Formatter below.</span></label>
@@ -164,7 +164,7 @@
     <section class="flex flex-col gap-4">
       <p class="text-xs text-muted-foreground">Fields: {% for f in fields %}<span class="num">{{ "{" }}{{ f }}{{ "}" }}</span>{% if !loop.last %}, {% endif %}{% endfor %}. A field can take a format spec, such as <span class="num">{character_name:.20}</span> to cut it to 20 characters.</p>
       {% for f in formats %}
-      <form method="post" action="/admin/discord/names" class="flex items-end gap-2 max-w-2xl">
+      <form method="post" action="/admin/discord/names" class="flex items-end gap-2 max-w-2xl" id="name-format-{{ f.state_id }}" data-in-place>
         <input type="hidden" name="state_id" value="{{ f.state_id }}">
         <div class="grid gap-2 grow">
           <label class="label" for="format-{{ f.state_id }}">{{ f.state_name }}</label>

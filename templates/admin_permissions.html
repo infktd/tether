@@ -27,7 +27,8 @@
       <thead><tr><th scope="col">Permission</th><th scope="col">Granted to</th></tr></thead>
       <tbody>
         {% for row in rows %}
-        <tr>
+        {%- let dom_id = row.dom_id() %}
+        <tr id="{{ dom_id }}" data-in-place>
           <td class="whitespace-normal">
             <div class="font-medium num">{{ row.name }}</div>
             <div class="text-xs text-muted-foreground">{{ row.description }}</div>
