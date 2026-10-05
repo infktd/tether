@@ -1,0 +1,88 @@
+# Blueprints, a first-party Tether plugin: aa-blueprints (AA's Blueprint
+# Library; Jay, 2026-10-04). `scripts/package-plugin.sh` builds, zips and
+# signs it, putting the publisher's key in below.
+[plugin]
+id = "tether.blueprints"
+name = "Blueprints"
+version = "0.1.0"
+host_api = "1"
+description = "The corporations' and pilots' blueprint library, with ME, TE, runs, where each is and what's running, and requests for copies the owners fulfil."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+discord = ["send_message"]
+# Requesters and approvers hear about requests in Tether's notifications,
+# as AA's notify (Jay, 2026-10-04).
+notify = true
+
+# Corporate owners (AA's add_corporate_blueprint_owner): a Director's
+# character, whose corporation's blueprints, jobs and assets are read.
+# Personal owners register a character with the user scopes instead.
+[capabilities.esi]
+data_source = [
+    "esi-corporations.read_blueprints.v1",
+    "esi-industry.read_corporation_jobs.v1",
+    "esi-assets.read_corporation_assets.v1",
+    "esi-universe.read_structures.v1",
+]
+user = [
+    "esi-characters.read_blueprints.v1",
+    "esi-industry.read_character_jobs.v1",
+    "esi-assets.read_assets.v1",
+    "esi-universe.read_structures.v1",
+]
+owner_permissions = ["add_corporate_blueprint_owner"]
+
+# aa-blueprints' periodic tasks: blueprints every 3 hours, industry jobs
+# every hour, locations every 12 hours.
+[[capabilities.schedules]]
+name = "sync_blueprints"
+every = "3h"
+
+[[capabilities.schedules]]
+name = "sync_jobs"
+every = "1h"
+
+[[capabilities.schedules]]
+name = "sync_places"
+every = "12h"
+
+# aa-blueprints' permissions, and Tether's manage for Settings.
+[permissions]
+basic_access = "Can access this app"
+request_blueprints = "Can request blueprints"
+manage_requests = "Can review and accept blueprint requests"
+add_personal_blueprint_owner = "Can add personal blueprint owners"
+add_corporate_blueprint_owner = "Can add corporate blueprint owners (give it only to directors or the CEO)"
+view_alliance_blueprints = "Can view alliance's blueprints"
+view_blueprint_locations = "Can view the location of all blueprints"
+view_industry_jobs = "Can view details about running industry jobs (all of them)"
+manage = "Change the Discord channel new requests are posted to"
+
+[[pages]]
+path = ""
+permission = "basic_access"
+
+[[pages]]
+path = "requests"
+permission = "request_blueprints"
+
+[[pages]]
+path = "open"
+permission = "manage_requests"
+
+[[pages]]
+path = "owners"
+permission = "add_personal_blueprint_owner"
+
+[[pages]]
+path = "settings"
+permission = "manage"
+
+[[navigation]]
+label = "Blueprints"
+path = ""
+section = "industry"

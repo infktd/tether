@@ -362,6 +362,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blueprints"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tether-plugin-sdk",
+]
+
+[[package]]
 name = "bulletin-board"
 version = "0.1.0"
 dependencies = [

@@ -9,6 +9,7 @@ mod admin_pages;
 mod auth;
 mod autogroups;
 mod blacklist;
+mod blueprints;
 mod bulletin_board;
 mod bundled;
 mod compliance;
