@@ -259,3 +259,125 @@ async fn a_login_never_lands_off_site(db: PgPool) {
     .unwrap();
     assert_eq!(land(&h, "/auth/login", Some(&handle)).await, "/");
 }
+
+/// Every path the router serves, read from its source so a new route is
+/// covered the day it's added: each `.route(` and the path after it, its
+/// parameters filled with samples.
+fn every_route() -> Vec<String> {
+    let source = include_str!("../../src/lib.rs");
+    let mut paths = Vec::new();
+    // One router, its routes named by literal paths: anything else would
+    // slip past this list.
+    assert!(
+        !source.contains(".nest("),
+        "nested routers aren't read here"
+    );
+    assert_eq!(source.matches("Router::new()").count(), 1);
+    for (at, _) in source.match_indices(".route(") {
+        let rest = source[at + ".route(".len()..].trim_start();
+        assert!(
+            rest.starts_with('"'),
+            "a route not named by a literal path: {}",
+            &rest[..rest.len().min(80)]
+        );
+        let rest = &rest[1..];
+        let Some(close) = rest.find('"') else {
+            continue;
+        };
+        let path = &rest[..close];
+        if !path.starts_with('/') {
+            continue;
+        }
+        let mut filled = String::new();
+        let mut inside = false;
+        for c in path.chars() {
+            match c {
+                '{' => inside = true,
+                '}' => {
+                    inside = false;
+                    filled.push('1');
+                }
+                _ if !inside => filled.push(c),
+                _ => {}
+            }
+        }
+        paths.push(filled);
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// What a signed-out browser may reach once Tether is set up: the way in
+/// (logging in and EVE's and Discord's callbacks, which check their own
+/// state), logging out, what the login page draws with, and the
+/// container's health checks. Each with the answer it gives without a
+/// session; anything else must send to log in (or 401 for the API, or
+/// 405 for a method the route doesn't take).
+const THE_WAY_IN: &[(&str, &str, u16)] = &[
+    ("GET", "/login", 200),
+    ("GET", "/auth/login", 303),
+    ("GET", "/auth/callback", 400),
+    ("GET", "/discord/callback", 400),
+    ("POST", "/auth/logout", 303),
+    ("GET", "/health", 200),
+    ("GET", "/ready", 200),
+    ("GET", "/theme.css", 200),
+    // An asset that doesn't exist.
+    ("GET", "/static/1", 404),
+    // The old name of the Dashboard, which then asks to log in.
+    ("GET", "/profile", 308),
+    // Echoes a nonce, so `tether doctor` can check the public URL (this
+    // one sends none).
+    ("GET", "/api/setup/probe", 400),
+];
+
+/// Routes only development builds have: not there at all in this one.
+const DEV_ONLY: &[&str] = &["/dev/login", "/dev/login/1", "/docs"];
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_route_needs_a_login_but_the_way_in(db: PgPool) {
+    let h = harness(db, true).await;
+    // Set up: an owner exists. Its session isn't sent below.
+    log_in_owner(&h, "196379789:Chribba").await;
+    let routes = every_route();
+    assert!(routes.len() > 100, "{routes:?}");
+    let mut wrong = Vec::new();
+    for path in routes {
+        for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
+            let req = Request::builder()
+                .method(method)
+                .uri(&path)
+                .header(header::ORIGIN, SITE)
+                .body(Body::empty())
+                .unwrap();
+            let res = send(&h.app, req).await;
+            let status = res.status.as_u16();
+            let to = res
+                .headers
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let fine = if DEV_ONLY.contains(&path.as_str()) {
+                // Not found, or a post sent to log in first.
+                status == 404 || (status == 303 && to == "/login")
+            } else {
+                match THE_WAY_IN
+                    .iter()
+                    .find(|(m, p, _)| *m == method && *p == path)
+                {
+                    Some((_, _, expected)) => status == *expected,
+                    None => (status == 303 && to == "/login") || status == 401 || status == 405,
+                }
+            };
+            if !fine {
+                wrong.push(format!("{method} {path}: {status} {to}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "open signed out: {wrong:#?}");
+
+    // The probe answers anyone: `tether doctor` checks the public URL so.
+    let res = send(&h.app, get("/api/setup/probe?nonce=abc123", &[])).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}

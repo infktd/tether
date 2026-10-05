@@ -66,9 +66,11 @@ pub struct Suggestion {
     pub kind: &'static str,
 }
 
-/// `GET /api/setup`: public; says which step comes next.
+/// `GET /api/setup`: says which step comes next; public until there's an
+/// owner, then signed in.
 #[utoipa::path(get, path = "/api/setup", tag = "setup",
-    responses((status = 200, body = SetupStatus)))]
+    responses((status = 200, body = SetupStatus),
+        (status = 401, description = "Set up, and not signed in")))]
 pub async fn status(
     State(state): State<AppState>,
     jar: CookieJar,

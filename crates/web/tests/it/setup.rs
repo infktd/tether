@@ -125,7 +125,8 @@ async fn the_wizard_from_fresh_install_to_complete(db: PgPool) {
         ),
     )
     .await;
-    assert_eq!(late.status, StatusCode::GONE);
+    // Set up, setup is closed to the signed out like every other route.
+    assert_eq!(late.status, StatusCode::UNAUTHORIZED);
     let stale = send(
         &h.app,
         post(
@@ -154,7 +155,12 @@ async fn the_wizard_from_fresh_install_to_complete(db: PgPool) {
     )
     .await;
     assert_eq!(set.status, StatusCode::NO_CONTENT, "{}", set.body);
-    assert_eq!(status(&h, &[]).await["state"], "complete");
+    assert_eq!(status(&h, &[(SESSION, &owner)]).await["state"], "complete");
+    // Signed out, set up: nothing to see.
+    let closed = send(&h.app, get("/api/setup", &[])).await;
+    assert_eq!(closed.status, StatusCode::UNAUTHORIZED);
+    let page = send(&h.app, get("/setup", &[])).await;
+    assert_eq!(page.location(), "/login");
 
     assert_eq!(
         audit_actions(&h.db).await,

@@ -4,7 +4,7 @@ use axum::Json;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-use crate::auth::SESSION_COOKIE;
+use crate::auth::{CurrentSession, SESSION_COOKIE};
 use crate::{api, setup};
 
 #[derive(OpenApi)]
@@ -115,8 +115,9 @@ impl Modify for SessionCookie {
     }
 }
 
-/// `GET /api/openapi.json`
-pub async fn spec() -> Json<utoipa::openapi::OpenApi> {
+/// `GET /api/openapi.json`, signed in from a browser, as every route but
+/// the way in.
+pub async fn spec(_signed_in: CurrentSession) -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
 

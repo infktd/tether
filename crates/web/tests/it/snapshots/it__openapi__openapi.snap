@@ -1664,7 +1664,7 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
         "tags": [
           "setup"
         ],
-        "summary": "`GET /api/setup`: public; says which step comes next.",
+        "summary": "`GET /api/setup`: says which step comes next; public until there's an\nowner, then signed in.",
         "operationId": "status",
         "responses": {
           "200": {
@@ -1675,6 +1675,9 @@ expression: "tether_web::openapi::ApiDoc::openapi()"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Set up, and not signed in"
           }
         }
       }

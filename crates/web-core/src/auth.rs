@@ -813,6 +813,10 @@ pub fn safe_path(path: &str) -> Option<&str> {
 /// 422 instead. The API (its own 401s), setup, login and the dev fixtures
 /// are left alone.
 ///
+/// Once there's an owner, setup is closed to the signed out as every
+/// other page is: what's left of it (choosing the alliance) is the
+/// owner's, after logging in.
+///
 /// Signed out, a page that sends the browser to log in remembers where it
 /// was headed ([`remember_destination`]), so logging in lands there.
 pub async fn sign_in_first(
@@ -827,6 +831,23 @@ pub async fn sign_in_first(
         .any(|prefix| path.starts_with(prefix));
     if request.method() == axum::http::Method::POST && session.is_none() && !open {
         return Redirect::to("/login").into_response();
+    }
+    // The probe stays open: it only echoes a nonce, and `tether doctor`
+    // checks the public URL with it.
+    let setup = path != "/api/setup/probe"
+        && ["/setup", "/api/setup"]
+            .iter()
+            .any(|p| path == *p || path.starts_with(&format!("{p}/")));
+    if setup
+        && session.is_none()
+        // Unsure counts as set up: closed rather than open.
+        && accounts::owner_exists(&state.db).await.unwrap_or(true)
+    {
+        return if path.starts_with("/api/") {
+            AppError::unauthorized().into_response()
+        } else {
+            Redirect::to("/login").into_response()
+        };
     }
     // Signed in from a browser: in its sudo scope.
     if let Some(session) = session.as_ref().filter(|s| s.token_scopes.is_none()) {

@@ -125,10 +125,8 @@
     {% if can_admin %}
     <a href="/admin" class="btn" data-variant="primary">Open Administration</a>
     <a href="/dashboard" class="btn" data-variant="outline">Dashboard</a>
-    {% else if signed_in %}
-    <a href="/dashboard" class="btn" data-variant="primary">Continue</a>
     {% else %}
-    <a href="/auth/login" class="btn" data-variant="primary">Log in with EVE Online</a>
+    <a href="/dashboard" class="btn" data-variant="primary">Continue</a>
     {% endif %}
   </footer>
 </section>

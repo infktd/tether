@@ -297,8 +297,7 @@ async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
     assert_eq!(chosen.location(), "/setup");
     let page = send(&h.app, get("/setup", &[(SESSION, &owner)])).await;
     assert!(page.body.contains("Setup is complete"));
-    // Onwards: the owner to Administration; anyone signed out to the same
-    // EVE login everyone uses (no separate admin login).
+    // Onwards: the owner to Administration.
     assert!(page.body.contains(r#"href="/admin""#), "{}", page.body);
     // And names the site, prefilled with the main's alliance.
     assert!(page.body.contains("Name this site"), "{}", page.body);
@@ -307,10 +306,9 @@ async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
         "{}",
         page.body
     );
+    // Signed out, set up: to the same EVE login everyone uses.
     let page = send(&h.app, get("/setup", &[])).await;
-    assert!(page.body.contains("Setup is complete"));
-    assert!(!page.body.contains("Name this site"));
-    assert!(page.body.contains(r#"href="/auth/login""#), "{}", page.body);
+    assert_eq!(page.location(), "/login");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

@@ -10,9 +10,6 @@ HTTP 200
 [Asserts]
 body == "ready"
 
+# The API spec, like every route but the way in, needs a login.
 GET {{base}}/api/openapi.json
-HTTP 200
-[Asserts]
-header "Content-Type" contains "application/json"
-jsonpath "$.info.title" == "Tether API"
-jsonpath "$.components.securitySchemes.session.in" == "cookie"
+HTTP 401

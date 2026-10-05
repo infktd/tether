@@ -133,8 +133,12 @@ async fn documented_routes_are_served(db: PgPool) {
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn spec_is_served_as_json(db: PgPool) {
-    let h = harness(db, false).await;
+    let h = harness(db, true).await;
+    // Signed in, as every route but the way in.
     let res = send(&h.app, get("/api/openapi.json", &[])).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let res = send(&h.app, get("/api/openapi.json", &[(SESSION, &owner)])).await;
     assert_eq!(res.status, StatusCode::OK);
     let spec: serde_json::Value = serde_json::from_str(&res.body).unwrap();
     assert_eq!(spec["info"]["title"], "Tether API");
