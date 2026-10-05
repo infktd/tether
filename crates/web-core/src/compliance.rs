@@ -335,9 +335,9 @@ pub async fn before_login(state: &AppState, account: AccountId, character: i64) 
 /// After a login stored `character`'s token: every running app the login
 /// made it one of the characters of runs its schedules now, so the pilot
 /// doesn't wait for their next tick to see the character in them.
-/// Audited as the system's `schedule.run_now`. Not a schedule queued in
-/// the last [`crate::plugin_jobs::TRIGGERED_GAP`]: registering alts one
-/// after another doesn't sync an app every minute. If the login made it a
+/// Audited as the system's `schedule.run_now`. Not a schedule queued
+/// within [`crate::plugin_jobs::triggered_gap`] (a minute while ESI's
+/// budget has room, ten while it's low). If the login made it a
 /// registered Member character, its corporation's member list is read now
 /// too if there's none yet (Corp Stats). In the background, so the login
 /// doesn't wait for it; best effort, a failure is only logged.
@@ -380,7 +380,7 @@ pub fn sync_if_newly_registered(
                 &running.manifest,
                 Actor::System,
                 &why,
-                crate::plugin_jobs::TRIGGERED_GAP,
+                crate::plugin_jobs::triggered_gap(&state.esi, false),
             )
             .await;
         }

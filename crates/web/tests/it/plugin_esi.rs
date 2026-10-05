@@ -1273,8 +1273,9 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
     assert!(queued_plugin_runs(&h.db).await.is_empty());
     assert_eq!(run_now_audits(&h.db).await.len(), 1);
 
-    // An alt registered five minutes after the last run waits for the
-    // next tick: Tether's own runs are ten minutes apart at least.
+    // With plenty of ESI budget left, an alt registered five minutes
+    // after the last run runs them at once (only a minute apart at least;
+    // ten while the budget is low).
     finish_runs(&h.db, "5 minutes").await;
     let owner = log_in_as(&h, "443630591:The Mittani", Some(&owner)).await;
     let (_, owner) = grant(
@@ -1284,11 +1285,13 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         "443630591:The Mittani",
     )
     .await;
-    await_runs(&h.db, 0).await;
-    assert!(queued_plugin_runs(&h.db).await.is_empty());
-    assert_eq!(run_now_audits(&h.db).await.len(), 1);
-    // Eleven minutes after, it would have run: another alt shows it.
-    finish_runs(&h.db, "11 minutes").await;
+    await_runs(&h.db, 2).await;
+    assert_eq!(
+        queued_plugin_runs(&h.db).await,
+        std::slice::from_ref(&schedule)
+    );
+    assert_eq!(run_now_audits(&h.db).await.len(), 2);
+    // Another alt while that run still waits: it's the same run.
     let owner = log_in_as(&h, "1887431749:gigX", Some(&owner)).await;
     let (_, owner) = grant(
         &h,
@@ -1297,11 +1300,38 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         "1887431749:gigX",
     )
     .await;
-    await_runs(&h.db, 2).await;
+    await_runs(&h.db, 0).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
         std::slice::from_ref(&schedule)
     );
+    assert_eq!(run_now_audits(&h.db).await.len(), 2);
+    // One while that run is running (it may have read before the new
+    // character came): one more is queued behind it.
+    sqlx::query(
+        "UPDATE core.jobs SET state = 'running' WHERE kind = 'plugin.job' AND state = 'queued'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE core.schedules SET last_enqueued_at = now() - interval '2 minutes'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let owner = log_in_as(&h, "406944591:Fourth", Some(&owner)).await;
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "406944591:Fourth",
+    )
+    .await;
+    await_runs(&h.db, 3).await;
+    assert_eq!(
+        queued_plugin_runs(&h.db).await,
+        std::slice::from_ref(&schedule)
+    );
+    assert_eq!(run_now_audits(&h.db).await.len(), 3);
 
     // Adding a data source runs them too, as the pilot who added it, a
     // minute after the last run (a person's gap).
@@ -1313,10 +1343,10 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
     );
     let admin = me(&h, &owner).await["account_id"].as_i64();
     let audits = run_now_audits(&h.db).await;
-    assert_eq!(audits.len(), 3, "{audits:?}");
-    assert_eq!(audits[2].0, admin);
+    assert_eq!(audits.len(), 4, "{audits:?}");
+    assert_eq!(audits[3].0, admin);
     assert_eq!(
-        audits[2].2,
+        audits[3].2,
         serde_json::json!({ "reason": "data_source_added", "character_id": CHRIBBA })
     );
 }

@@ -176,9 +176,23 @@ pub fn declared(manifest: &tether_plugins::manifest::Manifest) -> Vec<(String, i
 
 /// How soon after a schedule was last queued a run Tether triggers itself
 /// (a character registered) may queue it again. Longer than an admin's
-/// Run now gap ([`tether_jobs::schedule::RUN_NOW_GAP`]): registering alts
-/// one after another mustn't turn into an app syncing every minute.
+/// The gap between runs a person's change asks for while ESI's budget is
+/// low: registering alts one after another mustn't turn into an app
+/// syncing every minute.
 pub const TRIGGERED_GAP: Duration = Duration::from_secs(10 * 60);
+
+/// How soon a person's change (a character registered, an owner added)
+/// may run an app's schedules again: at once (after a run asked for a
+/// minute ago, as an admin's Run now) while there's plenty of ESI budget
+/// left (Jay, 2026-10-05), else [`TRIGGERED_GAP`], or the minute for app
+/// admins. What ESI has cached is answered from the cache anyway.
+pub fn triggered_gap(esi: &tether_esi::Esi, admin: bool) -> Duration {
+    if admin || esi.has_room() {
+        tether_jobs::schedule::RUN_NOW_GAP
+    } else {
+        TRIGGERED_GAP
+    }
+}
 
 /// Runs every schedule of the running app `manifest` now (see
 /// [`tether_jobs::schedule::run_now_in`]: a run in flight isn't doubled,

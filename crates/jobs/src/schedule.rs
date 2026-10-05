@@ -174,8 +174,10 @@ pub enum RunNow {
 pub const RUN_NOW_GAP: Duration = Duration::from_secs(60);
 
 /// Queues a schedule's job now, as its next tick would, and restarts its
-/// interval from now. Only that schedule: a run still in flight isn't
-/// doubled, and it runs by hand at most once per [`RUN_NOW_GAP`].
+/// interval from now. Only that schedule: a run already queued isn't
+/// doubled (nor a running one of Tether's own; an app's gets one more
+/// queued behind it), and it runs by hand at most once per
+/// [`RUN_NOW_GAP`].
 pub async fn run_now(pool: &PgPool, name: &str) -> Result<RunNow, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let outcome = run_now_in(&mut tx, name, RUN_NOW_GAP).await?;
@@ -197,8 +199,14 @@ pub async fn run_now_in(
         r#"
         SELECT kind, payload, every_secs, enabled,
                COALESCE(last_enqueued_at > now() - make_interval(secs => $2), false) AS "too_soon!",
+               -- Queued already; or running, for Tether's own schedules.
+               -- An app's running one gets one run queued behind it: apps
+               -- run one job at a time, and the running one may have
+               -- read before what prompted this.
                EXISTS (SELECT 1 FROM core.jobs j
-                       WHERE j.schedule = s.name AND j.state IN ('queued', 'running')) AS "busy!"
+                       WHERE j.schedule = s.name
+                         AND (j.state = 'queued'
+                              OR (j.state = 'running' AND s.payload->>'plugin' IS NULL))) AS "busy!"
         FROM core.schedules s
         WHERE name = $1
           AND (s.payload->>'plugin' IS NULL

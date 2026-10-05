@@ -605,3 +605,23 @@ async fn corporation_blueprints_and_running_jobs_are_esis() {
     assert_eq!(out.body[0]["job_id"], 77);
     assert_eq!(out.body[0]["activity_id"], 5);
 }
+
+#[tokio::test]
+async fn room_for_work_on_demand_follows_the_error_budget() {
+    let (server, esi) = esi().await;
+    // Nothing stated yet: plenty.
+    assert!(esi.has_room());
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHARACTER}/skillqueue")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-esi-error-limit-remain", "20")
+                .insert_header("x-esi-error-limit-reset", "30")
+                .set_body_json(json!([])),
+        )
+        .mount(&server)
+        .await;
+    get(&esi, "character-skillqueue", &[], None).await.unwrap();
+    // 20 errors left is under the bulk reserve: work waits for its turn.
+    assert!(!esi.has_room());
+}

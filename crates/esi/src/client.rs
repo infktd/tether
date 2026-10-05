@@ -169,6 +169,12 @@ impl Esi {
             .snapshot(self.client.error_budget(), self.client.rate_budgets())
     }
 
+    /// Plenty of ESI budget left for work a change asks for now
+    /// ([`crate::budget::has_room`]).
+    pub fn has_room(&self) -> bool {
+        crate::budget::has_room(self.client.error_budget(), &self.client.rate_budgets())
+    }
+
     pub(crate) fn client(&self) -> &Client {
         &self.client
     }

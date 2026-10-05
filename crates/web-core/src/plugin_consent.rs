@@ -224,11 +224,7 @@ pub async fn finish(
     let admin = tether_db::permissions::effective(&state.db, account)
         .await?
         .contains(tether_core::permissions::ADMIN_PLUGINS);
-    let gap = if admin {
-        tether_jobs::schedule::RUN_NOW_GAP
-    } else {
-        crate::plugin_jobs::TRIGGERED_GAP
-    };
+    let gap = crate::plugin_jobs::triggered_gap(&state.esi, admin);
     let why = json!({ "reason": "data_source_added", "character_id": identity.character_id });
     crate::plugin_jobs::run_app_schedules(
         &state.db,

@@ -34,6 +34,25 @@ pub fn bulk_delay(error: Option<ErrorBudget>) -> Option<Duration> {
         .map(|e| e.resets_in.min(Duration::from_secs(60)) + Duration::from_secs(1))
 }
 
+/// A rate-limit group counts as having room while at least this share
+/// of its tokens is left.
+pub const ROOM_SHARE: f64 = 0.25;
+
+/// Whether there's plenty of ESI budget left for work a person's change
+/// asks for (Jay, 2026-10-05: "go ahead and make it if it's not cached and
+/// we have plenty of api calls left"): the error budget above
+/// [`BULK_ERROR_RESERVE`], and every rate-limit group not held and with
+/// at least [`ROOM_SHARE`] of its tokens. Budgets ESI hasn't stated yet
+/// count as plenty. (What's cached ESI answers from the cache anyway.)
+pub fn has_room(error: Option<ErrorBudget>, rates: &[RateBudget]) -> bool {
+    let errors = error.is_none_or(|e| e.remain >= BULK_ERROR_RESERVE);
+    let groups = rates.iter().all(|g| {
+        g.blocked_for.is_none()
+            && f64::from(g.remaining_estimate) >= f64::from(g.max_tokens) * ROOM_SHARE
+    });
+    errors && groups
+}
+
 #[derive(Debug, Default)]
 pub struct Budget {
     state: Mutex<State>,
