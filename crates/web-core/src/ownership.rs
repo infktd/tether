@@ -165,7 +165,8 @@ impl ChangeMain {
 /// first if its access token has expired, so a sale or a revocation since
 /// the last ownership check counts now. If SSO can't be reached, the
 /// stored token state (kept by the 4-hourly check) decides. The state
-/// follows the new main. Rate limited with Token Management's refreshes:
+/// follows the new main, its corporation read from ESI at once while
+/// there's room. Rate limited with Token Management's refreshes:
 /// each may call EVE SSO from Tether's one client id.
 pub async fn change_main(
     state: &crate::AppState,
@@ -228,7 +229,24 @@ pub async fn change_main(
     Ok(match changed {
         accounts::MainChange::Changed { name } => {
             tracing::info!(account = account.0, character_id, "main changed");
-            crate::states::evaluate_account(db, account).await?;
+            // The state follows the new main's corporation: read from ESI
+            // now while there's room (Jay, 2026-10-05; cached for an hour,
+            // so mostly answered from the cache), else the stored one.
+            let fresh = state.esi.has_room()
+                && crate::states::refresh_account(
+                    db,
+                    &state.esi,
+                    account,
+                    tether_esi::Priority::Interactive,
+                )
+                .await
+                .inspect_err(|err| {
+                    tracing::warn!(account = account.0, error = %err, "change main: affiliations not read");
+                })
+                .is_ok();
+            if !fresh {
+                crate::states::evaluate_account(db, account).await?;
+            }
             ChangeMain::Done { name }
         }
         accounts::MainChange::Unchanged { name } => ChangeMain::Done { name },

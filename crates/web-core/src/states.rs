@@ -242,10 +242,29 @@ pub async fn evaluate_all(db: &PgPool) -> Result<usize, sqlx::Error> {
 }
 
 pub fn register_jobs(registry: &mut Registry, db: PgPool, esi: Esi) {
-    let evaluate_db = db.clone();
+    let (evaluate_db, evaluate_esi) = (db.clone(), esi.clone());
     registry.register(EVALUATE_ALL_JOB, move |_job| {
-        let db = evaluate_db.clone();
+        let (db, esi) = (evaluate_db.clone(), evaluate_esi.clone());
         async move {
+            // An admin's change (a state's rules, groups, the Blacklist):
+            // with room in ESI's budget, everyone's corporation is read
+            // first (Jay, 2026-10-05; one call per 1,000 characters, mostly
+            // from the cache), which re-evaluates everyone; else, or if
+            // ESI fails, the stored ones.
+            if esi.has_room() {
+                match crate::sync::affiliation_sync(&db, &esi).await {
+                    Ok(summary) => {
+                        tracing::info!(
+                            accounts = summary.accounts,
+                            "re-evaluated all states with fresh affiliations"
+                        );
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "affiliations not read; re-evaluating with the stored ones");
+                    }
+                }
+            }
             let count = evaluate_all(&db).await.map_err(JobError::retry)?;
             tracing::info!(accounts = count, "re-evaluated all states");
             Ok(())

@@ -128,6 +128,16 @@ async fn make_main_stays_on_the_dashboard(db: PgPool) {
     let h = harness(db, true).await;
     let token = log_in_owner(&h, "196379789:Chribba").await;
     let token = log_in_as(&h, "443630591:The Mittani", Some(&token)).await;
+    let affiliation_reads = || async {
+        h.esi_server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/characters/affiliation")
+            .count()
+    };
+    let before = affiliation_reads().await;
 
     // From the Dashboard (a boosted form): the Dashboard again, in place,
     // with a toast.
@@ -156,6 +166,8 @@ async fn make_main_stays_on_the_dashboard(db: PgPool) {
         ))
     );
     assert_eq!(me(&h, &token).await["main"]["id"], 443630591);
+    // The new main's corporation was read from ESI at once (there's room).
+    assert_eq!(affiliation_reads().await, before + 1);
 
     // Without htmx, back to the page.
     let plain = send(
