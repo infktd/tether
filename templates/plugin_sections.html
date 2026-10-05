@@ -21,11 +21,44 @@
 <input type="hidden" name="_form" value="{{ a.form }}">{% for (name, field) in a.fields %}<input type="hidden" name="{{ name }}" value="{{ field }}">{% endfor %}
 {%- endmacro %}
 
+{#- A form's fields, on the page or in a popup. -#}
+{% macro form_fields(form) -%}
+  <section class="grid gap-4 max-w-xl">
+    {% for f in form.fields %}
+    {% let field_id = format!("{}-{}", form.id, f.name) %}
+    <div class="grid gap-2">
+      {% if f.kind == "checkbox" %}
+      <label class="label gap-2"><input type="checkbox" class="input" id="{{ field_id }}" name="{{ f.name }}" value="on"{% if f.checked %} checked{% endif %}{% if f.required %} required{% endif %}> {{ f.label }}</label>
+      {% else %}
+      <label class="label" for="{{ field_id }}">{{ f.label }}{% if !f.required %} <span class="text-muted-foreground font-normal">(optional)</span>{% endif %}</label>
+      {% if f.kind == "textarea" %}
+      <textarea class="textarea input" id="{{ field_id }}" name="{{ f.name }}" maxlength="{{ f.max_length }}" rows="4"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>{{ f.value }}</textarea>
+      {% else if f.kind == "select" %}
+      <select class="select input" id="{{ field_id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}>
+        {% if !f.required %}<option value="">—</option>{% endif %}
+        {% for o in f.options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      {% else if f.kind == "number" %}
+      <input class="input num" type="number" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" step="{{ f.step }}"{% if !f.min.is_empty() %} min="{{ f.min }}"{% endif %}{% if !f.max.is_empty() %} max="{{ f.max }}"{% endif %}{% if f.required %} required{% endif %}>
+      {% else %}
+      <input class="input" type="text" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" maxlength="{{ f.max_length }}"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>
+      {% endif %}
+      {% endif %}
+      {% if let Some(help) = f.help %}<p class="text-xs text-muted-foreground">{{ help }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+{%- endmacro %}
+
 {#- A button that posts like a one-button form. With a confirmation, it
     opens a popover (the browser's own: no script) stating what will
     happen, whose button posts. -#}
 {% macro action(a) -%}
-{%- if let Some(id) = a.popover -%}
+{%- if let Some(popup) = a.opens -%}
+{#- Opens the page's form in its popup, with this button's hidden values
+    (assets/live.js); its confirmation sentence leads the popup. -#}
+<button type="button" class="btn{% if a.style == "danger" %} btn-destructive-outline{% endif %}" data-size="sm" data-variant="{% if a.style == "primary" %}primary{% else %}outline{% endif %}" data-opens="{{ popup }}" data-fields="{{ a.fields_json }}"{% if let Some(sentence) = a.confirm %} data-lead="{{ sentence }}"{% endif %}>{{ a.label }}</button>
+{%- else if let Some(id) = a.popover -%}
 <button type="button" class="btn{% if a.style == "danger" %} btn-destructive-outline{% endif %}" data-size="sm" data-variant="{% if a.style == "primary" %}primary{% else %}outline{% endif %}" popovertarget="{{ id }}">{{ a.label }}</button>
 <div id="{{ id }}" popover class="confirm-popover" role="dialog" aria-labelledby="{{ id }}-text">
   <p id="{{ id }}-text">{% if let Some(sentence) = a.confirm %}{{ sentence }}{% endif %}</p>
@@ -235,38 +268,34 @@
   <section><pre class="code-text" tabindex="0">{{ code.text }}</pre></section>
 </section>
 {% when SectionView::Form(form) %}
+{%- if let Some(popup) = form.popup -%}
+{#- A form an action opens: in a dialog (DESIGN.md, Popups), the action's
+    hidden values put in by assets/live.js. -#}
+<dialog class="dialog popup" id="{{ popup }}" aria-labelledby="{{ popup }}-title">
+  <form class="card w-full max-w-md" method="post" action="{{ form.action }}">
+    <input type="hidden" name="_form" value="{{ form.id }}">
+    <div data-popup-fields hidden></div>
+    <header>
+      <h2 id="{{ popup }}-title">{% if let Some(t) = form.title %}{{ t }}{% else %}{{ form.submit_label }}{% endif %}</h2>
+      <p data-popup-lead>{% if let Some(d) = form.description %}{{ d }}{% endif %}</p>
+    </header>
+    {% call form_fields(form) %}{% endcall %}
+    <footer class="gap-2">
+      <button type="button" class="btn" data-variant="outline" data-close>Cancel</button>
+      <button type="submit" class="btn" data-variant="primary">{{ form.submit_label }}</button>
+    </footer>
+  </form>
+</dialog>
+{%- else -%}
 <form class="card" method="post" action="{{ form.action }}">
   <input type="hidden" name="_form" value="{{ form.id }}">
   {% if form.title.is_some() || form.description.is_some() %}
   <header>{% if let Some(t) = form.title %}<h2>{{ t }}</h2>{% endif %}{% if let Some(d) = form.description %}<p>{{ d }}</p>{% endif %}</header>
   {% endif %}
-  <section class="grid gap-4 max-w-xl">
-    {% for f in form.fields %}
-    {% let field_id = format!("{}-{}", form.id, f.name) %}
-    <div class="grid gap-2">
-      {% if f.kind == "checkbox" %}
-      <label class="label gap-2"><input type="checkbox" class="input" id="{{ field_id }}" name="{{ f.name }}" value="on"{% if f.checked %} checked{% endif %}{% if f.required %} required{% endif %}> {{ f.label }}</label>
-      {% else %}
-      <label class="label" for="{{ field_id }}">{{ f.label }}{% if !f.required %} <span class="text-muted-foreground font-normal">(optional)</span>{% endif %}</label>
-      {% if f.kind == "textarea" %}
-      <textarea class="textarea input" id="{{ field_id }}" name="{{ f.name }}" maxlength="{{ f.max_length }}" rows="4"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>{{ f.value }}</textarea>
-      {% else if f.kind == "select" %}
-      <select class="select input" id="{{ field_id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}>
-        {% if !f.required %}<option value="">—</option>{% endif %}
-        {% for o in f.options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
-      </select>
-      {% else if f.kind == "number" %}
-      <input class="input num" type="number" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" step="{{ f.step }}"{% if !f.min.is_empty() %} min="{{ f.min }}"{% endif %}{% if !f.max.is_empty() %} max="{{ f.max }}"{% endif %}{% if f.required %} required{% endif %}>
-      {% else %}
-      <input class="input" type="text" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" maxlength="{{ f.max_length }}"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>
-      {% endif %}
-      {% endif %}
-      {% if let Some(help) = f.help %}<p class="text-xs text-muted-foreground">{{ help }}</p>{% endif %}
-    </div>
-    {% endfor %}
-  </section>
+  {% call form_fields(form) %}{% endcall %}
   <footer><button type="submit" class="btn" data-variant="primary">{{ form.submit_label }}</button></footer>
 </form>
+{%- endif -%}
 {% when SectionView::Tables(set) %}
 {#- Tables that followed each other with the same columns: one table,
     each one's title a heading row, so the columns line up. -#}

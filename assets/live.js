@@ -223,6 +223,54 @@
     document.cookie = `tether_nav_folded=${folded.slice(-30).join("~")}; path=/; max-age=31536000; samesite=lax${secure}`;
   });
 
+  // Popups (DESIGN.md, Popups): a button opening one of the page's forms
+  // puts its hidden values into the form, its sentence at the top, and
+  // shows it; Cancel, Escape or a click outside closes it. The form posts
+  // as any (boosted), and the page stays put with a toast.
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const opener = target && target.closest("button[data-opens]");
+    if (opener) {
+      const dialog = document.getElementById(opener.dataset.opens);
+      if (!(dialog instanceof HTMLDialogElement)) return;
+      dialog.querySelector("form")?.reset();
+      const box = dialog.querySelector("[data-popup-fields]");
+      let fields = {};
+      try {
+        fields = JSON.parse(opener.dataset.fields || "{}");
+      } catch (_) {}
+      box.replaceChildren(
+        ...Object.entries(fields).map(([name, value]) => {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = name;
+          input.value = String(value);
+          return input;
+        }),
+      );
+      const lead = dialog.querySelector("[data-popup-lead]");
+      if (lead) {
+        if (!("text" in lead.dataset)) lead.dataset.text = lead.textContent;
+        lead.textContent = opener.dataset.lead || lead.dataset.text;
+      }
+      dialog.showModal();
+      dialog.querySelector("input:not([type=hidden]), select, textarea")?.focus();
+      return;
+    }
+    if (target && target.closest("dialog.popup [data-close]")) {
+      target.closest("dialog").close();
+      return;
+    }
+    // A click on the backdrop (the dialog itself, not its card).
+    if (target instanceof HTMLDialogElement && target.classList.contains("popup")) target.close();
+  });
+  // Posted (the page is swapped in place): a popup left open closes. A
+  // page with a popup form never reloads itself (any form stops that).
+  document.addEventListener("htmx:beforeRequest", (event) => {
+    const dialog = event.detail.elt instanceof Element && event.detail.elt.closest("dialog.popup");
+    if (dialog && dialog.open) dialog.close();
+  });
+
   // Tables (DESIGN.md, Tables): a column heading sorts the rows shown
   // (again to reverse), and a long table gets a filter box that hides the
   // rows not matching as you type. All in the browser: nothing is fetched,

@@ -148,6 +148,11 @@ pub struct ActionView {
     pub confirm: Option<String>,
     /// The confirmation's popover id, with `confirm`.
     pub popover: Option<String>,
+    /// The popup its form is drawn in, for an action opening one of the
+    /// page's forms; its hidden fields as JSON, which the popup's form
+    /// posts with its own.
+    pub opens: Option<String>,
+    pub fields_json: String,
 }
 
 pub struct BadgeView {
@@ -300,6 +305,8 @@ pub struct FieldView {
 
 pub struct FormView {
     pub id: String,
+    /// Drawn in a popup (an action opens it): its id.
+    pub popup: Option<String>,
     pub action: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -606,6 +613,8 @@ pub struct Ctx<'a> {
     /// On the Dashboard, footers for the cards of the viewer's own
     /// characters, by character id.
     feet: Option<&'a std::collections::HashMap<i64, CardFoot>>,
+    /// The page's forms an action opens in a popup.
+    popups: std::collections::BTreeSet<String>,
     next: std::cell::Cell<usize>,
 }
 
@@ -619,8 +628,22 @@ impl<'a> Ctx<'a> {
             site,
             owner_back: None,
             feet: None,
+            popups: std::collections::BTreeSet::new(),
             next: std::cell::Cell::new(0),
         }
+    }
+
+    /// The page's forms that actions open in a popup.
+    pub fn with_popups(mut self, popups: std::collections::BTreeSet<String>) -> Self {
+        self.popups = popups;
+        self
+    }
+
+    /// The popup a form of the page is drawn in, if an action opens it.
+    fn popup(&self, form: &str) -> Option<String> {
+        self.popups
+            .contains(form)
+            .then(|| format!("{}-popup-{form}", self.prefix))
     }
 
     /// For a viewer who may add owners, on the page at `back`, the login
@@ -661,7 +684,21 @@ fn action_view(ctx: &Ctx, action: &Action) -> ActionView {
             Tone::Neutral | Tone::Success | Tone::Warning => "outline",
         },
         confirm: action.confirm.clone(),
-        popover: action.confirm.as_ref().map(|_| ctx.next_id()),
+        // Opening a popup, its confirmation is the popup's lead line.
+        popover: action
+            .confirm
+            .as_ref()
+            .filter(|_| ctx.popup(&action.form).is_none())
+            .map(|_| ctx.next_id()),
+        opens: ctx.popup(&action.form),
+        fields_json: serde_json::Value::Object(
+            action
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect(),
+        )
+        .to_string(),
     }
 }
 
@@ -883,6 +920,7 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
         }),
         Section::Form(form) => SectionView::Form(FormView {
             id: form.id.clone(),
+            popup: ctx.popup(&form.id),
             action: ctx.action.to_owned(),
             title: form.title.clone(),
             description: form.description.clone(),
@@ -1390,7 +1428,8 @@ fn draw(
     };
     let ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
         .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
-        .adding_owners(owner_back(&opened));
+        .adding_owners(owner_back(&opened))
+        .with_popups(page_rules::popup_forms(page));
     let sections: Vec<SectionView> =
         arrange(page.sections.iter().map(|s| section(&ctx, s)).collect());
     let tab_sections: Vec<SectionView> = page
@@ -1585,7 +1624,8 @@ pub async fn widget(
                         )
                         .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
                         .adding_owners(owner_back(&opened))
-                        .with_feet(&feet);
+                        .with_feet(&feet)
+                        .with_popups(page_rules::popup_forms(&page));
                         WidgetFragment {
                             title: widget.title,
                             sections: arrange(
@@ -1795,7 +1835,30 @@ async fn post(
         from.answer(opened, &page, status, Some(problem), toast)
     };
     // What the toast names: the button, or the form's.
-    let (values, label) = if let Some(form) = page_rules::find_form(&page, &form_id) {
+    let popup = page_rules::popup_forms(&page).contains(&form_id);
+    let (values, label) = if let Some(form) = page_rules::find_form(&page, &form_id)
+        && popup
+    {
+        // A popup's post: the hidden fields of an action this page offers
+        // this person now, then the form's own values, checked as any.
+        let Some((action, own)) = page_rules::find_popup_action(&page, form, &values) else {
+            return Ok(refused(
+                opened,
+                StatusCode::CONFLICT,
+                "That form isn't on this page any more. Try again.".to_owned(),
+            ));
+        };
+        match page_rules::check_submission(form, &own) {
+            Ok(own) => {
+                let mut values = action.fields.clone();
+                values.extend(own);
+                (values, form.submit_label.clone())
+            }
+            Err(problem) => {
+                return Ok(refused(opened, StatusCode::UNPROCESSABLE_ENTITY, problem));
+            }
+        }
+    } else if let Some(form) = page_rules::find_form(&page, &form_id) {
         match page_rules::check_submission(form, &values) {
             Ok(values) => (values, form.submit_label.clone()),
             Err(problem) => {

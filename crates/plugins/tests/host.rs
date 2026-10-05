@@ -89,7 +89,8 @@ async fn bad_pages_are_refused_before_anyone_draws_them() {
     for (path, why) in [
         ("bad-page-link", "isn't a path"),
         ("bad-progress", "isn't an RFC 3339 time"),
-        ("action-clash", "both a form and an action"),
+        ("action-clash", "which the form has too"),
+        ("popup-tab", "isn't on its tab"),
     ] {
         let err = render(&host, &pages, path).await.unwrap_err();
         assert!(

@@ -1012,6 +1012,13 @@
     content: " \25BC";
     color: var(--primary);
   }
+  /* Popups (assets/live.js): a form an action opens, over a dimmed page. */
+  .popup::backdrop {
+    background: rgb(0 0 0 / 0.6);
+  }
+  .popup > form > footer {
+    @apply flex justify-end;
+  }
   /* A long table's filter box, above it inside its panel. */
   .table-filter {
     padding: 0 18px 10px;

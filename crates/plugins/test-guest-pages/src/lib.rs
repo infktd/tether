@@ -224,9 +224,14 @@ impl Plugin for Pages {
                 progress(0.5).between("2026-09-24T18:00:00Z", "not a time"),
             ))),
             "bad-page-link" => Ok(Page::new("Bad page link").link("away", "//evil.example")),
+            // A popup's action may not carry a field the form has.
             "action-clash" => Ok(Page::new("Clash")
                 .form(note_form())
-                .card(Card::new("c").field("a", action("Go", "note")))),
+                .card(Card::new("c").field("a", action("Go", "note").field("body", "x")))),
+            // Nor open a form on another tab.
+            "popup-tab" => Ok(Page::new("Tabs")
+                .card(Card::new("c").field("a", action("Go", "note").field("item", "1")))
+                .tab("Other", vec![tether_plugin_sdk::Section::Form(note_form())])),
             "form" => Ok(Page::new("Form").form(note_form())),
             "groups" => {
                 let names = |groups: Vec<tether_plugin_sdk::identity::Group>| {

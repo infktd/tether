@@ -4,7 +4,7 @@
 //! rejects pages that are malformed, oversized, or carry links that could
 //! point outside the plugin.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::host::Timeline;
 use crate::host::{
@@ -73,8 +73,14 @@ struct Budget {
     bytes: usize,
     values: usize,
     form_ids: BTreeSet<String>,
-    /// The forms actions post as: none may be a form's id.
-    action_forms: BTreeSet<String>,
+    /// Each form's field names, and the tab it's in (`None`: the page's
+    /// own sections, shown under every tab).
+    form_fields: BTreeMap<String, (BTreeSet<String>, Option<usize>)>,
+    /// The forms actions post as, each such action's field names and its
+    /// tab: an action whose form is one of the page's opens it in a popup.
+    action_fields: Vec<(String, BTreeSet<String>, Option<usize>)>,
+    /// The tab being checked.
+    tab: Option<usize>,
 }
 
 impl Budget {
@@ -116,7 +122,9 @@ pub fn check(page: &Page) -> Result<(), PageProblem> {
         bytes: 0,
         values: 0,
         form_ids: BTreeSet::new(),
-        action_forms: BTreeSet::new(),
+        form_fields: BTreeMap::new(),
+        action_fields: Vec::new(),
+        tab: None,
     };
     if page.title.trim().is_empty() {
         return Err(problem("the page title is empty"));
@@ -152,24 +160,81 @@ pub fn check(page: &Page) -> Result<(), PageProblem> {
     for section in &page.sections {
         check_section(section, &mut budget)?;
     }
-    for tab in &page.tabs {
+    for (i, tab) in page.tabs.iter().enumerate() {
+        budget.tab = Some(i);
         budget.text("a tab label", &tab.label)?;
         for section in &tab.sections {
             check_section(section, &mut budget)?;
         }
     }
-    if let Some(both) = budget.action_forms.intersection(&budget.form_ids).next() {
-        return Err(problem(format!(
-            "{both:?} is both a form and an action's form"
-        )));
+    // An action opening one of the page's forms in a popup posts its own
+    // hidden fields with the form's: none may share a name.
+    for (form, names, tab) in &budget.action_fields {
+        let Some((fields, form_tab)) = budget.form_fields.get(form) else {
+            continue;
+        };
+        if let Some(both) = names.intersection(fields).next() {
+            return Err(problem(format!(
+                "an action opening the form {form:?} has a hidden field {both:?}, which the form has too"
+            )));
+        }
+        // Its popup is drawn where the form is: with the page's own
+        // sections (under every tab), or with its tab only.
+        if form_tab.is_some() && form_tab != tab {
+            return Err(problem(format!(
+                "an action opens the form {form:?}, which isn't on its tab"
+            )));
+        }
     }
     Ok(())
+}
+
+/// The ids of the page's forms that an action opens: each is drawn in a
+/// popup, not on the page.
+pub fn popup_forms(page: &Page) -> BTreeSet<String> {
+    let forms: BTreeSet<&str> = page
+        .sections
+        .iter()
+        .chain(page.tabs.iter().flat_map(|t| t.sections.iter()))
+        .filter_map(|s| match s {
+            Section::Form(form) => Some(form.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    page_values(page)
+        .flat_map(|value| match value {
+            Value::Action(action) => std::slice::from_ref(action),
+            Value::Actions(actions) => actions.as_slice(),
+            _ => &[],
+        })
+        .filter(|action| forms.contains(action.form.as_str()))
+        .map(|action| action.form.clone())
+        .collect()
+}
+
+/// A post of a popup form: the action that opened it (its hidden fields
+/// exactly, as the page offers them) and the form's own values, apart.
+pub fn find_popup_action<'p>(
+    page: &'p Page,
+    form: &Form,
+    posted: &[(String, String)],
+) -> Option<(&'p Action, Vec<(String, String)>)> {
+    let names: BTreeSet<&str> = form.fields.iter().map(|f| f.name.as_str()).collect();
+    let (own, hidden): (Vec<_>, Vec<_>) = posted
+        .iter()
+        .cloned()
+        .partition(|(name, _)| names.contains(name.as_str()));
+    find_action(page, &form.id, &hidden).map(|action| (action, own))
 }
 
 fn check_action(action: &Action, budget: &mut Budget) -> Result<(), PageProblem> {
     budget.text("an action label", &action.label)?;
     check_form_name("an action's form", &action.form)?;
-    budget.action_forms.insert(action.form.clone());
+    budget.action_fields.push((
+        action.form.clone(),
+        action.fields.iter().map(|(name, _)| name.clone()).collect(),
+        budget.tab,
+    ));
     if action.fields.len() > MAX_ACTION_FIELDS {
         return Err(problem(format!(
             "an action has {} fields; the limit is {MAX_ACTION_FIELDS}",
@@ -600,6 +665,13 @@ fn check_form(form: &Form, budget: &mut Budget) -> Result<(), PageProblem> {
         )));
     }
     let mut names = BTreeSet::new();
+    budget.form_fields.insert(
+        form.id.clone(),
+        (
+            form.fields.iter().map(|f| f.name.clone()).collect(),
+            budget.tab,
+        ),
+    );
     for field in &form.fields {
         check_form_name("a field name", &field.name)?;
         if !names.insert(field.name.as_str()) {
@@ -907,6 +979,86 @@ fn printable_prefix(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_popups_post_must_be_an_offered_actions_fields_exactly() {
+        use crate::host::{Field, NumberInput};
+        let form = Form {
+            id: "request".into(),
+            title: None,
+            description: None,
+            submit_label: "Request".into(),
+            fields: vec![Field {
+                name: "runs".into(),
+                label: "Runs".into(),
+                help: None,
+                required: false,
+                kind: FieldKind::Number(NumberInput {
+                    value: None,
+                    min: Some(1.0),
+                    max: None,
+                    integer: true,
+                }),
+            }],
+        };
+        let open = |fields: &[(&str, &str)]| Action {
+            label: "Request".into(),
+            form: "request".into(),
+            fields: fields
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            tone: Tone::Accent,
+            confirm: None,
+        };
+        let page = Page {
+            title: "Library".into(),
+            description: None,
+            links: Vec::new(),
+            sections: vec![
+                Section::Form(form.clone()),
+                Section::Table(Table {
+                    title: None,
+                    columns: vec![Column {
+                        label: "".into(),
+                        numeric: false,
+                    }],
+                    rows: vec![
+                        vec![Value::Action(open(&[("item", "1"), ("owner", "a")]))],
+                        vec![Value::Action(open(&[("item", "2"), ("owner", "b")]))],
+                    ],
+                    empty: None,
+                }),
+            ],
+            tabs: Vec::new(),
+            refresh_seconds: None,
+        };
+        let post = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let (action, own) = find_popup_action(
+            &page,
+            &form,
+            &post(&[("item", "1"), ("owner", "a"), ("runs", "5")]),
+        )
+        .unwrap();
+        assert_eq!(action.fields[0].1, "1");
+        assert_eq!(own, post(&[("runs", "5")]));
+        for bad in [
+            // An extra name, one missing, one altered, two actions mixed,
+            // and none at all (no action without fields is offered).
+            post(&[("item", "1"), ("owner", "a"), ("extra", "x"), ("runs", "5")]),
+            post(&[("item", "1"), ("runs", "5")]),
+            post(&[("item", "9"), ("owner", "a")]),
+            post(&[("item", "1"), ("owner", "b")]),
+            post(&[("runs", "5")]),
+        ] {
+            assert!(find_popup_action(&page, &form, &bad).is_none(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn redirects_may_carry_a_plain_query() {
