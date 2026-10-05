@@ -553,3 +553,18 @@ pub async fn last_change_was_rollback<'e>(
     .await?;
     Ok(action.as_deref() == Some("plugin.rolled_back"))
 }
+
+/// The Postgres channel an app's changed data is announced on, with the
+/// app's id: its open pages refresh.
+pub const CHANGES_CHANNEL: &str = "tether_apps";
+
+/// Announces that app `id`'s data changed (a job or a form wrote rows).
+pub async fn announce_change<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("SELECT pg_notify($1, $2)", CHANGES_CHANNEL, id)
+        .execute(executor)
+        .await?;
+    Ok(())
+}

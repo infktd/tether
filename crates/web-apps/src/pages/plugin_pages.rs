@@ -1001,6 +1001,9 @@ pub struct ContentView {
     pub watermark: String,
     /// Seconds between reloads, while the page asks for them.
     pub refresh: Option<u32>,
+    /// The app's id, when the page refreshes once the app's data changed
+    /// (`assets/live.js`).
+    pub live: Option<String>,
     /// The page's address with its query: what a reload fetches.
     pub href: String,
     /// The app's owners (Add owner), drawn by the host.
@@ -1521,6 +1524,7 @@ fn draw(
         } else {
             None
         },
+        live: (error.is_none() && !audited).then(|| opened.running.manifest.plugin.id.clone()),
         error,
         watermark,
         href: opened.href.clone(),
@@ -1897,6 +1901,10 @@ async fn post(
     match submitted {
         Ok(submitted) => {
             record_logs(&state.db, &id, &source(&opened.path), &submitted.logs).await;
+            // Other people's open pages of the app show it too.
+            if submitted.changed {
+                tether_web_core::plugin_jobs::announce_change(&state.db, &id).await;
+            }
             // Settings saved: the app reads with them now while there's
             // room in ESI's budget (Jay, 2026-10-05), not at its next tick.
             // In the background, best effort.

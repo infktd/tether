@@ -4,7 +4,6 @@ use std::time::Duration;
 use crate::common::*;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use futures_core::Stream;
 use serde_json::Value;
 use sqlx::PgPool;
 use tether_core::states::{Builtin, EntityKind};
@@ -280,23 +279,12 @@ async fn lost_characters_are_notified(db: PgPool) {
     assert!(message.contains("Change Main"), "{message}");
 }
 
-/// The next server-sent event's text, or `None` after `wait`.
+/// The next `unread` event's text, or `None` after `wait`.
 async fn next_event(
     body: &mut Pin<Box<axum::body::BodyDataStream>>,
     wait: Duration,
 ) -> Option<String> {
-    loop {
-        let frame =
-            tokio::time::timeout(wait, std::future::poll_fn(|cx| body.as_mut().poll_next(cx)))
-                .await
-                .ok()??
-                .unwrap();
-        let text = String::from_utf8_lossy(&frame).into_owned();
-        // Skip keep-alive comments.
-        if text.contains("event: unread") {
-            return Some(text);
-        }
-    }
+    next_sse(body, "unread", wait).await
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

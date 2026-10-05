@@ -1017,3 +1017,47 @@ pub async fn discord_ready(h: &Harness, owner: &str) {
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{uri}: {}", res.body);
     }
 }
+
+/// The next server-sent `event`'s text (others and keep-alive comments
+/// skipped), or `None` if none came within `wait` or the stream ended.
+pub async fn next_sse(
+    body: &mut std::pin::Pin<Box<axum::body::BodyDataStream>>,
+    event: &str,
+    wait: Duration,
+) -> Option<String> {
+    use futures_core::Stream;
+    let wanted = format!("event: {event}\n");
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let frame = tokio::time::timeout_at(
+            deadline,
+            std::future::poll_fn(|cx| body.as_mut().poll_next(cx)),
+        )
+        .await
+        .ok()??
+        .unwrap();
+        let text = String::from_utf8_lossy(&frame).into_owned();
+        if text.contains(&wanted) {
+            return Some(text);
+        }
+    }
+}
+
+/// An open `/notifications/stream` of `token`'s, its first event read.
+pub async fn open_stream(
+    h: &Harness,
+    token: &str,
+) -> std::pin::Pin<Box<axum::body::BodyDataStream>> {
+    let res = h
+        .app
+        .clone()
+        .oneshot(get("/notifications/stream", &[(SESSION, token)]))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let mut body = Box::pin(res.into_body().into_data_stream());
+    next_sse(&mut body, "unread", Duration::from_secs(5))
+        .await
+        .expect("the stream's first event");
+    body
+}

@@ -195,3 +195,64 @@ async fn bulletin_board_end_to_end(db: PgPool) {
             .contains("Home defense")
     );
 }
+
+/// Live pages: a new bulletin tells the open streams of everyone who may
+/// open the board, and nobody else's; the board is marked to refresh.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_new_bulletin_reaches_open_boards(db: PgPool) {
+    use std::time::Duration;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let a = log_in_as(&h, "443630591:Pilot A", None).await;
+    let b = log_in_as(&h, "406944591:Pilot B", None).await;
+    grant(&h, account(&h, 443630591).await, "basic_access").await;
+
+    let board = page(&h, &format!("/plugins/{ID}"), &a).await;
+    assert!(
+        board
+            .body
+            .contains(&format!(r#"data-app="{ID}" data-href="/plugins/{ID}""#)),
+        "{}",
+        board.body
+    );
+    let mut a_stream = open_stream(&h, &a).await;
+    let mut b_stream = open_stream(&h, &b).await;
+
+    let res = post(
+        &h,
+        &owner,
+        "new",
+        "_form=bulletin&title=Ops&content=Tonight.",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let heard = next_sse(&mut a_stream, "app", Duration::from_secs(10))
+        .await
+        .expect("no app event after a new bulletin");
+    assert!(heard.contains(&format!("data: {ID}\n")), "{heard}");
+    // B may not open the board: not told.
+    assert_eq!(
+        next_sse(&mut b_stream, "app", Duration::from_secs(3)).await,
+        None
+    );
+
+    // Only ids of apps the account may open pass, whatever is announced.
+    tether_db::plugins::announce_change(&h.db, "tether.not-installed")
+        .await
+        .unwrap();
+    assert_eq!(
+        next_sse(&mut a_stream, "app", Duration::from_secs(3)).await,
+        None
+    );
+
+    // Viewing the board writes no rows: nobody's told.
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}"), &a).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        next_sse(&mut a_stream, "app", Duration::from_secs(3)).await,
+        None
+    );
+}

@@ -373,6 +373,107 @@
     }
   };
   document.addEventListener("htmx:load", (event) => enhance(event.detail.elt));
+
+  // An app page fetched again in place (its own timed reload, or a live
+  // refresh below) keeps each table's sort and filter.
+  let kept = null;
+  const refetch = (detail) =>
+    detail.target && detail.target.id === "plugin-content" && detail.requestConfig?.verb === "get" &&
+    detail.requestConfig.elt?.id === "plugin-content";
+  document.addEventListener("htmx:beforeSwap", (event) => {
+    kept = null;
+    // A reload answered with nothing (204) swaps nothing.
+    if (!refetch(event.detail) || !event.detail.shouldSwap) return;
+    kept = [...event.detail.target.querySelectorAll("table.table")].map((table) => {
+      const heading = table.querySelector(":scope > thead th[aria-sort]");
+      const box = table.previousElementSibling;
+      return {
+        column: heading ? heading.cellIndex : -1,
+        descending: heading?.getAttribute("aria-sort") === "descending",
+        query: box?.classList.contains("table-filter") ? box.querySelector("input").value : "",
+      };
+    });
+  });
+  document.addEventListener("htmx:load", (event) => {
+    const content = event.detail.elt;
+    if (!kept || !(content instanceof Element) || content.id !== "plugin-content") return;
+    const tables = content.querySelectorAll("table.table");
+    kept.forEach((was, i) => {
+      const table = tables[i];
+      if (!table) return;
+      const heading = table.tHead?.rows[0]?.cells[was.column];
+      if (heading && sortable(heading)) {
+        sortBy(heading);
+        if (was.descending) sortBy(heading);
+      }
+      const box = table.previousElementSibling;
+      if (was.query && box?.classList.contains("table-filter")) {
+        box.querySelector("input").value = was.query;
+        filter(table, was.query);
+      }
+    });
+    kept = null;
+  });
+
+  // Live app pages (DESIGN.md, Live pages): once an app's data changed,
+  // an open page of it fetches its content again in place, at most every
+  // REFRESH_GAP. Never under someone: while a field has focus or was
+  // changed, or a popup is open, it waits, and a page left meanwhile
+  // isn't fetched.
+  const REFRESH_GAP = 10000;
+  const RETRY = 3000;
+  let changedApp = null;
+  let timer = 0;
+  let lastRefresh = 0;
+  const live = () => document.querySelector("#plugin-content[data-app][data-href]");
+  const edited = (field) => {
+    if (field.closest(".table-filter") || field.closest("dialog:not([open])")) return false;
+    if (field instanceof HTMLSelectElement) return [...field.options].some((o) => o.selected !== o.defaultSelected);
+    if (field.type === "hidden") return false;
+    if (field.type === "checkbox" || field.type === "radio") return field.checked !== field.defaultChecked;
+    return field.value !== field.defaultValue;
+  };
+  const busy = (content) => {
+    if (document.querySelector("dialog[open]")) return true;
+    try {
+      if (document.getElementById("confirm")?.matches(":popover-open")) return true;
+    } catch (_) {}
+    const active = document.activeElement;
+    if (active && content.contains(active) && active.matches("input, select, textarea")) return true;
+    return [...content.querySelectorAll("input, select, textarea")].some(edited);
+  };
+  const refresh = () => {
+    timer = 0;
+    const content = live();
+    if (!changedApp || !content || content.dataset.app !== changedApp) {
+      changedApp = null;
+      return;
+    }
+    if (busy(content) || document.hidden) {
+      timer = setTimeout(refresh, RETRY);
+      return;
+    }
+    changedApp = null;
+    lastRefresh = Date.now();
+    window.htmx?.ajax("GET", content.dataset.href, {
+      source: content,
+      target: content,
+      swap: "outerHTML show:none",
+    });
+  };
+  // A post's answer is the page as it is now: the change it announces
+  // waits its turn like any other.
+  document.addEventListener("htmx:afterSwap", (event) => {
+    const request = event.detail.requestConfig;
+    if (event.detail.target?.id === "plugin-content" && request && request.verb !== "get") lastRefresh = Date.now();
+  });
+  document.addEventListener("app-changed", (event) => {
+    const content = live();
+    if (!content || content.dataset.app !== event.detail) return;
+    changedApp = event.detail;
+    if (!timer) timer = setTimeout(refresh, Math.max(500, lastRefresh + REFRESH_GAP - Date.now()));
+  });
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => enhance(document));
   } else {

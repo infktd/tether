@@ -2,7 +2,7 @@
 //! AA has one) and the live unread count. Storage is in
 //! `tether_db::notifications`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -267,12 +267,30 @@ const MIN_GAP: Duration = Duration::from_secs(1);
 /// How long one stream lasts; the browser reconnects (and so signs in
 /// again) after it ends.
 const STREAM_FOR: Duration = Duration::from_secs(3600);
+/// At most one `app` event per app per stream this often (as often as
+/// `assets/live.js` refreshes), however many changes arrive. `tether_apps`
+/// payloads are untrusted: any role on the database may `NOTIFY`, apps'
+/// own included.
+const APP_GAP: Duration = Duration::from_secs(10);
 
-/// Whose unread count moved, from Postgres (`LISTEN tether_notifications`,
-/// fired by triggers), so changes from jobs and the CLI arrive too.
+/// What changed, from Postgres.
+#[derive(Clone, Debug)]
+enum Change {
+    /// The account whose unread count moved.
+    Unread(i64),
+    /// The app whose data a job or form changed.
+    App(Arc<str>),
+}
+
+/// Whose unread count moved (`LISTEN tether_notifications`, fired by
+/// triggers, so changes from jobs and the CLI arrive too), and which app's
+/// data changed (`LISTEN tether_apps`), so its open pages refresh. A
+/// stream hears of every app the account may open a page of, open or not:
+/// when it changed, never what (the refresh checks access again).
+/// Accepted, since the stream is one per tab, not per page.
 #[derive(Clone)]
 pub struct Notices {
-    changes: broadcast::Sender<i64>,
+    changes: broadcast::Sender<Change>,
     /// Flipped at shutdown so open streams end and HTTP can drain.
     stopping: watch::Sender<bool>,
     open: Arc<Mutex<Open>>,
@@ -378,14 +396,25 @@ impl Drop for Slot {
     }
 }
 
-async fn listen(db: &PgPool, tx: &broadcast::Sender<i64>) -> Result<(), sqlx::Error> {
+async fn listen(db: &PgPool, tx: &broadcast::Sender<Change>) -> Result<(), sqlx::Error> {
     let mut listener = PgListener::connect_with(db).await?;
-    listener.listen(tether_db::notifications::CHANNEL).await?;
+    listener
+        .listen_all([
+            tether_db::notifications::CHANNEL,
+            tether_db::plugins::CHANGES_CHANNEL,
+        ])
+        .await?;
     loop {
         let notice = listener.recv().await?;
-        if let Ok(account) = notice.payload().parse::<i64>() {
+        let change = if notice.channel() == tether_db::plugins::CHANGES_CHANNEL {
+            // Only ever matched against the stream's own app ids.
+            Some(Change::App(Arc::from(notice.payload())))
+        } else {
+            notice.payload().parse::<i64>().ok().map(Change::Unread)
+        };
+        if let Some(change) = change {
             // No open pages is fine.
-            let _ = tx.send(account);
+            let _ = tx.send(change);
         }
     }
 }
@@ -402,13 +431,20 @@ struct BellCount {
 
 struct Watch {
     db: PgPool,
-    rx: broadcast::Receiver<i64>,
+    rx: broadcast::Receiver<Change>,
     stopping: watch::Receiver<bool>,
     account: AccountId,
     /// The session's token hash: the stream ends once it's no longer valid
     /// (logged out, expired, deactivated).
     session: Vec<u8>,
     last: Option<i64>,
+    /// The apps whose changes this account hears of: those it may open a
+    /// page of when the stream began.
+    apps: BTreeSet<String>,
+    /// Changed apps not yet announced.
+    pending: BTreeSet<String>,
+    /// When each app was last announced ([`APP_GAP`]).
+    announced: HashMap<String, Instant>,
     until: Instant,
     /// Fires when a newer stream of the account's takes this one's place.
     evicted: oneshot::Receiver<()>,
@@ -418,13 +454,21 @@ struct Watch {
 type Step = Pin<Box<dyn Future<Output = Option<(Event, Watch)>> + Send>>;
 
 /// Server-sent `unread` events carrying the top bar's bell (its HTML),
-/// sent at once and again whenever the account's unread count changes.
+/// sent at once and again whenever the account's unread count changes,
+/// and `app` events with an app's id when its data changed, for an open
+/// page of it to refresh.
 pub struct UnreadStream {
     step: Option<Step>,
 }
 
 impl UnreadStream {
-    pub fn new(db: PgPool, notices: &Notices, account: AccountId, session_hash: Vec<u8>) -> Self {
+    pub fn new(
+        db: PgPool,
+        notices: &Notices,
+        account: AccountId,
+        session_hash: Vec<u8>,
+        apps: BTreeSet<String>,
+    ) -> Self {
         let (slot, evicted) = notices.claim(account);
         let watch = Watch {
             db,
@@ -433,6 +477,9 @@ impl UnreadStream {
             account,
             session: session_hash,
             last: None,
+            apps,
+            pending: BTreeSet::new(),
+            announced: HashMap::new(),
             until: Instant::now() + STREAM_FOR,
             evicted,
             _slot: slot,
@@ -474,20 +521,31 @@ async fn next(mut w: Watch) -> Option<(Event, Watch)> {
         return None;
     }
     loop {
-        if w.last.is_some() {
+        let now = Instant::now();
+        if let Some(app) = w.ready(now) {
+            w.announced.insert(app.clone(), now);
+            return Some((Event::default().event("app").data(app), w));
+        }
+        // The first time round, the count; after, once something changed.
+        let mut count = w.last.is_none();
+        if !count {
+            let due = w.next_due();
             tokio::select! {
+                () = tokio::time::sleep_until(due.unwrap_or(w.until)), if due.is_some() => {}
                 got = w.rx.recv() => match got {
-                    Ok(account) if account == w.account.0 => {}
-                    Ok(_) => continue,
-                    // Missed some: check anyway.
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Ok(change) => count |= w.heard(change),
+                    Err(broadcast::error::RecvError::Lagged(_)) => count |= w.missed(),
                     Err(broadcast::error::RecvError::Closed) => return None,
                 },
                 _ = w.stopping.changed() => return None,
                 _ = &mut w.evicted => return None,
                 () = tokio::time::sleep_until(w.until) => return None,
             }
-            // Let a burst of changes settle into one count.
+            if !count && w.pending.is_empty() {
+                continue;
+            }
+            // Let a burst of changes settle into one count, and one event
+            // an app.
             tokio::select! {
                 () = tokio::time::sleep(MIN_GAP) => {}
                 _ = w.stopping.changed() => return None,
@@ -495,7 +553,8 @@ async fn next(mut w: Watch) -> Option<(Event, Watch)> {
             }
             loop {
                 match w.rx.try_recv() {
-                    Ok(_) | Err(broadcast::error::TryRecvError::Lagged(_)) => {}
+                    Ok(change) => count |= w.heard(change),
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => count |= w.missed(),
                     Err(broadcast::error::TryRecvError::Closed) => return None,
                     Err(broadcast::error::TryRecvError::Empty) => break,
                 }
@@ -508,6 +567,9 @@ async fn next(mut w: Watch) -> Option<(Event, Watch)> {
                 tracing::warn!(error = %err, "checking a stream's session");
                 return None;
             }
+        }
+        if !count {
+            continue;
         }
         let unread = match tether_db::notifications::unread(&w.db, w.account).await {
             Ok(unread) => unread,
@@ -536,5 +598,52 @@ async fn next(mut w: Watch) -> Option<(Event, Watch)> {
             .event("unread")
             .data(html.replace('\r', ""));
         return Some((event, w));
+    }
+}
+
+impl Watch {
+    /// Notes a change: whether the account's unread count may have moved.
+    /// An app's change is kept only for an app the account may open, so
+    /// neither a forged `NOTIFY` nor another app's id reaches the page.
+    fn heard(&mut self, change: Change) -> bool {
+        match change {
+            Change::Unread(account) => account == self.account.0,
+            Change::App(app) => {
+                if let Some(app) = self.apps.get(&*app) {
+                    self.pending.insert(app.clone());
+                }
+                false
+            }
+        }
+    }
+
+    /// Changes were missed: check the count. Apps' changes missed aren't
+    /// guessed at (a flood of forged ones would refresh every app): the
+    /// next one refreshes the page.
+    fn missed(&mut self) -> bool {
+        true
+    }
+
+    /// A changed app whose last announcement was [`APP_GAP`] ago.
+    fn ready(&mut self, now: Instant) -> Option<String> {
+        let app = self
+            .pending
+            .iter()
+            .find(|app| {
+                self.announced
+                    .get(*app)
+                    .is_none_or(|at| now >= *at + APP_GAP)
+            })?
+            .clone();
+        self.pending.remove(&app);
+        Some(app)
+    }
+
+    /// When the soonest changed app may be announced.
+    fn next_due(&self) -> Option<Instant> {
+        self.pending
+            .iter()
+            .filter_map(|app| self.announced.get(app).map(|at| *at + APP_GAP))
+            .min()
     }
 }

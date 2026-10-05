@@ -477,10 +477,11 @@ pub(crate) fn page(
     }
     let mut page = page.profile(profile);
     if pending {
-        // Filled in by the `details` job, usually within seconds.
-        page = page
-            .text("Item details and required skills are still being looked up; this page fills in by itself.")
-            .refresh(15);
+        // Filled in by the `details` job, usually within seconds: the
+        // open page refreshes once it has written them (live pages).
+        page = page.text(
+            "Item details and required skills are still being looked up; this page fills in by itself.",
+        );
     }
     for (place, stacks) in &by_place(&lines) {
         page = page.table(place_table(*place, stacks));

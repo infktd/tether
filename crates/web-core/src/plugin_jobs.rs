@@ -115,6 +115,14 @@ pub async fn record_logs(db: &PgPool, plugin: &str, source: &str, logs: &[LogRec
     }
 }
 
+/// Tells the app's open pages its data changed, so they refresh. Best
+/// effort: the change itself has happened.
+pub async fn announce_change(db: &PgPool, plugin: &str) {
+    if let Err(err) = tether_db::plugins::announce_change(db, plugin).await {
+        tracing::warn!(plugin, error = %err, "announcing an app's change");
+    }
+}
+
 /// Registers the handler for plugin jobs.
 pub fn register_jobs(registry: &mut Registry, db: PgPool, plugins: Arc<Plugins>) {
     registry.register(db::KIND, move |job| {
@@ -145,6 +153,9 @@ async fn run(db: &PgPool, plugins: &Plugins, job: tether_jobs::Job) -> Result<()
     match run {
         Ok(run) => {
             record_logs(db, plugin_id, &format!("job:{name}"), &run.logs).await;
+            if run.changed {
+                announce_change(db, plugin_id).await;
+            }
             match run.result {
                 Ok(()) => Ok(()),
                 Err(jobs::JobError::Retry(why)) => Err(JobError::Retry(why)),

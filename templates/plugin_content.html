@@ -1,8 +1,9 @@
 {#- A plugin page's content: the page itself includes it, and a live page
     (one that asks to be reloaded) gets it again in place every few
-    seconds, until a render no longer asks. -#}
+    seconds, until a render no longer asks. Once the app's data changed
+    (its live stream says), assets/live.js gets it again too. -#}
 {%- import "plugin_sections.html" as plugin -%}
-<div id="plugin-content" class="plugin-content"{% if let Some(seconds) = c.refresh %} hx-get="{{ c.href }}" hx-trigger="every {{ seconds }}s" hx-swap="outerHTML" data-live{% endif %}>
+<div id="plugin-content" class="plugin-content"{% if let Some(seconds) = c.refresh %} hx-get="{{ c.href }}" hx-trigger="every {{ seconds }}s" hx-swap="outerHTML" data-live{% endif %}{% if let Some(app) = c.live %} data-app="{{ app }}" data-href="{{ c.href }}"{% endif %}>
   <div class="page-header">
     <div class="min-w-0">
       <h1 class="page-title">{{ c.title }}</h1>

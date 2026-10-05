@@ -98,7 +98,8 @@ pub async fn show(
 }
 
 /// `GET /notifications/stream`: server-sent `unread` events with the top
-/// bar's bell, for `assets/notifications.js`. A new stream ends the
+/// bar's bell, and `app` events when an app's data changed, for
+/// `assets/notifications.js`. A new stream ends the
 /// account's oldest beyond [`crate::notifications::MAX_STREAMS`].
 pub async fn stream(
     State(state): State<AppState>,
@@ -110,7 +111,19 @@ pub async fn stream(
         .get(SESSION_COOKIE)
         .map(|c| hash_token(c.value()))
         .ok_or_else(AppError::unauthorized)?;
-    let stream = UnreadStream::new(state.db.clone(), &state.notices, session.account, hash);
+    // Changes of the apps it may open, so an open page of one refreshes.
+    let held = tether_db::permissions::effective(&state.db, session.account).await?;
+    let blacklisted = tether_db::states::account_state(&state.db, session.account)
+        .await?
+        .is_some_and(|s| s.is_blacklist());
+    let apps = state.plugins.watchable(blacklisted, |p| held.contains(p));
+    let stream = UnreadStream::new(
+        state.db.clone(),
+        &state.notices,
+        session.account,
+        hash,
+        apps,
+    );
     // nginx buffers proxied responses unless told not to, which would hold
     // events back; the generated server block turns buffering off here too,
     // but an admin's own nginx config may not.

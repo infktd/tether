@@ -77,6 +77,9 @@ pub struct CallState {
     notify_calls: usize,
     filter_reports: usize,
     http_calls: usize,
+    /// Whether a storage write changed any row: what tells open pages to
+    /// refresh.
+    changed: bool,
 }
 
 impl CallState {
@@ -103,6 +106,7 @@ impl CallState {
             notify_calls: 0,
             filter_reports: 0,
             http_calls: 0,
+            changed: false,
         }
     }
 
@@ -642,10 +646,14 @@ impl tether::plugin::storage::Host for CallState {
         sql: String,
         params: Vec<StorageValue>,
     ) -> Result<Rows, StorageError> {
-        match &self.storage {
-            Some(storage) => storage.query(&sql, &params).await,
-            None => Err(StorageError::NotApproved),
-        }
+        let rows = match &self.storage {
+            Some(storage) => storage.query(&sql, &params).await?,
+            None => return Err(StorageError::NotApproved),
+        };
+        // `INSERT … RETURNING`, say: what it changed isn't counted, so any
+        // write that ran counts.
+        self.changed |= writes(&sql);
+        Ok(rows)
     }
 
     async fn execute(
@@ -653,18 +661,39 @@ impl tether::plugin::storage::Host for CallState {
         sql: String,
         params: Vec<StorageValue>,
     ) -> Result<u64, StorageError> {
-        match &self.storage {
-            Some(storage) => storage.execute(&sql, &params).await,
-            None => Err(StorageError::NotApproved),
-        }
+        let rows = match &self.storage {
+            Some(storage) => storage.execute(&sql, &params).await?,
+            None => return Err(StorageError::NotApproved),
+        };
+        self.changed |= rows > 0 && writes(&sql);
+        Ok(rows)
     }
 
     async fn transaction(&mut self, statements: Vec<Statement>) -> Result<Vec<u64>, StorageError> {
-        match &self.storage {
-            Some(storage) => storage.transaction(&statements).await,
-            None => Err(StorageError::NotApproved),
-        }
+        let counts = match &self.storage {
+            Some(storage) => storage.transaction(&statements).await?,
+            None => return Err(StorageError::NotApproved),
+        };
+        self.changed |= statements
+            .iter()
+            .zip(&counts)
+            .any(|(statement, rows)| *rows > 0 && writes(&statement.sql));
+        Ok(counts)
     }
+}
+
+/// Whether a statement may change rows: it says `INSERT`, `UPDATE`,
+/// `DELETE` or `MERGE` (a word of its own, so not `updated_at`). A
+/// `SELECT`'s count is of the rows it read (`pg_advisory_lock`, say), and
+/// a page's reads aren't changes. At worst a word in a string counts:
+/// one refresh too many.
+fn writes(sql: &str) -> bool {
+    sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|word| {
+            ["insert", "update", "delete", "merge"]
+                .iter()
+                .any(|w| word.eq_ignore_ascii_case(w))
+        })
 }
 
 impl tether::plugin::log::Host for CallState {
@@ -788,6 +817,8 @@ impl LoadedPlugin {
 pub struct Submitted {
     pub result: SubmitResult,
     pub logs: Vec<LogRecord>,
+    /// Whether it changed any of the plugin's rows.
+    pub changed: bool,
 }
 
 /// How a job went, plus what the plugin logged while running it.
@@ -795,6 +826,8 @@ pub struct Submitted {
 pub struct JobRun {
     pub result: Result<(), jobs::JobError>,
     pub logs: Vec<LogRecord>,
+    /// Whether it changed any of the plugin's rows.
+    pub changed: bool,
 }
 
 /// A page, checked, plus what the plugin logged while making it.
@@ -981,13 +1014,13 @@ impl Host {
         state.acting = acting;
         state.writes_allowed = true;
         let store = self.runtime.store(state, limits);
-        let (answer, logs) = self
+        let (answer, logs, changed) = self
             .runtime
             .run(&plugin.id, store, limits, async |store| {
                 let instance = plugin.pre.instantiate_async(&mut *store).await?;
                 let answer = instance.call_submit(&mut *store, &submission).await?;
                 let state = &mut store.data_mut().data;
-                Ok((answer, std::mem::take(&mut state.logs)))
+                Ok((answer, std::mem::take(&mut state.logs), state.changed))
             })
             .await?;
         let result = answer.map_err(|err| {
@@ -1000,7 +1033,11 @@ impl Host {
             SubmitResult::Page(page) => page::check(page)?,
             SubmitResult::Redirect(path) => page::check_redirect(path)?,
         }
-        Ok(Submitted { result, logs })
+        Ok(Submitted {
+            result,
+            logs,
+            changed,
+        })
     }
 
     /// Runs one of the plugin's jobs.
@@ -1011,7 +1048,7 @@ impl Host {
         limits: &PluginLimits,
     ) -> Result<JobRun, CallError> {
         let store = self.runtime.store(self.call_state(plugin), limits);
-        let (result, logs) = self
+        let (result, logs, changed) = self
             .runtime
             .run_as(
                 crate::CallKind::Job,
@@ -1029,7 +1066,7 @@ impl Host {
                             "plugin wrote too many log lines; the rest were dropped"
                         );
                     }
-                    Ok((result, std::mem::take(&mut state.logs)))
+                    Ok((result, std::mem::take(&mut state.logs), state.changed))
                 },
             )
             .await?;
@@ -1040,13 +1077,36 @@ impl Host {
                 jobs::JobError::Permanent(printable(&text, MAX_LOG_TEXT))
             }
         });
-        Ok(JobRun { result, logs })
+        Ok(JobRun {
+            result,
+            logs,
+            changed,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_statements_that_may_write_count_as_changes() {
+        for sql in [
+            "INSERT INTO t VALUES (1)",
+            "  update t set a = 1",
+            "DELETE FROM t",
+            "WITH x AS (SELECT 1) DELETE FROM t",
+        ] {
+            assert!(writes(sql), "{sql}");
+        }
+        for sql in [
+            "SELECT pg_advisory_lock(1)",
+            "\n select 1",
+            "WITH x AS (SELECT 1) SELECT updated_at FROM t",
+        ] {
+            assert!(!writes(sql), "{sql}");
+        }
+    }
 
     #[test]
     fn invisible_characters_are_replaced() {

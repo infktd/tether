@@ -378,6 +378,30 @@ impl Plugins {
         running
     }
 
+    /// The running apps with a page an account holding what `holds` says
+    /// may open ([`may_open`]): whose changes its live stream announces.
+    pub fn watchable(
+        &self,
+        blacklisted: bool,
+        holds: impl Fn(&str) -> bool,
+    ) -> std::collections::BTreeSet<String> {
+        let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());
+        slots
+            .values()
+            .filter_map(|slot| match slot {
+                Slot::Running(running) => Some(&running.manifest),
+                Slot::Failed(_) => None,
+            })
+            .filter(|manifest| {
+                // A path no rule covers is the app admins'.
+                std::iter::once(manifest.page_access(""))
+                    .chain(manifest.pages.iter().map(|r| manifest.page_access(&r.path)))
+                    .any(|access| may_open(&access, blacklisted, &holds))
+            })
+            .map(|manifest| manifest.plugin.id.clone())
+            .collect()
+    }
+
     /// Every running plugin's sidebar entries, by plugin name.
     pub fn navigation(&self) -> Vec<NavItem> {
         let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());

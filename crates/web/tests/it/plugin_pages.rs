@@ -152,7 +152,12 @@ async fn the_host_draws_what_the_plugin_describes(db: PgPool) {
     // The query reaches the plugin, without the host's own parameters.
     let query = page(&h, "/plugins/acme.pages/query?moon=1&_tab=0", &owner).await;
     assert!(query.body.contains("moon"), "{}", query.body);
-    assert!(!query.body.contains("_tab"), "{}", query.body);
+    // The host's own refresh keeps the tab; the app's page doesn't see it.
+    let shown = query.body.replace(
+        r#"data-href="/plugins/acme.pages/query?moon=1&#38;_tab=0""#,
+        "",
+    );
+    assert!(!shown.contains("_tab"), "{}", query.body);
     let long = format!("/plugins/acme.pages/query?q={}", "x".repeat(3000));
     assert_eq!(
         page(&h, &long, &owner).await.status,
@@ -536,7 +541,7 @@ async fn live_pages_reload_their_content(db: PgPool) {
     let res = page(&h, "/plugins/acme.pages/live", &owner).await;
     assert!(
         res.body.contains(
-            r#"<div id="plugin-content" class="plugin-content" hx-get="/plugins/acme.pages/live" hx-trigger="every 5s" hx-swap="outerHTML" data-live>"#
+            r#"<div id="plugin-content" class="plugin-content" hx-get="/plugins/acme.pages/live" hx-trigger="every 5s" hx-swap="outerHTML" data-live data-app="acme.pages" data-href="/plugins/acme.pages/live">"#
         ),
         "{}",
         res.body

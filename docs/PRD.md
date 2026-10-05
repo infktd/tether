@@ -272,7 +272,7 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 
 - [x] Tables sort and filter in the browser: a click on a column heading sorts the rows shown (text, numbers and times by their kind, again to reverse), and long tables get a filter box that hides non-matching rows as you type; for core and app tables alike, no round trip. Tables Tether pages (25 rows) sort and filter within the page shown
 - [x] Popup forms for app actions: an action whose form is one of the page's own forms (refused until now) opens that form in a popup, its hidden fields the action's, instead of drawing the form inline; posted and checked as any form, the page staying put with a toast. Blueprints' Request asks for runs per copy this way
-- [ ] Live app pages: when an app's job has run, its open pages refresh the content in place over server-sent events (`LISTEN` on Postgres, no new service), replacing timed reloads; a page with a form being filled in waits until it's posted or left
+- [x] Live app pages: when an app's job has run, its open pages refresh the content in place over server-sent events (`LISTEN` on Postgres, no new service), replacing timed reloads; a page with a form being filled in waits until it's posted or left
 - [ ] Core pages edit in place where it helps (group members, permissions, Discord mappings, state covers): one row's change answers with that row, not the page
 
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
