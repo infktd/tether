@@ -2314,3 +2314,202 @@ async fn apps_see_the_character_you_act_as(db: PgPool) {
         res.headers
     );
 }
+
+// ---- notices (the notify interface) -------------------------------------------
+
+async fn install_notices(h: &Harness, owner: &str) {
+    let key = Key::new(9);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.notes\"\nname = \"Notes\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[capabilities]\nnotify = true\n\n\
+         [permissions]\nview = \"See\"\napprove = \"Approve\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = probe_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
+async fn account_of(h: &Harness, character: i64) -> i64 {
+    sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+        .bind(character)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+async fn notices(h: &Harness, account: i64) -> Vec<(String, String, String)> {
+    sqlx::query_as(
+        "SELECT level, title, message FROM core.notifications WHERE account_id = $1 ORDER BY id",
+    )
+    .bind(account)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_notify_only_their_own_audience(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    log_in_as(&h, "443630591:The Mittani", None).await;
+    install_notices(&h, &owner).await;
+    let owner_account = account_of(&h, 196379789).await;
+    let pilot = account_of(&h, MITTANI).await;
+    let to = |account: i64, title: &str| {
+        vec![
+            ("account".to_owned(), account.to_string()),
+            ("title".to_owned(), title.to_owned()),
+            ("message".to_owned(), "Your copy is ready.".to_owned()),
+        ]
+    };
+    let before = notices(&h, pilot).await.len();
+
+    // Not while a page draws.
+    let out = run_probe(&h, "acme.notes", "notify-account", to(pilot, "Ready"), true).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+
+    // Someone outside the app's audience isn't reached, nor told about.
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-account",
+        to(pilot, "Ready"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok false");
+    assert_eq!(notices(&h, pilot).await.len(), before);
+
+    // Once they hold one of its permissions: under the app's name, once
+    // while unread.
+    sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+        .bind("plugin.acme.notes.view")
+        .bind(pilot)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let out = run_probe(
+            &h,
+            "acme.notes",
+            "notify-account",
+            to(pilot, "Ready"),
+            false,
+        )
+        .await;
+        assert_eq!(out, "ok true");
+    }
+    let got = notices(&h, pilot).await;
+    assert_eq!(got.len(), before + 1);
+    assert_eq!(
+        got.last().unwrap(),
+        &(
+            "success".to_owned(),
+            "Notes: Ready".to_owned(),
+            "Your copy is ready.".to_owned()
+        )
+    );
+
+    // Plain text within limits.
+    for title in ["", &"x".repeat(101)] {
+        let out = run_probe(&h, "acme.notes", "notify-account", to(pilot, title), false).await;
+        assert!(out.starts_with("err Error::Invalid"), "{title}: {out}");
+    }
+
+    // Holders of its own permission, but the one who acted. The owner
+    // holds everything.
+    let holders = |permission: &str, except: Option<i64>| {
+        let mut q = vec![
+            ("permission".to_owned(), permission.to_owned()),
+            ("title".to_owned(), "New request".to_owned()),
+            ("message".to_owned(), "Someone asked for a copy.".to_owned()),
+        ];
+        if let Some(e) = except {
+            q.push(("except".to_owned(), e.to_string()));
+        }
+        q
+    };
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-holders",
+        holders("approve", None),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok 1");
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-holders",
+        holders("approve", Some(owner_account)),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok 0");
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-holders",
+        holders("admin", None),
+        false,
+    )
+    .await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    assert!(
+        notices(&h, owner_account)
+            .await
+            .iter()
+            .any(|n| n.1 == "Notes: New request")
+    );
+
+    // An account hears from one app at most 20 times an hour (the two
+    // "Ready" above count, the repeat too).
+    let mut sent = 2;
+    for n in 0..25 {
+        let out = run_probe(
+            &h,
+            "acme.notes",
+            "notify-account",
+            to(pilot, &format!("Ready {n}")),
+            false,
+        )
+        .await;
+        if out == "ok true" {
+            sent += 1;
+        } else {
+            assert_eq!(out, "ok false");
+        }
+    }
+    assert_eq!(sent, 20);
+    // Marked as the app's, and only its newest five are kept: an app
+    // can't push the rest of an account's notices out.
+    let kept: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT plugin_id FROM core.notifications WHERE account_id = $1 AND title LIKE 'Notes: %'",
+    )
+    .bind(pilot)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, vec![Some("acme.notes".to_owned()); 5]);
+    assert_eq!(notices(&h, pilot).await.len(), before + 5);
+    let listed = page(&h, "/notifications", &owner).await.body;
+    assert!(listed.contains("Notes: New request"), "{listed}");
+    assert!(listed.contains("Sent by the app acme.notes"), "{listed}");
+
+    // Only with the capability.
+    install_files(&h, &owner).await;
+    let out = run_probe(
+        &h,
+        "acme.files",
+        "notify-account",
+        to(owner_account, "Hi"),
+        false,
+    )
+    .await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+}

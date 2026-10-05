@@ -10,7 +10,8 @@
 //! one); a job named `fail` asks to be retried, `boom` gives up.
 //!
 //! HTTP too: `http?url=&method=post&body=&secret=&h=<name>:<value>`, and
-//! `http_repeat?url=&n=` for limits.
+//! `http_repeat?url=&n=` for limits. Notices: `notify-account` and
+//! `notify-holders`.
 //!
 //! Pages are read-only, so tests that write or queue go through `submit`,
 //! which runs the same probe.
@@ -22,6 +23,7 @@ use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::http;
 use tether_plugin_sdk::identity;
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
+use tether_plugin_sdk::notify;
 use tether_plugin_sdk::storage::{self, Statement, Value};
 use tether_plugin_sdk::{Page, PageError, Plugin, Request, Submission, SubmitResult, log};
 
@@ -227,6 +229,29 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 Err(e) => format!("err {e:?}"),
             }
         }
+        // notify-account?account=&title=&message=
+        "notify-account" => match notify::account(
+            arg("account")
+                .and_then(|a| a.parse().ok())
+                .unwrap_or_default(),
+            &arg("title").unwrap_or_default(),
+            &arg("message").unwrap_or_default(),
+            notify::Level::Success,
+        ) {
+            Ok(sent) => format!("ok {sent}"),
+            Err(e) => format!("err {e:?}"),
+        },
+        // notify-holders?permission=&title=&message=&except=
+        "notify-holders" => match notify::holders(
+            &arg("permission").unwrap_or_default(),
+            &arg("title").unwrap_or_default(),
+            &arg("message").unwrap_or_default(),
+            notify::Level::Info,
+            arg("except").and_then(|a| a.parse().ok()),
+        ) {
+            Ok(reached) => format!("ok {reached}"),
+            Err(e) => format!("err {e:?}"),
+        },
         "download-files" => downloads::files()
             .iter()
             .map(|f| format!("{} {} {}", f.name, f.title, f.rows))

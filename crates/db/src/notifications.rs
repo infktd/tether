@@ -110,6 +110,74 @@ async fn send(
     Ok(())
 }
 
+/// An app's notice (the notify interface): sent like [`notify_once`],
+/// marked as the app's, and only the app's newest `per_app` of the
+/// account's are kept, so no app can push the rest out. Whether it was
+/// added (not a repeat of one waiting unread).
+pub async fn notify_from_app(
+    tx: &mut sqlx::PgConnection,
+    account: AccountId,
+    plugin: &str,
+    level: Level,
+    title: &str,
+    message: &str,
+    per_app: i64,
+) -> Result<bool, sqlx::Error> {
+    let title = clip(title.trim(), MAX_TITLE);
+    let message = clip(message.trim(), MAX_MESSAGE);
+    let inserted = sqlx::query!(
+        r#"
+        INSERT INTO core.notifications (account_id, plugin_id, level, title, message)
+        SELECT $1, $2, $3, $4, $5
+        WHERE NOT EXISTS (
+            SELECT 1 FROM core.notifications
+            WHERE account_id = $1 AND plugin_id = $2 AND read_at IS NULL
+              AND title = $4 AND message = $5
+        )
+        "#,
+        account.0,
+        plugin,
+        level.as_str(),
+        title,
+        message,
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if inserted == 0 {
+        return Ok(false);
+    }
+    sqlx::query!(
+        r#"
+        DELETE FROM core.notifications
+        WHERE account_id = $1 AND plugin_id = $2 AND id NOT IN (
+            SELECT id FROM core.notifications WHERE account_id = $1 AND plugin_id = $2
+            ORDER BY id DESC LIMIT $3
+        )
+        "#,
+        account.0,
+        plugin,
+        per_app,
+    )
+    .execute(&mut *tx)
+    .await?;
+    let keep = crate::settings::notifications_max(&mut *tx).await?;
+    sqlx::query!(
+        r#"
+        DELETE FROM core.notifications
+        WHERE account_id = $1 AND id NOT IN (
+            SELECT id FROM core.notifications WHERE account_id = $1
+            ORDER BY id DESC LIMIT $2
+        )
+        "#,
+        account.0,
+        keep,
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(true)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notification {
     pub id: i64,
@@ -118,6 +186,8 @@ pub struct Notification {
     pub message: String,
     pub created_at: DateTime<Utc>,
     pub read: bool,
+    /// The app that sent it; none for Tether's own.
+    pub plugin_id: Option<String>,
 }
 
 /// The account's notifications, newest first.
@@ -125,7 +195,7 @@ pub async fn list(pool: &PgPool, account: AccountId) -> Result<Vec<Notification>
     sqlx::query_as!(
         Notification,
         r#"
-        SELECT id, level, title, message, created_at, read_at IS NOT NULL AS "read!"
+        SELECT id, level, title, message, created_at, read_at IS NOT NULL AS "read!", plugin_id
         FROM core.notifications WHERE account_id = $1
         ORDER BY id DESC
         "#,
@@ -148,7 +218,7 @@ pub async fn open(
             UPDATE core.notifications SET read_at = now()
             WHERE id = $1 AND account_id = $2 AND read_at IS NULL
         )
-        SELECT id, level, title, message, created_at, true AS "read!"
+        SELECT id, level, title, message, created_at, true AS "read!", plugin_id
         FROM core.notifications WHERE id = $1 AND account_id = $2
         "#,
         id,

@@ -161,6 +161,14 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
                 .to_owned(),
         );
     }
+    if c.notify {
+        add(
+            "Notifications",
+            "Sends notices to Tether's notifications (the bell), under its own name, only to \
+             accounts holding one of its permissions, and a limited number an hour"
+                .to_owned(),
+        );
+    }
     if c.groups {
         add(
             "Groups",

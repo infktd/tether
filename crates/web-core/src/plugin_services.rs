@@ -31,8 +31,8 @@ use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
     DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted,
-    Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Mention, Named, Owner, Services,
-    SharedDoctrine, SharedTimer, State, Subject, Timer, TimerError,
+    Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Mention, Named, NotifyError,
+    NotifyLevel, Owner, Services, SharedDoctrine, SharedTimer, State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -84,6 +84,7 @@ pub struct PluginServices {
     sends: RateLimiter<String>,
     throttle: Arc<ErrorThrottle>,
     http: Arc<crate::plugin_http::Http>,
+    notices: Arc<crate::plugin_notify::Limits>,
 }
 
 /// Plugins that cause too many ESI errors are refused for a while: the
@@ -149,6 +150,7 @@ impl PluginServices {
             plugins,
             sends: RateLimiter::new(SENDS_PER_MINUTE, Duration::from_secs(60)),
             throttle: Arc::new(ErrorThrottle::new()),
+            notices: Arc::default(),
             http,
         })
     }
@@ -1093,6 +1095,57 @@ impl Services for PluginServices {
     fn downloads_files(&self, plugin: String) -> Fut<Vec<DownloadFile>> {
         let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
         Box::pin(async move { crate::plugin_downloads::files(&db, &plugins, &plugin).await })
+    }
+
+    fn notify_account(
+        &self,
+        plugin: String,
+        account: i64,
+        title: String,
+        message: String,
+        level: NotifyLevel,
+    ) -> Fut<Result<bool, NotifyError>> {
+        let (db, plugins, limits) = (
+            self.deps.db.clone(),
+            self.plugins.clone(),
+            self.notices.clone(),
+        );
+        Box::pin(async move {
+            crate::plugin_notify::to_account(
+                &db, &plugins, &limits, &plugin, account, &title, &message, level,
+            )
+            .await
+        })
+    }
+
+    fn notify_holders(
+        &self,
+        plugin: String,
+        permission: String,
+        title: String,
+        message: String,
+        level: NotifyLevel,
+        except: Option<i64>,
+    ) -> Fut<Result<u32, NotifyError>> {
+        let (db, plugins, limits) = (
+            self.deps.db.clone(),
+            self.plugins.clone(),
+            self.notices.clone(),
+        );
+        Box::pin(async move {
+            crate::plugin_notify::to_holders(
+                &db,
+                &plugins,
+                &limits,
+                &plugin,
+                &permission,
+                &title,
+                &message,
+                level,
+                except,
+            )
+            .await
+        })
     }
 
     fn doctrines_publish(

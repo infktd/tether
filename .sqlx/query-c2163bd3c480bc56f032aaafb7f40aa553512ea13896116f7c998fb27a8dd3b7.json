@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.notifications\n        WHERE account_id = $1 AND plugin_id = $2 AND id NOT IN (\n            SELECT id FROM core.notifications WHERE account_id = $1 AND plugin_id = $2\n            ORDER BY id DESC LIMIT $3\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c2163bd3c480bc56f032aaafb7f40aa553512ea13896116f7c998fb27a8dd3b7"
+}

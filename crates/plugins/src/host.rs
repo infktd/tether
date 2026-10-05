@@ -74,6 +74,7 @@ pub struct CallState {
     writes_allowed: bool,
     esi_writes: usize,
     discord_sends: usize,
+    notify_calls: usize,
     filter_reports: usize,
     http_calls: usize,
 }
@@ -99,6 +100,7 @@ impl CallState {
             writes_allowed: false,
             esi_writes: 0,
             discord_sends: 0,
+            notify_calls: 0,
             filter_reports: 0,
             http_calls: 0,
         }
@@ -502,6 +504,64 @@ impl CallState {
         self.services
             .clone()
             .ok_or(services::DownloadError::Unavailable)
+    }
+}
+
+impl tether::plugin::notify::Host for CallState {
+    async fn account(
+        &mut self,
+        account_id: i64,
+        title: String,
+        message: String,
+        level: services::NotifyLevel,
+    ) -> Result<bool, services::NotifyError> {
+        let services = self.notifying()?;
+        services
+            .notify_account(self.plugin.clone(), account_id, title, message, level)
+            .await
+    }
+
+    async fn holders(
+        &mut self,
+        permission: String,
+        title: String,
+        message: String,
+        level: services::NotifyLevel,
+        except: Option<i64>,
+    ) -> Result<u32, services::NotifyError> {
+        let services = self.notifying()?;
+        services
+            .notify_holders(
+                self.plugin.clone(),
+                permission,
+                title,
+                message,
+                level,
+                except,
+            )
+            .await
+    }
+}
+
+impl CallState {
+    /// Notices go out from submits and jobs, a few a call, never while a
+    /// page draws (it runs on every view).
+    fn notifying(&mut self) -> Result<services::Shared, services::NotifyError> {
+        if self.jobs_refused {
+            return Err(services::NotifyError::Invalid(
+                "pages can't send notices: do that in submit or a job".to_owned(),
+            ));
+        }
+        self.notify_calls += 1;
+        if self.notify_calls > services::MAX_NOTIFY_CALLS {
+            return Err(services::NotifyError::Invalid(format!(
+                "at most {} notices a call",
+                services::MAX_NOTIFY_CALLS
+            )));
+        }
+        self.services
+            .clone()
+            .ok_or(services::NotifyError::Unavailable)
     }
 }
 

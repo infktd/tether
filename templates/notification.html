@@ -7,7 +7,7 @@
   <section class="card">
     <header>
       <h2 class="flex items-center gap-2"><span class="notification-level" data-level="{{ n.level }}">{{ n.level }}</span> {{ n.title }}</h2>
-      <p class="num">{{ n.at }}</p>
+      <p class="num">{{ n.at }}{% if let Some(app) = n.app %} · from the app <span class="badge" data-variant="outline">{{ app }}</span>{% endif %}</p>
     </header>
     <section><p class="text-sm">{{ n.message }}</p></section>
     <footer class="flex gap-2">

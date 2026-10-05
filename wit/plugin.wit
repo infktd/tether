@@ -1010,6 +1010,33 @@ interface downloads {
     files: func() -> list<file>;
 }
 
+/// Notices in Tether's notifications (the bell), as AA apps `notify`:
+/// plain text to pilots who use this app. The host puts the app's name
+/// before the title, skips one already waiting unread, and limits how
+/// many an app sends. Only from submit or a job. Needs `notify = true`.
+interface notify {
+    enum level {
+        info,
+        success,
+        warning,
+        danger,
+    }
+
+    variant error {
+        /// Not allowed (the capability, a page), or a limit; which.
+        invalid(string),
+        unavailable,
+    }
+
+    /// To one account (`identity`'s `account-id`), if it holds one of
+    /// this app's own permissions; false if it doesn't (any more). Title
+    /// at most 100 characters, message at most 1,000.
+    account: func(account-id: s64, title: string, message: string, level: level) -> result<bool, error>;
+    /// To every holder of `permission`, one of this app's own, but
+    /// `except` (the one who acted, say); how many it reached.
+    holders: func(permission: string, title: string, message: string, level: level, except: option<s64>) -> result<u32, error>;
+}
+
 world plugin {
     import log;
     import storage;
@@ -1022,6 +1049,7 @@ world plugin {
     import timers;
     import doctrines;
     import downloads;
+    import notify;
     use jobs.{job, job-error};
     use page.{page, request, page-error, submission, submit-result};
 

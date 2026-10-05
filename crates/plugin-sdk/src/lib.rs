@@ -473,6 +473,43 @@ pub mod downloads {
     }
 }
 
+/// Notices in Tether's notifications (the bell), as AA apps `notify`,
+/// with `notify = true`: plain text from a submit or a job, your app's
+/// name put before the title, only to accounts holding one of your
+/// permissions, a limited number an hour.
+pub mod notify {
+    pub use crate::bindings::tether::plugin::notify::{Error, Level};
+
+    /// The longest title.
+    pub const MAX_TITLE: usize = 100;
+    /// The longest message.
+    pub const MAX_MESSAGE: usize = 1_000;
+
+    /// To one account (`identity::current().account_id`, kept from when
+    /// they used your app); false if it no longer holds any of your
+    /// permissions.
+    pub fn account(
+        account_id: i64,
+        title: &str,
+        message: &str,
+        level: Level,
+    ) -> Result<bool, Error> {
+        crate::bindings::tether::plugin::notify::account(account_id, title, message, level)
+    }
+
+    /// To every holder of `permission`, one of yours, but `except` (the
+    /// one who acted); how many it reached.
+    pub fn holders(
+        permission: &str,
+        title: &str,
+        message: &str,
+        level: Level,
+        except: Option<i64>,
+    ) -> Result<u32, Error> {
+        crate::bindings::tether::plugin::notify::holders(permission, title, message, level, except)
+    }
+}
+
 /// Outbound HTTPS to the hosts in `capabilities.http` that an admin
 /// approved. The host sends the request, sets the User-Agent, adds a
 /// secret you name (you never see its value), follows redirects only

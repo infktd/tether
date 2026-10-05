@@ -299,6 +299,10 @@ pub struct Capabilities {
     /// rows the app hands over and served by the host.
     #[serde(default)]
     pub downloads: bool,
+    /// Notices in Tether's notifications (the bell) to pilots who use the
+    /// app, as AA apps `notify`.
+    #[serde(default)]
+    pub notify: bool,
     /// The viewer's groups and the groups to offer them (`identity.groups`,
     /// `identity.all-groups`), to limit things to groups.
     #[serde(default)]

@@ -22,6 +22,9 @@ pub struct Row {
     pub message: String,
     pub at: String,
     pub read: bool,
+    /// The app that sent it (its id, which no other app can take); none
+    /// for Tether's own.
+    pub app: Option<String>,
 }
 
 fn row(n: Notification) -> Row {
@@ -32,6 +35,7 @@ fn row(n: Notification) -> Row {
         message: n.message,
         at: n.created_at.format("%Y-%m-%d %H:%M").to_string(),
         read: n.read,
+        app: n.plugin_id,
     }
 }
 

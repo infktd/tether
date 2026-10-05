@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        WITH marked AS (\n            UPDATE core.notifications SET read_at = now()\n            WHERE id = $1 AND account_id = $2 AND read_at IS NULL\n        )\n        SELECT id, level, title, message, created_at, true AS \"read!\"\n        FROM core.notifications WHERE id = $1 AND account_id = $2\n        ",
+  "query": "\n        SELECT id, level, title, message, created_at, read_at IS NOT NULL AS \"read!\", plugin_id\n        FROM core.notifications WHERE account_id = $1\n        ORDER BY id DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -63,11 +63,21 @@
         "name": "read!",
         "type_info": "Bool",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.notifications",
+            "name": "plugin_id"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Int8",
         "Int8"
       ]
     },
@@ -77,8 +87,9 @@
       false,
       false,
       false,
-      null
+      null,
+      true
     ]
   },
-  "hash": "a6894a6cfbc8f0a27faab9c36dff25640cdef7af8ff27da59df0ecad584073e1"
+  "hash": "0576242d44de3b9e108d5e43e467920b7694c5e802ea8961418a45d2726b1799"
 }

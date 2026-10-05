@@ -25,7 +25,7 @@
         {% for n in rows %}
         <tr>
           <td>
-            <a href="/notifications/{{ n.id }}" class="{% if n.read %}text-foreground-soft{% else %}font-medium text-foreground{% endif %}">{% if !n.read %}<span class="sr-only">Unread: </span>{% endif %}{{ n.title }}</a>
+            <a href="/notifications/{{ n.id }}" class="{% if n.read %}text-foreground-soft{% else %}font-medium text-foreground{% endif %}">{% if !n.read %}<span class="sr-only">Unread: </span>{% endif %}{{ n.title }}</a>{% if let Some(app) = n.app %} <span class="badge" data-variant="outline" title="Sent by the app {{ app }}">{{ app }}</span>{% endif %}
           </td>
           <td><span class="notification-level" data-level="{{ n.level }}">{{ n.level }}</span></td>
           <td class="num text-muted-foreground">{{ n.at }}</td>

@@ -36,6 +36,7 @@ pub mod plugin_downloads;
 pub mod plugin_github;
 pub mod plugin_http;
 pub mod plugin_jobs;
+pub mod plugin_notify;
 pub mod plugin_review;
 pub mod plugin_services;
 pub mod plugin_shared;

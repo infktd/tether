@@ -25,6 +25,7 @@ pub use crate::host::tether::plugin::http::{
     Error as HttpError, Method as HttpMethod, Request as HttpRequest, Response as HttpResponse,
 };
 pub use crate::host::tether::plugin::identity::{Builtin, Character, Group, Owner, State, Viewer};
+pub use crate::host::tether::plugin::notify::{Error as NotifyError, Level as NotifyLevel};
 pub use crate::host::tether::plugin::timers::{Error as TimerError, Shared as SharedTimer, Timer};
 
 /// ESI calls in one job run or form submission.
@@ -63,6 +64,8 @@ pub struct EsiReply {
 pub const MAX_FILTER_REPORTS: usize = 50;
 /// Discord messages in one plugin call.
 pub const MAX_DISCORD_SENDS: usize = 5;
+/// `notify` calls in one plugin call.
+pub const MAX_NOTIFY_CALLS: usize = 10;
 /// HTTP requests in one job run or form submission.
 pub const MAX_HTTP_CALLS: usize = 20;
 /// HTTP requests in one page render: pages run on every view.
@@ -167,6 +170,27 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         build: u32,
     ) -> Fut<Result<(), DownloadError>>;
     fn downloads_files(&self, plugin: String) -> Fut<Vec<DownloadFile>>;
+    /// A notice to `account`, if it holds one of `plugin`'s permissions:
+    /// whether it was sent.
+    fn notify_account(
+        &self,
+        plugin: String,
+        account: i64,
+        title: String,
+        message: String,
+        level: NotifyLevel,
+    ) -> Fut<Result<bool, NotifyError>>;
+    /// A notice to every holder of `plugin`'s own `permission` but
+    /// `except`: how many it reached.
+    fn notify_holders(
+        &self,
+        plugin: String,
+        permission: String,
+        title: String,
+        message: String,
+        level: NotifyLevel,
+        except: Option<i64>,
+    ) -> Fut<Result<u32, NotifyError>>;
     /// Shared doctrines `account` may see, for `plugin` to offer; none
     /// without an account (a job).
     fn doctrines_published(

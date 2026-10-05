@@ -83,6 +83,7 @@ discord = ["send_message"]
 http = ["janice.e-351.com"]         # exact HTTPS hostnames, at most 10
 groups = true                       # which groups each viewer is in (see Who's looking)
 downloads = true                    # CSV files to download (see Downloads)
+notify = true                       # notices in the bell (see Notices)
 
 [capabilities.esi]
 user = ["esi-wallet.read_character_wallet.v1"]              # pilots register characters for your app with these
@@ -715,6 +716,10 @@ CSV files your app offers for download (aa-memberaudit's data exports). With `do
 
 Tether writes the CSV itself: cells are quoted as needed, lines end CRLF, and a cell a spreadsheet would run as a formula (starting `=`, `+`, `-`, `@`, a tab or a carriage return, and not a number) gets a leading `'`. It serves the file at `/plugins/<id>/downloads/<name>` (so `downloads/` isn't one of your page paths); link to it as `downloads/<name>` from your pages, and Tether renders the link as a download. Pilots without the permission, or without a main, don't get it; every download is audited. Downloads aren't in Tether's snapshots and backups, so after a rollback they're gone until your next build. `downloads::files()` lists your finished files (name, title, rows, when built) for your pages. Build large files over several jobs (enqueue the next chunk from each), since each call has its time limits. Not from pages.
 
+## Notices
+
+Notices in Tether's notifications (the bell), as AA apps `notify` (aa-blueprints tells requesters and approvers about requests this way). With `notify = true` under `[capabilities]`, from a submit or a job: `notify::account(account_id, title, message, level)` reaches one account, an `account_id` from `identity::current()` kept from when they used your app (a request's requester, say), and returns false when it no longer holds any of your permissions; `notify::holders(permission, title, message, level, except)` reaches every holder of one of your own permissions but `except` (the one who acted) and returns how many. Tether puts your app's name before the title (`Blueprints: ...`), so write titles without it; plain text only, the title at most 100 characters and the message at most 1,000. A notice already waiting unread isn't sent again. Limits: 10 notify calls a call, 20 notices an hour to one account from your app (past that it's skipped, and `account` returns false), 500 an hour from your app in all (past that you get `Error::Invalid`), and `holders` refuses a permission held by more than 200. Not from pages.
+
 ## Logging
 
 `log::debug`, `log::info`, `log::warn` and `log::error` write to the plugin's log, which admins see on the plugin's page (the newest 1,000 lines are kept). The host keeps the first 100 lines per call, each cut to 1,024 characters, with control characters and invisible formatting characters replaced. The text of `PageError::Failed` is treated the same way. Never log anything personal you don't need.
@@ -747,7 +752,8 @@ API version 1 (`host_api = "1"` in `plugin.toml`, WIT package `tether:plugin@1.0
 - `identity`, `esi` and `discord` (see above);
 - `http`: HTTPS to hosts an admin approved (see HTTP);
 - `filters`, `timers` and `doctrines`: Secure Groups filters, shared timers and shared doctrines (see above);
-- `downloads`: CSV files to download (see Downloads).
+- `downloads`: CSV files to download (see Downloads);
+- `notify`: notices in the bell (see Notices).
 
 ## Checklist before publishing
 
