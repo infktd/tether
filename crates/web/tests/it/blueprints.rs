@@ -24,6 +24,7 @@ const RIFTER_BP: i64 = 691;
 const MERLIN_BP: i64 = 954;
 const RIFTER: i64 = 587;
 const MERLIN: i64 = 603;
+const KEEPSTAR: i64 = 1_055_694_841_377;
 
 fn component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -42,11 +43,13 @@ async fn install(h: &Harness, owner: &str) {
     let key = Key::new(14);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_blueprints.sql");
+    let named = plugin_file("migrations/0002_places_named.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_blueprints.sql", migration.as_bytes()),
+        ("migrations/0002_places_named.sql", named.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -123,6 +126,11 @@ async fn mount(h: &Harness) {
                 "item_id": 3002, "type_id": MERLIN_BP, "location_id": 1001,
                 "location_flag": "CorpSAG1", "material_efficiency": 8,
                 "time_efficiency": 16, "quantity": -2, "runs": 10
+            },
+            {
+                "item_id": 3003, "type_id": MERLIN_BP, "location_id": 1002,
+                "location_flag": "CorpSAG3", "material_efficiency": 10,
+                "time_efficiency": 20, "quantity": -1, "runs": -1
             }
         ])))
         .mount(&h.esi_server)
@@ -147,6 +155,8 @@ async fn mount(h: &Harness) {
             asset(2001, 17366, "CorpSAG2", 1001, "item"),
             asset(3001, RIFTER_BP, "Unlocked", 2001, "item"),
             asset(3002, MERLIN_BP, "CorpSAG1", 1001, "item"),
+            asset(1002, 27, "OfficeFolder", KEEPSTAR, "item"),
+            asset(3003, MERLIN_BP, "CorpSAG3", 1002, "item"),
         ])))
         .mount(&h.esi_server)
         .await;
@@ -161,6 +171,29 @@ async fn mount(h: &Harness) {
             "reprocessing_efficiency": 0.5, "reprocessing_stations_take": 0.05,
             "services": ["courier-missions"],
         })))
+        .mount(&h.esi_server)
+        .await;
+    // The structure: refused once (the owner's character may not dock
+    // there yet), then named.
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{KEEPSTAR}")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "Forbidden" })),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{KEEPSTAR}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "1DQ1-A - Imperial Palace",
+            "owner_id": CORP,
+            "solar_system_id": 30004759,
+            "type_id": 35834,
+            "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+        })))
+        .with_priority(2)
         .mount(&h.esi_server)
         .await;
     Mock::given(method("POST"))
@@ -303,6 +336,49 @@ async fn blueprints_end_to_end(db: PgPool) {
     ] {
         assert!(library.body.contains(want), "{want}: {}", library.body);
     }
+    // The structure ESI refused is a placeholder for now, and the app's
+    // log says why.
+    assert!(
+        library
+            .body
+            .contains(&format!("Structure {KEEPSTAR} › Corp Hangar 3")),
+        "{}",
+        library.body
+    );
+    let logs: Vec<String> = sqlx::query_scalar(
+        "SELECT message FROM core.plugin_logs WHERE plugin_id = $1 AND message LIKE 'structure %'",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not named") && l.contains("403")),
+        "{logs:?}"
+    );
+    // Within the hour it's tried again, and named.
+    let schema: String =
+        sqlx::query_scalar("SELECT schema_name FROM core.plugin_storage WHERE plugin_id = $1")
+            .bind(ID)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"UPDATE "{schema}".places SET read_at = now() - interval '2 hours' WHERE NOT named"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let library = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        library
+            .body
+            .contains("1DQ1-A - Imperial Palace › Corp Hangar 3"),
+        "{}",
+        library.body
+    );
     let one = page(&h, &format!("/plugins/{ID}/blueprint/3001"), &owner).await;
     assert!(one.body.contains("Copying"), "{}", one.body);
     assert!(one.body.contains("The Mittani"), "{}", one.body);

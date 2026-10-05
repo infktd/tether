@@ -198,6 +198,7 @@ pub fn blueprints() -> Result<(), JobError> {
     }
     learn_names()?;
     learn_products()?;
+    name_places(&owners)?;
     set_error("blueprints_at", &problems)
 }
 
@@ -490,110 +491,130 @@ fn store_places(owner: &Owner, found: &Found) -> Result<(), JobError> {
     Ok(())
 }
 
-/// Names for places not named yet (or named over a week ago):
-/// stations publicly, structures through an owner who has blueprints
-/// there, systems by name.
+/// Names for places not named yet, named over a week ago, or whose name
+/// couldn't be read (within the hour): stations publicly, systems by
+/// name, structures through each owner with blueprints there in turn
+/// (ESI names a structure only to a character that may dock there),
+/// with why not in the app's log.
 fn name_places(owners: &[Owner]) -> Result<(), JobError> {
     let due = storage::query(
-        "SELECT b.place_id, (array_agg(b.owner_kind))[1], (array_agg(b.owner_id))[1] \
+        "SELECT b.place_id, array_agg(DISTINCT b.owner_kind || ':' || b.owner_id)::text \
          FROM blueprints b LEFT JOIN places p ON p.id = b.place_id \
          WHERE b.place_id IS NOT NULL \
-           AND (p.id IS NULL OR p.read_at < now() - interval '7 days') \
+           AND (p.id IS NULL OR p.read_at < now() - interval '7 days' \
+                OR (NOT p.named AND p.read_at < now() - interval '1 hour')) \
          GROUP BY b.place_id LIMIT $1",
         &[PLACES_PER_RUN.into()],
     )
     .map_err(|e| retry("finding places", e))?;
     for row in &due.rows {
-        let (id, kind, owner_id) = (int(row, 0), text(row, 1), int(row, 2));
-        let answer = if is_station(id) {
-            esi::get(
+        let id = int(row, 0);
+        // `{corporation:98000001,character:9...}` from Postgres.
+        let holders: Vec<&Owner> = text(row, 1)
+            .trim_matches(|c| c == '{' || c == '}')
+            .split(',')
+            .filter_map(|h| {
+                let (kind, owner) = h.trim_matches('"').split_once(':')?;
+                let owner: i64 = owner.parse().ok()?;
+                owners.iter().find(|o| o.kind == kind && o.id == owner)
+            })
+            .collect();
+        let named = if is_station(id) {
+            match esi::get(
                 "universe-station",
                 PUBLIC,
                 &[("station_id".to_owned(), id.to_string())],
                 None,
-            )
-            .map(Some)
-        } else if is_structure(id) {
-            match owners.iter().find(|o| o.kind == kind && o.id == owner_id) {
-                Some(owner) if owner.kind == "corporation" => esi::get(
-                    "source-structure",
-                    owner.subject,
-                    &[("structure_id".to_owned(), id.to_string())],
-                    None,
-                )
-                .map(Some),
-                Some(owner) => esi::get(
-                    "universe-structure",
-                    owner.subject,
-                    &[("structure_id".to_owned(), id.to_string())],
-                    None,
-                )
-                .map(Some),
-                None => Ok(None),
+            ) {
+                Ok(answer) => Some(place_named(&answer.body)),
+                Err(err) => {
+                    log::info(format!("station {id} not named: {err:?}"));
+                    continue;
+                }
             }
+        } else if is_structure(id) {
+            let mut found = None;
+            let mut why = Vec::new();
+            for owner in &holders {
+                let endpoint = if owner.kind == "corporation" {
+                    "source-structure"
+                } else {
+                    "universe-structure"
+                };
+                match esi::get(
+                    endpoint,
+                    owner.subject,
+                    &[("structure_id".to_owned(), id.to_string())],
+                    None,
+                ) {
+                    Ok(answer) => {
+                        found = Some(place_named(&answer.body));
+                        break;
+                    }
+                    Err(err) => why.push(format!("{} {}: {err:?}", owner.kind, owner.id)),
+                }
+            }
+            if found.is_none() {
+                log::warn(format!(
+                    "structure {id} not named (ESI names it only to a character that may dock \
+                     there): {}",
+                    if why.is_empty() {
+                        "no owner with blueprints there is in use".to_owned()
+                    } else {
+                        why.join("; ")
+                    }
+                ));
+            }
+            found
         } else if is_system(id) {
-            Ok(None)
+            esi::names(&[id])
+                .ok()
+                .and_then(|named| named.into_iter().next())
+                .map(|n| (n.name.clone(), n.name))
         } else {
             // Somewhere ESI doesn't say (an item in another's hangar).
-            store_place(id, &format!("Location {id}"), "")?;
-            continue;
+            None
         };
-        let (name, system) = match answer {
-            Ok(Some(answer)) => {
-                let place: serde_json::Value =
-                    serde_json::from_str(&answer.body).unwrap_or_default();
-                let system = place["system_id"]
-                    .as_i64()
-                    .or_else(|| place["solar_system_id"].as_i64())
-                    .and_then(|s| esi::names(&[s]).ok())
-                    .and_then(|named| named.into_iter().next())
-                    .map(|n| n.name)
-                    .unwrap_or_default();
-                let name: String = place["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .chars()
-                    .take(200)
-                    .collect();
-                (name, system)
+        match named {
+            Some((name, system)) if !name.is_empty() => store_place(id, &name, &system, true)?,
+            _ => {
+                let placeholder = if is_structure(id) {
+                    format!("Structure {id}")
+                } else {
+                    format!("Location {id}")
+                };
+                store_place(id, &placeholder, "", false)?;
             }
-            Ok(None) if is_system(id) => {
-                let name = esi::names(&[id])
-                    .ok()
-                    .and_then(|named| named.into_iter().next())
-                    .map(|n| n.name)
-                    .unwrap_or_default();
-                (name.clone(), name)
-            }
-            Ok(None) => (String::new(), String::new()),
-            Err(esi::Error::Status(status)) if (400..500).contains(&status) && status != 420 => {
-                (String::new(), String::new())
-            }
-            Err(err) => {
-                log::info(format!("place {id} not named: {err:?}"));
-                continue;
-            }
-        };
-        let name = if name.is_empty() {
-            if is_structure(id) {
-                format!("Structure {id}")
-            } else {
-                format!("Location {id}")
-            }
-        } else {
-            name
-        };
-        store_place(id, &name, &system)?;
+        }
     }
     Ok(())
 }
 
-fn store_place(id: i64, name: &str, system: &str) -> Result<(), JobError> {
+/// A station's or structure's name and its system's, from ESI's answer.
+fn place_named(body: &str) -> (String, String) {
+    let place: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let system = place["system_id"]
+        .as_i64()
+        .or_else(|| place["solar_system_id"].as_i64())
+        .and_then(|s| esi::names(&[s]).ok())
+        .and_then(|named| named.into_iter().next())
+        .map(|n| n.name)
+        .unwrap_or_default();
+    let name: String = place["name"]
+        .as_str()
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect();
+    (name, system)
+}
+
+fn store_place(id: i64, name: &str, system: &str, named: bool) -> Result<(), JobError> {
     storage::execute(
-        "INSERT INTO places (id, name, system_name) VALUES ($1, $2, $3) \
+        "INSERT INTO places (id, name, system_name, named) VALUES ($1, $2, $3, $4) \
          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, \
-             system_name = EXCLUDED.system_name, read_at = now()",
-        &[id.into(), name.into(), system.into()],
+             system_name = EXCLUDED.system_name, named = EXCLUDED.named, read_at = now()",
+        &[id.into(), name.into(), system.into(), named.into()],
     )
     .map_err(|e| retry("storing a place", e))?;
     Ok(())
