@@ -16,6 +16,8 @@ use crate::{int, retry, text};
 const PUBLIC: Subject = Subject::Character(0);
 /// Places named per run, within a run's 100 ESI calls.
 const PLACES_PER_RUN: i64 = 40;
+/// Batches of product names looked up per run (500 types each).
+const PRODUCT_BATCHES: usize = 6;
 /// Item ids `corporation-asset-places` takes at once.
 const PLACE_IDS_PER_CALL: usize = 1000;
 
@@ -401,20 +403,24 @@ fn owner_items(owner: &Owner) -> Result<Vec<(i64, i64)>, JobError> {
     Ok(rows.rows.iter().map(|r| (int(r, 0), int(r, 1))).collect())
 }
 
+/// Blueprints sit in a few containers and hangars: those are asked about
+/// (one call for up to 1,000, each reading the corporation's assets
+/// once), and each blueprint is where its holder is, inside it.
 fn corporate_places(owner: &Owner) -> Result<Found, esi::Error> {
     let items = owner_items(owner).unwrap_or_default();
     let mut found = Found::new();
     // Blueprints straight in a station, structure or system need no
     // asking.
-    let mut ask = Vec::new();
+    let mut holders: Vec<i64> = Vec::new();
     for (item, location) in &items {
         if is_place(*location) {
             found.insert(*item, (*location, serde_json::json!([])));
-        } else {
-            ask.push(*item);
+        } else if !holders.contains(location) {
+            holders.push(*location);
         }
     }
-    for chunk in ask.chunks(PLACE_IDS_PER_CALL) {
+    let mut placed: HashMap<i64, (i64, serde_json::Value)> = HashMap::new();
+    for chunk in holders.chunks(PLACE_IDS_PER_CALL) {
         let ids = chunk
             .iter()
             .map(i64::to_string)
@@ -428,17 +434,28 @@ fn corporate_places(owner: &Owner) -> Result<Found, esi::Error> {
         )?;
         let list: Vec<serde_json::Value> = serde_json::from_str(&answer.body).unwrap_or_default();
         for place in list {
-            let (Some(item), Some(at)) = (place["item_id"].as_i64(), place["place_id"].as_i64())
+            let (Some(holder), Some(at)) = (place["item_id"].as_i64(), place["place_id"].as_i64())
             else {
                 continue;
             };
-            let within: Vec<serde_json::Value> = place["within"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|w| serde_json::json!([w["type_id"], w["location_flag"]]))
-                .collect();
-            found.insert(item, (at, serde_json::Value::Array(within)));
+            // The holder itself, then what holds it, innermost first.
+            let mut within = vec![serde_json::json!([
+                place["type_id"],
+                place["location_flag"]
+            ])];
+            within.extend(
+                place["within"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|w| serde_json::json!([w["type_id"], w["location_flag"]])),
+            );
+            placed.insert(holder, (at, serde_json::Value::Array(within)));
+        }
+    }
+    for (item, location) in &items {
+        if let Some(place) = placed.get(location) {
+            found.insert(*item, place.clone());
         }
     }
     Ok(found)
@@ -636,7 +653,7 @@ fn learn_names() -> Result<(), JobError> {
                  jsonb_array_elements(coalesce(within, '[]')) w \
              UNION SELECT product_type_id FROM products) x \
          WHERE id IS NOT NULL AND id > 0 AND id < 1000000000000 \
-           AND NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) LIMIT 2000",
+           AND NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) LIMIT 5000",
         &[],
     )
     .map_err(|e| retry("finding names", e))?;
@@ -677,8 +694,19 @@ pub fn product_name(blueprint: &str) -> Option<&str> {
         .filter(|name| !name.is_empty())
 }
 
-/// Each new blueprint type's product, found by name, for its icon.
+/// Each new blueprint type's product, found by name, for its icon: a
+/// few hundred types a call, a few calls a run.
 fn learn_products() -> Result<(), JobError> {
+    for _ in 0..PRODUCT_BATCHES {
+        if !learn_products_batch()? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// One batch: whether there may be more.
+fn learn_products_batch() -> Result<bool, JobError> {
     let wanted = storage::query(
         "SELECT DISTINCT b.type_id, n.name FROM blueprints b JOIN names n ON n.id = b.type_id \
          WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.blueprint_type_id = b.type_id) \
@@ -687,7 +715,7 @@ fn learn_products() -> Result<(), JobError> {
     )
     .map_err(|e| retry("finding products", e))?;
     if wanted.rows.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let pairs: Vec<(i64, String)> = wanted
         .rows
@@ -713,7 +741,7 @@ fn learn_products() -> Result<(), JobError> {
                 .collect(),
             Err(err) => {
                 log::info(format!("products not read: {err:?}"));
-                return Ok(());
+                return Ok(false);
             }
         }
     };
@@ -734,7 +762,7 @@ fn learn_products() -> Result<(), JobError> {
         &[Db::json(serde_json::Value::Array(rows).to_string())],
     )
     .map_err(|e| retry("storing products", e))?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]

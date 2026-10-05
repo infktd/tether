@@ -442,9 +442,22 @@ async fn blueprints_end_to_end(db: PgPool) {
             .await
             .unwrap();
     assert_eq!(kept.as_deref(), Some("1DQ1-A - Imperial Palace"));
-    let one = page(&h, &format!("/plugins/{ID}/blueprint/3001"), &owner).await;
-    assert!(one.body.contains("Copying"), "{}", one.body);
-    assert!(one.body.contains("The Mittani"), "{}", one.body);
+    // The running job is in its row (view_industry_jobs), and each row
+    // has a Request button that asks first.
+    let library = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        library.body.contains("Copying until 2026-10-06 12:00"),
+        "{}",
+        library.body
+    );
+    assert!(library.body.contains(">Request<"), "{}", library.body);
+    assert!(
+        library
+            .body
+            .contains("Request copies of Rifter Blueprint from Otherworld Enterprises"),
+        "{}",
+        library.body
+    );
 
     // A pilot in the corporation who may request, without the location or
     // job permissions: the blueprints, not where they are or who's using
@@ -465,9 +478,14 @@ async fn blueprints_end_to_end(db: PgPool) {
         library.body
     );
     assert!(!library.body.contains("Corp Hangar 2"), "{}", library.body);
-    let one = page(&h, &format!("/plugins/{ID}/blueprint/3001"), &pilot).await;
-    assert!(!one.body.contains("Copying"), "{}", one.body);
-    assert!(one.body.contains("Request copies"), "{}", one.body);
+    assert!(!library.body.contains("Copying"), "{}", library.body);
+    assert!(library.body.contains(">Request<"), "{}", library.body);
+    // A search goes in the address, and its rows' buttons still match.
+    let res = post(&h, &pilot, "", "_form=search&q=Merlin Blue").await;
+    assert_eq!(res.location(), format!("/plugins/{ID}?q=Merlin%20Blue"));
+    let found = page(&h, &format!("/plugins/{ID}?q=Merlin%20Blue"), &pilot).await;
+    assert!(found.body.contains("Merlin Blueprint"), "{}", found.body);
+    assert!(!found.body.contains("Rifter Blueprint"), "{}", found.body);
 
     // Someone in another corporation and alliance sees none of it.
     let outsider = log_in_as(&h, "1887431749:Outsider", None).await;
@@ -478,14 +496,15 @@ async fn blueprints_end_to_end(db: PgPool) {
         "{}",
         library.body
     );
-    let one = page(&h, &format!("/plugins/{ID}/blueprint/3001"), &outsider).await;
-    assert_eq!(one.status, StatusCode::NOT_FOUND);
+    // Nor can they ask for one: the button isn't theirs.
+    let res = post(&h, &outsider, "", "_form=request&item=3001").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
-    // The pilot asks for copies of 5 runs: builders hear on Discord (not
+    // The pilot asks for copies: builders hear on Discord (not
     // in the bell, which would reach other corporations' builders). Asking
     // again while it's open is the same request.
     for _ in 0..2 {
-        let res = post(&h, &pilot, "blueprint/3001", "_form=request&runs=5").await;
+        let res = post(&h, &pilot, "", "_form=request&item=3001").await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     }
     assert!(notices(&h, owner_account).await.is_empty());
@@ -567,7 +586,15 @@ async fn blueprints_end_to_end(db: PgPool) {
 
     // Only builders of the owner's corporation may act on a request: not
     // the outsider, even with the permission.
-    let res = post(&h, &pilot, "blueprint/3002", "_form=request&runs=").await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}?q=Merlin%20Blue"),
+            "_form=request&item=3002",
+            &pilot,
+        ),
+    )
+    .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     grant(&h, OUTSIDER, &["manage_requests"]).await;
     let open = page(&h, &format!("/plugins/{ID}/open"), &outsider).await;

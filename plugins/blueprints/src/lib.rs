@@ -25,9 +25,9 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::notify::{self, Level};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
+    CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
     SubmitResult, Table, Tone, Value, action, actions, badge, character, corporation, item_type,
-    link, log, time,
+    log, time,
 };
 
 const SYNC_BLUEPRINTS: &str = "sync_blueprints";
@@ -53,7 +53,6 @@ impl Plugin for Blueprints {
         let parts: Vec<&str> = request.path.split('/').collect();
         match parts.as_slice() {
             [""] => library(&access, &q),
-            ["blueprint", id] => blueprint_page(&access, number(id)?),
             ["requests"] => my_requests(&access),
             ["open"] => open_requests(&access),
             ["owners"] => owners_page(&access),
@@ -68,8 +67,13 @@ impl Plugin for Blueprints {
         let path = submission.request.path.clone();
         let parts: Vec<&str> = path.split('/').collect();
         match (parts.as_slice(), submission.form.as_str()) {
-            ([""], "search") => Ok(SubmitResult::Page(library(&access, submission.value("q"))?)),
-            (["blueprint", id], "request") => request_copy(&access, number(id)?, &submission),
+            // The search goes in the address, so it stays on a reload and
+            // its Request buttons match when posted.
+            ([""], "search") => Ok(SubmitResult::Redirect(match submission.value("q").trim() {
+                "" => String::new(),
+                q => format!("?q={}", encode(q)),
+            })),
+            ([""], "request") => request_copy(&access, number(submission.value("item"))?),
             (["requests"], "cancel_own") => cancel_own(&access, &submission),
             (["open"], "mark") => mark(&access, &submission),
             (["owners"], "add_owner" | "remove_owner") => personal_owner(&access, &submission),
@@ -336,23 +340,57 @@ const WITHIN: &str = "(SELECT jsonb_agg(jsonb_build_array(w ->> 0, w ->> 1, coal
      FROM jsonb_array_elements(coalesce(b.within, '[]')) w \
      LEFT JOIN names wn ON wn.id = (w ->> 0)::bigint)::text";
 
+/// The longest search the address carries, encoded (Tether's redirect
+/// query is at most 200 bytes, `q=` included).
+const MAX_ENCODED_SEARCH: usize = 190;
+
+/// A search as the address carries it: percent-encoded, cut to whole
+/// characters that fit.
+fn encode(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        let mut bytes = [0u8; 4];
+        let mut piece = String::new();
+        for b in c.encode_utf8(&mut bytes).bytes() {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+                piece.push(char::from(b));
+            } else {
+                piece.push_str(&format!("%{b:02X}"));
+            }
+        }
+        if out.len() + piece.len() > MAX_ENCODED_SEARCH {
+            break;
+        }
+        out.push_str(&piece);
+    }
+    out
+}
+
+/// The library: identical blueprints (type, owner, ME, TE, runs, place)
+/// as one row with their count, each with a Request button.
 fn library(access: &Access, q: &str) -> Result<Page, PageError> {
     let (sees, mut params) = access.sees(1);
     let filter = q.trim().to_lowercase();
     params.push(format!("%{filter}%").into());
     let rows = storage::query(
         &format!(
-            "SELECT b.item_id, b.type_id, coalesce(n.name, 'Blueprint ' || b.type_id), \
+            "SELECT min(b.item_id), b.type_id, coalesce(n.name, 'Blueprint ' || b.type_id), \
                     p.product_type_id, o.kind, o.id, o.name, b.runs IS NULL, \
-                    b.material_efficiency, b.time_efficiency, b.runs, b.quantity, \
-                    pl.name, {WITHIN}, b.location_flag, j.job_id IS NOT NULL \
+                    b.material_efficiency, b.time_efficiency, b.runs, sum(b.quantity)::bigint, \
+                    pl.name, {WITHIN}, b.location_flag, count(j.job_id), \
+                    (array_agg(j.activity ORDER BY j.end_date) FILTER (WHERE j.job_id IS NOT NULL))[1], \
+                    min(j.end_date) \
              FROM blueprints b JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
              LEFT JOIN names n ON n.id = b.type_id \
              LEFT JOIN products p ON p.blueprint_type_id = b.type_id \
              LEFT JOIN places pl ON pl.id = b.place_id \
              LEFT JOIN jobs j ON j.item_id = b.item_id \
              WHERE {sees} AND (lower(coalesce(n.name, '')) LIKE $4 OR lower(o.name) LIKE $4) \
-             ORDER BY n.name, b.material_efficiency DESC, b.time_efficiency DESC LIMIT {LISTED}"
+             GROUP BY b.type_id, n.name, p.product_type_id, o.kind, o.id, o.name, b.runs, \
+                 b.material_efficiency, b.time_efficiency, pl.name, b.within, b.location_flag \
+             ORDER BY n.name, b.material_efficiency DESC, b.time_efficiency DESC \
+             LIMIT {}",
+            LISTED + 1
         ),
         &params,
     )
@@ -382,7 +420,9 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
         columns.push(Column::text("Location"));
     }
     columns.push(Column::text("In use"));
-    columns.push(Column::text(""));
+    if access.request {
+        columns.push(Column::text(""));
+    }
     let mut table = Table::new(columns)
         .title("Blueprints")
         .empty(if filter.is_empty() {
@@ -390,10 +430,17 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
         } else {
             "No blueprint matches."
         });
-    for r in &rows.rows {
+    let more = rows.rows.len() > usize::try_from(LISTED).unwrap_or(usize::MAX);
+    for r in rows
+        .rows
+        .iter()
+        .take(usize::try_from(LISTED).unwrap_or(usize::MAX))
+    {
+        let name = text(r, 2);
+        let owner = text(r, 6);
         let mut cells = vec![
-            blueprint_value(opt_int(r, 3), text(r, 2)),
-            owner_value(&text(r, 4), int(r, 5), text(r, 6)),
+            blueprint_value(opt_int(r, 3), name.clone()),
+            owner_value(&text(r, 4), int(r, 5), owner.clone()),
             kind_badge(flag(r, 7)),
             int(r, 8).into(),
             int(r, 9).into(),
@@ -404,18 +451,25 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
             cells
                 .push(place_text(opt_text(r, 12), opt_text(r, 13).as_deref(), &text(r, 14)).into());
         }
-        cells.push(if flag(r, 15) {
-            badge("In use", Tone::Warning).into()
-        } else {
-            "".into()
-        });
-        cells.push(link("Open", format!("blueprint/{}", int(r, 0))).into());
+        cells.push(in_use(access, int(r, 15), opt_int(r, 16), opt_text(r, 17)));
+        if access.request {
+            cells.push(
+                action("Request", "request")
+                    .field("item", int(r, 0).to_string())
+                    .tone(Tone::Accent)
+                    .confirm(format!(
+                        "Request copies of {name} from {owner}: its builders are told on \
+                         Discord, and you hear back in your notifications."
+                    ))
+                    .into(),
+            );
+        }
         table = table.row(cells);
     }
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let mut page = header(
         Page::new("Blueprints").description(
-            "Your corporations' and pilots' blueprints, read every 3 hours. Open one to request copies.",
+            "Your corporations' and pilots' blueprints, read every 3 hours. Request copies of any of them.",
         ),
         access,
     )
@@ -444,88 +498,38 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
     {
         page = page.text(format!("The last read had a problem: {error}"));
     }
+    if more {
+        page = page.text(format!(
+            "Showing the first {LISTED} rows: search to find the rest."
+        ));
+    }
     Ok(page.table(table))
 }
 
-fn blueprint_page(access: &Access, item: i64) -> Result<Page, PageError> {
-    let (sees, mut params) = access.sees(1);
-    params.push(item.into());
-    let rows = storage::query(
-        &format!(
-            "SELECT coalesce(n.name, 'Blueprint ' || b.type_id), p.product_type_id, o.kind, o.id, \
-                    o.name, b.runs IS NULL, b.material_efficiency, b.time_efficiency, b.runs, \
-                    b.quantity, pl.name, {WITHIN}, b.location_flag, j.activity, j.installer_id, \
-                    coalesce(i.name, 'Character ' || j.installer_id), j.runs, j.start_date, \
-                    j.end_date, j.job_id IS NOT NULL \
-             FROM blueprints b JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
-             LEFT JOIN names n ON n.id = b.type_id \
-             LEFT JOIN products p ON p.blueprint_type_id = b.type_id \
-             LEFT JOIN places pl ON pl.id = b.place_id \
-             LEFT JOIN jobs j ON j.item_id = b.item_id \
-             LEFT JOIN names i ON i.id = j.installer_id \
-             WHERE {sees} AND b.item_id = $4"
-        ),
-        &params,
+/// Whether a row's blueprints are in use: with `view_industry_jobs`, what
+/// the soonest job does and until when (as aa-blueprints' job details).
+fn in_use(access: &Access, jobs: i64, activity_id: Option<i64>, ends: Option<String>) -> Value {
+    if jobs == 0 {
+        return "".into();
+    }
+    if !access.jobs {
+        return badge("In use", Tone::Warning).into();
+    }
+    let until = ends
+        .as_deref()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| format!(" until {}", t.format("%Y-%m-%d %H:%M")))
+        .unwrap_or_default();
+    let more = if jobs > 1 {
+        format!(" (+{} more)", jobs - 1)
+    } else {
+        String::new()
+    };
+    badge(
+        format!("{}{until}{more}", activity(activity_id.unwrap_or_default())),
+        Tone::Warning,
     )
-    .map_err(|e| failed("reading the blueprint", e))?;
-    // Not one the viewer may see: as if it weren't there.
-    let r = rows.rows.first().ok_or(PageError::NotFound)?;
-    let name = text(r, 0);
-    let original = flag(r, 5);
-    let mut card = Card::new(name.clone())
-        .field("Blueprint", blueprint_value(opt_int(r, 1), name.clone()))
-        .field("Owner", owner_value(&text(r, 2), int(r, 3), text(r, 4)))
-        .field("Kind", kind_badge(original))
-        .field("Material efficiency", int(r, 6))
-        .field("Time efficiency", int(r, 7))
-        .field(
-            "Runs",
-            opt_int(r, 8).map_or_else(|| Value::from("Unlimited"), Value::from),
-        )
-        .field("Quantity", int(r, 9));
-    if access.locations {
-        card = card.field(
-            "Location",
-            place_text(opt_text(r, 10), opt_text(r, 11).as_deref(), &text(r, 12)),
-        );
-    }
-    card = card.field(
-        "In use",
-        if flag(r, 19) {
-            badge("In use", Tone::Warning)
-        } else {
-            badge("Not in use", Tone::Success)
-        },
-    );
-    let mut page = header(
-        Page::new(name.clone()).description("A blueprint in the library."),
-        access,
-    )
-    .card(card);
-    if flag(r, 19) && access.jobs {
-        page = page.card(
-            Card::new("Running job")
-                .field("Activity", activity(int(r, 13)))
-                .field("Installed by", character(int(r, 14), text(r, 15)))
-                .field("Runs", int(r, 16))
-                .field("Started", when(r, 17))
-                .field("Ends", when(r, 18)),
-        );
-    }
-    if access.request {
-        page = page.form(
-            Form::new("request", "Request copies")
-                .description(
-                    "The owner's builders are told, and you hear back here and in your notifications.",
-                )
-                .field(
-                    Field::number("runs", "Runs per copy")
-                        .range(Some(1.0), None, true)
-                        .help("Leave empty for as many as the blueprint allows."),
-                ),
-        );
-    }
-    Ok(page)
+    .into()
 }
 
 /// An instant from storage as a time value, or nothing.
@@ -601,7 +605,7 @@ fn my_requests(access: &Access) -> Result<Page, PageError> {
         &["Requested", "Status", "Taken by", ""],
     ))
     .title("Your open requests")
-    .empty("No open requests. Open a blueprint in the library to request copies.");
+    .empty("No open requests. Request copies of a blueprint from the library.");
     for r in &rows.rows {
         let mut cells = request_cells(access, r);
         cells.push(when(r, 14));
@@ -721,11 +725,7 @@ fn tell(account: i64, title: &str, message: &str, level: Level) {
     }
 }
 
-fn request_copy(
-    access: &Access,
-    item: i64,
-    submission: &Submission,
-) -> Result<SubmitResult, PageError> {
+fn request_copy(access: &Access, item: i64) -> Result<SubmitResult, PageError> {
     if !access.request {
         return Err(PageError::Forbidden);
     }
@@ -743,16 +743,8 @@ fn request_copy(
     if visible.rows.is_empty() {
         return Err(PageError::NotFound);
     }
-    let runs = match submission.value("runs").trim() {
-        "" => None,
-        value => Some(
-            value
-                .parse::<i64>()
-                .ok()
-                .filter(|r| *r > 0 && *r <= i64::from(i32::MAX))
-                .ok_or_else(|| PageError::Failed("runs wasn't a whole number".into()))?,
-        ),
-    };
+    // As many runs per copy as the blueprint allows (AA's blank runs).
+    let runs: Option<i64> = None;
     let open = storage::query(
         "SELECT count(*) FROM requests WHERE requester_account = $1 AND closed_at IS NULL",
         &[access.account.into()],
@@ -789,7 +781,8 @@ fn request_copy(
     {
         post_card(&a);
     }
-    Ok(SubmitResult::Redirect("requests".into()))
+    // Back to the library, under its search (Tether keeps the query).
+    Ok(SubmitResult::Redirect(String::new()))
 }
 
 /// A card for a new request in the channel Settings picked, if any.
@@ -1118,6 +1111,14 @@ mod tests {
             "Amarr VIII › Hangar"
         );
         assert_eq!(place_text(None, None, "Undefined"), "Not read yet");
+    }
+
+    #[test]
+    fn a_search_fits_the_address() {
+        assert_eq!(encode("Merlin Blue"), "Merlin%20Blue");
+        let long = encode(&"Ж".repeat(100));
+        assert!(long.len() <= MAX_ENCODED_SEARCH, "{}", long.len());
+        assert!(long.ends_with("%96"), "{long}");
     }
 
     #[test]
