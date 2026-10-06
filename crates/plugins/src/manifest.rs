@@ -769,6 +769,14 @@ pub fn check_key(key: &str) -> Result<(), ManifestError> {
 /// A page path as plugins write them: what link paths allow, outside
 /// `downloads/`, where Tether serves the app's downloads.
 impl Manifest {
+    /// An app with pages to open (any `[[pages]]` rule or `[[navigation]]`
+    /// entry) and no `[[views]]`: refused when installed or upgraded, as
+    /// Tether draws every app's frame. One stored before still loads,
+    /// drawn without a views bar.
+    pub fn needs_views(&self) -> bool {
+        self.views.is_empty() && (!self.pages.is_empty() || !self.navigation.is_empty())
+    }
+
     /// `[[views]]`, `[action]` and `[[manage]]`: plain labels and page
     /// paths, the first view the main page, no page twice, and no manage
     /// page under `settings` (Tether adds Settings itself).
@@ -786,12 +794,6 @@ impl Manifest {
         }
         if self.views.is_empty() && (self.action.is_some() || !self.manage.is_empty()) {
             return Err(bad("[action] and [[manage]] need [[views]]"));
-        }
-        if self.views.is_empty() && (!self.pages.is_empty() || !self.navigation.is_empty()) {
-            return Err(bad(
-                "an app with pages declares its [[views]]: the first is its main page \
-                 (label = \"Overview\", path = \"\"), and Tether draws its views bar",
-            ));
         }
         let mut seen = std::collections::HashSet::new();
         for (what, link) in self
@@ -1165,7 +1167,9 @@ mod tests {
         ] {
             assert!(Manifest::parse(&manifest(extra)).is_err(), "{why}");
         }
-        // An app with pages must declare its views.
+        // An app with pages must declare its views when installed; one
+        // stored before still parses, so it loads and can be removed.
+        assert!(!good.needs_views());
         for (why, extra) in [
             (
                 "pages need views",
@@ -1176,11 +1180,8 @@ mod tests {
                 "[[navigation]]\nlabel = \"Moons\"\npath = \"moons\"\n",
             ),
         ] {
-            let refused = Manifest::parse(&bare(extra)).unwrap_err();
-            assert!(
-                refused.to_string().contains("[[views]]"),
-                "{why}: {refused}"
-            );
+            let stored = Manifest::parse(&bare(extra)).unwrap();
+            assert!(stored.needs_views(), "{why}");
         }
         // An app with no pages (jobs, Discord) declares none: nothing
         // written back.

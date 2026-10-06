@@ -1014,6 +1014,16 @@ fn package_error(err: PackageError) -> AppError {
     }
 }
 
+/// A new package with pages but no views (`Manifest::needs_views`):
+/// refused at install and upgrade, never at load or rollback, so an app
+/// stored before still runs (without a views bar) and can be removed.
+fn frameless(package: &Package) -> Option<&'static str> {
+    package.manifest.needs_views().then_some(
+        "An app with pages declares its [[views]]: the first is its main page (label = \
+         \"Overview\", path = \"\"), and Tether draws its views bar. See the SDK's AGENTS.md.",
+    )
+}
+
 /// What a package can't ask for.
 fn unsupported(package: &Package) -> Option<&'static str> {
     // Registering for a plugin grants its user scopes: only ones a
@@ -1199,7 +1209,8 @@ async fn check_upload(
             .await
             .map_err(fail)?;
     }
-    if let Some(why) = unsupported(unverified.package()) {
+    if let Some(why) = unsupported(unverified.package()).or_else(|| frameless(unverified.package()))
+    {
         return Err(fail(AppError::bad_request(why)));
     }
     let pinned = plugin_keys::get(&state.db, &id).await.map_err(db_err)?;
@@ -1575,7 +1586,7 @@ async fn install_or_upgrade(
     candidate: Candidate<'_>,
     reviewed: Option<String>,
 ) -> Result<String, AppError> {
-    if let Some(why) = unsupported(candidate.package()) {
+    if let Some(why) = unsupported(candidate.package()).or_else(|| frameless(candidate.package())) {
         return Err(AppError::bad_request(why));
     }
     let installed = db::get_locked(&mut tx, id).await?;

@@ -322,6 +322,16 @@ async fn bad_uploads_are_refused_and_audited(db: PgPool) {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(res.body.contains("storage"), "{}", res.body);
 
+    // Pages but no views: Tether draws every app's frame.
+    let (frameless, frameless_signature) = package(
+        ID,
+        &key,
+        "\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+    );
+    let res = upload(&h, &owner, &frameless, &frameless_signature).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(res.body.contains("declares its [[views]]"), "{}", res.body);
+
     // A component that isn't a plugin.
     let manifest_text = manifest(ID, &key, "");
     let fake = testing::zip(&[
@@ -338,8 +348,8 @@ async fn bad_uploads_are_refused_and_audited(db: PgPool) {
     .fetch_one(&h.db)
     .await
     .unwrap();
-    // Every refusal above: four malformed requests, four bad packages.
-    assert_eq!(rejected, 8);
+    // Every refusal above: four malformed requests, five bad packages.
+    assert_eq!(rejected, 9);
     assert_eq!(h.plugins.status(ID), Status::Stopped);
 
     // Too many waiting.
