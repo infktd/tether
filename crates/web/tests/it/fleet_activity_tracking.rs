@@ -741,6 +741,23 @@ async fn statistics_by_alliance_corporation_pilot_and_month(db: PgPool) {
     assert!(stats.body.contains("Line Alt"));
     assert!(!stats.body.contains("Chribba</a>"), "{}", stats.body);
     assert!(!stats.body.contains("By alliance"));
+    // The years as chips under the header, this one marked.
+    let now = chrono::Utc::now().format("%Y").to_string();
+    let last: i32 = now.parse::<i32>().unwrap() - 1;
+    assert!(
+        stats.body.contains(&format!(
+            r#"href="/plugins/{ID}/stats" aria-current="page">{now}</a>"#
+        )),
+        "{}",
+        stats.body
+    );
+    assert!(
+        stats
+            .body
+            .contains(&format!(r#"href="/plugins/{ID}/stats/{last}">{last}</a>"#)),
+        "{}",
+        stats.body
+    );
     let mine = open(&h, &format!("stats/character/{LINE}"), &line).await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
     assert!(

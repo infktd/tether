@@ -783,7 +783,12 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
         .stats(vec![Stat::new("FAT links", total)])
         .table(links_table(
             viewer,
-            &format!("Page {page_number} of {pages}"),
+            // Which page, only when there's more than one.
+            &if pages > 1 {
+                format!("Page {page_number} of {pages}")
+            } else {
+                "Newest first".to_owned()
+            },
             "No FAT links yet.",
             &links,
         ));
@@ -2002,19 +2007,23 @@ fn grouped(
 const CORPORATION_LABEL: &str = "coalesce(n.name, 'Unknown corporation')";
 const ALLIANCE_LABEL: &str = "coalesce(n.name, 'Unknown alliance')";
 
-fn year_card(path: &str, year: i32) -> Card {
-    let mut card = Card::new("Year").field("Showing", year.to_string());
-    card = card.field(
-        "Previous year",
-        link((year - 1).to_string(), format!("{path}/{}", year - 1)),
-    );
-    if year < this_year() {
-        card = card.field(
-            "Next year",
-            link((year + 1).to_string(), format!("{path}/{}", year + 1)),
-        );
+/// The years as chips under the header, the one shown marked: this year
+/// (at `path` itself) and the four before, and the one shown if older.
+fn year_links(mut page: Page, path: &str, year: i32) -> Page {
+    let now = this_year();
+    let mut years: Vec<i32> = ((now - 4)..=now).rev().collect();
+    if !years.contains(&year) {
+        years.push(year);
     }
-    card
+    for y in years {
+        let to = if y == now {
+            path.to_owned()
+        } else {
+            format!("{path}/{y}")
+        };
+        page = page.link(y.to_string(), to);
+    }
+    page
 }
 
 /// The viewer's "own corporation" for stats_corporation_own: the main's,
@@ -2111,7 +2120,7 @@ fn stats_page(viewer: &Viewer, year: i32) -> Result<Page, PageError> {
             ))],
         );
     }
-    Ok(page.card(year_card("stats", year)))
+    Ok(year_links(page, "stats", year))
 }
 
 /// Totals for a scope: FATs, pilots and fleets, then a row per month.
@@ -2215,19 +2224,22 @@ fn corporation_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageErr
         year,
         &[id.into()],
     )?;
-    Ok(Page::new(format!("{name}: statistics {year}"))
-        .description("FATs of the corporation's pilots, by month (EVE time).")
-        .stats(stats)
-        .table(months)
-        .table(month_table(
-            "Pilot",
-            "By pilot",
-            "No FATs this year.",
-            &pilots,
-            |cid, n| link(n, format!("stats/character/{cid}/{year}")).into(),
-        ))
-        .table(fleet_type_table(filter, id, year)?)
-        .card(year_card(&format!("stats/corporation/{id}"), year)))
+    Ok(year_links(
+        Page::new(format!("{name}: statistics {year}"))
+            .description("FATs of the corporation's pilots, by month (EVE time).")
+            .stats(stats)
+            .table(months)
+            .table(month_table(
+                "Pilot",
+                "By pilot",
+                "No FATs this year.",
+                &pilots,
+                |cid, n| link(n, format!("stats/character/{cid}/{year}")).into(),
+            ))
+            .table(fleet_type_table(filter, id, year)?),
+        &format!("stats/corporation/{id}"),
+        year,
+    ))
 }
 
 fn alliance_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError> {
@@ -2245,19 +2257,22 @@ fn alliance_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError>
         year,
         &[id.into()],
     )?;
-    Ok(Page::new(format!("{name}: statistics {year}"))
-        .description("FATs of the alliance's pilots, by month (EVE time).")
-        .stats(stats)
-        .table(months)
-        .table(month_table(
-            "Corporation",
-            "By corporation",
-            "No FATs this year.",
-            &corporations,
-            |cid, n| link(n, format!("stats/corporation/{cid}/{year}")).into(),
-        ))
-        .table(fleet_type_table(filter, id, year)?)
-        .card(year_card(&format!("stats/alliance/{id}"), year)))
+    Ok(year_links(
+        Page::new(format!("{name}: statistics {year}"))
+            .description("FATs of the alliance's pilots, by month (EVE time).")
+            .stats(stats)
+            .table(months)
+            .table(month_table(
+                "Corporation",
+                "By corporation",
+                "No FATs this year.",
+                &corporations,
+                |cid, n| link(n, format!("stats/corporation/{cid}/{year}")).into(),
+            ))
+            .table(fleet_type_table(filter, id, year)?),
+        &format!("stats/alliance/{id}"),
+        year,
+    ))
 }
 
 fn character_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError> {
@@ -2299,29 +2314,32 @@ fn character_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError
     };
     let (stats, months) = scope_summary(filter, id, year)?;
     let fleets = can_create(viewer);
-    Ok(Page::new(format!("{name}: statistics {year}"))
-        .description("This character's FATs, by month (EVE time).")
-        .stats(stats.into_iter().take(1).collect())
-        .table(months)
-        .table(fleet_type_table(filter, id, year)?)
-        .table(with_rows(
-            Table::new(vec![
-                Column::text("Fleet"),
-                Column::text("Fleet type"),
-                Column::numeric("EVE time"),
-            ])
-            .title("FATs")
-            .empty("No FATs this year."),
-            fats.iter().map(|r| {
-                let fleet: Value = if fleets {
-                    link(text(r, 1), format!("links/{}", text(r, 4))).into()
-                } else {
-                    text(r, 1).into()
-                };
-                vec![fleet, text(r, 2).into(), time(text(r, 3))]
-            }),
-        ))
-        .card(year_card(&format!("stats/character/{id}"), year)))
+    Ok(year_links(
+        Page::new(format!("{name}: statistics {year}"))
+            .description("This character's FATs, by month (EVE time).")
+            .stats(stats.into_iter().take(1).collect())
+            .table(months)
+            .table(fleet_type_table(filter, id, year)?)
+            .table(with_rows(
+                Table::new(vec![
+                    Column::text("Fleet"),
+                    Column::text("Fleet type"),
+                    Column::numeric("EVE time"),
+                ])
+                .title("FATs")
+                .empty("No FATs this year."),
+                fats.iter().map(|r| {
+                    let fleet: Value = if fleets {
+                        link(text(r, 1), format!("links/{}", text(r, 4))).into()
+                    } else {
+                        text(r, 1).into()
+                    };
+                    vec![fleet, text(r, 2).into(), time(text(r, 3))]
+                }),
+            )),
+        &format!("stats/character/{id}"),
+        year,
+    ))
 }
 
 // ---- fleet types -----------------------------------------------------------
