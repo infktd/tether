@@ -1,0 +1,27 @@
+{#- A selected row's record panel (DESIGN.md, Record panel): what it is,
+    its name and context, Close (back to the list as it was), its figure,
+    its facts, and its page and one action. -#}
+<aside class="record-panel bk" aria-labelledby="record-panel-title">
+  <header class="record-panel-head">
+    <div class="min-w-0">
+      <div class="record-panel-kind">{{ p.kind }}</div>
+      <h2 id="record-panel-title" class="record-panel-title">{{ p.title }}</h2>
+      {% if let Some(context) = p.context %}<p class="record-panel-context">{{ context }}</p>{% endif %}
+    </div>
+    <a class="btn record-panel-close" data-variant="ghost" data-size="sm" href="{{ p.close }}" aria-label="Close" hx-target="#plugin-content" hx-swap="outerHTML show:none" hx-push-url="true">{% call icons::icon("x") %}{% endcall %}</a>
+  </header>
+  {% if let Some(f) = p.figure %}<div class="record-panel-figure">{% call plugin::ring(f) %}{% endcall %}</div>{% endif %}
+  {% if !p.facts.is_empty() %}
+  <dl class="ledger-dl">
+    {% for (label, v) in p.facts %}
+    <div><dt>{{ label }}</dt><dd>{% if v.is_blank() %}<span class="blank">—</span>{% else %}{% call plugin::value(v, false) %}{% endcall %}{% endif %}</dd></div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+  {% if p.open.is_some() || p.action.is_some() %}
+  <footer class="record-panel-foot">
+    {% if let Some((label, href)) = p.open %}<a class="btn" data-variant="primary" href="{{ href }}">{{ label }}</a>{% endif %}
+    {% if let Some(a) = p.action %}{% call plugin::action(a) %}{% endcall %}{% endif %}
+  </footer>
+  {% endif %}
+</aside>

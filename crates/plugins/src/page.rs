@@ -10,7 +10,7 @@ use crate::host::Timeline;
 use crate::host::{
     Action, Composition, Defenses, Entity, FieldKind, Form, Levels, Profile, Progress,
 };
-use crate::host::{Page, Section, Value};
+use crate::host::{Page, RecordPanel, Section, Toolbar, Value};
 
 pub const MAX_SECTIONS: usize = 40;
 pub const MAX_TABS: usize = 10;
@@ -68,6 +68,12 @@ pub const MAX_LANE_ITEMS: usize = 50;
 pub const MAX_WINDOWS: usize = 60;
 /// The longest span a timeline shows.
 pub const MAX_TIMELINE_DAYS: i64 = 60;
+/// Filters in a page's toolbar.
+pub const MAX_TOOLBAR_FILTERS: usize = 8;
+/// Facts in a record panel.
+pub const MAX_PANEL_FACTS: usize = 20;
+/// The toolbar's search: its query parameter, Tether's in every app.
+pub const SEARCH_PARAM: &str = "q";
 
 struct Budget {
     bytes: usize,
@@ -145,6 +151,13 @@ pub fn check(page: &Page) -> Result<(), PageProblem> {
         check_link_path(&link.path)?;
         budget.bytes(link.path.len())?;
     }
+    let mut params = BTreeSet::new();
+    if let Some(toolbar) = &page.toolbar {
+        check_toolbar(toolbar, &mut params, &mut budget)?;
+    }
+    if let Some(panel) = &page.panel {
+        check_panel(panel, &mut params, &mut budget)?;
+    }
     if page.tabs.len() > MAX_TABS {
         return Err(problem(format!(
             "{} tabs; the limit is {MAX_TABS}",
@@ -201,12 +214,7 @@ pub fn popup_forms(page: &Page) -> BTreeSet<String> {
             _ => None,
         })
         .collect();
-    page_values(page)
-        .flat_map(|value| match value {
-            Value::Action(action) => std::slice::from_ref(action),
-            Value::Actions(actions) => actions.as_slice(),
-            _ => &[],
-        })
+    page_actions(page)
         .filter(|action| forms.contains(action.form.as_str()))
         .map(|action| action.form.clone())
         .collect()
@@ -262,8 +270,143 @@ fn check_action(action: &Action, budget: &mut Budget) -> Result<(), PageProblem>
     Ok(())
 }
 
-/// Every value on a page, in its sections and tabs.
+/// A query parameter a toolbar's filter or a record panel names: as a
+/// redirect's (lowercase letters, digits and `_`, starting with a letter),
+/// not the search's, and each once on the page.
+fn check_param<'p>(
+    what: &str,
+    name: &'p str,
+    params: &mut BTreeSet<&'p str>,
+) -> Result<(), PageProblem> {
+    let fine = name.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+        && name.len() <= 40
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !fine || name == SEARCH_PARAM {
+        return Err(problem(format!(
+            "{what} {:?} isn't a query parameter a page may use (lowercase letters, digits and _, not {SEARCH_PARAM:?})",
+            printable_prefix(name)
+        )));
+    }
+    if !params.insert(name) {
+        return Err(problem(format!(
+            "{what} {name:?} is used twice on the page"
+        )));
+    }
+    Ok(())
+}
+
+fn check_toolbar<'p>(
+    toolbar: &'p Toolbar,
+    params: &mut BTreeSet<&'p str>,
+    budget: &mut Budget,
+) -> Result<(), PageProblem> {
+    if let Some(search) = &toolbar.search {
+        budget.text("the toolbar's search", search)?;
+    }
+    if toolbar.filters.len() > MAX_TOOLBAR_FILTERS {
+        return Err(problem(format!(
+            "{} toolbar filters; the limit is {MAX_TOOLBAR_FILTERS}",
+            toolbar.filters.len()
+        )));
+    }
+    for filter in &toolbar.filters {
+        check_param("a toolbar filter", &filter.param, params)?;
+        if filter.label.trim().is_empty() {
+            return Err(problem("a toolbar filter has no name"));
+        }
+        budget.text("a toolbar filter's name", &filter.label)?;
+        if filter.choices.is_empty() || filter.choices.len() > MAX_OPTIONS {
+            return Err(problem(format!(
+                "the toolbar filter {:?} has {} values; between 1 and {MAX_OPTIONS} are allowed",
+                filter.param,
+                filter.choices.len()
+            )));
+        }
+        for choice in &filter.choices {
+            if choice.value.is_empty()
+                || choice.value.chars().any(char::is_control)
+                || (filter.multiple && choice.value.contains(','))
+            {
+                return Err(problem(format!(
+                    "the toolbar filter {:?} has an empty value, one with a control character, or (taking several) one with a comma",
+                    filter.param
+                )));
+            }
+            budget.text("a toolbar filter's value", &choice.value)?;
+            budget.text("a toolbar filter's word", &choice.label)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_panel<'p>(
+    panel: &'p RecordPanel,
+    params: &mut BTreeSet<&'p str>,
+    budget: &mut Budget,
+) -> Result<(), PageProblem> {
+    check_param("a record panel's parameter", &panel.param, params)?;
+    if panel.title.trim().is_empty() {
+        return Err(problem("a record panel has no title"));
+    }
+    budget.text("a record panel's kind", &panel.kind)?;
+    budget.text("a record panel's title", &panel.title)?;
+    if let Some(context) = &panel.context {
+        budget.text("a record panel's context", context)?;
+    }
+    if let Some(figure) = &panel.figure {
+        check_composition(figure, budget)?;
+    }
+    if panel.facts.len() > MAX_PANEL_FACTS {
+        return Err(problem(format!(
+            "a record panel has {} facts; the limit is {MAX_PANEL_FACTS}",
+            panel.facts.len()
+        )));
+    }
+    for (label, value) in &panel.facts {
+        budget.value()?;
+        budget.text("a record panel's fact", label)?;
+        check_value(value, budget)?;
+    }
+    if let Some(open) = &panel.open {
+        budget.text("a record panel's link", &open.label)?;
+        check_redirect(&open.path)?;
+        // Its page: a download is a row's link (drawn as one).
+        if open.path.starts_with("downloads/") {
+            return Err(problem(
+                "a record panel's link opens its page, not a download",
+            ));
+        }
+        budget.bytes(open.path.len())?;
+    }
+    if let Some(action) = &panel.action {
+        check_action(action, budget)?;
+    }
+    Ok(())
+}
+
+/// Every value on a page, in its sections and tabs, and its record panel's.
 fn page_values(page: &Page) -> impl Iterator<Item = &Value> {
+    page.panel
+        .iter()
+        .flat_map(|panel| panel.facts.iter().map(|(_, v)| v))
+        .chain(section_values(page))
+}
+
+/// Every action a page offers: its values' and its record panel's.
+fn page_actions(page: &Page) -> impl Iterator<Item = &Action> {
+    page_values(page)
+        .flat_map(|value| match value {
+            Value::Action(action) => std::slice::from_ref(action),
+            Value::Actions(actions) => actions.as_slice(),
+            _ => &[],
+        })
+        .chain(page.panel.iter().filter_map(|panel| panel.action.as_ref()))
+}
+
+/// Every value in a page's sections and tabs.
+fn section_values(page: &Page) -> impl Iterator<Item = &Value> {
     page.sections
         .iter()
         .chain(page.tabs.iter().flat_map(|t| t.sections.iter()))
@@ -302,13 +445,7 @@ pub fn find_action<'p>(
             && action.fields.len() == posted.len()
             && posted.iter().all(|pair| action.fields.contains(pair))
     };
-    page_values(page)
-        .flat_map(|value| match value {
-            Value::Action(action) => std::slice::from_ref(action),
-            Value::Actions(actions) => actions.as_slice(),
-            _ => &[],
-        })
-        .find(|action| same(action))
+    page_actions(page).find(|action| same(action))
 }
 
 fn check_section(section: &Section, budget: &mut Budget) -> Result<(), PageProblem> {
@@ -454,7 +591,17 @@ fn check_profile(profile: &Profile, budget: &mut Budget) -> Result<(), PageProbl
 
 fn check_entity(entity: &Entity, budget: &mut Budget) -> Result<(), PageProblem> {
     budget.value()?;
-    budget.text("an entity name", &entity.name)
+    budget.text("an entity name", &entity.name)?;
+    check_entity_link(entity, budget)
+}
+
+/// An entity's link: one of the plugin's pages, as a link value's.
+fn check_entity_link(entity: &Entity, budget: &mut Budget) -> Result<(), PageProblem> {
+    if let Some(link) = &entity.link {
+        check_redirect(link)?;
+        budget.bytes(link.len())?;
+    }
+    Ok(())
 }
 
 /// An RFC 3339 instant, as `time`, `countdown` and `progress` take them.
@@ -869,12 +1016,16 @@ fn check_value(value: &Value, budget: &mut Budget) -> Result<(), PageProblem> {
         }
         Value::Time(time) | Value::Countdown(time) => check_time(time, budget),
         Value::Badge(badge) => budget.text("a badge", &badge.label),
+        // A link value may carry a query: a row selecting its panel.
         Value::Link(link) => {
             budget.text("a link label", &link.label)?;
-            check_link_path(&link.path)?;
+            check_redirect(&link.path)?;
             budget.bytes(link.path.len())
         }
-        Value::Entity(entity) => budget.text("an entity name", &entity.name),
+        Value::Entity(entity) => {
+            budget.text("an entity name", &entity.name)?;
+            check_entity_link(entity, budget)
+        }
         // Only the plugin's own pages: the host writes the site's address
         // before it, so a page can't hand out any other address.
         Value::Share(path) => {
@@ -935,9 +1086,10 @@ pub const MAX_REDIRECT_QUERY: usize = 200;
 /// The most pairs it may have (the host opens pages with at most 20).
 pub const MAX_REDIRECT_PAIRS: usize = 10;
 
-/// Where a submit may send the browser: one of the plugin's pages (a link
-/// path), with a query of its own if it likes (`fits?q=rifter`), so a
-/// search stays in the address. The query is `name=value` pairs joined by
+/// Where a submit may send the browser, and where a link value goes: one
+/// of the plugin's pages (a link path), with a query of its own if it
+/// likes (`fits?q=rifter`, `moons?moon=40161234`), so a search or a
+/// selected row stays in the address. The query is `name=value` pairs joined by
 /// `&`: names lowercase letters, digits and `_`, starting with a letter
 /// (`_tab` and the tables' `_p…` are the host's), values already
 /// percent-encoded (letters, digits, `-._~%+`), at most
@@ -963,7 +1115,7 @@ pub fn check_redirect(to: &str) -> Result<(), PageProblem> {
         Ok(())
     } else {
         Err(problem(format!(
-            "{:?} isn't a query a redirect may carry (name=value pairs, values percent-encoded)",
+            "{:?} isn't a query a link or redirect may carry (name=value pairs, values percent-encoded)",
             printable_prefix(query)
         )))
     }
@@ -1032,6 +1184,8 @@ mod tests {
             ],
             tabs: Vec::new(),
             refresh_seconds: None,
+            toolbar: None,
+            panel: None,
         };
         let post = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
             pairs
@@ -1367,6 +1521,8 @@ mod tests {
             tabs: Vec::new(),
             links: Vec::new(),
             refresh_seconds: None,
+            toolbar: None,
+            panel: None,
         }
     }
 
@@ -1442,6 +1598,7 @@ mod tests {
                     kind: crate::host::EntityKind::Character,
                     id: 90_000_001,
                     name: "Example Pilot".to_owned(),
+                    link: None,
                 },
                 subtitle: None,
                 corporation: None,

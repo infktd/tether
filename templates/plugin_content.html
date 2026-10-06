@@ -56,16 +56,17 @@
   {% if c.host == "data-sources" %}{% if let Some(o) = c.owners %}{% include "app_data_sources.html" %}{% endif %}
   {% else if c.host == "activity" %}{% if let Some(a) = c.activity %}{% include "app_activity.html" %}{% endif %}
   {% else %}
-  {% call plugin::sections(c.sections) %}{% endcall %}
-  {% if !c.tabs.is_empty() %}
-  {#- A tab swaps the content alone, keeps the scroll position and goes
-      in the history (DESIGN.md, Page hygiene and state). -#}
-  <nav class="view-chips self-start" aria-label="Tabs" hx-target="#plugin-content" hx-swap="outerHTML show:none" hx-push-url="true">
-    {% for t in c.tabs %}
-    <a href="{{ t.href }}"{% if t.current %} aria-current="page"{% endif %}>{{ t.label }}</a>
-    {% endfor %}
-  </nav>
-  {% call plugin::sections(c.tab_sections) %}{% endcall %}
+  {% call plugin::sections(c.before) %}{% endcall %}
+  {% if let Some(t) = c.toolbar %}{% include "plugin_toolbar.html" %}{% endif %}
+  {% if let Some(p) = c.panel %}
+  {#- The selected row's record panel beside the list (DESIGN.md, Record
+      panel); under it on a narrow screen. -#}
+  <div class="with-panel">
+    <div class="with-panel-list">{% call plugin::sections(c.list) %}{% endcall %}</div>
+    {% include "plugin_panel.html" %}
+  </div>
+  {% else %}
+  {% call plugin::sections(c.list) %}{% endcall %}
   {% endif %}
   {% endif %}
   {% if c.home.is_some() %}

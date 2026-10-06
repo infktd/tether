@@ -45,6 +45,9 @@ async fn install(h: &Harness, owner: &str) {
         "live-form",
         "groups",
         "tabbed-form",
+        "list",
+        "searched",
+        "panel",
     ] {
         manifest.push_str(&format!(
             "\n[[pages]]\npath = \"{path}\"\npermission = \"view\"\n"
@@ -1155,4 +1158,186 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
         "{bar}"
     );
     assert!(!body.contains("manage-link"), "{body}");
+}
+
+/// The toolbar (DESIGN.md, Toolbar): a long list gets Tether's search box
+/// over it, kept in the address, finding rows among those the page shows
+/// (every page of them).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_long_list_gets_a_search_kept_in_the_address(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let list = page(&h, "/plugins/acme.pages/list", &owner).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+    let toolbar = list
+        .body
+        .find(r#"<div class="toolbar""#)
+        .unwrap_or_else(|| panic!("{}", list.body));
+    // Over the list, after what comes before it (the stats).
+    let stats = list.body.find(r#"class="readouts""#).unwrap();
+    let table = list.body.find(r#"<table class="table""#).unwrap();
+    assert!(stats < toolbar && toolbar < table, "{}", list.body);
+    assert!(
+        list.body.contains(
+            r#"<form class="toolbar-search" method="get" action="/plugins/acme.pages/list" role="search" data-instant>"#
+        ),
+        "{}",
+        list.body
+    );
+    // 30 rows, 25 to a page.
+    assert!(!list.body.contains("Alpha 29<"), "{}", list.body);
+
+    // Found among all the rows, in one page, with the words in the box.
+    let found = page(&h, "/plugins/acme.pages/list?q=BETA", &owner)
+        .await
+        .body;
+    assert!(
+        found.contains("Beta 2<") && found.contains("Beta 30<") && !found.contains("Alpha "),
+        "{found}"
+    );
+    assert!(found.contains(r#"name="q" value="BETA""#), "{found}");
+    let none = page(&h, "/plugins/acme.pages/list?q=gamma", &owner)
+        .await
+        .body;
+    assert!(
+        none.contains("Nothing matches \u{201c}gamma\u{201d}."),
+        "{none}"
+    );
+    // A short list gets none; nor does a page without one.
+    let short = page(&h, "/plugins/acme.pages/panel", &owner).await.body;
+    assert!(!short.contains("toolbar-search"), "{short}");
+    let plain = page(&h, "/plugins/acme.pages/blocks", &owner).await.body;
+    assert!(!plain.contains(r#"class="toolbar""#), "{plain}");
+}
+
+/// A page searching its own data reads the search and its filters from
+/// its address; Tether hides none of its rows, and draws its filters as
+/// chips (the one applied, with a × taking it off) and "+ Filter".
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_apps_own_search_and_filters_are_its_own(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let res = page(&h, "/plugins/acme.pages/searched?q=zzz&kind=ore", &owner)
+        .await
+        .body;
+    assert!(
+        res.contains("asked q=&#34;zzz&#34; kind=&#34;ore&#34;"),
+        "{res}"
+    );
+    for name in ["x", "y", "z", "w", "v", "u", "t", "s"] {
+        assert!(res.contains(&format!("<td>{name}</td>")), "{name}: {res}");
+    }
+    assert!(
+        res.contains(r#"placeholder="Search things""#) && !res.contains("data-instant"),
+        "{res}"
+    );
+    // The filter applied: a chip whose × keeps the search.
+    assert!(
+        res.contains(
+            r#"<a href="/plugins/acme.pages/searched?q=zzz" aria-label="Take off Kind: Ore">"#
+        ),
+        "{res}"
+    );
+    // "+ Filter": each value, the search kept, the applied one marked.
+    assert!(
+        res.contains(r#"<a href="/plugins/acme.pages/searched?q=zzz&#38;kind=ice">Ice</a>"#),
+        "{res}"
+    );
+    assert!(
+        res.contains(
+            r#"<a href="/plugins/acme.pages/searched?q=zzz&#38;kind=ore" aria-current="true">Ore</a>"#
+        ),
+        "{res}"
+    );
+    // The search box keeps the filter.
+    assert!(
+        res.contains(r#"<input type="hidden" name="kind" value="ore">"#),
+        "{res}"
+    );
+}
+
+/// A row's name opens its record panel beside the list (DESIGN.md, Record
+/// panel): the link joins the page's address, the row is marked, Close
+/// goes back to the list as it was, and the panel's action posts like any
+/// the page offers.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_rows_name_opens_its_record_panel_beside_the_list(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let list = page(&h, "/plugins/acme.pages/panel?q=item", &owner)
+        .await
+        .body;
+    assert!(
+        list.contains(r#"href="/plugins/acme.pages/panel?q=item&#38;item=2""#),
+        "{list}"
+    );
+    assert!(!list.contains("record-panel"), "{list}");
+    let shown = page(&h, "/plugins/acme.pages/panel?q=item&item=2", &owner)
+        .await
+        .body;
+    assert!(
+        shown.contains(r#"<aside class="record-panel bk""#),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(r#"class="record-panel-title">Item 2</h2>"#)
+            && shown.contains("&#60;b&#62;context&#60;/b&#62;")
+            && shown.contains(">1.2b</text>"),
+        "{shown}"
+    );
+    assert_eq!(
+        shown
+            .matches(r#"<tr data-selected aria-current="true">"#)
+            .count(),
+        1,
+        "{shown}"
+    );
+    assert!(
+        shown.contains(r#"href="/plugins/acme.pages/panel?q=item" aria-label="Close""#),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(r#"href="/plugins/acme.pages/values">Open item</a>"#),
+        "{shown}"
+    );
+    // Its action posts as the page offers it, and no other row's.
+    let res = send(
+        &h.app,
+        post(
+            "/plugins/acme.pages/panel?item=2",
+            "_form=pin&item=2",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("pinned 2"), "{}", res.body);
+    let res = send(
+        &h.app,
+        post(
+            "/plugins/acme.pages/panel?item=2",
+            "_form=pin&item=3",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+}
+
+/// Tabs are the toolbar's view chips, keeping the search; the tables'
+/// pages and a selected row are left behind.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn tabs_are_the_toolbars_view_chips(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let res = page(&h, "/plugins/acme.pages/values?q=moon", &owner)
+        .await
+        .body;
+    let toolbar = res
+        .find(r#"<div class="toolbar""#)
+        .unwrap_or_else(|| panic!("{res}"));
+    let chips = res
+        .find(r#"<nav class="view-chips" aria-label="Tabs">"#)
+        .unwrap();
+    assert!(toolbar < chips, "{res}");
+    assert!(
+        res.contains(r#"href="/plugins/acme.pages/values?q=moon&#38;_tab=1""#),
+        "{res}"
+    );
 }

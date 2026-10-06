@@ -22,6 +22,7 @@ use tether_plugins::host::{
 use tether_plugins::services::{Builtin, Character, State as ViewerState, Viewer};
 use tether_plugins::{manifest, page as page_rules};
 
+use super::plugin_lists;
 use super::stay::{Toast, with_toast};
 use super::{CardFoot, PageError, Shell, encode, grouped, load, render};
 use crate::AppState;
@@ -37,10 +38,10 @@ pub const MAX_QUERY_PAIRS: usize = 20;
 pub const MAX_FORM_BYTES: usize = 64 * 1024;
 const MAX_FORM_PAIRS: usize = 100;
 /// The host's own query parameter: which tab to show.
-const TAB: &str = "_tab";
+pub(super) const TAB: &str = "_tab";
 /// The host's per-table page numbers: `_p0=2` is the page's first table on
 /// its second page.
-const TABLE_PAGE: &str = "_p";
+pub(super) const TABLE_PAGE: &str = "_p";
 /// Rows a table shows at once (Jay, 2026-09-30).
 pub const ROWS_PER_PAGE: usize = 25;
 /// The host's own form field: which form was posted.
@@ -95,9 +96,38 @@ pub struct ValueView {
     /// What a table sorts it by (`data-sort`, assets/live.js): seconds for
     /// times and countdowns, the plain number for counts and ISK.
     pub sort: Option<String>,
+    /// A link selecting the record panel shown: its row is the selected
+    /// one.
+    pub selects: bool,
 }
 
 impl ValueView {
+    /// Words alone, drawn as they are.
+    pub fn plain(text: String) -> Self {
+        Self {
+            text,
+            title: None,
+            href: None,
+            primary: false,
+            download: false,
+            badge: None,
+            status: None,
+            mono: false,
+            entity: None,
+            countdown: None,
+            progress: None,
+            actions: Vec::new(),
+            share: None,
+            add_owner: None,
+            levels: None,
+            composition: None,
+            defenses: None,
+            unit: None,
+            sort: None,
+            selects: false,
+        }
+    }
+
     /// Nothing to show: the host draws "—" for it where a value is
     /// expected (a labelled column, a fact).
     pub fn is_blank(&self) -> bool {
@@ -135,6 +165,8 @@ pub struct EntityView {
     pub initials: String,
     /// `sm` (20px) or `lg` (64px, a profile's subject).
     pub size: &'static str,
+    /// Its name links to one of the app's pages about it.
+    pub href: Option<String>,
 }
 
 pub struct CountdownView {
@@ -242,6 +274,15 @@ pub struct TableView {
     pub empty: Option<String>,
     /// Longer than a page: which one this is, and the way to the others.
     pub pager: Option<Pager>,
+    /// The row (of those shown) the record panel shown belongs to.
+    pub selected: Option<usize>,
+}
+
+impl TableView {
+    /// Askama hands loop indexes by reference.
+    pub fn is_selected(&self, row: &usize) -> bool {
+        self.selected == Some(*row)
+    }
 }
 
 /// A long table's place: rows `from` to `to` of `total`.
@@ -362,7 +403,7 @@ pub enum SectionView {
     Card(CardView),
     Text(String),
     Form(FormView),
-    Profile(ProfileView),
+    Profile(Box<ProfileView>),
     Code(CodeView),
     Cards(CardsView),
     Timeline(super::plugin_visuals::TimelineView),
@@ -584,7 +625,21 @@ fn entity(entity: &Entity, large: bool) -> EntityView {
         image: entity_image(&entity.kind, entity.id, pixels),
         initials: super::initials(&entity.name),
         size,
+        href: None,
     }
+}
+
+/// An entity as a page draws it, its link (if any) to the app's page
+/// about it, and whether that link selects the record panel shown.
+fn entity_in(ctx: &Ctx, entity: &Entity, large: bool) -> (EntityView, bool) {
+    let mut view = self::entity(entity, large);
+    let mut selects = false;
+    if let Some(link) = &entity.link {
+        let (href, chosen) = ctx.link_href(link);
+        view.href = Some(href);
+        selects = chosen;
+    }
+    (view, selects)
 }
 
 /// The time left until an instant: `2d 4h 13m`, `4h 13m`, `13m 05s`,
@@ -677,6 +732,12 @@ pub struct Ctx<'a> {
     /// The page's forms an action opens in a popup.
     popups: std::collections::BTreeSet<String>,
     next: std::cell::Cell<usize>,
+    /// The page shown, and its whole query (the tab's and the tables'
+    /// pages too): a link value to it with a query of its own joins it.
+    path: String,
+    query: Vec<(String, String)>,
+    /// The record panel's parameter and the row it selects.
+    selected: Option<(String, String)>,
 }
 
 impl<'a> Ctx<'a> {
@@ -691,7 +752,63 @@ impl<'a> Ctx<'a> {
             feet: None,
             popups: std::collections::BTreeSet::new(),
             next: std::cell::Cell::new(0),
+            path: String::new(),
+            query: Vec::new(),
+            selected: None,
         }
+    }
+
+    /// On the page at `path` with this whole query, its record panel (if
+    /// any) selected by `selected`.
+    fn at(
+        mut self,
+        path: &str,
+        query: Vec<(String, String)>,
+        selected: Option<(String, String)>,
+    ) -> Self {
+        self.path = path.to_owned();
+        self.query = query;
+        self.selected = selected;
+        self
+    }
+
+    /// A link value's address: one of the app's pages, with the link's
+    /// own query. To the page shown, that query joins the page's (its
+    /// search, filters, tab and tables' pages kept), so a row selecting
+    /// its record panel leaves the list as it is. And whether it selects
+    /// the panel shown.
+    fn link_href(&self, path: &str) -> (String, bool) {
+        let Some((to, query)) = path.split_once('?') else {
+            return (page_href(self.plugin, path), false);
+        };
+        let pairs: Vec<(String, String)> = format!("/?{query}")
+            .parse()
+            .ok()
+            .and_then(|uri| Query::<Vec<(String, String)>>::try_from_uri(&uri).ok())
+            .map(|Query(pairs)| pairs)
+            .unwrap_or_default();
+        let selects = self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| to == self.path && pairs.contains(selected));
+        let joined: Vec<String> = if to == self.path {
+            self.query
+                .iter()
+                .filter(|(k, _)| !pairs.iter().any(|(n, _)| n == k))
+                .chain(pairs.iter())
+                .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Joined only while the address stays one a page may have; else
+        // the link's own query alone.
+        let href = if !joined.is_empty() && plugin_lists::fits(&joined) {
+            format!("{}?{}", page_href(self.plugin, to), joined.join("&"))
+        } else {
+            format!("{}?{query}", page_href(self.plugin, to))
+        };
+        (href, selects)
     }
 
     /// The page's forms that actions open in a popup.
@@ -733,7 +850,7 @@ impl<'a> Ctx<'a> {
     }
 }
 
-fn action_view(ctx: &Ctx, action: &Action) -> ActionView {
+pub(super) fn action_view(ctx: &Ctx, action: &Action) -> ActionView {
     ActionView {
         label: action.label.clone(),
         href: ctx.action.to_owned(),
@@ -763,29 +880,9 @@ fn action_view(ctx: &Ctx, action: &Action) -> ActionView {
     }
 }
 
-fn value(ctx: &Ctx, value: &Value) -> ValueView {
+pub(super) fn value(ctx: &Ctx, value: &Value) -> ValueView {
     let plugin = ctx.plugin;
-    let plain = |text: String| ValueView {
-        text,
-        title: None,
-        href: None,
-        primary: false,
-        download: false,
-        badge: None,
-        status: None,
-        mono: false,
-        entity: None,
-        countdown: None,
-        progress: None,
-        actions: Vec::new(),
-        share: None,
-        add_owner: None,
-        levels: None,
-        composition: None,
-        defenses: None,
-        unit: None,
-        sort: None,
-    };
+    let plain = ValueView::plain;
     let mono = |text: String| ValueView {
         mono: true,
         ..plain(text)
@@ -822,12 +919,16 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
                 ..plain(badge.label.clone())
             },
         },
-        Value::Link(link) => ValueView {
-            href: Some(page_href(plugin, &link.path)),
-            primary: link.primary,
-            download: link.path.starts_with("downloads/"),
-            ..plain(link.label.clone())
-        },
+        Value::Link(link) => {
+            let (href, selects) = ctx.link_href(&link.path);
+            ValueView {
+                href: Some(href),
+                primary: link.primary,
+                download: link.path.starts_with("downloads/"),
+                selects,
+                ..plain(link.label.clone())
+            }
+        }
         Value::Action(action) => ValueView {
             actions: vec![action_view(ctx, action)],
             ..plain(String::new())
@@ -836,10 +937,14 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
             actions: actions.iter().map(|a| action_view(ctx, a)).collect(),
             ..plain(String::new())
         },
-        Value::Entity(e) => ValueView {
-            entity: Some(entity(e, false)),
-            ..plain(e.name.clone())
-        },
+        Value::Entity(e) => {
+            let (view, selects) = entity_in(ctx, e, false);
+            ValueView {
+                entity: Some(view),
+                selects,
+                ..plain(e.name.clone())
+            }
+        }
         // A checked link path, under the plugin's own pages: the address
         // is the site's and the plugin's, never one the plugin wrote.
         Value::Share(path) => ValueView {
@@ -902,10 +1007,10 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
 
 fn profile(ctx: &Ctx, p: &Profile) -> ProfileView {
     ProfileView {
-        subject: entity(&p.subject, true),
+        subject: entity_in(ctx, &p.subject, true).0,
         subtitle: p.subtitle.clone(),
-        corporation: p.corporation.as_ref().map(|e| entity(e, false)),
-        alliance: p.alliance.as_ref().map(|e| entity(e, false)),
+        corporation: p.corporation.as_ref().map(|e| entity_in(ctx, e, false).0),
+        alliance: p.alliance.as_ref().map(|e| entity_in(ctx, e, false).0),
         facts: p
             .facts
             .iter()
@@ -960,6 +1065,7 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
         ),
         Section::Table(table) => SectionView::Table(TableView {
             pager: None,
+            selected: None,
             title: table.title.clone(),
             columns: table
                 .columns
@@ -986,7 +1092,7 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
                 .collect(),
         }),
         Section::Text(text) => SectionView::Text(text.clone()),
-        Section::Profile(p) => SectionView::Profile(profile(ctx, p)),
+        Section::Profile(p) => SectionView::Profile(Box::new(profile(ctx, p))),
         Section::Cards(grid) => SectionView::Cards(CardsView {
             register: (grid.register && ctx.registers)
                 .then(|| format!("/register?app={}", ctx.plugin)),
@@ -1121,9 +1227,14 @@ pub struct ContentView {
     pub links: Vec<TabLink>,
     /// Its primary links, drawn as buttons after them.
     pub buttons: Vec<TabLink>,
-    pub sections: Vec<SectionView>,
-    pub tabs: Vec<TabLink>,
-    pub tab_sections: Vec<SectionView>,
+    /// The page's sections before its list, the toolbar over the list
+    /// (DESIGN.md, Toolbar), the list (its tab's sections, or the page's
+    /// own from its first table on), and the selected row's record panel
+    /// beside it.
+    pub before: Vec<SectionView>,
+    pub toolbar: Option<super::plugin_lists::ToolbarView>,
+    pub list: Vec<SectionView>,
+    pub panel: Option<super::plugin_lists::PanelView>,
     pub error: Option<String>,
     pub watermark: String,
     /// Seconds between reloads, while the page asks for them.
@@ -1273,6 +1384,8 @@ impl HostPage {
             tabs: Vec::new(),
             links: Vec::new(),
             refresh_seconds: None,
+            toolbar: None,
+            panel: None,
         }
     }
 }
@@ -1785,6 +1898,11 @@ fn each_entity(page: &mut Page, f: &mut impl FnMut(&mut Entity)) {
             value(v, f);
         }
     }
+    if let Some(panel) = page.panel.as_mut() {
+        for (_, v) in &mut panel.facts {
+            value(v, f);
+        }
+    }
     let sections = page
         .sections
         .iter_mut()
@@ -1880,10 +1998,16 @@ fn draw(
     let id = opened.running.manifest.plugin.id.clone();
     let audited = opened.running.manifest.page_audited(&opened.path);
     let tab = opened.tab.min(page.tabs.len().saturating_sub(1));
-    // Tab links keep the page's query, and set only the host's `_tab`.
+    // The record panel's parameter, and the row it selects.
+    let panel_param = page.panel.as_ref().map(|p| p.param.as_str());
+    let selected =
+        panel_param.and_then(|param| opened.query.iter().find(|(k, _)| k == param).cloned());
+    // Tab links keep the page's query (not the selected row), and set
+    // only the host's `_tab`.
     let base_query: Vec<String> = opened
         .query
         .iter()
+        .filter(|(k, _)| Some(k.as_str()) != panel_param)
         .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
         .collect();
     let tab_href = |i: usize| {
@@ -1891,10 +2015,22 @@ fn draw(
         parts.push(format!("{TAB}={i}"));
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
+    // The whole query as it stands, for links joining it.
+    let mut whole: Vec<(String, String)> = opened.query.clone();
+    if tab > 0 {
+        whole.push((TAB.to_owned(), tab.to_string()));
+    }
+    whole.extend(
+        opened
+            .table_pages
+            .iter()
+            .map(|(n, p)| (format!("{TABLE_PAGE}{n}"), p.to_string())),
+    );
     let mut ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
         .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
         .adding_owners(owner_back(&opened))
-        .with_popups(page_rules::popup_forms(page));
+        .with_popups(page_rules::popup_forms(page))
+        .at(&opened.path, whole, selected);
     if let Some(home) = &opened.home {
         ctx = ctx.with_feet(&home.feet);
     }
@@ -1905,6 +2041,21 @@ fn draw(
         .get(tab)
         .map(|chosen| arrange(chosen.sections.iter().map(|s| section(&ctx, s)).collect()))
         .unwrap_or_default();
+    let mut sections = sections;
+    let mut tab_sections = tab_sections;
+    // Tether's search among the rows shown, unless the page searches its
+    // own data (DESIGN.md, Toolbar), before the tables are paged.
+    let longest = plugin_lists::longest(&sections).max(plugin_lists::longest(&tab_sections));
+    let own_search = page.toolbar.as_ref().is_some_and(|t| t.search.is_some());
+    let q = opened
+        .query
+        .iter()
+        .find(|(k, _)| k == page_rules::SEARCH_PARAM)
+        .map_or("", |(_, v)| v.as_str());
+    if !own_search {
+        plugin_lists::find_rows(&mut sections, q);
+        plugin_lists::find_rows(&mut tab_sections, q);
+    }
     // Long tables a page at a time, each keeping the others' pages.
     let table_href = |index: usize, number: usize| {
         let mut parts = base_query.clone();
@@ -1919,8 +2070,6 @@ fn draw(
         parts.push(format!("{TABLE_PAGE}{index}={number}"));
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
-    let mut sections = sections;
-    let mut tab_sections = tab_sections;
     let mut next_index = 0;
     paginate(
         &mut sections,
@@ -1934,7 +2083,9 @@ fn draw(
         &opened.table_pages,
         &table_href,
     );
-    let tabs = page
+    plugin_lists::mark_selected(&mut sections);
+    plugin_lists::mark_selected(&mut tab_sections);
+    let tabs: Vec<TabLink> = page
         .tabs
         .iter()
         .enumerate()
@@ -1944,6 +2095,31 @@ fn draw(
             current: i == tab,
         })
         .collect();
+    // The toolbar goes over the list: the tab's, or the page's own from
+    // its first table.
+    let (before, list) = if page.tabs.is_empty() {
+        plugin_lists::split_at_list(sections)
+    } else {
+        (sections, tab_sections)
+    };
+    let page_address = page_href(&id, &opened.path);
+    let here = plugin_lists::Here {
+        href: &page_address,
+        query: &opened.query,
+        tab,
+        pages: &opened.table_pages,
+        panel: panel_param,
+    };
+    let toolbar = plugin_lists::toolbar(page.toolbar.as_ref(), &here, tabs, longest);
+    let panel = page.panel.as_ref().map(|p| {
+        plugin_lists::panel(
+            p,
+            &here,
+            |v| value(&ctx, v),
+            |path| ctx.link_href(path).0,
+            |a| action_view(&ctx, a),
+        )
+    });
     let header_link = |l: &tether_plugins::host::Link| TabLink {
         label: l.label.clone(),
         href: page_href(&id, &l.path),
@@ -2060,9 +2236,10 @@ fn draw(
         },
         links,
         buttons,
-        sections,
-        tabs,
-        tab_sections,
+        before,
+        toolbar,
+        list,
+        panel,
         // A page showing a problem with a post isn't reloaded: that would
         // take the problem away.
         // Nor is an audited page: every reload would be an audit entry, and
@@ -2541,6 +2718,7 @@ pub async fn download(
     State(state): State<AppState>,
     Path((id, name)): Path<(String, String)>,
     session: Option<CurrentSession>,
+    headers: HeaderMap,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     // 404 whether it's missing or just not for this account, as pages.
@@ -2564,6 +2742,21 @@ pub async fn download(
         .await?
         .and_then(|a| a.main)
         .ok_or_else(|| AppError::bad_request("Choose a main character first (Change Main)."))?;
+    // Asked by htmx (any link to it the browser didn't take as a
+    // download): back as a navigation, so the browser saves the file and
+    // its rows are never swapped into the page as HTML. Not yet audited:
+    // the navigation is.
+    if super::is_htmx(&headers) {
+        let to = page_href(&id, &format!("downloads/{}", file.name));
+        let mut response = StatusCode::OK.into_response();
+        if let Ok(value) = HeaderValue::from_str(&to) {
+            response.headers_mut().insert("hx-redirect", value);
+        }
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return Ok(response);
+    }
     if let Err(retry) = state
         .limits
         .plugin_pages
@@ -2606,6 +2799,7 @@ mod tests {
             kind,
             id,
             name: name.to_owned(),
+            link: None,
         };
         let corp = EntityKind::Corporation;
         assert!(unnamed(&e(corp, 98_000_001, "")));
@@ -2622,6 +2816,7 @@ mod tests {
     fn table(title: &str, columns: &[&str]) -> SectionView {
         SectionView::Table(TableView {
             pager: None,
+            selected: None,
             title: Some(title.to_owned()),
             columns: columns
                 .iter()

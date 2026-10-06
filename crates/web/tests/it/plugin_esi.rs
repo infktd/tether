@@ -2453,6 +2453,19 @@ async fn apps_offer_csv_downloads_the_host_writes(db: PgPool) {
         res.headers["content-disposition"],
         "attachment; filename=\"wallet.csv\""
     );
+    // Asked by htmx (a link the browser didn't take as a download): back
+    // as a navigation, never its rows swapped into the page as HTML.
+    let mut by_htmx = get("/plugins/acme.files/downloads/wallet", &[(SESSION, &owner)]);
+    by_htmx
+        .headers_mut()
+        .insert("hx-request", "true".parse().unwrap());
+    let res = send(&h.app, by_htmx).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(
+        res.headers["hx-redirect"],
+        "/plugins/acme.files/downloads/wallet"
+    );
+    assert!(res.body.is_empty(), "{}", res.body);
     // A build under way doesn't change what's served.
     let out = build_download(&h, serde_json::json!([]), &[("finish", "no")], false).await;
     assert_eq!(out, "ok");

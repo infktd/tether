@@ -480,6 +480,56 @@
       }
     }
   };
+  // The toolbar's search box (DESIGN.md, Toolbar). Tether's own search
+  // hides the rows not matching as you type; either way the server is
+  // asked after a pause or on Enter, so the words land in the address
+  // (an empty search leaves it), and `/` puts you in the box.
+  const SEARCH_PAUSE = 450;
+  let searchTimer = null;
+  document.addEventListener("input", (event) => {
+    const input = event.target;
+    const form = input instanceof HTMLInputElement && input.name === "q" && input.closest("form.toolbar-search");
+    if (!form) return;
+    if ("instant" in form.dataset) {
+      for (const table of document.querySelectorAll("#plugin-content table.table")) filter(table, input.value);
+    }
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => form.requestSubmit(), SEARCH_PAUSE);
+  });
+  document.addEventListener("submit", () => clearTimeout(searchTimer), true);
+  document.addEventListener("htmx:configRequest", (event) => {
+    const form = event.detail.elt;
+    if (!(form instanceof HTMLFormElement) || !form.classList.contains("toolbar-search")) return;
+    const params = event.detail.parameters;
+    const q = typeof params.get === "function" ? params.get("q") : params.q;
+    if (typeof q === "string" && q.trim() === "") {
+      if (typeof params.delete === "function") params.delete("q");
+      else delete params.q;
+    }
+  });
+  const typing = (target) =>
+    target instanceof Element && (target.closest("input, textarea, select, [contenteditable]") !== null);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
+    const box = document.querySelector("form.toolbar-search input[name='q']");
+    if (!box) return;
+    event.preventDefault();
+    box.focus();
+    box.select();
+  });
+  // "+ Filter" closes on a click elsewhere, or Escape.
+  document.addEventListener("click", (event) => {
+    for (const menu of document.querySelectorAll("details.toolbar-menu[open]")) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    for (const menu of document.querySelectorAll("details.toolbar-menu[open]")) {
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    }
+  });
   const enhance = (root) => {
     // A views bar wider than a phone's screen: the current view brought
     // into sight, without moving the page.
@@ -497,7 +547,8 @@
         if (sortable(heading)) heading.tabIndex = 0;
       }
       const rows = [...table.tBodies].reduce((n, b) => n + [...b.rows].filter(dataRow).length, 0);
-      if (rows < FILTER_FROM) continue;
+      // An app page's toolbar search is the filter box (DESIGN.md, Toolbar).
+      if (rows < FILTER_FROM || table.closest("#plugin-content")?.querySelector("form.toolbar-search")) continue;
       const box = document.createElement("div");
       box.className = "table-filter";
       const input = document.createElement("input");

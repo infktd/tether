@@ -100,8 +100,8 @@ macro_rules! export {
 pub use bindings::tether::plugin::page::{
     Action, Badge, Card, CardGrid, Choice, CodeBlock, Column, Composition, Defenses, Entity,
     EntityKind, Field, FieldKind, Form, Lane, LaneItem, Levels, Link, NumberInput, Profile,
-    ProfileCard, Progress, Section, SelectInput, Share, Stat, Tab, Table, TextInput, Timeline,
-    Tone, Value, Window,
+    ProfileCard, Progress, RecordPanel, Section, SelectInput, Share, Stat, Tab, Table, TextInput,
+    Timeline, Tone, Toolbar, ToolbarFilter, Value, Window,
 };
 pub use bindings::{Page, PageError, Request, Submission, SubmitResult};
 
@@ -856,7 +856,24 @@ impl Page {
             tabs: Vec::new(),
             links: Vec::new(),
             refresh_seconds: None,
+            toolbar: None,
+            panel: None,
         }
+    }
+
+    /// The page's own search and filters above its lists (see
+    /// [`Toolbar::new`]). Without one, Tether still draws a search box on a
+    /// page with a table, and finds rows among those shown.
+    pub fn toolbar(mut self, toolbar: Toolbar) -> Self {
+        self.toolbar = Some(toolbar);
+        self
+    }
+
+    /// The selected row's details beside the list (see [`RecordPanel::new`]):
+    /// draw it while the request's query selects a row.
+    pub fn panel(mut self, panel: RecordPanel) -> Self {
+        self.panel = Some(panel);
+        self
     }
 
     /// A link to another of your pages beside the title (at most 8), for
@@ -944,6 +961,151 @@ impl Page {
             sections,
         });
         self
+    }
+}
+
+impl Toolbar {
+    /// No search of your own (Tether finds rows among those shown) and no
+    /// filters yet.
+    pub fn new() -> Self {
+        Self {
+            search: None,
+            filters: Vec::new(),
+        }
+    }
+
+    /// Your page searches its own data for the box's words: `q` in the
+    /// request's query ([`Request::search`]). `placeholder` says what it
+    /// finds: "Search moons, systems, refineries".
+    pub fn search(mut self, placeholder: impl Into<String>) -> Self {
+        self.search = Some(placeholder.into());
+        self
+    }
+
+    /// A filter (at most 8): its query parameter (lowercase letters,
+    /// digits and `_`, not `q`), its name, and its values with their words.
+    /// Read the chosen one with [`Request::param`].
+    pub fn filter(
+        mut self,
+        param: impl Into<String>,
+        label: impl Into<String>,
+        choices: Vec<(String, String)>,
+    ) -> Self {
+        self.filters.push(ToolbarFilter {
+            param: param.into(),
+            label: label.into(),
+            choices: choices
+                .into_iter()
+                .map(|(value, label)| Choice { value, label })
+                .collect(),
+            multiple: false,
+        });
+        self
+    }
+
+    /// A filter taking several of its values at once, showing what has any
+    /// of them (tags): read them with [`Request::params`]. Its values have
+    /// no commas.
+    pub fn filter_any(
+        mut self,
+        param: impl Into<String>,
+        label: impl Into<String>,
+        choices: Vec<(String, String)>,
+    ) -> Self {
+        self = self.filter(param, label, choices);
+        if let Some(last) = self.filters.last_mut() {
+            last.multiple = true;
+        }
+        self
+    }
+}
+
+impl Default for Toolbar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RecordPanel {
+    /// The details of the row `param` selects (its query parameter, as a
+    /// filter's): `kind` is the overline ("Moon · R32"), `title` its name.
+    /// Link the row's name to the same page with it:
+    /// `link(name, format!("moons?moon={id}"))`.
+    pub fn new(
+        param: impl Into<String>,
+        kind: impl Into<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        Self {
+            param: param.into(),
+            kind: kind.into(),
+            title: title.into(),
+            context: None,
+            figure: None,
+            facts: Vec::new(),
+            open: None,
+            action: None,
+        }
+    }
+
+    /// A line under the title.
+    pub fn context(mut self, text: impl Into<String>) -> Self {
+        self.context = Some(text.into());
+        self
+    }
+
+    /// Its picture, drawn large: a ring of what it's made of (1 to 8
+    /// parts, see [`part`]) with a few words in its middle (a moon's
+    /// value).
+    pub fn figure(mut self, parts: Vec<Share>, center: impl Into<String>) -> Self {
+        self.figure = Some(Composition {
+            parts,
+            center: Some(center.into()),
+        });
+        self
+    }
+
+    /// A fact (at most 20).
+    pub fn fact(mut self, label: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.facts.push((label.into(), value.into()));
+        self
+    }
+
+    /// Its own page, as the panel's primary button ("Open moon").
+    pub fn open(mut self, label: impl Into<String>, path: impl Into<String>) -> Self {
+        self.open = Some(link(label, path));
+        self
+    }
+
+    /// One more button that posts (see [`action`]).
+    pub fn action(mut self, action: Action) -> Self {
+        self.action = Some(action);
+        self
+    }
+}
+
+impl Request {
+    /// A query parameter's value: a toolbar filter's, a record panel's
+    /// (`""` when it isn't there).
+    pub fn param(&self, name: &str) -> &str {
+        self.query
+            .iter()
+            .find(|(n, _)| n == name)
+            .map_or("", |(_, v)| v.as_str())
+    }
+
+    /// The toolbar's search, trimmed (`""` when there's none).
+    pub fn search(&self) -> &str {
+        self.param("q").trim()
+    }
+
+    /// A filter taking several values ([`Toolbar::filter_any`]): those
+    /// chosen, none when it isn't there.
+    pub fn params(&self, name: &str) -> Vec<&str> {
+        self.param(name)
+            .split(',')
+            .filter(|v| !v.is_empty())
+            .collect()
     }
 }
 
@@ -1345,6 +1507,17 @@ fn entity(kind: EntityKind, id: i64, name: impl Into<String>) -> Entity {
         kind,
         id,
         name: name.into(),
+        link: None,
+    }
+}
+
+impl Entity {
+    /// Its name links to one of your pages about it: a row's name opening
+    /// its record (`character(id, name).link(format!("character/{id}"))`),
+    /// or with a query, its record panel (see [`RecordPanel::new`]).
+    pub fn link(mut self, path: impl Into<String>) -> Self {
+        self.link = Some(path.into());
+        self
     }
 }
 

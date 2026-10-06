@@ -26,8 +26,8 @@ pub use tether::plugin::log::Level;
 pub use tether::plugin::page::{
     Action, Badge, Card, CardGrid, Choice, CodeBlock, Column, Composition, Defenses, Entity,
     EntityKind, Field, FieldKind, Form, Lane, LaneItem, Levels, Link, NumberInput, Profile,
-    ProfileCard, Progress, Section, SelectInput, Share, Stat, Tab, Table, TextInput, Timeline,
-    Tone, Value, Window,
+    ProfileCard, Progress, RecordPanel, Section, SelectInput, Share, Stat, Tab, Table, TextInput,
+    Timeline, Tone, Toolbar, ToolbarFilter, Value, Window,
 };
 // `Page`, `PageError` and `Request` are generated at this module's root:
 // the world `use`s them.

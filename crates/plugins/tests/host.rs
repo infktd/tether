@@ -86,11 +86,17 @@ async fn bad_pages_are_refused_before_anyone_draws_them() {
     );
     // The newer blocks are checked the same way.
     assert!(render(&host, &pages, "blocks").await.is_ok());
+    for fine in ["list", "searched", "panel"] {
+        assert!(render(&host, &pages, fine).await.is_ok(), "{fine}");
+    }
     for (path, why) in [
         ("bad-page-link", "isn't a path"),
         ("bad-progress", "isn't an RFC 3339 time"),
         ("action-clash", "which the form has too"),
         ("popup-tab", "isn't on its tab"),
+        ("bad-toolbar", "isn't a query parameter a page may use"),
+        ("bad-panel", "is used twice on the page"),
+        ("panel-download", "opens its page, not a download"),
     ] {
         let err = render(&host, &pages, path).await.unwrap_err();
         assert!(

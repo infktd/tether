@@ -63,7 +63,11 @@ pub struct CompositionView {
 }
 
 pub fn composition(c: &Composition) -> CompositionView {
-    let large = c.center.is_some();
+    composition_as(c, c.center.is_some())
+}
+
+/// A composition drawn `large` (a record panel's figure) or small.
+pub fn composition_as(c: &Composition, large: bool) -> CompositionView {
     let (size, stroke) = if large { (180u32, 12.0) } else { (36u32, 4.0) };
     let mid = f64::from(size) / 2.0;
     let radius = mid - stroke / 2.0 - 1.0;

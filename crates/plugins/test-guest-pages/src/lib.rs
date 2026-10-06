@@ -2,10 +2,68 @@
 
 use tether_plugin_sdk::{
     Card, CardGrid, CodeBlock, Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin,
-    Profile, Request, Stat, Submission, SubmitResult, Table, Timeline, Tone, action, actions,
-    add_owner, alliance, badge, character, composition, composition_large, corporation, countdown,
-    defenses, faction, isk, item_type, levels, link, log, part, progress, share, time,
+    Profile, RecordPanel, Request, Stat, Submission, SubmitResult, Table, Timeline, Tone, Toolbar,
+    action, actions, add_owner, alliance, badge, character, composition, composition_large,
+    corporation, countdown, defenses, faction, isk, item_type, levels, link, log, part, progress,
+    share, time,
 };
+
+/// A long list with no search of its own: Tether finds rows among those
+/// it shows.
+fn list() -> Page {
+    let mut table = Table::new(vec![Column::text("Name"), Column::numeric("n")]);
+    for n in 1..=30 {
+        let name = if n % 2 == 0 { "Beta" } else { "Alpha" };
+        table = table.row(vec![format!("{name} {n}").into(), n.into()]);
+    }
+    Page::new("List")
+        .stats(vec![Stat::new("Rows", 30)])
+        .table(table)
+}
+
+/// A page searching its own data, with a filter: it says what it was
+/// asked, and its rows don't match (Tether mustn't hide them).
+fn searched(request: &Request) -> Page {
+    let mut table = Table::new(vec![Column::text("Name")]);
+    for name in ["x", "y", "z", "w", "v", "u", "t", "s"] {
+        table = table.row(vec![name.into()]);
+    }
+    Page::new("Searched")
+        .toolbar(Toolbar::new().search("Search things").filter(
+            "kind",
+            "Kind",
+            vec![("ore".into(), "Ore".into()), ("ice".into(), "Ice".into())],
+        ))
+        .text(format!(
+            "asked q={:?} kind={:?}",
+            request.search(),
+            request.param("kind")
+        ))
+        .table(table)
+}
+
+/// Rows whose names select their record panel.
+fn panel(request: &Request) -> Page {
+    let mut table = Table::new(vec![Column::text("Item"), Column::numeric("n")]);
+    for n in 1..=3 {
+        table = table.row(vec![
+            link(format!("Item {n}"), format!("panel?item={n}")).into(),
+            n.into(),
+        ]);
+    }
+    let mut page = Page::new("Panel").table(table);
+    if let Ok(n) = request.param("item").parse::<i64>() {
+        page = page.panel(
+            RecordPanel::new("item", "Item · test", format!("Item {n}"))
+                .context("<b>context</b>")
+                .figure(vec![part("Ore", 2.0, 1), part("Ice", 1.0, 3)], "1.2b")
+                .fact("Number", n)
+                .open("Open item", "values")
+                .action(action("Pin", "pin").field("item", n.to_string())),
+        );
+    }
+    page
+}
 
 fn note_form() -> Form {
     Form::new("note", "Save")
@@ -259,12 +317,33 @@ impl Plugin for Pages {
                 )
                 .tab("Form", vec![tether_plugin_sdk::Section::Form(note_form())])),
             "admin/secret" => Ok(Page::new("Secret")),
+            "list" => Ok(list()),
+            "searched" => Ok(searched(&request)),
+            "panel" => Ok(panel(&request)),
+            // The search's parameter is Tether's.
+            "bad-toolbar" => Ok(Page::new("Bad toolbar").toolbar(Toolbar::new().filter(
+                "q",
+                "Q",
+                vec![("a".into(), "A".into())],
+            ))),
+            // A panel opens its record's page, not a download.
+            "panel-download" => Ok(Page::new("Panel download")
+                .panel(RecordPanel::new("item", "Item", "One").open("Export", "downloads/rows"))),
+            // A panel's parameter can't be a filter's too.
+            "bad-panel" => Ok(Page::new("Bad panel")
+                .toolbar(Toolbar::new().filter("item", "Item", vec![("1".into(), "1".into())]))
+                .panel(RecordPanel::new("item", "Item", "One"))),
             _ => Err(PageError::NotFound),
         }
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         log::info(format!("submitted {}", submission.form));
+        if submission.form == "pin" {
+            return Ok(SubmitResult::Page(
+                Page::new("Pinned").text(format!("pinned {}", submission.value("item"))),
+            ));
+        }
         if submission.request.path == "tabbed-form" {
             return Ok(SubmitResult::Redirect("tabbed-form".into()));
         }

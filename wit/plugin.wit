@@ -44,7 +44,12 @@ interface page {
     /// A link to another page of the same plugin.
     record link {
         label: string,
-        /// Relative to the plugin's pages, e.g. `moons/40161234`.
+        /// Relative to the plugin's pages, e.g. `moons/40161234`. As a
+        /// value (a table's or a card's), it may carry a query
+        /// (`moons?moon=40161234`, names and values as a redirect's): to the
+        /// page being shown, its parameters join the page's own address,
+        /// keeping its search and filters (a row selecting its record
+        /// panel).
         path: string,
         /// Drawn as a primary button (e.g. "Create timer" beside a page's
         /// title) rather than as a link. At most one per screen region.
@@ -94,6 +99,10 @@ interface page {
         kind: entity-kind,
         id: s64,
         name: string,
+        /// One of the plugin's pages about it: its name links there (a
+        /// row's name opening its record), as a `link` value's path, query
+        /// and all.
+        link: option<string>,
     }
 
     /// A thin bar, filled from 0 to 1.
@@ -388,6 +397,59 @@ interface page {
         sections: list<section>,
     }
 
+    /// A filter in a page's toolbar: a query parameter and the values it
+    /// may take. Applied, it is a chip with a × that takes it off again;
+    /// `render` reads it from the request's query.
+    record toolbar-filter {
+        /// The query parameter it sets: lowercase letters, digits and `_`,
+        /// starting with a letter; not `q`, and unique on the page.
+        param: string,
+        /// What it filters by ("Rarity").
+        label: string,
+        /// 1 to 100: its values and their words ("32", "R32").
+        choices: list<choice>,
+        /// Several of its values at once, any of them (tags): the address
+        /// lists them joined by commas, so values have none; else one.
+        multiple: bool,
+    }
+
+    /// The toolbar above a page's lists. Tether draws one on every page
+    /// with a table: a search box (`q` in the address) finding rows among
+    /// those the page shows, and the page's tabs as view chips. A page that
+    /// searches its own data (more than it shows, or by what it doesn't
+    /// show) says so here and reads `q` from the request's query itself.
+    record toolbar {
+        /// The page searches its own data for `q`: the box's words
+        /// ("Search moons, systems, refineries"). Left out, Tether finds
+        /// rows among those shown.
+        search: option<string>,
+        /// At most 8.
+        filters: list<toolbar-filter>,
+    }
+
+    /// A row's details beside the page's list, drawn while the page's
+    /// address selects it: a row's name links to the same page with the
+    /// row in the query (`moons?moon=40161234`), and `render` draws its
+    /// panel. Close takes the parameter out again; the list keeps its
+    /// search, filters and tab.
+    record record-panel {
+        /// The query parameter selecting the row (as a filter's).
+        param: string,
+        /// An overline: what it is ("Moon · R32").
+        kind: string,
+        title: string,
+        /// A line under the title.
+        context: option<string>,
+        /// Its picture, drawn large: a ring of what it's made of.
+        figure: option<composition>,
+        /// Label and value pairs (at most 20).
+        facts: list<tuple<string, value>>,
+        /// Its own page, the panel's primary button ("Open moon").
+        open: option<link>,
+        /// One more button that posts ("Add to planner").
+        action: option<action>,
+    }
+
     record page {
         title: string,
         description: option<string>,
@@ -403,6 +465,11 @@ interface page {
         /// while a first sync fills it in. It stops once a render leaves it
         /// out. Pages with a form, and audited pages, never reload.
         refresh-seconds: option<u32>,
+        /// Its own search and filters (see `toolbar`).
+        toolbar: option<toolbar>,
+        /// The selected row's details, while one is selected (see
+        /// `record-panel`).
+        panel: option<record-panel>,
     }
 
     /// Which of the plugin's pages is wanted.

@@ -7,7 +7,8 @@
 {%- endmacro %}
 
 {% macro entity(e) -%}
-<span class="entity">{% call picture(e) %}{% endcall %}<span class="entity-name">{{ e.name }}</span></span>
+{%- if let Some(href) = e.href -%}<a class="entity" href="{{ href }}">{% call picture(e) %}{% endcall %}<span class="entity-name underline underline-offset-4">{{ e.name }}</span></a>
+{%- else -%}<span class="entity">{% call picture(e) %}{% endcall %}<span class="entity-name">{{ e.name }}</span></span>{%- endif -%}
 {%- endmacro %}
 
 {#- A character's registration status (Registered, or what it's missing,
@@ -135,7 +136,7 @@
     <thead><tr>{% for c in table.columns %}<th scope="col"{% if c.numeric %} class="num text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in table.rows %}
-      <tr>{% for v in row %}{% let column = table.columns[loop.index0] %}<td{% if column.numeric %} class="num text-right"{% endif %}{% if let Some(key) = v.sort %} data-sort="{{ key }}"{% endif %}>{% if v.is_blank() && !column.label.is_empty() %}<span class="blank">—</span>{% else %}{% call value(v, column.numeric) %}{% endcall %}{% endif %}</td>{% endfor %}</tr>
+      <tr{% if table.is_selected(loop.index0) %} data-selected aria-current="true"{% endif %}>{% for v in row %}{% let column = table.columns[loop.index0] %}<td{% if column.numeric %} class="num text-right"{% endif %}{% if let Some(key) = v.sort %} data-sort="{{ key }}"{% endif %}>{% if v.is_blank() && !column.label.is_empty() %}<span class="blank">—</span>{% else %}{% call value(v, column.numeric) %}{% endcall %}{% endif %}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table>
@@ -165,7 +166,7 @@
       <div class="flex min-w-0 flex-col gap-1.5">
         {% if let Some(s) = p.subtitle %}<p class="ov">{{ s }}</p>{% endif %}
         <div class="flex flex-wrap items-center gap-2">
-          <h2 class="profile-name">{{ p.subject.name }}</h2>
+          <h2 class="profile-name">{% if let Some(href) = p.subject.href %}<a class="underline underline-offset-4" href="{{ href }}">{{ p.subject.name }}</a>{% else %}{{ p.subject.name }}{% endif %}</h2>
           {% for b in p.badges %}{% if let Some(tone) = b.status %}<span class="status-line" data-tone="{{ tone }}">{{ b.label }}</span>{% else %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endif %}{% endfor %}
         </div>
         {% if p.corporation.is_some() || p.alliance.is_some() %}
@@ -318,7 +319,7 @@
       <tr><td colspan="{{ set.columns.len() }}" class="text-sm text-muted-foreground">{% if let Some(empty) = g.empty %}{{ empty }}{% else %}Nothing here yet.{% endif %}</td></tr>
       {% endif %}
       {% for row in g.rows %}
-      <tr>{% for v in row %}{% let column = set.columns[loop.index0] %}<td{% if column.numeric %} class="num text-right"{% endif %}{% if let Some(key) = v.sort %} data-sort="{{ key }}"{% endif %}>{% if v.is_blank() && !column.label.is_empty() %}<span class="blank">—</span>{% else %}{% call value(v, column.numeric) %}{% endcall %}{% endif %}</td>{% endfor %}</tr>
+      <tr{% if g.is_selected(loop.index0) %} data-selected aria-current="true"{% endif %}>{% for v in row %}{% let column = set.columns[loop.index0] %}<td{% if column.numeric %} class="num text-right"{% endif %}{% if let Some(key) = v.sort %} data-sort="{{ key }}"{% endif %}>{% if v.is_blank() && !column.label.is_empty() %}<span class="blank">—</span>{% else %}{% call value(v, column.numeric) %}{% endcall %}{% endif %}</td>{% endfor %}</tr>
       {% endfor %}
       {% if let Some(p) = g.pager %}<tr class="table-pager"><td colspan="{{ set.columns.len() }}"><div class="pager">{% call pager(p) %}{% endcall %}</div></td></tr>{% endif %}
     </tbody>
