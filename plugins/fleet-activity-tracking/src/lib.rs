@@ -2568,7 +2568,7 @@ fn settings_page() -> Result<Page, PageError> {
             .required()
     };
     Ok(Page::new("Settings")
-        .description("aa-afat's settings, for every FAT link.")
+        .description("For every FAT link. Defaults are aa-afat's.")
         .form(
             Form::new("settings", "Save")
                 .field(minutes(
@@ -2576,27 +2576,27 @@ fn settings_page() -> Result<Page, PageError> {
                     "Default FAT link expiry time (minutes)",
                     settings.expiry_minutes,
                     1.0,
-                    "What New FAT link offers; the FC can change it. aa-afat's default: 60",
+                    "What New FAT link offers; the FC can change it. Default: 60.",
                 ))
                 .field(minutes(
                     "reopen_grace_minutes",
                     "Default FAT link reopen grace time (minutes)",
                     settings.reopen_grace_minutes,
                     0.0,
-                    "How long after closing a link can be reopened (once). 0: never. aa-afat's default: 60",
+                    "How long after closing a link can be reopened (once). 0: never. Default: 60.",
                 ))
                 .field(minutes(
                     "reopen_duration_minutes",
                     "Default FAT link reopen duration (minutes)",
                     settings.reopen_duration_minutes,
                     1.0,
-                    "How long a reopened link stays open. aa-afat's default: 60",
+                    "How long a reopened link stays open. Default: 60.",
                 ))
                 .field(
                     Field::number("log_days", "Default log duration (days)")
                         .range(Some(1.0), Some(3650.0), true)
                         .value(settings.log_days.to_string())
-                        .help("How long log entries are kept. aa-afat's default: 60")
+                        .help("How long log entries are kept. Default: 60.")
                         .required(),
                 )
                 .field(
@@ -2607,7 +2607,7 @@ fn settings_page() -> Result<Page, PageError> {
                     )
                     .help(
                         "New FAT link offers the doctrines Fittings shares that the FC may \
-                         see, instead of a text field. aa-afat's default: off",
+                         see, instead of a text field. Default: off.",
                     ),
                 ),
         ))

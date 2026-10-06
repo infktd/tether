@@ -88,14 +88,14 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
                 )
                 .range(retention_min, retention_max, true)
                 .value(settings.retention_days.to_string())
-                .help("MEMBERAUDIT_DATA_RETENTION_LIMIT: 360, and at least 7")
+                .help("At least 7. Default: 360.")
                 .required(),
             )
             .field(
                 Field::number("max_mails", "Mails kept per character")
                     .range(mails_min, mails_max, true)
                     .value(settings.max_mails.to_string())
-                    .help("MEMBERAUDIT_MAX_MAILS: 250. The newest are kept")
+                    .help("The newest are kept. Default: 250.")
                     .required(),
             )
             .field(
@@ -104,9 +104,7 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
                     "Read and show corporation roles",
                     settings.roles,
                 )
-                .help(
-                    "MEMBERAUDIT_FEATURE_ROLES_ENABLED: off. Turning it off forgets the roles read",
-                ),
+                .help("Turning it off forgets the roles read. Default: off."),
             )
             .field(
                 Field::number(
@@ -115,7 +113,7 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
                 )
                 .range(share_min, share_max, true)
                 .value(settings.sharing_timeout_minutes.to_string())
-                .help("MEMBERAUDIT_SHARING_TIMEOUT: 0, shared until its pilot stops sharing it")
+                .help("0: shared until its pilot stops sharing it. Default: 0.")
                 .required(),
             ),
     ))

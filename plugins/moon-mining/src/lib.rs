@@ -1772,21 +1772,21 @@ fn settings_page() -> Result<Page, PageError> {
                 Field::number("volume_per_day", "Ore a drill pulls a day (m³)")
                     .range(Some(1.0), Some(10_000_000.0), true)
                     .value(format!("{:.0}", settings.rates.per_day))
-                    .help("aa-moonmining's MOONMINING_VOLUME_PER_DAY: 960400 unless CCP changes it")
+                    .help("Default: 960,400, unless CCP changes it.")
                     .required(),
             )
             .field(
                 Field::number("days_per_month", "Days in a month")
                     .range(Some(28.0), Some(31.0), false)
                     .value(settings.rates.days_per_month.to_string())
-                    .help("aa-moonmining's MOONMINING_DAYS_PER_MONTH: 30.4. Moons' monthly value uses both")
+                    .help("Moons' monthly value uses this and the ore a day. Default: 30.4.")
                     .required(),
             )
             .field(
                 Field::number("stale_hours", "Hours after the chunk arrives until an extraction is Past")
                     .range(Some(1.0), Some(168.0), true)
                     .value(settings.stale.num_hours().to_string())
-                    .help("aa-moonmining's MOONMINING_COMPLETED_EXTRACTIONS_HOURS_UNTIL_STALE: 12")
+                    .help("Default: 12.")
                     .required(),
             )
             .field(

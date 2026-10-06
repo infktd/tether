@@ -697,11 +697,13 @@ async fn member_audit_end_to_end(db: PgPool) {
     // roles on, a shorter retention and fewer mails kept.
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
+    // Help in words, with the defaults: no internal setting names.
     assert!(
-        settings.body.contains("MEMBERAUDIT_DATA_RETENTION_LIMIT"),
+        settings.body.contains("At least 7. Default: 360."),
         "{}",
         settings.body
     );
+    assert!(!settings.body.contains("MEMBERAUDIT_"), "{}", settings.body);
     let refused = send(
         &h.app,
         form(
