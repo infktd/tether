@@ -45,6 +45,9 @@ struct SetupPage {
     steps: Vec<Step>,
     view: SetupView,
     callback_url: String,
+    /// The scopes to enable on the EVE application: every one Tether and
+    /// the apps it comes with may ask for.
+    application_scopes: Vec<String>,
     client_id: String,
     suggested: Option<Suggestion>,
     error: Option<String>,
@@ -126,10 +129,19 @@ async fn render_page(
         .map(|s| s.name),
         _ => None,
     };
+    let application_scopes = if matches!(view, SetupView::Sso) {
+        crate::compliance::application_scopes(state, true)
+            .await?
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
     let page = SetupPage {
         steps: steps(&s),
         view,
         callback_url: s.callback_url,
+        application_scopes,
         client_id,
         suggested: s.suggested,
         error: error.map(|e| e.message().to_owned()),

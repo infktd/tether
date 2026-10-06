@@ -248,6 +248,19 @@ async fn the_wizard_pages_from_token_to_complete(db: PgPool) {
     let page = send(&h.app, get("/setup", &[(SETUP, &setup)])).await;
     assert!(page.body.contains("https://tether.test/auth/callback"));
     assert!(page.body.contains(r#"action="/setup/sso""#));
+    // The scopes to enable on the EVE application, Member's own among
+    // them: an application without them can't register anyone.
+    assert!(
+        page.body.contains("Authentication &amp; API Access"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains("esi-corporations.read_corporation_membership.v1"),
+        "{}",
+        page.body
+    );
     assert_only_allowed_external_urls(&page.body);
 
     let bad = send(

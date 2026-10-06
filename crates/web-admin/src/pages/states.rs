@@ -139,23 +139,7 @@ async fn states_page(
                 .push(p.name.as_str());
         }
     }
-    let mut application_scopes: std::collections::BTreeSet<String> = admin_scopes
-        .iter()
-        .map(|(_, scope)| scope.clone())
-        .chain(plugin_scopes.keys().map(|s| (*s).to_owned()))
-        .chain(tether_core::scopes::CORE.iter().map(|s| (*s).to_owned()))
-        .collect();
-    for running in state.plugins.all_running() {
-        application_scopes.extend(
-            running
-                .manifest
-                .capabilities
-                .esi
-                .data_source
-                .iter()
-                .cloned(),
-        );
-    }
+    let application_scopes = crate::compliance::application_scopes(state, false).await?;
     // Guest is last; the one above it can't move down past it.
     let movable = states.iter().filter(|s| !s.is_guest()).count();
     let cards = states

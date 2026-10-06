@@ -46,7 +46,10 @@
   <section class="flex flex-col gap-4">
     <ol class="list-decimal pl-5 flex flex-col gap-2 text-foreground-soft">
       <li>Open <a class="underline underline-offset-4" href="https://developers.eveonline.com/applications" rel="noreferrer" target="_blank">developers.eveonline.com/applications</a> and create a new application.</li>
-      <li>Choose <strong class="text-foreground">Authentication only</strong>. Tether asks for no scopes yet.</li>
+      <li>Choose <strong class="text-foreground">Authentication &amp; API Access</strong> and enable every one of these scopes. Tether asks a pilot for each only when something needs it, but EVE refuses a login asking for one the application doesn't allow, so without them nobody can register:
+        <ul class="mt-2 flex flex-wrap gap-2" role="list">{% for s in application_scopes %}<li><span class="badge num" data-variant="outline">{{ s }}</span></li>{% endfor %}</ul>
+        <p class="mt-2 text-sm">Apps you install later may need more: States lists every scope to enable.</p>
+      </li>
       <li>Set the callback URL to exactly:
         <div class="mt-2 rounded-sm border bg-background px-3 py-2 num text-foreground select-all break-all">{{ callback_url }}</div>
       </li>

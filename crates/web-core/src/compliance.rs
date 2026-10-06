@@ -70,6 +70,48 @@ pub async fn required_in(
     Ok(required)
 }
 
+/// Every scope Tether may ask for, all of which Tether's EVE application
+/// must allow (EVE refuses a login asking for one it doesn't): the core
+/// ones, those states require, and installed apps' (pilots' and data
+/// sources'); with `bundled`, also those of the apps that come with this
+/// Tether, installed or not (the setup wizard, before any is).
+pub async fn application_scopes(
+    state: &AppState,
+    bundled: bool,
+) -> Result<BTreeSet<String>, sqlx::Error> {
+    let mut scopes: BTreeSet<String> = db::all_admin_scopes(&state.db)
+        .await?
+        .into_iter()
+        .map(|(_, scope)| scope)
+        .chain(
+            db::plugin_scopes(&state.db)
+                .await?
+                .into_iter()
+                .flat_map(|p| p.scopes),
+        )
+        .chain(scopes::CORE.iter().map(|s| (*s).to_owned()))
+        .collect();
+    for running in state.plugins.all_running() {
+        scopes.extend(
+            running
+                .manifest
+                .capabilities
+                .esi
+                .data_source
+                .iter()
+                .cloned(),
+        );
+    }
+    if bundled {
+        for app in state.plugins.bundled().all() {
+            let esi = &app.package.manifest.capabilities.esi;
+            scopes.extend(esi.user.iter().cloned());
+            scopes.extend(esi.data_source.iter().cloned());
+        }
+    }
+    Ok(scopes)
+}
+
 /// The apps `state` requires every character of `account` to be
 /// registered for (AA's Member Audit compliance), with which of them are.
 pub async fn required_apps_in(
