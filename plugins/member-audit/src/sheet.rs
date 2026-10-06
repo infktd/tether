@@ -83,12 +83,13 @@ pub(crate) fn subject(access: &Access, id: i64) -> Result<Subject, PageError> {
     })
 }
 
-/// A page about the character, with its sections linked beside the title.
+/// A page about the character, with its sections as chips under the
+/// app's views.
 pub(crate) fn sheet_page(who: &Subject, what: &str) -> Page {
     let id = who.id;
     let mut page = Page::new(who.name.clone())
         .description(what.to_owned())
-        .link("Overview", format!("character/{id}"))
+        .link("Summary", format!("character/{id}"))
         .link("Skills", format!("character/{id}/skills"))
         .link("Assets", format!("character/{id}/assets"))
         .link("Wallet", format!("character/{id}/wallet"))

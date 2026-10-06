@@ -5,7 +5,7 @@
 id = "tether.freight"
 name = "Freight"
 icon = "box"
-version = "0.1.3"
+version = "0.1.4"
 host_api = "1"
 description = "A central freight service: priced routes, a reward calculator, the courier contracts checked against the pricing, statistics, and notices to pilots and customers on Discord."
 
@@ -59,6 +59,38 @@ permission = "add_location"
 path = "pricing"
 permission = "manage"
 
+[[pages]]
+path = "handler"
+permission = "setup_contract_handler"
+
 [[navigation]]
 label = "Freight"
 path = ""
+
+[[views]]
+label = "Overview"
+path = ""
+
+[[views]]
+label = "My contracts"
+path = "mine"
+
+[[views]]
+label = "Contracts"
+path = "contracts"
+
+[[views]]
+label = "Statistics"
+path = "statistics"
+
+[[manage]]
+label = "Contract handler"
+path = "handler"
+
+[[manage]]
+label = "Locations"
+path = "locations"
+
+[[manage]]
+label = "Pricing"
+path = "pricing"

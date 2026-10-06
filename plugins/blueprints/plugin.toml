@@ -5,7 +5,7 @@
 id = "tether.blueprints"
 name = "Blueprints"
 icon = "blueprint"
-version = "0.1.6"
+version = "0.1.7"
 host_api = "1"
 description = "The corporations' and pilots' blueprint library, with ME, TE, runs, where each is and what's running, and requests for copies the owners fulfil."
 
@@ -87,3 +87,19 @@ permission = "manage"
 label = "Blueprints"
 path = ""
 section = "industry"
+
+[[views]]
+label = "Overview"
+path = ""
+
+[[views]]
+label = "My requests"
+path = "requests"
+
+[[views]]
+label = "Open requests"
+path = "open"
+
+[[views]]
+label = "Data sources"
+path = "owners"

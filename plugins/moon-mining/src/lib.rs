@@ -61,7 +61,7 @@ impl Plugin for MoonMining {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let segments: Vec<&str> = request.path.split('/').collect();
-        let page = match segments.as_slice() {
+        match segments.as_slice() {
             [""] => extractions_page(&viewer),
             ["moons"] => moons::moons_page(&viewer, &moons::Filter::default()),
             ["moon", id] => moons::moon_page(&viewer, id.parse().map_err(|_| PageError::NotFound)?),
@@ -76,8 +76,7 @@ impl Plugin for MoonMining {
             ["planner"] => planner_page(&viewer),
             ["settings"] => settings_page(),
             _ => Err(PageError::NotFound),
-        }?;
-        with_links(page, &viewer)
+        }
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
@@ -89,10 +88,7 @@ impl Plugin for MoonMining {
             }
             ("moons", "filter") => {
                 let filter = moons::Filter::from(&submission);
-                Ok(SubmitResult::Page(with_links(
-                    moons::moons_page(&viewer, &filter)?,
-                    &viewer,
-                )?))
+                Ok(SubmitResult::Page(moons::moons_page(&viewer, &filter)?))
             }
             ("upload", "survey") => moons::upload(&viewer, &submission),
             _ => Err(PageError::NotFound),
@@ -1047,46 +1043,6 @@ fn ping(job: &Job) -> Result<(), JobError> {
 
 // ---- pages -----------------------------------------------------------------
 
-/// The app's pages beside the title, as aa-moonmining's navbar: those the
-/// viewer may open, and Upload moon
-/// surveys as the button. Someone without `extractions_access` gets the
-/// old-moon list in the Extractions' place.
-fn with_links(page: Page, viewer: &Viewer) -> Result<Page, PageError> {
-    let mut links: Vec<(&str, &str)> = Vec::new();
-    if viewer.can("extractions_access") {
-        links.push(("Extractions", ""));
-    }
-    // As aa-moonmining's navbar: Moons for everyone who opens the app.
-    links.push(("Moons", "moons"));
-    if viewer.can("reports_access") {
-        links.push(("Reports", "reports"));
-    }
-    if viewer.can("extractions_access") {
-        links.push(("Mining totals", "totals"));
-        links.push(("Planner", "planner"));
-    }
-    // Settings open from the app's Administration page (Tether's own
-    // Settings button), not from here.
-    let upload = viewer.can("upload_moon_scan");
-    // The old-moon list (with the Members-only window on), for someone who
-    // sees it but not the extractions.
-    let window = settings()
-        .map_err(|e| failed("reading settings", e))?
-        .window();
-    let mut page = if viewer.can("extractions_access") || !window {
-        page
-    } else {
-        page.link("Old moons", "")
-    };
-    for (label, path) in links {
-        page = page.link(label, path);
-    }
-    if upload {
-        page = page.button("Upload moon surveys", "upload");
-    }
-    Ok(page)
-}
-
 /// A refinery: its type's icon and its name, when the type is known.
 fn refinery(name: &str, type_id: i64) -> Value {
     if type_id > 0 {
@@ -1911,10 +1867,9 @@ fn save_cadence(
         .map_err(|_| PageError::Failed("every_hours wasn't a number".into()))?;
     let at = submission.value("at_time").trim();
     if NaiveTime::parse_from_str(at, "%H:%M").is_err() || at.len() != 5 {
-        return Ok(SubmitResult::Page(with_links(
+        return Ok(SubmitResult::Page(
             planner_page(viewer)?.text("Write the time as HH:MM, e.g. 19:00."),
-            viewer,
-        )?));
+        ));
     }
     storage::execute(
         "INSERT INTO cadences (corporation_id, every_hours, at_time) VALUES ($1, $2, $3) \

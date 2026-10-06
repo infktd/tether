@@ -75,8 +75,7 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
     let (mails_min, mails_max) = range(MAX_MAILS);
     let (share_min, share_max) = range(SHARING_TIMEOUT);
     let mut page = Page::new("Member Audit settings")
-        .description("aa-memberaudit's settings, with its defaults")
-        .link("My Characters", "");
+        .description("aa-memberaudit's settings, with its defaults");
     if let Some(note) = note {
         page = page.text(note);
     }

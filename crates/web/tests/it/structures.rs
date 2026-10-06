@@ -536,18 +536,22 @@ async fn structures_end_to_end(db: PgPool) {
     ] {
         assert!(list.body.contains(seen), "{seen}: {}", list.body);
     }
-    // The app's pages beside the title (a manager's too); owners' logos,
-    // types' icons, and the reinforced Keep's timer counting down.
-    // Settings (tags too) open from the app's Administration page.
-    for href in ["settings", "settings/tags"] {
-        assert!(
-            !list
-                .body
-                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
-            "{href}: {}",
-            list.body
-        );
-    }
+    // The views and the Manage menu Tether draws (Settings, for managers);
+    // owners' logos, types' icons, and the reinforced Keep's timer
+    // counting down. The tag settings open from Settings, as a chip.
+    assert!(
+        list.body
+            .contains(&format!("href=\"/plugins/{ID}/settings\"")),
+        "{}",
+        list.body
+    );
+    assert!(
+        !list
+            .body
+            .contains(&format!("href=\"/plugins/{ID}/settings/tags\"")),
+        "{}",
+        list.body
+    );
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(
         settings

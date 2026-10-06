@@ -237,8 +237,7 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     let home = open(&h, &pilot, "").await;
     assert_eq!(home.status, StatusCode::OK, "{}", home.body);
     assert!(home.body.contains("No open SRP fleets."), "{}", home.body);
-    assert!(!home.body.contains("Add SRP Fleet"));
-    assert!(!home.body.contains("View All"));
+    assert!(!home.body.contains("New SRP fleet"));
     // Adding fleets takes add_srpfleetmain or srp_management.
     assert_ne!(open(&h, &pilot, "add").await.status, StatusCode::OK);
     let res = post(&h, &pilot, "add", &add_fleet("Mine")).await;
@@ -361,7 +360,7 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     let r4 = request_of(&h, 1004).await;
     assert_eq!(status_of(&h, r4).await, ("pending".to_owned(), None, false));
     let mine = open(&h, &pilot, "").await;
-    assert!(mine.body.contains("My SRP Requests"), "{}", mine.body);
+    assert!(mine.body.contains("My SRP requests"), "{}", mine.body);
     assert!(mine.body.contains("Pending"), "{}", mine.body);
 
     // Every access_srp holder opens the fleet's requests, as AA's fleet
@@ -566,16 +565,17 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     let home = open(&h, &pilot, "").await;
     assert!(home.body.contains("96m"), "{}", home.body);
     assert!(home.body.contains("Outstanding"), "{}", home.body);
-    // Add SRP Fleet is the header's button, for those who may add one.
+    // New SRP fleet (AA's Add SRP Fleet) is the header's button, for those
+    // who may add one.
     let home = open(&h, &manager, "").await;
     assert!(
         home.body
-            .contains(&format!("href=\"{}\">Add SRP Fleet</a>", at("add"))),
+            .contains(&format!("href=\"{}\">New SRP fleet</a>", at("add"))),
         "{}",
         home.body
     );
 
-    // Completed: no more requests, and off the list but for View All.
+    // Completed: no more requests, and off the list but for All fleets.
     let res = post(&h, &manager, &fleet_url, "_form=complete").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     // A second click changes nothing (set, not toggled): the form is gone.
@@ -597,18 +597,19 @@ async fn ship_replacement_end_to_end(db: PgPool) {
     assert_ne!(res.status, StatusCode::SEE_OTHER);
     let home = open(&h, &pilot, "").await;
     assert!(!home.body.contains("Op Rock</a>"), "{}", home.body);
-    // View All is AA's access_srp view; only its link is for managers.
+    // All fleets is AA's View All, open to access_srp: a view of the app
+    // for everyone who may open it.
     assert_eq!(open(&h, &pilot, "all").await.status, StatusCode::OK);
     let all = open(&h, &manager, "all").await;
     assert_eq!(all.status, StatusCode::OK, "{}", all.body);
-    assert!(all.body.contains("All SRP Fleets"), "{}", all.body);
+    assert!(all.body.contains("All SRP fleets"), "{}", all.body);
     assert!(all.body.contains("Op Rock"), "{}", all.body);
     assert!(
-        !home.body.contains(&format!("href=\"{}\"", at("all"))),
+        home.body
+            .contains(&format!("href=\"{}\">All fleets</a>", at("all"))),
         "{}",
         home.body
     );
-    assert!(all.body.contains(&format!("href=\"{}\"", at("all"))));
 
     // Removing the fleet takes its requests, and their losses can be
     // requested again (AA).

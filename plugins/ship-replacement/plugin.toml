@@ -5,7 +5,7 @@
 id = "tether.ship-replacement"
 name = "Ship Replacement"
 icon = "shield"
-version = "0.3.2"
+version = "0.3.3"
 host_api = "1"
 description = "SRP fleets: pilots request SRP for their losses by zKillboard link; SRP managers approve, reject and set payouts, with totals per fleet."
 
@@ -41,3 +41,11 @@ permission = "access_srp"
 label = "Ship Replacement"
 path = ""
 section = "fleet"
+
+[[views]]
+label = "Overview"
+path = ""
+
+[[views]]
+label = "All fleets"
+path = "all"

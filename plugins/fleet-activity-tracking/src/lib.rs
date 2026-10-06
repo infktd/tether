@@ -44,7 +44,7 @@ const MAX_EXPIRY_MINUTES: i64 = 24 * 60;
 /// Manual FATs are added within this long of a link's creation (and before
 /// it's reopened), as aa-afat.
 const MANUAL_FAT_HOURS: i64 = 24;
-/// FAT links per page of the FAT Links list.
+/// FAT links per page of the FAT links list.
 const LINKS_PER_PAGE: i64 = 100;
 /// Characters offered on the register form (a form has at most 30 fields).
 const MAX_FORM_CHARACTERS: usize = 30;
@@ -80,14 +80,17 @@ struct FleetActivityTracking;
 impl Plugin for FleetActivityTracking {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        Ok(with_links(render_page(&request, &viewer)?, &viewer))
+        let page = render_page(&request, &viewer)?;
+        Ok(with_create(page, &request.path, &viewer))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         remember_characters(&viewer);
         Ok(match submit_form(&submission, &viewer)? {
-            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            SubmitResult::Page(page) => {
+                SubmitResult::Page(with_create(page, &submission.request.path, &viewer))
+            }
             other => other,
         })
     }
@@ -104,27 +107,19 @@ impl Plugin for FleetActivityTracking {
 
 tether_plugin_sdk::export!(FleetActivityTracking);
 
-/// The app's pages beside the title, as aa-afat's navbar, and Create FAT
-/// Link as its button: those the viewer may open.
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let mut page = page;
-    if viewer.can("basic_access") {
-        page = page
-            .link("Dashboard", "")
-            .link("FAT Links", "links")
-            .link("Statistics", "stats");
+/// New FAT link as the header's button, beside the app's views (Tether
+/// draws those from the manifest). The app adds it rather than the
+/// manifest's `[action]`, which shows by one page rule: aa-afat lets
+/// `add_fatlink` or `manage_afat` create. Not on the Manage pages.
+fn with_create(page: Page, path: &str, viewer: &Viewer) -> Page {
+    let manage = ["fleet-types", "settings", "logs"]
+        .iter()
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")));
+    if can_create(viewer) && !manage {
+        page.button("New FAT link", "links/create")
+    } else {
+        page
     }
-    if viewer.can("manage_afat") {
-        // Settings open from the app's Administration page.
-        page = page.link("Fleet types", "fleet-types");
-    }
-    if viewer.can("log_view") {
-        page = page.link("Logs", "logs");
-    }
-    if can_create(viewer) {
-        page = page.button("Create FAT Link", "links/create");
-    }
-    page
 }
 
 fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
@@ -571,7 +566,7 @@ fn stop_text(reason: &str, character: &str) -> String {
         ),
         "refused" => "ESI refused to show the fleet (403).".to_owned(),
         "data_source" => format!(
-            "{character} is no longer a data source of this app (withdrawn, removed, or moved corporation). Log in with the fleet boss again on Create FAT Link."
+            "{character} is no longer a data source of this app (withdrawn, removed, or moved corporation). Log in with the fleet boss again on New FAT link."
         ),
         "token" => format!("{character}'s login has expired: they need to log in again."),
         "cap" => "Tracking stopped after six hours.".to_owned(),
@@ -781,7 +776,7 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
     .iter()
     .map(|r| link_info(r))
     .collect();
-    let mut page = Page::new("FAT Links")
+    let mut page = Page::new("FAT links")
         .description("Every FAT link, newest first. FCs share a link's register page in fleet.")
         .stats(vec![Stat::new("FAT links", total)])
         .table(links_table(
@@ -790,7 +785,7 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
             "No FAT links yet.",
             &links,
         ));
-    // Paging; the app's pages and Create FAT Link are beside the title.
+    // Paging; the views and New FAT link are in the header.
     let mut more = Card::new("Pages");
     if page_number > 1 {
         more = more.field(
@@ -858,13 +853,13 @@ fn already_tracked(character_id: i64) -> Result<String, PageError> {
     })
 }
 
-/// Create FAT Link, aa-afat's clickable or ESI-tracked link. `added` is
+/// New FAT link, aa-afat's clickable or ESI-tracked link. `added` is
 /// the fleet boss Add data source just logged in with, chosen for tracking.
 fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Result<Page, PageError> {
     if !can_create(viewer) {
         return Err(PageError::Forbidden);
     }
-    let mut page = Page::new("Create FAT Link").description(
+    let mut page = Page::new("New FAT link").description(
         "Members open the link's register page while it's open to record their attendance, \
          or Tether tracks your ESI fleet and gives everyone in it a FAT.",
     );
@@ -2579,7 +2574,7 @@ fn settings_page() -> Result<Page, PageError> {
                     "Default FAT link expiry time (minutes)",
                     settings.expiry_minutes,
                     1.0,
-                    "What Create FAT Link offers; the FC can change it. aa-afat's default: 60",
+                    "What New FAT link offers; the FC can change it. aa-afat's default: 60",
                 ))
                 .field(minutes(
                     "reopen_grace_minutes",
@@ -2609,7 +2604,7 @@ fn settings_page() -> Result<Page, PageError> {
                         settings.doctrines_from_fittings,
                     )
                     .help(
-                        "Create FAT Link offers the doctrines Fittings shares that the FC may \
+                        "New FAT link offers the doctrines Fittings shares that the FC may \
                          see, instead of a text field. aa-afat's default: off",
                     ),
                 ),

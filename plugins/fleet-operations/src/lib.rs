@@ -269,15 +269,6 @@ fn ops_table(list: &[Op], now: DateTime<Utc>, manage: bool, upcoming: bool, empt
     table
 }
 
-/// AA's "Create Operation", for managers.
-fn header(page: Page, manage: bool) -> Page {
-    if manage {
-        page.button("Create Operation", "add")
-    } else {
-        page
-    }
-}
-
 /// Both tabs' rows together, well under the host's 1 MiB a page.
 const LIST_BYTES: usize = 600 * 1024;
 
@@ -403,7 +394,7 @@ fn ops_page(viewer: &Viewer) -> Result<Page, PageError> {
     if let Some(timeline) = week_timeline(&upcoming, now, manage) {
         page = page.timeline(timeline);
     }
-    Ok(header(page, manage)
+    Ok(page
         .tab(
             "Upcoming",
             vec![Section::Table(
@@ -601,15 +592,12 @@ fn op_form(values: &Values, submit: &str) -> Result<Form, PageError> {
 }
 
 fn add_page(note: Option<&str>, values: Option<Values>) -> Result<Page, PageError> {
-    let mut page = header(
-        Page::new("Create Operation").description("A new fleet operation"),
-        true,
-    );
+    let mut page = Page::new("New operation").description("A new fleet operation");
     if let Some(note) = note {
         page = page.text(note);
     }
     let values = values.unwrap_or_else(Values::new_op);
-    Ok(page.form(op_form(&values, "Create Operation")?))
+    Ok(page.form(op_form(&values, "Create operation")?))
 }
 
 fn stored_op(id: i64) -> Result<Op, PageError> {
@@ -633,16 +621,14 @@ fn edit_page(id: i64, note: Option<&str>, values: Option<Values>) -> Result<Page
         about = about.field("Posted", time(rfc3339(posted)));
     }
     about = about.field("Delete", delete_button(&op));
-    let mut page = header(
-        Page::new("Edit Operation").description(format!("{}, from {}", op.name, op.system)),
-        true,
-    )
-    .card(about);
+    let mut page = Page::new("Edit operation")
+        .description(format!("{}, from {}", op.name, op.system))
+        .card(about);
     if let Some(note) = note {
         page = page.text(note);
     }
     let values = values.unwrap_or_else(|| Values::stored(&op));
-    Ok(page.form(op_form(&values, "Save Operation")?))
+    Ok(page.form(op_form(&values, "Save operation")?))
 }
 
 /// The type an operation gets: a new one typed (found by name whatever its

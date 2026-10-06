@@ -5,7 +5,7 @@
 id = "tether.contracts"
 name = "Contracts"
 icon = "contract"
-version = "0.1.4"
+version = "0.1.5"
 host_api = "1"
 description = "Every contract assigned to your corporation, posted to Discord as it comes in, completes or ends, its price checked against the Janice appraisal linked in its description."
 
@@ -53,3 +53,8 @@ permission = "manage"
 label = "Contracts"
 path = ""
 section = "industry"
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Overview"
+path = ""

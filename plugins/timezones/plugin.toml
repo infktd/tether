@@ -5,7 +5,7 @@
 id = "tether.timezones"
 name = "Time Zones"
 icon = "globe"
-version = "0.1.1"
+version = "0.1.2"
 host_api = "1"
 description = "EVE time beside other time zones, and every one of them at a time you pick: a reinforcement timer or a planned fleet, with a link to share."
 
@@ -32,3 +32,20 @@ permission = "manage"
 [[navigation]]
 label = "Time Zones"
 path = ""
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Overview"
+path = ""
+
+[[views]]
+label = "Your time zone"
+path = "mine"
+
+[action]
+label = "Adjust time"
+path = "adjust"
+
+[[manage]]
+label = "Panels"
+path = "panels"

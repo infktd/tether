@@ -107,7 +107,12 @@ async fn bulletin_board_end_to_end(db: PgPool) {
     let list = page(&h, &format!("/plugins/{ID}"), &a).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
     assert!(list.body.contains("Home defense"), "{}", list.body);
-    assert!(!list.body.contains("Create bulletin"), "{}", list.body);
+    // No New bulletin for pilots: the app's action is managers'.
+    assert!(
+        !list.body.contains(&format!("/plugins/{ID}/new\"")),
+        "{}",
+        list.body
+    );
     let one = page(&h, &format!("/plugins/{ID}/bulletin/{id}"), &a).await;
     assert!(one.body.contains("Form up at 19:00."), "{}", one.body);
     assert!(one.body.contains("Bring a fit."), "{}", one.body);

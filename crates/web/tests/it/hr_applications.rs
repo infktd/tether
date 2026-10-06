@@ -331,12 +331,11 @@ async fn hr_applications_end_to_end(db: PgPool) {
         "{}",
         mine.body
     );
-    // Create Application is the header's button; it lists the
-    // corporations taking applications, with their logos.
+    // Apply (AA's Create Application) is the header's button; it lists
+    // the corporations taking applications, with their logos.
     assert!(
-        mine.body.contains(&format!(
-            "href=\"/plugins/{ID}/create\">Create Application</a>"
-        )),
+        mine.body
+            .contains(&format!("href=\"/plugins/{ID}/create\">Apply</a>")),
         "{}",
         mine.body
     );
@@ -493,7 +492,7 @@ async fn hr_applications_end_to_end(db: PgPool) {
     let res = post(&h, &a, &review, &claim).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let for_b = open(&h, &b, &review).await;
-    assert!(for_b.body.contains("In Progress"), "{}", for_b.body);
+    assert!(for_b.body.contains("In progress"), "{}", for_b.body);
     assert!(for_b.body.contains("Pilot A"));
     assert!(!for_b.body.contains("Mark in Progress"));
     for body in [claim.clone(), decide("reject")] {
@@ -501,7 +500,7 @@ async fn hr_applications_end_to_end(db: PgPool) {
         assert_eq!(res.status, StatusCode::CONFLICT, "{body}: {}", res.body);
     }
     // Commenting takes add_applicationcomment too, as AA.
-    assert!(!for_b.body.contains("Add Comment"), "{}", for_b.body);
+    assert!(!for_b.body.contains("Add comment"), "{}", for_b.body);
     let res = post(&h, &b, &review, "_form=comment&comment=Knows+his+rocks").await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     grant(&h, &owner, "add_applicationcomment", MEMBER_STATE).await;
@@ -510,7 +509,7 @@ async fn hr_applications_end_to_end(db: PgPool) {
     assert!(open(&h, &a, &review).await.body.contains("Knows his rocks"));
     // The applicant sees the status, not the comments.
     let view = open(&h, &pilot, &format!("view/{pilot_app}")).await;
-    assert!(view.body.contains("In Progress"), "{}", view.body);
+    assert!(view.body.contains("In progress"), "{}", view.body);
     assert!(!view.body.contains("Knows his rocks"));
     // ...and may still withdraw it while it's in progress (AA: until it's
     // decided).

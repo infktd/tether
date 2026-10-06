@@ -48,11 +48,11 @@ impl Plugin for BulletinBoard {
             if !manager(&viewer) {
                 return Err(PageError::NotFound);
             }
-            return edit_page(&viewer, id.parse().map_err(|_| PageError::NotFound)?, None);
+            return edit_page(id.parse().map_err(|_| PageError::NotFound)?, None);
         }
         match path {
             "" => list_page(&viewer),
-            "new" if manager(&viewer) => new_page(&viewer, None),
+            "new" if manager(&viewer) => new_page(None),
             _ => Err(PageError::NotFound),
         }
     }
@@ -265,15 +265,6 @@ fn paragraphs(content: &str) -> Vec<String> {
     out
 }
 
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let page = page.link("Bulletin Board", "");
-    if manager(viewer) {
-        page.button("Create bulletin", "new")
-    } else {
-        page
-    }
-}
-
 // ---- pages -------------------------------------------------------------------
 
 fn list_page(viewer: &Viewer) -> Result<Page, PageError> {
@@ -312,11 +303,9 @@ fn list_page(viewer: &Viewer) -> Result<Page, PageError> {
         }
         table = table.row(row);
     }
-    Ok(with_links(
-        Page::new("Bulletin Board").description("Bulletins, newest first"),
-        viewer,
-    )
-    .table(table))
+    Ok(Page::new("Bulletin Board")
+        .description("Bulletins, newest first")
+        .table(table))
 }
 
 fn bulletin_page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
@@ -338,9 +327,9 @@ fn bulletin_page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
     if manager(viewer) {
         about = about.field("Groups", names_of(&bulletin.groups, &group_names()));
     }
-    let mut page = with_links(Page::new(bulletin.title.clone()), viewer);
+    let mut page = Page::new(bulletin.title.clone());
     if manager(viewer) {
-        page = page.link("Edit", format!("edit/{id}"));
+        page = page.button("Edit", format!("edit/{id}"));
     }
     for paragraph in paragraphs(&bulletin.content) {
         page = page.text(paragraph);
@@ -363,12 +352,9 @@ fn bulletin_form(title: &str, content: &str, submit: &str) -> Form {
         )
 }
 
-fn new_page(viewer: &Viewer, problem: Option<(&str, &str, &str)>) -> Result<Page, PageError> {
-    let mut page = with_links(
-        Page::new("Create bulletin")
-            .description("Everyone with access sees it, until you limit it to groups"),
-        viewer,
-    );
+fn new_page(problem: Option<(&str, &str, &str)>) -> Result<Page, PageError> {
+    let mut page = Page::new("New bulletin")
+        .description("Everyone with access sees it, until you limit it to groups");
     let (title, content) = match problem {
         Some((note, title, content)) => {
             page = page.text(note);
@@ -379,18 +365,10 @@ fn new_page(viewer: &Viewer, problem: Option<(&str, &str, &str)>) -> Result<Page
     Ok(page.form(bulletin_form(title, content, "Create bulletin")))
 }
 
-fn edit_page(
-    viewer: &Viewer,
-    id: i64,
-    problem: Option<(&str, &str, &str)>,
-) -> Result<Page, PageError> {
+fn edit_page(id: i64, problem: Option<(&str, &str, &str)>) -> Result<Page, PageError> {
     let bulletin = one(id)?;
-    let mut page = with_links(
-        Page::new(format!("Edit {}", bulletin.title))
-            .description("Its title, text and who sees it")
-            .link("Bulletin", format!("bulletin/{id}")),
-        viewer,
-    );
+    let mut page = Page::new(format!("Edit {}", bulletin.title))
+        .description("Its title, text and who sees it");
     let (title, content) = match problem {
         Some((note, title, content)) => {
             page = page.text(note);
@@ -464,8 +442,8 @@ fn save(
     };
     if let Some(note) = problem {
         return Ok(SubmitResult::Page(match id {
-            Some(id) => edit_page(viewer, id, Some((note, title, content)))?,
-            None => new_page(viewer, Some((note, title, content)))?,
+            Some(id) => edit_page(id, Some((note, title, content)))?,
+            None => new_page(Some((note, title, content)))?,
         }));
     }
     let saved = match id {
@@ -509,7 +487,6 @@ fn add_group(viewer: &Viewer, id: i64, submission: &Submission) -> Result<Submit
     let bulletin = one(id)?;
     if bulletin.groups.len() >= MAX_GROUPS {
         return Ok(SubmitResult::Page(edit_page(
-            viewer,
             id,
             Some((
                 "A bulletin is limited to at most 20 groups.",

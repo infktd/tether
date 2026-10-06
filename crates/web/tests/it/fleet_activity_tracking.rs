@@ -304,8 +304,9 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     assert_eq!(details.status, StatusCode::OK, "{}", details.body);
     assert!(details.body.contains("Home defense"));
     assert!(details.body.contains("CTA"));
-    // aa-afat's navbar beside the title, Create FAT Link as its button,
-    // and the link's own buttons: Close, and Delete asking first.
+    // The views and Manage menu Tether draws from the manifest, New FAT
+    // link as the header's button, and the link's own buttons: Close, and
+    // Delete asking first.
     for href in ["links", "stats", "fleet-types", "logs"] {
         assert!(
             details
@@ -317,7 +318,7 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     }
     assert!(
         details.body.contains(&format!(
-            "href=\"/plugins/{ID}/links/create\">Create FAT Link</a>"
+            "href=\"/plugins/{ID}/links/create\">New FAT link</a>"
         )),
         "{}",
         details.body
@@ -864,7 +865,7 @@ async fn add_fc(h: &Harness, owner: &str) -> String {
 }
 
 /// Adds a character of the session's account as the app's data source
-/// from Create FAT Link (the SSO round trip); returns the session after it.
+/// from New FAT link (the SSO round trip); returns the session after it.
 async fn offer_source(h: &Harness, session: &str, character: i64, name: &str) -> String {
     let res = send(
         &h.app,
@@ -1565,7 +1566,7 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    // Back on Create FAT Link, with the fleet boss chosen.
+    // Back on New FAT link, with the fleet boss chosen.
     assert_eq!(
         res.location(),
         format!("/plugins/{ID}/links/create?owner={LINE}")
@@ -1632,7 +1633,7 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
     let (h, owner, line) = setup(db).await;
     let schema = schema(&h).await;
 
-    // The defaults, as aa-afat's, and Create FAT Link offers the expiry.
+    // The defaults, as aa-afat's, and New FAT link offers the expiry.
     let settings = open(&h, "settings", &owner).await;
     assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
     assert!(settings.body.contains("Default FAT link reopen grace time"));

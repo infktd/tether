@@ -1,4 +1,4 @@
-//! Fits: All Fits, a fit's page, and adding, editing and deleting them.
+//! Fits: All fits, a fit's page, and adding, editing and deleting them.
 
 use std::collections::BTreeMap;
 
@@ -14,8 +14,8 @@ use crate::eft::{self, Problem, Slot};
 use crate::lookup::{self, Failure};
 use crate::pilots;
 use crate::{
-    Access, app_links, category_names, clip, doctrine_seen, execute, failed, fit_seen, id_list,
-    int, opt_int, query, text,
+    Access, category_names, clip, doctrine_seen, execute, failed, fit_seen, id_list, int, opt_int,
+    primary, query, text,
 };
 
 /// Form limits (AA's: a fit's description is at most 500 characters).
@@ -24,7 +24,7 @@ const MAX_EFT: u32 = 10_000;
 const MAX_EFT_BYTES: usize = 16_000;
 const MAX_ROLE: u32 = 40;
 const MAX_DESCRIPTION: u32 = 500;
-/// Rows in All Fits (the host's limit per table).
+/// Rows in All fits (the host's limit per table).
 const LIST_ROWS: i64 = 500;
 /// Options in a select (the host's limit), one of them "none".
 const SELECT_OPTIONS: i64 = 99;
@@ -209,7 +209,7 @@ fn doctrines_of(access: &Access, fit: i64) -> Result<Vec<(i64, String, String)>,
     .collect())
 }
 
-// ---- All Fits -----------------------------------------------------------------
+// ---- All fits -----------------------------------------------------------------
 
 pub(crate) fn list(access: &Access, q: &str) -> Result<Page, PageError> {
     let q: String = q.trim().to_lowercase().chars().take(100).collect();
@@ -280,20 +280,17 @@ pub(crate) fn list(access: &Access, q: &str) -> Result<Page, PageError> {
     )?
     .first()
     .map_or(0, |r| int(r, 0));
-    Ok(app_links(
-        Page::new("All Fits").description("Every fit, by hull. Open one to copy it into EVE."),
-        access,
-        None,
-    )
-    .stats(vec![Stat::new("Fits", total)])
-    .form(
-        Form::new("search", "Search").field(
-            Field::text("q", "Search", 100)
-                .value(q)
-                .help("Part of a fit's name, hull, role, doctrine or category."),
-        ),
-    )
-    .table(table))
+    Ok(Page::new("All fits")
+        .description("Every fit, by hull. Open one to copy it into EVE.")
+        .stats(vec![Stat::new("Fits", total)])
+        .form(
+            Form::new("search", "Search").field(
+                Field::text("q", "Search", 100)
+                    .value(q)
+                    .help("Part of a fit's name, hull, role, doctrine or category."),
+            ),
+        )
+        .table(table))
 }
 
 /// A fit's Delete, asking first.
@@ -471,7 +468,7 @@ pub(crate) fn page(
         clip(&format!("{} · {}", fit.hull, fit.role), 400)
     });
     let edit = format!("edit/fit/{id}");
-    let mut page = app_links(page, access, Some(("Edit Fit", &edit)));
+    let mut page = primary(page, access, "Edit fit", &edit);
     if let Some(notice) = notice {
         page = page.text(notice);
     }
@@ -744,15 +741,8 @@ fn problems_table(problems: &[Problem]) -> Table {
     table
 }
 
-pub(crate) fn add_page(
-    access: &Access,
-    again: Option<(&[Problem], Values)>,
-) -> Result<Page, PageError> {
-    let mut page = app_links(
-        Page::new("Add Fit").description("A new fit, from its EFT text"),
-        access,
-        None,
-    );
+pub(crate) fn add_page(again: Option<(&[Problem], Values)>) -> Result<Page, PageError> {
+    let mut page = Page::new("New fit").description("A new fit, from its EFT text");
     let values = match again {
         Some((problems, values)) => {
             page = page.table(problems_table(problems));
@@ -760,7 +750,7 @@ pub(crate) fn add_page(
         }
         None => Values::default(),
     };
-    Ok(page.form(fit_form(&values, "Add Fit", Some(doctrine_options(0)?))))
+    Ok(page.form(fit_form(&values, "Create fit", Some(doctrine_options(0)?))))
 }
 
 pub(crate) fn edit_page(
@@ -770,13 +760,8 @@ pub(crate) fn edit_page(
 ) -> Result<Page, PageError> {
     let fit = seen_fit(access, id)?;
     let doctrines = doctrines_of(access, id)?;
-    let mut page = app_links(
-        Page::new(format!("Edit {}", clip(&fit.name, 200)))
-            .description(fit.hull.clone())
-            .link("Fit", format!("fit/{id}")),
-        access,
-        None,
-    );
+    let mut page =
+        Page::new(format!("Edit {}", clip(&fit.name, 200))).description(fit.hull.clone());
     let values = match again {
         Some((problems, values)) => {
             page = page.table(problems_table(problems));
@@ -789,7 +774,7 @@ pub(crate) fn edit_page(
             doctrine: String::new(),
         },
     };
-    page = page.form(fit_form(&values, "Save Fit", None));
+    page = page.form(fit_form(&values, "Save fit", None));
     let options = doctrine_options(id)?;
     if options.len() > 1 {
         page = page.form(
@@ -829,7 +814,7 @@ fn again(
     let values = Values::posted(submission);
     Ok(SubmitResult::Page(match id {
         Some(id) => edit_page(access, id, Some((problems, values)))?,
-        None => add_page(access, Some((problems, values)))?,
+        None => add_page(Some((problems, values)))?,
     }))
 }
 

@@ -8,9 +8,8 @@
 //!   mark them Completed.
 //! - Everyone with `access_srp` sees the open fleets with their Total ISK
 //!   Cost and pending requests, and opens any fleet's requests (pilots,
-//!   ships, amounts, status), as AA. View All (completed fleets too) is
-//!   linked for `srp_management` and open to every `access_srp` holder,
-//!   as AA's view is.
+//!   ships, amounts, status), as AA. All fleets (AA's View All, completed
+//!   fleets too) is open to every `access_srp` holder, as AA's view is.
 //! - **Request SRP** (`access_srp`): a pilot pastes a zKillboard link for
 //!   a loss on an open fleet. The loss comes from ESI's public killmail
 //!   endpoint (through Tether), its value from zKillboard (over the app's
@@ -71,7 +70,7 @@ impl Plugin for ShipReplacement {
             ["review", request] => review_page(&viewer, id(request)?, None),
             _ => Err(PageError::NotFound),
         }?;
-        Ok(with_links(page, &viewer))
+        Ok(with_add(page, &viewer))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
@@ -86,7 +85,7 @@ impl Plugin for ShipReplacement {
             _ => Err(PageError::NotFound),
         }?;
         Ok(match result {
-            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            SubmitResult::Page(page) => SubmitResult::Page(with_add(page, &viewer)),
             other => other,
         })
     }
@@ -94,16 +93,13 @@ impl Plugin for ShipReplacement {
 
 tether_plugin_sdk::export!(ShipReplacement);
 
-/// Beside the title, as AA's SRP navbar: the fleet list, View All for
-/// managers (AA's link; the page itself is `access_srp`'s, as AA's), and
-/// Add SRP Fleet for those who may add one.
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let mut page = page.link("SRP Fleets", "");
-    if manager(viewer) {
-        page = page.link("View All", "all");
-    }
+/// New SRP fleet (AA's Add SRP Fleet) as the header's button, beside the
+/// views Tether draws from the manifest. The app adds it rather than the
+/// manifest's `[action]`, which shows by one page rule: AA lets
+/// `add_srpfleetmain` or `srp_management` add fleets.
+fn with_add(page: Page, viewer: &Viewer) -> Page {
     if can_add(viewer) {
-        page.button("Add SRP Fleet", "add")
+        page.button("New SRP fleet", "add")
     } else {
         page
     }
@@ -335,7 +331,7 @@ fn total_stats(t: &Totals) -> Vec<Stat> {
     ]
 }
 
-/// AA's SRP fleet list: the open fleets, or (View All) every fleet, with
+/// AA's SRP fleet list: the open fleets, or (All fleets) every fleet, with
 /// their Total ISK Cost and pending requests, for everyone with
 /// `access_srp`.
 fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
@@ -363,7 +359,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
         Column::text("SRP"),
     ];
     let mut table = Table::new(columns)
-        .title(if all { "All SRP Fleets" } else { "SRP Fleets" })
+        .title(if all { "All SRP fleets" } else { "SRP fleets" })
         .empty(if all {
             "No SRP fleets yet."
         } else {
@@ -403,7 +399,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
         Column::numeric("Payout"),
         Column::text("Status"),
     ])
-    .title("My SRP Requests")
+    .title("My SRP requests")
     .empty("You haven't requested SRP yet.");
     for r in &mine {
         my = my.row(vec![
@@ -433,7 +429,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
 fn add_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
     need(can_add(viewer))?;
     let now = Utc::now().format("%Y-%m-%d %H:%M").to_string();
-    let form = Form::new("add_fleet", "Create SRP Fleet")
+    let form = Form::new("add_fleet", "Create SRP fleet")
         .description("Pilots request SRP with the fleet's SRP code, until you mark it Completed.")
         .field(Field::text("name", "Fleet Name", MAX_NAME).required())
         .field(Field::text("doctrine", "Fleet Doctrine", MAX_DOCTRINE).required())
@@ -456,7 +452,7 @@ fn add_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
             Field::textarea("aar", "After Action Report", MAX_AAR)
                 .help("Optional: what happened, or where the report is."),
         );
-    let mut page = Page::new("Add SRP Fleet");
+    let mut page = Page::new("New SRP fleet");
     if let Some(note) = note {
         page = page.text(note);
     }
@@ -820,7 +816,7 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
     .map(|r| request(r))
     .collect();
     let sums = query(&format!("{TOTALS} WHERE fleet_id = $1"), &[f.id.into()])?;
-    let mut about = Card::new("SRP Fleet")
+    let mut about = Card::new("SRP fleet")
         .field("Fleet Name", f.name.clone())
         .field("Doctrine", f.doctrine.clone())
         .field("Fleet Commander", f.fleet_commander.clone())
@@ -888,7 +884,7 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
         }
         table = table.row(row);
     }
-    let mut page = Page::new(f.name.clone()).description("SRP Fleet Data");
+    let mut page = Page::new(f.name.clone()).description("SRP fleet data");
     if let Some(note) = note {
         page = page.text(note);
     }
@@ -1036,7 +1032,7 @@ fn request_by_id(request_id: i64) -> Result<Req, PageError> {
 fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<Page, PageError> {
     need(manager(viewer))?;
     let r = request_by_id(request_id)?;
-    let mut about = Card::new("SRP Request")
+    let mut about = Card::new("SRP request")
         .field(
             "Fleet",
             link(r.fleet_name.clone(), format!("fleet/{}", r.fleet_id)),
@@ -1093,7 +1089,7 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
             cut(&text(c, 2), 600).into(),
         ]);
     }
-    let mut page = Page::new("SRP Request").description(format!(
+    let mut page = Page::new("SRP request").description(format!(
         "{}'s {} on {}",
         r.character_name, r.ship_name, r.fleet_name
     ));

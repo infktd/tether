@@ -11,7 +11,7 @@ use tether_plugin_sdk::{
 };
 
 use crate::{
-    Access, CATEGORY_SEEN, app_links, clip, doctrine_seen, execute, failed, fit_seen, int, query,
+    Access, CATEGORY_SEEN, clip, doctrine_seen, execute, failed, fit_seen, int, primary, query,
     text,
 };
 
@@ -120,13 +120,14 @@ pub(crate) fn list(access: &Access) -> Result<Page, PageError> {
         }
         table = table.row(row);
     }
-    Ok(app_links(
+    Ok(primary(
         Page::new("Categories").description(
             "Tags on doctrines and fits. A category limited to groups is seen, with what's in it, \
              only by their members.",
         ),
         access,
-        None,
+        "New category",
+        "add-category",
     )
     .table(table))
 }
@@ -213,11 +214,12 @@ pub(crate) fn page(access: &Access, id: i64) -> Result<Page, PageError> {
             clip(&text(r, 4), 200).into(),
         ]);
     }
-    Ok(app_links(
+    Ok(primary(
         Page::new(clip(&category.name, 200))
             .description("Category: its doctrines, and its fits with its doctrines' fits"),
         access,
-        Some(("Edit Category", &edit)),
+        "Edit category",
+        &edit,
     )
     .card(about)
     .table(doctrine_table)
@@ -254,13 +256,9 @@ fn category_form(values: &Values, submit: &str) -> Form {
         )
 }
 
-pub(crate) fn add_page(access: &Access, again: Option<(&str, Values)>) -> Result<Page, PageError> {
-    let mut page = app_links(
-        Page::new("Add Category")
-            .description("A new category; add its groups, doctrines and fits next."),
-        access,
-        None,
-    );
+pub(crate) fn add_page(again: Option<(&str, Values)>) -> Result<Page, PageError> {
+    let mut page = Page::new("New category")
+        .description("A new category; add its groups, doctrines and fits next.");
     let values = match again {
         Some((note, values)) => {
             page = page.text(note);
@@ -271,7 +269,7 @@ pub(crate) fn add_page(access: &Access, again: Option<(&str, Values)>) -> Result
             color: DEFAULT_COLOR.to_owned(),
         },
     };
-    Ok(page.form(category_form(&values, "Add Category")))
+    Ok(page.form(category_form(&values, "Create category")))
 }
 
 /// A select of `rows` (id, label) for a form with one field, if any.
@@ -299,13 +297,8 @@ pub(crate) fn edit_page(
     again: Option<(&str, Values)>,
 ) -> Result<Page, PageError> {
     let category = seen_category(access, id)?;
-    let mut page = app_links(
-        Page::new(format!("Edit {}", clip(&category.name, 200)))
-            .description("Its name, colour, groups, doctrines and fits")
-            .link("Category", format!("category/{id}")),
-        access,
-        None,
-    );
+    let mut page = Page::new(format!("Edit {}", clip(&category.name, 200)))
+        .description("Its name, colour, groups, doctrines and fits");
     let values = match again {
         Some((note, values)) => {
             page = page.text(note);
@@ -316,7 +309,7 @@ pub(crate) fn edit_page(
             color: category.color.clone(),
         },
     };
-    page = page.form(category_form(&values, "Save Category"));
+    page = page.form(category_form(&values, "Save category"));
 
     // Groups: those the editor may be offered, not on it yet.
     let names = group_names();
@@ -326,7 +319,7 @@ pub(crate) fn edit_page(
         .take(usize::try_from(SELECT_OPTIONS).unwrap_or(100))
         .map(|g| (g.id.to_string(), clip(&g.name, 200)))
         .collect();
-    if let Some(form) = add_form("add_group", "group", "Group", "Limit to Group", offered) {
+    if let Some(form) = add_form("add_group", "group", "Group", "Limit to group", offered) {
         page = page.form(form);
     }
     let mut groups = Table::new(vec![Column::text("Group"), Column::text("")])
@@ -361,7 +354,7 @@ pub(crate) fn edit_page(
         "add_doctrine",
         "doctrine",
         "Doctrine",
-        "Add Doctrine",
+        "Add doctrine",
         options,
     ) {
         page = page.form(form);
@@ -402,7 +395,7 @@ pub(crate) fn edit_page(
         )
     })
     .collect();
-    if let Some(form) = add_form("add_fit", "fit", "Fit", "Add Fit", options) {
+    if let Some(form) = add_form("add_fit", "fit", "Fit", "Add fit", options) {
         page = page.form(form);
     }
     let mut fits = Table::new(vec![
@@ -446,7 +439,7 @@ pub(crate) fn save(
         let values = Some((note, Values::posted(submission)));
         Ok(SubmitResult::Page(match id {
             Some(id) => edit_page(access, id, values)?,
-            None => add_page(access, values)?,
+            None => add_page(values)?,
         }))
     };
     if let Some(id) = id {

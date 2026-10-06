@@ -20,27 +20,6 @@ use crate::{
 /// A queue ending sooner than this is flagged.
 const QUEUE_WARNING: Duration = Duration::hours(24);
 
-/// The app's own pages beside the title, those the viewer may open.
-pub(crate) fn app_links(page: Page, access: &Access) -> Page {
-    let manage = access.viewer.can("manage");
-    let mut page = page.link("My Characters", "");
-    if access.skill_sets || manage {
-        page = page.link("Skill Sets", "skill-sets");
-    }
-    if access.finder {
-        page = page.link("Character Finder", "finder");
-    }
-    if access.reports {
-        page = page.link("Reports", "reports");
-    }
-    if access.viewer.can("exports_access") {
-        page = page.link("Data Export", "data-export");
-    }
-    // Settings open from the app's Administration page (Tether's own
-    // Settings button), not from here.
-    page
-}
-
 /// An id as the entity its `names` category says it is, or its name.
 pub(crate) fn entity(id: i64, name: String, category: &str) -> Value {
     match category {
@@ -206,7 +185,6 @@ fn card(row: &[Db], training: Option<&Training>, main: bool) -> Profile {
 /// My Characters: Tether's Register Character card, then a card per
 /// character, and all of them together. Also the Dashboard's widget.
 pub(crate) fn my_characters(viewer: &Viewer) -> Result<Page, PageError> {
-    let access = Access::of(viewer);
     let mine = ids_param(viewer);
     let rows = query(
         &character_select(
@@ -254,18 +232,16 @@ pub(crate) fn my_characters(viewer: &Viewer) -> Result<Page, PageError> {
         }
     }
     let registered = rows.len();
-    Ok(app_links(
-        Page::new("My Characters").description("Your characters, and all of them together"),
-        &access,
-    )
-    .stats(vec![
-        Stat::new("Characters", count(registered))
-            .caption(format!("of {} on your account", viewer.characters.len())),
-        Stat::new("Wallets", isk(wallet)),
-        Stat::new("Skill points", sp),
-        Stat::new("Queues ending", count(ending)).caption("within a day, or empty"),
-    ])
-    .cards(grid))
+    Ok(Page::new("My characters")
+        .description("Your characters, and all of them together")
+        .stats(vec![
+            Stat::new("Characters", count(registered))
+                .caption(format!("of {} on your account", viewer.characters.len())),
+            Stat::new("Wallets", isk(wallet)),
+            Stat::new("Skill points", sp),
+            Stat::new("Queues ending", count(ending)).caption("within a day, or empty"),
+        ])
+        .cards(grid))
 }
 
 /// The Character Finder: the characters in the viewer's scope, searched by
@@ -386,8 +362,8 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
             ]
         }),
     );
-    Ok(app_links(
-        Page::new("Character Finder").description(format!(
+    Ok(Page::new("Character finder")
+        .description(format!(
             "Characters registered with Member Audit: {}{}",
             access.scope_words(),
             if access.shared {
@@ -395,20 +371,19 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
             } else {
                 ""
             }
-        )),
-        access,
-    )
-    .stats(vec![
-        Stat::new("Characters", total.first().map_or(0, |r| int(r, 0))).caption("in your scope"),
-    ])
-    .form(
-        Form::new("search", "Search").field(
-            Field::text("q", "Character, corporation, alliance or main", 100)
-                .value(q.clone())
-                .help("Part of a name is enough."),
-        ),
-    )
-    .table(table))
+        ))
+        .stats(vec![
+            Stat::new("Characters", total.first().map_or(0, |r| int(r, 0)))
+                .caption("in your scope"),
+        ])
+        .form(
+            Form::new("search", "Search").field(
+                Field::text("q", "Character, corporation, alliance or main", 100)
+                    .value(q.clone())
+                    .help("Part of a name is enough."),
+            ),
+        )
+        .table(table))
 }
 
 /// Names for corporations (a main's may be no member character's):

@@ -96,13 +96,15 @@ struct Structures;
 impl Plugin for Structures {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        Ok(with_links(render_page(&request, &viewer)?, &viewer))
+        Ok(with_chips(render_page(&request, &viewer)?, &request.path))
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         Ok(match submit_form(&submission, &viewer)? {
-            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
+            SubmitResult::Page(page) => {
+                SubmitResult::Page(with_chips(page, &submission.request.path))
+            }
             other => other,
         })
     }
@@ -120,20 +122,15 @@ impl Plugin for Structures {
 
 tether_plugin_sdk::export!(Structures);
 
-/// The app's pages beside the title, as aa-structures' navbar: the list
-/// and the public customs offices for everyone, the settings and tags for
-/// managers. The host adds Add data source.
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let mut page = page;
-    if viewer.can("basic_access") {
-        page = page.link("Structures", "").link("Customs offices", "pocos");
+/// The settings pages' own pages (aa-structures' settings and tags), as
+/// chips under the Manage bar Tether draws.
+fn with_chips(page: Page, path: &str) -> Page {
+    if path == "settings" || path.starts_with("settings/") {
+        page.link("General", "settings")
+            .link("Tags", "settings/tags")
+    } else {
+        page
     }
-    if viewer.can("manage") {
-        page = page
-            .link("Settings", "settings")
-            .link("Tag settings", "settings/tags");
-    }
-    page
 }
 
 fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {

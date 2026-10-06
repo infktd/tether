@@ -539,9 +539,6 @@ fn timers_page(viewer: &Viewer) -> Result<Page, PageError> {
     if let Some(problem) = problem {
         page = page.text(problem);
     }
-    if manage {
-        page = page.button("Create Timer", "add");
-    }
     if let Some(timeline) = week_timeline(&upcoming, now, manage) {
         page = page.timeline(timeline);
     }
@@ -688,12 +685,12 @@ fn timer_form(values: &Values, submit: &str) -> Form {
 }
 
 fn add_page(note: Option<&str>, values: Option<Values>) -> Result<Page, PageError> {
-    let mut page = Page::new("Create Timer").description("A new structure timer");
+    let mut page = Page::new("New timer").description("A new structure timer");
     if let Some(note) = note {
         page = page.text(note);
     }
     let values = values.unwrap_or_else(Values::new_timer);
-    Ok(page.form(timer_form(&values, "Create Timer")))
+    Ok(page.form(timer_form(&values, "Create timer")))
 }
 
 /// A timer the viewer may see, or not found.
@@ -728,14 +725,14 @@ fn edit_page(
             .field("Last edited", time(rfc3339(updated)));
     }
     about = about.field("Delete", delete_button(&t));
-    let mut page = Page::new("Edit Timer")
+    let mut page = Page::new("Edit timer")
         .description(format!("{} in {}", t.structure, t.system))
         .card(about);
     if let Some(note) = note {
         page = page.text(note);
     }
     let values = values.unwrap_or_else(|| Values::stored(&t));
-    Ok(page.form(timer_form(&values, "Save Timer")))
+    Ok(page.form(timer_form(&values, "Save timer")))
 }
 
 fn save_timer(

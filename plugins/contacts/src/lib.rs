@@ -519,7 +519,6 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
     }
     let mut page = Page::new(format!("{} contacts: {}", word(kind), name(id)?))
         .description("Standings and labels as set in EVE, read hourly")
-        .link("Contacts", "")
         .table(table);
     if viewer.can(&format!("manage_{kind}_contacts")) {
         page =
@@ -566,8 +565,7 @@ fn contact_page(
     };
     let mut page = Page::new(shown.clone())
         .description(format!("A contact of {}", name(id)?))
-        .link("Contacts", "")
-        .link("All of them", format!("{kind}/{id}"))
+        .link("All contacts", format!("{kind}/{id}"))
         .card(
             Card::new("Contact")
                 .field("Contact", entity(&text(row, 0), contact, shown))

@@ -194,7 +194,7 @@ async fn fleet_operations_end_to_end(db: PgPool) {
     assert_eq!(far.status, StatusCode::SEE_OTHER, "{}", far.body);
 
     // Upcoming: AA's columns, the countdown ticking in the browser, the
-    // creator's portrait, Create Operation as the header's button, and
+    // creator's portrait, New operation as the header's button, and
     // Edit and a Delete that asks first in each row. Past on its own tab.
     let list = ops_page(&h, &owner, 0).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
@@ -215,7 +215,7 @@ async fn fleet_operations_end_to_end(db: PgPool) {
     }
     assert!(
         list.body
-            .contains(&format!("href=\"/plugins/{ID}/add\">Create Operation</a>")),
+            .contains(&format!("href=\"/plugins/{ID}/add\">New operation</a>")),
         "{}",
         list.body
     );
@@ -240,7 +240,7 @@ async fn fleet_operations_end_to_end(db: PgPool) {
     let seen = ops_page(&h, &blue, 0).await;
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(seen.body.contains("Home Defence"));
-    assert!(!seen.body.contains("Create Operation"), "{}", seen.body);
+    assert!(!seen.body.contains("New operation"), "{}", seen.body);
     assert!(!seen.body.contains("name=\"op\""), "{}", seen.body);
     let home = op_id(&h, "Home Defence").await;
     for uri in ["add".to_owned(), format!("op/{home}")] {

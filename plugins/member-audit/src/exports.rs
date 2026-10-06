@@ -13,8 +13,6 @@ use tether_plugin_sdk::{
     Column, Page, PageError, SubmitResult, Table, Tone, Value, action, badge, link, time,
 };
 
-use crate::access::Access;
-use crate::pages::app_links;
 use crate::{name_of, query};
 
 /// The job building one topic's file.
@@ -369,7 +367,7 @@ fn start(topic: &str) -> Result<(), PageError> {
 }
 
 /// AA's Data Export page, for `exports_access`.
-pub(crate) fn page(access: &Access, notice: Option<&str>) -> Result<Page, PageError> {
+pub(crate) fn page(notice: Option<&str>) -> Result<Page, PageError> {
     let files = downloads::files();
     let recent: Vec<String> = query(
         "SELECT topic FROM export_runs WHERE asked_at > now() - $1 * interval '1 minute'",
@@ -414,11 +412,11 @@ pub(crate) fn page(access: &Access, notice: Option<&str>) -> Result<Page, PageEr
             update,
         ]);
     }
-    let page = Page::new("Data Export").description(format!(
+    let page = Page::new("Data export").description(format!(
         "CSV files of all {characters} characters' data, as aa-memberaudit's data export. Each is \
          updated daily, and on request at most once an hour."
     ));
-    let mut page = app_links(page, access);
+    let mut page = page;
     if let Some(notice) = notice {
         page = page.text(notice);
     }
@@ -426,7 +424,7 @@ pub(crate) fn page(access: &Access, notice: Option<&str>) -> Result<Page, PageEr
 }
 
 /// "Update": starts a topic's export, unless it ran in the last hour.
-pub(crate) fn update(access: &Access, topic: &str) -> Result<SubmitResult, PageError> {
+pub(crate) fn update(topic: &str) -> Result<SubmitResult, PageError> {
     if !TOPICS.iter().any(|(t, _, _)| *t == topic) {
         return Err(PageError::NotFound);
     }
@@ -441,7 +439,7 @@ pub(crate) fn update(access: &Access, topic: &str) -> Result<SubmitResult, PageE
         start(topic)?;
         format!("Data export for {topic} has been started. This can take a couple of minutes.")
     };
-    Ok(SubmitResult::Page(page(access, Some(&notice))?))
+    Ok(SubmitResult::Page(page(Some(&notice))?))
 }
 
 #[cfg(test)]

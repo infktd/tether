@@ -4,9 +4,9 @@
 //!   answer, one choice, or any of several choices (`manage`, AA's admin).
 //! - **Applications**: any pilot signed in with a main (as AA, no
 //!   permission) applies to a corporation once, follows its status on
-//!   **My Applications**, and may delete it until it's decided (as AA,
+//!   **My applications** (the Overview), and may delete it until it's decided (as AA,
 //!   even while in progress).
-//! - **HR Application Management** (`human_resources`): the applications
+//! - **Review** (AA's HR Application Management, `human_resources`): the applications
 //!   to the corporation of the reviewer's main (every corporation for
 //!   superusers, as AA), with the applicant's characters and answers.
 //!   Reviewers **Mark in Progress** to become an application's reviewer,
@@ -71,7 +71,7 @@ impl Plugin for HrApplications {
             ["forms", form, "question", question] => question_page(id(form)?, id(question)?, None),
             _ => Err(PageError::NotFound),
         }?;
-        Ok(with_links(page, &viewer))
+        Ok(page)
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
@@ -113,28 +113,11 @@ impl Plugin for HrApplications {
             }
             _ => Err(PageError::NotFound),
         }?;
-        Ok(match result {
-            SubmitResult::Page(page) => SubmitResult::Page(with_links(page, &viewer)),
-            other => other,
-        })
+        Ok(result)
     }
 }
 
 tether_plugin_sdk::export!(HrApplications);
-
-/// Beside the title, as AA's HR pages: the pilot's applications, the
-/// reviewers' management page and the forms (for those who may open
-/// them), and Create Application as the button.
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let mut page = page.link("My Applications", "");
-    if viewer.can("human_resources") {
-        page = page.link("HR Application Management", "review");
-    }
-    if viewer.can("manage") {
-        page = page.link("Application Forms", "forms");
-    }
-    page.button("Create Application", "create")
-}
 
 /// 1 to 4 buttons side by side, or an empty cell.
 fn buttons(list: Vec<Action>) -> Value {
@@ -315,7 +298,7 @@ impl Application {
         match self.approved {
             Some(true) => badge("Approved", Tone::Success),
             Some(false) => badge("Rejected", Tone::Danger),
-            None if self.reviewer_account_id.is_some() => badge("In Progress", Tone::Warning),
+            None if self.reviewer_account_id.is_some() => badge("In progress", Tone::Warning),
             None => badge("Pending", Tone::Neutral),
         }
     }
@@ -379,7 +362,7 @@ fn my_applications(viewer: &Viewer) -> Result<Page, PageError> {
         Column::text("Status"),
         Column::text(""),
     ])
-    .title("My Applications")
+    .title("My applications")
     .empty("You haven't applied anywhere yet: Create Application lists the corporations taking applications.");
     for a in &apps {
         mine = mine.row(vec![
@@ -389,13 +372,13 @@ fn my_applications(viewer: &Viewer) -> Result<Page, PageError> {
             own_delete(a).map_or_else(|| "".into(), Value::from),
         ]);
     }
-    Ok(Page::new("My Applications")
+    Ok(Page::new("My applications")
         .description("Apply to a corporation and follow your applications")
         .table(mine))
 }
 
-/// AA's Create Application: the corporations taking applications that the
-/// pilot hasn't applied to.
+/// Apply (AA's Create Application): the corporations taking applications
+/// that the pilot hasn't applied to.
 fn create_page(viewer: &Viewer) -> Result<Page, PageError> {
     let open = query(
         "SELECT f.id, f.corporation_name, f.corporation_id FROM forms f WHERE NOT EXISTS ( \
@@ -404,7 +387,7 @@ fn create_page(viewer: &Viewer) -> Result<Page, PageError> {
         &[viewer.account_id.into()],
     )?;
     let mut create = Table::new(vec![Column::text("Corporation"), Column::text("")])
-        .title("Choose a Corporation")
+        .title("Choose a corporation")
         .empty("No other corporation is taking applications right now.");
     for r in &open {
         let name = text(r, 1);
@@ -413,7 +396,7 @@ fn create_page(viewer: &Viewer) -> Result<Page, PageError> {
             link(format!("Apply to {name}"), format!("apply/{}", int(r, 0))).into(),
         ]);
     }
-    Ok(Page::new("Create Application")
+    Ok(Page::new("Apply")
         .description("The corporations taking applications")
         .table(create))
 }
@@ -509,10 +492,10 @@ fn apply_page(viewer: &Viewer, form: i64, note: Option<&str>) -> Result<Page, Pa
             .text(format!("You've already applied to {corporation}."))
             .card(Card::new("Your application").field(
                 "Application",
-                link("View Application", format!("view/{existing}")),
+                link("View application", format!("view/{existing}")),
             )));
     }
-    let mut apply = Form::new("apply", "Submit Application").description(format!(
+    let mut apply = Form::new("apply", "Submit application").description(format!(
         "{corporation}'s recruiters, and HR staff who review every corporation, see your answers and the characters on your account."
     ));
     for q in questions(form)? {
@@ -655,7 +638,7 @@ fn personal_view(viewer: &Viewer, app: i64) -> Result<Page, PageError> {
     if let Some(delete) = own_delete(&a) {
         about = about.field("Delete", delete);
     }
-    let mut page = Page::new("View Application")
+    let mut page = Page::new("Application")
         .description(format!("Your application to {}", a.corporation_name))
         .card(about);
     for section in answer_cards(a.id)? {
@@ -831,7 +814,7 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
         .iter()
         .filter(|a| a.reviewer_account_id == Some(viewer.account_id))
         .count();
-    let mut page = Page::new("HR Application Management")
+    let mut page = Page::new("Review")
         .description(if identity::superuser() {
             "Applications to every corporation".to_owned()
         } else {
@@ -839,7 +822,7 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
         })
         .stats(vec![
             Stat::new("Pending", count(unclaimed)).caption("nobody reviewing yet"),
-            Stat::new("In Progress", count(pending.len() - unclaimed)),
+            Stat::new("In progress", count(pending.len() - unclaimed)),
             Stat::new("Yours", count(yours)).caption("you're reviewing"),
             Stat::new("Reviewed", count(reviewed.len())),
         ]);
@@ -850,7 +833,7 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
         page = page.text(format!("Applications with a character named like \"{q}\"."));
         search_field = search_field.value(q.clone());
     }
-    page = page.form(Form::new("search", "Search Applications").field(search_field));
+    page = page.form(Form::new("search", "Search applications").field(search_field));
     Ok(page
         .tab(
             "Pending",
@@ -930,7 +913,7 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
             },
         ]);
     }
-    let mut page = Page::new("View Application").description(format!(
+    let mut page = Page::new("Application").description(format!(
         "{} to {}. Characters as they were when they applied.",
         a.main_name, a.corporation_name
     ));
@@ -969,7 +952,7 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
     // AA's Comment: human_resources and add_applicationcomment.
     if viewer.can("add_applicationcomment") {
         page = page.form(
-            Form::new("comment", "Add Comment")
+            Form::new("comment", "Add comment")
                 .description("Only reviewers see comments.")
                 .field(Field::textarea("comment", "Comment", MAX_COMMENT).required()),
         );
@@ -1147,7 +1130,7 @@ fn forms_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
     yours.sort_unstable();
     yours.dedup();
     let names = names(yours.iter().copied());
-    let mut add = Form::new("add_form", "Create Form").title("New form").description(
+    let mut add = Form::new("add_form", "Create form").title("New form").description(
         "One form per corporation. Pick one of your characters' corporations, or give a corporation's ID.",
     );
     if !yours.is_empty() {
@@ -1163,7 +1146,7 @@ fn forms_page(viewer: &Viewer, note: Option<&str>) -> Result<Page, PageError> {
             .range(Some(1.0), None, true)
             .help("Any corporation, by its EVE ID."),
     );
-    let mut page = Page::new("Application Forms")
+    let mut page = Page::new("Application forms")
         .description("Which corporations take applications, and what they ask");
     if let Some(note) = note {
         page = page.text(note);
@@ -1295,7 +1278,7 @@ fn form_page(form: i64, note: Option<&str>) -> Result<Page, PageError> {
         .field("Applications", applications)
         .field(
             "Delete",
-            action("Delete Form", "delete_form")
+            action("Delete form", "delete_form")
                 .tone(Tone::Danger)
                 .confirm(format!(
                     "{corporation}'s form, its questions and its {applications} applications, \
@@ -1303,7 +1286,7 @@ fn form_page(form: i64, note: Option<&str>) -> Result<Page, PageError> {
                 )),
         );
     Ok(page.card(about).table(table).form(question_fields(
-        Form::new("add_question", "Add Question").title("New question"),
+        Form::new("add_question", "Add question").title("New question"),
         None,
     )))
 }
@@ -1315,19 +1298,16 @@ fn question_page(form: i64, question: i64, note: Option<&str>) -> Result<Page, P
         .iter()
         .find(|q| q.id == question)
         .ok_or(PageError::NotFound)?;
-    let mut page = Page::new("Edit Question").description(format!(
+    let mut page = Page::new("Edit question").description(format!(
         "{corporation}'s application form. Applications already made keep their answers."
     ));
     if let Some(note) = note {
         page = page.text(note);
     }
-    // Back to its form, beside the title.
-    Ok(page
-        .link(format!("{corporation}'s form"), format!("forms/{form}"))
-        .form(question_fields(
-            Form::new("edit_question", "Save Question"),
-            Some(q),
-        )))
+    Ok(page.form(question_fields(
+        Form::new("edit_question", "Save question"),
+        Some(q),
+    )))
 }
 
 /// A question as posted, checked: its title, help, choices and whether

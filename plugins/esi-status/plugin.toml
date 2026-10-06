@@ -5,7 +5,7 @@
 id = "tether.esi-status"
 name = "ESI Status"
 icon = "radio"
-version = "0.1.1"
+version = "0.1.2"
 host_api = "1"
 description = "ESI's status route by route (OK, degraded, down, recovering), as ESI reports it, and how it went over the last 24 hours."
 
@@ -27,4 +27,9 @@ signed_in = true
 
 [[navigation]]
 label = "ESI Status"
+path = ""
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Overview"
 path = ""

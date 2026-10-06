@@ -315,10 +315,15 @@ async fn freight_end_to_end(db: PgPool) {
     assert_eq!(index.status, StatusCode::OK, "{}", index.body);
     assert!(index.body.contains("None yet"), "{}", index.body);
     let owner = add_handler(&h, &owner).await;
+    // The handler is chosen on its Manage page, not the calculator's.
+    let mode_form = "name=\"_form\" value=\"mode\"";
+    assert!(!index.body.contains(mode_form), "{}", index.body);
+    let manage = page(&h, &format!("/plugins/{ID}/handler"), &owner).await;
+    assert!(manage.body.contains(mode_form), "{}", manage.body);
     let res = post(
         &h,
         &owner,
-        "",
+        "handler",
         &format!("_form=mode&handler={CHRIBBA}&mode=corp_public"),
     )
     .await;
@@ -523,8 +528,13 @@ async fn freight_end_to_end(db: PgPool) {
     );
     let index = page(&h, &format!("/plugins/{ID}"), &pilot).await;
     assert!(!index.body.contains("Reward calculator"), "{}", index.body);
-    assert!(!index.body.contains("Save mode"), "{}", index.body);
-    for at in ["contracts", "statistics", "pricing", "locations"] {
+    assert!(
+        !index.body.contains("name=\"_form\" value=\"mode\""),
+        "{}",
+        index.body
+    );
+    // The contract handler is setup_contract_handler's (as aa-freight).
+    for at in ["contracts", "statistics", "pricing", "locations", "handler"] {
         assert_eq!(
             page(&h, &format!("/plugins/{ID}/{at}"), &pilot)
                 .await
@@ -533,6 +543,14 @@ async fn freight_end_to_end(db: PgPool) {
             "{at}"
         );
     }
+    let res = post(
+        &h,
+        &pilot,
+        "handler",
+        &format!("_form=mode&handler={CHRIBBA}&mode=corp_public"),
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let res = post(
         &h,
         &pilot,

@@ -987,7 +987,6 @@ fn settings_page() -> Result<Page, PageError> {
             "The Janice API key is entered by an admin as this app's secret (Administration, Apps, \
              Contracts). Without it, contracts are still posted, their appraisal marked not checked.",
         )
-        .link("Contracts", "")
         .form(
             Form::new("settings", "Save")
                 .field(

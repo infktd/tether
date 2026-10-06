@@ -91,6 +91,11 @@ impl Plugin for Freight {
         let parts: Vec<&str> = request.path.split('/').collect();
         match parts.as_slice() {
             [""] => index_page(&viewer, None),
+            ["handler"] => {
+                // The manifest's rule asks for it too.
+                need(&viewer, "setup_contract_handler")?;
+                handler_page()
+            }
             ["mine"] => mine_page(&viewer),
             ["contracts"] => contracts_page(),
             ["statistics"] => statistics_page(),
@@ -112,7 +117,7 @@ impl Plugin for Freight {
                     Some(calculate(&submission)?),
                 )?))
             }
-            ("", "mode") => set_mode(&viewer, &submission),
+            ("handler", "mode") => set_mode(&viewer, &submission),
             ("locations", "add_location") => add_location(&viewer, &submission),
             ("locations", "delete_location") => delete_location(&viewer, &submission),
             ("pricing", "add_pricing") => match save_pricing(&viewer, None, &submission)? {
@@ -1099,21 +1104,6 @@ fn relay() -> Result<(), JobError> {
 
 // ---- pages -----------------------------------------------------------------------
 
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let mut page = page.link("Calculator", "").link("My contracts", "mine");
-    for (permission, label, path) in [
-        ("view_contracts", "Contracts", "contracts"),
-        ("view_statistics", "Statistics", "statistics"),
-        ("add_location", "Locations", "locations"),
-        ("manage", "Pricing", "pricing"),
-    ] {
-        if viewer.can(permission) {
-            page = page.link(label, path);
-        }
-    }
-    page
-}
-
 /// What the calculator worked out.
 struct Calculation {
     pricing: i64,
@@ -1167,21 +1157,16 @@ fn calculate(submission: &Submission) -> Result<Calculation, PageError> {
     })
 }
 
-fn index_page(viewer: &Viewer, calculation: Option<Calculation>) -> Result<Page, PageError> {
-    let settings = settings().map_err(|e| failed("reading settings", e))?;
-    let names = places().map_err(|e| failed("reading locations", e))?;
-    let pricings = pricing::all().map_err(|e| failed("reading pricings", e))?;
-    let sources = esi::data_sources();
-    let handler = handler(&settings);
-    let mut page = with_links(
-        Page::new("Freight")
-            .description("A central freight service: priced routes and their courier contracts"),
-        viewer,
-    );
-
-    // The contract handler.
+/// Who the courier contracts go to, and the character reading them; `here`
+/// on the Contract handler page, where it's chosen.
+fn handler_card(
+    settings: &Settings,
+    handler: Option<&Character>,
+    sources: &[Character],
+    here: bool,
+) -> Card {
     let mut card = Card::new("Contract handler");
-    match &handler {
+    match handler {
         Some(h) => {
             let assignee = organization(h, &settings.mode);
             card = card
@@ -1206,9 +1191,11 @@ fn index_page(viewer: &Viewer, calculation: Option<Calculation>) -> Result<Page,
             }
         }
         None if !sources.is_empty() => {
-            card = card.description(
-                "Choose which data source is the contract handler, under Operation mode.",
-            );
+            card = card.description(if here {
+                "Choose which data source is the contract handler, under Operation mode."
+            } else {
+                "Not chosen yet: a holder of Setup contract handler picks one of the data sources under Manage, Contract handler."
+            });
         }
         None => {
             card = card.description(
@@ -1216,46 +1203,67 @@ fn index_page(viewer: &Viewer, calculation: Option<Calculation>) -> Result<Page,
             );
         }
     }
-    page = page.card(card);
-    if viewer.can("setup_contract_handler") || viewer.can("manage") {
-        let options = MODES
+    card
+}
+
+/// aa-freight's contract handler: which data source's corporation's
+/// courier contracts are read, and the operation mode, for
+/// `setup_contract_handler`.
+fn handler_page() -> Result<Page, PageError> {
+    let settings = settings().map_err(|e| failed("reading settings", e))?;
+    let sources = esi::data_sources();
+    let handler = handler(&settings);
+    let options = MODES
+        .iter()
+        .map(|(value, label, _)| ((*value).to_owned(), (*label).to_owned()))
+        .collect();
+    let help = MODES
+        .iter()
+        .map(|(_, label, what)| format!("{label}: {what}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut form = Form::new("mode", "Save").title("Operation mode");
+    if !sources.is_empty() {
+        let owners = sources
             .iter()
-            .map(|(value, label, _)| ((*value).to_owned(), (*label).to_owned()))
+            .map(|s| {
+                (
+                    s.id.to_string(),
+                    format!("{} ({})", s.name, name_of(s.corporation_id)),
+                )
+            })
             .collect();
-        let help = MODES
-            .iter()
-            .map(|(_, label, what)| format!("{label}: {what}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let mut form = Form::new("mode", "Save").title("Operation mode");
-        if !sources.is_empty() {
-            let owners = sources
-                .iter()
-                .map(|s| {
-                    (
-                        s.id.to_string(),
-                        format!("{} ({})", s.name, name_of(s.corporation_id)),
-                    )
-                })
-                .collect();
-            let chosen = handler
-                .as_ref()
-                .map(|h| h.id.to_string())
-                .unwrap_or_default();
-            form = form.field(
-                select("handler", "Contract handler", owners, &chosen)
-                    .required()
-                    .help("The data source whose corporation's contracts are read. Changing it, or the mode, starts the contracts afresh."),
-            );
-        }
-        page = page.form(
+        let chosen = handler
+            .as_ref()
+            .map(|h| h.id.to_string())
+            .unwrap_or_default();
+        form = form.field(
+            select("handler", "Contract handler", owners, &chosen)
+                .required()
+                .help("The data source whose corporation's contracts are read. Changing it, or the mode, starts the contracts afresh."),
+        );
+    }
+    Ok(Page::new("Contract handler")
+        .description("Who the courier contracts are assigned to, and the character reading them")
+        .card(handler_card(&settings, handler.as_ref(), &sources, true))
+        .form(
             form.field(
                 select("mode", "Mode", options, &settings.mode)
                     .required()
                     .help(help),
             ),
-        );
-    }
+        ))
+}
+
+fn index_page(viewer: &Viewer, calculation: Option<Calculation>) -> Result<Page, PageError> {
+    let settings = settings().map_err(|e| failed("reading settings", e))?;
+    let names = places().map_err(|e| failed("reading locations", e))?;
+    let pricings = pricing::all().map_err(|e| failed("reading pricings", e))?;
+    let sources = esi::data_sources();
+    let handler = handler(&settings);
+    let mut page = Page::new("Freight")
+        .description("A central freight service: priced routes and their courier contracts")
+        .card(handler_card(&settings, handler.as_ref(), &sources, false));
 
     // The calculator.
     let active: Vec<&Pricing> = pricings.iter().filter(|p| p.active).collect();
@@ -1413,9 +1421,7 @@ fn result_card(
 }
 
 fn set_mode(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
-    if !viewer.can("setup_contract_handler") && !viewer.can("manage") {
-        return Err(PageError::Forbidden);
-    }
+    need(viewer, "setup_contract_handler")?;
     let mode = submission.value("mode");
     if !MODES.iter().any(|(value, _, _)| *value == mode) {
         return Err(PageError::NotFound);
@@ -1454,7 +1460,7 @@ fn set_mode(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, Pa
         viewer.main.id
     ));
     jobs::enqueue(NewJob::new(SYNC).key("sync-now")).map_err(|e| failed("queuing a sync", e))?;
-    Ok(SubmitResult::Redirect(String::new()))
+    Ok(SubmitResult::Redirect("handler".to_owned()))
 }
 
 fn contract_table(title: &str, empty: &str) -> Table {
@@ -1532,16 +1538,12 @@ fn mine_page(viewer: &Viewer) -> Result<Page, PageError> {
     for c in &list {
         table = table.row(contract_row(c, &names, &pricings, settings.modifier, now));
     }
-    Ok(with_links(
-        Page::new("My contracts")
-            .description("Your characters' courier contracts to the freight service"),
-        viewer,
-    )
-    .table(table))
+    Ok(Page::new("My contracts")
+        .description("Your characters' courier contracts to the freight service")
+        .table(table))
 }
 
 fn contracts_page() -> Result<Page, PageError> {
-    let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let names = places().map_err(|e| failed("reading locations", e))?;
     let pricings = pricing::all().map_err(|e| failed("reading pricings", e))?;
@@ -1559,17 +1561,14 @@ fn contracts_page() -> Result<Page, PageError> {
     for c in &list {
         table = table.row(contract_row(c, &names, &pricings, settings.modifier, now));
     }
-    Ok(with_links(
-        Page::new("Contracts").description(
+    Ok(Page::new("Contracts")
+        .description(
             "Outstanding and in-progress courier contracts, checked against their route's pricing",
-        ),
-        &viewer,
-    )
-    .table(table))
+        )
+        .table(table))
 }
 
 fn statistics_page() -> Result<Page, PageError> {
-    let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
     let names = places().map_err(|e| failed("reading locations", e))?;
     let since = rfc3339(Utc::now() - Duration::days(STATISTICS_DAYS));
     let finished = "status = 'finished' AND date_completed > $1::timestamptz";
@@ -1593,12 +1592,9 @@ fn statistics_page() -> Result<Page, PageError> {
             m3(float(r, at + 3)).into(),
         ])
     };
-    let mut page = with_links(
-        Page::new("Statistics").description(format!(
-            "Finished courier contracts of the last {STATISTICS_DAYS} days"
-        )),
-        &viewer,
-    );
+    let mut page = Page::new("Statistics").description(format!(
+        "Finished courier contracts of the last {STATISTICS_DAYS} days"
+    ));
 
     let routes = storage::query(
         &format!(
@@ -1656,7 +1652,6 @@ fn statistics_page() -> Result<Page, PageError> {
 // ---- locations -------------------------------------------------------------------
 
 fn locations_page(problem: Option<&str>) -> Result<Page, PageError> {
-    let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
     let rows = storage::query(
         "SELECT id, name, system_name, category FROM locations ORDER BY name LIMIT $1",
         &[MAX_LOCATIONS.into()],
@@ -1714,12 +1709,10 @@ fn locations_page(problem: Option<&str>) -> Result<Page, PageError> {
     if let Some(problem) = problem {
         form = form.description(problem.to_owned());
     }
-    Ok(with_links(
-        Page::new("Locations").description("Stations and structures routes start and end at"),
-        &viewer,
-    )
-    .form(form)
-    .table(table))
+    Ok(Page::new("Locations")
+        .description("Stations and structures routes start and end at")
+        .form(form)
+        .table(table))
 }
 
 fn add_location(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
@@ -1918,7 +1911,6 @@ fn pricing_form(
 }
 
 fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError> {
-    let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let names = location_names().map_err(|e| failed("reading locations", e))?;
     let pricings = pricing::all().map_err(|e| failed("reading pricings", e))?;
@@ -1942,12 +1934,9 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
             },
         ]);
     }
-    let mut page = with_links(
-        Page::new("Pricing")
-            .description("Routes, how their rewards are worked out, and the settings"),
-        &viewer,
-    )
-    .table(table);
+    let mut page = Page::new("Pricing")
+        .description("Routes, how their rewards are worked out, and the settings")
+        .table(table);
     if names.len() < 2 {
         page = page.text("Routes need two locations: add them on Locations (stations by ID, structures by ID and name).");
     } else {
@@ -1996,7 +1985,6 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
 }
 
 fn edit_page(id: i64, problem: Option<(&str, &Submission)>) -> Result<Page, PageError> {
-    let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
     let names = location_names().map_err(|e| failed("reading locations", e))?;
     let pricings = pricing::all().map_err(|e| failed("reading pricings", e))?;
     let p = pricings
@@ -2014,8 +2002,7 @@ fn edit_page(id: i64, problem: Option<(&str, &Submission)>) -> Result<Page, Page
     if let Some((problem, _)) = problem {
         form = form.description(problem.to_owned());
     }
-    Ok(with_links(Page::new("Edit route"), &viewer)
-        .link("Back to pricing", "pricing")
+    Ok(Page::new("Edit route")
         .form(form)
         .card(Card::new("Delete").field(
             "",

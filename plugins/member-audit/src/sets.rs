@@ -103,16 +103,14 @@ pub(crate) fn for_character(id: i64) -> Result<Vec<(String, Vec<String>)>, PageE
 /// can use each), and for `manage` (to add and delete them).
 pub(crate) fn skill_sets_page(access: &Access, note: Option<&str>) -> Result<Page, PageError> {
     let viewer = access.viewer;
-    if !access.skill_sets && !viewer.can("manage") {
+    // The manifest's rule asks for view_skill_sets too.
+    if !access.skill_sets {
         return Err(PageError::NotFound);
     }
     let sets = skill_sets()?;
     let mine = own(viewer);
-    let mut page = crate::pages::app_links(
-        Page::new("Skill Sets").description(
-            "Named lists of skills, such as a doctrine, and which of your characters can use them",
-        ),
-        access,
+    let mut page = Page::new("Skill sets").description(
+        "Named lists of skills, such as a doctrine, and which of your characters can use them",
     );
     if let Some(note) = note {
         page = page.text(note);
@@ -283,13 +281,10 @@ pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
     }
     let sets = skill_sets()?;
     let scope = access.listed(2);
-    let mut page = crate::pages::app_links(
-        Page::new("Reports").description(format!(
-            "Skill Sets: which characters can use each, of {}",
-            access.scope_words()
-        )),
-        access,
-    );
+    let mut page = Page::new("Reports").description(format!(
+        "Skill Sets: which characters can use each, of {}",
+        access.scope_words()
+    ));
     let mut summary = Vec::new();
     let mut tabs = Vec::new();
     for set in sets.iter().take(10) {

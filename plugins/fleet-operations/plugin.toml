@@ -5,7 +5,7 @@
 id = "tether.fleet-operations"
 name = "Fleet Operations"
 icon = "crosshair"
-version = "0.1.2"
+version = "0.1.3"
 host_api = "1"
 description = "Fleet operations in EVE time: upcoming and past ops with doctrine, form-up system, FC and type, counting down, and the next ones on the Dashboard."
 
@@ -44,3 +44,12 @@ section = "fleet"
 [[widgets]]
 title = "Upcoming Fleets"
 path = "widget"
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Overview"
+path = ""
+
+[action]
+label = "New operation"
+path = "add"

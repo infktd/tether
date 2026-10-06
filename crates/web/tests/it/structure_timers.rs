@@ -150,12 +150,12 @@ async fn structure_timers_end_to_end(db: PgPool) {
     assert!(list.body.contains("1d 2h"), "{}", list.body);
     assert!(list.body.contains("Important"));
     assert!(list.body.contains("Jita IV - Moon 4"));
-    // Create Timer is the header's button; upcoming timers tick in the
+    // New timer is the header's button; upcoming timers tick in the
     // browser, with the creator's portrait; each row has Edit and a
     // Delete that asks first.
     assert!(
         list.body
-            .contains(&format!("href=\"/plugins/{ID}/add\">Create Timer</a>")),
+            .contains(&format!("href=\"/plugins/{ID}/add\">New timer</a>")),
         "{}",
         list.body
     );
@@ -194,7 +194,7 @@ async fn structure_timers_end_to_end(db: PgPool) {
     let seen = timers_page(&h, &blue, 0).await;
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert!(seen.body.contains("Hostile Fortizar"));
-    assert!(!seen.body.contains("Create Timer"), "{}", seen.body);
+    assert!(!seen.body.contains("New timer"), "{}", seen.body);
     assert!(!seen.body.contains("name=\"timer\""), "{}", seen.body);
     let public = timer_id(&h, "Hostile Fortizar").await;
     for uri in ["add".to_owned(), format!("timer/{public}")] {

@@ -20,7 +20,7 @@ use tether_plugin_sdk::{
 use crate::survey::{self, Survey};
 use crate::{
     Which, extractions, failed, float, int, isk_or_blank, refinery, rfc3339, system_label, text,
-    value, when, with_links, with_rows,
+    value, when, with_rows,
 };
 
 /// The latest extraction at each moon: its refinery and corporation.
@@ -444,13 +444,10 @@ pub fn upload(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, 
         if let Err(err) = jobs::enqueue(NewJob::new("prices").key("prices")) {
             log::warn(format!("queuing prices: {err:?}"));
         }
-        return Ok(SubmitResult::Page(with_links(
-            upload_page(viewer, None)?.text(
-                "Moon Mining doesn't know the moon ores yet: it reads them from ESI now. \
+        return Ok(SubmitResult::Page(upload_page(viewer, None)?.text(
+            "Moon Mining doesn't know the moon ores yet: it reads them from ESI now. \
                  Try again in a minute.",
-            ),
-            viewer,
-        )?));
+        )));
     }
     let parsed = checked(viewer, survey::parse(submission.value("scan")), &ores)?;
     let good: Vec<&Survey> = parsed.iter().filter_map(|r| r.as_ref().ok()).collect();
@@ -500,10 +497,7 @@ pub fn upload(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, 
             },
         })
         .collect();
-    Ok(SubmitResult::Page(with_links(
-        upload_page(viewer, Some(&outcomes))?,
-        viewer,
-    )?))
+    Ok(SubmitResult::Page(upload_page(viewer, Some(&outcomes))?))
 }
 
 /// Surveys refused beyond their paste: ores that aren't moon ores (only

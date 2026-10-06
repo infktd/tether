@@ -5,7 +5,7 @@
 id = "tether.hr-applications"
 name = "HR Applications"
 icon = "clipboard"
-version = "0.4.2"
+version = "0.4.3"
 host_api = "1"
 description = "Application forms per corporation: pilots apply, recruiters review with comments and approve or reject, applicants follow their status."
 
@@ -46,7 +46,18 @@ label = "Applications"
 path = ""
 section = "corporation"
 
-[[navigation]]
-label = "HR Application Management"
+[[views]]
+label = "Overview"
+path = ""
+
+[[views]]
+label = "Review"
 path = "review"
-section = "corporation"
+
+[action]
+label = "Apply"
+path = "create"
+
+[[manage]]
+label = "Application forms"
+path = "forms"

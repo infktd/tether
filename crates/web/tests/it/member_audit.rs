@@ -4,7 +4,7 @@
 //! Characters (the card grid, Register Character first), the Character
 //! Sheet's pages and tabs, mail with the sheet and audited, the Character
 //! Finder (with each character's main and state) scoped by the owner's
-//! main's corporation or alliance, or everything, sharing, Skill Sets,
+//! main's corporation or alliance, or everything, sharing, Skill sets,
 //! reports and aa-memberaudit's settings.
 
 use std::sync::OnceLock;
@@ -542,8 +542,8 @@ async fn member_audit_end_to_end(db: PgPool) {
         // The skill in training fills live.
         r#"data-from="2026-01-01T00:00:00Z" data-to="2090-01-01T00:00:00Z""#.to_owned(),
         "Small Hybrid Turret IV".to_owned(),
-        // No "More" card: the app's pages are beside the title.
-        format!(r#"<a href="/plugins/{ID}/skill-sets">Skill Sets</a>"#),
+        // No "More" card: the app's views are in the bar Tether draws.
+        format!(r#"<a href="/plugins/{ID}/skill-sets">Skill sets</a>"#),
     ] {
         assert!(body.contains(&part), "{part}\n\n{body}");
     }
@@ -1008,6 +1008,28 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
     );
 }
 
+/// Skill sets has a page rule of its own (view_skill_sets), as the Finder,
+/// Reports and Data export do: it opens with that alone, so the views bar
+/// shows it only to those who may open it, and managing sets takes it
+/// with manage.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn skill_sets_are_for_view_skill_sets(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    let add = || form(&at, "_form=add_set&name=Guns&skills=Gunnery+1", &blue);
+    // manage alone: no page, and no adding.
+    grant(&h, &owner, "manage").await;
+    assert_eq!(page(&h, &at, &blue).await.status, StatusCode::NOT_FOUND);
+    assert_ne!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
+    // view_skill_sets opens it, without basic_access; with manage, sets
+    // are added there.
+    grant(&h, &owner, "view_skill_sets").await;
+    let sets = page(&h, &at, &blue).await;
+    assert_eq!(sets.status, StatusCode::OK, "{}", sets.body);
+    assert_eq!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
+}
+
 /// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance
 /// or everything; mail with the sheet, and every view audited.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -1036,7 +1058,7 @@ async fn who_sees_what(db: PgPool) {
     let sheet = |id: i64| format!("/plugins/{ID}/character/{id}");
     let mail = format!("/plugins/{ID}/mail/{CHRIBBA}");
 
-    // Basic access alone: only their own characters, and no Skill Sets
+    // Basic access alone: only their own characters, and no Skill sets
     // (view_skill_sets) or Settings (manage).
     grant(&h, &owner, "basic_access").await;
     for uri in ["skill-sets", "settings"] {
@@ -1048,9 +1070,13 @@ async fn who_sees_what(db: PgPool) {
             "{uri}"
         );
     }
-    assert_eq!(
-        page(&h, &format!("/plugins/{ID}"), &blue).await.status,
-        StatusCode::OK
+    let home = page(&h, &format!("/plugins/{ID}"), &blue).await;
+    assert_eq!(home.status, StatusCode::OK);
+    // Nor their views: the bar shows what they may open.
+    assert!(
+        !home.body.contains(&format!("/plugins/{ID}/skill-sets")),
+        "{}",
+        home.body
     );
     for uri in [sheet(CHRIBBA), sheet(CORP_MATE), mail.clone()] {
         assert_eq!(
@@ -1748,7 +1774,7 @@ async fn data_exports_are_csv_files_for_exports_access(db: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     // The daily schedule has already built them.
     for text in [
-        "Data Export",
+        "Data export",
         "Wallet journal",
         "Contract item",
         "/plugins/tether.member-audit/downloads/wallet-journal",

@@ -321,12 +321,11 @@ async fn moon_mining_end_to_end(db: PgPool) {
     assert!(moons.body.contains("Ready"));
     // Only refineries are kept.
     assert!(!moons.body.contains("Jita - Market"));
-    // The app's pages beside the title (the planner for a Station
-    // Manager), refineries with their type's icon, and the chunk's arrival
-    // counting down.
-    // Settings open from the app's Administration page instead.
+    // The views (the planner for a Station Manager) and the Manage menu
+    // with Settings, which Tether draws; refineries with their type's
+    // icon, and the chunk's arrival counting down.
     assert!(
-        !moons
+        moons
             .body
             .contains(&format!("href=\"/plugins/{ID}/settings\"")),
         "{}",

@@ -242,21 +242,6 @@ impl Access {
     }
 }
 
-/// The page's links beside the title, by what the viewer may open.
-fn header(page: Page, access: &Access) -> Page {
-    let mut page = page.link("Library", "");
-    if access.request {
-        page = page.link("My requests", "requests");
-    }
-    if access.manage_requests {
-        page = page.link("Open requests", "open");
-    }
-    if access.add_personal {
-        page = page.link("Data sources", "owners");
-    }
-    page
-}
-
 /// A blueprint's name with its product's icon (the image server has no
 /// plain icon for blueprints), or the name alone.
 fn blueprint_value(product: Option<i64>, name: String) -> Value {
@@ -469,12 +454,9 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
         table = table.row(cells);
     }
     let settings = settings().map_err(|e| failed("reading settings", e))?;
-    let mut page = header(
-        Page::new("Blueprints").description(
+    let mut page = Page::new("Blueprints").description(
             "Your corporations' and pilots' blueprints, read every 3 hours. Request copies of any of them.",
-        ),
-        access,
-    )
+        )
     .stats(vec![
         Stat::new("Blueprints", count(0)),
         Stat::new("Originals", count(1)),
@@ -635,11 +617,9 @@ fn my_requests(access: &Access) -> Result<Page, PageError> {
         );
         table = table.row(cells);
     }
-    Ok(header(
-        Page::new("My requests").description("Requests for copies you made that are still open."),
-        access,
-    )
-    .table(table))
+    Ok(Page::new("My requests")
+        .description("Requests for copies you made that are still open.")
+        .table(table))
 }
 
 fn open_requests(access: &Access) -> Result<Page, PageError> {
@@ -692,12 +672,9 @@ fn open_requests(access: &Access) -> Result<Page, PageError> {
         cells.push(actions(buttons));
         table = table.row(cells);
     }
-    Ok(header(
-        Page::new("Open requests").description(
+    Ok(Page::new("Open requests").description(
             "Requests for copies of your corporations' and characters' blueprints: open ones, and those you took.",
-        ),
-        access,
-    )
+        )
     .table(table))
 }
 
@@ -989,14 +966,11 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
                 .into(),
         ]);
     }
-    let mut page = header(
-        Page::new("Data sources").description(
+    let mut page = Page::new("Data sources").description(
             "Your characters whose own blueprints are in the library. Register a character for this app \
              first (it reads its blueprints, industry jobs and assets). Corporations' blueprints come \
              from corporate data sources, added with Add data source with a Director's character.",
-        ),
-        access,
-    )
+        )
     .table(mine);
     if registered.is_empty() {
         page = page.cards(CardGrid::new().register());
@@ -1090,7 +1064,7 @@ fn settings_page() -> Result<Page, PageError> {
         .channel
         .filter(|c| channels.iter().any(|(id, _)| id == c))
         .unwrap_or_default();
-    Ok(Page::new("Blueprints settings").link("Library", "").form(
+    Ok(Page::new("Blueprints settings").form(
         Form::new("settings", "Save").field(
             Field::select("channel", "Post new requests to", channels)
                 .value(current)

@@ -3,12 +3,12 @@
 //!
 //! - **Doctrines** (AA's dashboard): a card per doctrine, with its icon
 //!   hull, and a page per doctrine listing its fits.
-//! - **All Fits**: every fit, searchable; a page per fit with its modules
+//! - **All fits**: every fit, searchable; a page per fit with its modules
 //!   by slot, the EFT text to copy, notes, doctrines, categories and
 //!   required skills.
 //! - **Categories**: AA's tags on fits and doctrines, which limit who sees
 //!   them to groups.
-//! - **Add Fit** (EFT text), **Add Doctrine**, **Add Category**, and
+//! - **New fit** (EFT text), **New doctrine**, **New category**, and
 //!   editing and deleting all three, for `manage`.
 //!
 //! AA's permissions and rules exactly: `access_fittings` sees,
@@ -48,9 +48,9 @@ impl Plugin for Fittings {
             ["doctrine", id] => doctrines::page(&access, number(id)?),
             ["categories"] => categories::list(&access),
             ["category", id] => categories::page(&access, number(id)?),
-            ["add-fit"] if access.manage => fits::add_page(&access, None),
-            ["add-doctrine"] if access.manage => doctrines::add_page(&access, None),
-            ["add-category"] if access.manage => categories::add_page(&access, None),
+            ["add-fit"] if access.manage => fits::add_page(None),
+            ["add-doctrine"] if access.manage => doctrines::add_page(None),
+            ["add-category"] if access.manage => categories::add_page(None),
             ["edit", "fit", id] if access.manage => fits::edit_page(&access, number(id)?, None),
             ["edit", "doctrine", id] if access.manage => {
                 doctrines::edit_page(&access, number(id)?, None)
@@ -308,23 +308,14 @@ pub(crate) fn category_names(
         .collect())
 }
 
-/// The page links every page carries, AA's navbar: for managers, Add Fit
-/// as the page's one primary button, or as a link when the page has its
-/// own (`primary`, such as Edit Fit).
-pub(crate) fn app_links(page: Page, access: &Access, primary: Option<(&str, &str)>) -> Page {
-    let page = page
-        .link("Doctrines", "")
-        .link("All Fits", "fits")
-        .link("Categories", "categories");
-    if !access.manage {
-        return page;
-    }
-    let page = page
-        .link("Add Doctrine", "add-doctrine")
-        .link("Add Category", "add-category");
-    match primary {
-        Some((label, path)) => page.link("Add Fit", "add-fit").button(label, path),
-        None => page.button("Add Fit", "add-fit"),
+/// A page's own primary button, for managers: Edit on a record, New
+/// doctrine and New category on their lists. Tether draws the views and,
+/// elsewhere, the manifest's New fit.
+pub(crate) fn primary(page: Page, access: &Access, label: &str, path: &str) -> Page {
+    if access.manage {
+        page.button(label, path)
+    } else {
+        page
     }
 }
 

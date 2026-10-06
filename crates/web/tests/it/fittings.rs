@@ -451,6 +451,22 @@ async fn fittings_end_to_end(db: PgPool) {
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     work(&h).await;
     let list = open(&h, &owner, "").await;
+    // Managers: New doctrine on the Overview, the app's New fit elsewhere.
+    assert!(
+        list.body.contains(&format!(
+            "href=\"/plugins/{ID}/add-doctrine\">New doctrine</a>"
+        )),
+        "{}",
+        list.body
+    );
+    assert!(!list.body.contains(">New fit</a>"), "{}", list.body);
+    let fits = open(&h, &owner, "fits").await;
+    assert!(
+        fits.body
+            .contains(&format!("href=\"/plugins/{ID}/add-fit\">New fit</a>")),
+        "{}",
+        fits.body
+    );
     assert!(list.body.contains("Frigate Gang"), "{}", list.body);
     assert!(list.body.contains("Fast frigates"), "{}", list.body);
     // The icon is the main hull: the first added of two.
@@ -462,7 +478,7 @@ async fn fittings_end_to_end(db: PgPool) {
     let page = open(&h, &owner, &format!("doctrine/{doctrine}")).await;
     assert!(page.body.contains("Fast Tackle"), "{}", page.body);
     assert!(page.body.contains("Scout"), "{}", page.body);
-    assert!(page.body.contains("Edit Doctrine"), "{}", page.body);
+    assert!(page.body.contains("Edit doctrine"), "{}", page.body);
 
     // Members with access_fittings see; they don't manage.
     let pilot = log_in_as(&h, PILOT_A, None).await;
@@ -471,7 +487,9 @@ async fn fittings_end_to_end(db: PgPool) {
     let list = open(&h, &pilot, "").await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
     assert!(list.body.contains("Frigate Gang"), "{}", list.body);
-    assert!(!list.body.contains("Add Fit"), "{}", list.body);
+    assert!(!list.body.contains("New doctrine"), "{}", list.body);
+    let fits = open(&h, &pilot, "fits").await;
+    assert!(!fits.body.contains("New fit"), "{}", fits.body);
     assert_eq!(
         open(&h, &pilot, "add-fit").await.status,
         StatusCode::NOT_FOUND

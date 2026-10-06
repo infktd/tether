@@ -11,8 +11,8 @@ use tether_plugin_sdk::{
 
 use crate::fits::fit_categories_sql;
 use crate::{
-    Access, CATEGORY_SEEN, app_links, category_names, clip, doctrine_seen, execute, failed,
-    fit_seen, int, opt_int, query, text,
+    Access, CATEGORY_SEEN, category_names, clip, doctrine_seen, execute, failed, fit_seen, int,
+    opt_int, primary, query, text,
 };
 
 /// AA's lengths.
@@ -93,10 +93,11 @@ pub(crate) fn list(access: &Access) -> Result<Page, PageError> {
     let (doctrines, fits) = totals.first().map_or((0, 0), |r| (int(r, 0), int(r, 1)));
     let ids: Vec<i64> = rows.iter().map(|r| int(r, 0)).collect();
     let categories = category_names(access, &doctrine_categories_sql(), &ids)?;
-    let mut page = app_links(
+    let mut page = primary(
         Page::new("Doctrines").description("Doctrines and the fits in them"),
         access,
-        None,
+        "New doctrine",
+        "add-doctrine",
     )
     .stats(vec![
         Stat::new("Doctrines", doctrines),
@@ -131,7 +132,7 @@ pub(crate) fn list(access: &Access) -> Result<Page, PageError> {
     page = page.cards(grid);
     if doctrines > CARDS {
         page = page.text(format!(
-            "The first {CARDS} doctrines by name are shown. All Fits lists every fit."
+            "The first {CARDS} doctrines by name are shown. All fits lists every fit."
         ));
     }
     Ok(page)
@@ -204,10 +205,11 @@ pub(crate) fn page(access: &Access, id: i64) -> Result<Page, PageError> {
         )
         .fact("Created", time(doctrine.created_at.clone()))
         .fact("Updated", time(doctrine.updated_at.clone()));
-    let mut page = app_links(
+    let mut page = primary(
         Page::new(clip(&doctrine.name, 200)).description("Doctrine"),
         access,
-        Some(("Edit Doctrine", &edit)),
+        "Edit doctrine",
+        &edit,
     )
     .profile(profile);
     if !doctrine.description.is_empty() {
@@ -287,12 +289,8 @@ fn doctrine_form(values: &Values, submit: &str) -> Result<Form, PageError> {
         ))
 }
 
-pub(crate) fn add_page(access: &Access, again: Option<(&str, Values)>) -> Result<Page, PageError> {
-    let mut page = app_links(
-        Page::new("Add Doctrine").description("A new doctrine; add its fits next."),
-        access,
-        None,
-    );
+pub(crate) fn add_page(again: Option<(&str, Values)>) -> Result<Page, PageError> {
+    let mut page = Page::new("New doctrine").description("A new doctrine; add its fits next.");
     let values = match again {
         Some((note, values)) => {
             page = page.text(note);
@@ -300,7 +298,7 @@ pub(crate) fn add_page(access: &Access, again: Option<(&str, Values)>) -> Result
         }
         None => Values::default(),
     };
-    Ok(page.form(doctrine_form(&values, "Add Doctrine")?))
+    Ok(page.form(doctrine_form(&values, "Create doctrine")?))
 }
 
 pub(crate) fn edit_page(
@@ -310,13 +308,8 @@ pub(crate) fn edit_page(
 ) -> Result<Page, PageError> {
     let doctrine = seen_doctrine(access, id)?;
     let fits = fits_of(access, id)?;
-    let mut page = app_links(
-        Page::new(format!("Edit {}", clip(&doctrine.name, 200)))
-            .description("Its name, description, icon and fits")
-            .link("Doctrine", format!("doctrine/{id}")),
-        access,
-        None,
-    );
+    let mut page = Page::new(format!("Edit {}", clip(&doctrine.name, 200)))
+        .description("Its name, description, icon and fits");
     let values = match again {
         Some((note, values)) => {
             page = page.text(note);
@@ -331,7 +324,7 @@ pub(crate) fn edit_page(
                 .unwrap_or_default(),
         },
     };
-    page = page.form(doctrine_form(&values, "Save Doctrine")?);
+    page = page.form(doctrine_form(&values, "Save doctrine")?);
     // Fits to add: every fit not in it yet (a manager sees them all).
     let options: Vec<(String, String)> = query(
         "SELECT f.id, t.name, f.name FROM fits f JOIN types t ON t.type_id = f.hull_type_id \
@@ -349,7 +342,7 @@ pub(crate) fn edit_page(
     .collect();
     if !options.is_empty() {
         page = page.form(
-            Form::new("add_fit", "Add Fit to Doctrine")
+            Form::new("add_fit", "Add fit to doctrine")
                 .field(Field::select("fit", "Fit", options).required()),
         );
     }
@@ -403,7 +396,7 @@ pub(crate) fn save(
         let values = Some((note, Values::posted(submission)));
         Ok(SubmitResult::Page(match id {
             Some(id) => edit_page(access, id, values)?,
-            None => add_page(access, values)?,
+            None => add_page(values)?,
         }))
     };
     if let Some(id) = id {

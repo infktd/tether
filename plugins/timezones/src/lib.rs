@@ -177,14 +177,6 @@ fn clock(tz: Tz, at: DateTime<Utc>) -> (String, String, String) {
 
 // ---- pages -------------------------------------------------------------------
 
-fn with_links(page: Page, viewer: &Viewer) -> Page {
-    let mut page = page.link("Time Zones", "").link("Your time zone", "mine");
-    if viewer.can("manage") {
-        page = page.link("Panels", "panels");
-    }
-    page.button("Adjust time", "adjust")
-}
-
 /// Every zone now (kept current), or at an adjusted time.
 fn zones_page(viewer: &Viewer, at: Option<DateTime<Utc>>) -> Result<Page, PageError> {
     let when = at.unwrap_or_else(Utc::now);
@@ -246,7 +238,7 @@ fn zones_page(viewer: &Viewer, at: Option<DateTime<Utc>>) -> Result<Page, PageEr
             ),
     };
     page = page.stats(stats).table(table);
-    Ok(with_links(page, viewer))
+    Ok(page)
 }
 
 fn adjust_page(viewer: &Viewer, problem: Option<&str>) -> Result<Page, PageError> {
@@ -300,7 +292,7 @@ fn adjust_page(viewer: &Viewer, problem: Option<&str>) -> Result<Page, PageError
     if let Some(problem) = problem {
         page = page.text(problem);
     }
-    Ok(with_links(page.form(timer).form(fixed), viewer))
+    Ok(page.form(timer).form(fixed))
 }
 
 fn mine_page(viewer: &Viewer, problem: Option<&str>) -> Result<Page, PageError> {
@@ -320,7 +312,7 @@ fn mine_page(viewer: &Viewer, problem: Option<&str>) -> Result<Page, PageError> 
     if let Some(problem) = problem {
         page = page.text(problem);
     }
-    Ok(with_links(page.form(form), viewer))
+    Ok(page.form(form))
 }
 
 fn panels_page(problem: Option<&str>) -> Result<Page, PageError> {
@@ -372,10 +364,7 @@ fn panels_page(problem: Option<&str>) -> Result<Page, PageError> {
                 .help("An IANA name, e.g. Europe/Berlin")
                 .required(),
         );
-    let mut page = Page::new("Panels")
-        .description("The time zones everyone sees beside EVE time")
-        .link("Time Zones", "")
-        .link("Panels", "panels");
+    let mut page = Page::new("Panels").description("The time zones everyone sees beside EVE time");
     if let Some(problem) = problem {
         page = page.text(problem);
     }

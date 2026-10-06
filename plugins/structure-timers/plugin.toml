@@ -5,7 +5,7 @@
 id = "tether.structure-timers"
 name = "Structure Timers"
 icon = "clock"
-version = "0.2.3"
+version = "0.2.4"
 host_api = "1"
 description = "Structure timers in EVE time: upcoming and past, important ones marked, and corporation-only timers seen by the creator's corporation alone."
 
@@ -40,3 +40,12 @@ permission = "timer_management"
 label = "Structure Timers"
 path = ""
 section = "fleet"
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Overview"
+path = ""
+
+[action]
+label = "New timer"
+path = "add"

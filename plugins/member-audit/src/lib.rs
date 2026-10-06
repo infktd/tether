@@ -52,7 +52,7 @@ impl Plugin for MemberAudit {
             ["finder"] => pages::finder(&access, &request),
             ["skill-sets"] => sets::skill_sets_page(&access, None),
             ["reports"] => sets::reports(&access),
-            ["data-export"] if viewer.can("exports_access") => exports::page(&access, None),
+            ["data-export"] if viewer.can("exports_access") => exports::page(None),
             ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
@@ -75,7 +75,7 @@ impl Plugin for MemberAudit {
                 sets::add_set(&access, &submission)
             }
             ("data-export", "update_export") if viewer.can("exports_access") => {
-                exports::update(&access, submission.value("topic"))
+                exports::update(submission.value("topic"))
             }
             ("settings", "settings") if viewer.can("manage") => {
                 settings::save(&viewer, &submission)

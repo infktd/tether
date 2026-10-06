@@ -5,7 +5,7 @@
 id = "tether.bulletin-board"
 name = "Bulletin Board"
 icon = "megaphone"
-version = "0.1.1"
+version = "0.1.2"
 host_api = "1"
 description = "Bulletins for everyone, or only for members of some groups, newest first."
 
@@ -37,3 +37,12 @@ permission = "manage_bulletins"
 [[navigation]]
 label = "Bulletin Board"
 path = ""
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Overview"
+path = ""
+
+[action]
+label = "New bulletin"
+path = "new"
