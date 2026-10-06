@@ -736,25 +736,14 @@ async fn pilots_see_whether_they_can_fly_a_fit_and_save_it_to_eve(db: PgPool) {
         .expect(1)
         .mount(&h.esi_server)
         .await;
-    // Registering runs the app's schedules (in the background, and not
-    // again within ten minutes of the runs installing it queued).
+    // Registering runs the app's schedules (queued before the login
+    // answers, and not again within ten minutes of the runs installing it
+    // queued).
     sqlx::query("UPDATE core.schedules SET last_enqueued_at = now() - interval '1 hour'")
         .execute(&h.db)
         .await
         .unwrap();
     let owner = register(&h, &owner, "196379789:Chribba").await;
-    for _ in 0..100 {
-        let queued: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM core.audit_log WHERE action = 'schedule.run_now'",
-        )
-        .fetch_one(&h.db)
-        .await
-        .unwrap();
-        if queued > 0 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
     // Its skills are read.
     work(&h).await;
 

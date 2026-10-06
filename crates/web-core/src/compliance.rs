@@ -339,52 +339,50 @@ pub async fn before_login(state: &AppState, account: AccountId, character: i64) 
 /// within [`crate::plugin_jobs::triggered_gap`] (a minute while ESI's
 /// budget has room, ten while it's low). If the login made it a
 /// registered Member character, its corporation's member list is read now
-/// too if there's none yet (Corp Stats). In the background, so the login
-/// doesn't wait for it; best effort, a failure is only logged.
-pub fn sync_if_newly_registered(
+/// too if there's none yet (Corp Stats). Queued before the login's answer
+/// (a few queries and inserts), so whatever follows sees them; best
+/// effort, a failure is only logged.
+pub async fn sync_if_newly_registered(
     state: &AppState,
     account: AccountId,
     character: i64,
     before: Before,
 ) {
-    let state = state.clone();
-    tokio::spawn(async move {
-        if !before.member {
-            match registered_member(&state.db, account, character).await {
-                Ok(true) => {
-                    if let Err(err) = read_first_member_list(&state.db, character).await {
-                        tracing::warn!(character, error = %err, "queueing a first member list");
-                    }
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    tracing::warn!(character, error = %err, "checking a new registration");
+    if !before.member {
+        match registered_member(&state.db, account, character).await {
+            Ok(true) => {
+                if let Err(err) = read_first_member_list(&state.db, character).await {
+                    tracing::warn!(character, error = %err, "queueing a first member list");
                 }
             }
-        }
-        let now = match apps_serving(&state, character).await {
-            Ok(now) => now,
+            Ok(false) => {}
             Err(err) => {
-                tracing::warn!(character, error = %err, "checking a new app registration");
-                return;
+                tracing::warn!(character, error = %err, "checking a new registration");
             }
-        };
-        let why = json!({ "reason": "character_registered", "character_id": character });
-        for running in state.plugins.all_running() {
-            let id = &running.manifest.plugin.id;
-            if !now.contains(id) || before.had(id) {
-                continue;
-            }
-            crate::plugin_jobs::run_app_schedules(
-                &state.db,
-                &running.manifest,
-                Actor::System,
-                &why,
-                crate::plugin_jobs::triggered_gap(&state.esi, false),
-            )
-            .await;
         }
-    });
+    }
+    let now = match apps_serving(state, character).await {
+        Ok(now) => now,
+        Err(err) => {
+            tracing::warn!(character, error = %err, "checking a new app registration");
+            return;
+        }
+    };
+    let why = json!({ "reason": "character_registered", "character_id": character });
+    for running in state.plugins.all_running() {
+        let id = &running.manifest.plugin.id;
+        if !now.contains(id) || before.had(id) {
+            continue;
+        }
+        crate::plugin_jobs::run_app_schedules(
+            &state.db,
+            &running.manifest,
+            Actor::System,
+            &why,
+            crate::plugin_jobs::triggered_gap(&state.esi, false),
+        )
+        .await;
+    }
 }
 
 // ---- registering for an app --------------------------------------------------

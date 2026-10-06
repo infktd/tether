@@ -1379,22 +1379,6 @@ async fn finish_runs(db: &PgPool, ago: &str) {
         .unwrap();
 }
 
-/// Waits for the background sync a login starts: until `n` audited runs
-/// exist (at most five seconds), or, for none, a second for it to have
-/// (not) queued anything.
-async fn await_runs(db: &PgPool, n: usize) {
-    if n == 0 {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        return;
-    }
-    for _ in 0..100 {
-        if run_now_audits(db).await.len() >= n {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-}
-
 async fn mount_viewer_esi(h: &Harness) {
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/mail/77")))
@@ -1526,7 +1510,6 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         "196379789:Chribba",
     )
     .await;
-    await_runs(&h.db, 1).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
         std::slice::from_ref(&schedule)
@@ -1543,7 +1526,6 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
     // Logging in again registers nothing new: no run.
     finish_runs(&h.db, "1 hour").await;
     let owner = log_in_as(&h, "196379789:Chribba", Some(&owner)).await;
-    await_runs(&h.db, 0).await;
     assert!(queued_plugin_runs(&h.db).await.is_empty());
     assert_eq!(run_now_audits(&h.db).await.len(), 1);
 
@@ -1559,7 +1541,6 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         "443630591:The Mittani",
     )
     .await;
-    await_runs(&h.db, 2).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
         std::slice::from_ref(&schedule)
@@ -1574,7 +1555,6 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         "1887431749:gigX",
     )
     .await;
-    await_runs(&h.db, 0).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
         std::slice::from_ref(&schedule)
@@ -1600,7 +1580,6 @@ async fn registering_and_approving_a_source_run_the_apps_schedules_now(db: PgPoo
         "406944591:Fourth",
     )
     .await;
-    await_runs(&h.db, 3).await;
     assert_eq!(
         queued_plugin_runs(&h.db).await,
         std::slice::from_ref(&schedule)
@@ -1670,7 +1649,6 @@ async fn a_sync_that_cannot_be_queued_fails_neither_registering_nor_adding(db: P
 
     // Nothing queued, and nothing claimed to be: the audit goes with the
     // run it records.
-    await_runs(&h.db, 0).await;
     assert!(queued_plugin_runs(&h.db).await.is_empty());
     assert!(run_now_audits(&h.db).await.is_empty());
 }

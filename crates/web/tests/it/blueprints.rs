@@ -331,21 +331,14 @@ async fn blueprints_end_to_end(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     // Settings saved, the app reads at once (there's room in ESI's
-    // budget), in the background.
-    let mut ran = 0;
-    for _ in 0..100 {
-        ran = sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM core.audit_log WHERE action = 'schedule.run_now' \
-             AND details->>'reason' = 'settings_saved'",
-        )
-        .fetch_one(&h.db)
-        .await
-        .unwrap();
-        if ran >= 3 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    // budget): its schedules are queued before the answer.
+    let ran: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.audit_log WHERE action = 'schedule.run_now' \
+         AND details->>'reason' = 'settings_saved'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
     assert_eq!(ran, 3, "one per schedule");
     Mock::given(method("POST"))
         .and(path_regex(r"^/api/v10/channels/\d+/messages$"))

@@ -464,9 +464,9 @@ pub async fn callback(
     }
 
     // A character that just registered shows up in apps now, not at their
-    // next scheduled sync (in the background, best effort: never fails or
-    // slows the login).
-    crate::compliance::sync_if_newly_registered(&state, account, identity.character_id, before);
+    // next scheduled sync (best effort: it never fails the login).
+    crate::compliance::sync_if_newly_registered(&state, account, identity.character_id, before)
+        .await;
 
     // Rotate: drop any session this browser already had, then issue a new
     // token.

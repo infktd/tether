@@ -222,24 +222,18 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     );
 }
 
-/// Waits for the background work after a registration to queue a read of
-/// the corporation's member list.
-async fn wait_for_member_list_job(h: &Harness, corporation: i64) {
-    for _ in 0..200 {
-        let queued: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM core.jobs WHERE kind = 'compliance.corp_stats' \
-             AND (payload->>'corporation_id')::bigint = $1",
-        )
-        .bind(corporation)
-        .fetch_one(&h.db)
-        .await
-        .unwrap();
-        if queued > 0 {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    panic!("no member list read queued for {corporation}");
+/// Whether a read of the corporation's member list is queued (a
+/// registration queues one before its login answers).
+async fn member_list_read_queued(h: &Harness, corporation: i64) -> bool {
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE kind = 'compliance.corp_stats' \
+         AND (payload->>'corporation_id')::bigint = $1",
+    )
+    .bind(corporation)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    queued > 0
 }
 
 async fn member_list_source(h: &Harness) -> Option<i64> {
@@ -325,7 +319,7 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
     // Registering is enough: no offer, no approval. The corporation's list
     // is read at once (and daily after that).
     let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
-    wait_for_member_list_job(&h, CHRIBBA_CORP).await;
+    assert!(member_list_read_queued(&h, CHRIBBA_CORP).await);
     run_jobs(&h).await;
     assert_eq!(member_list_source(&h).await, Some(CHRIBBA_ID));
 
