@@ -7,9 +7,9 @@ Every core page and every plugin page follows this file. When a screen needs som
 ## Principles
 
 - **Seams, not shadows.** Surfaces separate with 1px `--border` hairlines; panels carry bright corner brackets (registration marks). No drop shadows, glows or gradients, except the ambient sky (Motion).
-- **Square, with one cut.** Corners are square. The primary button, the active tab and the active filter key have their bottom-right corner cut (8px, 7px on small controls). Nothing else is cut, so the cut marks what is selected or what acts.
+- **Square, with one cut.** Corners are square. The primary button, the active tab and the active filter key have their bottom-right corner cut (9px; 7px on small controls, 10px at 48px). Nothing else is cut, so the cut marks what is selected or what acts.
 - **EVE's colour meanings.** Blue (`--info`) is friendly, healthy, positive ISK; red (`--destructive`) is hostile, a loss, an error; the signal (`--accent`, orange by default) is the one thing that needs you now (the next countdown, pending counts, a queue about to end). Everything else is bone and fog.
-- **Instruments, not charts.** Progress is a segmented bar (capacitor cells); skill levels are EVE's five squares; composition is a ring; readouts are mono numbers split by hairlines; facts are dotted-leader ledgers.
+- **Instruments, not charts.** Progress is a segmented bar (capacitor cells); skill levels are EVE's five squares; composition is a ring; totals are stat cards of mono numbers; facts are dotted-leader ledgers.
 - **Numbers are monospaced.** Timers, ISK, counts, tickers, ids that are wanted, and timestamps use IBM Plex Mono so columns align and countdowns don't jitter.
 - **Dense but readable.** Tables are the main way data is shown. Comfortable rows, overline headers, no zebra stripes.
 - **Dark only.** Tokens are named so a light theme could come later without touching components.
@@ -22,22 +22,26 @@ Written as shadcn-style theme variables, so Basecoat's components pick them up.
 :root {
   /* surfaces */
   --background: #07090c;        /* void: the page */
-  --sidebar: rgba(7,9,12,.8);   /* the shell over the sky */
+  --sidebar: rgba(7,9,12,.86);  /* the shell over the sky */
   --card: #0c1016;              /* hull: panels, tables, cards */
   --muted: #121820;             /* raised: active key, tab track, subtle fills */
   --accent-surface: #0f141b;    /* hover rows, hover nav */
+  --selected: #111821;          /* the row a record panel belongs to */
+  --track: #161d26;             /* unlit cells, rings' tracks, empty bars */
+  --scrim: rgba(4,6,9,.72);     /* behind the command palette and dialogs */
 
   /* text */
   --foreground: #e7e3d8;        /* bone: primary text */
-  --foreground-soft: #a9afb7;   /* fog: secondary text, nav */
-  --muted-foreground: #7c8591;  /* dim: labels, captions, overlines */
+  --foreground-soft: #a9afb7;   /* fog: secondary text, nav, captions */
+  --muted-foreground: #7c8591;  /* dim: labels, overlines, meta */
   --faint: #2a3645;             /* seams you notice: outlines, empty cells */
+  --disabled: #5b6470;          /* controls that can't be used */
 
   /* lines */
   --border: #1c2530;            /* seam */
   --bracket: #566579;           /* panel corner marks */
   --input: #1c2530;
-  --ring: #a9afb7;
+  --ring: #4da3ff;              /* focus: 2px, EVE blue */
 
   /* primary action: bone fill, void text */
   --primary: #e7e3d8;
@@ -46,6 +50,8 @@ Written as shadcn-style theme variables, so Basecoat's components pick them up.
   /* signal: one per screen (per-instance setting) */
   --accent: #ff7a1a;
   --accent-soft: #2a1608;
+  --accent-line: #5a3417;       /* a signal notice's border */
+  --accent-wash: #170f09;       /* a signal notice's fill */
 
   /* EVE standings */
   --info: #4da3ff;              /* friendly, healthy */
@@ -53,10 +59,13 @@ Written as shadcn-style theme variables, so Basecoat's components pick them up.
   --info-soft: #0e1e33;
   --destructive: #f2555a;       /* hostile, loss, error */
   --destructive-soft: #2b1012;
+  --destructive-line: #5a2427;  /* a problem notice's border */
+  --caution: #e8b04a;           /* stale: read long ago, may be out of date */
 
   /* shape */
   --radius: 0;                  /* square everywhere */
-  --cut: 8px;                   /* the one cut corner */
+  --cut: 9px;                   /* the one cut corner */
+  --cut-sm: 7px;                /* on small controls */
 }
 ```
 
@@ -64,7 +73,7 @@ Written as shadcn-style theme variables, so Basecoat's components pick them up.
 
 The signal colour is a per-instance setting. Alliances pick it under Administration → Settings → Appearance (presets or any colour); signal orange `#ff7a1a` is the default. A colour must reach 4.5:1 against `--background`, so it reads as text and carries dark text in pills; `--accent-soft` is derived. It reaches pages as `/theme.css`, loaded after the built stylesheet, since the CSP allows no inline styles.
 
-**Moon ore rarity** (Moon Mining) is its own scale, brighter with value: R4 `#3c4a5c`, R8 `#6b7d92`, R16 `#a9afb7`, R32 `#e3c08a`, R64 the signal. Security status: 0.5 and up blue, above 0 signal, 0 and below red.
+**Moon ore rarity** (Moon Mining) is its own cold scale, brighter with value (the mock-up, 2026-10-06): R4 `#344152`, R8 `#4f6680`, R16 `--info`, R32 `--info-foreground`, R64 bone. The signal stays free for what needs you. Security status: 0.5 and up blue, above 0 signal, 0 and below red.
 
 Status colours must differ in lightness as well as hue, and pair colour with a text label or a square mark, never colour alone.
 
@@ -79,13 +88,17 @@ Fonts are **bundled and self-hosted**, never loaded from Google Fonts or any CDN
 
 | Use | Size | Weight | Notes |
 | --- | --- | --- | --- |
-| Page title (h1) | 30px | 600 | Archivo at 125% width (`font-stretch`), -0.01em |
+| Page title (h1) | 30px | 600 | Archivo at 125% width (`font-stretch`), -0.01em; 26px on phones |
 | Detail title (h2 in a profile or side panel) | 18–20px | 600 | 125% width |
-| Overline (card headers, column headers, labels over readouts) | 11px | 500 | uppercase, +0.14em tracking, `--muted-foreground` |
-| Body, table cells | 14px | 400 | primary text |
-| Nav items, buttons | 14px | 500 | tabs and filter keys are overline-styled (11px, +0.14em, uppercase) |
-| Captions, meta | 12px | 400 | `--muted-foreground` |
-| Readouts (stat values) | 22px | 500 | Plex Mono; a unit suffix (`B`, `M`, `/3`) in `--muted-foreground` |
+| Panel title (h2 in a panel's header) | 15px | 600 | bone; its meta beside it in 11px Plex Mono capitals, `--muted-foreground` |
+| Overline (column headers, labels over values, stat labels) | 11px | 500 | uppercase, +0.14em tracking, `--muted-foreground` |
+| Body | 14px | 400 | primary text |
+| Table cells | 13px | 400 | a row's name 13.5px/500 over an 11.5px muted line |
+| Nav items | 13.5px | 400 | `--foreground-soft`; the views bar is 11px/400 capitals (600 for the current view) |
+| Buttons | 13px | 500 | 600 on the primary; 12px on small ones |
+| Captions | 12px | 400 | `--foreground-soft` under a stat, `--muted-foreground` elsewhere |
+| Stat values | 30px | 400 | Plex Mono, line-height 1; a unit suffix (`ISK`, `B`, `/3`) in `--muted-foreground` |
+| Status lines | 12.5px | 400 | 500 when it needs someone or is wrong |
 | Timers, ISK, counts, tickers | inherits | 400–500 | Plex Mono |
 
 ## Spacing and layout
@@ -98,8 +111,9 @@ A 4px base. Common steps: 4, 8, 12, 14, 18, 22, 26, 36.
 | Sidebar width | 236px, right seam, over the sky |
 | Content padding | 22px top, 28px sides |
 | Gap between page sections | 20px |
-| Gap between panels | 14px |
-| Panel padding | 18px |
+| Gap between panels | 14px (18px side by side) |
+| Gap between stat cards | 12px |
+| Panel padding | 18px (16px in a stat card) |
 | Right rail (detail panels) | 330–372px |
 | Desktop design width | 1440px; layouts must hold down to 1280px |
 
@@ -115,7 +129,7 @@ Page structure (the mock-up, 2026-10-06: https://claude.ai/artifact/Edvv5nBKef4v
 
 **Page header**: under the trail, on every page, core and app alike. On the left a 44px icon tile (1px `--faint` frame, `--card` fill, the 22px icon in bone at stroke 1.5), then an eyebrow (11px overline in the signal: the app's name, or the core section's) over the title (Archivo at 125% width, 30px/600). On the right, at most one primary button (cut corner) and, for those who run the app, an outline Manage button with a sliders icon. A Manage page's eyebrow reads "<App> · Manage", the app's name linking back to it. A page's description, where it has one, is one line of 13px `--foreground-soft` under the title (two at most; more is cut); long explanations go in a panel or a disclosure, not the header. Everything hangs from the top: the icon tile and the buttons sit level with the title, so a longer or missing description never moves them, and the title keeps to one line (on a phone it may wrap, and the buttons go under it).
 
-**Views bar**: under the page header, the views of an app (or a core area's pages) as one row of links: 11px/600 uppercase at +0.14em, 10px × 14px, `--muted-foreground`, hovering to `--muted`. The current view is bone with a 2px signal underline (`box-shadow: inset 0 -2px 0`), and `aria-current="page"`. A count follows a label in mono (`EXTRACTIONS 2`), in the signal when it needs someone. A 1px seam runs under the whole row. On phones it scrolls sideways with a 40px fade at its right edge. There is one views bar per page: never a second row of look-alike tabs.
+**Views bar**: under the page header, the views of an app (or a core area's pages) as one row of links: 11px/400 uppercase at +0.14em, 10px × 14px, `--muted-foreground`, hovering to `--muted`. The current view is bone at 600 with a 2px signal underline (`box-shadow: inset 0 -2px 0`), and `aria-current="page"`. A count follows a label in mono (`EXTRACTIONS 2`), in the signal when it needs someone. A 1px seam runs under the whole row. On phones it scrolls sideways with a 40px fade at its right edge. There is one views bar per page: never a second row of look-alike tabs.
 
 **View chips**: a segmented group (1px `--border`, `--card` fill, 32px) for choosing which part of a list is shown (Owned · All · My surveys; Upcoming · Past), each a button with its count in mono; the chosen one has a `--border`-coloured fill (#1c2530), bone text at 500 and `aria-pressed="true"`. They live in the toolbar, kept in the address like any filter.
 
@@ -131,7 +145,7 @@ Page structure (the mock-up, 2026-10-06: https://claude.ai/artifact/Edvv5nBKef4v
 
 **Keys** (`.kbd`): 10.5px Plex Mono in a 1px `--faint` box with a 2px bottom edge, `--card` fill, `--foreground-soft` text.
 
-**Panels** (`.card`): `--card` fill, 1px `--border`, square, with four 10px corner brackets in `--bracket` (drawn as background images on the border box, so no extra markup). 18px padding. A panel's header is an overline, not a big title.
+**Panels** (`.card`, `.bk`): `--card` fill, 1px `--border`, square, with four 10px corner brackets in `--bracket` (drawn as background images on the border box, so no extra markup). 18px padding. A panel's title is 15px/600 in bone; what qualifies it (a count, LIVE, EVE TIME, SINCE TETHER STARTED) goes beside it on the right as 11px Plex Mono capitals in `--muted-foreground` (`.panel-head` holding the title and a `.panel-meta`). Overlines label things inside a panel, never the panel itself.
 
 **Buttons**, 34px tall (28px small), square, 13px/500 (12px small), 16px horizontal padding.
 - Primary: `--primary` fill, `--primary-foreground` text, weight 600, the bottom-right corner cut. At most one per screen region.
@@ -142,7 +156,7 @@ Page structure (the mock-up, 2026-10-06: https://claude.ai/artifact/Edvv5nBKef4v
 
 **Inputs**, 32px tall, `--card` fill, `--border` border, square, 13px. Every input has a `<label>`, visually hidden if the design omits it; an overline label beside a filter is fine.
 
-**Readouts** (stat values): an overline label over a 22px mono value, in a row split by 1px vertical seams (no boxes). Used in page headers and under profiles. A value that needs you is in the signal; hostile or loss in red.
+**Stat cards** (`.readouts` of `.card.stat`; the mock-up, 2026-10-06): bracketed panels 12px apart, each 16px inside: an 11px overline, the value in 30px Plex Mono (line-height 1, a unit suffix muted), and a 12px caption in `--foreground-soft`. A value that needs you is in the signal; hostile or loss in red. Three or four stay one row, and four become two rows of two on a narrower page; on a phone two to a row, an odd last card across both, so no card is ever left alone under the rest. The page's totals go here, above its panels.
 
 **Readout grid** (counts inside a panel: ESI's responses, the job queue): `dl.readout-grid`, even columns at least 150px wide, each cell an 11px overline over an 18px mono value, 12px × 18px padding, 1px seams between rows. A label that wraps keeps its value on the row's line, so a row of numbers always lines up. A count that needs you is in the signal once it's above zero; one that must stay zero (ESI's 420s) in red. Use it instead of a one-row table: a table's columns size to their contents and never line up with the next table's.
 

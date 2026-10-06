@@ -26,7 +26,7 @@
   </section>
 
   <section class="card data-card" aria-labelledby="esi-requests">
-    <header><h2 id="esi-requests">ESI requests</h2><p>What came back since Tether last started.</p></header>
+    <header><div class="panel-head"><h2 id="esi-requests">ESI requests</h2><span class="panel-meta">Since Tether started</span></div></header>
     <dl class="readout-grid">
       {% for r in requests %}<div><dt>{{ r.label }}</dt><dd class="num"{% if let Some(t) = r.tone %} data-tone="{{ t }}"{% endif %}>{{ r.value }}</dd></div>{% endfor %}
     </dl>
@@ -79,7 +79,7 @@
   </section>
 
   <section class="card data-card" aria-labelledby="schedules">
-    <header><h2 id="schedules">Schedules</h2><p>Times are EVE time.</p></header>
+    <header><div class="panel-head"><h2 id="schedules">Schedules</h2><span class="panel-meta">EVE time</span></div></header>
     <table class="table">
       <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last run</th><th scope="col">Next</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
