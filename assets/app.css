@@ -1467,6 +1467,182 @@
     text-decoration: underline;
     text-underline-offset: 4px;
   }
+  /* Not in use: not set up, switched off, or not yet. */
+  .status-line[data-tone="off"] {
+    color: var(--muted-foreground);
+  }
+  .status-line[data-tone="off"]::before {
+    background: var(--faint);
+  }
+
+  /* Health's verdict (DESIGN.md, Health): the worst of its systems as a
+     square in the tone's colour, the headline, and when it was read. */
+  .verdict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+    padding: 16px 18px;
+  }
+  .verdict-mark {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    background: var(--info);
+  }
+  .verdict-headline {
+    font-size: 18px;
+    font-weight: 600;
+    font-stretch: 125%;
+    color: var(--foreground);
+  }
+  .verdict-detail {
+    font-size: 12px;
+    color: var(--foreground-soft);
+  }
+  .verdict[data-tone="warn"] .verdict-mark {
+    background: var(--accent);
+  }
+  .verdict[data-tone="danger"] .verdict-mark {
+    background: var(--destructive);
+  }
+  .verdict[data-tone="danger"] .verdict-headline {
+    color: var(--destructive);
+  }
+  .verdict.is-loading .verdict-mark {
+    background: var(--faint);
+  }
+  .verdict.is-loading .verdict-headline {
+    color: var(--muted-foreground);
+  }
+
+  /* Health's systems: the tone's square, the name over what it is or
+     what's wrong, the reading, and the status in the tone's colour. */
+  .system-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .system-list > li {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto 140px;
+    align-items: center;
+    column-gap: 16px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+  }
+  .system-list > li:first-child {
+    border-top: 0;
+  }
+  .system-mark {
+    width: 8px;
+    height: 8px;
+    background: var(--info);
+  }
+  .system-name {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+  .system-name a:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .system-detail {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted-foreground);
+    overflow-wrap: anywhere;
+  }
+  .system-value {
+    font-size: 12px;
+    color: var(--foreground);
+    white-space: nowrap;
+  }
+  .system-status {
+    font-size: 12.5px;
+    text-align: right;
+    color: var(--foreground-soft);
+  }
+  .system-list > li[data-tone="warn"] .system-mark {
+    background: var(--accent);
+  }
+  .system-list > li[data-tone="warn"] .system-status {
+    color: var(--accent);
+  }
+  .system-list > li[data-tone="danger"] .system-mark {
+    background: var(--destructive);
+  }
+  .system-list > li[data-tone="danger"] .system-status {
+    color: var(--destructive);
+  }
+  .system-list > li[data-tone="off"] .system-mark {
+    background: var(--faint);
+  }
+  .system-list > li[data-tone="off"] .system-status {
+    color: var(--muted-foreground);
+  }
+  /* A phone: the reading and the status under the name. */
+  @media (width < 640px) {
+    .system-list > li {
+      grid-template-columns: 8px minmax(0, 1fr) auto;
+      row-gap: 4px;
+    }
+    .system-mark {
+      grid-row: span 2;
+      align-self: start;
+      margin-top: 5px;
+    }
+    .system-name {
+      grid-column: 2 / -1;
+    }
+    .system-value {
+      grid-column: 2;
+    }
+    .system-status {
+      grid-column: 3;
+    }
+  }
+
+  /* A readout grid: labelled numbers in even columns, so a row of them
+     lines up with the next. */
+  .readout-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    margin: 0 0 -1px;
+    border-top: 1px solid var(--border);
+  }
+  /* A label that wraps keeps its number on the row's line. */
+  .readout-grid > div {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .readout-grid dt {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .readout-grid dd {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+  .readout-grid dd[data-tone="warn"] {
+    color: var(--accent);
+  }
+  .readout-grid dd[data-tone="danger"] {
+    color: var(--destructive);
+  }
 
   /* Segmented bar: cells, lit or not. */
   .segbar {

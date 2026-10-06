@@ -1,7 +1,7 @@
 //! The site's own name (DESIGN.md, Identity): an alliance's, say, shown in
 //! browser tabs ("Dashboard · Name · Tether") and on the sign-in page,
 //! beside Tether's own wordmark. None unless an admin sets one, at setup's
-//! end or on System.
+//! end or on Settings.
 
 use serde_json::json;
 use tether_db::accounts::AccountId;

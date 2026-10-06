@@ -35,7 +35,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         key: "instance",
         label: "Instance",
-        about: "This server: health, updates, the sidebar and the record of changes.",
+        about: "This server: its health and settings, the sidebar and the record of changes.",
     },
 ];
 
@@ -150,11 +150,19 @@ pub const PAGES: &[Page] = &[
     },
     Page {
         active: "system",
-        label: "System",
+        label: "Health",
         href: "/admin/system",
         icon: "activity",
         group: "instance",
-        about: "ESI requests, the job queue and schedules, platform updates and the accent colour.",
+        about: "Whether ESI, Discord, the job queue, backups and updates are working; schedules and upgrades.",
+    },
+    Page {
+        active: "settings",
+        label: "Settings",
+        href: "/admin/settings",
+        icon: "sliders",
+        group: "instance",
+        about: "The site's name, the accent colour, notifications kept per user, and update checks.",
     },
     Page {
         active: "menu",
@@ -207,7 +215,7 @@ pub fn may(nav: &AdminNav, page: &Page) -> bool {
         "corpstats" => nav.corpstats,
         "discord" | "pings_settings" => nav.discord,
         "plugins" => nav.plugins,
-        "system" | "menu" => nav.system,
+        "system" | "settings" | "menu" => nav.system,
         "audit" => nav.audit,
         "setup" => nav.setup,
         _ => false,
@@ -263,11 +271,19 @@ pub fn views(nav: &AdminNav, active: &str) -> (&'static str, Vec<Link>) {
     if active == OVERVIEW || !is_admin_page(active) {
         return ("", Vec::new());
     }
-    listed(nav, active)
+    let Some(group) = listed(nav, active)
         .into_iter()
         .find(|group| group.pages.iter().any(|p| p.current))
-        .filter(|group| group.pages.len() > 1)
-        .map_or(("", Vec::new()), |group| (group.label, group.pages))
+    else {
+        return ("", Vec::new());
+    };
+    // One page alone draws no bar; the group still names the page's place.
+    let pages = if group.pages.len() > 1 {
+        group.pages
+    } else {
+        Vec::new()
+    };
+    (group.label, pages)
 }
 
 #[cfg(test)]

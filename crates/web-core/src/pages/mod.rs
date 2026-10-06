@@ -105,6 +105,34 @@ pub fn grouped(n: i64) -> String {
     if n < 0 { format!("-{out}") } else { out }
 }
 
+/// `1 warning`, `2 warnings`, `1,240 pilots`: a count and its noun.
+pub fn plural(n: i64, one: &str, many: &str) -> String {
+    format!("{} {}", grouped(n), if n == 1 { one } else { many })
+}
+
+/// How long ago, in its largest whole unit: `just now`, `4m ago`, `3h ago`,
+/// `2d ago`.
+pub fn ago(seconds: i64) -> String {
+    match seconds.max(0) {
+        s if s < 60 => "just now".to_owned(),
+        s if s < 3_600 => format!("{}m ago", s / 60),
+        s if s < 86_400 => format!("{}h ago", s / 3_600),
+        s => format!("{}d ago", s / 86_400),
+    }
+}
+
+/// How long until, the same way: `in 4m`, `in 3h`, `in 2d`; `due` once
+/// it's passed.
+pub fn until(seconds: i64) -> String {
+    match seconds {
+        s if s <= 0 => "due".to_owned(),
+        s if s < 60 => format!("in {s}s"),
+        s if s < 3_600 => format!("in {}m", s / 60),
+        s if s < 86_400 => format!("in {}h", s / 3_600),
+        s => format!("in {}d", s / 86_400),
+    }
+}
+
 pub fn is_htmx(headers: &HeaderMap) -> bool {
     headers.get("hx-request").is_some_and(|v| v == "true")
 }
@@ -690,7 +718,29 @@ pub async fn load(
 
 #[cfg(test)]
 mod tests {
-    use super::initials;
+    use super::{ago, initials, plural, until};
+
+    #[test]
+    fn counts_take_their_noun() {
+        assert_eq!(plural(1, "warning", "warnings"), "1 warning");
+        assert_eq!(plural(0, "warning", "warnings"), "0 warnings");
+        assert_eq!(plural(12_400, "pilot", "pilots"), "12,400 pilots");
+    }
+
+    #[test]
+    fn times_read_in_their_largest_unit() {
+        assert_eq!(ago(-5), "just now");
+        assert_eq!(ago(59), "just now");
+        assert_eq!(ago(4 * 60 + 59), "4m ago");
+        assert_eq!(ago(3 * 3_600), "3h ago");
+        assert_eq!(ago(2 * 86_400 + 5), "2d ago");
+        assert_eq!(until(0), "due");
+        assert_eq!(until(-30), "due");
+        assert_eq!(until(42), "in 42s");
+        assert_eq!(until(4 * 60), "in 4m");
+        assert_eq!(until(16 * 3_600 + 59), "in 16h");
+        assert_eq!(until(3 * 86_400), "in 3d");
+    }
 
     #[test]
     fn initials_take_two_words() {

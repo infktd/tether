@@ -1,41 +1,14 @@
-{#- Administration's System panel: a fragment for /admin/system/summary.
-    Its heading is the link to the System page. -#}
+{#- Health on Administration's overview: the verdict, and whatever isn't
+    simply working. A fragment for /admin/system/summary; its heading is
+    the link to Health. -#}
 {%- import "icons.html" as icons -%}
-<section class="flex flex-col gap-3" aria-label="System">
-  <div>
-    <h2 class="widget-title"><a href="/admin/system">System {% call icons::icon("chevron-right") %}{% endcall %}</a></h2>
-    <p class="text-sm text-muted-foreground">This server right now: its version, the job queue and ESI.</p>
-  </div>
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <div class="card stat">
-      <div class="stat-label">Software Version</div>
-      <div class="stat-value num">{{ updates.current }}</div>
-      <div class="stat-caption">
-        {% if !updates.enabled %}Update checks are off
-        {% else if updates.newer %}{% if let Some(latest) = updates.latest %}<span class="badge" data-variant="secondary">{{ latest }} available</span>{% endif %}
-        {% else if updates.latest.is_some() %}Up to date
-        {% else %}Not checked yet{% endif %}
-      </div>
-    </div>
-    <div class="card stat">
-      <div class="stat-label">Task Queue</div>
-      <div class="stat-value num">{{ queued }}</div>
-      <div class="stat-caption">Waiting; <span class="num">{{ running }}</span> running{% if dead > 0 %}, <span class="text-destructive"><span class="num">{{ dead }}</span> dead</span>{% endif %}</div>
-    </div>
-    <div class="card stat">
-      <div class="stat-label">ESI</div>
-      {% if let Some(online) = esi_online %}
-      <div class="stat-value"><span class="badge" data-variant="secondary">Answering</span></div>
-      <div class="stat-caption"><span class="num">{{ online }}</span> pilots online</div>
-      {% else %}
-      <div class="stat-value"><span class="badge" data-variant="destructive">Down</span></div>
-      <div class="stat-caption">{% if let Some(e) = esi_error %}{{ e }}{% endif %}</div>
-      {% endif %}
-    </div>
-    <div class="card stat">
-      <div class="stat-label">Error budget</div>
-      <div class="stat-value num">{% if let Some(r) = budget.error_remain %}{{ r }}{% else %}—{% endif %}</div>
-      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% else %}No errors reported this window{% endif %}</div>
-    </div>
-  </div>
+{%- import "ui.html" as ui -%}
+<section class="flex flex-col gap-3" aria-label="Health">
+  <h2 class="widget-title"><a href="/admin/system">Health {% call icons::icon("chevron-right") %}{% endcall %}</a></h2>
+  {% call ui::verdict(verdict.tone.as_str(), verdict.headline.as_str(), verdict.detail.as_str()) %}{% endcall %}
+  {% if !lines.is_empty() %}
+  <section class="card data-card">
+    {% include "health_lines.html" %}
+  </section>
+  {% endif %}
 </section>

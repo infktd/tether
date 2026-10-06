@@ -1,5 +1,5 @@
-//! The admin dashboard: system health, dead jobs, update checks and the
-//! audit log.
+//! The admin dashboard: Health (systems, dead jobs, schedules, the
+//! version), Settings, update checks and the audit log.
 
 use crate::common::*;
 use axum::body::Body;
@@ -46,7 +46,7 @@ async fn the_dashboard_and_audit_log_need_their_permissions(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
     mount_status(&h).await;
-    for uri in ["/admin/system", "/admin/audit"] {
+    for uri in ["/admin/system", "/admin/settings", "/admin/audit"] {
         assert_eq!(send(&h.app, get(uri, &[])).await.location(), "/login");
         assert_eq!(
             page(&h, uri, &pilot).await.status,
@@ -69,9 +69,13 @@ async fn the_dashboard_and_audit_log_need_their_permissions(db: PgPool) {
     // Administration's overview lists it.
     let overview = page(&h, "/admin", &owner).await.body;
     assert!(overview.contains(r#"href="/admin/system""#), "{overview}");
-    let dashboard = page(&h, "/admin/system", &owner).await.body;
-    assert!(dashboard.contains("Answering"), "{dashboard}");
-    assert!(dashboard.contains(r#"href="/admin/audit""#), "rail link");
+    assert!(overview.contains(r#"href="/admin/settings""#), "{overview}");
+    let health = page(&h, "/admin/system", &owner).await.body;
+    // ESI's line: up, with Tranquility's pilots online, not a badge.
+    assert!(health.contains("pilots online"), "{health}");
+    assert!(!health.contains("Answering"), "{health}");
+    assert!(health.contains(r#"href="/admin/audit""#), "views bar");
+    assert!(health.contains(r#"href="/admin/settings""#), "views bar");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -306,7 +310,7 @@ async fn update_checks_can_be_switched_off(db: PgPool) {
 
     // The form without the checkbox ticked.
     let off = send(&h.app, form("/admin/system/updates", "", &owner)).await;
-    assert_eq!(off.location(), "/admin/system");
+    assert_eq!(off.location(), "/admin/settings");
     assert!(!updates::status(&h.db).await.unwrap().enabled);
     let http = github_client(&github);
     updates::check(&h.db, &http, &source(&github))
@@ -322,7 +326,7 @@ async fn update_checks_can_be_switched_off(db: PgPool) {
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
 
     let on = send(&h.app, form("/admin/system/updates", "enabled=on", &owner)).await;
-    assert_eq!(on.location(), "/admin/system");
+    assert_eq!(on.location(), "/admin/settings");
     assert!(updates::status(&h.db).await.unwrap().enabled);
     let actions: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT details FROM core.audit_log WHERE action = 'updates.enabled' ORDER BY id",
@@ -493,7 +497,7 @@ async fn schedules_run_now_from_the_system_page(db: PgPool) {
 async fn the_notification_cap_is_a_setting(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
-    let shown = page(&h, "/admin/system", &owner).await;
+    let shown = page(&h, "/admin/settings", &owner).await;
     assert!(
         shown.body.contains(r#"name="max_per_user""#) && shown.body.contains(r#"value="50""#),
         "AA's default: {}",
@@ -516,7 +520,7 @@ async fn the_notification_cap_is_a_setting(db: PgPool) {
         form("/admin/system/notifications", "max_per_user=3", &owner),
     )
     .await;
-    assert_eq!(res.location(), "/admin/system");
+    assert_eq!(res.location(), "/admin/settings");
     assert_eq!(
         tether_db::settings::notifications_max(&h.db).await.unwrap(),
         3
@@ -553,7 +557,7 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
         ),
     )
     .await;
-    assert_eq!(res.location(), "/admin/system", "{}", res.body);
+    assert_eq!(res.location(), "/admin/settings", "{}", res.body);
     assert_eq!(
         title(&page(&h, "/dashboard", &pilot).await.body),
         "Dashboard · Some Alliance · Tether"
@@ -562,7 +566,7 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
     assert_eq!(title(&login), "Log in · Some Alliance · Tether");
     assert!(login.contains(r#"<div class="signin-site">Some Alliance</div>"#));
     assert!(
-        page(&h, "/admin/system", &owner)
+        page(&h, "/admin/settings", &owner)
             .await
             .body
             .contains(r#"value="Some Alliance""#)
@@ -772,4 +776,92 @@ async fn upgrading_needs_a_recent_eve_login(db: PgPool) {
         res.location()
     );
     assert!(request(&h).is_none());
+}
+
+/// Health (Jay, 2026-10-06): a verdict over a line for each system, saying
+/// in words what's wrong rather than in a badge.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn health_says_what_is_wrong(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    mount_status(&h).await;
+    for (name, every) in [("backups.nightly", 86_400), ("discord.sync_all", 300)] {
+        tether_jobs::schedule::ensure(
+            &h.db,
+            &tether_jobs::schedule::ScheduleSpec::new(
+                name,
+                name,
+                std::time::Duration::from_secs(every),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    // Nothing has run yet, and Discord isn't set up: not problems.
+    let body = page(&h, "/admin/system", &owner).await.body;
+    assert!(body.contains("All systems nominal"), "{body}");
+    assert!(body.contains("None yet"), "{body}");
+    assert!(body.contains("Not set up"), "{body}");
+    assert!(body.contains("every 5 minutes"), "{body}");
+    assert!(body.contains("every day"), "{body}");
+    assert!(!body.contains("(s)"), "plurals: {body}");
+
+    // The nightly backup gave up: a problem, its error the line's detail,
+    // and a dead job in the queue.
+    sqlx::query(
+        "INSERT INTO core.jobs (kind, state, attempts, last_error, schedule, finished_at)
+         VALUES ('backups.nightly', 'dead', 5, 'pg_dump not found', 'backups.nightly', now())",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let body = page(&h, "/admin/system", &owner).await.body;
+    assert!(body.contains("1 problem"), "{body}");
+    assert!(body.contains("pg_dump not found"), "{body}");
+    assert!(body.contains("1 dead job<"), "{body}");
+    assert!(body.contains(">Failed<"), "{body}");
+
+    // It ran again: backed up. The dead job still wants someone.
+    sqlx::query(
+        "INSERT INTO core.jobs (kind, state, schedule, finished_at)
+         VALUES ('backups.nightly', 'succeeded', 'backups.nightly', now())",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let body = page(&h, "/admin/system", &owner).await.body;
+    assert!(body.contains("Backed up"), "{body}");
+    assert!(body.contains("Needs attention"), "{body}");
+    assert!(body.contains("1 warning"), "{body}");
+    assert!(body.contains(">Succeeded<"), "{body}");
+}
+
+/// An app's schedules show under its name, run from its Apps page: Health
+/// offers Run now only for Tether's own.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_schedules_go_under_their_app(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    mount_status(&h).await;
+    tether_jobs::schedule::ensure(
+        &h.db,
+        &tether_jobs::schedule::ScheduleSpec::new(
+            "plugin:acme.thing:refresh",
+            "plugin.job",
+            std::time::Duration::from_secs(1800),
+        ),
+    )
+    .await
+    .unwrap();
+    let body = page(&h, "/admin/system", &owner).await.body;
+    assert!(body.contains(">refresh<"), "{body}");
+    assert!(
+        body.contains(r#"href="/admin/plugins/acme.thing""#),
+        "{body}"
+    );
+    assert!(body.contains("every 30 minutes"), "{body}");
+    assert!(
+        !body.contains("/admin/system/schedules/plugin:acme.thing:refresh/run"),
+        "{body}"
+    );
 }

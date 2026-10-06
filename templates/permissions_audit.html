@@ -1,14 +1,14 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}Permissions Audit{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Permissions Audit</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Permissions Audit</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
   <div class="page-head">
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon("search") %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">Admin</div>
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Permissions Audit</h1>
         <p class="page-desc max-w-3xl">Every permission, and how many states, groups and single users it's granted to, and how many accounts hold it. Superusers hold everything; deactivated accounts hold nothing; group permissions count only while an account has a main.</p>
       </div>

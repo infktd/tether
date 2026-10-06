@@ -1,14 +1,14 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}Permissions{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Permissions</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Permissions</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="page-head">
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon("shield") %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">Administration</div>
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Permissions</h1>
         <p class="page-desc">Granted to states, groups and single users, as in Alliance Auth. Superusers always have everything. To grant to one user, open them under <a class="underline underline-offset-4" href="/admin/users">Users</a>.</p>
       </div>

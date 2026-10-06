@@ -1,85 +1,68 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
-{% block title %}System{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">System</span>{% endblock %}
+{%- import "ui.html" as ui -%}
+{% block title %}Health{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Health</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="page-head">
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon("activity") %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">Administration</div>
-        <h1 class="page-title">System</h1>
-        <p class="page-desc">ESI health, the job queue and platform updates. Counts are since this instance last started.</p>
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
+        <h1 class="page-title">Health</h1>
+        <p class="page-desc">Whether each part of Tether is working, read as this page loaded.</p>
       </div>
     </div>
   </div>
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
-  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Summary">
-    <div class="card stat">
-      <div class="stat-label">ESI</div>
-      {% if let Some(online) = esi_online %}
-      <div class="stat-value"><span class="badge" data-variant="secondary">Answering</span></div>
-      <div class="stat-caption"><span class="num">{{ online }}</span> pilots online</div>
-      {% else %}
-      <div class="stat-value"><span class="badge" data-variant="destructive">Down</span></div>
-      <div class="stat-caption">{% if let Some(e) = esi_error %}{{ e }}{% endif %}</div>
-      {% endif %}
-    </div>
-    <div class="card stat">
-      <div class="stat-label">Error budget</div>
-      <div class="stat-value num">{% if let Some(r) = budget.error_remain %}{{ r }}{% else %}—{% endif %}</div>
-      <div class="stat-caption">{% if budget.error_remain.is_some() %}Left this window{% if let Some(low) = budget.lowest_error_remain %}; lowest <span class="num">{{ low }}</span>{% endif %}{% else %}No errors reported this window{% endif %}</div>
-    </div>
-    <div class="card stat">
-      <div class="stat-label">Budget exceeded</div>
-      <div class="stat-value num">{{ budget.counts.error_limited }}</div>
-      <div class="stat-caption">HTTP 420s; must stay 0</div>
-    </div>
-    <div class="card stat">
-      <div class="stat-label">Dead jobs</div>
-      <div class="stat-value num">{{ dead_count }}</div>
-      <div class="stat-caption">Gave up after retrying</div>
-    </div>
+  {% call ui::verdict(verdict.tone.as_str(), verdict.headline.as_str(), verdict.detail.as_str()) %}{% endcall %}
+
+  <section class="card data-card" aria-labelledby="systems">
+    <header><h2 id="systems">Systems</h2></header>
+    {% include "health_lines.html" %}
   </section>
 
-  <section class="card data-card">
-    <header><h2>ESI requests</h2></header>
+  <section class="card data-card" aria-labelledby="esi-requests">
+    <header><h2 id="esi-requests">ESI requests</h2><p>What came back since Tether last started.</p></header>
+    <dl class="readout-grid">
+      {% for r in requests %}<div><dt>{{ r.label }}</dt><dd class="num"{% if let Some(t) = r.tone %} data-tone="{{ t }}"{% endif %}>{{ r.value }}</dd></div>{% endfor %}
+    </dl>
+  </section>
+
+  {% if !rate_groups.is_empty() %}
+  <section class="card data-card" aria-labelledby="rate-groups">
+    <header><h2 id="rate-groups">Rate-limit groups</h2><p>ESI's budget for each group of routes, as Tether last saw it.</p></header>
     <table class="table">
-      <thead><tr><th scope="col">OK</th><th scope="col">Cached</th><th scope="col">Not modified</th><th scope="col">4xx</th><th scope="col">5xx</th><th scope="col">420 (budget)</th><th scope="col">429 (rate)</th><th scope="col">No response</th></tr></thead>
+      <thead><tr><th scope="col">Group</th><th scope="col" class="num">Limit</th><th scope="col" class="num">Left</th><th scope="col">Held</th></tr></thead>
       <tbody>
-        <tr class="num">
-          <td>{{ budget.counts.ok }}</td><td>{{ budget.counts.cached }}</td><td>{{ budget.counts.not_modified }}</td><td>{{ budget.counts.client_errors }}</td><td>{{ budget.counts.server_errors }}</td><td>{{ budget.counts.error_limited }}</td><td>{{ budget.counts.rate_limited }}</td><td>{{ budget.counts.transport_errors }}</td>
+        {% for g in rate_groups %}
+        <tr>
+          <td><span class="num">{{ g.name }}</span></td>
+          <td class="num">{{ g.limit }}</td>
+          <td class="num">{{ g.remaining }}</td>
+          <td>{% if let Some(held) = g.held %}{% call ui::status("warn", held.as_str()) %}{% endcall %}{% else %}<span class="blank">—</span>{% endif %}</td>
         </tr>
-      </tbody>
-    </table>
-    {% if !budget.groups.is_empty() %}
-    <table class="table">
-      <thead><tr><th scope="col">Rate-limit group</th><th scope="col">Limit</th><th scope="col">Remaining</th><th scope="col">Held</th></tr></thead>
-      <tbody>
-        {% for g in budget.groups %}
-        <tr><td class="num">{{ g.name }}</td><td class="num">{{ g.limit }}</td><td class="num">{{ g.remaining }}</td><td class="num">{% if let Some(h) = g.held_for_secs %}{{ h }} s{% else %}—{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>
-    {% endif %}
   </section>
+  {% endif %}
 
-  <section class="card data-card">
-    <header><h2>Job queue</h2></header>
-    <table class="table">
-      <thead><tr>{% for j in jobs %}<th scope="col">{{ j.state }}</th>{% endfor %}</tr></thead>
-      <tbody><tr class="num">{% for j in jobs %}<td>{{ j.count }}</td>{% endfor %}</tr></tbody>
-    </table>
+  <section class="card data-card" aria-labelledby="job-queue">
+    <header><h2 id="job-queue">Job queue</h2></header>
+    <dl class="readout-grid">
+      {% for r in jobs %}<div><dt>{{ r.label }}</dt><dd class="num"{% if let Some(t) = r.tone %} data-tone="{{ t }}"{% endif %}>{{ r.value }}</dd></div>{% endfor %}
+    </dl>
     {% if !dead.is_empty() %}
     <table class="table">
-      <thead><tr><th scope="col">Dead job</th><th scope="col">Last error</th><th scope="col">Tries</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">Dead job</th><th scope="col">Last error</th><th scope="col" class="num">Tries</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for j in dead %}
         <tr>
-          <td><div class="font-medium num">{{ j.kind }}</div><div class="text-xs text-muted-foreground num">#{{ j.id }} · {{ j.when }}</div></td>
+          <td><div class="font-medium num">{{ j.kind }}</div><div class="text-xs text-muted-foreground num whitespace-nowrap">#{{ j.id }} · {{ j.when }} EVE</div></td>
           <td class="w-full whitespace-normal"><div class="line-clamp-2 break-words text-sm">{{ j.error }}</div></td>
           <td class="num">{{ j.attempts }}</td>
           <td class="text-right">
@@ -91,90 +74,26 @@
         {% endfor %}
       </tbody>
     </table>
+    {% if dead_count > dead_shown %}<footer><p class="text-xs text-muted-foreground">The newest <span class="num">{{ dead_shown }}</span> of <span class="num">{{ dead_count }}</span>.</p></footer>{% endif %}
     {% endif %}
   </section>
 
-  <section class="card data-card">
-    <header><h2>Schedules</h2></header>
+  <section class="card data-card" aria-labelledby="schedules">
+    <header><h2 id="schedules">Schedules</h2><p>Times are EVE time.</p></header>
     <table class="table">
-      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last queued</th><th scope="col">Next</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last run</th><th scope="col">Next</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {% for s in schedules %}
         <tr>
-          <td class="num">{{ s.name }}{% if !s.enabled %} <span class="badge" data-variant="outline">off</span>{% endif %}</td>
+          <td><div class="num">{{ s.name }}</div>{% if let Some(app) = s.app %}<div class="text-xs text-muted-foreground"><a href="{{ app.href }}" class="hover:text-foreground">{{ app.name }}</a></div>{% endif %}</td>
           <td>{{ s.every }}</td>
-          <td class="num">{{ s.last_run }}</td>
-          <td class="num">{{ s.next_run }}</td>
-          <td class="text-right">{% if s.enabled %}<form method="post" action="/admin/system/schedules/{{ s.name }}/run" hx-post="/admin/system/schedules/{{ s.name }}/run" hx-target="this" hx-swap="outerHTML"><button type="submit" class="btn" data-variant="outline" data-size="sm">Run now</button></form>{% endif %}</td>
+          <td>{% if let Some(l) = s.last %}<div>{% call ui::status(l.tone, l.status) %}{% endcall %}</div><div class="text-xs text-muted-foreground num" title="{{ l.at }}">{{ l.ago }}</div>{% else %}<span class="blank">—</span>{% endif %}</td>
+          <td>{% if s.enabled %}<span class="num" title="{{ s.next_at }}">{{ s.next }}</span>{% else %}{% call ui::status("off", "Off") %}{% endcall %}{% endif %}</td>
+          <td class="text-right">{% if s.enabled %}{% if let Some(run) = s.run %}<form method="post" action="{{ run }}" hx-post="{{ run }}" hx-target="this" hx-swap="outerHTML"><button type="submit" class="btn" data-variant="outline" data-size="sm">Run now</button></form>{% endif %}{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-  </section>
-
-  <form class="card" method="post" action="/admin/system/site-name">
-    <header><h2>Site name</h2><p>Your alliance's or corporation's name, shown in browser tabs and on the sign-in page beside Tether's. The sign-in page is public: anyone who opens it sees this name. Empty: Tether's alone.</p></header>
-    <section class="grid gap-2 max-w-md">
-      <label class="label" for="site_name">Name</label>
-      <input class="input" id="site_name" name="site_name" maxlength="50" value="{% if let Some(site) = shell.site_name %}{{ site }}{% endif %}" placeholder="Your alliance's name" autocomplete="off">
-    </section>
-    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
-  </form>
-
-  <form class="card" method="post" action="/admin/system/theme">
-    <header><h2>Appearance</h2><p>The accent colour marks the one thing that matters most on each screen: unread counts, the next countdown, Member badges.</p></header>
-    <section class="flex flex-wrap items-center gap-4 text-sm">
-      {% for p in presets %}
-      <label class="label gap-2 font-normal">
-        <input type="radio" class="input" name="accent" value="{{ p.value }}"{% if p.checked %} checked{% endif %}>
-        <svg class="size-4" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="{{ p.value }}"/></svg>
-        {{ p.name }}
-      </label>
-      {% endfor %}
-      <label class="label gap-2 font-normal">
-        <input type="radio" class="input" name="accent" value="custom"{% if custom %} checked{% endif %}>
-        Custom
-        <input type="color" class="h-8 w-12 rounded-sm border bg-background" name="custom_accent" value="{{ accent }}" aria-label="Custom accent colour">
-      </label>
-    </section>
-    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
-  </form>
-
-  <form class="card" method="post" action="/admin/system/notifications">
-    <header><h2>Notifications</h2><p>How many notifications each user keeps, as Alliance Auth's <span class="num">NOTIFICATIONS_MAX_PER_USER</span>: when one more arrives, the oldest goes, read or not.</p></header>
-    <section class="flex items-end gap-2">
-      <div class="grid gap-2">
-        <label class="label" for="max_per_user">Per user</label>
-        <input class="input num w-24" id="max_per_user" name="max_per_user" type="number" min="1" max="1000" value="{{ notifications_max }}" required>
-      </div>
-    </section>
-    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
-  </form>
-
-  <section class="card">
-    <header><h2>Platform updates</h2><p>Once a day, Tether asks GitHub whether a newer release exists.</p></header>
-    <section class="flex flex-col gap-3 text-sm">
-      <p>This instance runs <span class="num text-foreground">{{ updates.current }}</span>.
-        {% if !updates.enabled %}Update checks are off.
-        {% else if updates.newer %}{% if let Some(latest) = updates.latest %}<strong class="text-foreground">{{ latest }} is available.</strong>{% endif %}{% if let Some(url) = updates.url %} <a class="underline underline-offset-4" href="{{ url }}" rel="noreferrer" target="_blank">Release notes</a>{% endif %}
-        {% else if let Some(latest) = updates.latest %}The latest release is {{ latest }}: up to date.
-        {% else if updates.no_releases %}Nothing has been released yet.
-        {% else %}Not checked yet.{% endif %}
-      </p>
-      {% if updates.enabled %}{% if let Some(e) = updates.error %}<p class="text-destructive">The last check failed: {{ e }}</p>{% endif %}{% endif %}
-      {% if let Some(at) = updates.checked_at %}<p class="text-xs text-muted-foreground">Last checked {{ at }} (EVE time)</p>{% endif %}
-    </section>
-    <footer class="gap-3">
-      <form method="post" action="/admin/system/updates" class="flex items-center gap-3">
-        <label class="label gap-2"><input type="checkbox" class="input" name="enabled" value="on"{% if updates.enabled %} checked{% endif %}> Check for updates</label>
-        <button type="submit" class="btn" data-variant="outline" data-size="sm">Save</button>
-      </form>
-      {% if updates.enabled %}
-      <form method="post" action="/admin/system/updates/check">
-        <button type="submit" class="btn" data-variant="outline" data-size="sm">Check now</button>
-      </form>
-      {% endif %}
-    </footer>
   </section>
 
   {% include "admin_system_upgrade.html" %}

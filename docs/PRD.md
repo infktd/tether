@@ -103,7 +103,7 @@ The top rule: a fresh `docker compose up` must produce a working instance with z
 | N11 | Performance | Host under 300 MB RAM idle; whole stack comfortable on 1 OCPU and 6 GB for 500 characters |
 | N12 | Performance | Pages load in under 500 ms on that box, excluding waits on ESI |
 | N13 | Reliability | ESI and Discord outages delay work through retries instead of losing it |
-| N14 | Upgrades | Upgrade by changing the image tag (`install.sh --version X.Y.Z`), or from the console's System page through the updater container (Jay, 2026-09-28); rollback is the previous tag plus one command using the automatic pre-migration snapshot, or one button that does both |
+| N14 | Upgrades | Upgrade by changing the image tag (`install.sh --version X.Y.Z`), or from the console's Health page through the updater container (Jay, 2026-09-28); rollback is the previous tag plus one command using the automatic pre-migration snapshot, or one button that does both |
 | N15 | Design | All core pages and plugin pages use the shared component library and design tokens |
 
 ## Technical decisions
@@ -298,7 +298,7 @@ Phase 3, lists and settings:
 Phase 4, core, Administration and phone:
 
 - [ ] Core lists on the toolbar; the audit log filtered by who, action, app and date, and exported as CSV
-- [ ] Administration's Health page and Instance settings (System split in two)
+- [x] Administration's Health page and Instance settings (System split in two; Jay, 2026-10-06: ESI as a status, not a badge, and columns that line up). Health reads what Tether knows (no uptime history yet); Settings keeps a Save per form until the save bar (phase 3)
 - [ ] The ⌘K command palette: pages, pilots and actions, only what the viewer may open
 - [ ] Phone: the views bar scrolls with a fade, toolbars fold into one search line and Filters, the primary action at the bottom; a skip link; a WCAG 2.2 AA pass
 
@@ -319,7 +319,7 @@ Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from AR
 
 - [x] Reverse proxy choice at install (N1): `deploy/install.sh --proxy caddy|nginx|traefik|none`, asked interactively. Caddy stays the default; nginx gets a generated server block (installed and reloaded when run as root), Traefik gets labels on its network, `none` publishes the app on 127.0.0.1 with documented requirements (`deploy/README.md`). X-Forwarded-For is believed only from loopback and private peers; `doctor` fits its checks to the proxy; CI starts the image through compose without Caddy and checks `/health`
 - [x] Published images (N1, N4, N14): CI publishes `ghcr.io/<owner>/tether` after every check passes (main as `:edge` and `:sha-<commit>`, `vX.Y.Z` tags as `:X.Y.Z`, `:X.Y`, `:latest`), amd64 and arm64 built natively and joined by digest. `docker-compose.yml` pulls `TETHER_IMAGE`, which install.sh pins (newest release, else `:edge`) and moves only on `--version` or `--build`. `docker-compose.build.yml` builds from a clone, for CI and development. Installs work from the deploy files alone. Done: published from main on every push since, and the package pulls without logging in
-- [x] Upgrades from the console (N14; Jay, 2026-09-28): an updater container (`docker:28.5.2-cli`, pinned by digest, `deploy/updater.sh`) holds the Docker socket, not the app; no network, no ports. The System page asks it for a published tag of the install's image (a newer release, or the newest edge) or one step back (restoring the pre-upgrade snapshot when the upgrade migrated, the version typed to confirm), in sudo mode and audited; the updater checks every request itself, reports progress back, and install.sh turns it on. `doctor` says whether it runs; a `--build` install upgrades on the server
+- [x] Upgrades from the console (N14; Jay, 2026-09-28): an updater container (`docker:28.5.2-cli`, pinned by digest, `deploy/updater.sh`) holds the Docker socket, not the app; no network, no ports. Health (formerly System) asks it for a published tag of the install's image (a newer release, or the newest edge) or one step back (restoring the pre-upgrade snapshot when the upgrade migrated, the version typed to confirm), in sudo mode and audited; the updater checks every request itself, reports progress back, and install.sh turns it on. `doctor` says whether it runs; a `--build` install upgrades on the server
 - [ ] Fresh VPS with a real domain: `deploy/install.sh <domain>`, then only the browser wizard; no other shell commands
 - [ ] Register the production callback URL (`https://<domain>/auth/callback`) on the EVE application
 - [ ] Caddy obtains a Let's Encrypt certificate for the domain (or, with `--proxy nginx`/`traefik`, the admin's proxy serves one)

@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}Fleet Pings settings{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/pings">Fleet Pings</a>&nbsp;/&nbsp;<span class="text-foreground">Settings</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<a href="/pings">Fleet Pings</a>&nbsp;/&nbsp;<span class="text-foreground">Settings</span>{% endblock %}
 {% macro limits(things, empty) %}
 {% if things.is_empty() %}
 <p class="px-5 pb-5 text-sm text-muted-foreground">{{ empty }}</p>
@@ -73,7 +73,7 @@
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon("megaphone") %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">Administration</div>
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Fleet Pings settings</h1>
         <p class="page-desc max-w-3xl">What the ping form offers, and who may use which channel, ping, fleet type and doctrine. Anything without a limit is open to everyone who can send pings; a limit lets in the listed states and groups only. Ping channels themselves are chosen on the <a class="underline underline-offset-4" href="/admin/discord">Discord</a> page.</p>
       </div>

@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}Menu{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/system">System</a>&nbsp;/&nbsp;<span class="text-foreground">Menu</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Menu</span>{% endblock %}
 {% macro arrows(reference) %}
 <form method="post" action="/admin/menu/move" class="contents"><input type="hidden" name="reference" value="{{ reference }}"><input type="hidden" name="dir" value="up"><button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Move up" title="Move up">{% call icons::icon("arrow-up") %}{% endcall %}</button></form>
 <form method="post" action="/admin/menu/move" class="contents"><input type="hidden" name="reference" value="{{ reference }}"><input type="hidden" name="dir" value="down"><button type="submit" class="btn" data-variant="ghost" data-size="icon" aria-label="Move down" title="Move down">{% call icons::icon("arrow-down") %}{% endcall %}</button></form>
@@ -41,7 +41,7 @@
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon("folder") %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">Administration</div>
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Menu</h1>
         <p class="page-desc max-w-3xl">Arrange the sidebar: rename, reorder, hide, group pages into sections and folders, and add your own links. Everyone still sees only the pages they may open; hiding a page only takes it off the sidebar. Pages and apps added later appear in their usual section.</p>
       </div>

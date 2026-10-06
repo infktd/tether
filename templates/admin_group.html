@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}{{ group.name }}{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
   <div class="page-head">

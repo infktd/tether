@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {% block title %}Blacklist{% endblock %}
-{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<span class="text-foreground">Blacklist</span>{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Blacklist</span>{% endblock %}
 {% macro tiers(prefix, restricted, ultra) %}
 {% if restricted %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="restricted" value="on"> Restricted</label>{% endif %}
 {% if ultra %}<label class="label gap-2 font-normal"><input type="checkbox" class="input" name="ultra_restricted" value="on"> Ultra restricted</label>{% endif %}
@@ -12,7 +12,7 @@
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon("shield") %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">Administration</div>
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Blacklist</h1>
         <p class="page-desc max-w-3xl">The Pilot Log keeps notes on pilots, corporations and alliances; a note can blacklist them. An account whose main is, or is in, a blacklisted pilot, corporation or alliance is in the Blacklist state, above every other: it holds what that state is granted, and leaves groups and services the state isn't allowed.</p>
       </div>

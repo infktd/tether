@@ -959,8 +959,13 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-# The admin dashboard and audit log need a session.
+# Health, Settings and the audit log need a session.
 GET {{base}}/admin/system
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/settings
 HTTP 303
 [Asserts]
 header "Location" == "/login"

@@ -54,23 +54,25 @@ async fn system_admins_get_the_system_panel_on_administration(db: PgPool) {
     let overview = page(&h, "/admin", &owner).await.body;
     let panel_at = overview
         .find(r#"hx-get="/admin/system/summary""#)
-        .expect("the System panel");
+        .expect("Health's verdict");
     assert!(
         panel_at < overview.find("admin-tile").unwrap(),
         "{overview}"
     );
     let dashboard = page(&h, "/dashboard", &owner).await.body;
     assert!(!dashboard.contains("/system"), "{dashboard}");
-    assert!(!dashboard.contains("Task Queue"), "{dashboard}");
+    assert!(!dashboard.contains("verdict"), "{dashboard}");
     let panel = page(&h, "/admin/system/summary", &owner).await;
     assert_eq!(panel.status, StatusCode::OK, "{}", panel.body);
+    // The verdict, its heading the link to Health, and whatever isn't
+    // simply working: here Discord, not set up.
+    assert!(panel.body.contains("verdict"), "{}", panel.body);
     assert!(
-        panel.body.contains(env!("CARGO_PKG_VERSION")),
+        panel.body.contains(r#"href="/admin/system""#),
         "{}",
         panel.body
     );
-    assert!(panel.body.contains("Task Queue"), "{}", panel.body);
-    assert!(panel.body.contains("ESI"), "{}", panel.body);
+    assert!(panel.body.contains("Not set up"), "{}", panel.body);
     assert!(!panel.body.contains("<html"), "a fragment");
 
     assert_eq!(

@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Settings{% endblock %}
+{% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Settings</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("sliders") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
+        <h1 class="page-title">Settings</h1>
+        <p class="page-desc">This instance's name and colour, how many notifications each user keeps, and whether Tether looks for new releases.</p>
+      </div>
+    </div>
+  </div>
+  {% include "admin_views.html" %}
+  {% include "admin_error.html" %}
+
+  <form class="card" method="post" action="/admin/system/site-name">
+    <header><h2>Site name</h2><p>Your alliance's or corporation's name, shown in browser tabs and on the sign-in page beside Tether's. The sign-in page is public: anyone who opens it sees this name. Empty: Tether's alone.</p></header>
+    <section class="grid gap-2 max-w-md">
+      <label class="label" for="site_name">Name</label>
+      <input class="input" id="site_name" name="site_name" maxlength="50" value="{% if let Some(site) = shell.site_name %}{{ site }}{% endif %}" placeholder="Your alliance's name" autocomplete="off">
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
+  <form class="card" method="post" action="/admin/system/theme">
+    <header><h2>Appearance</h2><p>The accent colour marks the one thing that matters most on each screen: unread counts, the next countdown, Member badges.</p></header>
+    <section class="flex flex-wrap items-center gap-4 text-sm">
+      {% for p in presets %}
+      <label class="label gap-2 font-normal">
+        <input type="radio" class="input" name="accent" value="{{ p.value }}"{% if p.checked %} checked{% endif %}>
+        <svg class="size-4" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="{{ p.value }}"/></svg>
+        {{ p.name }}
+      </label>
+      {% endfor %}
+      <label class="label gap-2 font-normal">
+        <input type="radio" class="input" name="accent" value="custom"{% if custom %} checked{% endif %}>
+        Custom
+        <input type="color" class="h-8 w-12 rounded-sm border bg-background" name="custom_accent" value="{{ accent }}" aria-label="Custom accent colour">
+      </label>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
+  <form class="card" method="post" action="/admin/system/notifications">
+    <header><h2>Notifications</h2><p>How many notifications each user keeps: when one more arrives, the oldest goes, read or not.</p></header>
+    <section class="grid gap-2 max-w-md">
+      <label class="label" for="max_per_user">Per user</label>
+      <input class="input num w-24" id="max_per_user" name="max_per_user" type="number" min="1" max="1000" value="{{ notifications_max }}" required>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+
+  <form class="card" method="post" action="/admin/system/updates">
+    <header><h2>Update checks</h2><p>Once a day, Tether asks GitHub whether a newer release exists, and Health offers it. The request names Tether's version, never this instance.</p></header>
+    <section>
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="enabled" value="on"{% if updates.enabled %} checked{% endif %}> Check for updates</label>
+    </section>
+    <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{#- Shared components (DESIGN.md, Components): core pages and app
+    sections draw the same markup through these macros, so one change
+    reaches every page. -#}
+
+{#- A status line: how something is, as the tone's square and the word.
+    Tones: ok, warn, danger, off. -#}
+{% macro status(tone, text) -%}
+<span class="status-line" data-tone="{{ tone }}">{{ text }}</span>
+{%- endmacro %}
+
+{#- Health's verdict: the worst of its systems, in words. -#}
+{% macro verdict(tone, headline, detail) -%}
+<div class="bk verdict" data-tone="{{ tone }}" role="status">
+  <span class="verdict-mark" aria-hidden="true"></span>
+  <span class="verdict-headline">{{ headline }}</span>
+  <span class="verdict-detail num">{{ detail }}</span>
+</div>
+{%- endmacro %}

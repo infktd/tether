@@ -1,14 +1,29 @@
+{#- Health's Version card: what runs, whether there's newer, and the
+    updater's Upgrade and Roll back. Also /admin/system/upgrade, which it
+    polls while the updater works. -#}
+{%- import "ui.html" as ui -%}
+{%- let updater = upgrade.available && !upgrade.busy && !upgrade.from_source -%}
 <section class="card" id="upgrade-card"{% if upgrade.busy %} hx-get="/admin/system/upgrade" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
-  <header><h2>Upgrade</h2><p>Tether's updater pulls the new version and restarts the app, which takes a snapshot and migrates first. Rolling back goes one step back, restoring that snapshot.</p></header>
+  <header><h2>Version</h2><p>Tether's updater pulls the new version and restarts the app, which takes a snapshot and migrates first. Rolling back goes one step back, restoring that snapshot.</p></header>
   <section class="flex flex-col gap-3 text-sm">
-    <p>Running <span class="num text-foreground">{{ upgrade.running }}</span>{% if let Some(image) = upgrade.image %} from <span class="num">{{ image }}</span>{% endif %}.</p>
+    <p>Running <span class="num text-foreground">{{ upgrade.running }}</span>{% if let Some(image) = upgrade.image %} from <span class="num">{{ image }}</span>{% endif %}.
+      {% if !updates.enabled %}Update checks are off. <a class="underline underline-offset-4" href="/admin/settings">Settings</a> switches them on.
+      {% else if updates.newer %}{% if let Some(latest) = updates.latest %}<strong class="text-foreground">{{ latest }} is available.</strong>{% endif %}{% if let Some(url) = updates.url %} <a class="underline underline-offset-4" href="{{ url }}" rel="noreferrer" target="_blank">Release notes</a>{% endif %}
+      {% else if let Some(latest) = updates.latest %}The latest release is {{ latest }}: up to date.
+      {% else if updates.no_releases %}Nothing has been released yet.
+      {% else %}Not checked for releases yet.{% endif %}
+    </p>
+    {% if updates.enabled %}
+    {% if let Some(e) = updates.error %}<p class="text-destructive">The last check failed: {{ e }}</p>{% endif %}
+    {% if let Some(at) = updates.checked_at %}<p class="text-xs text-muted-foreground">Last checked <span class="num">{{ at }}</span> EVE</p>{% endif %}
+    {% endif %}
     {% if let Some(s) = upgrade.status %}
-    <p>
-      {% if s.state == "running" && !s.stuck %}<span class="badge" data-variant="secondary">Working</span>
-      {% else if s.state == "done" %}<span class="badge" data-variant="outline">Done</span>
-      {% else %}<span class="badge" data-variant="destructive">Failed</span>{% endif %}
-      {{ s.message }}{% if s.stuck %} It stopped reporting: check the updater's logs on the server.{% endif %}
-      {% if !s.at.is_empty() %}<span class="text-xs text-muted-foreground">{{ s.at }}</span>{% endif %}
+    <p class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {% if s.state == "running" && !s.stuck %}{% call ui::status("ok", "Working") %}{% endcall %}
+      {% else if s.state == "done" %}{% call ui::status("ok", "Done") %}{% endcall %}
+      {% else %}{% call ui::status("danger", "Failed") %}{% endcall %}{% endif %}
+      <span>{{ s.message }}{% if s.stuck %} It stopped reporting: check the updater's logs on the server.{% endif %}</span>
+      {% if !s.at.is_empty() %}<span class="text-xs text-muted-foreground num">{{ s.at }}</span>{% endif %}
     </p>
     {% endif %}
     {% if upgrade.from_source %}
@@ -17,19 +32,26 @@
     <p class="text-muted-foreground">The updater isn't running. Run <span class="num">deploy/install.sh</span> again on the server to add it; until then, upgrade there with <span class="num">deploy/install.sh --version X.Y.Z</span>.</p>
     {% else if upgrade.busy %}
     <p class="text-muted-foreground">Under way. Tether restarts on its own; this page catches up once it's back.</p>
+    {% else if upgrade.upgrade_to.is_none() %}
+    <p class="text-muted-foreground">No newer release to upgrade to.</p>
     {% endif %}
   </section>
-  {% if upgrade.available && !upgrade.busy && !upgrade.from_source %}
+  {% if updates.enabled || updater %}
   <footer class="flex flex-col items-start gap-4">
-    {% if let Some(tag) = upgrade.upgrade_to %}
-    <form method="post" action="/admin/system/upgrade" class="flex items-center gap-3">
-      <input type="hidden" name="tag" value="{{ tag }}">
-      <button type="submit" class="btn" data-size="sm">{% if tag == "edge" %}Update to the newest edge{% else %}Upgrade to {{ tag }}{% endif %}</button>
-    </form>
-    {% else %}
-    <p class="text-sm text-muted-foreground">No newer release to upgrade to.</p>
-    {% endif %}
-    {% if let Some(to) = upgrade.rollback_to %}
+    <div class="flex flex-wrap items-center gap-3">
+      {% if updater %}{% if let Some(tag) = upgrade.upgrade_to %}
+      <form method="post" action="/admin/system/upgrade">
+        <input type="hidden" name="tag" value="{{ tag }}">
+        <button type="submit" class="btn" data-size="sm">{% if tag == "edge" %}Update to the newest edge{% else %}Upgrade to {{ tag }}{% endif %}</button>
+      </form>
+      {% endif %}{% endif %}
+      {% if updates.enabled %}
+      <form method="post" action="/admin/system/updates/check">
+        <button type="submit" class="btn" data-variant="outline" data-size="sm">Check now</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if updater %}{% if let Some(to) = upgrade.rollback_to %}
     <form method="post" action="/admin/system/rollback" class="flex flex-col gap-2">
       <p class="text-sm">Roll back to <span class="num">{{ to }}</span>.{% if upgrade.rollback_restores %} This restores the snapshot taken before the upgrade: anything changed since is lost.{% endif %}</p>
       <label class="label" for="rollback-confirmation">Type <span class="num">{{ to }}</span> to confirm</label>
@@ -38,7 +60,7 @@
         <button type="submit" class="btn" data-variant="destructive" data-size="sm">Roll back</button>
       </div>
     </form>
-    {% endif %}
+    {% endif %}{% endif %}
   </footer>
   {% endif %}
 </section>

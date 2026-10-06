@@ -29,7 +29,7 @@ async fn admins_pick_the_accent(db: PgPool) {
 
     let owner = log_in_owner(&h, CHRIBBA).await;
     let pilot = log_in_as(&h, GIGX, None).await;
-    let system = page(&h, "/admin/system", &owner).await.body;
+    let system = page(&h, "/admin/settings", &owner).await.body;
     assert!(
         system.contains(r#"href="/theme.css""#),
         "every page links it"
@@ -48,7 +48,7 @@ async fn admins_pick_the_accent(db: PgPool) {
         form("/admin/system/theme", "accent=%23a78bfa", &owner),
     )
     .await;
-    assert_eq!(res.location(), "/admin/system", "{}", res.body);
+    assert_eq!(res.location(), "/admin/settings", "{}", res.body);
     let css = send(&h.app, get("/theme.css", &[])).await;
     assert!(css.body.contains("--accent:#a78bfa"), "{}", css.body);
     assert_ne!(css.headers[header::ETAG].to_str().unwrap(), etag);
@@ -74,7 +74,7 @@ async fn admins_pick_the_accent(db: PgPool) {
         ),
     )
     .await;
-    assert_eq!(custom.location(), "/admin/system");
+    assert_eq!(custom.location(), "/admin/settings");
     let css = send(&h.app, get("/theme.css", &[])).await;
     assert!(css.body.contains("--accent:#22d3ee"), "{}", css.body);
     let audited: i64 =

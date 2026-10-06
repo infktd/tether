@@ -278,6 +278,44 @@ pub async fn list(pool: &PgPool) -> Result<Vec<ScheduleRow>, sqlx::Error> {
     .await
 }
 
+/// A schedule's latest job, and how it went.
+#[derive(Debug, Clone)]
+pub struct LastRun {
+    pub schedule: String,
+    pub state: crate::JobState,
+    pub run_at: chrono::DateTime<chrono::Utc>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_error: Option<String>,
+}
+
+/// Each schedule's latest job still kept (succeeded ones go after
+/// [`prune_succeeded`]'s week), for System's Health page.
+pub async fn last_runs(pool: &PgPool) -> Result<Vec<LastRun>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT ON (schedule)
+            schedule AS "schedule!", state, run_at, finished_at, last_error
+        FROM core.jobs
+        WHERE schedule IS NOT NULL
+        ORDER BY schedule, id DESC
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            Some(LastRun {
+                state: crate::JobState::parse(&r.state)?,
+                schedule: r.schedule,
+                run_at: r.run_at,
+                finished_at: r.finished_at,
+                last_error: r.last_error,
+            })
+        })
+        .collect())
+}
+
 /// Deletes succeeded jobs older than `keep`. Dead jobs stay for inspection.
 pub async fn prune_succeeded(pool: &PgPool, keep: Duration) -> Result<u64, sqlx::Error> {
     let result = sqlx::query!(

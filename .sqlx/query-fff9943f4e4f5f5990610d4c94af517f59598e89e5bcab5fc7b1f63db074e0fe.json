@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT ON (schedule)\n            schedule AS \"schedule!\", state, run_at, finished_at, last_error\n        FROM core.jobs\n        WHERE schedule IS NOT NULL\n        ORDER BY schedule, id DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.jobs",
+            "name": "schedule"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.jobs",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.jobs",
+            "name": "run_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.jobs",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "last_error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.jobs",
+            "name": "last_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "fff9943f4e4f5f5990610d4c94af517f59598e89e5bcab5fc7b1f63db074e0fe"
+}

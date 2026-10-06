@@ -228,7 +228,7 @@ pub struct Status {
     pub stuck: bool,
 }
 
-/// What the System page shows.
+/// What Health's Version card shows.
 #[derive(Debug, Clone, Default)]
 pub struct View {
     pub running: String,

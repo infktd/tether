@@ -1,0 +1,14 @@
+{#- Health's systems (DESIGN.md, Health): a line each, the tone's square,
+    its name over what it is or what's wrong, its reading and its status.
+    On Health, and on Administration's overview for whatever isn't simply
+    working. -#}
+<ul class="system-list">
+  {% for l in lines %}
+  <li data-tone="{{ l.tone.as_str() }}">
+    <span class="system-mark" aria-hidden="true"></span>
+    <span class="system-name">{% if let Some(href) = l.href %}<a href="{{ href }}">{{ l.name }}</a>{% else %}<span>{{ l.name }}</span>{% endif %}<span class="system-detail">{{ l.detail }}</span></span>
+    <span class="system-value num">{{ l.value }}</span>
+    <span class="system-status">{{ l.status }}</span>
+  </li>
+  {% endfor %}
+</ul>
