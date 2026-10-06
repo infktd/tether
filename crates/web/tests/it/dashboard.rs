@@ -27,7 +27,7 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = format!(
         "[plugin]\nid = \"{ID}\"\nname = \"Widgets\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[permissions]\nview = \"See the pages\"\n\n\
-         [[pages]]\npath = \"values\"\npermission = \"view\"\n\n\
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"values\"\npermission = \"view\"\n\n\
          [[pages]]\npath = \"failed\"\npermission = \"view\"\n\n\
          [[widgets]]\ntitle = \"Ore\"\npath = \"values\"\n\n\
          [[widgets]]\ntitle = \"Secret\"\npath = \"admin/secret\"\n\n\

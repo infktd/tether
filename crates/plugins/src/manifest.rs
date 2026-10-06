@@ -59,8 +59,8 @@ pub struct Manifest {
     pub navigation: Vec<NavEntry>,
     /// The app's views, in the order of its views bar (DESIGN.md, App
     /// shell); the first is its main page, its Overview. Each shows to
-    /// whoever may open its page. Left out, the app's pages bring their
-    /// own links, as before.
+    /// whoever may open its page. Required of an app with pages to open
+    /// (`[[pages]]` or `[[navigation]]`): Tether draws every app's frame.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<PageLink>,
     /// Its one primary action, in its header on every view but its own.
@@ -787,6 +787,12 @@ impl Manifest {
         if self.views.is_empty() && (self.action.is_some() || !self.manage.is_empty()) {
             return Err(bad("[action] and [[manage]] need [[views]]"));
         }
+        if self.views.is_empty() && (!self.pages.is_empty() || !self.navigation.is_empty()) {
+            return Err(bad(
+                "an app with pages declares its [[views]]: the first is its main page \
+                 (label = \"Overview\", path = \"\"), and Tether draws its views bar",
+            ));
+        }
         let mut seen = std::collections::HashSet::new();
         for (what, link) in self
             .views
@@ -1159,7 +1165,25 @@ mod tests {
         ] {
             assert!(Manifest::parse(&manifest(extra)).is_err(), "{why}");
         }
-        // Left out: nothing, and nothing written back.
+        // An app with pages must declare its views.
+        for (why, extra) in [
+            (
+                "pages need views",
+                "[permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+            ),
+            (
+                "navigation needs views",
+                "[[navigation]]\nlabel = \"Moons\"\npath = \"moons\"\n",
+            ),
+        ] {
+            let refused = Manifest::parse(&bare(extra)).unwrap_err();
+            assert!(
+                refused.to_string().contains("[[views]]"),
+                "{why}: {refused}"
+            );
+        }
+        // An app with no pages (jobs, Discord) declares none: nothing
+        // written back.
         let plain = Manifest::parse(&manifest("")).unwrap();
         let text = serde_json::to_string(&plain).unwrap();
         assert!(
@@ -1186,7 +1210,22 @@ mod tests {
         assert!(!serde_json::to_string(&plain).unwrap().contains("icon"));
     }
 
+    /// A manifest with `extra`, and the main page as its one view when it
+    /// has pages and names none (an app with pages must).
     fn manifest(extra: &str) -> String {
+        let needs_views = (extra.contains("[[pages]]") || extra.contains("[[navigation]]"))
+            && !extra.contains("[[views]]");
+        if needs_views {
+            bare(&format!(
+                "{extra}\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n"
+            ))
+        } else {
+            bare(extra)
+        }
+    }
+
+    /// A manifest with `extra` and nothing added.
+    fn bare(extra: &str) -> String {
         format!(
             r#"
 [plugin]

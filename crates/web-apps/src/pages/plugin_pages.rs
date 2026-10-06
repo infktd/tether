@@ -1381,10 +1381,9 @@ async fn open(
 /// What an app's frame shows this viewer (DESIGN.md, App shell): its
 /// views, its Manage pages (Settings first) and its primary action, each
 /// only if they may open its page, the one being shown marked. Empty for
-/// an app that declares no views: its pages bring their own links.
+/// an app with no pages to open (its manifest declares no views).
 #[derive(Default)]
 struct Frame {
-    declared: bool,
     views: Vec<TabLink>,
     manage: Vec<TabLink>,
     /// The page shown is one of the Manage pages (or under one).
@@ -1435,7 +1434,6 @@ fn frame(manifest: &manifest::Manifest, path: &str, may: impl Fn(&str) -> bool) 
     };
     let in_manage = manage.iter().any(|l| current == Some(l.path.as_str()));
     Frame {
-        declared: true,
         views: manifest
             .views
             .iter()
@@ -1806,10 +1804,6 @@ fn draw(
         href: page_href(&id, &l.path),
         current: l.path == opened.path,
     };
-    // An app's settings open from its Administration page, not from its
-    // own header (configuring an app is an admin's job); once there, its
-    // settings pages link to each other.
-    let in_settings = tether_plugins::manifest::is_settings(&opened.path);
     // The page's own primary link (a record's Edit, say) is its action;
     // else the app's, from its manifest.
     let page_action: Vec<TabLink> = page
@@ -1819,49 +1813,35 @@ fn draw(
         .map(header_link)
         .collect();
     let frame = &opened.frame;
-    // A page's own other links, in an app with a frame: the record's own
-    // pages (a character's Skills, Assets, Wallet), as view chips under
-    // the bar.
-    let sub_links: Vec<TabLink> = if frame.declared {
-        page.links
-            .iter()
-            .filter(|l| !l.primary)
-            .map(header_link)
-            .collect()
+    // A page's own other links: the record's own pages (a character's
+    // Skills, Assets, Wallet), as view chips under the bar.
+    let sub_links: Vec<TabLink> = page
+        .links
+        .iter()
+        .filter(|l| !l.primary)
+        .map(header_link)
+        .collect();
+    // The views bar: the Manage pages on one of them, else the views; one
+    // alone needs no bar.
+    let links = if frame.in_manage {
+        frame.manage.clone()
     } else {
-        Vec::new()
+        frame.views.clone()
     };
-    let (links, buttons, manage) = if frame.declared {
-        let bar = if frame.in_manage {
-            frame.manage.clone()
-        } else {
-            frame.views.clone()
-        };
-        // One view alone needs no bar.
-        let bar = if bar.len() > 1 { bar } else { Vec::new() };
-        let buttons = if !page_action.is_empty() {
-            page_action
-        } else if frame.in_manage {
-            Vec::new()
-        } else {
-            frame.action.clone().into_iter().collect()
-        };
-        let manage = if frame.in_manage {
-            Vec::new()
-        } else {
-            frame.manage.clone()
-        };
-        (bar, buttons, manage)
+    let links = if links.len() > 1 { links } else { Vec::new() };
+    // The header's button: the page's own primary link (a record's Edit),
+    // else the app's action, never on a Manage page.
+    let buttons = if !page_action.is_empty() {
+        page_action
+    } else if frame.in_manage {
+        Vec::new()
     } else {
-        let links = page
-            .links
-            .iter()
-            .filter(|l| {
-                !l.primary && (in_settings || !tether_plugins::manifest::is_settings(&l.path))
-            })
-            .map(header_link)
-            .collect();
-        (links, page_action, Vec::new())
+        frame.action.clone().into_iter().collect()
+    };
+    let manage = if frame.in_manage {
+        Vec::new()
+    } else {
+        frame.manage.clone()
     };
     // The account's main, whichever character it acts as: a screenshot
     // of other pilots' data names who took it. Not on the Dashboard, nor on

@@ -29,7 +29,8 @@ async fn install(h: &Harness, owner: &str) {
         "[plugin]\nid = \"{ID}\"\nname = \"Pages\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[permissions]\nview = \"See the pages\"\n\n\
          [[navigation]]\nlabel = \"Values\"\npath = \"values\"\n\n\
-         [[navigation]]\nlabel = \"Secret\"\npath = \"admin/secret\"\n",
+         [[navigation]]\nlabel = \"Secret\"\npath = \"admin/secret\"\n\n\
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n",
         key.public()
     );
     for path in [
@@ -744,7 +745,7 @@ async fn apps_see_the_viewers_groups_and_only_listed_ones_to_offer(db: PgPool) {
     let manifest = format!(
         "[plugin]\nid = \"acme.grouped\"\nname = \"Grouped\"\nversion = \"1.0.0\"\n\
          host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ngroups = true\n\n\
-         [permissions]\nview = \"See the pages\"\n\n[[pages]]\npath = \"groups\"\n\
+         [permissions]\nview = \"See the pages\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"groups\"\n\
          permission = \"view\"\n",
         key.public()
     );

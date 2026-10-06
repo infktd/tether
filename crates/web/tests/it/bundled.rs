@@ -25,7 +25,8 @@ fn bundled(version: &str, permissions: &str) -> Vec<u8> {
     let manifest = format!(
         "[plugin]\nid = \"{ID}\"\nname = \"Hello\"\nversion = \"{version}\"\nhost_api = \"1\"\n\
          description = \"Says hello\"\n\n[permissions]\n{permissions}\n\
-         [[navigation]]\nlabel = \"Hello\"\npath = \"\"\nsection = \"industry\"\n"
+         [[navigation]]\nlabel = \"Hello\"\npath = \"\"\nsection = \"industry\"\n\n\
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n"
     );
     testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -528,7 +529,7 @@ async fn upgrades(db: &PgPool) -> Vec<(Option<i64>, serde_json::Value)> {
 }
 
 const VIEW: &str = "view = \"See the hello page\"\n";
-const VIEW_RULE: &str = "[[pages]]\npath = \"\"\npermission = \"view\"\n";
+const VIEW_RULE: &str = "[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n";
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn a_rebuild_that_asks_for_nothing_new_is_applied_at_startup(db: PgPool) {

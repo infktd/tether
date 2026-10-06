@@ -82,7 +82,7 @@ every = "30m"                      # fixed intervals, 5m to 7d
 view = "View mining ledger"
 manage = "Manage mining ledger"
 
-[[views]]                          # the views bar; the first is the main page
+[[views]]                          # required with pages: the views bar; the first is the main page
 label = "Overview"
 path = ""
 

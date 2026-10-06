@@ -635,7 +635,7 @@ async fn a_blacklisted_account_uses_the_apps_its_state_is_granted(db: PgPool) {
     let manifest = format!(
         "[plugin]\nid = \"acme.book\"\nname = \"Book\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[permissions]\nview = \"See\"\n\n\
-         [[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = build_guest("tether-plugins-test-guest-storage");

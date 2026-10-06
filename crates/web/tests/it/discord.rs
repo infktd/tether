@@ -2505,7 +2505,7 @@ async fn install_publisher_as(h: &Harness, owner: &str, id: &str, key: u8) {
     let manifest = format!(
         "[plugin]\nid = \"{id}\"\nname = \"Doctrine Book\"\nversion = \"1.0.0\"\n\
          host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ndoctrines = \"publish\"\n\n\
-         [permissions]\nview = \"See\"\nmanage = \"Manage\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\nmanage = \"Manage\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = build_guest("tether-plugins-test-guest-storage");
@@ -2653,7 +2653,7 @@ async fn install_reader(h: &Harness, owner: &str) {
     let manifest = format!(
         "[plugin]\nid = \"acme.reader\"\nname = \"Reader\"\nversion = \"1.0.0\"\n\
          host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ndoctrines = \"read\"\n\n\
-         [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = build_guest("tether-plugins-test-guest-storage");

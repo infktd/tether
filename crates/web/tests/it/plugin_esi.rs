@@ -34,7 +34,7 @@ async fn install(h: &Harness, owner: &str) {
         "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[capabilities]\ndiscord = [\"send_message\"]\n\n\
          [capabilities.esi]\nuser = [\"{SKILLS}\"]\ndata_source = [\"{MINING}\"]\n\n\
-         [permissions]\nview = \"See\"\nmanage = \"Manage\"\nadd_owner = \"Add owners\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\nmanage = \"Manage\"\nadd_owner = \"Add owners\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
@@ -1032,7 +1032,7 @@ async fn install_viewer(h: &Harness, owner: &str) {
          [publisher]\nkey = \"{}\"\n\n\
          [capabilities.esi]\nuser = [\"{MAIL}\", \"{STRUCTURES}\"]\ndata_source = [\"{MINING}\"]\n\n\
          [[capabilities.schedules]]\nname = \"sync\"\nevery = \"15m\"\n\n\
-         [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
@@ -1748,7 +1748,7 @@ async fn install_writer(h: &Harness, owner: &str) {
     let manifest = format!(
         "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[capabilities.esi]\nuser = [\"{WRITE_FITTINGS}\"]\n\n\
-         [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
@@ -1902,7 +1902,7 @@ fn probe_package(version: &str, user: &[&str]) -> (Vec<u8>, String) {
         "[plugin]\nid = \"{ID}\"\nname = \"ESI probe\"\nversion = \"{version}\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[capabilities]\ndiscord = [\"send_message\"]\n\n\
          [capabilities.esi]\nuser = [{user}]\ndata_source = [\"{MINING}\"]\n\n\
-         [permissions]\nview = \"See\"\nmanage = \"Manage\"\nadd_owner = \"Add owners\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\nmanage = \"Manage\"\nadd_owner = \"Add owners\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
@@ -2107,7 +2107,7 @@ async fn install_files(h: &Harness, owner: &str) {
     let manifest = format!(
         "[plugin]\nid = \"acme.files\"\nname = \"Files\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[capabilities]\ndownloads = true\n\n\
-         [permissions]\nview = \"See\"\nexports = \"Download\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\nexports = \"Download\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
@@ -2353,7 +2353,7 @@ async fn install_notices(h: &Harness, owner: &str) {
     let manifest = format!(
         "[plugin]\nid = \"acme.notes\"\nname = \"Notes\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
          [publisher]\nkey = \"{}\"\n\n[capabilities]\nnotify = true\n\n\
-         [permissions]\nview = \"See\"\napprove = \"Approve\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+         [permissions]\nview = \"See\"\napprove = \"Approve\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
         key.public()
     );
     let component = probe_component();
