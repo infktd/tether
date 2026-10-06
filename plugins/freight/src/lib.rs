@@ -34,8 +34,9 @@ use tether_plugin_sdk::identity::{self, Character, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, Submission, SubmitResult, Table,
-    Tone, Value, action, actions, badge, character, corporation, isk, link, log, time,
+    Card, Column, Field, Form, Page, PageError, Plugin, Request, SettingsForm, SettingsGroup,
+    Submission, SubmitResult, Table, Tone, Value, action, actions, badge, character, corporation,
+    isk, link, log, time,
 };
 
 const SYNC: &str = "sync";
@@ -1954,26 +1955,32 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
                 .map(|c| (c.id, format!("#{}", c.name))),
         )
         .collect();
-    Ok(page.form(
-        Form::new("settings", "Save settings")
-            .title("Settings")
-            .field(
-                Field::number("modifier", "Global price per m3 modifier (%)")
-                    .range(Some(-100.0), Some(1_000.0), false)
-                    .value(settings.modifier.map(|m| m.to_string()).unwrap_or_default())
-                    .help("Raises or lowers the price per m3 of routes using it, e.g. 10 for 10% more."),
+    // The settings, saved at once from Tether's save bar (DESIGN.md, Save
+    // bar); the routes above are added and changed one by one.
+    Ok(page.settings(
+        SettingsForm::new("settings")
+            .group(
+                SettingsGroup::new("Prices").field(
+                    Field::number("modifier", "Global price per m3 modifier (%)")
+                        .range(Some(-100.0), Some(1_000.0), false)
+                        .value(settings.modifier.map(|m| m.to_string()).unwrap_or_default())
+                        .help("Raises or lowers the price per m3 of routes using it, e.g. 10 for 10% more."),
+                ),
             )
-            .field(
-                select("pilot_channel", "Pilots' channel", channels.clone(), settings.pilot_channel.as_deref().unwrap_or_default())
-                    .help("New contracts, for pilots to pick up."),
-            )
-            .field(
-                select("customer_channel", "Customers' channel", channels, settings.customer_channel.as_deref().unwrap_or_default())
-                    .help("Each contract's status changes, naming its issuer and route. Everyone in the channel sees every customer's notices (aa-freight sends them privately; apps can't)."),
-            )
-            .field(
-                Field::checkbox("notify_all", "Announce every contract", settings.notify_all)
-                    .help("Also contracts on routes without a pricing."),
+            .group(
+                SettingsGroup::new("Discord")
+                    .field(
+                        select("pilot_channel", "Pilots' channel", channels.clone(), settings.pilot_channel.as_deref().unwrap_or_default())
+                            .help("New contracts, for pilots to pick up."),
+                    )
+                    .field(
+                        select("customer_channel", "Customers' channel", channels, settings.customer_channel.as_deref().unwrap_or_default())
+                            .help("Each contract's status changes, naming its issuer and route. Everyone in the channel sees every customer's notices (aa-freight sends them privately; apps can't)."),
+                    )
+                    .field(
+                        Field::checkbox("notify_all", "Announce every contract", settings.notify_all)
+                            .help("Also contracts on routes without a pricing."),
+                    ),
             ),
     ))
 }

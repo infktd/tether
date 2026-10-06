@@ -25,9 +25,9 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::notify::{self, Level};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
-    SubmitResult, Table, Tone, Toolbar, Value, action, actions, badge, character, corporation,
-    item_type, log, time,
+    CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, SettingsForm, SettingsGroup,
+    Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, actions, badge, character,
+    corporation, item_type, log, time,
 };
 
 const SYNC_BLUEPRINTS: &str = "sync_blueprints";
@@ -1022,11 +1022,13 @@ fn settings_page() -> Result<Page, PageError> {
         .channel
         .filter(|c| channels.iter().any(|(id, _)| id == c))
         .unwrap_or_default();
-    Ok(Page::new("Blueprints settings").form(
-        Form::new("settings", "Save").field(
-            Field::select("channel", "Post new requests to", channels)
-                .value(current)
-                .help("A channel an admin assigned this app on the Discord page. Builders also hear in Tether's notifications."),
+    Ok(Page::new("Blueprints settings").settings(
+        SettingsForm::new("settings").group(
+            SettingsGroup::new("Discord").field(
+                Field::select("channel", "Post new requests to", channels)
+                    .value(current)
+                    .help("A channel an admin assigned this app on the Discord page. Builders also hear in Tether's notifications."),
+            ),
         ),
     ))
 }

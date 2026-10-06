@@ -5,7 +5,7 @@
 id = "tether.contracts"
 name = "Contracts"
 icon = "contract"
-version = "0.1.5"
+version = "0.1.6"
 host_api = "1"
 description = "Every contract assigned to your corporation, posted to Discord as it comes in, completes or ends, its price checked against the Janice appraisal linked in its description."
 

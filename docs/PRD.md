@@ -293,12 +293,12 @@ Phase 2, the app shell:
 Phase 3, lists and settings:
 
 - [x] The toolbar on every list (the search in the address, filter chips, view chips) in place of search cards and filter tabs; row names as links; the record panel for a selected row. Tether draws it on every app page with a list: its own search among the rows a page shows (from 8 rows; every page of them), or the app's search of its own data (`toolbar`), the app's filters (one value or several, as tags) and its tabs. Moon Mining, Member Audit's Finder, HR, Blueprints, Fittings and Structures' tag filter moved onto it; row names open their records (entities can link: a pilot's or a corporation's name with its picture); Moon Mining's Moons opens a moon's record panel (the mock-up's). Other apps adopt panels as their lists call for one
-- [ ] Settings in grouped sections with one save bar, CHANGED marks and a warning before leaving unsaved changes
+- [x] Settings in grouped sections with one save bar, CHANGED marks and a warning before leaving unsaved changes. Apps declare a settings form (`section::settings`: up to 16 groups, 120 fields) that posts as one form; Moon Mining, Member Audit, Structures (its owners' routing too, the notification types now in the same form), Blueprints, Contracts, Fleet Activity Tracking and Freight's pricing moved onto it, and Administration's Settings is one form with the same bar. A refused save keeps the page and its changes, with a toast
 
 Phase 4, core, Administration and phone:
 
 - [ ] Core lists on the toolbar; the audit log filtered by who, action, app and date, and exported as CSV
-- [x] Administration's Health page and Instance settings (System split in two; Jay, 2026-10-06: ESI as a status, not a badge, and columns that line up). Health reads what Tether knows (no uptime history yet); Settings keeps a Save per form until the save bar (phase 3)
+- [x] Administration's Health page and Instance settings (System split in two; Jay, 2026-10-06: ESI as a status, not a badge, and columns that line up). Health reads what Tether knows (no uptime history yet); Settings saves from the save bar since phase 3
 - [ ] The ⌘K command palette: pages, pilots and actions, only what the viewer may open
 - [ ] Phone: the views bar scrolls with a fade, toolbars fold into one search line and Filters, the primary action at the bottom; a skip link; a WCAG 2.2 AA pass
 

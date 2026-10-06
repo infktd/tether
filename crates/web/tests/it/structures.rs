@@ -523,16 +523,18 @@ async fn structures_end_to_end(db: PgPool) {
     // 0.3's thresholds became aa-structures' fuel alert configs.
     assert!(settings.body.contains("Fuel alerts"), "{}", settings.body);
     assert_eq!(fuel_configs(&h).await, vec![(72, 24), (24, 6), (6, 0)]);
-    let res = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/settings"),
-            &format!(
-                "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}\
-                 &moon_channel={c}&default_pings=on&danger_ping=Member&warning_ping=Member"
-            ),
-            &owner,
-        ),
+    let res = save_settings(
+        &h,
+        &owner,
+        &[
+            ("attack_channel", c),
+            ("fuel_channel", c),
+            ("state_channel", c),
+            ("moon_channel", c),
+            ("default_pings", "on"),
+            ("danger_ping", "Member"),
+            ("warning_ping", "Member"),
+        ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -970,14 +972,16 @@ async fn structures_feed_structure_timers(db: PgPool) {
         "{}",
         settings.body
     );
-    let res = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/settings"),
-            "_form=settings&attack_channel=&fuel_channel=&state_channel=&moon_channel=\
-             &timers_corporation_only=on",
-            &owner,
-        ),
+    let res = save_settings(
+        &h,
+        &owner,
+        &[
+            ("attack_channel", ""),
+            ("fuel_channel", ""),
+            ("state_channel", ""),
+            ("moon_channel", ""),
+            ("timers_corporation_only", "on"),
+        ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -1275,16 +1279,15 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let c = DISCORD_PING_CHANNEL;
-    let res = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/settings"),
-            &format!(
-                "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}\
-                 &moon_channel={c}"
-            ),
-            &owner,
-        ),
+    let res = save_settings(
+        &h,
+        &owner,
+        &[
+            ("attack_channel", c),
+            ("fuel_channel", c),
+            ("state_channel", c),
+            ("moon_channel", c),
+        ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -1306,15 +1309,12 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
         "{}",
         routing.body
     );
-    let res = send(
-        &h.app,
-        form(
-            &url,
-            "_form=owner_routes&attack_channel=default&fuel_channel=none&state_channel=default\
-             &moon_channel=default&sov_channel=default&war_channel=default\
-             &corp_channel=default&mention=default&pocos_public=on",
-            &owner,
-        ),
+    let res = save_owner(
+        &h,
+        &owner,
+        CHRIBBA_CORP,
+        &[("fuel_channel", "none"), ("pocos_public", "on")],
+        None,
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -1422,15 +1422,12 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
 
     // Fuel alerts, once the owner's fuel goes to the default channel:
     // the tower and the Metenox (its gas).
-    let res = send(
-        &h.app,
-        form(
-            &url,
-            "_form=owner_routes&attack_channel=default&fuel_channel=default&state_channel=default\
-             &moon_channel=default&sov_channel=default&war_channel=default\
-             &corp_channel=default&mention=default&pocos_public=on",
-            &owner,
-        ),
+    let res = save_owner(
+        &h,
+        &owner,
+        CHRIBBA_CORP,
+        &[("fuel_channel", "default"), ("pocos_public", "on")],
+        None,
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -1552,16 +1549,13 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
             "{url}"
         );
     }
-    let res = send(
-        &h.app,
-        form(
-            &url,
-            "_form=owner_routes&attack_channel=none&fuel_channel=none&state_channel=none\
-             &moon_channel=none&mention=default",
-            &member,
-        ),
-    )
-    .await;
+    // The whole form, as the owner's page has it.
+    let body = form_body(
+        &page(&h, &url, &owner).await.body,
+        "owner_routes",
+        &[("attack_channel", "none"), ("fuel_channel", "none")],
+    );
+    let res = send(&h.app, form(&url, &body, &member)).await;
     assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let tags = page(&h, &format!("/plugins/{ID}?_tab=6"), &member).await;
     assert!(
@@ -1638,17 +1632,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     assert_eq!(left, 0);
 
     // Customs offices made private again: off the public list.
-    let res = send(
-        &h.app,
-        form(
-            &url,
-            "_form=owner_routes&attack_channel=default&fuel_channel=default&state_channel=default\
-             &moon_channel=default&sov_channel=default&war_channel=default\
-             &corp_channel=default&mention=default",
-            &owner,
-        ),
-    )
-    .await;
+    let res = save_owner(&h, &owner, CHRIBBA_CORP, &[("pocos_public", "")], None).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let pocos = page(&h, &format!("/plugins/{ID}/pocos"), &member).await;
     assert_eq!(pocos.status, StatusCode::OK, "{}", pocos.body);
@@ -1687,6 +1671,36 @@ impl wiremock::Respond for AltAffiliation {
 /// Posts a form to one of the plugin's pages.
 async fn post(h: &Harness, token: &str, at: &str, body: &str) -> Res {
     send(&h.app, form(&format!("/plugins/{ID}/{at}"), body, token)).await
+}
+
+/// Saves the settings page's form as a browser would, with these changes.
+async fn save_settings(h: &Harness, token: &str, changes: &[(&str, &str)]) -> Res {
+    let at = format!("/plugins/{ID}/settings");
+    let body = form_body(&page(h, &at, token).await.body, "settings", changes);
+    send(&h.app, form(&at, &body, token)).await
+}
+
+/// Saves an owner's routing form as a browser would, with these changes,
+/// and (given `types`) only those types ticked.
+async fn save_owner(
+    h: &Harness,
+    token: &str,
+    corp: i64,
+    changes: &[(&str, &str)],
+    types: Option<&[&str]>,
+) -> Res {
+    let at = format!("/plugins/{ID}/settings/owner/{corp}");
+    let mut body = form_body(&page(h, &at, token).await.body, "owner_routes", changes);
+    if let Some(types) = types {
+        body = body
+            .split('&')
+            .filter(|pair| !pair.starts_with("t_"))
+            .map(str::to_owned)
+            .chain(types.iter().map(|t| format!("{t}=on")))
+            .collect::<Vec<_>>()
+            .join("&");
+    }
+    send(&h.app, form(&at, &body, token)).await
 }
 
 /// aa-structures' rules: notification types per owner, fuel alert configs
@@ -1734,37 +1748,30 @@ async fn aa_structures_rules(db: PgPool) {
         .mount(&h.discord_server)
         .await;
     let c = DISCORD_PING_CHANNEL;
-    let res = post(
+    let res = save_settings(
         &h,
         &owner,
-        "settings",
-        &format!(
-            "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}&moon_channel={c}"
-        ),
+        &[
+            ("attack_channel", c),
+            ("fuel_channel", c),
+            ("state_channel", c),
+            ("moon_channel", c),
+        ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
-    // This owner sends only lost shields (and fuel alerts), its own types
-    // (each kind's form: saving one makes the types its own).
-    for (kind, ticked) in [
-        ("attack", "&t_structurelostshields=on"),
-        ("fuel", "&t_structurefuelalert=on"),
-        ("state", ""),
-        ("moon", ""),
-        ("sov", ""),
-        ("war", ""),
-        ("corp", ""),
-    ] {
-        let res = post(
-            &h,
-            &owner,
-            &format!("settings/owner/{CHRIBBA_CORP}"),
-            &format!("_form=owner_types_{kind}{ticked}"),
-        )
-        .await;
-        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    }
+    // This owner sends only lost shields (and fuel alerts), its own types:
+    // one save of its form, its types its own.
+    let res = save_owner(
+        &h,
+        &owner,
+        CHRIBBA_CORP,
+        &[("types_from", "own")],
+        Some(&["t_structurelostshields", "t_structurefuelalert"]),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     // Another fuel alert: under 100 hours, every hour, pinging danger.
     let res = post(
         &h,
@@ -2074,14 +2081,18 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
         .mount(&h.discord_server)
         .await;
     let c = DISCORD_PING_CHANNEL;
-    let res = post(
+    let res = save_settings(
         &h,
         &owner,
-        "settings",
-        &format!(
-            "_form=settings&attack_channel={c}&fuel_channel={c}&state_channel={c}&moon_channel={c}\
-             &sov_channel={c}&war_channel={c}&corp_channel={c}"
-        ),
+        &[
+            ("attack_channel", c),
+            ("fuel_channel", c),
+            ("state_channel", c),
+            ("moon_channel", c),
+            ("sov_channel", c),
+            ("war_channel", c),
+            ("corp_channel", c),
+        ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -2153,15 +2164,7 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
     let url = format!("settings/owner/{CHRIBBA_CORP}");
     let routing = page(&h, &format!("/plugins/{ID}/{url}"), &owner).await;
     assert!(routing.body.contains("Alliance main"), "{}", routing.body);
-    let res = post(
-        &h,
-        &owner,
-        &url,
-        "_form=owner_routes&attack_channel=default&fuel_channel=default&state_channel=default\
-         &moon_channel=default&sov_channel=default&war_channel=default&corp_channel=default\
-         &mention=default&alliance_main=on",
-    )
-    .await;
+    let res = save_owner(&h, &owner, CHRIBBA_CORP, &[("alliance_main", "on")], None).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     // As if they'd just arrived.
     sqlx::query(r#"UPDATE "plugin_tether.structures".notifications SET handled = false"#)

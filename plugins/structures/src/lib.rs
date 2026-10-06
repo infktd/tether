@@ -41,9 +41,9 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
-    Table, Tone, Toolbar, Value, action, alliance, badge, character, corporation, countdown,
-    defenses, item_type, link, log, time,
+    Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm, SettingsGroup,
+    Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, alliance, badge,
+    character, corporation, countdown, defenses, item_type, link, log, time,
 };
 
 use crate::notification::{Category, Context, Fields};
@@ -213,18 +213,11 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
         return match submission.form.as_str() {
             "owner_routes" => save_owner_settings(viewer, corp, submission),
-            "owner_types" => save_owner_types(viewer, corp, submission),
-            form => match types_category(form.strip_prefix("owner_")) {
-                Some(category) => save_owner_category(viewer, corp, category, submission),
-                None => Err(PageError::NotFound),
-            },
+            _ => Err(PageError::NotFound),
         };
     }
     match (path, submission.form.as_str()) {
         ("settings", "settings") => save_settings(viewer, submission),
-        ("settings", form) if types_category(Some(form)).is_some() => {
-            save_types(viewer, types_category(Some(form)), submission)
-        }
         ("settings", "add_fuel_alert") => add_fuel_alert(viewer, submission),
         ("settings", "delete_fuel_alert") => delete_fuel_alert(viewer, submission),
         ("settings", "add_jump_fuel_alert") => add_jump_fuel_alert(viewer, submission),
@@ -2652,8 +2645,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     if let Some(problem) = problem {
         page = page.text(problem);
     }
-    let form = Form::new("settings", "Save")
-        .title("Discord")
+    let discord = SettingsGroup::new("Discord")
         .description(
             "Each kind of notification goes to one of the channels an admin assigned Structures \
              (Admin → Apps), within a day of it happening, once. These are the defaults: an owner \
@@ -2705,7 +2697,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             "Members and projects",
             "Applications, members joining and leaving, corporation projects.",
             settings.corp.as_deref(),
-        ))
+        ));
+    let pings = SettingsGroup::new("Pings")
         .field(
             Field::checkbox("default_pings", "Default pings", settings.default_pings).help(
                 "aa-structures' default pings: danger notifications ping @everyone and warnings \
@@ -2725,7 +2718,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             )
             .value(settings.warning_ping.clone().unwrap_or_default())
             .help("aa-structures' @here. Empty: no mention."),
-        )
+        );
+    let shown = SettingsGroup::new("Timers and the list")
         .field(
             Field::checkbox(
                 "timers_corporation_only",
@@ -2868,21 +2862,23 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             ]
         }),
     );
-    let mut page = page.form(form);
+    // One form, saved at once from Tether's save bar (DESIGN.md, Save bar):
+    // the channels, pings and list, then which types are sent, by kind.
+    let mut form = SettingsForm::new("settings")
+        .group(discord)
+        .group(pings)
+        .group(shown);
     for (i, category) in Category::ALL.into_iter().enumerate() {
-        let mut types = type_form(
-            &format!("types_{}", category.name()),
-            category,
-            settings.notification_types.as_ref(),
-        );
+        let mut types = type_group(category, settings.notification_types.as_ref());
         if i == 0 {
             types = types.description(
                 "Which notification types are sent (aa-structures' webhook filters), with their \
                  severity, by kind. These are the defaults; an owner can pick its own.",
             );
         }
-        page = page.form(types);
+        form = form.group(types);
     }
+    let page = page.settings(form);
     Ok(page
         .table(fuel_alert_table()?)
         .form(fuel_alert_form())
@@ -2913,11 +2909,15 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             "A state's name is at most 64 characters.",
         ))?));
     }
+    // Every type ticked is stored as none: every type, new ones included.
+    let types = ticked_types(submission);
+    let types = (types.len() < notification::TYPES.len()).then(|| types.join(","));
     storage::execute(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
          moon_channel = $4, default_pings = $5, danger_ping = $6, warning_ping = $9, \
          timers_corporation_only = $7, default_tags_filter = $8, sov_channel = $10, \
-         war_channel = $11, corp_channel = $12 WHERE id = 1",
+         war_channel = $11, corp_channel = $12, \
+         notification_types = string_to_array($13, ',') WHERE id = 1",
         &[
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
@@ -2931,6 +2931,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             channel("sov_channel").into(),
             channel("war_channel").into(),
             channel("corp_channel").into(),
+            types.clone().into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
@@ -2940,7 +2941,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     log::info(format!(
         "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, \
          sovereignty {:?}, wars {:?}, members {:?}, \
-         default pings {} (danger {:?}, warning {:?}), timers corporation-only {}",
+         default pings {} (danger {:?}, warning {:?}), timers corporation-only {}, types {}",
         viewer.main.name,
         viewer.main.id,
         channel("attack_channel"),
@@ -2954,6 +2955,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         channel("danger_ping"),
         channel("warning_ping"),
         submission.checked("timers_corporation_only"),
+        types.as_deref().unwrap_or("every type"),
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }
@@ -2975,123 +2977,30 @@ fn severity_name(severity: notification::Severity) -> &'static str {
 /// them is stored as none, meaning every type, new ones included).
 /// A kind's notification types as a form of checkboxes, ticked as in
 /// `list` (none: all of them).
-fn type_form(name: &str, category: Category, list: Option<&Vec<String>>) -> Form {
-    let mut form = Form::new(name, "Save types").title(format!("Types: {}", category.label()));
+/// One kind's types as a settings group, ticked as `list` has them (every
+/// type when there's none).
+fn type_group(category: Category, list: Option<&Vec<String>>) -> SettingsGroup {
+    let mut group = SettingsGroup::new(format!("Types: {}", category.label()));
     for (kind, label, severity, _) in notification::TYPES
         .iter()
         .filter(|(_, _, _, c)| *c == category)
     {
-        form = form.field(Field::checkbox(
+        group = group.field(Field::checkbox(
             type_field(kind),
             format!("{label} ({})", severity_name(*severity)),
             list.is_none_or(|t| t.iter().any(|k| k == kind)),
         ));
     }
-    form
+    group
 }
 
-/// The kind a types form is for (`types_attack`, ...).
-fn types_category(form: Option<&str>) -> Option<Category> {
-    let name = form?.strip_prefix("types_")?;
-    Category::ALL.into_iter().find(|c| c.name() == name)
-}
-
-fn every_type() -> Vec<String> {
+/// The types a settings form ticked.
+fn ticked_types(submission: &Submission) -> Vec<String> {
     notification::TYPES
         .iter()
-        .map(|(k, _, _, _)| (*k).to_owned())
+        .filter(|(kind, _, _, _)| submission.checked(&type_field(kind)))
+        .map(|(kind, _, _, _)| (*kind).to_owned())
         .collect()
-}
-
-fn settings_now() -> Result<Settings, PageError> {
-    settings().map_err(|e| failed("reading settings", e))
-}
-
-/// The settings' types, spelled out.
-fn default_types(settings: &Settings) -> Vec<String> {
-    settings
-        .notification_types
-        .clone()
-        .unwrap_or_else(every_type)
-}
-
-/// `list` with one kind's types as ticked on its form.
-fn with_ticked(list: Vec<String>, category: Category, submission: &Submission) -> Vec<String> {
-    let mut list: Vec<String> = list
-        .into_iter()
-        .filter(|k| notification::category(k) != Some(category))
-        .collect();
-    list.extend(
-        notification::TYPES
-            .iter()
-            .filter(|(kind, _, _, c)| *c == category && submission.checked(&type_field(kind)))
-            .map(|(kind, _, _, _)| (*kind).to_owned()),
-    );
-    list
-}
-
-fn save_types(
-    viewer: &Viewer,
-    category: Option<Category>,
-    submission: &Submission,
-) -> Result<SubmitResult, PageError> {
-    let category = category.ok_or(PageError::NotFound)?;
-    let list = with_ticked(default_types(&settings_now()?), category, submission);
-    // Every type is stored as none: every type, new ones included.
-    let types = (list.len() < notification::TYPES.len()).then(|| list.join(","));
-    storage::execute(
-        "UPDATE settings SET notification_types = string_to_array($1, ',') WHERE id = 1",
-        &[types.clone().into()],
-    )
-    .map_err(|e| failed("saving the types", e))?;
-    log::info(format!(
-        "notification types ({}) set by {} ({}): {}",
-        category.name(),
-        viewer.main.name,
-        viewer.main.id,
-        types.as_deref().unwrap_or("every type")
-    ));
-    Ok(SubmitResult::Redirect("settings".into()))
-}
-
-/// An owner's own types, if it has them.
-fn owner_types(corp: i64) -> Result<Option<Vec<String>>, PageError> {
-    let own = storage::query(
-        "SELECT array_to_string(notification_types, ',') FROM owner_settings WHERE corporation_id = $1",
-        &[corp.into()],
-    )
-    .map_err(|e| failed("reading the owner's types", e))?;
-    Ok(own.rows.first().and_then(|r| routing::type_list(r.first())))
-}
-
-fn save_owner_category(
-    viewer: &Viewer,
-    corp: i64,
-    category: Category,
-    submission: &Submission,
-) -> Result<SubmitResult, PageError> {
-    if owner_name(corp)?.is_none() {
-        return Err(PageError::NotFound);
-    }
-    let base = match owner_types(corp)? {
-        Some(own) => own,
-        None => default_types(&settings_now()?),
-    };
-    let types = with_ticked(base, category, submission).join(",");
-    storage::execute(
-        "INSERT INTO owner_settings (corporation_id, notification_types) \
-         VALUES ($1, string_to_array($2, ',')) \
-         ON CONFLICT (corporation_id) DO UPDATE SET notification_types = EXCLUDED.notification_types",
-        &[corp.into(), types.clone().into()],
-    )
-    .map_err(|e| failed("saving the owner's types", e))?;
-    log::info(format!(
-        "owner {corp} types ({}) set by {} ({}): {types}",
-        category.name(),
-        viewer.main.name,
-        viewer.main.id,
-    ));
-    Ok(SubmitResult::Redirect(format!("settings/owner/{corp}")))
 }
 
 // ---- fuel alert configs ------------------------------------------------------
@@ -3470,12 +3379,10 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
         .and_then(Db::as_bool)
         .unwrap_or(false);
     let channels = discord::channels();
-    let mut form = Form::new("owner_routes", "Save")
-        .title("Discord")
-        .description(
-            "Where this owner's notifications and alerts go. Default follows the settings' \
+    let mut discord = SettingsGroup::new("Discord").description(
+        "Where this owner's notifications and alerts go. Default follows the settings' \
          channels; pick another channel, or Not sent, to route this owner on its own.",
-        );
+    );
     for category in Category::ALL {
         let value = match routes.rows.iter().find(|r| text(r, 0) == category.name()) {
             None => "default".to_owned(),
@@ -3485,14 +3392,14 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
                 .filter(|c| !c.is_empty())
                 .map_or_else(|| "none".to_owned(), str::to_owned),
         };
-        form = form.field(owner_channel_field(
+        discord = discord.field(owner_channel_field(
             category,
             settings.channel(category),
             &channels,
             &value,
         ));
     }
-    form = form
+    let owner = SettingsGroup::new("Pings and customs offices")
         .field(
             Field::select(
                 "mention",
@@ -3527,11 +3434,9 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
                  alliance's others.",
             ),
         );
-    let types = Form::new("owner_types", "Save")
-        .title("Notification types")
+    let types = SettingsGroup::new("Notification types")
         .description(
-            "Which types this owner sends: the settings' defaults, or its own. Saving a kind's \
-             types below makes them its own.",
+            "Which types this owner sends: the settings' defaults, or its own, ticked below.",
         )
         .field(
             Field::select(
@@ -3550,54 +3455,17 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
             .required(),
         );
     let shown = own_types.or_else(|| settings.notification_types.clone());
-    let mut page = Page::new(format!("Structures owner: {name}"))
-        .description("Discord routing for one owner")
-        .form(form)
-        .form(types);
+    // One form, saved at once from Tether's save bar (DESIGN.md, Save bar).
+    let mut form = SettingsForm::new("owner_routes")
+        .group(discord)
+        .group(owner)
+        .group(types);
     for category in Category::ALL {
-        page = page.form(type_form(
-            &format!("owner_types_{}", category.name()),
-            category,
-            shown.as_ref(),
-        ));
+        form = form.group(type_group(category, shown.as_ref()));
     }
-    Ok(page)
-}
-
-fn save_owner_types(
-    viewer: &Viewer,
-    corp: i64,
-    submission: &Submission,
-) -> Result<SubmitResult, PageError> {
-    if owner_name(corp)?.is_none() {
-        return Err(PageError::NotFound);
-    }
-    // Its own list starts as the defaults, spelled out (every type
-    // included is stored as the list of all of them, so new types stay
-    // off for it).
-    let types = match submission.value("types_from") {
-        "default" => None,
-        "own" => Some(match owner_types(corp)? {
-            Some(own) => own,
-            None => default_types(&settings_now()?),
-        }),
-        _ => return Err(PageError::NotFound),
-    }
-    .map(|t| t.join(","));
-    storage::execute(
-        "INSERT INTO owner_settings (corporation_id, notification_types) \
-         VALUES ($1, string_to_array($2, ',')) \
-         ON CONFLICT (corporation_id) DO UPDATE SET notification_types = EXCLUDED.notification_types",
-        &[corp.into(), types.clone().into()],
-    )
-    .map_err(|e| failed("saving the owner's types", e))?;
-    log::info(format!(
-        "owner {corp} types set by {} ({}): {}",
-        viewer.main.name,
-        viewer.main.id,
-        types.as_deref().unwrap_or("the defaults")
-    ));
-    Ok(SubmitResult::Redirect(format!("settings/owner/{corp}")))
+    Ok(Page::new(format!("Structures owner: {name}"))
+        .description("Discord routing for one owner")
+        .settings(form))
 }
 
 fn save_owner_settings(
@@ -3634,6 +3502,12 @@ fn save_owner_settings(
         return Err(PageError::NotFound);
     }
     let alliance_main = submission.checked("alliance_main");
+    // Its types: the defaults (none of its own), or those ticked.
+    let types = match submission.value("types_from") {
+        "default" => None,
+        "own" => Some(ticked_types(submission).join(",")),
+        _ => return Err(PageError::NotFound),
+    };
     // The alliance it's main of (none without one).
     let alliance = "(SELECT o.alliance_id FROM owners o WHERE o.corporation_id = $1 \
                     AND o.alliance_id IS NOT NULL LIMIT 1)";
@@ -3649,26 +3523,30 @@ fn save_owner_settings(
     }
     statements.push(Statement::new(
         format!(
-            "INSERT INTO owner_settings (corporation_id, mention, pocos_public, alliance_main) \
-             VALUES ($1, $2, $3, CASE WHEN $4 THEN {alliance} END) \
+            "INSERT INTO owner_settings (corporation_id, mention, pocos_public, alliance_main, \
+                 notification_types) \
+             VALUES ($1, $2, $3, CASE WHEN $4 THEN {alliance} END, string_to_array($5, ',')) \
              ON CONFLICT (corporation_id) DO UPDATE SET mention = EXCLUDED.mention, \
-                 pocos_public = EXCLUDED.pocos_public, alliance_main = EXCLUDED.alliance_main"
+                 pocos_public = EXCLUDED.pocos_public, alliance_main = EXCLUDED.alliance_main, \
+                 notification_types = EXCLUDED.notification_types"
         ),
         vec![
             corp.into(),
             mention.into(),
             submission.checked("pocos_public").into(),
             alliance_main.into(),
+            types.clone().into(),
         ],
     ));
     storage::transaction(&statements).map_err(|e| failed("saving the owner", e))?;
     log::info(format!(
         "owner {corp} routing set by {} ({}): {}, mention {mention}, customs offices public {}, \
-         alliance main {alliance_main}",
+         alliance main {alliance_main}, types {}",
         viewer.main.name,
         viewer.main.id,
         summary.join(", "),
         submission.checked("pocos_public"),
+        types.as_deref().unwrap_or("the defaults"),
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }

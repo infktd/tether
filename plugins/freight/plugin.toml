@@ -5,7 +5,7 @@
 id = "tether.freight"
 name = "Freight"
 icon = "box"
-version = "0.1.4"
+version = "0.1.5"
 host_api = "1"
 description = "A central freight service: priced routes, a reward calculator, the courier contracts checked against the pricing, statistics, and notices to pilots and customers on Discord."
 

@@ -26,8 +26,8 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission, SubmitResult, Table,
-    Tone, Value, badge, character, isk, log, time,
+    Column, Field, Page, PageError, Plugin, Request, SettingsForm, SettingsGroup, Stat, Submission,
+    SubmitResult, Table, Tone, Value, badge, character, isk, log, time,
 };
 
 use card::{Check, Event, Notice};
@@ -1000,34 +1000,40 @@ fn settings_page() -> Result<Page, PageError> {
             "The Janice API key is entered by an admin as this app's secret (Administration, Apps, \
              Contracts). Without it, contracts are still posted, their appraisal marked not checked.",
         )
-        .form(
-            Form::new("settings", "Save")
-                .field(
-                    Field::select("channel", "Post contracts to", channels)
-                        .value(current)
-                        .help("A channel an admin assigned this app on the Discord page."),
+        .settings(
+            SettingsForm::new("settings")
+                .group(
+                    SettingsGroup::new("Discord")
+                        .description("Where contracts are posted, and which events.")
+                        .field(
+                            Field::select("channel", "Post contracts to", channels)
+                                .value(current)
+                                .help("A channel an admin assigned this app on the Discord page."),
+                        )
+                        .field(Field::checkbox(
+                            "notify_new",
+                            "New contracts assigned to the corporation",
+                            settings.notify_new,
+                        ))
+                        .field(Field::checkbox(
+                            "notify_completed",
+                            "Completed contracts",
+                            settings.notify_completed,
+                        ))
+                        .field(Field::checkbox(
+                            "notify_ended",
+                            "Expired, rejected, cancelled or deleted contracts",
+                            settings.notify_ended,
+                        )),
                 )
-                .field(Field::checkbox(
-                    "notify_new",
-                    "New contracts assigned to the corporation",
-                    settings.notify_new,
-                ))
-                .field(Field::checkbox(
-                    "notify_completed",
-                    "Completed contracts",
-                    settings.notify_completed,
-                ))
-                .field(Field::checkbox(
-                    "notify_ended",
-                    "Expired, rejected, cancelled or deleted contracts",
-                    settings.notify_ended,
-                ))
-                .field(
-                    Field::number("tolerance_percent", "A price matches its appraisal within (%)")
-                        .range(Some(0.0), Some(100.0), false)
-                        .value(settings.tolerance.to_string())
-                        .help("How far a contract's price may be from the appraisal's buy total. 1 by default; 0 is exact.")
-                        .required(),
+                .group(
+                    SettingsGroup::new("Appraisals").field(
+                        Field::number("tolerance_percent", "A price matches its appraisal within (%)")
+                            .range(Some(0.0), Some(100.0), false)
+                            .value(settings.tolerance.to_string())
+                            .help("How far a contract's price may be from the appraisal's buy total. 1 by default; 0 is exact.")
+                            .required(),
+                    ),
                 ),
         ))
 }

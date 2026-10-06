@@ -4,7 +4,9 @@
 
 use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::{self, Value as Db};
-use tether_plugin_sdk::{Field, Form, Page, PageError, Submission, SubmitResult, log};
+use tether_plugin_sdk::{
+    Field, Page, PageError, SettingsForm, SettingsGroup, Submission, SubmitResult, log,
+};
 
 use crate::failed;
 
@@ -79,42 +81,50 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
     if let Some(note) = note {
         page = page.text(note);
     }
-    Ok(page.form(
-        Form::new("settings", "Save")
-            .field(
-                Field::number(
-                    "retention_days",
-                    "Days to keep mail, contracts and wallet history",
-                )
-                .range(retention_min, retention_max, true)
-                .value(settings.retention_days.to_string())
-                .help("At least 7. Default: 360.")
-                .required(),
+    Ok(page.settings(
+        SettingsForm::new("settings")
+            .group(
+                SettingsGroup::new("History")
+                    .description("What Member Audit keeps of each character.")
+                    .field(
+                        Field::number(
+                            "retention_days",
+                            "Days to keep mail, contracts and wallet history",
+                        )
+                        .range(retention_min, retention_max, true)
+                        .value(settings.retention_days.to_string())
+                        .help("At least 7. Default: 360.")
+                        .required(),
+                    )
+                    .field(
+                        Field::number("max_mails", "Mails kept per character")
+                            .range(mails_min, mails_max, true)
+                            .value(settings.max_mails.to_string())
+                            .help("The newest are kept. Default: 250.")
+                            .required(),
+                    ),
             )
-            .field(
-                Field::number("max_mails", "Mails kept per character")
-                    .range(mails_min, mails_max, true)
-                    .value(settings.max_mails.to_string())
-                    .help("The newest are kept. Default: 250.")
+            .group(
+                SettingsGroup::new("Roles").field(
+                    Field::checkbox(
+                        "roles_enabled",
+                        "Read and show corporation roles",
+                        settings.roles,
+                    )
+                    .help("Turning it off forgets the roles read. Default: off."),
+                ),
+            )
+            .group(
+                SettingsGroup::new("Sharing").field(
+                    Field::number(
+                        "sharing_timeout_minutes",
+                        "Minutes a character stays shared",
+                    )
+                    .range(share_min, share_max, true)
+                    .value(settings.sharing_timeout_minutes.to_string())
+                    .help("0: shared until its pilot stops sharing it. Default: 0.")
                     .required(),
-            )
-            .field(
-                Field::checkbox(
-                    "roles_enabled",
-                    "Read and show corporation roles",
-                    settings.roles,
-                )
-                .help("Turning it off forgets the roles read. Default: off."),
-            )
-            .field(
-                Field::number(
-                    "sharing_timeout_minutes",
-                    "Minutes a character stays shared",
-                )
-                .range(share_min, share_max, true)
-                .value(settings.sharing_timeout_minutes.to_string())
-                .help("0: shared until its pilot stops sharing it. Default: 0.")
-                .required(),
+                ),
             ),
     ))
 }

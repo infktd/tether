@@ -37,9 +37,9 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin, Request, Section, Stat,
-    Submission, SubmitResult, Table, Timeline, Tone, Value, badge, character, countdown, isk,
-    item_type, link, log, time,
+    Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin, Request, Section, SettingsForm,
+    SettingsGroup, Stat, Submission, SubmitResult, Table, Timeline, Tone, Value, badge, character,
+    countdown, isk, item_type, link, log, time,
 };
 
 use crate::planner::{Advice, Cadence, Drill};
@@ -1735,20 +1735,29 @@ fn settings_page() -> Result<Page, PageError> {
             .into_iter()
             .map(|c| (c.id, format!("#{}", c.name))),
     );
-    Ok(Page::new("Moon Mining settings").form(
-        Form::new("settings", "Save")
-            .field(
-                Field::number("fresh_hours", "Members-only hours after a pop")
+    // One form, saved at once from Tether's save bar (DESIGN.md, Save bar).
+    Ok(Page::new("Moon Mining settings").settings(
+        SettingsForm::new("settings")
+            .group(
+                SettingsGroup::new("Members-only window")
+                    .description("Not in aa-moonmining: Members see popped moons first, Blue later.")
+                .field(Field::number("fresh_hours", "Members-only hours after a pop")
                     .range(Some(0.0), Some(48.0), true)
                     .value(settings.fresh.num_hours().to_string())
                     .help(
                         "Not in aa-moonmining: 0 is off, as there. On, those with basic_access \
                          alone (Blue) see popped moons after this many hours, on an old-moon list.",
                     )
-                    .required(),
+                    .required(),)
+                .field(Field::number("old_moons_shown", "Old moons shown beside fresh ones")
+                    .range(Some(0.0), Some(50.0), true)
+                    .value(settings.old_shown.to_string())
+                    .help("Not in aa-moonmining: the newest moons popped in the last two days, beside the fresh ones on Extractions and on Blue's old-moon list (without when they popped), while the Members-only window is on. 0 shows none")
+                    .required(),)
             )
-            .field(
-                // A channel no longer assigned to the app starts on "No
+            .group(
+                SettingsGroup::new("Pops on Discord")
+                .field(// A channel no longer assigned to the app starts on "No
                 // pings": a select can't start on a value it doesn't list.
                 Field::select("ping_channel", "Ping pops to", channels.clone())
                     .value(
@@ -1757,41 +1766,33 @@ fn settings_page() -> Result<Page, PageError> {
                             .filter(|c| channels.iter().any(|(id, _)| id == c))
                             .unwrap_or_default(),
                     )
-                    .help("Not in aa-moonmining: no channel, no pings."),
-            )
-            .field(Field::checkbox(
+                    .help("Not in aa-moonmining: no channel, no pings."),)
+                .field(Field::checkbox(
                 "pings",
                 "Ping Members at each pop",
                 settings.pings,
             ))
-            .field(
-                Field::number("volume_per_day", "Ore a drill pulls a day (m³)")
+            )
+            .group(
+                SettingsGroup::new("Moon value")
+                    .description("What a month of mining a moon is worth.")
+                .field(Field::number("volume_per_day", "Ore a drill pulls a day (m³)")
                     .range(Some(1.0), Some(10_000_000.0), true)
                     .value(format!("{:.0}", settings.rates.per_day))
                     .help("Default: 960,400, unless CCP changes it.")
-                    .required(),
-            )
-            .field(
-                Field::number("days_per_month", "Days in a month")
+                    .required(),)
+                .field(Field::number("days_per_month", "Days in a month")
                     .range(Some(28.0), Some(31.0), false)
                     .value(settings.rates.days_per_month.to_string())
                     .help("Moons' monthly value uses this and the ore a day. Default: 30.4.")
-                    .required(),
+                    .required(),)
             )
-            .field(
-                Field::number("stale_hours", "Hours after the chunk arrives until an extraction is Past")
+            .group(SettingsGroup::new("Extractions")
+                .field(Field::number("stale_hours", "Hours after the chunk arrives until an extraction is Past")
                     .range(Some(1.0), Some(168.0), true)
                     .value(settings.stale.num_hours().to_string())
                     .help("Default: 12.")
-                    .required(),
-            )
-            .field(
-                Field::number("old_moons_shown", "Old moons shown beside fresh ones")
-                    .range(Some(0.0), Some(50.0), true)
-                    .value(settings.old_shown.to_string())
-                    .help("Not in aa-moonmining: the newest moons popped in the last two days, beside the fresh ones on Extractions and on Blue's old-moon list (without when they popped), while the Members-only window is on. 0 shows none")
-                    .required(),
-            ),
+                    .required(),)),
     ))
 }
 

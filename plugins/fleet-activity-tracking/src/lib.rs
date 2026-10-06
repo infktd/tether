@@ -34,9 +34,9 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Action, Card, CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat,
-    Submission, SubmitResult, Table, Tone, Value, action, actions, add_owner, alliance, badge,
-    character, corporation, item_type, link, log, share, time,
+    Action, Card, CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Section,
+    SettingsForm, SettingsGroup, Stat, Submission, SubmitResult, Table, Tone, Value, action,
+    actions, add_owner, alliance, badge, character, corporation, item_type, link, log, share, time,
 };
 
 /// The longest a link may stay open at once.
@@ -2587,45 +2587,50 @@ fn settings_page() -> Result<Page, PageError> {
     };
     Ok(Page::new("Settings")
         .description("For every FAT link. Defaults are aa-afat's.")
-        .form(
-            Form::new("settings", "Save")
-                .field(minutes(
-                    "expiry_minutes",
-                    "Default FAT link expiry time (minutes)",
-                    settings.expiry_minutes,
-                    1.0,
-                    "What New FAT link offers; the FC can change it. Default: 60.",
-                ))
-                .field(minutes(
-                    "reopen_grace_minutes",
-                    "Default FAT link reopen grace time (minutes)",
-                    settings.reopen_grace_minutes,
-                    0.0,
-                    "How long after closing a link can be reopened (once). 0: never. Default: 60.",
-                ))
-                .field(minutes(
-                    "reopen_duration_minutes",
-                    "Default FAT link reopen duration (minutes)",
-                    settings.reopen_duration_minutes,
-                    1.0,
-                    "How long a reopened link stays open. Default: 60.",
-                ))
-                .field(
-                    Field::number("log_days", "Default log duration (days)")
-                        .range(Some(1.0), Some(3650.0), true)
-                        .value(settings.log_days.to_string())
-                        .help("How long log entries are kept. Default: 60.")
-                        .required(),
+        .settings(
+            SettingsForm::new("settings")
+                .group(
+                    SettingsGroup::new("FAT links")
+                        .field(minutes(
+                            "expiry_minutes",
+                            "Default FAT link expiry time (minutes)",
+                            settings.expiry_minutes,
+                            1.0,
+                            "What New FAT link offers; the FC can change it. Default: 60.",
+                        ))
+                        .field(minutes(
+                            "reopen_grace_minutes",
+                            "Default FAT link reopen grace time (minutes)",
+                            settings.reopen_grace_minutes,
+                            0.0,
+                            "How long after closing a link can be reopened (once). 0: never. Default: 60.",
+                        ))
+                        .field(minutes(
+                            "reopen_duration_minutes",
+                            "Default FAT link reopen duration (minutes)",
+                            settings.reopen_duration_minutes,
+                            1.0,
+                            "How long a reopened link stays open. Default: 60.",
+                        ))
+                        .field(
+                            Field::checkbox(
+                                "use_doctrines_from_fittings",
+                                "Use doctrines from Fittings",
+                                settings.doctrines_from_fittings,
+                            )
+                            .help(
+                                "New FAT link offers the doctrines Fittings shares that the FC may \
+                                 see, instead of a text field. Default: off.",
+                            ),
+                        ),
                 )
-                .field(
-                    Field::checkbox(
-                        "use_doctrines_from_fittings",
-                        "Use doctrines from Fittings",
-                        settings.doctrines_from_fittings,
-                    )
-                    .help(
-                        "New FAT link offers the doctrines Fittings shares that the FC may \
-                         see, instead of a text field. Default: off.",
+                .group(
+                    SettingsGroup::new("Log").field(
+                        Field::number("log_days", "Default log duration (days)")
+                            .range(Some(1.0), Some(3650.0), true)
+                            .value(settings.log_days.to_string())
+                            .help("How long log entries are kept. Default: 60.")
+                            .required(),
                     ),
                 ),
         ))
