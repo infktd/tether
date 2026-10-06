@@ -154,9 +154,10 @@ Page structure (the mock-up, 2026-10-06: https://claude.ai/artifact/Edvv5nBKef4v
 
 **Tabs and filter keys**: replaced by the views bar (navigation between pages) and view chips (which part of a list); see both above.
 
-**Badges**: 10–11px mono or overline text, 1px border, square, 1px × 6px padding. Never filled: a status badge is its colour's border and text (the signal, `--destructive`), a neutral one `--faint` and `--foreground-soft`.
-- Neutral: `--faint` border, `--foreground-soft` text.
-- Status: the status colour's border and text (`--info`, `--destructive`, signal), or a soft fill for the state badge. Never colour alone: a word goes with it.
+**Badges** are labels (a fit's type, Main, a timer's kind): 10–11px mono or overline text, 1px border, square, 1px × 6px padding, never filled: `--faint` border and `--foreground-soft` text, or the signal for the one highlighted. A number is never a badge.
+
+**Status lines** say how something is (Jay, 2026-10-06): a 7px square in the tone's colour and the word in 12.5px, no border: working or done in `--info` with the word in `--foreground-soft`, needing someone in the signal, a problem in `--destructive` (the word in the same colour), like the command bar's ESI NOMINAL. An app's badge with a success, warning or danger tone is drawn as one; a neutral or highlighted badge stays a badge. A status that links somewhere (Missing 1 scope · Register) underlines on hover.
+- Never colour alone: a word goes with it. The state badge keeps its soft fill.
 - Notification levels: danger red, warning signal, success blue, info neutral. The bell's unread count is the signal.
 
 **Ledger** (facts in a panel or card): the label in `--muted-foreground`, a dotted `--faint` leader filling the space, the value right-aligned (mono for numbers). Used for character facts, membership, summaries.

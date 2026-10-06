@@ -139,13 +139,14 @@ async fn the_host_draws_what_the_plugin_describes(db: PgPool) {
         "1,240,000,000 ISK",
         "2026-09-24 18:00",
         r#"href="/plugins/acme.pages/moons/old""#,
-        "Viewing as Chribba",
         "first tab",
         r#"href="/plugins/acme.pages/values?_tab=1""#,
     ] {
         assert!(res.body.contains(part), "{part}: {}", res.body);
     }
     assert!(!res.body.contains("second tab"));
+    // No other pilot on it: no watermark (DESIGN.md, Watermark).
+    assert!(!res.body.contains("Viewing as"), "{}", res.body);
     let second = page(&h, "/plugins/acme.pages/values?_tab=1", &owner).await;
     assert!(second.body.contains("second tab") && !second.body.contains("first tab"));
 
@@ -428,7 +429,10 @@ async fn the_newer_blocks_are_drawn_and_escaped(db: PgPool) {
         r#"<img src="https://images.evetech.net/characters/90000001/portrait?size=128" alt="" loading="lazy" class="entity-img" data-size="lg">"#,
         r#"<h2 class="profile-name">Pilot &#60;script&#62;"#,
         "Main &#60;script&#62;",
-        r#"data-variant="secondary">Badge &#60;script&#62;"#,
+        // A badge with a success tone is a status line, its word escaped.
+        r#"<span class="status-line" data-tone="ok">Badge &#60;script&#62;alert(1)&#60;/script&#62;</span>"#,
+        // Another pilot shows: the watermark names who looked.
+        "Viewing as Chribba",
         r#"src="https://images.evetech.net/corporations/98000001/logo?size=64""#,
         "Corp &#34;quoted&#34; &#38; co",
         r#"<span class="entity-initials" data-size="sm" aria-hidden="true">A&#60;</span>"#,
@@ -1105,9 +1109,17 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
         !body.contains("menu-details"),
         "no Manage for a member: {body}"
     );
-    // The action isn't offered on its own page.
+    // The action isn't offered on its own page, and a page under no view
+    // marks none (the main page covers only itself).
     let blocks = page(&h, "/plugins/acme.frame/blocks", &pilot).await;
     assert!(!blocks.body.contains(">New block</a>"), "{}", blocks.body);
+    assert!(
+        blocks
+            .body
+            .contains(r#"<a href="/plugins/acme.frame">Overview</a>"#),
+        "{}",
+        blocks.body
+    );
 
     // Whoever runs it: Manage, Settings first, then the app's own pages.
     let values = page(&h, "/plugins/acme.frame/values", &owner).await;

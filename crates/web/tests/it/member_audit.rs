@@ -519,9 +519,8 @@ async fn member_audit_end_to_end(db: PgPool) {
     // is off by default.
     assert_eq!(sections, 23, "{:?}", plugin_warnings(&h).await);
 
-    // My characters, which is the Dashboard: Tether's Register Character
-    // card first, then a card per character with its portrait, logos and
-    // facts, and the totals.
+    // My characters, which is the Dashboard: a row per character with its
+    // portrait and facts, the totals, and Tether's Register Character last.
     let mine = page(&h, "/dashboard", &owner).await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
     let body = &mine.body;
@@ -530,7 +529,7 @@ async fn member_audit_end_to_end(db: PgPool) {
     ));
     let card = body.find(&format!("/plugins/{ID}/character/{CHRIBBA}"));
     assert!(
-        register.is_some() && card.is_some() && register < card,
+        register.is_some() && card.is_some() && card < register,
         "{body}"
     );
     for part in [
@@ -1571,7 +1570,7 @@ async fn the_dashboard_is_the_character_audit(db: PgPool) {
     let first = body
         .find(&format!(r#"href="/plugins/{ID}/character/{CHRIBBA}""#))
         .expect("Chribba's row");
-    assert!(register < first, "{body}");
+    assert!(first < register, "{body}");
     assert!(
         body.contains(&format!(
             "https://images.evetech.net/characters/{CHRIBBA}/portrait?size=128"

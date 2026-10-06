@@ -13,8 +13,8 @@
 {#- A character's registration status (Registered, or what it's missing,
     linking to Register Character). -#}
 {% macro status_chip(chip) -%}
-{%- if chip.problem -%}<a href="/register" class="badge" data-variant="destructive" title="Register it with the access your state needs">{{ chip.label }}</a>
-{%- else -%}<span class="badge" data-variant="secondary">{{ chip.label }}</span>{%- endif -%}
+{%- if chip.problem -%}<a href="/register" class="status-line" data-tone="danger" title="Register it with the access your state needs">{{ chip.label }}</a>
+{%- else -%}<span class="status-line" data-tone="ok">{{ chip.label }}</span>{%- endif -%}
 {%- endmacro %}
 
 {% macro action_fields(a) -%}
@@ -23,7 +23,7 @@
 
 {#- A form's fields, on the page or in a popup. -#}
 {% macro form_fields(form) -%}
-  <section class="grid gap-4 max-w-xl">
+  <section class="form-grid">
     {% for f in form.fields %}
     {% let field_id = format!("{}-{}", form.id, f.name) %}
     <div class="grid gap-2">
@@ -35,7 +35,7 @@
       <textarea class="textarea input" id="{{ field_id }}" name="{{ f.name }}" maxlength="{{ f.max_length }}" rows="4"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>{{ f.value }}</textarea>
       {% else if f.kind == "select" %}
       <select class="select input" id="{{ field_id }}" name="{{ f.name }}"{% if f.required %} required{% endif %}>
-        {% if !f.required %}<option value="">—</option>{% endif %}
+        {% if f.blank %}<option value="">—</option>{% endif %}
         {% for o in f.options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
       </select>
       {% else if f.kind == "number" %}
@@ -44,7 +44,7 @@
       <input class="input" type="text" id="{{ field_id }}" name="{{ f.name }}" value="{{ f.value }}" maxlength="{{ f.max_length }}"{% if !f.placeholder.is_empty() %} placeholder="{{ f.placeholder }}"{% endif %}{% if f.required %} required{% endif %}>
       {% endif %}
       {% endif %}
-      {% if let Some(help) = f.help %}<p class="text-xs text-muted-foreground">{{ help }}</p>{% endif %}
+      {% if let Some(help) = f.help %}<p class="form-help">{{ help }}</p>{% endif %}
     </div>
     {% endfor %}
   </section>
@@ -96,8 +96,9 @@
 {%- else if let Some(c) = v.composition -%}{% call ring(c) %}{% endcall %}
 {%- else if let Some(d) = v.defenses -%}<svg class="defenses" width="44" height="44" viewBox="0 0 44 44" fill="none" role="img" aria-label="{{ d.label }}"><title>{{ d.label }}</title>{% for (r, track, part) in d.rings %}<circle cx="22" cy="22" r="{{ r }}" class="{{ track.color }}" stroke-width="3" stroke-dasharray="{{ track.dash }}" transform="rotate(135 22 22)"/><circle cx="22" cy="22" r="{{ r }}" class="{{ part.color }}" stroke-width="3" stroke-dasharray="{{ part.dash }}" transform="rotate(135 22 22)"/>{% endfor %}<rect x="19" y="19" width="6" height="6" fill="none" class="{% if d.alarm %}arc-danger alarm{% else %}arc-bracket{% endif %}"/></svg>
 {%- else if let Some(href) = v.href -%}{% if v.primary %}<a class="btn" data-variant="primary" data-size="sm" href="{{ href }}"{% if v.download %} download hx-boost="false"{% endif %}>{{ v.text }}</a>{% else %}<a class="underline underline-offset-4" href="{{ href }}"{% if v.download %} download hx-boost="false"{% endif %}>{{ v.text }}</a>{% endif %}
+{%- else if let Some(tone) = v.status -%}<span class="status-line" data-tone="{{ tone }}">{{ v.text }}</span>
 {%- else if let Some(variant) = v.badge -%}<span class="badge"{% if !variant.is_empty() %} data-variant="{{ variant }}"{% endif %}>{{ v.text }}</span>
-{%- else if (v.mono && !mono_already) || v.title.is_some() -%}<span{% if v.mono && !mono_already %} class="num"{% endif %}{% if let Some(title) = v.title %} title="{{ title }}"{% endif %}>{{ v.text }}</span>
+{%- else if (v.mono && !mono_already) || v.title.is_some() -%}<span{% if v.mono && !mono_already %} class="num"{% endif %}{% if let Some(title) = v.title %} title="{{ title }}"{% endif %}>{{ v.text }}</span>{% if let Some(unit) = v.unit %}<span class="unit">{{ unit }}</span>{% endif %}
 {%- else -%}{{ v.text }}{%- endif -%}
 {%- endmacro %}
 
@@ -119,7 +120,7 @@
   {% for stat in stats %}
   <div class="card stat">
     <div class="stat-label">{{ stat.label }}</div>
-    <div class="stat-value num">{% call value(stat.value, true) %}{% endcall %}</div>
+    <div class="stat-value num"{% if let Some(tone) = stat.tone %} data-tone="{{ tone }}"{% endif %}>{% call value(stat.value, true) %}{% endcall %}</div>
     {% if let Some(caption) = stat.caption %}<div class="stat-caption">{{ caption }}</div>{% endif %}
   </div>
   {% endfor %}
@@ -131,10 +132,10 @@
   <p class="px-5 py-5 text-sm text-muted-foreground">{% if let Some(empty) = table.empty %}{{ empty }}{% else %}Nothing here yet.{% endif %}</p>
   {% else %}
   <table class="table">
-    <thead><tr>{% for c in table.columns %}<th scope="col"{% if c.numeric %} class="text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
+    <thead><tr>{% for c in table.columns %}<th scope="col"{% if c.numeric %} class="num text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in table.rows %}
-      <tr>{% for v in row %}{% let numeric = table.columns[loop.index0].numeric %}<td{% if numeric %} class="num text-right"{% endif %}>{% call value(v, numeric) %}{% endcall %}</td>{% endfor %}</tr>
+      <tr>{% for v in row %}{% let column = table.columns[loop.index0] %}<td{% if column.numeric %} class="num text-right"{% endif %}{% if let Some(key) = v.sort %} data-sort="{{ key }}"{% endif %}>{% if v.is_blank() && !column.label.is_empty() %}<span class="blank">—</span>{% else %}{% call value(v, column.numeric) %}{% endcall %}{% endif %}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table>
@@ -144,16 +145,18 @@
 {% when SectionView::Card(card) %}
 <section class="card">
   <header><h2>{{ card.title }}</h2>{% if let Some(d) = card.description %}<p>{{ d }}</p>{% endif %}</header>
+  {% if !card.fields.is_empty() %}
   <section>
     <dl class="ledger-dl">
       {% for (label, v) in card.fields %}
-      <div><dt>{{ label }}</dt><dd>{% call value(v, false) %}{% endcall %}</dd></div>
+      <div><dt>{{ label }}</dt><dd>{% if v.is_blank() %}<span class="blank">—</span>{% else %}{% call value(v, false) %}{% endcall %}{% endif %}</dd></div>
       {% endfor %}
     </dl>
   </section>
+  {% endif %}
 </section>
 {% when SectionView::Text(text) %}
-<p class="text-sm leading-relaxed whitespace-pre-line">{{ text }}</p>
+<p class="section-text">{{ text }}</p>
 {% when SectionView::Profile(p) %}
 <section class="card profile">
   <section class="flex flex-col gap-5">
@@ -163,7 +166,7 @@
         {% if let Some(s) = p.subtitle %}<p class="ov">{{ s }}</p>{% endif %}
         <div class="flex flex-wrap items-center gap-2">
           <h2 class="profile-name">{{ p.subject.name }}</h2>
-          {% for b in p.badges %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endfor %}
+          {% for b in p.badges %}{% if let Some(tone) = b.status %}<span class="status-line" data-tone="{{ tone }}">{{ b.label }}</span>{% else %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endif %}{% endfor %}
         </div>
         {% if p.corporation.is_some() || p.alliance.is_some() %}
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-foreground-soft">
@@ -176,20 +179,19 @@
     {% if !p.facts.is_empty() %}
     <dl class="profile-facts">
       {% for (label, v) in p.facts %}
-      <div class="flex min-w-0 flex-col gap-1"><dt>{{ label }}</dt><dd class="break-words">{% call value(v, false) %}{% endcall %}</dd></div>
+      <div class="flex min-w-0 flex-col gap-1"><dt>{{ label }}</dt><dd class="break-words">{% if v.is_blank() %}<span class="blank">—</span>{% else %}{% call value(v, false) %}{% endcall %}{% endif %}</dd></div>
       {% endfor %}
     </dl>
     {% endif %}
   </section>
 </section>
 {% when SectionView::Cards(grid) %}
-<section class="card-grid">
-  {% if let Some(register_href) = grid.register %}
-  <a class="card grid-card grid-card-register" href="{{ register_href }}">
-    <span class="grid-card-plus" aria-hidden="true"><svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
-    <span class="grid-card-name">Register another character</span>
-    <span class="text-[13px] text-muted-foreground">Log in with EVE to add one, or renew one's access.</span>
-  </a>
+{#- With the host's Register card, the account's characters: a roster
+    (DESIGN.md, Card grid) under a header band of the facts' labels, the
+    card its last row. -#}
+<section class="card-grid{% if grid.register.is_some() %} roster{% endif %}">
+  {% if grid.register.is_some() && !grid.columns.is_empty() %}
+  <div class="roster-head" aria-hidden="true"><span>Character</span>{% for c in grid.columns %}<span>{{ c }}</span>{% endfor %}<span></span></div>
   {% endif %}
   {% for item in grid.items %}
   {% let p = item.profile %}
@@ -206,15 +208,15 @@
       </span>
       <div class="flex min-w-0 flex-col gap-1">
         <h3 class="grid-card-name">{% if let Some(href) = item.href %}<a class="hover:underline underline-offset-4" href="{{ href }}">{{ p.subject.name }}</a>{% else %}{{ p.subject.name }}{% endif %}</h3>
-        {% if !p.badges.is_empty() %}<div class="flex flex-wrap gap-1.5">{% for b in p.badges %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endfor %}</div>{% endif %}
+        {% if !p.badges.is_empty() %}<div class="flex flex-wrap gap-1.5">{% for b in p.badges %}{% if let Some(tone) = b.status %}<span class="status-line" data-tone="{{ tone }}">{{ b.label }}</span>{% else %}<span class="badge"{% if !b.variant.is_empty() %} data-variant="{{ b.variant }}"{% endif %}>{{ b.label }}</span>{% endif %}{% endfor %}</div>{% endif %}
         {% if let Some(s) = p.subtitle %}<p class="text-xs text-muted-foreground">{{ s }}</p>{% endif %}
-        {% if let Some(e) = p.corporation %}<span class="truncate text-xs text-foreground-soft">{{ e.name }}{% if let Some(a) = p.alliance %} · {{ a.name }}{% endif %}</span>{% endif %}
+        {% if let Some(e) = p.corporation %}<span class="truncate text-xs text-foreground-soft" title="{{ e.name }}{% if let Some(a) = p.alliance %} · {{ a.name }}{% endif %}">{{ e.name }}{% if let Some(a) = p.alliance %} · {{ a.name }}{% endif %}</span>{% endif %}
       </div>
     </div>
     {% if !p.facts.is_empty() %}
     <dl class="grid-card-facts ledger-dl">
       {% for (label, v) in p.facts %}
-      <div><dt>{{ label }}</dt><dd>{% call value(v, false) %}{% endcall %}</dd></div>
+      <div><dt>{{ label }}</dt><dd>{% if v.is_blank() %}<span class="blank">—</span>{% else %}{% call value(v, false) %}{% endcall %}{% endif %}</dd></div>
       {% endfor %}
     </dl>
     {% endif %}
@@ -231,6 +233,13 @@
     {% endif %}
   </article>
   {% endfor %}
+  {% if let Some(register_href) = grid.register %}
+  <a class="card grid-card grid-card-register" href="{{ register_href }}">
+    <span class="grid-card-plus" aria-hidden="true"><svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+    <span class="grid-card-name">Register another character</span>
+    <span class="text-[13px] text-muted-foreground">Log in with EVE to add one, or renew one's access.</span>
+  </a>
+  {% endif %}
 </section>
 {% when SectionView::Timeline(t) %}
 <section class="card timeline">
@@ -301,7 +310,7 @@
     each one's title a heading row, so the columns line up. -#}
 <section class="card data-card">
   <table class="table table-set">
-    <thead><tr>{% for c in set.columns %}<th scope="col"{% if c.numeric %} class="text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
+    <thead><tr>{% for c in set.columns %}<th scope="col"{% if c.numeric %} class="num text-right"{% endif %}>{{ c.label }}</th>{% endfor %}</tr></thead>
     {% for g in set.groups %}
     <tbody>
       {% if let Some(title) = g.title %}<tr class="table-group"><th scope="colgroup" colspan="{{ set.columns.len() }}">{{ title }}</th></tr>{% endif %}
@@ -309,7 +318,7 @@
       <tr><td colspan="{{ set.columns.len() }}" class="text-sm text-muted-foreground">{% if let Some(empty) = g.empty %}{{ empty }}{% else %}Nothing here yet.{% endif %}</td></tr>
       {% endif %}
       {% for row in g.rows %}
-      <tr>{% for v in row %}{% let numeric = set.columns[loop.index0].numeric %}<td{% if numeric %} class="num text-right"{% endif %}>{% call value(v, numeric) %}{% endcall %}</td>{% endfor %}</tr>
+      <tr>{% for v in row %}{% let column = set.columns[loop.index0] %}<td{% if column.numeric %} class="num text-right"{% endif %}{% if let Some(key) = v.sort %} data-sort="{{ key }}"{% endif %}>{% if v.is_blank() && !column.label.is_empty() %}<span class="blank">—</span>{% else %}{% call value(v, column.numeric) %}{% endcall %}{% endif %}</td>{% endfor %}</tr>
       {% endfor %}
       {% if let Some(p) = g.pager %}<tr class="table-pager"><td colspan="{{ set.columns.len() }}"><div class="pager">{% call pager(p) %}{% endcall %}</div></td></tr>{% endif %}
     </tbody>

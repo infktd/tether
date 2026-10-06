@@ -147,7 +147,7 @@ async fn structure_timers_end_to_end(db: PgPool) {
     let list = timers_page(&h, &owner, 0).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
     assert!(list.body.contains("Hostile Fortizar"), "{}", list.body);
-    assert!(list.body.contains("1d 2h"), "{}", list.body);
+    assert!(list.body.contains("1d 02h"), "{}", list.body);
     assert!(list.body.contains("Important"));
     assert!(list.body.contains("Jita IV - Moon 4"));
     // New timer is the header's button; upcoming timers tick in the

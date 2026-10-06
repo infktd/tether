@@ -206,7 +206,7 @@ async fn fleet_operations_end_to_end(db: PgPool) {
         "Example FC",
         "Bring drones",
         "CTA",
-        "1d 2h",
+        "1d 02h",
         "data-countdown",
         "images.evetech.net/characters/196379789/portrait",
         "The fleet operation Home Defence is deleted for everyone.",

@@ -13,16 +13,17 @@
     localStorage.removeItem("htmx-history-cache");
   } catch (_) {}
 
-  // As plugin_pages.rs's countdown_text.
+  // As plugin_pages.rs's countdown_text: two units, the second padded.
   const left = (seconds) => {
     if (seconds <= 0) return "done";
     const d = Math.floor(seconds / 86400);
     const h = Math.floor((seconds % 86400) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
-    if (d > 0) return `T\u2212 ${d}d ${h}h ${m}m`;
-    if (h > 0) return `T\u2212 ${h}h ${m}m`;
-    if (m > 0) return `T\u2212 ${m}m ${String(s).padStart(2, "0")}s`;
+    const two = (n) => String(n).padStart(2, "0");
+    if (d > 0) return `T\u2212 ${d}d ${two(h)}h`;
+    if (h > 0) return `T\u2212 ${h}h ${two(m)}m`;
+    if (m > 0) return `T\u2212 ${m}m ${two(s)}s`;
     return `T\u2212 ${s}s`;
   };
 
@@ -453,10 +454,14 @@
       for (const row of sorted) body.insertBefore(row, after);
     }
   };
+  // A heading with words people see (not one only screen readers read,
+  // as a row-actions column's).
   const sortable = (heading) =>
     heading instanceof HTMLTableCellElement &&
     heading.closest("table.table > thead") &&
-    heading.textContent.trim() !== "";
+    [...heading.childNodes].some((n) =>
+      n.nodeType === Node.TEXT_NODE ? n.textContent.trim() !== "" : !n.classList?.contains("sr-only") && n.textContent.trim() !== "",
+    );
   document.addEventListener("click", (event) => {
     const heading = event.target instanceof Element && event.target.closest("th");
     if (heading && sortable(heading)) sortBy(heading);
@@ -488,6 +493,14 @@
     }
   };
   const enhance = (root) => {
+    // A views bar wider than a phone's screen: the current view brought
+    // into sight, without moving the page.
+    for (const bar of root.querySelectorAll ? root.querySelectorAll(".views-bar") : []) {
+      const current = bar.querySelector('[aria-current="page"]');
+      if (!current || bar.scrollWidth <= bar.clientWidth) continue;
+      const offset = current.getBoundingClientRect().left - bar.getBoundingClientRect().left;
+      bar.scrollLeft += offset - (bar.clientWidth - current.offsetWidth) / 2;
+    }
     const tables = root.querySelectorAll ? root.querySelectorAll("table.table") : [];
     for (const table of tables) {
       if ("enhanced" in table.dataset) continue;

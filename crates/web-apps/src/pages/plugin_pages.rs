@@ -65,8 +65,13 @@ pub struct ValueView {
     /// A link to one of the app's downloads: fetched as a file, not
     /// swapped in as a page.
     pub download: bool,
-    /// A badge, and its Basecoat variant ("" for the default).
+    /// A badge (a label: a neutral or highlighted chip), and its Basecoat
+    /// variant ("" for the default).
     pub badge: Option<&'static str>,
+    /// A status (a badge with a tone of success, warning or danger), drawn
+    /// as a status line (DESIGN.md): a small square in the tone's colour
+    /// and the word. "ok", "warn" or "danger".
+    pub status: Option<&'static str>,
     /// Buttons that post; empty for other values.
     pub actions: Vec<ActionView>,
     /// Numbers, ISK and times: IBM Plex Mono.
@@ -85,6 +90,29 @@ pub struct ValueView {
     pub levels: Option<super::plugin_visuals::LevelsView>,
     pub composition: Option<super::plugin_visuals::CompositionView>,
     pub defenses: Option<super::plugin_visuals::DefensesView>,
+    /// A muted unit after the value (DESIGN.md, Data display): ISK, EVE.
+    pub unit: Option<&'static str>,
+    /// What a table sorts it by (`data-sort`, assets/live.js): seconds for
+    /// times and countdowns, the plain number for counts and ISK.
+    pub sort: Option<String>,
+}
+
+impl ValueView {
+    /// Nothing to show: the host draws "—" for it where a value is
+    /// expected (a labelled column, a fact).
+    pub fn is_blank(&self) -> bool {
+        self.text.trim().is_empty()
+            && self.href.is_none()
+            && self.actions.is_empty()
+            && self.entity.is_none()
+            && self.countdown.is_none()
+            && self.progress.is_none()
+            && self.add_owner.is_none()
+            && self.share.is_none()
+            && self.levels.is_none()
+            && self.composition.is_none()
+            && self.defenses.is_none()
+    }
 }
 
 /// Tether's own Add owner form, posting to the host: the login comes back
@@ -158,6 +186,8 @@ pub struct ActionView {
 pub struct BadgeView {
     pub label: String,
     pub variant: &'static str,
+    /// A status, drawn as a status line instead (see [`badge_kind`]).
+    pub status: Option<&'static str>,
 }
 
 pub struct ProfileView {
@@ -179,16 +209,25 @@ pub struct CardItemView {
 }
 
 pub struct CardsView {
-    /// Tether's Register Character card first, for an app with user
-    /// scopes that asks for it: where it leads (registering for the app).
+    /// Tether's Register Character card, for an app with user scopes that
+    /// asks for it: where it leads (registering for the app). A grid with
+    /// it is the account's characters, drawn as a roster (DESIGN.md, Card
+    /// grid), the card a row at its end.
     pub register: Option<String>,
     pub items: Vec<CardItemView>,
+    /// The roster's header band: the facts' labels, from the first
+    /// character that has any.
+    pub columns: Vec<String>,
 }
 
 pub struct StatView {
     pub label: String,
     pub value: ValueView,
     pub caption: Option<String>,
+    /// A number that needs someone ("warn", the signal) or is a problem
+    /// ("danger"), from the app's badge: drawn as the number in that
+    /// colour, never a badge in a stat card (DESIGN.md, Stat cards).
+    pub tone: Option<&'static str>,
 }
 
 pub struct ColumnView {
@@ -301,6 +340,9 @@ pub struct FieldView {
     pub step: &'static str,
     pub options: Vec<ChoiceView>,
     pub checked: bool,
+    /// An optional select gets Tether's empty choice ("—") unless the app
+    /// named its own ("Any rarity", "Not posted").
+    pub blank: bool,
 }
 
 pub struct FormView {
@@ -352,6 +394,18 @@ impl SectionView {
             SectionView::Table(t) if t.columns.len() <= NARROW_COLUMNS => Some("table"),
             _ => None,
         }
+    }
+
+    /// Whether it sits beside `other` in a row: the same narrow kind, and
+    /// for tables of a like length (a one-row table beside 237 rows reads
+    /// as a stray scrap, not a pair).
+    fn pairs_with(&self, other: &SectionView) -> bool {
+        let rows = |v: &SectionView| match v {
+            SectionView::Table(t) => t.rows.len(),
+            _ => 0,
+        };
+        let (a, b) = (rows(self), rows(other));
+        self.narrow().is_some() && self.narrow() == other.narrow() && a.max(b) <= 3 * a.min(b) + 5
     }
 }
 
@@ -422,7 +476,7 @@ pub fn arrange(views: Vec<SectionView>) -> Vec<SectionView> {
     };
     for view in merged {
         match view.narrow() {
-            Some(kind) if run.first().and_then(SectionView::narrow) == Some(kind) => {
+            Some(_) if run.last().is_some_and(|last| view.pairs_with(last)) => {
                 run.push(view);
             }
             Some(_) => {
@@ -475,12 +529,17 @@ fn short_isk(amount: f64) -> String {
 }
 
 /// A badge's Basecoat variant ("" for the default, the accent).
-fn badge_variant(tone: &Tone) -> &'static str {
+/// How a badge is drawn (DESIGN.md, Status lines): one with a tone of
+/// success, warning or danger says how something is, so it's a status
+/// line, `Err` with its tone; a neutral or highlighted one is a label, a
+/// chip, `Ok` with its Basecoat variant.
+fn badge_kind(tone: &Tone) -> Result<&'static str, &'static str> {
     match tone {
-        Tone::Neutral | Tone::Warning => "outline",
-        Tone::Success => "secondary",
-        Tone::Danger => "destructive",
-        Tone::Accent => "",
+        Tone::Neutral => Ok("outline"),
+        Tone::Accent => Ok(""),
+        Tone::Success => Err("ok"),
+        Tone::Warning => Err("warn"),
+        Tone::Danger => Err("danger"),
     }
 }
 
@@ -540,11 +599,12 @@ pub fn countdown_text(seconds_left: i64) -> String {
         seconds_left % 3_600 / 60,
         seconds_left % 60,
     );
-    // "T−", as the DESIGN.md countdowns (a real minus sign).
+    // "T−" (a real minus sign) and two units, the second padded, as
+    // DESIGN.md's countdowns: T− 2d 04h, T− 19h 40m, T− 13m 05s.
     if d > 0 {
-        format!("T\u{2212} {d}d {h}h {m}m")
+        format!("T\u{2212} {d}d {h:02}h")
     } else if h > 0 {
-        format!("T\u{2212} {h}h {m}m")
+        format!("T\u{2212} {h}h {m:02}m")
     } else if m > 0 {
         format!("T\u{2212} {m}m {s:02}s")
     } else {
@@ -712,6 +772,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         primary: false,
         download: false,
         badge: None,
+        status: None,
         mono: false,
         entity: None,
         countdown: None,
@@ -722,6 +783,8 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         levels: None,
         composition: None,
         defenses: None,
+        unit: None,
+        sort: None,
     };
     let mono = |text: String| ValueView {
         mono: true,
@@ -729,24 +792,35 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
     };
     match value {
         Value::Text(text) => plain(text.clone()),
-        Value::Number(n) => mono(grouped(*n)),
+        Value::Number(n) => ValueView {
+            sort: Some(n.to_string()),
+            ..mono(grouped(*n))
+        },
         Value::Isk(amount) => ValueView {
             title: Some(format!("{} ISK", grouped(amount.trunc() as i64))),
+            unit: Some("ISK"),
+            sort: Some(format!("{amount}")),
             ..mono(short_isk(*amount))
         },
-        Value::Time(text) => {
+        Value::Time(text) => match utc(text) {
             // Checked as RFC 3339 by the host already.
-            let shown = utc(text)
-                .map(|at| at.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| text.clone());
-            ValueView {
-                title: Some(format!("{text} (EVE time)")),
-                ..mono(shown)
-            }
-        }
-        Value::Badge(badge) => ValueView {
-            badge: Some(badge_variant(&badge.tone)),
-            ..plain(badge.label.clone())
+            Some(at) => ValueView {
+                title: Some(format!("{} EVE", at.format("%Y-%m-%d %H:%M:%S"))),
+                unit: Some("EVE"),
+                sort: Some(at.timestamp().to_string()),
+                ..mono(at.format("%Y-%m-%d %H:%M").to_string())
+            },
+            None => mono(text.clone()),
+        },
+        Value::Badge(badge) => match badge_kind(&badge.tone) {
+            Ok(variant) => ValueView {
+                badge: Some(variant),
+                ..plain(badge.label.clone())
+            },
+            Err(tone) => ValueView {
+                status: Some(tone),
+                ..plain(badge.label.clone())
+            },
         },
         Value::Link(link) => ValueView {
             href: Some(page_href(plugin, &link.path)),
@@ -795,6 +869,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
                         text: shown.clone(),
                         title: format!("{} EVE", at.format("%Y-%m-%d %H:%M:%S")),
                     }),
+                    sort: Some(at.timestamp().to_string()),
                     ..mono(shown)
                 }
             }
@@ -841,7 +916,8 @@ fn profile(ctx: &Ctx, p: &Profile) -> ProfileView {
             .iter()
             .map(|b| BadgeView {
                 label: b.label.clone(),
-                variant: badge_variant(&b.tone),
+                variant: badge_kind(&b.tone).unwrap_or(""),
+                status: badge_kind(&b.tone).err(),
             })
             .collect(),
     }
@@ -856,10 +932,29 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
         Section::Stats(stats) => SectionView::Stats(
             stats
                 .iter()
-                .map(|s| StatView {
-                    label: s.label.clone(),
-                    value: value(ctx, &s.value),
-                    caption: s.caption.clone(),
+                .map(|s| {
+                    // A badge in a stat card is its number (or word) in
+                    // the tone's colour, not a box.
+                    let (value, tone) = match &s.value {
+                        Value::Badge(badge) => (
+                            ValueView {
+                                mono: true,
+                                ..value(ctx, &Value::Text(badge.label.clone()))
+                            },
+                            match badge.tone {
+                                Tone::Warning | Tone::Accent => Some("warn"),
+                                Tone::Danger => Some("danger"),
+                                Tone::Success | Tone::Neutral => None,
+                            },
+                        ),
+                        other => (value(ctx, other), None),
+                    };
+                    StatView {
+                        label: s.label.clone(),
+                        value,
+                        caption: s.caption.clone(),
+                        tone,
+                    }
                 })
                 .collect(),
         ),
@@ -895,6 +990,18 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
         Section::Cards(grid) => SectionView::Cards(CardsView {
             register: (grid.register && ctx.registers)
                 .then(|| format!("/register?app={}", ctx.plugin)),
+            columns: grid
+                .items
+                .iter()
+                .find(|card| !card.profile.facts.is_empty())
+                .map(|card| {
+                    card.profile
+                        .facts
+                        .iter()
+                        .map(|(label, _)| label.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
             items: grid
                 .items
                 .iter()
@@ -944,6 +1051,7 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
                         step: "any",
                         options: Vec::new(),
                         checked: false,
+                        blank: false,
                     };
                     match &f.kind {
                         FieldKind::Text(input) | FieldKind::Textarea(input) => {
@@ -974,6 +1082,8 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
                                     label: c.label.clone(),
                                 })
                                 .collect();
+                            view.blank =
+                                !f.required && !input.options.iter().any(|c| c.value.is_empty());
                         }
                         FieldKind::Checkbox(checked) => {
                             view.kind = "checkbox";
@@ -1301,13 +1411,14 @@ fn frame(manifest: &manifest::Manifest, path: &str, may: impl Fn(&str) -> bool) 
         .chain(manifest.manage.iter().filter(|l| may(&l.path)))
         .collect();
     // The page shown belongs to the view or Manage page with the longest
-    // path covering it.
+    // path covering it: the main page only itself, so a page under no
+    // view (a record, the action's own page) marks none.
     let covers = |p: &str| {
-        p.is_empty()
-            || path == p
-            || path
-                .strip_prefix(p)
-                .is_some_and(|rest| rest.starts_with('/'))
+        path == p
+            || (!p.is_empty()
+                && path
+                    .strip_prefix(p)
+                    .is_some_and(|rest| rest.starts_with('/')))
     };
     let current = manifest
         .views
@@ -1549,6 +1660,20 @@ fn each_entity(page: &mut Page, f: &mut impl FnMut(&mut Entity)) {
     }
 }
 
+/// Whether a page shows another pilot: a character that isn't one of the
+/// viewer's own. Only such pages carry the watermark (DESIGN.md,
+/// Watermark): a screenshot of other pilots' data names who took it.
+fn shows_others(page: &Page, viewer: &Viewer) -> bool {
+    let mut page = page.clone();
+    let mut others = false;
+    each_entity(&mut page, &mut |e| {
+        if e.kind == EntityKind::Character && !viewer.characters.iter().any(|c| c.id == e.id) {
+            others = true;
+        }
+    });
+    others
+}
+
 /// An entity an app knows only by its id so far (its name not read yet),
 /// which it names with the id itself.
 fn unnamed(e: &Entity) -> bool {
@@ -1732,8 +1857,9 @@ fn draw(
         (links, page_action, Vec::new())
     };
     // The account's main, whichever character it acts as: a screenshot
-    // names who took it. Not on the Dashboard (DESIGN.md).
-    let watermark = if opened.home.is_some() {
+    // of other pilots' data names who took it. Not on the Dashboard, nor on
+    // pages with only the viewer's own (DESIGN.md, Watermark).
+    let watermark = if opened.home.is_some() || !shows_others(page, &opened.viewer) {
         String::new()
     } else {
         format!(
@@ -2474,9 +2600,10 @@ mod tests {
     fn countdowns_read_as_live_js_writes_them() {
         assert_eq!(
             countdown_text(2 * 86_400 + 4 * 3_600 + 13 * 60 + 9),
-            "T\u{2212} 2d 4h 13m"
+            "T\u{2212} 2d 04h"
         );
-        assert_eq!(countdown_text(4 * 3_600 + 13 * 60), "T\u{2212} 4h 13m");
+        assert_eq!(countdown_text(19 * 3_600 + 40 * 60), "T\u{2212} 19h 40m");
+        assert_eq!(countdown_text(4 * 3_600 + 3 * 60), "T\u{2212} 4h 03m");
         assert_eq!(countdown_text(13 * 60 + 5), "T\u{2212} 13m 05s");
         assert_eq!(countdown_text(45), "T\u{2212} 45s");
         assert_eq!(countdown_text(0), "done");
