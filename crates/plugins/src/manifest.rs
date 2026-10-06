@@ -57,6 +57,19 @@ pub struct Manifest {
     /// Sidebar entries, shown to whoever may open their page.
     #[serde(default)]
     pub navigation: Vec<NavEntry>,
+    /// The app's views, in the order of its views bar (DESIGN.md, App
+    /// shell); the first is its main page, its Overview. Each shows to
+    /// whoever may open its page. Left out, the app's pages bring their
+    /// own links, as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<PageLink>,
+    /// Its one primary action, in its header on every view but its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<PageLink>,
+    /// Pages for those who run the app, in its Manage menu with Tether's
+    /// own (Settings, Data sources, Activity).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manage: Vec<PageLink>,
     /// Dashboard widgets, shown to whoever may open their page.
     #[serde(default)]
     pub widgets: Vec<Widget>,
@@ -96,6 +109,19 @@ pub struct NavEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
 }
+
+/// `[[views]]`, `[action]` and `[[manage]]`: one of the app's pages by its
+/// label.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageLink {
+    pub label: String,
+    /// A page path; `""` for the app's main page.
+    pub path: String,
+}
+
+/// At most this many views, and this many manage pages.
+pub const MAX_VIEWS: usize = 8;
 
 /// The sidebar's default sections a `[[navigation]]` entry can name, in the
 /// order the sidebar shows them.
@@ -667,6 +693,7 @@ impl Manifest {
                 )));
             }
         }
+        self.check_frame()?;
         if self.filters.len() > 10 {
             return Err(bad("more than 10 [[filters]]"));
         }
@@ -747,6 +774,54 @@ pub fn check_key(key: &str) -> Result<(), ManifestError> {
 
 /// A page path as plugins write them: what link paths allow, outside
 /// `downloads/`, where Tether serves the app's downloads.
+impl Manifest {
+    /// `[[views]]`, `[action]` and `[[manage]]`: plain labels and page
+    /// paths, the first view the main page, no page twice, and no manage
+    /// page under `settings` (Tether adds Settings itself).
+    fn check_frame(&self) -> Result<(), ManifestError> {
+        if self.views.len() > MAX_VIEWS {
+            return Err(bad(format!("more than {MAX_VIEWS} [[views]]")));
+        }
+        if self.manage.len() > MAX_VIEWS {
+            return Err(bad(format!("more than {MAX_VIEWS} [[manage]] pages")));
+        }
+        if let Some(first) = self.views.first()
+            && !first.path.is_empty()
+        {
+            return Err(bad("the first of [[views]] is the main page: path = \"\""));
+        }
+        if self.views.is_empty() && (self.action.is_some() || !self.manage.is_empty()) {
+            return Err(bad("[action] and [[manage]] need [[views]]"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (what, link) in self
+            .views
+            .iter()
+            .map(|l| ("[[views]]", l))
+            .chain(self.manage.iter().map(|l| ("[[manage]]", l)))
+        {
+            check_text(&format!("a {what} label"), &link.label, 30, true)?;
+            check_page_path(&format!("{what} path"), &link.path)?;
+            if !seen.insert(link.path.as_str()) {
+                return Err(bad(format!("{what} path {:?} appears twice", link.path)));
+            }
+        }
+        for link in &self.manage {
+            if link.path.is_empty() || is_settings(&link.path) {
+                return Err(bad(format!(
+                    "[[manage]] path {:?}: the main page is a view, and Tether adds Settings itself",
+                    link.path
+                )));
+            }
+        }
+        if let Some(action) = &self.action {
+            check_text("the [action] label", &action.label, 30, true)?;
+            check_page_path("[action] path", &action.path)?;
+        }
+        Ok(())
+    }
+}
+
 fn check_page_path(what: &str, path: &str) -> Result<(), ManifestError> {
     crate::page::check_link_path(path).map_err(|_| {
         bad(format!(
@@ -1051,6 +1126,52 @@ mod tests {
         ))
         .unwrap();
         assert!(permission_renames(Some(&other), &renamed).is_empty());
+    }
+
+    #[test]
+    fn views_action_and_manage_are_checked() {
+        let good = Manifest::parse(&manifest(
+            "[[views]]\nlabel = \"Overview\"\npath = \"\"\n[[views]]\nlabel = \"Moons\"\npath = \"moons\"\n\
+             [action]\nlabel = \"Upload surveys\"\npath = \"upload\"\n\
+             [[manage]]\nlabel = \"Ore prices\"\npath = \"prices\"\n",
+        ))
+        .unwrap();
+        assert_eq!(good.views.len(), 2);
+        assert_eq!(good.action.as_ref().unwrap().path, "upload");
+        assert_eq!(good.manage[0].label, "Ore prices");
+        for (why, extra) in [
+            (
+                "first view",
+                "[[views]]\nlabel = \"Moons\"\npath = \"moons\"\n",
+            ),
+            ("needs views", "[action]\nlabel = \"Go\"\npath = \"go\"\n"),
+            (
+                "twice",
+                "[[views]]\nlabel = \"A\"\npath = \"\"\n[[views]]\nlabel = \"B\"\npath = \"\"\n",
+            ),
+            (
+                "settings",
+                "[[views]]\nlabel = \"A\"\npath = \"\"\n[[manage]]\nlabel = \"S\"\npath = \"settings\"\n",
+            ),
+            (
+                "manage twice",
+                "[[views]]\nlabel = \"A\"\npath = \"\"\n[[manage]]\nlabel = \"S\"\npath = \"\"\n",
+            ),
+            ("empty label", "[[views]]\nlabel = \"\"\npath = \"\"\n"),
+            (
+                "bad path",
+                "[[views]]\nlabel = \"A\"\npath = \"\"\n[[views]]\nlabel = \"B\"\npath = \"../x\"\n",
+            ),
+        ] {
+            assert!(Manifest::parse(&manifest(extra)).is_err(), "{why}");
+        }
+        // Left out: nothing, and nothing written back.
+        let plain = Manifest::parse(&manifest("")).unwrap();
+        let text = serde_json::to_string(&plain).unwrap();
+        assert!(
+            !text.contains("views") && !text.contains("manage"),
+            "{text}"
+        );
     }
 
     #[test]

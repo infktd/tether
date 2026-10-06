@@ -12,7 +12,7 @@
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon(c.icon) %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">{% if c.title == c.app_name %}{{ c.section }}{% else %}{{ c.app_name }}{% endif %}</div>
+        <div class="page-eyebrow">{% if c.in_manage %}<a href="{{ c.app_href }}">{{ c.app_name }}</a> · Manage{% else if c.title == c.app_name %}{{ c.section }}{% else %}{{ c.app_name }}{% endif %}</div>
         <h1 class="page-title">{{ c.title }}</h1>
         {% if let Some(d) = c.description %}<p class="page-desc">{{ d }}</p>{% endif %}
       </div>
@@ -20,13 +20,30 @@
     <div class="page-head-actions">
       {% for b in c.buttons %}{% if !b.current %}<a class="btn" data-variant="primary" href="{{ b.href }}">{{ b.label }}</a>{% endif %}{% endfor %}
       {% include "app_owners_button.html" %}
+      {#- The Manage menu (DESIGN.md, App shell): the app's pages for those
+          who run it, Settings first. -#}
+      {% if !c.manage.is_empty() %}
+      <details class="menu-details">
+        <summary class="btn" data-variant="outline">{% call icons::icon("sliders") %}{% endcall %} Manage</summary>
+        <nav class="menu-panel" aria-label="Manage {{ c.app_name }}">
+          {% for m in c.manage %}<a href="{{ m.href }}">{{ m.label }}</a>{% endfor %}
+        </nav>
+      </details>
+      {% endif %}
     </div>
   </div>
   {#- The app's views (DESIGN.md, Views bar): one row, the current one
       underlined in the signal. -#}
   {% if !c.links.is_empty() %}
-  <nav class="views-bar" aria-label="Views">
+  <nav class="views-bar" aria-label="{% if c.in_manage %}Manage{% else %}Views{% endif %}">
     {% for l in c.links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}
+  </nav>
+  {% endif %}
+  {#- A record's own pages (a character's Skills, Assets, Wallet): view
+      chips under the bar. -#}
+  {% if !c.sub_links.is_empty() %}
+  <nav class="view-chips" aria-label="{{ c.title }}">
+    {% for l in c.sub_links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}
   </nav>
   {% endif %}
   {% if let Some(error) = c.error %}<div class="alert" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}

@@ -81,9 +81,25 @@ every = "30m"                      # fixed intervals, 5m to 7d
 [permissions]
 view = "View mining ledger"
 manage = "Manage mining ledger"
+
+[[views]]                          # the views bar; the first is the main page
+label = "Overview"
+path = ""
+
+[[views]]
+label = "Ledger"
+path = "ledger"
+
+[action]                           # optional: the one primary action
+label = "Upload surveys"
+path = "upload"
+
+[[manage]]                         # the Manage menu, after Tether's Settings
+label = "Ore prices"
+path = "prices"
 ```
 
-Unknown fields are refused, so a typo can't hide a capability.
+Unknown fields are refused, so a typo can't hide a capability. Each view, the action and each Manage page show only to whoever may open its page (`[[pages]]`).
 
 **Publisher keys:** the key in the first installed package is pinned for that plugin id and kept even after uninstall. A package signed by another key is refused unless it carries `rotation.txt`, the exact statement `tether-key-rotation v1`, `plugin: <id>`, `old: <pinned key>`, `new: <new key>` (one per line), signed by the pinned key. A publisher who lost their key can't rotate; an admin can re-pin the plugin's key after typing its id to confirm. Pinning, rotating and re-pinning are audited.
 

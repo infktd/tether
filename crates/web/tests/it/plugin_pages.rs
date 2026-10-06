@@ -1037,3 +1037,94 @@ async fn an_apps_redirect_back_keeps_the_tab(db: PgPool) {
     assert_eq!(to["push"], "false");
     assert_eq!(toast(&res).unwrap().0, "Save · done");
 }
+
+/// The app's frame (DESIGN.md, App shell): from its manifest, Tether draws
+/// its views bar, its one action (never on its own page) and its Manage
+/// menu, each entry only for those who may open its page.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_manifest_draws_the_apps_frame(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let key = Key::new(2);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.frame\"\nname = \"Frame\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[permissions]\nview = \"See it\"\nmanage = \"Run it\"\n\n\
+         [[pages]]\npath = \"\"\npermission = \"view\"\n\n\
+         [[pages]]\npath = \"admin\"\npermission = \"manage\"\n\n\
+         [[pages]]\npath = \"settings\"\npermission = \"manage\"\n\n\
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n\n\
+         [[views]]\nlabel = \"Values\"\npath = \"values\"\n\n\
+         [action]\nlabel = \"New block\"\npath = \"blocks\"\n\n\
+         [[manage]]\nlabel = \"Secret\"\npath = \"admin/secret\"\n",
+        key.public()
+    );
+    let component = component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    for state in [MEMBER_STATE, BLUE_STATE, GUEST_STATE] {
+        tether_db::permissions::grant(
+            &h.db,
+            "plugin.acme.frame.view",
+            Grantee::State(StateId(state)),
+        )
+        .await
+        .unwrap();
+    }
+
+    // A member: the views and the action, no Manage.
+    let values = page(&h, "/plugins/acme.frame/values", &pilot).await;
+    assert_eq!(values.status, StatusCode::OK, "{}", values.body);
+    let body = &values.body;
+    assert!(
+        body.contains(r#"<nav class="views-bar" aria-label="Views">"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"<a href="/plugins/acme.frame">Overview</a>"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"<a href="/plugins/acme.frame/values" aria-current="page">Values</a>"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"<a class="btn" data-variant="primary" href="/plugins/acme.frame/blocks">New block</a>"#),
+        "{body}"
+    );
+    assert!(
+        !body.contains("menu-details"),
+        "no Manage for a member: {body}"
+    );
+    // The action isn't offered on its own page.
+    let blocks = page(&h, "/plugins/acme.frame/blocks", &pilot).await;
+    assert!(!blocks.body.contains(">New block</a>"), "{}", blocks.body);
+
+    // Whoever runs it: Manage, Settings first, then the app's own pages.
+    let values = page(&h, "/plugins/acme.frame/values", &owner).await;
+    let menu = values.body.split(r#"class="menu-panel""#).nth(1).unwrap();
+    let settings = menu.find(">Settings</a>").unwrap();
+    let secret = menu.find(">Secret</a>").unwrap();
+    assert!(settings < secret, "{menu}");
+    // On a Manage page: the eyebrow says so, and the bar is the Manage pages.
+    let secret = page(&h, "/plugins/acme.frame/admin/secret", &owner).await;
+    let body = &secret.body;
+    assert!(
+        body.contains(r#"<a href="/plugins/acme.frame">Frame</a> · Manage"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"<nav class="views-bar" aria-label="Manage">"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            r#"<a href="/plugins/acme.frame/admin/secret" aria-current="page">Secret</a>"#
+        ),
+        "{body}"
+    );
+    assert!(!body.contains("menu-details"), "{body}");
+}

@@ -445,6 +445,7 @@ pub struct CodeView {
     pub copy_label: String,
 }
 
+#[derive(Clone)]
 pub struct TabLink {
     pub label: String,
     pub href: String,
@@ -996,6 +997,13 @@ pub struct ContentView {
     /// The sidebar section the app's link sits in by default, for the
     /// eyebrow when a page is named after the app itself.
     pub section: &'static str,
+    /// The app's Manage menu (DESIGN.md, App shell), for those who run it.
+    pub manage: Vec<TabLink>,
+    /// The page is one of the app's Manage pages: its eyebrow says so and
+    /// its bar shows the Manage pages.
+    pub in_manage: bool,
+    /// The page's own pages (a record's), as view chips under the bar.
+    pub sub_links: Vec<TabLink>,
     pub title: String,
     pub description: Option<String>,
     /// The page's own links beside the title.
@@ -1062,6 +1070,8 @@ struct Opened {
     owners: Option<super::plugin_access::Owners>,
     /// The site's origin, for links to share.
     site: String,
+    /// The app's views, Manage pages and action for this viewer.
+    frame: Frame,
 }
 
 /// Everything before the plugin is called. Anything that doesn't pass is
@@ -1086,13 +1096,26 @@ async fn open(
     page_rules::check_link_path(path).map_err(|_| missing())?;
     let perms = tether_db::permissions::effective(&state.db, session.account).await?;
     let access = running.manifest.page_access(path);
-    let blacklisted = access == manifest::PageAccess::SignedIn
+    // Whether the Blacklist matters here: for this page, or the frame's
+    // pages that only ask for a signed-in account.
+    let signed_in_pages = running
+        .manifest
+        .pages
+        .iter()
+        .any(|rule| rule.permission.is_none());
+    let blacklisted = (access == manifest::PageAccess::SignedIn || signed_in_pages)
         && tether_db::states::account_state(&state.db, session.account)
             .await?
             .is_some_and(|s| s.is_blacklist());
-    if !tether_web_core::plugins::may_open(&access, blacklisted, |p| perms.contains(p)) {
+    let may = |page: &str| {
+        tether_web_core::plugins::may_open(&running.manifest.page_access(page), blacklisted, |p| {
+            perms.contains(p)
+        })
+    };
+    if !may(path) {
         return Err(missing());
     }
+    let frame = frame(&running.manifest, path, may);
     let viewer = viewer(state, &session, &running, &perms).await?;
     // Change character: one of the account's own, not the main
     // (`identity.acting`).
@@ -1155,8 +1178,82 @@ async fn open(
             href,
             owners,
             site: state.site.origin().to_owned(),
+            frame,
         },
     ))
+}
+
+/// What an app's frame shows this viewer (DESIGN.md, App shell): its
+/// views, its Manage pages (Settings first) and its primary action, each
+/// only if they may open its page, the one being shown marked. Empty for
+/// an app that declares no views: its pages bring their own links.
+#[derive(Default)]
+struct Frame {
+    declared: bool,
+    views: Vec<TabLink>,
+    manage: Vec<TabLink>,
+    /// The page shown is one of the Manage pages (or under one).
+    in_manage: bool,
+    action: Option<TabLink>,
+}
+
+fn frame(manifest: &manifest::Manifest, path: &str, may: impl Fn(&str) -> bool) -> Frame {
+    if manifest.views.is_empty() {
+        return Frame::default();
+    }
+    let id = &manifest.plugin.id;
+    let settings = manifest
+        .pages
+        .iter()
+        .any(|rule| rule.path == manifest::SETTINGS_PATH)
+        && may(manifest::SETTINGS_PATH);
+    let settings_link = manifest::PageLink {
+        label: "Settings".to_owned(),
+        path: manifest::SETTINGS_PATH.to_owned(),
+    };
+    let manage: Vec<&manifest::PageLink> = settings
+        .then_some(&settings_link)
+        .into_iter()
+        .chain(manifest.manage.iter().filter(|l| may(&l.path)))
+        .collect();
+    // The page shown belongs to the view or Manage page with the longest
+    // path covering it.
+    let covers = |p: &str| {
+        p.is_empty()
+            || path == p
+            || path
+                .strip_prefix(p)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    let current = manifest
+        .views
+        .iter()
+        .chain(manage.iter().copied())
+        .map(|l| l.path.as_str())
+        .filter(|p| covers(p))
+        .max_by_key(|p| p.len());
+    let link = |l: &manifest::PageLink| TabLink {
+        label: l.label.clone(),
+        href: page_href(id, &l.path),
+        current: current == Some(l.path.as_str()),
+    };
+    let in_manage = manage.iter().any(|l| current == Some(l.path.as_str()));
+    Frame {
+        declared: true,
+        views: manifest
+            .views
+            .iter()
+            .filter(|l| may(&l.path))
+            .map(link)
+            .collect(),
+        manage: manage.into_iter().map(link).collect(),
+        in_manage,
+        action: manifest
+            .action
+            .as_ref()
+            .filter(|a| a.path != path && may(&a.path))
+            .map(link),
+    }
 }
 
 /// The account as the plugin sees it: its characters (main first), state,
@@ -1496,18 +1593,59 @@ fn draw(
     // own header (configuring an app is an admin's job); once there, its
     // settings pages link to each other.
     let in_settings = tether_plugins::manifest::is_settings(&opened.path);
-    let links = page
-        .links
-        .iter()
-        .filter(|l| !l.primary && (in_settings || !tether_plugins::manifest::is_settings(&l.path)))
-        .map(header_link)
-        .collect();
-    let buttons = page
+    // The page's own primary link (a record's Edit, say) is its action;
+    // else the app's, from its manifest.
+    let page_action: Vec<TabLink> = page
         .links
         .iter()
         .filter(|l| l.primary)
         .map(header_link)
         .collect();
+    let frame = &opened.frame;
+    // A page's own other links, in an app with a frame: the record's own
+    // pages (a character's Skills, Assets, Wallet), as view chips under
+    // the bar.
+    let sub_links: Vec<TabLink> = if frame.declared {
+        page.links
+            .iter()
+            .filter(|l| !l.primary)
+            .map(header_link)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let (links, buttons, manage) = if frame.declared {
+        let bar = if frame.in_manage {
+            frame.manage.clone()
+        } else {
+            frame.views.clone()
+        };
+        // One view alone needs no bar.
+        let bar = if bar.len() > 1 { bar } else { Vec::new() };
+        let buttons = if !page_action.is_empty() {
+            page_action
+        } else if frame.in_manage {
+            Vec::new()
+        } else {
+            frame.action.clone().into_iter().collect()
+        };
+        let manage = if frame.in_manage {
+            Vec::new()
+        } else {
+            frame.manage.clone()
+        };
+        (bar, buttons, manage)
+    } else {
+        let links = page
+            .links
+            .iter()
+            .filter(|l| {
+                !l.primary && (in_settings || !tether_plugins::manifest::is_settings(&l.path))
+            })
+            .map(header_link)
+            .collect();
+        (links, page_action, Vec::new())
+    };
     // The account's main, whichever character it acts as: a screenshot
     // names who took it.
     let watermark = format!(
@@ -1531,6 +1669,9 @@ fn draw(
         icon: tether_web_core::plugins::icon_of(manifest),
         app_href: tether_web_core::plugins::page_href(&manifest.plugin.id, ""),
         section,
+        manage,
+        in_manage: opened.frame.in_manage,
+        sub_links,
         title: page.title.clone(),
         description: page.description.clone(),
         links,
