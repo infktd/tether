@@ -26,6 +26,10 @@ fn problem_text(problem: &Problem) -> String {
         Problem::NotRegistered => "Not registered yet".to_owned(),
         Problem::Revoked => "EVE access was revoked".to_owned(),
         Problem::NotRegisteredFor(apps) => format!("Not registered for {}", apps.join(", ")),
+        Problem::NoAccessTo(apps) => format!(
+            "Can't register for {}: needs one of its permissions first",
+            apps.join(", ")
+        ),
         Problem::Missing(scopes) => format!(
             "Missing {}",
             scopes

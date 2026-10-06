@@ -82,6 +82,18 @@ async fn setup(db: PgPool) -> (Harness, String, String) {
     (h, owner, pilot)
 }
 
+/// An app nobody may use yet says so on its admin page, until one of
+/// its permissions is granted.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_app_nobody_may_use_says_so(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await.body;
+    assert!(admin.contains("Nobody may use it yet"), "{admin}");
+    grant_view(&h.db).await;
+    let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await.body;
+    assert!(!admin.contains("Nobody may use it yet"), "{admin}");
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn only_those_allowed_learn_a_page_exists(db: PgPool) {
     let (h, owner, pilot) = setup(db).await;

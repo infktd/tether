@@ -475,11 +475,14 @@ pub async fn annotate(
 pub const CHARACTER_AUDIT: &str = "tether.member-audit";
 
 /// A character's registration status as a chip: "Registered", or what
-/// it's missing (which links to Register Character).
+/// it's missing (which links to Register Character, when registering
+/// fixes it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusChip {
     pub label: String,
     pub problem: bool,
+    /// Registering fixes it: the chip links to Register Character.
+    pub register: bool,
 }
 
 impl StatusChip {
@@ -488,6 +491,7 @@ impl StatusChip {
         Self {
             label: "Access ended · Register".to_owned(),
             problem: true,
+            register: true,
         }
     }
 
@@ -500,27 +504,36 @@ impl StatusChip {
         if required.is_empty() {
             return None;
         }
-        Some(match problem {
-            None => Self {
+        let Some(problem) = problem else {
+            return Some(Self {
                 label: "Registered".to_owned(),
                 problem: false,
-            },
-            Some(problem) => Self {
-                label: match problem {
-                    Problem::NotRegistered => "Not registered · Register".to_owned(),
-                    Problem::NotRegisteredFor(apps) => {
-                        format!("Not registered for {} · Register", apps.join(", "))
-                    }
-                    Problem::Revoked => return Some(Self::ended()),
-                    Problem::Missing(scopes) if scopes.len() == 1 => {
-                        "Missing 1 scope · Register".to_owned()
-                    }
-                    Problem::Missing(scopes) => {
-                        format!("Missing {} scopes · Register", scopes.len())
-                    }
-                },
-                problem: true,
-            },
+                register: false,
+            });
+        };
+        let (label, register) = match problem {
+            Problem::NotRegistered => ("Not registered · Register".to_owned(), true),
+            Problem::NotRegisteredFor(apps) => (
+                format!("Not registered for {} · Register", apps.join(", ")),
+                true,
+            ),
+            // Registering can't fix it: one of the app's permissions first.
+            Problem::NoAccessTo(apps) => (
+                format!("No access to {} yet: ask an admin", apps.join(", ")),
+                false,
+            ),
+            Problem::Revoked => return Some(Self::ended()),
+            Problem::Missing(scopes) if scopes.len() == 1 => {
+                ("Missing 1 scope · Register".to_owned(), true)
+            }
+            Problem::Missing(scopes) => {
+                (format!("Missing {} scopes · Register", scopes.len()), true)
+            }
+        };
+        Some(Self {
+            label,
+            problem: true,
+            register,
         })
     }
 }

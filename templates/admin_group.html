@@ -128,6 +128,7 @@
         <p class="text-xs text-muted-foreground">AA posts summaries to Discord webhooks; Tether's bot posts them to one of the ping channels set on the Discord page, mentioning nobody.</p>
       </form>
       {% if !sm.settings.enabled %}<div class="alert" role="status"><section>Switched off: this is an ordinary group until it's enabled again. Nobody is checked, added or removed.</section></div>{% endif %}
+      {% if sm.unseen && !sm.settings.auto_join %}<div class="alert" role="status"><section>No pilot can open Secure Groups yet, so nobody can see or request this group: grant <span class="num">securegroups.access_sec_group</span> to Member (or the states it's for) on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>.</section></div>{% endif %}
       <div class="flex flex-wrap items-center justify-between gap-3 rounded-sm border p-3">
         <p class="text-sm text-muted-foreground">{% if sm.settings.include_in_updates %}Tether checks everyone against the filters every hour{% else %}Left out of the hourly updates: only Check now runs it{% endif %}{% if let Some(at) = sm.checked_at %}; last at <span class="num">{{ at }}</span> EVE{% endif %}. Check now does it for this group at once: members who fail leave (or start a grace period){% if sm.settings.auto_join %}, and everyone who passes joins{% endif %}.</p>
         <form method="post" action="/admin/groups/{{ group.id }}/smart/check">

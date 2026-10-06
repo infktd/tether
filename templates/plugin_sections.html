@@ -15,7 +15,8 @@
 {#- A character's registration status (Registered, or what it's missing,
     linking to Register Character). -#}
 {% macro status_chip(chip) -%}
-{%- if chip.problem -%}<a href="/register" class="status-line" data-tone="danger" title="Register it with the access your state needs">{{ chip.label }}</a>
+{%- if chip.problem && chip.register -%}<a href="/register" class="status-line" data-tone="danger" title="Register it with the access your state needs">{{ chip.label }}</a>
+{%- else if chip.problem -%}<span class="status-line" data-tone="danger">{{ chip.label }}</span>
 {%- else -%}<span class="status-line" data-tone="ok">{{ chip.label }}</span>{%- endif -%}
 {%- endmacro %}
 

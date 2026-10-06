@@ -85,20 +85,24 @@ pub async fn required_apps_in(
         return Ok(Vec::new());
     }
     let registrations = db::account_app_registrations(&mut *conn, account).await?;
-    Ok(apps
+    let mut required = Vec::new();
+    for app in apps
         .into_iter()
         .filter(|app| !app.scopes.is_empty())
         .filter(|app| !app.scopes.iter().any(|s| scopes::is_write(s)))
-        .map(|app| scopes::RequiredApp {
+    {
+        required.push(scopes::RequiredApp {
             registered: registrations
                 .iter()
                 .filter(|(plugin, _)| *plugin == app.id)
                 .map(|(_, character)| *character)
                 .collect(),
+            may_register: db::holds_app_permission(&mut *conn, account, &app.id).await?,
             name: app.name,
             scopes: app.scopes.into_iter().collect(),
-        })
-        .collect())
+        });
+    }
+    Ok(required)
 }
 
 /// Which of the account's characters fall short of `candidate`'s

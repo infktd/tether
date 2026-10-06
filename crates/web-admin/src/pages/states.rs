@@ -85,6 +85,9 @@ pub struct AppChip {
     pub name: String,
     /// The state requires every character registered for it.
     pub required: bool,
+    /// Required, but the state holds none of the app's permissions, so
+    /// its pilots can't register for it unless a group gives them one.
+    barred: bool,
 }
 
 fn chip(scope: &str, by: String) -> ScopeChip {
@@ -117,6 +120,16 @@ async fn states_page(
     let admin_scopes = tether_db::compliance::all_admin_scopes(&state.db).await?;
     let plugins = tether_db::compliance::plugin_scopes(&state.db).await?;
     let state_apps = tether_db::compliance::all_state_apps(&state.db).await?;
+    let grants = tether_db::permissions::list(&state.db).await?;
+    // Whether a state holds one of an app's permissions (its pilots may
+    // register for it).
+    let holds = |s: StateId, app: &str| {
+        let prefix = format!("plugin.{app}.");
+        grants.iter().any(|g| {
+            g.grantee == tether_db::permissions::Grantee::State(s)
+                && g.permission.starts_with(&prefix)
+        })
+    };
     let mut plugin_scopes: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
     for p in &plugins {
         for scope in &p.scopes {
@@ -215,12 +228,16 @@ async fn states_page(
                         !p.scopes.iter().any(|sc| tether_core::scopes::is_write(sc))
                             || state_apps.iter().any(|(id, plugin)| *id == s.id && *plugin == p.id)
                     })
-                    .map(|p| AppChip {
-                        id: p.id.clone(),
-                        name: p.name.clone(),
-                        required: state_apps
+                    .map(|p| {
+                        let required = state_apps
                             .iter()
-                            .any(|(id, plugin)| *id == s.id && *plugin == p.id),
+                            .any(|(id, plugin)| *id == s.id && *plugin == p.id);
+                        AppChip {
+                            id: p.id.clone(),
+                            name: p.name.clone(),
+                            required,
+                            barred: required && !holds(s.id, &p.id),
+                        }
                     })
                     .collect()
             },

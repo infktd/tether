@@ -1805,6 +1805,22 @@ async fn a_state_requires_an_apps_scopes_in_one_click(db: PgPool) {
         states.contains("Every character registered for ESI probe"),
         "{states}"
     );
+    // Member holds none of the app's permissions: its pilots couldn't
+    // register (only the owner, who holds everything), and States says so
+    // until one is granted.
+    assert!(
+        states.contains("Member holds none of ESI probe's permissions"),
+        "{states}"
+    );
+    tether_db::permissions::grant(
+        &h.db,
+        "plugin.acme.esi.view",
+        tether_db::permissions::Grantee::State(tether_core::states::StateId(MEMBER_STATE)),
+    )
+    .await
+    .unwrap();
+    let states = page(&h, "/admin/states", &owner).await.body;
+    assert!(!states.contains("holds none of"), "{states}");
     let compliant = |h: &Harness| {
         let db = h.db.clone();
         async move {

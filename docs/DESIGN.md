@@ -272,7 +272,7 @@ Admin settings must make sense without documentation open. Alliance Auth's setti
 - **Live counts.** Next to each item, how many accounts it covers right now, in Plex Mono.
 - **Preview before impact.** A change that would move any account's access shows a confirmation first, listing where accounts move ("12 accounts: Guest → Member") with Apply and Cancel. A change that moves nobody applies at once. Plain forms work without JavaScript; htmx only makes them smoother.
 - **Built-ins are marked.** Built-in items that can't be renamed or removed carry a lock icon and a one-line reason instead of hidden or disabled buttons.
-- **Works from defaults.** A fresh instance's defaults are usable as they are, and empty states say what to do next.
+- **Works from defaults.** A fresh instance's defaults are usable as they are, and empty states say what to do next. A setting that can't take effect as things stand says so where it's set, with the fix: a state that requires an app it holds none of the permissions for (its pilots can't register, and their checklist says "No access to … yet: ask an admin" instead of a Register link that does nothing), a Secure Group nobody may open the Secure Groups page to see.
 - **Consequences in confirmations.** Destructive actions state what will happen ("Its 4 accounts become Guest"), not "Are you sure?".
 
 ## Interaction and accessibility

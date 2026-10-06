@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% import "icons.html" as icons %}
+{%- import "ui.html" as ui -%}
 {% block title %}States{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">States</span>{% endblock %}
 {% block content %}
@@ -107,6 +108,7 @@
                 <button type="submit" class="btn" data-variant="ghost" data-size="icon-sm" aria-label="Stop requiring {{ a.name }} for {{ c.name }}">{% call icons::icon("x") %}{% endcall %}</button>
               </form>
             </span>
+            {% if a.barred %}<p class="mt-1 text-sm">{% call ui::status("warn", "Can't be met yet") %}{% endcall %} {{ c.name }} holds none of {{ a.name }}'s permissions, so its pilots can't register for it unless a group gives them one. <a class="underline underline-offset-4" href="/admin/permissions">Grant one on Permissions</a>.</p>{% endif %}
             {% else %}
             <form method="post" action="/admin/states/{{ c.id }}/scopes/app">
               <input type="hidden" name="plugin" value="{{ a.id }}">

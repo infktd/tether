@@ -419,6 +419,9 @@ pub struct SmartView {
     pub checked_at: Option<String>,
     /// Ping channels, for the run summaries (AA's group update webhook).
     pub channels: Vec<tether_db::pings::PingChannel>,
+    /// Nobody holds `securegroups.access_sec_group`: no pilot can open
+    /// Secure Groups to see or request it.
+    pub unseen: bool,
 }
 
 impl SmartView {
@@ -552,12 +555,17 @@ async fn group_page(
                 Ok(config) => crate::pings::channels_for(state, &config).await?,
                 Err(_) => Vec::new(),
             };
+            let unseen = !tether_db::permissions::list(&state.db)
+                .await?
+                .iter()
+                .any(|g| g.permission == tether_core::permissions::SECUREGROUPS_ACCESS);
             Some(SmartView {
                 checked_at,
                 settings: s,
                 filters,
                 frozen,
                 channels,
+                unseen,
             })
         }
         None => None,

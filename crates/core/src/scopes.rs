@@ -344,6 +344,11 @@ pub enum Problem {
     /// (by name), which the state requires: Alliance Auth's Member Audit
     /// compliance is registration with Member Audit.
     NotRegisteredFor(Vec<String>),
+    /// Not registered for these apps, which the state requires, and the
+    /// account holds none of their permissions, so it can't register (as
+    /// AA's Member Audit registration needs `basic_access`): an admin must
+    /// grant one first.
+    NoAccessTo(Vec<String>),
 }
 
 /// An app a state requires every character to be registered for.
@@ -354,6 +359,9 @@ pub struct RequiredApp {
     pub scopes: BTreeSet<String>,
     /// The characters registered for it.
     pub registered: BTreeSet<i64>,
+    /// The account holds one of its permissions, so it may register
+    /// characters for it.
+    pub may_register: bool,
 }
 
 /// [`check`] for a state that also requires apps: `required` and every
@@ -373,13 +381,23 @@ pub fn check_with_apps(
         if problems.iter().any(|(p, _)| p == id) {
             continue;
         }
-        let missing: Vec<String> = apps
+        let missing: Vec<&RequiredApp> = apps
             .iter()
             .filter(|app| !app.registered.contains(id))
+            .collect();
+        // What the pilot can't do anything about comes first.
+        let barred: Vec<String> = missing
+            .iter()
+            .filter(|app| !app.may_register)
             .map(|app| app.name.clone())
             .collect();
-        if !missing.is_empty() {
-            problems.push((*id, Problem::NotRegisteredFor(missing)));
+        if !barred.is_empty() {
+            problems.push((*id, Problem::NoAccessTo(barred)));
+        } else if !missing.is_empty() {
+            problems.push((
+                *id,
+                Problem::NotRegisteredFor(missing.iter().map(|app| app.name.clone()).collect()),
+            ));
         }
     }
     problems.sort_by_key(|(id, _)| characters.iter().position(|(c, _)| c == id));
@@ -495,10 +513,11 @@ mod tests {
 
     #[test]
     fn a_required_app_needs_its_scopes_and_a_registration() {
-        let app = RequiredApp {
+        let mut app = RequiredApp {
             name: "Member Audit".to_owned(),
             scopes: set(&["esi-skills.read_skills.v1"]),
             registered: [1, 3].into_iter().collect(),
+            may_register: true,
         };
         let characters = [
             (1, valid(&["esi-skills.read_skills.v1"])),
@@ -530,6 +549,13 @@ mod tests {
             ]
         );
         assert!(check_with_apps(&BTreeSet::new(), &[], &characters).is_empty());
+        // Without one of the app's permissions the account can't register:
+        // it says so instead of asking it to.
+        app.may_register = false;
+        assert_eq!(
+            check_with_apps(&BTreeSet::new(), std::slice::from_ref(&app), &characters)[0],
+            (2, Problem::NoAccessTo(vec!["Member Audit".to_owned()]))
+        );
     }
 
     #[test]

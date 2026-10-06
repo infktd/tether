@@ -1007,7 +1007,6 @@ async fn a_secure_group_is_made_in_one_step(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
     let pilot = log_in_as(&h, MITTANI, None).await; // Guest
-    grant_state(&h, &owner, "securegroups.access_sec_group", GUEST_STATE).await;
 
     // The button is the admins': it opens the form set for one.
     let secure = page(&h, "/securegroups", &owner).await.body;
@@ -1045,6 +1044,19 @@ async fn a_secure_group_is_made_in_one_step(db: PgPool) {
             .await
             .unwrap();
     assert!(enabled && !auto_join);
+    // Nobody may open Secure Groups yet: its page says so until a state
+    // may.
+    let shown = page(&h, &format!("/admin/groups/{id}"), &owner).await.body;
+    assert!(
+        shown.contains("No pilot can open Secure Groups yet"),
+        "{shown}"
+    );
+    grant_state(&h, &owner, "securegroups.access_sec_group", GUEST_STATE).await;
+    let shown = page(&h, &format!("/admin/groups/{id}"), &owner).await.body;
+    assert!(
+        !shown.contains("No pilot can open Secure Groups yet"),
+        "{shown}"
+    );
 
     // Its filters next; then pilots who pass may apply.
     filter(&h, &owner, id, &format!("kind=state&states={GUEST_STATE}")).await;

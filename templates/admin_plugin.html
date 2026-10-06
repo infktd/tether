@@ -44,6 +44,8 @@
   </div>
   {% endif %}
 
+  {% if ungranted %}<div class="alert" role="status"><section>Nobody may use it yet: none of its permissions is granted, so only superusers see it. Grant them to states or groups on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>.</section></div>{% endif %}
+
   {% if !esi_scopes.is_empty() %}
   <section class="card">
     <header><h2>ESI access</h2><p>Enable these scopes on Tether's EVE application (developers.eveonline.com) so people can grant them.</p></header>

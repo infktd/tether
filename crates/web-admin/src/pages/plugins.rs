@@ -891,6 +891,9 @@ pub struct SecretView {
 #[template(path = "admin_plugin.html")]
 struct PluginPage {
     shell: Shell,
+    /// It runs and has permissions, but none is granted to anyone: only
+    /// superusers can use it.
+    ungranted: bool,
     channels: Vec<ChannelView>,
     free_channels: Vec<ChannelView>,
     uses_discord: bool,
@@ -1087,11 +1090,19 @@ async fn plugin_page(
                 .map(|(_, at)| time(*at)),
         })
         .collect();
+    let prefix = format!("plugin.{id}.");
+    let ungranted = running
+        && !package.manifest.permissions.is_empty()
+        && !tether_db::permissions::list(&state.db)
+            .await?
+            .iter()
+            .any(|g| g.permission.starts_with(&prefix));
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         code,
         &PluginPage {
             shell,
+            ungranted,
             http_hosts: approved.hosts,
             http_unapproved,
             http_secrets,
