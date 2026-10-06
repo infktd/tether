@@ -25,7 +25,7 @@ pub const DISCORD_STRIP_UNMAPPED: &str = "discord.strip_unmapped";
 /// the sign-in page beside Tether's. None unless set.
 pub const SITE_NAME: &str = "site.name";
 
-/// The accent colour (DESIGN.md), `#rrggbb`. Amber unless set.
+/// The accent colour (DESIGN.md), `#rrggbb`. Signal orange unless set.
 pub const THEME_ACCENT: &str = "theme.accent";
 
 /// aa-fleetpings: whether pings may target @here and @everyone. On unless
