@@ -126,6 +126,17 @@ pub fn every(secs: i64) -> String {
     }
 }
 
+/// An EVE time as people read it (DESIGN.md, Dates): `06 Oct 04:12`
+/// within the year, `2025-10-06 04:12` in any other. "EVE" goes beside it.
+pub fn eve_time(at: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::Datelike;
+    if at.year() == now.year() {
+        at.format("%d %b %H:%M").to_string()
+    } else {
+        at.format("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
 /// How long ago, in its largest whole unit: `just now`, `4m ago`, `3h ago`,
 /// `2d ago`.
 pub fn ago(seconds: i64) -> String {
@@ -734,7 +745,27 @@ pub async fn load(
 
 #[cfg(test)]
 mod tests {
-    use super::{ago, every, initials, plural, until};
+    use super::{ago, eve_time, every, initials, plural, until};
+
+    #[test]
+    fn eve_times_drop_the_year_they_share() {
+        let at = |t: &str| {
+            chrono::DateTime::parse_from_rfc3339(t)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let now = at("2026-10-06T21:04:00Z");
+        assert_eq!(eve_time(at("2026-10-06T04:12:00Z"), now), "06 Oct 04:12");
+        assert_eq!(eve_time(at("2026-01-31T23:59:00Z"), now), "31 Jan 23:59");
+        assert_eq!(
+            eve_time(at("2025-12-31T23:59:00Z"), now),
+            "2025-12-31 23:59"
+        );
+        assert_eq!(
+            eve_time(at("2027-01-02T03:04:00Z"), now),
+            "2027-01-02 03:04"
+        );
+    }
 
     #[test]
     fn counts_take_their_noun() {

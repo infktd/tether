@@ -808,7 +808,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
                 title: Some(format!("{} EVE", at.format("%Y-%m-%d %H:%M:%S"))),
                 unit: Some("EVE"),
                 sort: Some(at.timestamp().to_string()),
-                ..mono(at.format("%Y-%m-%d %H:%M").to_string())
+                ..mono(super::eve_time(at, chrono::Utc::now()))
             },
             None => mono(text.clone()),
         },

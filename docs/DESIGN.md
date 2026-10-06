@@ -254,8 +254,8 @@ Motion says something arrived, is on its way, or that the ship is alive; it neve
 ## Data display
 
 - **Relative times** for recent events ("1h 12m ago") with the absolute EVE time in a tooltip or sub-line.
-- **Countdowns** in Plex Mono (`T− 2d 4h`), updated live from the server (server-sent events); the nearest one gets the accent color. A countdown to an instant that is already known (a skill finishing, a timer) ticks in the browser instead, from the bundled `assets/live.js`, with the absolute EVE time in its tooltip: `T− 2d 4h 13m` over a day, `T− 4h 13m` over an hour, `T− 13m 05s` under it. Once the instant passes it reads `done`.
-- **EVE time (UTC)** everywhere, labeled "EVE".
+- **Countdowns** in Plex Mono, two units with the second padded (`T− 2d 04h`, `T− 4h 13m`, `T− 13m 05s`), ticking in the browser from the bundled `assets/live.js` with the absolute EVE time in its tooltip; the nearest one gets the accent color. Once the instant passes it reads `done`; a timeline's stretch that has started reads `since 11:20`, or `02:10–03:40` once over.
+- **EVE time (UTC)** everywhere, labeled "EVE". **Dates** (the mock-up, 2026-10-06): `06 Oct 04:12` within the year, `2025-10-06 04:12` in any other, the full time to the second in the tooltip (`pages::eve_time`).
 - **ISK** abbreviated in tables (`1.24b`, `350.2m`), full value on hover or in detail views.
 - **EVE names** (systems, moons, structures, characters) exactly as ESI returns them. Character portraits and corp or alliance logos come from CCP's image server at 32px in tables and 36px in the sidebar (20px as an app's entity values, 64px in a profile), with initials as the fallback.
 
