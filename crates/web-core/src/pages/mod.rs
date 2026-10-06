@@ -4,6 +4,7 @@
 pub mod assets;
 pub mod headers;
 pub mod plugin_access;
+pub mod plugin_activity;
 pub mod stay;
 
 use askama::Template;
@@ -730,8 +731,7 @@ pub async fn load(
             version: crate::updates::CURRENT,
             update_available: nav.system && crate::updates::status(&state.db).await?.newer,
             data_sources: if nav.plugins {
-                let (working, broken) =
-                    tether_db::plugin_esi::data_source_health(&state.db).await?;
+                let (working, broken) = plugin_access::source_health(state).await?;
                 (working + broken > 0).then_some(SourceHealth { working, broken })
             } else {
                 None

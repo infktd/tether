@@ -1141,6 +1141,21 @@ pub struct ContentView {
     /// The character audit's main page drawn as the Dashboard: its header
     /// is the Dashboard's.
     pub home: Option<HomeView>,
+    /// One of Tether's own pages in the app's space (`data-sources`,
+    /// `activity`), drawn by the host under the frame; empty for the
+    /// app's.
+    pub host: &'static str,
+    pub activity: Option<super::plugin_activity::Activity>,
+    /// A data source isn't working (DESIGN.md, Notice): what, and the way
+    /// to Data sources. Not on Tether's own pages.
+    pub notice: Option<NoticeView>,
+}
+
+pub struct NoticeView {
+    /// `signal` or `danger`.
+    pub tone: &'static str,
+    pub text: String,
+    pub href: String,
 }
 
 /// The Dashboard's header over the character audit (DESIGN.md,
@@ -1198,6 +1213,95 @@ struct Opened {
     frame: Frame,
     /// The character audit's main page, drawn as the Dashboard.
     home: Option<Home>,
+    /// One of Tether's own pages in the app's space, and what Activity
+    /// shows (read by `with_host`).
+    host: Option<HostPage>,
+    activity: Option<super::plugin_activity::Activity>,
+}
+
+/// Tether's own pages in an app's space (DESIGN.md, App shell), under its
+/// Manage: Data sources for app admins and those who may add one, and
+/// Activity for app admins. The app is never called for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostPage {
+    DataSources,
+    Activity,
+}
+
+impl HostPage {
+    fn of(path: &str) -> Option<Self> {
+        match path {
+            manifest::DATA_SOURCES_PATH => Some(Self::DataSources),
+            manifest::ACTIVITY_PATH => Some(Self::Activity),
+            _ => None,
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::DataSources => manifest::DATA_SOURCES_PATH,
+            Self::Activity => manifest::ACTIVITY_PATH,
+        }
+    }
+
+    /// The page as the header draws it: a title and a description, no
+    /// sections (the host draws its own under the frame).
+    fn page(self, app: &str, corporate: bool) -> Page {
+        let (title, description) = match self {
+            Self::DataSources => (
+                "Data sources",
+                if corporate {
+                    format!(
+                        "Characters whose EVE login {app} reads their corporation's data through: \
+                         one login each, in use at once."
+                    )
+                } else {
+                    format!(
+                        "Characters {app} reads ESI through: one EVE login each, in use at once."
+                    )
+                },
+            ),
+            Self::Activity => (
+                "Activity",
+                format!("What {app} asked of ESI and the web, its schedules, jobs and log."),
+            ),
+        };
+        Page {
+            title: title.to_owned(),
+            description: Some(description),
+            sections: Vec::new(),
+            tabs: Vec::new(),
+            links: Vec::new(),
+            refresh_seconds: None,
+        }
+    }
+}
+
+/// Reads what Tether draws around and in the app's pages, once the page's
+/// rate limit has let it through: the data sources this viewer looks
+/// after (for the notice, or the Data sources page), and Activity on its
+/// own page.
+async fn with_host(
+    state: &AppState,
+    opened: &mut Opened,
+    viewer: tether_db::accounts::AccountId,
+) -> Result<(), PageError> {
+    if let Some(owners) = opened.owners.as_mut() {
+        super::plugin_access::load(
+            state,
+            owners,
+            Some(viewer),
+            opened.host == Some(HostPage::DataSources),
+        )
+        .await?;
+    }
+    if opened.host == Some(HostPage::Activity) {
+        opened.activity = Some(
+            super::plugin_activity::activity(state, &opened.running.manifest.plugin.id, true)
+                .await?,
+        );
+    }
+    Ok(())
 }
 
 /// Reads what the Dashboard draws around the character audit's main page:
@@ -1264,6 +1368,12 @@ async fn open(
     manifest::check_id(id).map_err(|_| missing())?;
     let running = state.plugins.running(id).ok_or_else(missing)?;
     page_rules::check_link_path(path).map_err(|_| missing())?;
+    // Tether's own pages, and anything under them, are never the app's
+    // (an app installed before they were reserved may declare some).
+    let host = HostPage::of(path);
+    if host.is_none() && manifest::under_host_page(path) {
+        return Err(missing());
+    }
     let perms = tether_db::permissions::effective(&state.db, session.account).await?;
     let access = running.manifest.page_access(path);
     // Whether the Blacklist matters here: for this page, or the frame's
@@ -1282,10 +1392,20 @@ async fn open(
             perms.contains(p)
         })
     };
-    if !may(path) {
+    let owners = super::plugin_access::owners(state, &session, &running.manifest, &perms);
+    let host_links = HostLinks {
+        data_sources: owners.as_ref().is_some_and(|o| o.can_manage || o.can_offer),
+        activity: perms.contains(tether_core::permissions::ADMIN_PLUGINS),
+    };
+    let allowed = match host {
+        Some(HostPage::DataSources) => host_links.data_sources,
+        Some(HostPage::Activity) => host_links.activity,
+        None => may(path),
+    };
+    if !allowed {
         return Err(missing());
     }
-    let mut frame = frame(&running.manifest, path, may);
+    let mut frame = frame(&running.manifest, path, may, host_links);
     let viewer = viewer(state, &session, &running, &perms).await?;
     // Change character: one of the account's own, not the main
     // (`identity.acting`).
@@ -1293,8 +1413,6 @@ async fn open(
         .acting
         .filter(|id| *id != viewer.main.id)
         .and_then(|id| viewer.characters.iter().find(|c| c.id == id).cloned());
-    let owners =
-        super::plugin_access::owners(state, &session, &running, &perms, path.is_empty()).await?;
     let raw = raw_query.unwrap_or("");
     if raw.len() > MAX_QUERY_BYTES {
         return Err(AppError::bad_request("That address is too long.").into());
@@ -1374,6 +1492,8 @@ async fn open(
             site: state.site.origin().to_owned(),
             frame,
             home,
+            host,
+            activity: None,
         },
     ))
 }
@@ -1391,7 +1511,18 @@ struct Frame {
     action: Option<TabLink>,
 }
 
-fn frame(manifest: &manifest::Manifest, path: &str, may: impl Fn(&str) -> bool) -> Frame {
+/// Which of Tether's own Manage pages this viewer may open.
+struct HostLinks {
+    data_sources: bool,
+    activity: bool,
+}
+
+fn frame(
+    manifest: &manifest::Manifest,
+    path: &str,
+    may: impl Fn(&str) -> bool,
+    host: HostLinks,
+) -> Frame {
     if manifest.views.is_empty() {
         return Frame::default();
     }
@@ -1405,10 +1536,20 @@ fn frame(manifest: &manifest::Manifest, path: &str, may: impl Fn(&str) -> bool) 
         label: "Settings".to_owned(),
         path: manifest::SETTINGS_PATH.to_owned(),
     };
+    let data_sources = manifest::PageLink {
+        label: "Data sources".to_owned(),
+        path: manifest::DATA_SOURCES_PATH.to_owned(),
+    };
+    let activity = manifest::PageLink {
+        label: "Activity".to_owned(),
+        path: manifest::ACTIVITY_PATH.to_owned(),
+    };
     let manage: Vec<&manifest::PageLink> = settings
         .then_some(&settings_link)
         .into_iter()
         .chain(manifest.manage.iter().filter(|l| may(&l.path)))
+        .chain(host.data_sources.then_some(&data_sources))
+        .chain(host.activity.then_some(&activity))
         .collect();
     // The page shown belongs to the view or Manage page with the longest
     // path covering it: the main page only itself, so a page under no
@@ -1568,6 +1709,10 @@ impl Via {
 /// rule is written to the audit log first (`plugin.page_view`), and isn't
 /// shown if that fails.
 async fn render_page(state: &AppState, opened: &Opened, via: Via) -> Result<Page, PageError> {
+    if let Some(host) = opened.host {
+        let corporate = opened.owners.as_ref().is_some_and(|o| o.corporate);
+        return Ok(host.page(&opened.running.manifest.plugin.name, corporate));
+    }
     let id = &opened.running.manifest.plugin.id;
     if opened.running.manifest.page_audited(&opened.path) {
         tether_db::audit::record(
@@ -1846,7 +1991,15 @@ fn draw(
     // The account's main, whichever character it acts as: a screenshot
     // of other pilots' data names who took it. Not on the Dashboard, nor on
     // pages with only the viewer's own (DESIGN.md, Watermark).
-    let watermark = if opened.home.is_some() || !shows_others(page, &opened.viewer) {
+    let others = match opened.host {
+        Some(HostPage::Activity) => true,
+        Some(HostPage::DataSources) => opened
+            .owners
+            .as_ref()
+            .is_some_and(|o| o.rows.iter().any(|r| !r.own) || !o.gone.is_empty()),
+        None => shows_others(page, &opened.viewer),
+    };
+    let watermark = if opened.home.is_some() || !others {
         String::new()
     } else {
         format!(
@@ -1923,12 +2076,30 @@ fn draw(
         error,
         watermark,
         href: opened.href.clone(),
+        notice: if opened.host.is_some() {
+            None
+        } else {
+            opened
+                .owners
+                .as_ref()
+                .and_then(|o| o.notice.clone())
+                .map(|(tone, text)| NoticeView {
+                    tone,
+                    text,
+                    href: page_href(
+                        &opened.running.manifest.plugin.id,
+                        manifest::DATA_SOURCES_PATH,
+                    ),
+                })
+        },
         owners: opened.owners.map(|mut owners| {
             owners.back = opened.path.clone();
             owners
         }),
         audited,
         home,
+        host: opened.host.map_or("", HostPage::path),
+        activity: opened.activity,
     };
     let mut response = if alone {
         render(status, &PluginContent { c: content })
@@ -2062,6 +2233,7 @@ async fn show(
             return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
         }
         with_home(&state, &mut opened).await?;
+        with_host(&state, &mut opened, session.account).await?;
         let via = if reload { Via::Reload } else { Via::Page };
         let page = render_page(&state, &opened, via).await?;
         Ok::<_, PageError>(draw(opened, &page, StatusCode::OK, None, alone))
@@ -2181,6 +2353,11 @@ async fn post(
     headers: HeaderMap,
     posted: Vec<(String, String)>,
 ) -> Result<Response, PageError> {
+    // Tether's own pages post elsewhere (Withdraw, Remove, Run now), and
+    // nothing under them is the app's.
+    if manifest::under_host_page(&path) {
+        return Err(missing());
+    }
     let from = Posted::of(&state, &headers, &page_href(&id, &path));
     let (session, mut opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
     if let Err(retry) = state
@@ -2191,6 +2368,7 @@ async fn post(
         return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
     }
     with_home(&state, &mut opened).await?;
+    with_host(&state, &mut opened, session.account).await?;
     if posted.len() > MAX_FORM_PAIRS {
         return Err(AppError::bad_request("That form has too many fields.").into());
     }

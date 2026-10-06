@@ -5,6 +5,7 @@
 {%- import "plugin_sections.html" as plugin -%}
 {%- import "icons.html" as icons -%}
 {%- import "membership.html" as membership -%}
+{%- import "ui.html" as ui -%}
 <div id="plugin-content" class="plugin-content"{% if let Some(seconds) = c.refresh %} hx-get="{{ c.href }}" hx-trigger="every {{ seconds }}s" hx-swap="outerHTML" data-live{% endif %}{% if let Some(app) = c.live %} data-app="{{ app }}" data-href="{{ c.href }}"{% endif %}>
   {#- The page header (DESIGN.md): the app's icon, its name over the
       page's title (the section's when the page is named after the app),
@@ -24,7 +25,7 @@
     </div>
     <div class="page-head-actions">
       {% for b in c.buttons %}{% if !b.current %}<a class="btn" data-variant="primary" href="{{ b.href }}">{{ b.label }}</a>{% endif %}{% endfor %}
-      {% include "app_owners_button.html" %}
+      {% if c.host == "data-sources" %}{% include "app_owners_button.html" %}{% endif %}
       {#- Manage (DESIGN.md, App shell): for those who run the app, the
           first of its manage pages (Settings first), whose views bar is
           the rest. -#}
@@ -47,7 +48,14 @@
     {% for l in c.sub_links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}
   </nav>
   {% endif %}
+  {#- A data source stopped working (DESIGN.md, Notice): one line, and
+      the way to fix it. -#}
+  {% if let Some(n) = c.notice %}{% call ui::notice(n.tone, n.text.as_str(), n.href.as_str(), "Review data sources") %}{% endcall %}{% endif %}
   {% if let Some(error) = c.error %}<div class="alert" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}
+  {#- Tether's own pages in the app's space, under its Manage. -#}
+  {% if c.host == "data-sources" %}{% if let Some(o) = c.owners %}{% include "app_data_sources.html" %}{% endif %}
+  {% else if c.host == "activity" %}{% if let Some(a) = c.activity %}{% include "app_activity.html" %}{% endif %}
+  {% else %}
   {% call plugin::sections(c.sections) %}{% endcall %}
   {% if !c.tabs.is_empty() %}
   {#- A tab swaps the content alone, keeps the scroll position and goes
@@ -59,11 +67,11 @@
   </nav>
   {% call plugin::sections(c.tab_sections) %}{% endcall %}
   {% endif %}
+  {% endif %}
   {% if c.home.is_some() %}
   <form method="post" action="/profile/main/login" hx-boost="false" class="flex justify-end">
     <button type="submit" class="btn" data-variant="ghost" data-size="sm" title="Log in with any character to make it your main">Change Main with EVE login</button>
   </form>
   {% endif %}
-  {% include "app_owners.html" %}
   {% if !c.watermark.is_empty() %}<p class="self-end text-[11px] font-mono text-faint select-none" aria-hidden="true">{{ c.watermark }}</p>{% endif %}
 </div>

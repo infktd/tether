@@ -80,7 +80,6 @@ const ROUTES: &[&str] = &[
     "/apps/example.hello/owners/add",
     "/apps/example.hello/owners/1/withdraw",
     "/apps/example.hello/owners/1/remove",
-    "/admin/plugins/example.hello/sources/1/remove",
     "/admin/plugins/example.hello/channels/1/remove",
     "/reauthenticate",
 ];

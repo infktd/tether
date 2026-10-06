@@ -1186,6 +1186,17 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# Tether's own pages in every app's space, under its Manage.
+GET {{base}}/plugins/tether.moon-mining/data-sources
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.moon-mining/activity
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/plugins/acme.hello
 Origin: {{base}}
 [Form]
@@ -1285,12 +1296,6 @@ HTTP 303
 header "Location" == "/login"
 
 POST {{base}}/apps/acme.hello/owners/1/remove
-Origin: {{base}}
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/admin/plugins/acme.hello/sources/1/remove
 Origin: {{base}}
 HTTP 303
 [Asserts]

@@ -312,14 +312,17 @@ async fn moon_mining_end_to_end(db: PgPool) {
 
     // Members (the owner holds everything): extractions, with names.
     let moons = page(&h, &format!("/plugins/{ID}"), &owner).await;
-    // Corporation scopes: the data sources card says whose data it is.
+    // Corporation scopes: its Data sources page, under Manage, says whose
+    // data it is, and the source works once the schedules read through it.
+    let sources = page(&h, &format!("/plugins/{ID}/data-sources"), &owner).await;
     assert!(
-        moons
+        sources
             .body
-            .contains("Characters whose corporation's data this app reads."),
+            .contains("reads their corporation&#39;s data through"),
         "{}",
-        moons.body
+        sources.body
     );
+    assert!(sources.body.contains(">Working</span>"), "{}", sources.body);
     // aa-moonmining has no Members-only window: off unless turned on.
     assert!(!moons.body.contains("Fresh moons"), "{}", moons.body);
     assert_eq!(moons.status, StatusCode::OK, "{}", moons.body);

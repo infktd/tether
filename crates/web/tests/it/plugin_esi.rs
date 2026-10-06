@@ -160,7 +160,7 @@ async fn user_scopes_need_a_character_registered_for_the_app(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            &format!("/admin/plugins/acme.esi/sources/{CHRIBBA}/remove"),
+            &format!("/apps/acme.esi/owners/{CHRIBBA}/remove"),
             "",
             &pilot,
         ),
@@ -384,10 +384,13 @@ async fn user_scopes_need_a_character_registered_for_the_app(db: PgPool) {
         "{log:?}"
     );
     assert!(log.contains(&("character-skills".to_owned(), "not registered".to_owned())));
-    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
+    // And on the app's Activity page, under Manage.
+    let activity = page(&h, "/plugins/acme.esi/activity", &owner).await.body;
     assert!(
-        admin.contains("Recent data access") && admin.contains(SKILLS),
-        "{admin}"
+        activity.contains("ESI calls")
+            && activity.contains("character-skills")
+            && activity.contains(">not registered</span>"),
+        "{activity}"
     );
 }
 
@@ -427,20 +430,31 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     install(&h, &owner).await;
     mount_esi(&h).await;
 
-    // Add data source is on the app's own page (AA's Add Owner), with its data sources.
+    // Add data source is on the app's Data sources page (AA's Add Owner),
+    // under its Manage, with its data sources.
     let main = page(&h, "/plugins/acme.esi", &owner).await.body;
     assert!(
-        main.contains(r#"action="/apps/acme.esi/owners/add""#),
+        main.contains(r#"href="/plugins/acme.esi/data-sources""#),
         "{main}"
     );
-    assert!(main.contains("No data sources yet"), "{main}");
+    assert!(!main.contains("/apps/acme.esi/owners/add"), "{main}");
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
+    assert!(
+        listed.contains(r#"action="/apps/acme.esi/owners/add""#),
+        "{listed}"
+    );
+    assert!(listed.contains("No data sources yet"), "{listed}");
     let (asked, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     assert!(asked.contains(&MINING.to_owned()), "{asked:?}");
     // In use at once, as AA's Add Owner: nobody approves it.
-    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
-    assert!(main.contains(">Active</span>"), "{main}");
-    assert!(!main.contains("/approve"), "{main}");
-    assert!(!main.contains("waiting"), "{main}");
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
+    assert!(listed.contains(">Not read yet</span>"), "{listed}");
+    assert!(!listed.contains("/approve"), "{listed}");
+    assert!(!listed.contains("waiting"), "{listed}");
     // Not on the Dashboard any more.
     let dashboard = page(&h, "/dashboard", &owner).await.body;
     assert!(!dashboard.contains("corporation data"), "{dashboard}");
@@ -462,12 +476,21 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     assert!(out.contains("40161234"), "{out}");
     let sources = probe(&h, "sources", &[]).await;
     assert!(sources.contains("Chribba"), "{sources}");
+    // Read through: working, and what it read.
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
+    assert!(listed.contains(">Working</span>"), "{listed}");
+    assert!(listed.contains("Read mining extractions"), "{listed}");
     // A data source is for corporation endpoints only.
     let out = esi(&h, "character-skills", ("source", CHRIBBA)).await;
     assert!(out.starts_with("err Error::NotAllowed"), "{out}");
-    // The Apps admin page lists it too.
+    // The Apps admin page points to it.
     let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
-    assert!(admin.contains("Data sources"), "{admin}");
+    assert!(
+        admin.contains(r#"href="/plugins/acme.esi/data-sources""#),
+        "{admin}"
+    );
 
     // Token Management always shows what an account's characters are
     // used for, with Withdraw.
@@ -491,8 +514,10 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     );
     let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
     assert_eq!(out, "err Error::NotADataSource");
-    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
-    assert!(main.contains("Withdrawn by Chribba"), "{main}");
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
+    assert!(listed.contains("Withdrawn by Chribba"), "{listed}");
 }
 
 /// A character Tether has never seen, added as an owner: its corporation
@@ -537,10 +562,12 @@ async fn a_new_character_added_as_owner_is_in_use_at_once(db: PgPool) {
     let out = esi(&h, "corporation-mining-extractions", ("source", GIGX)).await;
     assert!(out.starts_with("ok pages=1"), "{out}");
     assert!(out.contains("40165678"), "{out}");
-    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
     assert!(
-        main.contains("gigX") && main.contains(">Active</span>"),
-        "{main}"
+        listed.contains("gigX") && listed.contains(">Working</span>"),
+        "{listed}"
     );
 
     // Not in the affiliation fixture: EVE names no corporation, so nothing
@@ -591,28 +618,44 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
 
-    // May open the app, but not add owners: no button, no owners card,
-    // and the route refuses.
+    // May open the app, but not add owners: no Data sources or Activity
+    // under Manage, neither page, and the route refuses.
     grant_to_guests(&h, &owner, "view").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await;
     assert_eq!(main.status, StatusCode::OK, "{}", main.body);
-    assert!(!main.body.contains("Add data source"), "{}", main.body);
-    assert!(!main.body.contains("owners-title"), "{}", main.body);
+    assert!(!main.body.contains("/data-sources"), "{}", main.body);
+    assert!(!main.body.contains("/activity"), "{}", main.body);
+    for host in ["data-sources", "activity"] {
+        let res = page(&h, &format!("/plugins/acme.esi/{host}"), &pilot).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{host}: {}", res.body);
+    }
     let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
 
     // Nor may the app's manage permission, as in AA.
     grant_to_guests(&h, &owner, "manage").await;
-    let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
-    assert!(!main.contains("Add data source"), "{main}");
+    let res = page(&h, "/plugins/acme.esi/data-sources", &pilot).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
     let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
 
     // An add_ permission may: its holder adds their own character, in use
-    // at once, and sees only their own.
+    // at once, and sees only their own (and not Activity, the admins').
     grant_to_guests(&h, &owner, "add_owner").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
-    assert!(main.contains("Add data source"), "{main}");
+    assert!(
+        main.contains(r#"href="/plugins/acme.esi/data-sources""#),
+        "{main}"
+    );
+    assert!(!main.contains("/activity"), "{main}");
+    let res = page(&h, "/plugins/acme.esi/activity", &pilot).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &pilot)
+        .await
+        .body;
+    assert!(listed.contains("Add data source"), "{listed}");
+    assert!(!listed.contains("/plugins/acme.esi/activity"), "{listed}");
+    assert!(listed.contains("t added a character yet"), "{listed}");
     let (asked, pilot) = grant(
         &h,
         &pilot,
@@ -621,14 +664,46 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     )
     .await;
     assert!(asked.contains(&MINING.to_owned()), "{asked:?}");
-    let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
-    assert!(main.contains("The Mittani"), "{main}");
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &pilot)
+        .await
+        .body;
+    assert!(listed.contains("The Mittani"), "{listed}");
     assert!(
-        main.contains(&format!("/apps/acme.esi/owners/{MITTANI}/withdraw")),
-        "{main}"
+        listed.contains(&format!("/apps/acme.esi/owners/{MITTANI}/withdraw")),
+        "{listed}"
     );
-    assert!(!main.contains("Chribba"), "{main}");
-    assert!(!main.contains("/approve"), "{main}");
+    assert!(!listed.contains("Chribba"), "{listed}");
+    assert!(!listed.contains("/approve"), "{listed}");
+    // Coverage and the link to share are the admins'.
+    assert!(!listed.contains("coverage-title"), "{listed}");
+    // A character another account added (sold since): its new owner sees
+    // nothing of that account's, not who nor what it read, and no notice.
+    let chribba_account: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+            .bind(CHRIBBA)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let added_by = |account: i64| {
+        sqlx::query("UPDATE core.plugin_data_sources SET offered_by = $1 WHERE character_id = $2")
+            .bind(account)
+            .bind(MITTANI)
+            .execute(&h.db)
+    };
+    let pilot_account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
+    added_by(chribba_account).await.unwrap();
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &pilot)
+        .await
+        .body;
+    assert!(
+        listed.contains("Added by another account<")
+            && listed.contains("Added from another account")
+            && !listed.contains("Chribba"),
+        "{listed}"
+    );
+    let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
+    assert!(!main.contains(r#"class="notice""#), "{main}");
+    added_by(pilot_account).await.unwrap();
     let res = send(
         &h.app,
         form(
@@ -652,14 +727,16 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 
     // The admin sees both, and may remove the pilot's.
-    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
     assert!(
-        main.contains("The Mittani") && main.contains("Chribba"),
-        "{main}"
+        listed.contains("The Mittani") && listed.contains("Chribba"),
+        "{listed}"
     );
     assert!(
-        main.contains(&format!("/apps/acme.esi/owners/{MITTANI}/remove")),
-        "{main}"
+        listed.contains(&format!("/apps/acme.esi/owners/{MITTANI}/remove")),
+        "{listed}"
     );
     let res = send(
         &h.app,
@@ -671,8 +748,205 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), "/plugins/acme.esi/data-sources");
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
+    assert!(listed.contains("Removed by Chribba"), "{listed}");
+}
+
+/// The Data sources page says how each source is doing, from the app's
+/// calls through it, and how it reads each member corporation; a source
+/// that stops working puts a notice on the app's other pages for those
+/// who look after its sources.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn data_sources_say_how_they_are_doing_and_what_they_cover(db: PgPool) {
+    use tether_core::states::{Builtin, EntityKind};
+    const SOURCES: &str = "/plugins/acme.esi/data-sources";
+    cover(&db, Builtin::Member, EntityKind::Corporation, 98133756).await;
+    let (h, owner) = member_with_plugin(db).await;
+    let gigx = log_in_as(&h, "1887431749:gigX", None).await;
+    assert_eq!(state_of(&h, &gigx).await, "Member");
+
+    // Two member corporations, neither read: the link to send a Director.
+    let listed = page(&h, SOURCES, &owner).await.body;
+    assert!(listed.contains("0 of 2 corporations read"), "{listed}");
+    assert_eq!(
+        listed.matches(">No data source</span>").count(),
+        2,
+        "{listed}"
+    );
+    assert!(
+        listed.contains(r#"/plugins/acme.esi/data-sources" aria-label="Link to this page""#),
+        "{listed}"
+    );
+    // Tether's own pages take no posts, and nothing under them (in any
+    // case) is the app's, though its main page rule covers every path.
+    for host in ["data-sources", "activity"] {
+        let res = send(
+            &h.app,
+            form(&format!("/plugins/acme.esi/{host}"), "", &owner),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{host}: {}", res.body);
+    }
+    for under in [
+        "data-sources/remove",
+        "activity/x",
+        "Activity",
+        "DATA-SOURCES/x",
+    ] {
+        let uri = format!("/plugins/acme.esi/{under}");
+        let res = page(&h, &uri, &owner).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{under}: {}", res.body);
+        let res = send(&h.app, form(&uri, "_form=note", &owner)).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{under}: {}", res.body);
+    }
+
+    // Added: not read yet, then working once the app reads through it.
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
+    let listed = page(&h, SOURCES, &owner).await.body;
+    assert!(listed.contains(">Not read yet</span>"), "{listed}");
+    assert!(
+        listed.contains(">Not read yet through Chribba</span>"),
+        "{listed}"
+    );
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+    let listed = page(&h, SOURCES, &owner).await.body;
+    assert!(listed.contains(">Working</span>"), "{listed}");
+    assert!(listed.contains("1 of 2 corporations read"), "{listed}");
+    assert!(listed.contains(">Read through Chribba</span>"), "{listed}");
     let main = page(&h, "/plugins/acme.esi", &owner).await.body;
-    assert!(main.contains("Removed by Chribba"), "{main}");
+    assert!(!main.contains(r#"class="notice""#), "{main}");
+    // The sidebar's foot counts it working, by the same rules.
+    assert!(
+        main.contains(r#"<span class="num text-foreground">1</span> working"#)
+            && !main.contains("</span> not working"),
+        "{main}"
+    );
+    // Manage opens Data sources, beside Activity, which names who looks.
+    assert!(
+        listed.contains(r#"href="/plugins/acme.esi/activity""#),
+        "{listed}"
+    );
+    let activity = page(&h, "/plugins/acme.esi/activity", &owner).await.body;
+    assert!(activity.contains("Viewing as Chribba"), "{activity}");
+
+    // ESI refuses one endpoint (an in-game role): partly refused, and the
+    // app's pages say so to those who look after its sources.
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/corporation/{CHRIBBA_CORP}/mining/observers"
+        )))
+        .respond_with(ResponseTemplate::new(403).set_body_json(
+            serde_json::json!({"error": "Character does not have required role(s)"}),
+        ))
+        .mount(&h.esi_server)
+        .await;
+    let out = esi(&h, "corporation-mining-observers", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("err"), "{out}");
+    let listed = page(&h, SOURCES, &owner).await.body;
+    assert!(listed.contains(">Refused by ESI</span>"), "{listed}");
+    assert!(
+        listed.contains("ESI refused mining observers (403)"),
+        "{listed}"
+    );
+    assert!(
+        listed.contains(">Refused by ESI through Chribba</span>"),
+        "{listed}"
+    );
+    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
+    assert!(
+        main.contains(r#"class="notice" data-tone="signal""#)
+            && main.contains("ESI refused mining observers (403)"),
+        "{main}"
+    );
+    assert!(
+        main.contains(r#"<span class="num text-highlight">1</span> not working"#),
+        "{main}"
+    );
+    // Not to those who only use the app.
+    grant_to_guests(&h, &owner, "view").await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let main = page(&h, "/plugins/acme.esi", &pilot).await;
+    assert_eq!(main.status, StatusCode::OK, "{}", main.body);
+    assert!(!main.body.contains("ESI refused"), "{}", main.body);
+
+    // Its login revoked: the source reads nothing, whatever it calls.
+    sqlx::query("UPDATE core.character_tokens SET state = 'revoked' WHERE character_id = $1")
+        .bind(CHRIBBA)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("err"), "{out}");
+    let listed = page(&h, SOURCES, &owner).await.body;
+    assert!(listed.contains(">Login stopped working</span>"), "{listed}");
+    assert!(
+        listed.contains(">Its data sources aren&#39;t working</span>"),
+        "{listed}"
+    );
+    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
+    assert!(
+        main.contains(r#"class="notice" data-tone="danger""#)
+            && main.contains("Its EVE login was revoked or expired"),
+        "{main}"
+    );
+}
+
+/// A stopped app's data sources and activity stay on its admin page, so
+/// disabling an app keeps what it read in view, and its sources can still
+/// be removed (and withdrawn from Token Management).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_stopped_apps_sources_and_activity_stay_on_its_admin_page(db: PgPool) {
+    let (h, owner) = member_with_plugin(db).await;
+    let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
+    let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+    // While it runs, they're under its Manage.
+    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
+    assert!(!admin.contains("owners-title"), "{admin}");
+    assert!(!admin.contains("calls-title"), "{admin}");
+
+    let res = send(&h.app, form("/admin/plugins/acme.esi/disable", "", &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    for host in ["data-sources", "activity"] {
+        let res = page(&h, &format!("/plugins/acme.esi/{host}"), &owner).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{host}");
+    }
+    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
+    assert!(
+        admin.contains("owners-title")
+            && admin.contains(&format!("/apps/acme.esi/owners/{CHRIBBA}/remove")),
+        "{admin}"
+    );
+    assert!(
+        admin.contains("calls-title") && admin.contains("corporation-mining-extractions"),
+        "{admin}"
+    );
+    // No link to send: its pages aren't there.
+    assert!(!admin.contains("Link to this page"), "{admin}");
+    // Its own sources stay in Token Management, not used.
+    let tokens = page(&h, "/tokens", &owner).await.body;
+    assert!(
+        tokens.contains("ESI probe") && tokens.contains(">Not used</span>"),
+        "{tokens}"
+    );
+    // Removed from there, back there.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/apps/acme.esi/owners/{CHRIBBA}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), "/admin/plugins/acme.esi");
+    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
+    assert!(admin.contains("Removed by Chribba"), "{admin}");
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -1450,10 +1724,12 @@ async fn waiting_offers_are_dropped_and_owners_stay_with_their_account(db: PgPoo
         "{}",
         audited.1
     );
-    // The owners card lists it as removed; holders add it again in one
-    // login.
-    let main = page(&h, "/plugins/acme.esi", &owner).await.body;
-    assert!(main.contains("Removed by"), "{main}");
+    // The Data sources page lists it as removed; holders add it again in
+    // one login.
+    let listed = page(&h, "/plugins/acme.esi/data-sources", &owner)
+        .await
+        .body;
+    assert!(listed.contains("Removed by"), "{listed}");
     let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
     assert!(out.starts_with("ok"), "{out}");

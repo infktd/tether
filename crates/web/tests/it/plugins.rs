@@ -332,6 +332,18 @@ async fn bad_uploads_are_refused_and_audited(db: PgPool) {
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     assert!(res.body.contains("declares its [[views]]"), "{}", res.body);
 
+    // A page at one of Tether's own, in every app's space.
+    let (claims, claims_signature) = package(
+        ID,
+        &key,
+        "\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[views]]\nlabel = \"Activity\"\n\
+         path = \"activity\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n\n[[pages]]\n\
+         path = \"activity\"\npermission = \"view\"\n",
+    );
+    let res = upload(&h, &owner, &claims, &claims_signature).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(res.body.contains("own pages in every app"), "{}", res.body);
+
     // A component that isn't a plugin.
     let manifest_text = manifest(ID, &key, "");
     let fake = testing::zip(&[
@@ -348,8 +360,8 @@ async fn bad_uploads_are_refused_and_audited(db: PgPool) {
     .fetch_one(&h.db)
     .await
     .unwrap();
-    // Every refusal above: four malformed requests, five bad packages.
-    assert_eq!(rejected, 9);
+    // Every refusal above: four malformed requests, six bad packages.
+    assert_eq!(rejected, 10);
     assert_eq!(h.plugins.status(ID), Status::Stopped);
 
     // Too many waiting.

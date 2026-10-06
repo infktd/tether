@@ -825,11 +825,7 @@ async fn an_owner_without_the_role_is_left_alone(db: PgPool) {
     // The host listing no owners for a moment keeps them.
     let res = send(
         &h.app,
-        form(
-            &format!("/admin/plugins/{ID}/sources/{CHRIBBA}/remove"),
-            "",
-            &owner,
-        ),
+        form(&format!("/apps/{ID}/owners/{CHRIBBA}/remove"), "", &owner),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);

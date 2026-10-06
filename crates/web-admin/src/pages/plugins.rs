@@ -846,38 +846,9 @@ pub async fn discard(
 
 // ---- one plugin -------------------------------------------------------------
 
-pub struct SourceView {
-    pub character_id: i64,
-    pub name: String,
-    pub offered_by: String,
-    pub when: String,
-    /// approved, moved (approved for another corporation) or waiting.
-    pub state: &'static str,
-    pub corporation: String,
-}
-
 pub struct ChannelView {
     pub id: i64,
     pub name: String,
-}
-
-pub struct AccessView {
-    pub at: String,
-    pub character: String,
-    pub endpoint: String,
-    pub outcome: String,
-}
-
-pub struct HttpCallView {
-    pub at: String,
-    pub method: String,
-    pub host: String,
-    pub path: String,
-    pub status: String,
-    pub outcome: String,
-    pub secret: String,
-    pub bytes: i64,
-    pub ms: i32,
 }
 
 pub struct SecretView {
@@ -888,61 +859,27 @@ pub struct SecretView {
     pub set: Option<String>,
 }
 
-pub struct ScheduleView {
-    pub name: String,
-    pub every: String,
-    pub enabled: bool,
-    pub next_run: String,
-    pub last_run: String,
-}
-
-pub struct JobView {
-    pub name: String,
-    pub key: String,
-    pub state: String,
-    pub attempts: i32,
-    pub when: String,
-    pub error: String,
-}
-
-pub struct LogView {
-    pub at: String,
-    pub level: String,
-    pub source: String,
-    pub message: String,
-}
-
-fn job_view(j: tether_db::plugin_jobs::JobRow) -> JobView {
-    JobView {
-        name: j.name,
-        key: j.key.unwrap_or_default(),
-        state: j.state,
-        attempts: j.attempts,
-        when: time(j.run_at),
-        error: j.last_error.unwrap_or_default(),
-    }
-}
-
 #[derive(Template)]
 #[template(path = "admin_plugin.html")]
 struct PluginPage {
     shell: Shell,
-    sources: Vec<SourceView>,
     channels: Vec<ChannelView>,
     free_channels: Vec<ChannelView>,
     uses_discord: bool,
     esi_scopes: Vec<String>,
-    access: Vec<AccessView>,
     http_hosts: Vec<String>,
     /// Declared by the running package, but never approved: refused.
     http_unapproved: Vec<String>,
     http_secrets: Vec<SecretView>,
-    http_calls: Vec<HttpCallView>,
-    schedules: Vec<ScheduleView>,
-    active_jobs: i64,
-    upcoming: Vec<JobView>,
-    dead: Vec<JobView>,
-    logs: Vec<LogView>,
+    /// It runs: its data sources and activity are under its Manage.
+    running: bool,
+    /// It reads ESI through data sources.
+    has_sources: bool,
+    /// While it doesn't run (stopped, failed, or not fitting this Tether):
+    /// its data sources and activity here, so disabling an app keeps what
+    /// it read and sent in view, and its sources can still be removed.
+    owners: Option<tether_web_core::pages::plugin_access::Owners>,
+    activity: Option<tether_web_core::pages::plugin_activity::Activity>,
     about: About,
     enabled: bool,
     /// It has a settings page (`settings`): opened from here, not from
@@ -1063,53 +1000,21 @@ async fn plugin_page(
         deletes_data: plan.deletes_data,
         blocked: plan.blocked,
     });
-    let schedules = tether_db::plugin_jobs::schedules(&state.db, id)
-        .await?
-        .into_iter()
-        .map(|s| ScheduleView {
-            name: s.name,
-            every: super::every(i64::from(s.every_secs)),
-            enabled: s.enabled,
-            next_run: time(s.next_run_at),
-            last_run: s.last_enqueued_at.map_or_else(|| "never".to_owned(), time),
-        })
-        .collect();
-    let (active_jobs, upcoming, dead) = tether_db::plugin_jobs::jobs(&state.db, id, 20).await?;
-    let logs = tether_db::plugin_jobs::logs(&state.db, id, 50)
-        .await?
-        .into_iter()
-        .map(|l| LogView {
-            at: l.at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            level: l.level,
-            source: l.source,
-            message: l.message,
-        })
-        .collect();
-    let sources = tether_db::plugin_esi::data_sources(&state.db, id).await?;
-    // Corporations by name from the names cache (DESIGN.md: no raw ids).
-    let corporations: Vec<i64> = sources
-        .iter()
-        .filter_map(|d| d.character.corporation_id)
-        .collect();
-    let corporations = tether_db::compliance::cached_names(&state.db, &corporations).await?;
-    let sources = sources
-        .into_iter()
-        .map(|d| {
-            let state = super::plugin_access::source_state(&d);
-            SourceView {
-                character_id: d.character.id,
-                corporation: d
-                    .character
-                    .corporation_id
-                    .and_then(|c| corporations.get(&c).cloned())
-                    .unwrap_or_else(|| "Unknown corporation".to_owned()),
-                name: d.character.name,
-                offered_by: d.offered_by.unwrap_or_else(|| "Someone".to_owned()),
-                when: time(d.offered_at),
-                state,
-            }
-        })
-        .collect();
+    // While it runs, its data sources and activity are under its Manage.
+    let running = matches!(status, Status::Running);
+    let (owners, activity) = if running {
+        (None, None)
+    } else {
+        use tether_web_core::pages::{plugin_access, plugin_activity};
+        let mut owners = plugin_access::for_admin(state, &package.manifest);
+        if let Some(owners) = owners.as_mut() {
+            plugin_access::load(state, owners, None, true).await?;
+        }
+        (
+            owners,
+            Some(plugin_activity::activity(state, id, false).await?),
+        )
+    };
     let (channels, free_channels) = match crate::discord::config(state).await {
         Ok(config) => {
             let guild = i64::try_from(config.guild_id).map_err(AppError::internal)?;
@@ -1131,16 +1036,6 @@ async fn plugin_page(
         }
         Err(_) => (Vec::new(), Vec::new()),
     };
-    let access = tether_db::plugin_esi::access_log(&state.db, id, 30)
-        .await?
-        .into_iter()
-        .map(|a| AccessView {
-            at: a.at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            character: a.character.unwrap_or_default(),
-            endpoint: a.endpoint,
-            outcome: a.outcome,
-        })
-        .collect();
     let approved = tether_db::plugin_http::approved(&state.db, id).await?;
     let http_unapproved = package
         .manifest
@@ -1164,21 +1059,6 @@ async fn plugin_page(
                 .map(|(_, at)| time(*at)),
         })
         .collect();
-    let http_calls = tether_db::plugin_http::recent(&state.db, id, 30)
-        .await?
-        .into_iter()
-        .map(|c| HttpCallView {
-            at: c.at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            status: c.status.map_or_else(String::new, |s| s.to_string()),
-            secret: c.secret.unwrap_or_default(),
-            method: c.method,
-            host: c.host,
-            path: c.path,
-            outcome: c.outcome,
-            bytes: c.bytes,
-            ms: c.duration_ms,
-        })
-        .collect();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
         code,
@@ -1187,13 +1067,10 @@ async fn plugin_page(
             http_hosts: approved.hosts,
             http_unapproved,
             http_secrets,
-            http_calls,
-            schedules,
-            active_jobs,
-            upcoming: upcoming.into_iter().map(job_view).collect(),
-            dead: dead.into_iter().map(job_view).collect(),
-            logs,
-            sources,
+            running,
+            has_sources: !package.manifest.capabilities.esi.data_source.is_empty(),
+            owners,
+            activity,
             channels,
             free_channels,
             uses_discord: package
@@ -1211,7 +1088,6 @@ async fn plugin_page(
                 .chain(&package.manifest.capabilities.esi.data_source)
                 .cloned()
                 .collect(),
-            access,
             about: About::new(&package, installed.origin == db::Origin::Bundled),
             enabled: installed.enabled,
             // Only a running app has a settings page to open.
@@ -1578,22 +1454,6 @@ pub async fn set_secret(
 }
 
 // ---- data sources and channels ---------------------------------------------
-
-/// `POST /admin/plugins/{id}/sources/{character}/remove`
-pub async fn remove_source(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path((id, character)): Path<(String, i64)>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
-    let id = plugin_id(&id)?;
-    match crate::plugin_consent::remove_source_as_admin(&state, session.account, id, character)
-        .await
-    {
-        Ok(()) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
-        Err(err) => plugin_page(&state, shell, id, Some(err)).await,
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ChannelForm {

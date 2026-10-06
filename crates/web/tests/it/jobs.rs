@@ -156,7 +156,7 @@ async fn one_off_jobs_run_late_with_their_scheduled_time(db: PgPool) {
     assert_eq!(queued(&h.db).await.len(), 1, "moon:2 still waits");
 
     // What it logged is kept for admins.
-    let detail = page(&h, "/admin/plugins/acme.jobs", &owner).await.body;
+    let detail = page(&h, "/plugins/acme.jobs/activity", &owner).await.body;
     assert!(detail.contains("running ping (attempt 1)"), "{detail}");
     assert!(detail.contains("job:ping"), "{detail}");
     assert!(
@@ -267,7 +267,7 @@ async fn failures_retry_or_give_up(db: PgPool) {
         outcomes.iter().any(|o| matches!(o, Outcome::Dead(_))),
         "{outcomes:?}"
     );
-    let detail = page(&h, "/admin/plugins/acme.jobs", &owner).await.body;
+    let detail = page(&h, "/plugins/acme.jobs/activity", &owner).await.body;
     assert!(
         detail.contains("Gave up") && detail.contains("never"),
         "{detail}"
@@ -423,7 +423,7 @@ async fn declared_schedules_follow_the_plugin(db: PgPool) {
     assert_eq!(ran.len(), 1);
     assert_eq!(ran[0].0, "sync");
     assert!(
-        page(&h, "/admin/plugins/acme.jobs", &owner)
+        page(&h, "/plugins/acme.jobs/activity", &owner)
             .await
             .body
             .contains("every 30 minutes")

@@ -771,7 +771,10 @@ impl Plugins {
         if !changes.unchanged() {
             return Ok(Some("it asks for something new or different"));
         }
-        if unsupported(package).is_some() {
+        if unsupported(package)
+            .or_else(|| frameless(package))
+            .is_some()
+        {
             return Ok(Some("it asks for something Tether doesn't allow"));
         }
         // An admin went back to this package: a restart mustn't undo that.
@@ -1014,13 +1017,21 @@ fn package_error(err: PackageError) -> AppError {
     }
 }
 
-/// A new package with pages but no views (`Manifest::needs_views`):
-/// refused at install and upgrade, never at load or rollback, so an app
-/// stored before still runs (without a views bar) and can be removed.
+/// What a new package's frame can't be: pages but no views
+/// (`Manifest::needs_views`), or a page at one of Tether's own
+/// (`Manifest::claims_host_page`). Refused at install and upgrade, never
+/// at load or rollback, so an app stored before still runs (without a
+/// views bar) and can be removed.
 fn frameless(package: &Package) -> Option<&'static str> {
-    package.manifest.needs_views().then_some(
-        "An app with pages declares its [[views]]: the first is its main page (label = \
-         \"Overview\", path = \"\"), and Tether draws its views bar. See the SDK's AGENTS.md.",
+    if package.manifest.needs_views() {
+        return Some(
+            "An app with pages declares its [[views]]: the first is its main page (label = \
+             \"Overview\", path = \"\"), and Tether draws its views bar. See the SDK's AGENTS.md.",
+        );
+    }
+    package.manifest.claims_host_page().then_some(
+        "data-sources and activity are Tether's own pages in every app (under its Manage): \
+         an app's pages, sidebar entries, views and action go elsewhere.",
     )
 }
 

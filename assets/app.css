@@ -1459,6 +1459,42 @@
     text-decoration: underline;
     text-underline-offset: 4px;
   }
+  /* Notice (DESIGN.md): a one-line strip for what stops the page
+     working as it should, in its tone's line and wash, with one button
+     to the fix. */
+  .notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--accent-line);
+    background: var(--accent-wash);
+  }
+  .notice > p {
+    flex: 1 1 320px;
+    margin: 0;
+    font-size: 13px;
+    color: var(--foreground);
+  }
+  .notice-icon {
+    display: inline-flex;
+    color: var(--accent);
+  }
+  .notice > .btn {
+    border-color: var(--accent-line);
+  }
+  .notice[data-tone="danger"] {
+    border-color: var(--destructive-line);
+    background: var(--destructive-soft);
+  }
+  .notice[data-tone="danger"] .notice-icon {
+    color: var(--destructive);
+  }
+  .notice[data-tone="danger"] > .btn {
+    border-color: var(--destructive-line);
+  }
+
   /* Not in use: not set up, switched off, or not yet. */
   .status-line[data-tone="off"] {
     color: var(--muted-foreground);

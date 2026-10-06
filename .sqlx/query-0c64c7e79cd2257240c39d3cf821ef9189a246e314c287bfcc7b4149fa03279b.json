@@ -1,0 +1,75 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT l.plugin_id, l.character_id AS \"character_id!\", l.endpoint,\n               max(l.at) FILTER (WHERE l.outcome = 'ok') AS last_ok,\n               max(l.at) AS \"last_at!\",\n               (array_agg(l.outcome ORDER BY l.id DESC))[1] AS \"last_outcome!\"\n        FROM core.plugin_access_log l\n        JOIN core.plugin_data_sources d\n          ON d.plugin_id = l.plugin_id AND d.character_id = l.character_id\n        WHERE l.plugin_id = ANY($1) AND l.at > $2 AND l.at >= d.offered_at\n          AND l.outcome = ANY($3)\n        GROUP BY l.plugin_id, l.character_id, l.endpoint\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plugin_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_access_log",
+            "name": "plugin_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "character_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_access_log",
+            "name": "character_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "endpoint",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_access_log",
+            "name": "endpoint"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_ok",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_outcome!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Timestamptz",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "0c64c7e79cd2257240c39d3cf821ef9189a246e314c287bfcc7b4149fa03279b"
+}

@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT c.corporation_id AS \"corporation_id!\", n.name AS \"name?\"\n        FROM core.accounts a\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.characters c ON c.id = a.main_character_id\n        LEFT JOIN core.entity_names n ON n.id = c.corporation_id\n        WHERE s.builtin = 'member' AND a.active AND c.corporation_id IS NOT NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "corporation_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.entity_names",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "1e5243fabf54b8340ef3e104e97f23de978e8ab03065dc35cb4582d658265be7"
+}

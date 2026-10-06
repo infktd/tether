@@ -21,6 +21,26 @@ pub fn is_settings(path: &str) -> bool {
     path == SETTINGS_PATH || path.starts_with("settings/")
 }
 
+/// Pages Tether draws inside every app's space, under its Manage
+/// (DESIGN.md, App shell): never an app's own.
+pub const DATA_SOURCES_PATH: &str = "data-sources";
+pub const ACTIVITY_PATH: &str = "activity";
+
+/// One of Tether's own pages in an app's space.
+pub fn is_host_page(path: &str) -> bool {
+    path == DATA_SOURCES_PATH || path == ACTIVITY_PATH
+}
+
+/// One of Tether's own pages, or under one, in any case: never the app's.
+pub fn under_host_page(path: &str) -> bool {
+    path.split('/')
+        .next()
+        .is_some_and(|first| is_host_page(&first.to_ascii_lowercase()))
+}
+
+/// The labels of Tether's own Manage pages, which no app's may wear.
+const HOST_LABELS: [&str; 2] = ["data sources", "activity"];
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("plugin.toml: {0}")]
 pub struct ManifestError(pub String);
@@ -777,6 +797,24 @@ impl Manifest {
         self.views.is_empty() && (!self.pages.is_empty() || !self.navigation.is_empty())
     }
 
+    /// A page rule, sidebar entry, view, Manage page or action at or under
+    /// one of Tether's own pages (`under_host_page`), or a link wearing
+    /// one's label: refused when installed or upgraded, as Tether's page
+    /// would be the one shown, or a look-alike beside it.
+    pub fn claims_host_page(&self) -> bool {
+        let links = self.views.iter().chain(&self.manage).chain(&self.action);
+        self.pages
+            .iter()
+            .map(|r| r.path.as_str())
+            .chain(self.navigation.iter().map(|n| n.path.as_str()))
+            .chain(links.clone().map(|l| l.path.as_str()))
+            .any(under_host_page)
+            || links
+                .map(|l| l.label.as_str())
+                .chain(self.navigation.iter().map(|n| n.label.as_str()))
+                .any(|label| HOST_LABELS.contains(&label.trim().to_lowercase().as_str()))
+    }
+
     /// `[[views]]`, `[action]` and `[[manage]]`: plain labels and page
     /// paths, the first view the main page, no page twice, and no manage
     /// page under `settings` (Tether adds Settings itself).
@@ -1183,6 +1221,32 @@ mod tests {
             let stored = Manifest::parse(&bare(extra)).unwrap();
             assert!(stored.needs_views(), "{why}");
         }
+        // Tether's own pages in every app's space, or under them: no
+        // app's, whichever way it reaches them.
+        assert!(!good.claims_host_page());
+        for extra in [
+            "[permissions]\nview = \"See\"\n\n[[pages]]\npath = \"activity\"\npermission = \"view\"\n",
+            "[[navigation]]\nlabel = \"Sources\"\npath = \"data-sources/mine\"\n",
+            "[[views]]\nlabel = \"A\"\npath = \"\"\n[[manage]]\nlabel = \"Log\"\npath = \"activity\"\n",
+        ] {
+            let claims = Manifest::parse(&bare(extra)).unwrap();
+            assert!(claims.claims_host_page(), "{extra}");
+        }
+        let look_alike = Manifest::parse(&bare(
+            "[[views]]\nlabel = \"A\"\npath = \"\"\n[[manage]]\nlabel = \"Data Sources\"\npath = \"mine\"\n",
+        ))
+        .unwrap();
+        assert!(look_alike.claims_host_page());
+        let look_alike = Manifest::parse(&bare(
+            "[[views]]\nlabel = \"A\"\npath = \"\"\n[[views]]\nlabel = \"activity\"\npath = \"log\"\n",
+        ))
+        .unwrap();
+        assert!(look_alike.claims_host_page());
+        let near = Manifest::parse(&bare(
+            "[[navigation]]\nlabel = \"Fleet activity\"\npath = \"activity-log\"\n",
+        ))
+        .unwrap();
+        assert!(!near.claims_host_page());
         // An app with no pages (jobs, Discord) declares none: nothing
         // written back.
         let plain = Manifest::parse(&manifest("")).unwrap();

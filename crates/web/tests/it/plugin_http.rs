@@ -167,8 +167,8 @@ async fn an_approved_host_answers_and_every_request_is_logged(db: PgPool) {
     assert_eq!(rows[1].1, OTHER);
     assert_eq!(rows[1].3, Some(404));
 
-    // And shown on the app's admin page.
-    let page = page(&h, "/admin/plugins/acme.http", &owner).await;
+    // And shown on the app's Activity page, under Manage.
+    let page = page(&h, "/plugins/acme.http/activity", &owner).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(
         page.body.contains("api.example.com/v1/thing"),

@@ -1,0 +1,127 @@
+{#- Tether's Activity page in an app's space (DESIGN.md, App shell),
+    under its Manage, for app admins, and a stopped app's admin page: what
+    it (`a`) asked of ESI and the web, its schedules and how each last
+    ran, its jobs and its log. Plugins never see it. -#}
+{%- import "ui.html" as ui -%}
+<section class="card data-card" aria-labelledby="calls-title">
+  <header>
+    <div class="panel-head"><h2 id="calls-title">ESI calls</h2><span class="panel-meta">Kept 90 days · EVE time</span></div>
+    <p>Every call it made through Tether, and its Discord posts, newest first.</p>
+  </header>
+  {% if a.access.is_empty() %}
+  <p class="px-5 pb-5 text-sm text-muted-foreground">None yet.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Character</th><th scope="col">Endpoint</th><th scope="col">Outcome</th></tr></thead>
+    <tbody>
+      {% for r in a.access %}
+      <tr>
+        <td class="num"><span title="{{ r.at_full }}">{{ r.at }}</span></td>
+        <td>{% if r.character.is_empty() %}<span class="blank">—</span>{% else %}{{ r.character }}{% endif %}</td>
+        <td><span class="num">{{ r.endpoint }}</span></td>
+        <td>{% call ui::status(r.tone, r.outcome.as_str()) %}{% endcall %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+{% if !a.http.is_empty() %}
+<section class="card data-card" aria-labelledby="http-title">
+  <header>
+    <div class="panel-head"><h2 id="http-title">HTTPS requests</h2><span class="panel-meta">Kept 90 days · EVE time</span></div>
+    <p>Its requests to the hosts approved for it, newest first; the query string isn't kept.</p>
+  </header>
+  <table class="table">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Request</th><th scope="col" class="num">Status</th><th scope="col">Outcome</th><th scope="col" class="num">Bytes</th><th scope="col" class="num">ms</th></tr></thead>
+    <tbody>
+      {% for r in a.http %}
+      <tr>
+        <td class="num"><span title="{{ r.at_full }}">{{ r.at }}</span></td>
+        <td class="w-full whitespace-normal"><div class="break-all text-sm num">{{ r.method }} {{ r.host }}{{ r.path }}</div>{% if !r.secret.is_empty() %}<div class="text-xs text-muted-foreground num">with {{ r.secret }}</div>{% endif %}</td>
+        <td class="num">{{ r.status }}</td>
+        <td>{{ r.outcome }}</td>
+        <td class="num">{{ r.bytes }}</td>
+        <td class="num">{{ r.ms }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if !a.schedules.is_empty() %}
+<section class="card data-card" aria-labelledby="schedules-title">
+  <header>
+    <div class="panel-head"><h2 id="schedules-title">Schedules</h2><span class="panel-meta">EVE time</span></div>
+    <p>Declared in the app; they run while it's enabled.</p>
+  </header>
+  <table class="table">
+    <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last run</th><th scope="col">Next</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+      {% for s in a.schedules %}
+      <tr>
+        <td><span class="num">{{ s.name }}</span></td>
+        <td>{{ s.every }}</td>
+        <td>{% if let Some((tone, word, ago)) = s.last %}<div>{% call ui::status(tone, word) %}{% endcall %}</div><div class="text-xs text-muted-foreground num">{{ ago }}</div>{% else %}<span class="blank">—</span>{% endif %}</td>
+        <td>{% if s.enabled %}<span class="num" title="{{ s.next_at }} EVE">{{ s.next }}</span>{% else %}{% call ui::status("off", "Off") %}{% endcall %}{% endif %}</td>
+        <td class="text-right">{% if s.enabled && a.running %}<form method="post" action="/admin/plugins/{{ a.plugin_id }}/schedules/{{ s.name }}/run" hx-post="/admin/plugins/{{ a.plugin_id }}/schedules/{{ s.name }}/run" hx-target="this" hx-swap="outerHTML"><button type="submit" class="btn" data-variant="outline" data-size="sm">Run now</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="card data-card" aria-labelledby="jobs-title">
+  <header>
+    <div class="panel-head"><h2 id="jobs-title">Jobs</h2><span class="panel-meta">{{ a.active_jobs }} queued or running</span></div>
+  </header>
+  {% if a.upcoming.is_empty() %}
+  <p class="px-5 pb-5 text-sm text-muted-foreground">Nothing queued.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th scope="col">Job</th><th scope="col">Key</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Tries</th></tr></thead>
+    <tbody>
+      {% for j in a.upcoming %}
+      <tr><td><span class="num">{{ j.name }}</span>{% if j.state == "running" %} {% call ui::status("ok", "Running") %}{% endcall %}{% endif %}</td><td><span class="num">{{ j.key }}</span></td><td class="num">{{ j.when }}</td><td class="num">{{ j.attempts }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if !a.dead.is_empty() %}
+  <table class="table">
+    <thead><tr><th scope="col">Gave up</th><th scope="col">Last error</th><th scope="col" class="num">Tries</th></tr></thead>
+    <tbody>
+      {% for j in a.dead %}
+      <tr><td><div class="font-medium num">{{ j.name }}</div><div class="text-xs text-muted-foreground num">{{ j.key }} · {{ j.when }} EVE</div></td><td class="w-full whitespace-normal"><div class="line-clamp-2 break-words text-sm">{{ j.error }}</div></td><td class="num">{{ j.attempts }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="card data-card" aria-labelledby="log-title">
+  <header>
+    <div class="panel-head"><h2 id="log-title">Log</h2><span class="panel-meta">The last 1,000 lines kept · EVE time</span></div>
+    <p>What the app wrote, newest first.</p>
+  </header>
+  {% if a.logs.is_empty() %}
+  <p class="px-5 pb-5 text-sm text-muted-foreground">Nothing yet.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Level</th><th scope="col">From</th><th scope="col">Message</th></tr></thead>
+    <tbody>
+      {% for l in a.logs %}
+      <tr>
+        <td class="num"><span title="{{ l.at_full }}">{{ l.at }}</span></td>
+        <td>{% if l.level == "error" %}{% call ui::status("danger", "Error") %}{% endcall %}{% else if l.level == "warn" %}{% call ui::status("warn", "Warning") %}{% endcall %}{% else %}<span class="text-sm text-muted-foreground">{{ l.level }}</span>{% endif %}</td>
+        <td><span class="num">{{ l.source }}</span></td>
+        <td class="w-full whitespace-normal"><div class="break-words text-sm num">{{ l.message }}</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>

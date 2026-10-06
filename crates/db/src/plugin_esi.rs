@@ -60,7 +60,9 @@ pub async fn account_token_scopes(
 #[derive(Debug, Clone)]
 pub struct DataSource {
     pub character: CharacterRow,
+    /// The main of the account that added it, and that account.
     pub offered_by: Option<String>,
+    pub offered_by_account: Option<i64>,
     pub offered_at: DateTime<Utc>,
     /// Added (or, before owners needed no approval, approved).
     pub approved: bool,
@@ -128,10 +130,28 @@ pub async fn remove_data_source<'e>(
 
 /// Offered and approved data sources of a plugin.
 pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSource>, sqlx::Error> {
+    Ok(sources_of(pool, Some(plugin_id))
+        .await?
+        .into_iter()
+        .map(|(_, source)| source)
+        .collect())
+}
+
+/// Every app's data sources, with the app's id: the sidebar's foot and the
+/// System page count them.
+pub async fn all_data_sources(pool: &PgPool) -> Result<Vec<(String, DataSource)>, sqlx::Error> {
+    sources_of(pool, None).await
+}
+
+async fn sources_of(
+    pool: &PgPool,
+    plugin_id: Option<&str>,
+) -> Result<Vec<(String, DataSource)>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
-        SELECT c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,
+        SELECT d.plugin_id, c.id, c.name, c.corporation_id, c.alliance_id, d.offered_at,
                d.approved_at IS NOT NULL AS "approved!", o.name AS "offered_by?",
+               d.offered_by AS offered_by_account,
                d.corporation_id AS approved_corporation,
                COALESCE(ca.id = d.offered_by AND ca.active AND NOT core.blacklisted(ca.id), false)
                    AS "account_ok!"
@@ -140,7 +160,7 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
         LEFT JOIN core.accounts ca ON ca.id = c.account_id
         LEFT JOIN core.accounts a ON a.id = d.offered_by
         LEFT JOIN core.characters o ON o.id = a.main_character_id
-        WHERE d.plugin_id = $1 ORDER BY c.name
+        WHERE $1::text IS NULL OR d.plugin_id = $1 ORDER BY c.name
         "#,
         plugin_id
     )
@@ -148,43 +168,106 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| DataSource {
-            character: CharacterRow {
-                id: r.id,
-                name: r.name,
-                corporation_id: r.corporation_id,
-                alliance_id: r.alliance_id,
-            },
-            offered_by: r.offered_by,
-            offered_at: r.offered_at,
-            approved: r.approved,
-            approved_corporation: r.approved_corporation,
-            account_ok: r.account_ok,
+        .map(|r| {
+            (
+                r.plugin_id,
+                DataSource {
+                    character: CharacterRow {
+                        id: r.id,
+                        name: r.name,
+                        corporation_id: r.corporation_id,
+                        alliance_id: r.alliance_id,
+                    },
+                    offered_by: r.offered_by,
+                    offered_by_account: r.offered_by_account,
+                    offered_at: r.offered_at,
+                    approved: r.approved,
+                    approved_corporation: r.approved_corporation,
+                    account_ok: r.account_ok,
+                },
+            )
         })
         .collect())
 }
 
-/// Every app's data sources, working and not (the sidebar's foot for app
-/// admins): working is approved, still in the corporation it was approved
-/// for, on the active, unblacklisted account that offered it.
-pub async fn data_source_health(pool: &PgPool) -> Result<(i64, i64), sqlx::Error> {
-    let row = sqlx::query!(
+/// How a data source's calls to one endpoint went since it was added:
+/// when one last went through, and the latest with what came of it.
+#[derive(Debug, Clone)]
+pub struct SourceReads {
+    pub plugin_id: String,
+    pub character_id: i64,
+    /// The catalogue's name of the endpoint called.
+    pub endpoint: String,
+    pub last_ok: Option<DateTime<Utc>>,
+    pub last_at: DateTime<Utc>,
+    /// One of [`SOURCE_OUTCOMES`].
+    pub last_outcome: String,
+}
+
+/// The access log's outcomes that say how a source is doing: through, or
+/// refused for its login or its roles. The rest are the app's or ESI's
+/// (a bad request, a 5xx, Tether's own limits).
+pub const SOURCE_OUTCOMES: [&str; 4] = ["ok", "ESI 401", "ESI 403", "no usable token"];
+
+/// These apps' data sources' calls since `since` (and since each was last
+/// added), by app, character and endpoint, from the access log: the Data
+/// sources page, its notice, and the count of those working.
+pub async fn source_reads(
+    pool: &PgPool,
+    plugin_ids: &[String],
+    since: DateTime<Utc>,
+) -> Result<Vec<SourceReads>, sqlx::Error> {
+    let rows = sqlx::query!(
         r#"
-        SELECT count(*) FILTER (WHERE ok) AS "working!", count(*) FILTER (WHERE NOT ok) AS "broken!"
-        FROM (
-            SELECT d.approved_at IS NOT NULL
-                   AND c.corporation_id = d.corporation_id
-                   AND COALESCE(ca.id = d.offered_by AND ca.active AND NOT core.blacklisted(ca.id), false)
-                   AS ok
-            FROM core.plugin_data_sources d
-            JOIN core.characters c ON c.id = d.character_id
-            LEFT JOIN core.accounts ca ON ca.id = c.account_id
-        ) s
+        SELECT l.plugin_id, l.character_id AS "character_id!", l.endpoint,
+               max(l.at) FILTER (WHERE l.outcome = 'ok') AS last_ok,
+               max(l.at) AS "last_at!",
+               (array_agg(l.outcome ORDER BY l.id DESC))[1] AS "last_outcome!"
+        FROM core.plugin_access_log l
+        JOIN core.plugin_data_sources d
+          ON d.plugin_id = l.plugin_id AND d.character_id = l.character_id
+        WHERE l.plugin_id = ANY($1) AND l.at > $2 AND l.at >= d.offered_at
+          AND l.outcome = ANY($3)
+        GROUP BY l.plugin_id, l.character_id, l.endpoint
+        "#,
+        plugin_ids,
+        since,
+        &SOURCE_OUTCOMES.map(str::to_owned) as &[String],
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SourceReads {
+            plugin_id: r.plugin_id,
+            character_id: r.character_id,
+            endpoint: r.endpoint,
+            last_ok: r.last_ok,
+            last_at: r.last_at,
+            last_outcome: r.last_outcome,
+        })
+        .collect())
+}
+
+/// The corporations of the mains in the Member state (active accounts),
+/// with their names where known: what an app's data sources should cover.
+pub async fn member_corporations(pool: &PgPool) -> Result<Vec<(i64, Option<String>)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT c.corporation_id AS "corporation_id!", n.name AS "name?"
+        FROM core.accounts a
+        JOIN core.states s ON s.id = a.state_id
+        JOIN core.characters c ON c.id = a.main_character_id
+        LEFT JOIN core.entity_names n ON n.id = c.corporation_id
+        WHERE s.builtin = 'member' AND a.active AND c.corporation_id IS NOT NULL
         "#
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await?;
-    Ok((row.working, row.broken))
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.corporation_id, r.name))
+        .collect())
 }
 
 /// A data source's alliance (the character's own), for alliance endpoints;

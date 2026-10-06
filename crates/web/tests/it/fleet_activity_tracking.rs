@@ -1356,11 +1356,7 @@ async fn only_your_own_characters_track(db: PgPool) {
     let hash = tracked_link(&h, &owner).await;
     let res = send(
         &h.app,
-        form(
-            &format!("/admin/plugins/{ID}/sources/{CHRIBBA}/remove"),
-            "",
-            &owner,
-        ),
+        form(&format!("/apps/{ID}/owners/{CHRIBBA}/remove"), "", &owner),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -1413,13 +1409,32 @@ async fn a_deactivated_fcs_data_source_stops_tracking(db: PgPool) {
         (Some("stopped".into()), Some("data_source".into()))
     );
     assert_eq!(queued_polls(&h).await, 0);
-    let admin = page(&h, &format!("/admin/plugins/{ID}"), &owner).await;
+    // Its Data sources page says why, and the app's pages say so to
+    // those who look after its sources.
+    let listed = page(&h, &format!("/plugins/{ID}/data-sources"), &owner).await;
     assert!(
-        admin
-            .body
-            .contains("account deactivated, blacklisted or changed"),
+        listed.body.contains(">Not used</span>")
+            && listed
+                .body
+                .contains("Its account is deactivated or blacklisted"),
         "{}",
-        admin.body
+        listed.body
+    );
+    let main = open(&h, "", &owner).await;
+    assert!(
+        main.body
+            .contains("A data source isn&#39;t working: Line Member")
+            || main
+                .body
+                .contains("A data source isn't working: Line Member"),
+        "{}",
+        main.body
+    );
+    assert!(
+        main.body
+            .contains(&format!(r#"href="/plugins/{ID}/data-sources""#)),
+        "{}",
+        main.body
     );
 }
 
@@ -1565,21 +1580,24 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
             .body
             .matches(r#"name="back" value="links/create""#)
             .count(),
-        2,
+        1,
         "{}",
         create.body
     );
-    // A fleet boss's fleet isn't a corporation's data: the card says so.
-    let main = open(&h, "", &owner).await;
+    // A fleet boss's fleet isn't a corporation's data: its Data sources
+    // page says so.
+    let listed = open(&h, "data-sources", &owner).await;
     assert!(
-        main.body.contains("Characters this app reads ESI through."),
+        listed
+            .body
+            .contains("Fleet Activity Tracking reads ESI through"),
         "{}",
-        main.body
+        listed.body
     );
     assert!(
-        !main.body.contains("Characters whose corporation"),
+        !listed.body.contains("corporation&#39;s data") && !listed.body.contains("in-game role"),
         "{}",
-        main.body
+        listed.body
     );
     // Only one of the app's own pages to come back to.
     for bad in ["https://evil.example", "/admin", "../x", "a?b=c"] {
@@ -1669,11 +1687,11 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
     work(&h).await;
     assert_eq!(esi_fats(&h, &hash).await.len(), 2);
 
-    // The owners card on the app's page: active, no approval anywhere.
-    let main = open(&h, "", &owner).await.body;
-    assert!(main.contains(">Active</span>"), "{main}");
-    assert!(!main.contains("/approve"), "{main}");
-    assert!(!main.contains("waiting for an admin"), "{main}");
+    // Its Data sources page: working, no approval anywhere.
+    let listed = open(&h, "data-sources", &owner).await.body;
+    assert!(listed.contains(">Working</span>"), "{listed}");
+    assert!(!listed.contains("/approve"), "{listed}");
+    assert!(!listed.contains("waiting for an admin"), "{listed}");
 }
 
 /// aa-afat's Setting and its rules: the reopen grace time and duration,

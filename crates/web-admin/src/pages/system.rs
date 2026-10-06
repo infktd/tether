@@ -239,7 +239,7 @@ impl Readings {
             schedules: tether_jobs::schedule::list(&state.db).await?,
             last_runs,
             discord: crate::discord::is_configured(state).await?,
-            sources: tether_db::plugin_esi::data_source_health(&state.db).await?,
+            sources: tether_web_core::pages::plugin_access::source_health(state).await?,
             updates: updates::status(&state.db).await?,
             apps: tether_db::plugins::list(&state.db)
                 .await?

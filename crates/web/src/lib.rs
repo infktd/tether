@@ -421,10 +421,6 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/plugins/{id}", get(pages::plugins::plugin))
         .route(
-            "/admin/plugins/{id}/sources/{character}/remove",
-            post(pages::plugins::remove_source),
-        )
-        .route(
             "/admin/plugins/{id}/channels",
             post(pages::plugins::assign_channel),
         )

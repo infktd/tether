@@ -287,7 +287,7 @@ Phase 1, feel and look:
 Phase 2, the app shell:
 
 - [x] The manifest declares an app's views, primary action and manage pages; Tether draws its header, views bar and Manage pages, and apps' own page links and buttons go (2026-10-06: `[[views]]` is required of every app with pages; the old path, where a page's links were its views bar, is gone)
-- [ ] Data sources: one page per app under Manage (character, corporation, role check, last read, status, coverage, a link to send a Director), the notice when one stops working, and Activity under Manage (jobs, schedules, log, ESI calls)
+- [x] Data sources: one page per app under Manage (character, corporation, role check, last read, status, coverage, a link to send a Director), the notice when one stops working, and Activity under Manage (jobs, schedules, log, ESI calls). The role check is ESI's own answer: a corporation endpoint's latest 403 (no extra ESI calls); Add data source moved from every page's header to this page
 - [x] All 17 apps moved over, each with a version bump
 
 Phase 3, lists and settings:

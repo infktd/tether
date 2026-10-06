@@ -51,27 +51,13 @@
   </section>
   {% endif %}
 
-  {% if !about.capabilities.is_empty() && !sources.is_empty() %}
-  <section class="card data-card">
-    <header><h2>Data sources</h2><p>Characters the app reads ESI through (a corporation's data, or the character's own), added by pilots with the app's add permission (Alliance Auth's owners). Each is used only while it stays in the corporation it was added for, on the account that added it. Tether asks ESI with that character's token every time, and for corporation data ESI checks the in-game role (it can take up to an hour to notice a change). Remove any you don't want the app to read.</p></header>
-    <table class="table">
-      <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Added by</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>
-        {% for d in sources %}
-        <tr>
-          <td class="font-medium">{{ d.name }}</td>
-          <td>{{ d.corporation }}</td>
-          <td><div class="text-sm">{{ d.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ d.when }} EVE</div></td>
-          <td>{% if d.state == "active" %}{% call ui::status("ok", "Active") %}{% endcall %}{% else if d.state == "suspended" %}{% call ui::status("danger", "Not used: account deactivated, blacklisted or changed") %}{% endcall %}{% else %}{% call ui::status("danger", "Changed corporation: add it again") %}{% endcall %}{% endif %}</td>
-          <td class="text-right">
-            <div class="inline-flex gap-2">
-              <form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/remove"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  {% if running %}
+  <section class="card">
+    <header><h2>Data sources and activity</h2><p>Under the app's Manage: {% if has_sources %}its data sources and how each is doing, and {% endif %}its ESI and HTTPS calls, schedules, jobs and log.</p></header>
+    <footer class="flex flex-wrap gap-2">
+      {% if has_sources %}<a class="btn" data-variant="outline" href="/plugins/{{ about.id }}/data-sources">Data sources</a>{% endif %}
+      <a class="btn" data-variant="outline" href="/plugins/{{ about.id }}/activity">Activity</a>
+    </footer>
   </section>
   {% endif %}
 
@@ -99,23 +85,9 @@
   </section>
   {% endif %}
 
-  {% if !access.is_empty() %}
+  {% if !http_hosts.is_empty() || !http_unapproved.is_empty() %}
   <section class="card data-card">
-    <header><h2>Recent data access</h2><p>Every ESI call and Discord post, kept 90 days; EVE time.</p></header>
-    <table class="table">
-      <thead><tr><th scope="col">When</th><th scope="col">Character</th><th scope="col">Endpoint</th><th scope="col">Outcome</th></tr></thead>
-      <tbody>
-        {% for a in access %}
-        <tr><td class="num whitespace-nowrap">{{ a.at }}</td><td>{{ a.character }}</td><td class="num">{{ a.endpoint }}</td><td>{{ a.outcome }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-  {% endif %}
-
-  {% if !http_hosts.is_empty() || !http_unapproved.is_empty() || !http_calls.is_empty() %}
-  <section class="card data-card">
-    <header><h2>HTTPS requests</h2><p>The hosts you approved for this app; it can reach nothing else. Tether sends each request, adds the secrets below, and records every one here (the query string isn't kept), for 90 days; EVE time.</p></header>
+    <header><h2>HTTPS hosts</h2><p>The hosts you approved for this app; it can reach nothing else. Tether sends each request and adds the secrets below; its requests are under the app's Activity.</p></header>
     <section class="flex flex-wrap gap-2 px-5">
       {% for h in http_hosts %}<span class="badge num" data-variant="outline">{{ h }}</span>{% endfor %}
       {% for h in http_unapproved %}{% call ui::status_with("danger") %}<span class="num">{{ h }}</span>: not approved, refused{% endcall %}{% endfor %}
@@ -142,92 +114,11 @@
     </table>
     <p class="px-5 pb-2 text-xs text-muted-foreground">Values are stored encrypted and never shown again, not even to the app.</p>
     {% endif %}
-    {% if http_calls.is_empty() %}<p class="px-5 pb-5 text-sm text-muted-foreground">No requests yet.</p>{% else %}
-    <table class="table">
-      <thead><tr><th scope="col">When</th><th scope="col">Request</th><th scope="col">Status</th><th scope="col">Outcome</th><th scope="col" class="text-right">Bytes</th><th scope="col" class="text-right">ms</th></tr></thead>
-      <tbody>
-        {% for c in http_calls %}
-        <tr>
-          <td class="num whitespace-nowrap">{{ c.at }}</td>
-          <td class="w-full whitespace-normal"><div class="break-all text-sm num">{{ c.method }} {{ c.host }}{{ c.path }}</div>{% if !c.secret.is_empty() %}<div class="text-xs text-muted-foreground num">with {{ c.secret }}</div>{% endif %}</td>
-          <td class="num">{{ c.status }}</td>
-          <td>{{ c.outcome }}</td>
-          <td class="num text-right">{{ c.bytes }}</td>
-          <td class="num text-right">{{ c.ms }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
   </section>
   {% endif %}
 
-  {% if !schedules.is_empty() %}
-  <section class="card data-card">
-    <header><h2>Schedules</h2><p>Declared in the app; they run while it's enabled.</p></header>
-    <table class="table">
-      <thead><tr><th scope="col">Schedule</th><th scope="col">Runs</th><th scope="col">Last queued</th><th scope="col">Next</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>
-        {% for s in schedules %}
-        <tr>
-          <td class="num">{{ s.name }}{% if !s.enabled %} {% call ui::status("off", "Off") %}{% endcall %}{% endif %}</td>
-          <td>{{ s.every }}</td>
-          <td class="num">{{ s.last_run }}</td>
-          <td class="num">{{ s.next_run }}</td>
-          <td class="text-right">{% if s.enabled %}<form method="post" action="/admin/plugins/{{ about.id }}/schedules/{{ s.name }}/run" hx-post="/admin/plugins/{{ about.id }}/schedules/{{ s.name }}/run" hx-target="this" hx-swap="outerHTML"><button type="submit" class="btn" data-variant="outline" data-size="sm">Run now</button></form>{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-  {% endif %}
-
-  <section class="card data-card">
-    <header><h2>Jobs <span class="num text-muted-foreground font-normal">{{ active_jobs }}</span></h2><p>Queued or running now; EVE time.</p></header>
-    {% if upcoming.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">Nothing queued.</p>
-    {% else %}
-    <table class="table">
-      <thead><tr><th scope="col">Job</th><th scope="col">Key</th><th scope="col">Runs</th><th scope="col">Tries</th></tr></thead>
-      <tbody>
-        {% for j in upcoming %}
-        <tr><td class="num">{{ j.name }}{% if j.state == "running" %} {% call ui::status("ok", "Running") %}{% endcall %}{% endif %}</td><td class="num">{{ j.key }}</td><td class="num">{{ j.when }}</td><td class="num">{{ j.attempts }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-    {% if !dead.is_empty() %}
-    <table class="table">
-      <thead><tr><th scope="col">Gave up</th><th scope="col">Last error</th><th scope="col">Tries</th></tr></thead>
-      <tbody>
-        {% for j in dead %}
-        <tr><td><div class="font-medium num">{{ j.name }}</div><div class="text-xs text-muted-foreground num">{{ j.key }} · {{ j.when }}</div></td><td class="w-full whitespace-normal"><div class="line-clamp-2 break-words text-sm">{{ j.error }}</div></td><td class="num">{{ j.attempts }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-  </section>
-
-  <section class="card data-card">
-    <header><h2>Log</h2><p>What the app wrote, newest first; the last 1,000 lines are kept.</p></header>
-    {% if logs.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">Nothing yet.</p>
-    {% else %}
-    <table class="table">
-      <thead><tr><th scope="col">When</th><th scope="col">Level</th><th scope="col">From</th><th scope="col">Message</th></tr></thead>
-      <tbody>
-        {% for l in logs %}
-        <tr>
-          <td class="num whitespace-nowrap">{{ l.at }}</td>
-          <td><span class="badge" data-variant="{% if l.level == "error" %}destructive{% else %}outline{% endif %}">{{ l.level }}</span></td>
-          <td class="num">{{ l.source }}</td>
-          <td class="w-full whitespace-normal"><div class="break-words text-sm num">{{ l.message }}</div></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-  </section>
+  {% if let Some(o) = owners %}{% include "app_data_sources.html" %}{% endif %}
+  {% if let Some(a) = activity %}{% include "app_activity.html" %}{% endif %}
 
   {% include "admin_plugin_about.html" %}
 
