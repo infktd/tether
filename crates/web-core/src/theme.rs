@@ -1,6 +1,6 @@
-//! The accent colour (DESIGN.md): one per instance, amber unless an admin
-//! picks another. Served as a small stylesheet after the built one, since
-//! the CSP allows no inline styles.
+//! The accent colour (DESIGN.md: the signal): one per instance, signal
+//! orange unless an admin picks another. Served as a small stylesheet
+//! after the built one, since the CSP allows no inline styles.
 
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -12,18 +12,37 @@ use tether_db::audit::{self, Actor};
 use crate::AppState;
 use crate::error::AppError;
 
-pub const DEFAULT: &str = "#f59e0b";
+/// Signal orange (DESIGN.md).
+pub const DEFAULT: &str = "#ff7a1a";
 
-/// DESIGN.md's suggestions, all of a similar lightness.
+/// The suggestions, all of a similar lightness: signal orange first.
 pub const PRESETS: &[(&str, &str)] = &[
+    ("Signal orange", "#ff7a1a"),
     ("Amber", "#f59e0b"),
-    ("Orange", "#fb923c"),
     ("Violet", "#a78bfa"),
     ("Emerald", "#34d399"),
 ];
 
-/// The page background, which the soft accent is mixed into.
-const BACKGROUND: (u8, u8, u8) = (0x09, 0x09, 0x0b);
+/// The default's own colours, as `assets/app.css` defines them (tuned by
+/// hand in the design): the soft fill, a notice's border and its fill.
+const DESIGN: [(&str, &str); 4] = [
+    ("--accent", DEFAULT),
+    ("--accent-soft", "#2a1608"),
+    ("--accent-line", "#5a3417"),
+    ("--accent-wash", "#170f09"),
+];
+
+/// How much of another colour each of those is, mixed into the page
+/// background: close to the design's own for signal orange.
+const MIXES: [(&str, f64); 3] = [
+    ("--accent-soft", 0.14),
+    ("--accent-line", 0.35),
+    ("--accent-wash", 0.06),
+];
+
+/// The page background (`--background`), which the accent must read on
+/// and its other colours are mixed into.
+const BACKGROUND: (u8, u8, u8) = (0x07, 0x09, 0x0c);
 
 fn rgb(hex: &str) -> Option<(u8, u8, u8)> {
     let hex = hex.strip_prefix('#')?;
@@ -61,10 +80,10 @@ pub fn check(hex: &str) -> Result<String, AppError> {
     Ok(hex)
 }
 
-/// The accent mixed 14% into the background, for accent badge fills.
-fn soft(color: (u8, u8, u8)) -> String {
+/// `share` of the colour mixed into the background.
+fn mixed(color: (u8, u8, u8), share: f64) -> String {
     let mix = |a: u8, b: u8| {
-        let mixed = f64::from(a) * 0.14 + f64::from(b) * 0.86;
+        let mixed = f64::from(a) * share + f64::from(b) * (1.0 - share);
         // Two u8s mixed stay within 0..=255.
         mixed.round().clamp(0.0, 255.0) as u8
     };
@@ -76,18 +95,30 @@ fn soft(color: (u8, u8, u8)) -> String {
     )
 }
 
+/// The signal's colours for `accent`: the design's own for the default,
+/// else the accent and its others mixed from it (a badge's soft fill, a
+/// notice's and the save bar's border, a notice's fill).
 pub fn css(accent: &str) -> String {
     let color = rgb(accent).or_else(|| rgb(DEFAULT)).unwrap_or(BACKGROUND);
-    format!(
-        ":root,.dark{{--accent:#{:02x}{:02x}{:02x};--accent-soft:{}}}\n",
-        color.0,
-        color.1,
-        color.2,
-        soft(color)
-    )
+    let hex = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
+    let tokens: Vec<String> = if hex == DEFAULT {
+        DESIGN
+            .iter()
+            .map(|(name, value)| format!("{name}:{value}"))
+            .collect()
+    } else {
+        std::iter::once(format!("--accent:{hex}"))
+            .chain(
+                MIXES
+                    .iter()
+                    .map(|(name, share)| format!("{name}:{}", mixed(color, *share))),
+            )
+            .collect()
+    };
+    format!(":root,.dark{{{}}}\n", tokens.join(";"))
 }
 
-/// The instance's accent: the setting if it's valid, else amber.
+/// The instance's accent: the setting if it's valid, else signal orange.
 pub async fn accent<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<String, sqlx::Error> {
     Ok(
         tether_db::settings::get_string(executor, tether_db::settings::THEME_ACCENT)
@@ -125,7 +156,8 @@ pub async fn stylesheet(State(state): State<AppState>, headers: HeaderMap) -> Re
             DEFAULT.to_owned()
         }
     };
-    let etag = format!("\"{}\"", accent.trim_start_matches('#'));
+    let body = css(&accent);
+    let etag = etag(&body);
     let Ok(etag_value) = HeaderValue::from_str(&etag) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -149,9 +181,18 @@ pub async fn stylesheet(State(state): State<AppState>, headers: HeaderMap) -> Re
             (header::CACHE_CONTROL, cache),
             (header::ETAG, etag_value),
         ],
-        css(&accent),
+        body,
     )
         .into_response()
+}
+
+/// The stylesheet's ETag, from what it says: a new colour, or new colours
+/// for the same one (a Tether that derives more of them), is fetched anew.
+fn etag(body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(body.as_bytes());
+    let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    format!("\"{hex}\"")
 }
 
 #[cfg(test)]
@@ -159,14 +200,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_matches_design_md() {
+    fn the_default_is_the_designs_own() {
         assert_eq!(
             css(DEFAULT),
-            ":root,.dark{--accent:#f59e0b;--accent-soft:#2a1e0b}\n"
+            ":root,.dark{--accent:#ff7a1a;--accent-soft:#2a1608;--accent-line:#5a3417;\
+             --accent-wash:#170f09}\n"
         );
+        // As assets/app.css defines them, background included.
+        let app = include_str!("../../../assets/app.css");
+        for (name, value) in DESIGN {
+            assert!(app.contains(&format!("  {name}: {value};")), "{name}");
+        }
+        let (r, g, b) = BACKGROUND;
+        assert!(app.contains(&format!("  --background: #{r:02x}{g:02x}{b:02x};")));
         for (_, preset) in PRESETS {
             assert!(check(preset).is_ok(), "{preset}");
         }
+    }
+
+    #[test]
+    fn another_colour_brings_its_own_line_and_wash() {
+        assert_eq!(
+            css("#34d399"),
+            ":root,.dark{--accent:#34d399;--accent-soft:#0d2520;--accent-line:#17503d;\
+             --accent-wash:#0a1514}\n"
+        );
     }
 
     #[test]

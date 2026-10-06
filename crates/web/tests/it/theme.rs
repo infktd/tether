@@ -1,5 +1,5 @@
-//! The accent colour (DESIGN.md): amber unless an admin picks another,
-//! served as /theme.css after the built stylesheet.
+//! The accent colour (DESIGN.md: the signal): signal orange unless an
+//! admin picks another, served as /theme.css after the built stylesheet.
 
 use axum::http::{StatusCode, header};
 use sqlx::PgPool;
@@ -15,7 +15,7 @@ async fn admins_pick_the_accent(db: PgPool) {
     // Public: the sign-in page uses it too.
     let css = send(&h.app, get("/theme.css", &[])).await;
     assert_eq!(css.status, StatusCode::OK);
-    assert!(css.body.contains("--accent:#f59e0b"), "{}", css.body);
+    assert!(css.body.contains("--accent:#ff7a1a"), "{}", css.body);
     let etag = css.headers[header::ETAG].to_str().unwrap().to_owned();
     let again = send(
         &h.app,
@@ -43,6 +43,12 @@ async fn admins_pick_the_accent(db: PgPool) {
     assert_eq!(res.location(), "/admin/settings", "{}", res.body);
     let css = send(&h.app, get("/theme.css", &[])).await;
     assert!(css.body.contains("--accent:#a78bfa"), "{}", css.body);
+    // Its own border and fill for notices and the save bar, not orange's.
+    assert!(
+        css.body.contains("--accent-line:") && !css.body.contains("#5a3417"),
+        "{}",
+        css.body
+    );
     assert_ne!(css.headers[header::ETAG].to_str().unwrap(), etag);
 
     // A custom colour, checked: too dark to read is refused.
