@@ -312,6 +312,14 @@ async fn moon_mining_end_to_end(db: PgPool) {
 
     // Members (the owner holds everything): extractions, with names.
     let moons = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    // Corporation scopes: the data sources card says whose data it is.
+    assert!(
+        moons
+            .body
+            .contains("Characters whose corporation's data this app reads."),
+        "{}",
+        moons.body
+    );
     // aa-moonmining has no Members-only window: off unless turned on.
     assert!(!moons.body.contains("Fresh moons"), "{}", moons.body);
     assert_eq!(moons.status, StatusCode::OK, "{}", moons.body);

@@ -1943,7 +1943,10 @@ fn draw(
         error,
         watermark,
         href: opened.href.clone(),
-        owners: opened.owners,
+        owners: opened.owners.map(|mut owners| {
+            owners.back = opened.path.clone();
+            owners
+        }),
         audited,
         home,
     };

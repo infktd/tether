@@ -56,6 +56,12 @@ pub struct Owners {
     /// it).
     pub panel: bool,
     pub scopes: Vec<String>,
+    /// The scopes read a corporation's data (through an in-game role),
+    /// rather than the character's own (a fleet boss's fleet).
+    pub corporate: bool,
+    /// The app page Add data source comes back to (a link path; empty for
+    /// the main page).
+    pub back: String,
     pub rows: Vec<OwnerRow>,
     pub gone: Vec<GoneRow>,
 }
@@ -105,6 +111,11 @@ pub async fn owners(
             && plugin_consent::may_offer(manifest, |p| holds(p)),
         can_manage: holds(ADMIN_PLUGINS),
         panel: false,
+        corporate: manifest.capabilities.esi.data_source.iter().any(|s| {
+            tether_core::scopes::info(s)
+                .is_some_and(|i| i.kind == tether_core::scopes::ScopeKind::Corporation)
+        }),
+        back: String::new(),
         scopes: manifest.capabilities.esi.data_source.clone(),
         rows: Vec::new(),
         gone: Vec::new(),
@@ -192,8 +203,7 @@ fn back(state: &AppState, id: &str, message: &str) -> Response {
 }
 
 /// Add owner's form: the app page it was on (`back`, a link path), which
-/// the login comes back to. The header's button leaves it out: the app's
-/// main page.
+/// the login comes back to; empty for the app's main page.
 #[derive(Debug, Default, Deserialize)]
 pub struct AddForm {
     #[serde(default)]

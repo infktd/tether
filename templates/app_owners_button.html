@@ -1,8 +1,10 @@
 {#- An app page's Add data source (AA's Add Owner), for those who may add a
-    character as the app's data source: one EVE login, and it's in use. -#}
+    character as the app's data source: one EVE login, and it's in use,
+    back on the page it was added from. -#}
 {%- import "icons.html" as icons -%}
 {% if let Some(o) = c.owners %}{% if o.can_offer %}
 <form method="post" action="/apps/{{ o.plugin_id }}/owners/add" hx-boost="false" class="shrink-0">
+  {% if !o.back.is_empty() %}<input type="hidden" name="back" value="{{ o.back }}">{% endif %}
   <button type="submit" class="btn" data-variant="outline">{% call icons::icon("plus") %}{% endcall %} Add data source</button>
 </form>
 {% endif %}{% endif %}

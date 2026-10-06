@@ -1,5 +1,6 @@
 {#- An app's data sources (AA's owners), on its main page: the characters
-    whose corporation data the app reads, in use once added. App admins
+    the app reads ESI through (a corporation's data, or their own), in use
+    once added. App admins
     see them all, with Remove; everyone else sees their own, with
     Withdraw. Drawn by the host: plugins never see it. -#}
 {%- import "ui.html" as ui -%}
@@ -7,12 +8,12 @@
 <section class="card data-card" id="owners" aria-labelledby="owners-title">
   <header>
     <h2 id="owners-title">Data sources <span class="num text-muted-foreground font-normal">{{ o.rows.len() }}</span></h2>
-    <p>Characters whose corporation's data this app reads.{% if o.can_manage %} You see every data source, and can remove any.{% else %} You can withdraw yours at any time.{% endif %}</p>
+    <p>{% if o.corporate %}Characters whose corporation's data this app reads.{% else %}Characters this app reads ESI through.{% endif %}{% if o.can_manage %} You see every data source, and can remove any.{% else %} You can withdraw yours at any time.{% endif %}</p>
     {#- The details, and the scopes, behind a disclosure (DESIGN.md, Page
         hygiene). -#}
     <details class="inline-disclosure text-xs text-muted-foreground mt-2">
       <summary><span><span class="num">{{ o.scopes.len() }}</span> ESI scope{% if o.scopes.len() != 1 %}s{% endif %} · how data sources work</span></summary>
-      <p class="mt-2 max-w-prose">A data source's corporation data is read through the in-game role ESI asks for.{% if o.can_offer %} Add data source logs in with one of your characters; the app uses it at once, while it stays in that corporation.{% endif %} The app never sees a login token.</p>
+      <p class="mt-2 max-w-prose">{% if o.corporate %}A data source's corporation data is read through the in-game role ESI asks for.{% if o.can_offer %} Add data source logs in with one of your characters; the app uses it at once, while it stays in that corporation.{% endif %}{% else %}The app reads what these scopes allow through each data source's own login.{% if o.can_offer %} Add data source logs in with one of your characters; the app uses it at once, while it stays in that corporation.{% endif %}{% endif %} The app never sees a login token.</p>
       <div class="flex flex-wrap gap-2 mt-2">{% for s in o.scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
     </details>
   </header>
@@ -41,8 +42,8 @@
         <td>{% if r.state == "active" %}{% call ui::status("ok", "Active") %}{% endcall %}{% else if r.state == "suspended" %}{% call ui::status("danger", "Not used: account deactivated, blacklisted or changed") %}{% endcall %}{% else %}{% call ui::status("danger", "Changed corporation: add it again") %}{% endcall %}{% endif %}</td>
         <td class="text-right">
           <div class="inline-flex gap-2">
-            {% if r.own %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/withdraw" hx-confirm="Withdraw {{ r.name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
-            {% else if o.can_manage %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/remove" hx-confirm="Remove {{ r.name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>{% endif %}
+            {% if r.own %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/withdraw" hx-confirm="Withdraw {{ r.name }}? {% if o.corporate %}The app stops reading its corporation's data.{% else %}The app stops reading through it.{% endif %}"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
+            {% else if o.can_manage %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/remove" hx-confirm="Remove {{ r.name }}? {% if o.corporate %}The app stops reading its corporation's data.{% else %}The app stops reading through it.{% endif %}"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>{% endif %}
           </div>
         </td>
       </tr>

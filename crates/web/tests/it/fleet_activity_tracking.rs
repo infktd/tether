@@ -1559,6 +1559,28 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
         create.body
     );
     assert!(!create.body.contains("name=\"track\""), "{}", create.body);
+    // The header's Add data source comes back here too.
+    assert_eq!(
+        create
+            .body
+            .matches(r#"name="back" value="links/create""#)
+            .count(),
+        2,
+        "{}",
+        create.body
+    );
+    // A fleet boss's fleet isn't a corporation's data: the card says so.
+    let main = open(&h, "", &owner).await;
+    assert!(
+        main.body.contains("Characters this app reads ESI through."),
+        "{}",
+        main.body
+    );
+    assert!(
+        !main.body.contains("Characters whose corporation"),
+        "{}",
+        main.body
+    );
     // Only one of the app's own pages to come back to.
     for bad in ["https://evil.example", "/admin", "../x", "a?b=c"] {
         let res = send(

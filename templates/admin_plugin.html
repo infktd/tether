@@ -53,7 +53,7 @@
 
   {% if !about.capabilities.is_empty() && !sources.is_empty() %}
   <section class="card data-card">
-    <header><h2>Data sources</h2><p>Characters added for their corporation's data by pilots with the app's add permission (Alliance Auth's owners). Each is used only while it stays in the corporation it was added for, on the account that added it. Tether asks ESI with that character's token every time, and ESI checks the in-game role (it can take up to an hour to notice a change). Remove any you don't want the app to read.</p></header>
+    <header><h2>Data sources</h2><p>Characters the app reads ESI through (a corporation's data, or the character's own), added by pilots with the app's add permission (Alliance Auth's owners). Each is used only while it stays in the corporation it was added for, on the account that added it. Tether asks ESI with that character's token every time, and for corporation data ESI checks the in-game role (it can take up to an hour to notice a change). Remove any you don't want the app to read.</p></header>
     <table class="table">
       <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Added by</th><th scope="col">State</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>

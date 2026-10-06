@@ -68,7 +68,7 @@
 
   {% if !owners.is_empty() %}
   <section class="card data-card">
-    <header><h2>App data sources</h2><p>Your characters that apps read corporation data through, added with Add data source. Withdraw one and the app stops reading its corporation's data.</p></header>
+    <header><h2>App data sources</h2><p>Your characters apps read ESI through (a corporation's data, or the character's own, such as a fleet boss's fleet), added with Add data source. Withdraw one and the app stops reading through it.</p></header>
     <table class="table">
       <thead><tr><th scope="col">Character</th><th scope="col">App</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
@@ -78,7 +78,7 @@
           <td>{{ o.plugin_name }}</td>
           <td>{% if o.state == "active" %}{% call ui::status("ok", "Active") %}{% endcall %}{% else %}{% call ui::status("off", "Not used") %}{% endcall %}{% endif %}</td>
           <td class="text-right">
-            <form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ o.character_id }}/withdraw?from=tokens" hx-confirm="Withdraw {{ o.name }} from {{ o.plugin_name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
+            <form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ o.character_id }}/withdraw?from=tokens" hx-confirm="Withdraw {{ o.name }} from {{ o.plugin_name }}? The app stops reading through it."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
           </td>
         </tr>
         {% endfor %}
