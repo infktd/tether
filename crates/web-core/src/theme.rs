@@ -88,28 +88,30 @@ pub fn css(accent: &str) -> String {
 }
 
 /// The instance's accent: the setting if it's valid, else amber.
-pub async fn accent(db: &tether_db::PgPool) -> Result<String, sqlx::Error> {
+pub async fn accent<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<String, sqlx::Error> {
     Ok(
-        tether_db::settings::get_string(db, tether_db::settings::THEME_ACCENT)
+        tether_db::settings::get_string(executor, tether_db::settings::THEME_ACCENT)
             .await?
             .filter(|c| rgb(c).is_some())
             .unwrap_or_else(|| DEFAULT.to_owned()),
     )
 }
 
-pub async fn set_accent(state: &AppState, actor: AccountId, hex: &str) -> Result<(), AppError> {
-    let hex = check(hex)?;
-    let mut tx = state.db.begin().await?;
-    tether_db::settings::set(&mut *tx, tether_db::settings::THEME_ACCENT, json!(hex)).await?;
+/// Sets the accent, as [`check`] gave it, audited.
+pub async fn set_accent(
+    conn: &mut sqlx::PgConnection,
+    actor: AccountId,
+    hex: &str,
+) -> Result<(), sqlx::Error> {
+    tether_db::settings::set(&mut *conn, tether_db::settings::THEME_ACCENT, json!(hex)).await?;
     audit::record(
-        &mut *tx,
+        &mut *conn,
         Actor::Account(actor),
         "theme.accent",
         None,
         json!({ "accent": hex }),
     )
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 

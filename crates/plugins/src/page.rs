@@ -10,7 +10,7 @@ use crate::host::Timeline;
 use crate::host::{
     Action, Composition, Defenses, Entity, FieldKind, Form, Levels, Profile, Progress,
 };
-use crate::host::{Page, RecordPanel, Section, Toolbar, Value};
+use crate::host::{Page, RecordPanel, Section, SettingsForm, Toolbar, Value};
 
 pub const MAX_SECTIONS: usize = 40;
 pub const MAX_TABS: usize = 10;
@@ -68,6 +68,11 @@ pub const MAX_LANE_ITEMS: usize = 50;
 pub const MAX_WINDOWS: usize = 60;
 /// The longest span a timeline shows.
 pub const MAX_TIMELINE_DAYS: i64 = 60;
+/// Groups in a settings form, and fields across them.
+pub const MAX_SETTINGS_GROUPS: usize = 16;
+pub const MAX_SETTINGS_FIELDS: usize = 120;
+/// What a settings form's button says, and its toast.
+pub const SETTINGS_SUBMIT: &str = "Save changes";
 /// Filters in a page's toolbar.
 pub const MAX_TOOLBAR_FILTERS: usize = 8;
 /// Facts in a record panel.
@@ -421,9 +426,11 @@ fn section_values(page: &Page) -> impl Iterator<Item = &Value> {
                         .iter()
                         .flat_map(|card| card.profile.facts.iter().map(|(_, v)| v)),
                 ),
-                Section::Text(_) | Section::Form(_) | Section::Code(_) | Section::Timeline(_) => {
-                    Box::new(std::iter::empty())
-                }
+                Section::Text(_)
+                | Section::Form(_)
+                | Section::Code(_)
+                | Section::Timeline(_)
+                | Section::Settings(_) => Box::new(std::iter::empty()),
             }
         })
 }
@@ -517,7 +524,31 @@ fn check_section(section: &Section, budget: &mut Budget) -> Result<(), PageProbl
             }
         }
         Section::Text(text) => budget.text("a paragraph", text)?,
-        Section::Form(form) => check_form(form, budget)?,
+        Section::Form(form) => check_form(form, budget, MAX_FIELDS_PER_FORM)?,
+        Section::Settings(settings) => {
+            if settings.groups.is_empty() || settings.groups.len() > MAX_SETTINGS_GROUPS {
+                return Err(problem(format!(
+                    "a settings form has {} groups; between 1 and {MAX_SETTINGS_GROUPS} are allowed",
+                    settings.groups.len()
+                )));
+            }
+            for group in &settings.groups {
+                if group.title.trim().is_empty() {
+                    return Err(problem("a settings group has no title"));
+                }
+                budget.text("a settings group's title", &group.title)?;
+                if let Some(description) = &group.description {
+                    budget.text("a settings group's description", description)?;
+                }
+                if group.fields.is_empty() || group.fields.len() > MAX_FIELDS_PER_FORM {
+                    return Err(problem(format!(
+                        "a settings group has {} fields; between 1 and {MAX_FIELDS_PER_FORM} are allowed",
+                        group.fields.len()
+                    )));
+                }
+            }
+            check_form(&settings_form(settings), budget, MAX_SETTINGS_FIELDS)?;
+        }
         Section::Code(code) => {
             if let Some(title) = &code.title {
                 budget.text("a code block title", title)?;
@@ -760,14 +791,14 @@ fn check_progress(progress: &Progress, budget: &mut Budget) -> Result<(), PagePr
 
 /// How often the host reloads a page's content, in seconds: what the page
 /// asks for, brought into [`MIN_REFRESH_SECONDS`] to
-/// [`MAX_REFRESH_SECONDS`]. Never for a page with a form, whose fields
-/// would be reset under someone typing.
+/// [`MAX_REFRESH_SECONDS`]. Never for a page with a form or a settings
+/// form, whose fields would be reset under someone typing.
 pub fn refresh_seconds(page: &Page) -> Option<u32> {
     let has_form = page
         .sections
         .iter()
         .chain(page.tabs.iter().flat_map(|t| t.sections.iter()))
-        .any(|s| matches!(s, Section::Form(_)));
+        .any(|s| matches!(s, Section::Form(_) | Section::Settings(_)));
     if has_form {
         return None;
     }
@@ -793,7 +824,22 @@ fn check_form_name(what: &str, name: &str) -> Result<(), PageProblem> {
     }
 }
 
-fn check_form(form: &Form, budget: &mut Budget) -> Result<(), PageProblem> {
+/// A settings form as the form it posts: its groups' fields in order.
+pub fn settings_form(settings: &SettingsForm) -> Form {
+    Form {
+        id: settings.id.clone(),
+        title: None,
+        description: None,
+        fields: settings
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter().cloned())
+            .collect(),
+        submit_label: SETTINGS_SUBMIT.to_owned(),
+    }
+}
+
+fn check_form(form: &Form, budget: &mut Budget, max_fields: usize) -> Result<(), PageProblem> {
     check_form_name("a form id", &form.id)?;
     if !budget.form_ids.insert(form.id.clone()) {
         return Err(problem(format!("two forms are called {:?}", form.id)));
@@ -805,9 +851,9 @@ fn check_form(form: &Form, budget: &mut Budget) -> Result<(), PageProblem> {
         budget.text("a form description", description)?;
     }
     budget.text("a submit label", &form.submit_label)?;
-    if form.fields.is_empty() || form.fields.len() > MAX_FIELDS_PER_FORM {
+    if form.fields.is_empty() || form.fields.len() > max_fields {
         return Err(problem(format!(
-            "a form has {} fields; between 1 and {MAX_FIELDS_PER_FORM} are allowed",
+            "a form has {} fields; between 1 and {max_fields} are allowed",
             form.fields.len()
         )));
     }
@@ -893,15 +939,27 @@ fn check_form(form: &Form, budget: &mut Budget) -> Result<(), PageProblem> {
     Ok(())
 }
 
-/// The form called `id` on a page, in its sections or tabs.
-pub fn find_form<'p>(page: &'p Page, id: &str) -> Option<&'p Form> {
+/// The form called `id` on a page, in its sections or tabs: a form, or a
+/// settings form as the form it posts.
+pub fn find_form<'p>(page: &'p Page, id: &str) -> Option<std::borrow::Cow<'p, Form>> {
     page.sections
         .iter()
         .chain(page.tabs.iter().flat_map(|t| t.sections.iter()))
         .find_map(|section| match section {
-            Section::Form(form) if form.id == id => Some(form),
+            Section::Form(form) if form.id == id => Some(std::borrow::Cow::Borrowed(form)),
+            Section::Settings(settings) if settings.id == id => {
+                Some(std::borrow::Cow::Owned(settings_form(settings)))
+            }
             _ => None,
         })
+}
+
+/// Whether the form called `id` on a page is a settings form.
+pub fn is_settings_form(page: &Page, id: &str) -> bool {
+    page.sections
+        .iter()
+        .chain(page.tabs.iter().flat_map(|t| t.sections.iter()))
+        .any(|section| matches!(section, Section::Settings(settings) if settings.id == id))
 }
 
 /// Checks posted values against a form's fields: every field known, none
@@ -1460,6 +1518,12 @@ mod tests {
             p.refresh_seconds = Some(asked);
             assert_eq!(refresh_seconds(&p), Some(got));
         }
+        let mut settings = p.clone();
+        settings.sections.push(Section::Settings(SettingsForm {
+            id: "s".to_owned(),
+            groups: Vec::new(),
+        }));
+        assert_eq!(refresh_seconds(&settings), None);
         p.tabs.push(crate::host::Tab {
             label: "t".to_owned(),
             sections: vec![Section::Form(Form {

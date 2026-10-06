@@ -56,7 +56,7 @@ async fn the_dashboard_and_audit_log_need_their_permissions(db: PgPool) {
         assert_eq!(page(&h, uri, &owner).await.status, StatusCode::OK, "{uri}");
     }
     for uri in [
-        "/admin/system/updates",
+        "/admin/settings",
         "/admin/system/updates/check",
         "/admin/jobs/1/retry",
     ] {
@@ -317,7 +317,7 @@ async fn update_checks_can_be_switched_off(db: PgPool) {
         .await;
 
     // The form without the checkbox ticked.
-    let off = send(&h.app, form("/admin/system/updates", "", &owner)).await;
+    let off = save_instance_settings(&h, &owner, &[("updates", "")]).await;
     assert_eq!(off.location(), "/admin/settings");
     assert!(!updates::status(&h.db).await.unwrap().enabled);
     let http = github_client(&github);
@@ -333,7 +333,7 @@ async fn update_checks_can_be_switched_off(db: PgPool) {
     let refused = send(&h.app, form("/admin/system/updates/check", "", &owner)).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
 
-    let on = send(&h.app, form("/admin/system/updates", "enabled=on", &owner)).await;
+    let on = save_instance_settings(&h, &owner, &[("updates", "on")]).await;
     assert_eq!(on.location(), "/admin/settings");
     assert!(updates::status(&h.db).await.unwrap().enabled);
     let actions: Vec<serde_json::Value> = sqlx::query_scalar(
@@ -511,27 +511,96 @@ async fn the_notification_cap_is_a_setting(db: PgPool) {
         "AA's default: {}",
         shown.body
     );
-    let res = send(
-        &h.app,
-        form("/admin/system/notifications", "max_per_user=0", &owner),
-    )
-    .await;
+    let res = save_instance_settings(&h, &owner, &[("max_per_user", "0")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
-    let res = send(
-        &h.app,
-        form("/admin/system/notifications", "max_per_user=3", &pilot),
-    )
-    .await;
+    let res = send(&h.app, form("/admin/settings", "max_per_user=3", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
-    let res = send(
-        &h.app,
-        form("/admin/system/notifications", "max_per_user=3", &owner),
-    )
-    .await;
+    let res = save_instance_settings(&h, &owner, &[("max_per_user", "3")]).await;
     assert_eq!(res.location(), "/admin/settings");
     assert_eq!(
         tether_db::settings::notifications_max(&h.db).await.unwrap(),
         3
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn settings_save_what_changed_at_once(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    let audited = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT action FROM core.audit_log WHERE action IN \
+             ('site.name', 'theme.accent', 'notifications.settings', 'updates.enabled') \
+             ORDER BY id",
+        )
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    };
+
+    // The page as it is: nothing to save.
+    let res = save_instance_settings(&h, &owner, &[]).await;
+    assert_eq!(res.location(), "/admin/settings");
+    assert!(audited().await.is_empty());
+
+    // One bad value saves nothing, the good ones with it.
+    let res = save_instance_settings(
+        &h,
+        &owner,
+        &[("site_name", "Some Alliance"), ("max_per_user", "5000")],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
+    assert!(res.body.contains("Keep 1 to 1000"), "{}", res.body);
+    assert!(audited().await.is_empty());
+    // With script, what's shown stays: a toast says why.
+    let res = send(
+        &h.app,
+        boosted(
+            form(
+                "/admin/settings",
+                "site_name=Some+Alliance&accent=%23a78bfa&max_per_user=5000&updates=on",
+                &owner,
+            ),
+            "/admin/settings",
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let (message, tone) = toast(&res).unwrap();
+    assert!(message.contains("Keep 1 to 1000"), "{message}");
+    assert_eq!(tone, "problem");
+    assert!(audited().await.is_empty());
+
+    // Two changes, two saves; the rest as it was.
+    let res = save_instance_settings(
+        &h,
+        &owner,
+        &[("site_name", "Some Alliance"), ("max_per_user", "7")],
+    )
+    .await;
+    assert_eq!(res.location(), "/admin/settings");
+    assert_eq!(audited().await, ["site.name", "notifications.settings"]);
+    let shown = page(&h, "/admin/settings", &owner).await.body;
+    assert!(shown.contains(r#"value="Some Alliance""#), "{shown}");
+    assert!(shown.contains(r#"value="7""#), "{shown}");
+
+    // A page shown before someone else's save doesn't undo it: what was
+    // left as shown stays as it is now (update checks, here).
+    let res = save_instance_settings(&h, &owner, &[("updates", "")]).await;
+    assert_eq!(res.location(), "/admin/settings");
+    let body = form_body(&shown, "instance-settings", &[("site_name", "Other Name")]);
+    let res = send(&h.app, form("/admin/settings", &body, &owner)).await;
+    assert_eq!(res.location(), "/admin/settings");
+    assert!(!updates::status(&h.db).await.unwrap().enabled);
+    assert_eq!(
+        audited().await,
+        [
+            "site.name",
+            "notifications.settings",
+            "updates.enabled",
+            "site.name"
+        ]
     );
 }
 
@@ -549,6 +618,8 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
     );
 
     // Only System's admins name it.
+    let res = send(&h.app, form("/admin/settings", "site_name=Nope", &pilot)).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
     let res = send(
         &h.app,
         form("/admin/system/site-name", "site_name=Nope", &pilot),
@@ -556,15 +627,7 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
 
-    let res = send(
-        &h.app,
-        form(
-            "/admin/system/site-name",
-            "site_name=++Some+Alliance++",
-            &owner,
-        ),
-    )
-    .await;
+    let res = save_instance_settings(&h, &owner, &[("site_name", "  Some Alliance  ")]).await;
     assert_eq!(res.location(), "/admin/settings", "{}", res.body);
     assert_eq!(
         title(&page(&h, "/dashboard", &pilot).await.body),
@@ -581,11 +644,14 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
     );
 
     // One short line.
+    let long = "x".repeat(51);
+    let res = save_instance_settings(&h, &owner, &[("site_name", &long)]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
     let res = send(
         &h.app,
         form(
             "/admin/system/site-name",
-            &format!("site_name={}", "x".repeat(51)),
+            &format!("site_name={long}"),
             &owner,
         ),
     )
@@ -594,20 +660,13 @@ async fn the_site_name_shows_in_tabs_and_on_the_sign_in_page(db: PgPool) {
     // From the setup wizard's last step: back there.
     let res = send(
         &h.app,
-        form(
-            "/admin/system/site-name",
-            "site_name=Other+Name&from=setup",
-            &owner,
-        ),
+        form("/admin/system/site-name", "site_name=Other+Name", &owner),
     )
     .await;
     assert_eq!(res.location(), "/setup");
     // Empty: Tether's alone again.
-    send(
-        &h.app,
-        form("/admin/system/site-name", "site_name=", &owner),
-    )
-    .await;
+    let res = save_instance_settings(&h, &owner, &[("site_name", "")]).await;
+    assert_eq!(res.location(), "/admin/settings");
     assert_eq!(
         title(&page(&h, "/dashboard", &owner).await.body),
         "Dashboard · Tether"

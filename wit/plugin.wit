@@ -287,6 +287,28 @@ interface page {
         submit-label: string,
     }
 
+    /// One group of a settings form: a heading, a line about it, and its
+    /// fields.
+    record settings-group {
+        title: string,
+        description: option<string>,
+        /// 1 to 30.
+        fields: list<field>,
+    }
+
+    /// A settings page's form (DESIGN.md, Save bar): its fields in groups,
+    /// saved at once from a bar that appears once something changed (each
+    /// changed field marked, Discard putting them back), and leaving with
+    /// changes unsaved asks first. Posting it calls `submit` with its id
+    /// and every field's value, checked as a form's.
+    record settings-form {
+        /// As a form's: lowercase letters, digits and `_`, unique on the
+        /// page.
+        id: string,
+        /// 1 to 16; at most 120 fields in all, names unique across them.
+        groups: list<settings-group>,
+    }
+
     /// The top of a page about one character or corporation: its portrait
     /// or logo, name, corporation and alliance, and a grid of facts.
     record profile {
@@ -390,6 +412,8 @@ interface page {
         cards(card-grid),
         /// Events on lanes across time (see `timeline`).
         timeline(timeline),
+        /// A settings page's form, saved at once (see `settings-form`).
+        settings(settings-form),
     }
 
     record tab {

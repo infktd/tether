@@ -8,7 +8,6 @@ use tether_db::accounts::AccountId;
 use tether_db::audit::{self, Actor};
 use tether_db::settings::{self, SITE_NAME};
 
-use crate::AppState;
 use crate::error::AppError;
 
 /// At most this many characters: EVE's own limit for alliance and
@@ -58,28 +57,26 @@ pub async fn get<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<Option<Strin
         .filter(|name| !name.trim().is_empty()))
 }
 
-/// Sets the site's name (none: Tether's alone), audited.
+/// Sets the site's name (none: Tether's alone), as [`check`] gave it,
+/// audited.
 pub async fn set(
-    state: &AppState,
+    conn: &mut sqlx::PgConnection,
     actor: AccountId,
-    name: &str,
-) -> Result<Option<String>, AppError> {
-    let name = check(name)?;
-    let mut tx = state.db.begin().await?;
-    match &name {
-        Some(name) => settings::set(&mut *tx, SITE_NAME, json!(name)).await?,
-        None => settings::delete(&mut *tx, SITE_NAME).await?,
+    name: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    match name {
+        Some(name) => settings::set(&mut *conn, SITE_NAME, json!(name)).await?,
+        None => settings::delete(&mut *conn, SITE_NAME).await?,
     }
     audit::record(
-        &mut *tx,
+        &mut *conn,
         Actor::Account(actor),
         "site.name",
         None,
         json!({ "name": name }),
     )
     .await?;
-    tx.commit().await?;
-    Ok(name)
+    Ok(())
 }
 
 #[cfg(test)]

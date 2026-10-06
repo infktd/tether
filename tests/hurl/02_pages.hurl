@@ -502,22 +502,16 @@ HTTP 200
 header "Content-Type" contains "text/css"
 body contains "--accent:"
 
-POST {{base}}/admin/system/theme
+POST {{base}}/admin/settings
 Origin: {{base}}
+[Form]
+max_per_user: 50
 HTTP 303
 [Asserts]
 header "Location" == "/login"
 
 POST {{base}}/admin/system/site-name
 Origin: {{base}}
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/admin/system/notifications
-Origin: {{base}}
-[Form]
-max_per_user: 50
 HTTP 303
 [Asserts]
 header "Location" == "/login"
@@ -971,14 +965,6 @@ HTTP 303
 header "Location" == "/login"
 
 GET {{base}}/admin/audit
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
-POST {{base}}/admin/system/updates
-Origin: {{base}}
-[Form]
-enabled: on
 HTTP 303
 [Asserts]
 header "Location" == "/login"

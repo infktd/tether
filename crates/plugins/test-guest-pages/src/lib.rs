@@ -2,10 +2,10 @@
 
 use tether_plugin_sdk::{
     Card, CardGrid, CodeBlock, Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin,
-    Profile, RecordPanel, Request, Stat, Submission, SubmitResult, Table, Timeline, Tone, Toolbar,
-    action, actions, add_owner, alliance, badge, character, composition, composition_large,
-    corporation, countdown, defenses, faction, isk, item_type, levels, link, log, part, progress,
-    share, time,
+    Profile, RecordPanel, Request, SettingsForm, SettingsGroup, Stat, Submission, SubmitResult,
+    Table, Timeline, Tone, Toolbar, action, actions, add_owner, alliance, badge, character,
+    composition, composition_large, corporation, countdown, defenses, faction, isk, item_type,
+    levels, link, log, part, progress, share, time,
 };
 
 /// A long list with no search of its own: Tether finds rows among those
@@ -40,6 +40,35 @@ fn searched(request: &Request) -> Page {
             request.param("kind")
         ))
         .table(table)
+}
+
+/// A settings page: two groups saved at once.
+fn settings() -> Page {
+    Page::new("Settings").settings(
+        SettingsForm::new("prefs")
+            .group(
+                SettingsGroup::new("Discord")
+                    .description("Where <b>pings</b> go.")
+                    .field(
+                        Field::select(
+                            "channel",
+                            "Post to",
+                            vec![("1".into(), "#pings".into()), ("2".into(), "#ops".into())],
+                        )
+                        .value("1".to_owned())
+                        .required(),
+                    )
+                    .field(Field::checkbox("mention", "Mention Member", false)),
+            )
+            .group(
+                SettingsGroup::new("Fuel alerts").field(
+                    Field::number("hours", "Warn under (hours)")
+                        .range(Some(1.0), Some(168.0), true)
+                        .value("48".to_owned())
+                        .required(),
+                ),
+            ),
+    )
 }
 
 /// Rows whose names select their record panel.
@@ -318,6 +347,34 @@ impl Plugin for Pages {
                 .tab("Form", vec![tether_plugin_sdk::Section::Form(note_form())])),
             "admin/secret" => Ok(Page::new("Secret")),
             "list" => Ok(list()),
+            "settings" => Ok(settings()),
+            // At most 16 groups.
+            "bad-settings" => {
+                let mut form = SettingsForm::new("prefs");
+                for n in 0..17 {
+                    form = form.group(
+                        SettingsGroup::new(format!("Group {n}")).field(Field::checkbox(
+                            format!("on_{n}"),
+                            "On",
+                            false,
+                        )),
+                    );
+                }
+                Ok(Page::new("Bad settings").settings(form))
+            }
+            // As many settings as a form may have: 4 groups of 30.
+            "big-settings" => {
+                let mut form = SettingsForm::new("big");
+                for g in 0..4 {
+                    let mut group = SettingsGroup::new(format!("Group {g}"));
+                    for n in 0..30 {
+                        group = group
+                            .field(Field::number(format!("n_{g}_{n}"), "N").value(n.to_string()));
+                    }
+                    form = form.group(group);
+                }
+                Ok(Page::new("Big settings").settings(form))
+            }
             "searched" => Ok(searched(&request)),
             "panel" => Ok(panel(&request)),
             // The search's parameter is Tether's.
@@ -339,6 +396,16 @@ impl Plugin for Pages {
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         log::info(format!("submitted {}", submission.form));
+        if submission.form == "big" {
+            return Ok(SubmitResult::Page(
+                Page::new("Settings saved").text(format!("{} values", submission.values.len())),
+            ));
+        }
+        if submission.form == "prefs" {
+            return Ok(SubmitResult::Page(
+                Page::new("Settings saved").text(format!("got {:?}", submission.values)),
+            ));
+        }
         if submission.form == "pin" {
             return Ok(SubmitResult::Page(
                 Page::new("Pinned").text(format!("pinned {}", submission.value("item"))),

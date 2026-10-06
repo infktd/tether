@@ -1,0 +1,14 @@
+{#- The bar that saves a settings form, last in the form (DESIGN.md, Save
+    bar). assets/live.js shows it once something changed (without script
+    it's always there), counts the changes and names their groups. -#}
+{% macro bar() -%}
+<div class="save-bar" data-save-bar role="region" aria-label="Unsaved changes">
+  <span class="save-bar-mark" aria-hidden="true"></span>
+  <span class="save-bar-count" data-save-count aria-live="polite">Save your changes</span>
+  <span class="save-bar-where" data-save-where></span>
+  <span class="save-bar-actions">
+    <button type="reset" class="btn" data-variant="outline">Discard</button>
+    <button type="submit" class="btn" data-variant="primary">Save changes</button>
+  </span>
+</div>
+{%- endmacro %}

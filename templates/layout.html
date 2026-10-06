@@ -140,11 +140,11 @@
 <div id="toaster" class="toaster" hx-preserve></div>
 {#- Confirmations (DESIGN.md): live.js fills it, as text, from an
     hx-confirm, and sends the request only on its button. -#}
-<div id="confirm" popover class="confirm-popover" role="alertdialog" aria-labelledby="confirm-text" hx-preserve>
-  <p id="confirm-text"></p>
+<div id="confirm" popover class="confirm-popover" role="alertdialog" aria-labelledby="confirm-box-text" hx-preserve>
+  <p id="confirm-box-text"></p>
   <div class="flex justify-end gap-2">
     <button type="button" class="btn" data-variant="outline" data-size="sm" popovertarget="confirm" popovertargetaction="hide">Cancel</button>
-    <button type="button" class="btn" data-size="sm" data-variant="primary" id="confirm-go"></button>
+    <button type="button" class="btn" data-size="sm" data-variant="primary" id="confirm-box-go"></button>
   </div>
 </div>
 </body>

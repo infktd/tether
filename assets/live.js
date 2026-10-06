@@ -263,34 +263,143 @@
     arm();
   });
 
+  // Settings forms (DESIGN.md, Save bar): each changed field says CHANGED,
+  // the index and the bar count them by group, the bar shows once
+  // something changed (without script it's always there), Discard puts
+  // them back, and leaving with changes unsaved asks first.
+  const fieldChanged = (el) => {
+    if (el.type === "checkbox" || el.type === "radio") return el.checked !== el.defaultChecked;
+    if (el instanceof HTMLSelectElement) {
+      const initial = [...el.options].findIndex((o) => o.defaultSelected);
+      return el.selectedIndex !== (initial < 0 ? 0 : initial);
+    }
+    return el.value !== el.defaultValue;
+  };
+  const settingsState = (form) => {
+    let total = 0;
+    const byGroup = new Map();
+    for (const field of form.querySelectorAll("[data-setting]")) {
+      const changed = [...field.querySelectorAll("input:not([type=hidden]), select, textarea")].some(fieldChanged);
+      field.toggleAttribute("data-changed", changed);
+      if (!changed) continue;
+      total++;
+      const group = field.closest("[data-group]");
+      if (group) byGroup.set(group, (byGroup.get(group) || 0) + 1);
+    }
+    form.toggleAttribute("data-dirty", total > 0);
+    for (const link of form.querySelectorAll("[data-index]")) {
+      const n = byGroup.get(form.querySelector(`#${CSS.escape(link.dataset.index)}`)) || 0;
+      const count = link.querySelector("[data-count]");
+      if (count) count.textContent = n ? String(n) : "";
+    }
+    const count = form.querySelector("[data-save-count]");
+    if (count) count.textContent = total === 1 ? "1 unsaved change" : `${total} unsaved changes`;
+    const where = form.querySelector("[data-save-where]");
+    if (where) {
+      where.textContent = [...byGroup].map(([g, n]) => (n > 1 ? `${g.dataset.group} ×${n}` : g.dataset.group)).join(" · ");
+    }
+  };
+  const watchSettings = (root) => {
+    for (const form of root.querySelectorAll ? root.querySelectorAll("form[data-settings]") : []) {
+      form.dataset.live = "";
+      settingsState(form);
+    }
+  };
+  document.addEventListener("htmx:load", (event) => watchSettings(event.detail.elt));
+  for (const kind of ["input", "change"]) {
+    document.addEventListener(kind, (event) => {
+      const form = event.target.closest?.("form[data-settings]");
+      if (form) settingsState(form);
+    });
+  }
+  document.addEventListener("reset", (event) => {
+    if (event.target.matches?.("form[data-settings]")) setTimeout(() => settingsState(event.target));
+  }, true);
+  // Answers that load a page over what's shown: another page, or this one
+  // again (a save's own answer).
+  const navigates = (xhr) => ["HX-Location", "HX-Redirect", "HX-Refresh"].some((h) => xhr?.getResponseHeader(h));
+  // The form's own save: nothing asks while it's on its way (its answer
+  // loads the page again).
+  document.addEventListener("htmx:beforeRequest", (event) => {
+    const form = event.detail.elt?.closest?.("form[data-settings]");
+    if (form && event.detail.requestConfig?.verb === "post") form.dataset.saving = "";
+  });
+  // A save, or a request someone chose to leave by, that loaded no page
+  // over the changes after all (it was refused with a toast saying why,
+  // swapped only part of this page, or got no answer) leaves them guarded
+  // again.
+  document.addEventListener("htmx:afterRequest", (event) => {
+    if (navigates(event.detail.xhr)) return;
+    event.detail.elt?.closest?.("form[data-settings]")?.removeAttribute("data-saving");
+    for (const form of document.querySelectorAll("form[data-leaving]")) delete form.dataset.leaving;
+  });
+  const unsaved = () => [
+    ...document.querySelectorAll("form[data-settings][data-dirty]:not([data-saving]):not([data-leaving])"),
+  ];
+  window.addEventListener("beforeunload", (event) => {
+    if (!unsaved().length) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  // Settings forms with unsaved changes that a request would draw over: it
+  // replaces the page, or the part of it holding one. Not their own save,
+  // nor the live refresh (which waits for them anyway), nor a request that
+  // leaves them where they are (the status line's poll).
+  const overrun = (detail) =>
+    unsaved().filter(
+      (form) =>
+        !form.contains(detail.elt) &&
+        detail.elt?.id !== "plugin-content" &&
+        (detail.target === document.body || detail.target?.contains(form)),
+    );
+
   // Confirmations (DESIGN.md, Row actions): an hx-confirm's question in
   // the designed popover instead of the browser's dialog. Its button is
   // named as the one that asked (its title, else its text), filled
   // destructive when that one is; the request goes only from it. Enter in
   // a form's field asks too, since htmx asks on every submit. Text only,
-  // never markup. Escape or a click outside cancels.
+  // never markup. Escape or a click outside cancels. A request that would
+  // draw over unsaved settings asks as well ("Leave without saving?"), or
+  // says so after its own question; while the popover is asking, such a
+  // request isn't sent.
   let pending = null;
   document.addEventListener("htmx:confirm", (event) => {
     const box = document.getElementById("confirm");
-    if (!event.detail.question || !box || !box.showPopover) return;
+    const detail = event.detail;
+    if (!box?.showPopover) return;
+    const losing = overrun(detail);
+    if (!detail.question && !losing.length) return;
     event.preventDefault();
-    const asker =
-      event.detail.triggeringEvent?.submitter ??
-      (event.detail.elt.matches("button") ? event.detail.elt : null) ??
-      event.detail.elt.querySelector?.("button[type=submit], button:not([type])");
-    const label = (asker?.title || asker?.textContent || "").trim() || "Confirm";
-    const danger =
-      asker?.classList.contains("btn-destructive-outline") || /^(Delete|Remove|Revoke)\b/.test(label);
-    const go = document.getElementById("confirm-go");
-    document.getElementById("confirm-text").textContent = event.detail.question;
+    if (box.matches(":popover-open")) return;
+    let text = "Leave without saving? Your changes to these settings are lost.";
+    let label = "Leave";
+    let danger = true;
+    if (detail.question) {
+      const asker =
+        detail.triggeringEvent?.submitter ??
+        (detail.elt.matches("button") ? detail.elt : null) ??
+        detail.elt.querySelector?.("button[type=submit], button:not([type])");
+      label = (asker?.title || asker?.textContent || "").trim() || "Confirm";
+      danger = asker?.classList.contains("btn-destructive-outline") || /^(Delete|Remove|Revoke)\b/.test(label);
+      text = detail.question + (losing.length ? " Your unsaved changes to these settings are lost." : "");
+    }
+    // Its parts are looked for inside it, by ids no app's form and field
+    // names make (theirs are form-field).
+    const go = box.querySelector("#confirm-box-go");
+    box.querySelector("#confirm-box-text").textContent = text;
     go.textContent = label;
     go.dataset.variant = danger ? "destructive" : "primary";
-    pending = event.detail;
+    pending = {
+      issueRequest: (skip) => {
+        for (const form of losing) form.dataset.leaving = "";
+        detail.issueRequest(skip);
+      },
+    };
     box.showPopover();
     box.querySelector("button")?.focus();
   });
   document.addEventListener("click", (event) => {
-    if (event.target.closest?.("#confirm-go") && pending) {
+    if (event.target.closest?.("#confirm-box-go")?.closest("#confirm") && pending) {
       const confirmed = pending;
       pending = null;
       document.getElementById("confirm")?.hidePopover();
@@ -623,7 +732,9 @@
   let lastRefresh = 0;
   const live = () => document.querySelector("#plugin-content[data-app][data-href]");
   const edited = (field) => {
-    if (field.closest(".table-filter") || field.closest("dialog:not([open])")) return false;
+    // A search box's words are in the address already (htmx keeps the box
+    // across answers, so its first words would always look changed).
+    if (field.closest(".table-filter") || field.closest(".toolbar-search") || field.closest("dialog:not([open])")) return false;
     if (field instanceof HTMLSelectElement) return [...field.options].some((o) => o.selected !== o.defaultSelected);
     if (field.type === "hidden") return false;
     if (field.type === "checkbox" || field.type === "radio") return field.checked !== field.defaultChecked;

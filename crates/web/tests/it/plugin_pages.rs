@@ -48,6 +48,8 @@ async fn install(h: &Harness, owner: &str) {
         "list",
         "searched",
         "panel",
+        "settings",
+        "big-settings",
     ] {
         manifest.push_str(&format!(
             "\n[[pages]]\npath = \"{path}\"\npermission = \"view\"\n"
@@ -1340,4 +1342,123 @@ async fn tabs_are_the_toolbars_view_chips(db: PgPool) {
         res.contains(r#"href="/plugins/acme.pages/values?q=moon&#38;_tab=1""#),
         "{res}"
     );
+}
+
+/// A settings page (DESIGN.md, Save bar): its groups in one form, an
+/// index of them, and the bar that saves them all; posted, every field's
+/// value is checked as a form's, then the app gets them at once.
+/// A value's fingerprint in a settings form's `_drawn`, as the host makes
+/// it.
+fn fingerprint(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_settings_form_of_120_fields_saves(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let uri = "/plugins/acme.pages/big-settings";
+    let shown = page(&h, uri, &owner).await;
+    assert_eq!(shown.status, StatusCode::OK, "{}", shown.body);
+    let body = form_body(&shown.body, "big", &[("n_3_29", "7")]);
+    let res = send(&h.app, post(uri, &body, &owner)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("120 values"), "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_settings_page_saves_its_groups_at_once(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let uri = "/plugins/acme.pages/settings";
+    let res = page(&h, uri, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for part in [
+        r#"<form class="settings-form" method="post" action="/plugins/acme.pages/settings" data-settings>"#,
+        r#"<input type="hidden" name="_form" value="prefs">"#,
+        r##"<a href="#prefs-1" hx-boost="false" data-index="prefs-1">Fuel alerts"##,
+        r#"<section class="card" id="prefs-0" data-group="Discord""#,
+        "Where &#60;b&#62;pings&#60;/b&#62; go.",
+        r#"id="prefs-hours" name="hours" value="48""#,
+        r#"<div class="save-bar" data-save-bar"#,
+        r#"<button type="reset" class="btn" data-variant="outline">Discard</button>"#,
+    ] {
+        assert!(res.body.contains(part), "{part}: {}", res.body);
+    }
+    // What it shows, so a save takes only what was changed.
+    let drawn = format!(
+        r#"<input type="hidden" name="_drawn" value="{{&#34;channel&#34;:&#34;{}&#34;,&#34;hours&#34;:&#34;{}&#34;}}">"#,
+        fingerprint("1"),
+        fingerprint("48")
+    );
+    assert!(res.body.contains(&drawn), "{drawn}: {}", res.body);
+    // Saved at once, each value checked as a form's.
+    let res = send(
+        &h.app,
+        post(uri, "_form=prefs&channel=2&mention=on&hours=24", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body.contains(
+            "got [(&#34;channel&#34;, &#34;2&#34;), (&#34;mention&#34;, &#34;true&#34;), (&#34;hours&#34;, &#34;24&#34;)]"
+        ),
+        "{}",
+        res.body
+    );
+    for body in [
+        "_form=prefs&channel=9&hours=24",
+        "_form=prefs&channel=1&hours=500",
+        "_form=prefs&channel=1",
+    ] {
+        let res = send(&h.app, post(uri, body, &owner)).await;
+        assert_eq!(
+            res.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}: {}",
+            res.body
+        );
+        assert!(!res.body.contains("Settings saved"), "{body}");
+    }
+    // A field left as the page showed it takes its value now (another
+    // admin may have saved it meanwhile): this page showed 24 hours.
+    let drawn = format!(
+        r#"{{"channel":"{}","hours":"{}"}}"#,
+        fingerprint("1"),
+        fingerprint("24")
+    );
+    let res = send(
+        &h.app,
+        post(
+            uri,
+            &format!(
+                "_form=prefs&_drawn={}&channel=2&hours=24",
+                url_encode(&drawn)
+            ),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body.contains(
+            "got [(&#34;channel&#34;, &#34;2&#34;), (&#34;mention&#34;, &#34;false&#34;), (&#34;hours&#34;, &#34;48&#34;)]"
+        ),
+        "{}",
+        res.body
+    );
+    // From the page itself, a refused save leaves it as it is, its
+    // changes and all: a toast says why.
+    let res = send(
+        &h.app,
+        boosted(post(uri, "_form=prefs&channel=1&hours=500", &owner), uri),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let (message, tone) = toast(&res).unwrap();
+    assert!(message.contains("Warn under (hours)"), "{message}");
+    assert_eq!(tone, "problem");
 }

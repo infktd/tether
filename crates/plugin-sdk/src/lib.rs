@@ -100,8 +100,8 @@ macro_rules! export {
 pub use bindings::tether::plugin::page::{
     Action, Badge, Card, CardGrid, Choice, CodeBlock, Column, Composition, Defenses, Entity,
     EntityKind, Field, FieldKind, Form, Lane, LaneItem, Levels, Link, NumberInput, Profile,
-    ProfileCard, Progress, RecordPanel, Section, SelectInput, Share, Stat, Tab, Table, TextInput,
-    Timeline, Tone, Toolbar, ToolbarFilter, Value, Window,
+    ProfileCard, Progress, RecordPanel, Section, SelectInput, SettingsForm, SettingsGroup, Share,
+    Stat, Tab, Table, TextInput, Timeline, Tone, Toolbar, ToolbarFilter, Value, Window,
 };
 pub use bindings::{Page, PageError, Request, Submission, SubmitResult};
 
@@ -955,11 +955,60 @@ impl Page {
         self.section(Section::Form(form))
     }
 
+    /// A settings page's form: its fields in groups, saved at once from
+    /// Tether's save bar (see [`SettingsForm::new`]).
+    pub fn settings(self, settings: SettingsForm) -> Self {
+        self.section(Section::Settings(settings))
+    }
+
     pub fn tab(mut self, label: impl Into<String>, sections: Vec<Section>) -> Self {
         self.tabs.push(Tab {
             label: label.into(),
             sections,
         });
+        self
+    }
+}
+
+impl SettingsForm {
+    /// A settings form posting as `id` (as a form's): add its groups with
+    /// [`SettingsForm::group`]. Tether draws them with a save bar that
+    /// appears once something changed, marks each changed field, puts
+    /// them back on Discard and asks before leaving with changes unsaved;
+    /// `submit` gets every field's value at once.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            groups: Vec::new(),
+        }
+    }
+
+    /// A group (at most 16; 120 fields in all).
+    pub fn group(mut self, group: SettingsGroup) -> Self {
+        self.groups.push(group);
+        self
+    }
+}
+
+impl SettingsGroup {
+    /// A group of settings under its heading ("Discord", "Fuel alerts").
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            description: None,
+            fields: Vec::new(),
+        }
+    }
+
+    /// One line about it.
+    pub fn description(mut self, text: impl Into<String>) -> Self {
+        self.description = Some(text.into());
+        self
+    }
+
+    /// A field (at most 30), as a form's.
+    pub fn field(mut self, field: Field) -> Self {
+        self.fields.push(field);
         self
     }
 }

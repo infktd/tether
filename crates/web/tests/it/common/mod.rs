@@ -1061,3 +1061,133 @@ pub async fn open_stream(
         .expect("the stream's first event");
     body
 }
+
+/// What a browser posts for the form `form_id` on this page as drawn: each
+/// field's value (ticked boxes as `on`, the chosen option, the text in it),
+/// `_form` included, then `changes` applied (a value, or `""` to clear it,
+/// unticking a box): URL-encoded `name=value` pairs, as `form` takes them.
+/// For forms too long to spell out in a test (a settings page's).
+pub fn form_body(html: &str, form_id: &str, changes: &[(&str, &str)]) -> String {
+    // An app's form by its `_form`, a core one by its id.
+    let start = html
+        .find(&format!(r#"<form class="settings-form" id="{form_id}""#))
+        .or_else(|| {
+            let at = html.find(&format!(r#"name="_form" value="{form_id}""#))?;
+            html[..at].rfind("<form")
+        })
+        .unwrap_or_else(|| panic!("no form {form_id}: {html}"));
+    let end = start + html[start..].find("</form>").unwrap();
+    let form = &html[start..end];
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut rest = form;
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open + 1..];
+        let close = rest.find('>').unwrap_or(rest.len());
+        let tag = &rest[..close];
+        let (kind, attrs) = tag.split_once(char::is_whitespace).unwrap_or((tag, ""));
+        let attr = |name: &str| attribute(attrs, name);
+        match kind {
+            "input" => {
+                let Some(name) = attr("name") else { continue };
+                match attr("type").as_deref() {
+                    Some("checkbox" | "radio") => {
+                        if attr("checked").is_some() {
+                            pairs.push((name, attr("value").unwrap_or_else(|| "on".to_owned())));
+                        }
+                    }
+                    Some("submit" | "reset" | "button") => {}
+                    _ => pairs.push((name, attr("value").unwrap_or_default())),
+                }
+            }
+            "select" => {
+                let Some(name) = attr("name") else { continue };
+                let options = &rest[close..rest.find("</select>").unwrap()];
+                let mut chosen = None;
+                let mut first = None;
+                for option in options.split("<option").skip(1) {
+                    let head = &option[..option.find('>').unwrap()];
+                    let value = attribute(head, "value").unwrap_or_default();
+                    first.get_or_insert(value.clone());
+                    if attribute(head, "selected").is_some() {
+                        chosen = Some(value);
+                    }
+                }
+                pairs.push((name, chosen.or(first).unwrap_or_default()));
+            }
+            "textarea" => {
+                let Some(name) = attr("name") else { continue };
+                let text = &rest[close + 1..rest.find("</textarea>").unwrap()];
+                pairs.push((name, unescape(text)));
+            }
+            _ => {}
+        }
+    }
+    for (name, value) in changes {
+        pairs.retain(|(n, _)| n != name);
+        if !value.is_empty() {
+            pairs.push(((*name).to_owned(), (*value).to_owned()));
+        }
+    }
+    pairs
+        .iter()
+        .map(|(n, v)| format!("{}={}", url_encode(n), url_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Saves Administration's Settings, its one form, as a browser would, with
+/// these changes.
+pub async fn save_instance_settings(h: &Harness, token: &str, changes: &[(&str, &str)]) -> Res {
+    let shown = page(h, "/admin/settings", token).await.body;
+    let body = form_body(&shown, "instance-settings", changes);
+    send(&h.app, form("/admin/settings", &body, token)).await
+}
+
+/// An attribute's value as askama wrote it (unescaped); a bare attribute
+/// (`checked`) is `Some("")`.
+fn attribute(attrs: &str, name: &str) -> Option<String> {
+    let mut rest = attrs;
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        let end = rest
+            .find(|c: char| c == '=' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        let key = &rest[..end];
+        rest = &rest[end..];
+        let value = if let Some(after) = rest.strip_prefix("=\"") {
+            let close = after.find('"').unwrap_or(after.len());
+            let value = &after[..close];
+            rest = &after[(close + 1).min(after.len())..];
+            Some(unescape(value))
+        } else {
+            None
+        };
+        if key == name {
+            return Some(value.unwrap_or_default());
+        }
+        if key.is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+fn unescape(text: &str) -> String {
+    text.replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#60;", "<")
+        .replace("&#62;", ">")
+        .replace("&#38;", "&")
+}
+
+pub fn url_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+                char::from(b).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}

@@ -53,19 +53,24 @@ pub fn schedules() -> Vec<ScheduleSpec> {
     )]
 }
 
-pub async fn enabled(db: &PgPool) -> Result<bool, sqlx::Error> {
-    Ok(settings::get(db, ENABLED)
+pub async fn enabled<'e>(executor: impl sqlx::PgExecutor<'e>) -> Result<bool, sqlx::Error> {
+    Ok(settings::get(executor, ENABLED)
         .await?
         .and_then(|v| v.as_bool())
         .unwrap_or(true))
 }
 
-pub async fn set_enabled(state: &AppState, actor: AccountId, on: bool) -> Result<(), AppError> {
-    let was_on = enabled(&state.db).await?;
-    let mut tx = state.db.begin().await?;
-    settings::set(&mut *tx, ENABLED, on.into()).await?;
+/// Switches update checks on or off, audited; switched on, a check is
+/// queued at once.
+pub async fn set_enabled(
+    tx: &mut sqlx::PgTransaction<'_>,
+    actor: AccountId,
+    on: bool,
+) -> Result<(), sqlx::Error> {
+    let was_on = enabled(&mut **tx).await?;
+    settings::set(&mut **tx, ENABLED, on.into()).await?;
     audit::record(
-        &mut *tx,
+        &mut **tx,
         Actor::Account(actor),
         "updates.enabled",
         None,
@@ -73,9 +78,8 @@ pub async fn set_enabled(state: &AppState, actor: AccountId, on: bool) -> Result
     )
     .await?;
     if on && !was_on {
-        queue_check(&mut tx).await?;
+        queue_check(tx).await?;
     }
-    tx.commit().await?;
     Ok(())
 }
 

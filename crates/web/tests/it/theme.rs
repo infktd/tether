@@ -36,45 +36,38 @@ async fn admins_pick_the_accent(db: PgPool) {
     );
     assert!(system.contains("Violet"), "{system}");
 
-    let denied = send(
-        &h.app,
-        form("/admin/system/theme", "accent=%23a78bfa", &pilot),
-    )
-    .await;
+    let denied = send(&h.app, form("/admin/settings", "accent=%23a78bfa", &pilot)).await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
 
-    let res = send(
-        &h.app,
-        form("/admin/system/theme", "accent=%23a78bfa", &owner),
-    )
-    .await;
+    let res = save_instance_settings(&h, &owner, &[("accent", "#a78bfa")]).await;
     assert_eq!(res.location(), "/admin/settings", "{}", res.body);
     let css = send(&h.app, get("/theme.css", &[])).await;
     assert!(css.body.contains("--accent:#a78bfa"), "{}", css.body);
     assert_ne!(css.headers[header::ETAG].to_str().unwrap(), etag);
 
     // A custom colour, checked: too dark to read is refused.
-    let dark = send(
-        &h.app,
-        form(
-            "/admin/system/theme",
-            "accent=custom&custom_accent=%231e3a8a",
-            &owner,
-        ),
+    let dark = save_instance_settings(
+        &h,
+        &owner,
+        &[("accent", "custom"), ("custom_accent", "#1e3a8a")],
     )
     .await;
     assert_eq!(dark.status, StatusCode::BAD_REQUEST);
     assert!(dark.body.contains("too dark"), "{}", dark.body);
+    // With script, the page loads again for the new colour.
+    let shown = page(&h, "/admin/settings", &owner).await.body;
+    let body = form_body(
+        &shown,
+        "instance-settings",
+        &[("accent", "custom"), ("custom_accent", "#22D3EE")],
+    );
     let custom = send(
         &h.app,
-        form(
-            "/admin/system/theme",
-            "accent=custom&custom_accent=%2322D3EE",
-            &owner,
-        ),
+        boosted(form("/admin/settings", &body, &owner), "/admin/settings"),
     )
     .await;
-    assert_eq!(custom.location(), "/admin/settings");
+    assert_eq!(custom.status, StatusCode::NO_CONTENT, "{}", custom.body);
+    assert_eq!(custom.headers["hx-refresh"], "true");
     let css = send(&h.app, get("/theme.css", &[])).await;
     assert!(css.body.contains("--accent:#22d3ee"), "{}", css.body);
     let audited: i64 =

@@ -11,7 +11,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
@@ -903,55 +903,134 @@ pub async fn run_now(
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UpdatesForm {
-    /// A checkbox: present when ticked.
-    enabled: Option<String>,
-}
-
-/// `POST /admin/system/updates`: switch update checks on or off.
-pub async fn set_updates(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Form(form): Form<UpdatesForm>,
-) -> Result<Response, PageError> {
-    let (session, _) = guard(&state, session, ADMIN_SYSTEM, "settings").await?;
-    updates::set_enabled(&state, session.account, form.enabled.is_some()).await?;
-    Ok(super::stay::back(
-        SETTINGS,
-        if form.enabled.is_some() {
-            "Update checks on."
-        } else {
-            "Update checks off."
-        },
-    ))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NotificationsForm {
+#[derive(Debug, Default, Deserialize)]
+pub struct SettingsForm {
+    #[serde(default)]
+    site_name: String,
+    /// A preset's value, or `custom` for `custom_accent`.
+    #[serde(default)]
+    accent: String,
+    #[serde(default)]
+    custom_accent: String,
+    #[serde(default)]
     max_per_user: String,
+    /// A checkbox: present when ticked.
+    updates: Option<String>,
+    /// What the page showed (absent from an older page: then everything
+    /// posted counts as changed).
+    was_site_name: Option<String>,
+    was_accent: Option<String>,
+    was_max_per_user: Option<String>,
+    was_updates: Option<String>,
 }
 
-/// `POST /admin/system/notifications`: AA's `NOTIFICATIONS_MAX_PER_USER`.
-pub async fn set_notifications(
+/// Whether `now` differs from what the page showed.
+fn changed(now: &str, was: Option<&String>) -> bool {
+    was.is_none_or(|was| was.trim() != now.trim())
+}
+
+/// What a save of Settings changed.
+#[derive(Default)]
+struct Saved {
+    any: bool,
+    accent: bool,
+}
+
+/// Checks what was changed on the page, then saves it at once: a value
+/// that isn't right saves nothing, and a setting left as the page showed
+/// it stays as it is now (another admin may have changed it meanwhile).
+async fn save_instance(
+    state: &AppState,
+    actor: tether_db::accounts::AccountId,
+    form: &SettingsForm,
+) -> Result<Saved, AppError> {
+    let name = changed(&form.site_name, form.was_site_name.as_ref())
+        .then(|| crate::site_name::check(&form.site_name))
+        .transpose()?;
+    let colour = if form.accent == "custom" {
+        &form.custom_accent
+    } else {
+        &form.accent
+    };
+    let accent = changed(&colour.to_ascii_lowercase(), form.was_accent.as_ref())
+        .then(|| crate::theme::check(colour))
+        .transpose()?;
+    let range = tether_db::settings::NOTIFICATIONS_MAX_RANGE;
+    let max = changed(&form.max_per_user, form.was_max_per_user.as_ref())
+        .then(|| {
+            form.max_per_user
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|n| range.contains(n))
+                .ok_or_else(|| {
+                    AppError::bad_request(format!(
+                        "Keep {} to {} notifications per user.",
+                        range.start(),
+                        range.end()
+                    ))
+                })
+        })
+        .transpose()?;
+    let updates_on = form.updates.is_some();
+    let updates = form
+        .was_updates
+        .as_ref()
+        .is_none_or(|was| (was == "on") != updates_on)
+        .then_some(updates_on);
+
+    let mut tx = state.db.begin().await?;
+    let mut saved = Saved::default();
+    if let Some(name) = name
+        && crate::site_name::get(&mut *tx).await? != name
+    {
+        crate::site_name::set(&mut tx, actor, name.as_deref()).await?;
+        saved.any = true;
+    }
+    if let Some(accent) = accent
+        && crate::theme::accent(&mut *tx).await? != accent
+    {
+        crate::theme::set_accent(&mut tx, actor, &accent).await?;
+        saved.any = true;
+        saved.accent = true;
+    }
+    if let Some(max) = max
+        && tether_db::settings::notifications_max(&mut *tx).await? != max
+    {
+        crate::notifications::set_max(&mut tx, actor, max).await?;
+        saved.any = true;
+    }
+    if let Some(on) = updates
+        && updates::enabled(&mut *tx).await? != on
+    {
+        updates::set_enabled(&mut tx, actor, on).await?;
+        saved.any = true;
+    }
+    tx.commit().await?;
+    Ok(saved)
+}
+
+/// `POST /admin/settings`: the page's one form (DESIGN.md, Save bar).
+pub async fn save_settings(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
-    Form(form): Form<NotificationsForm>,
+    headers: HeaderMap,
+    Form(form): Form<SettingsForm>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "settings").await?;
-    let range = tether_db::settings::NOTIFICATIONS_MAX_RANGE;
-    let result = match form.max_per_user.trim().parse::<i64>() {
-        Ok(n) if range.contains(&n) => {
-            crate::notifications::set_max(&state.db, session.account, n).await
-        }
-        _ => Err(AppError::bad_request(format!(
-            "Keep {} to {} notifications per user.",
-            range.start(),
-            range.end()
-        ))),
-    };
-    match result {
-        Ok(()) => Ok(super::stay::back(SETTINGS, "Notification limit saved.")),
+    let htmx = super::is_htmx(&headers);
+    match save_instance(&state, session.account, &form).await {
+        Ok(saved) if !saved.any => Ok(super::stay::back(SETTINGS, "Nothing changed.")),
+        // The accent is in a stylesheet: a whole new load shows it.
+        Ok(saved) if saved.accent && htmx => Ok(super::stay::with_toast(
+            (StatusCode::NO_CONTENT, [("hx-refresh", "true")]).into_response(),
+            super::stay::Toast::done("Settings saved."),
+        )),
+        // The site name is in the tab title: the page is loaded again.
+        Ok(_) => Ok(super::stay::back(SETTINGS, "Settings saved.")),
+        // With script, what's shown stays, changes and all, and a toast
+        // says why nothing was saved.
+        Err(err) if htmx => Err(err.into()),
         Err(err) => settings_page(&state, shell, Some(err)).await,
     }
 }
@@ -960,62 +1039,23 @@ pub async fn set_notifications(
 pub struct SiteNameForm {
     #[serde(default)]
     site_name: String,
-    /// `setup` when saved on the setup wizard's last step, which it goes
-    /// back to.
-    #[serde(default)]
-    from: String,
 }
 
 /// `POST /admin/system/site-name`: the site's own name (empty: Tether's
-/// alone), from System or the setup wizard's last step.
+/// alone), from the setup wizard's last step, which it goes back to.
+/// Settings saves it with the rest of its form.
 pub async fn set_site_name(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Form(form): Form<SiteNameForm>,
 ) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "settings").await?;
-    let (back, done) = match form.from.as_str() {
-        "setup" => ("/setup", "Site name saved."),
-        _ => (SETTINGS, "Site name saved."),
-    };
-    match crate::site_name::set(&state, session.account, &form.site_name).await {
-        // The name is in the tab title: reload the page for it.
-        Ok(_) => Ok(super::stay::back(back, done)),
-        Err(err) if back == "/setup" => Err(err.into()),
-        Err(err) => settings_page(&state, shell, Some(err)).await,
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ThemeForm {
-    /// A preset's value, or `custom` for `custom_accent`.
-    accent: String,
-    #[serde(default)]
-    custom_accent: String,
-}
-
-/// `POST /admin/system/theme`: the accent colour.
-pub async fn set_theme(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    headers: HeaderMap,
-    Form(form): Form<ThemeForm>,
-) -> Result<Response, PageError> {
-    let (session, shell) = guard(&state, session, ADMIN_SYSTEM, "settings").await?;
-    let chosen = if form.accent == "custom" {
-        &form.custom_accent
-    } else {
-        &form.accent
-    };
-    match crate::theme::set_accent(&state, session.account, chosen).await {
-        // The accent is in a stylesheet: a whole new load shows it.
-        Ok(()) if super::is_htmx(&headers) => Ok(super::stay::with_toast(
-            (StatusCode::NO_CONTENT, [("hx-refresh", "true")]).into_response(),
-            super::stay::Toast::done("Accent saved."),
-        )),
-        Ok(()) => Ok(Redirect::to(SETTINGS).into_response()),
-        Err(err) => settings_page(&state, shell, Some(err)).await,
-    }
+    let (session, _) = guard(&state, session, ADMIN_SYSTEM, "settings").await?;
+    let name = crate::site_name::check(&form.site_name)?;
+    let mut tx = state.db.begin().await?;
+    crate::site_name::set(&mut tx, session.account, name.as_deref()).await?;
+    tx.commit().await?;
+    // The name is in the tab title: the page is loaded again for it.
+    Ok(super::stay::back("/setup", "Site name saved."))
 }
 
 #[derive(Template)]

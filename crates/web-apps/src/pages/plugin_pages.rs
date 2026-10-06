@@ -10,6 +10,8 @@
 //! before `submit` sees it. What a plugin says went wrong goes to its log
 //! for admins; users see a generic message.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, RawQuery, State};
@@ -36,7 +38,8 @@ pub const MAX_QUERY_BYTES: usize = 2 * 1024;
 pub const MAX_QUERY_PAIRS: usize = 20;
 /// A posted form's body, and its fields.
 pub const MAX_FORM_BYTES: usize = 64 * 1024;
-const MAX_FORM_PAIRS: usize = 100;
+/// A settings form's fields with the host's own two (`_form`, `_drawn`).
+const MAX_FORM_PAIRS: usize = page_rules::MAX_SETTINGS_FIELDS + 2;
 /// The host's own query parameter: which tab to show.
 pub(super) const TAB: &str = "_tab";
 /// The host's per-table page numbers: `_p0=2` is the page's first table on
@@ -46,6 +49,10 @@ pub(super) const TABLE_PAGE: &str = "_p";
 pub const ROWS_PER_PAGE: usize = 25;
 /// The host's own form field: which form was posted.
 const FORM: &str = "_form";
+/// The host's own field on a settings form: what each field showed when
+/// the page was drawn (JSON, name to the [`fingerprint`] of the value a
+/// browser posts for it), so a save takes only what the person changed.
+const DRAWN: &str = "_drawn";
 
 const FAILED: &str = "This page couldn't be shown. The app's admins can see why in its log.";
 const MISSING: &str = "There's nothing at this address.";
@@ -367,6 +374,8 @@ pub struct ChoiceView {
 }
 
 pub struct FieldView {
+    /// Its element id: the form's id and its name.
+    pub id: String,
     pub name: String,
     pub label: String,
     pub help: Option<String>,
@@ -386,6 +395,24 @@ pub struct FieldView {
     pub blank: bool,
 }
 
+/// A settings page's form (DESIGN.md, Save bar): its groups, saved at
+/// once; assets/live.js marks what changed and shows the bar.
+pub struct SettingsView {
+    pub id: String,
+    pub action: String,
+    pub groups: Vec<SettingsGroupView>,
+    /// What its fields show, for `_drawn`.
+    pub drawn: String,
+}
+
+pub struct SettingsGroupView {
+    pub title: String,
+    pub description: Option<String>,
+    /// Its id, for the index's links.
+    pub anchor: String,
+    pub fields: Vec<FieldView>,
+}
+
 pub struct FormView {
     pub id: String,
     /// Drawn in a popup (an action opens it): its id.
@@ -403,6 +430,7 @@ pub enum SectionView {
     Card(CardView),
     Text(String),
     Form(FormView),
+    Settings(SettingsView),
     Profile(Box<ProfileView>),
     Code(CodeView),
     Cards(CardsView),
@@ -1142,65 +1170,162 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
             fields: form
                 .fields
                 .iter()
-                .map(|f| {
-                    let mut view = FieldView {
-                        name: f.name.clone(),
-                        label: f.label.clone(),
-                        help: f.help.clone(),
-                        required: f.required,
-                        kind: "text",
-                        value: String::new(),
-                        max_length: 0,
-                        placeholder: String::new(),
-                        min: String::new(),
-                        max: String::new(),
-                        step: "any",
-                        options: Vec::new(),
-                        checked: false,
-                        blank: false,
-                    };
-                    match &f.kind {
-                        FieldKind::Text(input) | FieldKind::Textarea(input) => {
-                            view.kind = if matches!(f.kind, FieldKind::Text(_)) {
-                                "text"
-                            } else {
-                                "textarea"
-                            };
-                            view.value = input.value.clone().unwrap_or_default();
-                            view.max_length = input.max_length;
-                            view.placeholder = input.placeholder.clone().unwrap_or_default();
-                        }
-                        FieldKind::Number(input) => {
-                            view.kind = "number";
-                            view.value = number_text(input.value);
-                            view.min = number_text(input.min);
-                            view.max = number_text(input.max);
-                            view.step = if input.integer { "1" } else { "any" };
-                        }
-                        FieldKind::Select(input) => {
-                            view.kind = "select";
-                            view.options = input
-                                .options
-                                .iter()
-                                .map(|c| ChoiceView {
-                                    selected: input.value.as_deref() == Some(c.value.as_str()),
-                                    value: c.value.clone(),
-                                    label: c.label.clone(),
-                                })
-                                .collect();
-                            view.blank =
-                                !f.required && !input.options.iter().any(|c| c.value.is_empty());
-                        }
-                        FieldKind::Checkbox(checked) => {
-                            view.kind = "checkbox";
-                            view.checked = *checked;
-                        }
-                    }
-                    view
-                })
+                .map(|f| field_view(&form.id, f))
                 .collect(),
         }),
+        Section::Settings(settings) => {
+            let groups: Vec<SettingsGroupView> = settings
+                .groups
+                .iter()
+                .enumerate()
+                .map(|(i, g)| SettingsGroupView {
+                    title: g.title.clone(),
+                    description: g.description.clone(),
+                    anchor: format!("{}-{i}", settings.id),
+                    fields: g
+                        .fields
+                        .iter()
+                        .map(|f| field_view(&settings.id, f))
+                        .collect(),
+                })
+                .collect();
+            let drawn: serde_json::Map<String, serde_json::Value> = groups
+                .iter()
+                .flat_map(|g| g.fields.iter())
+                .filter_map(|f| Some((f.name.clone(), fingerprint(&f.posted()?).into())))
+                .collect();
+            SectionView::Settings(SettingsView {
+                id: settings.id.clone(),
+                action: ctx.action.to_owned(),
+                groups,
+                drawn: serde_json::Value::Object(drawn).to_string(),
+            })
+        }
     }
+}
+
+impl FieldView {
+    /// What a browser posts for the field as drawn: its value, a select's
+    /// chosen option (else the blank one, else the first), `on` for a
+    /// ticked box and nothing for an unticked one.
+    fn posted(&self) -> Option<String> {
+        match self.kind {
+            "checkbox" => self.checked.then(|| "on".to_owned()),
+            "select" => self
+                .options
+                .iter()
+                .rfind(|o| o.selected)
+                .map(|o| o.value.clone())
+                .or_else(|| self.blank.then(String::new))
+                .or_else(|| self.options.first().map(|o| o.value.clone())),
+            _ => Some(self.value.clone()),
+        }
+    }
+}
+
+/// A value's fingerprint for `_drawn`: the start of its SHA-256, in hex,
+/// line breaks as LF (browsers send a textarea's as CRLF). Short, so the
+/// field doesn't double a form's size.
+fn fingerprint(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(value.replace("\r\n", "\n").as_bytes());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// A settings form's post as the person changed it: a field they left as
+/// it was drawn (`drawn`, from `_drawn`) takes its value now, so a save
+/// never undoes what someone else saved meanwhile. Anything the form
+/// doesn't ask for, or a field twice, is left for the check to refuse.
+fn as_changed(
+    form: &tether_plugins::host::Form,
+    posted: Vec<(String, String)>,
+    drawn: &str,
+) -> Vec<(String, String)> {
+    let Ok(drawn) = serde_json::from_str::<BTreeMap<String, String>>(drawn) else {
+        return posted;
+    };
+    let names: BTreeSet<&str> = posted.iter().map(|(n, _)| n.as_str()).collect();
+    if names.len() != posted.len() {
+        return posted;
+    }
+    let mut merged: Vec<(String, String)> = posted
+        .iter()
+        .filter(|(n, _)| !form.fields.iter().any(|f| &f.name == n))
+        .cloned()
+        .collect();
+    for field in &form.fields {
+        let sent = posted
+            .iter()
+            .find(|(n, _)| n == &field.name)
+            .map(|(_, v)| v);
+        let value = if sent.map(|v| fingerprint(v)).as_ref() == drawn.get(&field.name) {
+            field_view(&form.id, field).posted()
+        } else {
+            sent.cloned()
+        };
+        if let Some(value) = value {
+            merged.push((field.name.clone(), value));
+        }
+    }
+    merged
+}
+
+/// A form's field as the templates draw it.
+fn field_view(form: &str, f: &tether_plugins::host::Field) -> FieldView {
+    let mut view = FieldView {
+        id: format!("{form}-{}", f.name),
+        name: f.name.clone(),
+        label: f.label.clone(),
+        help: f.help.clone(),
+        required: f.required,
+        kind: "text",
+        value: String::new(),
+        max_length: 0,
+        placeholder: String::new(),
+        min: String::new(),
+        max: String::new(),
+        step: "any",
+        options: Vec::new(),
+        checked: false,
+        blank: false,
+    };
+    match &f.kind {
+        FieldKind::Text(input) | FieldKind::Textarea(input) => {
+            view.kind = if matches!(f.kind, FieldKind::Text(_)) {
+                "text"
+            } else {
+                "textarea"
+            };
+            view.value = input.value.clone().unwrap_or_default();
+            view.max_length = input.max_length;
+            view.placeholder = input.placeholder.clone().unwrap_or_default();
+        }
+        FieldKind::Number(input) => {
+            view.kind = "number";
+            view.value = number_text(input.value);
+            view.min = number_text(input.min);
+            view.max = number_text(input.max);
+            view.step = if input.integer { "1" } else { "any" };
+        }
+        FieldKind::Select(input) => {
+            view.kind = "select";
+            view.options = input
+                .options
+                .iter()
+                .map(|c| ChoiceView {
+                    selected: input.value.as_deref() == Some(c.value.as_str()),
+                    value: c.value.clone(),
+                    label: c.label.clone(),
+                })
+                .collect();
+            view.blank = !f.required && !input.options.iter().any(|c| c.value.is_empty());
+        }
+        FieldKind::Checkbox(checked) => {
+            view.kind = "checkbox";
+            view.checked = *checked;
+        }
+    }
+    view
 }
 
 /// Everything below the top bar: what a live page reloads.
@@ -1917,7 +2042,11 @@ fn each_entity(page: &mut Page, f: &mut impl FnMut(&mut Entity)) {
                 .items
                 .iter_mut()
                 .for_each(|c| profile(&mut c.profile, f)),
-            Section::Text(_) | Section::Form(_) | Section::Code(_) | Section::Timeline(_) => {}
+            Section::Text(_)
+            | Section::Form(_)
+            | Section::Code(_)
+            | Section::Timeline(_)
+            | Section::Settings(_) => {}
         }
     }
 }
@@ -2554,14 +2683,27 @@ async fn post(
         .find(|(k, _)| k == FORM)
         .map(|(_, v)| v.clone())
         .ok_or_else(|| AppError::bad_request("Send the form from its page."))?;
-    let values: Vec<(String, String)> = posted.into_iter().filter(|(k, _)| k != FORM).collect();
+    let drawn = posted
+        .iter()
+        .find(|(k, _)| k == DRAWN)
+        .map(|(_, v)| v.clone());
+    let values: Vec<(String, String)> = posted
+        .into_iter()
+        .filter(|(k, _)| k != FORM && k != DRAWN)
+        .collect();
     // The form as the plugin draws it now is what the values must fit.
     // So is an action button: the page must offer this very one (its form
     // and hidden values) to this person now, and the plugin gets the
     // values as the page drew them.
     let page = render_page(&state, &opened, Via::Form).await?;
+    // A settings form's refused save keeps what's shown, its changes and
+    // all (DESIGN.md, Save bar), and the toast says why.
+    let settings = page_rules::is_settings_form(&page, &form_id);
     let refused = |opened: Opened, status: StatusCode, problem: String| {
         let toast = Toast::problem(problem.clone());
+        if settings && matches!(from, Posted::InPlace) {
+            return with_toast(StatusCode::NO_CONTENT.into_response(), toast);
+        }
         from.answer(opened, &page, status, Some(problem), toast)
     };
     // What the toast names: the button, or the form's.
@@ -2571,14 +2713,14 @@ async fn post(
     {
         // A popup's post: the hidden fields of an action this page offers
         // this person now, then the form's own values, checked as any.
-        let Some((action, own)) = page_rules::find_popup_action(&page, form, &values) else {
+        let Some((action, own)) = page_rules::find_popup_action(&page, &form, &values) else {
             return Ok(refused(
                 opened,
                 StatusCode::CONFLICT,
                 "That form isn't on this page any more. Try again.".to_owned(),
             ));
         };
-        match page_rules::check_submission(form, &own) {
+        match page_rules::check_submission(&form, &own) {
             Ok(own) => {
                 let mut values = action.fields.clone();
                 values.extend(own);
@@ -2589,7 +2731,11 @@ async fn post(
             }
         }
     } else if let Some(form) = page_rules::find_form(&page, &form_id) {
-        match page_rules::check_submission(form, &values) {
+        let values = match drawn.as_deref() {
+            Some(drawn) if settings => as_changed(&form, values, drawn),
+            _ => values,
+        };
+        match page_rules::check_submission(&form, &values) {
             Ok(values) => (values, form.submit_label.clone()),
             Err(problem) => {
                 return Ok(refused(opened, StatusCode::UNPROCESSABLE_ENTITY, problem));

@@ -427,7 +427,7 @@ A form is part of a page. When someone posts it, the host checks the values agai
 use tether_plugin_sdk::{Field, Form, Page, PageError, Plugin, Request, SubmitResult, Submission};
 
 fn render(request: Request) -> Result<Page, PageError> {
-    Ok(Page::new("Settings").form(
+    Ok(Page::new("Alerts").form(
         Form::new("threshold", "Save")
             .field(Field::number("isk", "Ping above (ISK)").range(Some(0.0), None, true).required())
             .field(Field::select("ore", "Ore", vec![("ubiquitous".into(), "Ubiquitous".into()), ("r64".into(), "R64".into())]))
@@ -453,6 +453,31 @@ fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
 - Posting needs the page's permission, comes from Tether's own pages only, and is limited to 30 a minute per person per plugin. No file uploads.
 - Field names and form ids are lowercase letters, digits and `_`, starting with a letter. Up to 30 fields per form, 100 options per select, 10,000 characters per text field; a post is at most 64 KiB.
 - Return `SubmitResult::Redirect(path)` to go to another of your pages (a link path), or `SubmitResult::Page(page)` to show a page there and then, for example the form again with a note about what to fix. A redirect may carry a query of its own (`fits?q=rifter`): `name=value` pairs, names lowercase letters, digits and `_`, values percent-encoded, at most 200 bytes and 10 pairs. Send a search there, so it stays in the address (and the page's row actions still match when one is posted: Tether checks an action against your render of the page with its query).
+
+### Settings pages
+
+A page that sets how your app behaves is one form in titled groups, saved at once from a bar Tether keeps at the bottom of the page (DESIGN.md, Save bar): each changed setting says CHANGED, the bar counts the changes and names their groups, Discard puts them back, and leaving with changes unsaved asks first. A save the host refuses leaves the page as it was, changes and all, with a toast saying why.
+
+```rust
+use tether_plugin_sdk::{Field, Page, SettingsForm, SettingsGroup};
+
+Page::new("Settings").settings(
+    SettingsForm::new("settings")
+        .group(
+            SettingsGroup::new("Discord")
+                .description("Where pings go.")
+                .field(Field::select("channel", "Post to", channels)),
+        )
+        .group(
+            SettingsGroup::new("Fuel alerts")
+                .field(Field::number("hours", "Warn under (hours)").range(Some(1.0), Some(168.0), true).required()),
+        ),
+)
+```
+
+- It posts as one form, named by the `SettingsForm`'s id, with every group's fields: `submit` gets them as it would a form's, checked the same way, one value per field in order. A field the person left as the page showed it comes with its value as your page draws it now, so a save never undoes another admin's change made meanwhile: store every value you get.
+- 1 to 16 groups, each with a title and 1 to 30 fields, at most 120 fields in all, names unique across the groups. With more than one group Tether draws an index of them above.
+- Keep what isn't a setting (adding a row, a one-off action) in forms and actions of its own on the page.
 
 ### Row actions
 

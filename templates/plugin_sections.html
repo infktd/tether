@@ -1,6 +1,7 @@
 {#- A plugin page's sections, drawn with the host's components. Image
     addresses come from the host (built from an entity's kind and id), never
     from the plugin. -#}
+{%- import "save_bar.html" as save -%}
 {% macro picture(e) -%}
 {%- if let Some(src) = e.image -%}<img src="{{ src }}" alt="" loading="lazy" class="entity-img" data-size="{{ e.size }}">
 {%- else -%}<span class="entity-initials" data-size="{{ e.size }}" aria-hidden="true">{{ e.initials }}</span>{%- endif -%}
@@ -24,10 +25,15 @@
 
 {#- A form's fields, on the page or in a popup. -#}
 {% macro form_fields(form) -%}
+{% call field_list(form.fields.as_slice()) %}{% endcall %}
+{%- endmacro %}
+
+{#- A form's fields, or a settings group's. -#}
+{% macro field_list(fields) -%}
   <section class="form-grid">
-    {% for f in form.fields %}
-    {% let field_id = format!("{}-{}", form.id, f.name) %}
-    <div class="grid gap-2">
+    {% for f in fields %}
+    {% let field_id = f.id.as_str() %}
+    <div class="grid gap-2" data-setting>
       {% if f.kind == "checkbox" %}
       <label class="label gap-2"><input type="checkbox" class="input" id="{{ field_id }}" name="{{ f.name }}" value="on"{% if f.checked %} checked{% endif %}{% if f.required %} required{% endif %}> {{ f.label }}</label>
       {% else %}
@@ -306,6 +312,31 @@
   <footer><button type="submit" class="btn" data-variant="primary">{{ form.submit_label }}</button></footer>
 </form>
 {%- endif -%}
+{% when SectionView::Settings(settings) %}
+{#- A settings page's form (DESIGN.md, Save bar): its groups, an index of
+    them when there are several, and the bar that saves them all.
+    assets/live.js marks each changed field CHANGED, counts them by group,
+    shows the bar once something changed (it's always there without
+    script), puts them back on Discard and asks before leaving with
+    changes unsaved. -#}
+<form class="settings-form" method="post" action="{{ settings.action }}" data-settings>
+  <input type="hidden" name="_form" value="{{ settings.id }}">
+  <input type="hidden" name="_drawn" value="{{ settings.drawn }}">
+  {% if settings.groups.len() > 1 %}
+  <nav class="settings-index" aria-label="Settings sections">
+    {% for g in settings.groups %}<a href="#{{ g.anchor }}" hx-boost="false" data-index="{{ g.anchor }}">{{ g.title }}<span class="settings-index-count num" data-count></span></a>{% endfor %}
+  </nav>
+  {% endif %}
+  <div class="settings-groups">
+    {% for g in settings.groups %}
+    <section class="card" id="{{ g.anchor }}" data-group="{{ g.title }}" aria-labelledby="{{ g.anchor }}-title">
+      <header><h2 id="{{ g.anchor }}-title">{{ g.title }}</h2>{% if let Some(d) = g.description %}<p>{{ d }}</p>{% endif %}</header>
+      {% call field_list(g.fields.as_slice()) %}{% endcall %}
+    </section>
+    {% endfor %}
+  </div>
+  {% call save::bar() %}{% endcall %}
+</form>
 {% when SectionView::Tables(set) %}
 {#- Tables that followed each other with the same columns: one table,
     each one's title a heading row, so the columns line up. -#}
