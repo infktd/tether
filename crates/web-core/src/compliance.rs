@@ -785,6 +785,20 @@ pub async fn corp_stats_for(
         }
     }
     db::prune_member_lists(db).await.map_err(JobError::retry)?;
+    // Corporations with pilots here but no member list are named too, for
+    // the Compliance Report, from the cache or ESI (public).
+    let unnamed: Vec<i64> = db::corporations_without_lists(db)
+        .await
+        .map_err(JobError::retry)?
+        .into_iter()
+        .filter(|(_, name)| name.is_none())
+        .map(|(id, _)| id)
+        .collect();
+    if !unnamed.is_empty()
+        && let Err(err) = tether_esi::names::resolve(db, esi, &unnamed, Priority::Bulk).await
+    {
+        tracing::warn!(error = %err, "Corp Stats names: corporations without a member list");
+    }
     tracing::info!(corporations = fetched, "Corp Stats refreshed");
     Ok(fetched)
 }
