@@ -1015,8 +1015,22 @@ fn ping(job: &Job) -> Result<(), JobError> {
     if let Some(t) = popped {
         card = card.timestamp(t.to_rfc3339_opts(SecondsFormat::Secs, true));
     }
-    match discord::send_embed(&channel, &card, Mention::State("Member".into())) {
+    let mut sent = discord::send_embed(&channel, &card, Mention::State("Member".into()));
+    // No Discord role mapped to Member: posted without the mention.
+    if matches!(sent, Err(discord::Error::NotAllowed(_))) {
+        sent = discord::send_embed(&channel, &card, Mention::None);
+    }
+    match sent {
         Ok(()) => Ok(()),
+        // Refused for good (its channel isn't this app's any more: an admin
+        // took it back on the Discord page): said in the log, once per
+        // pop, and the job is done rather than dead.
+        Err(discord::Error::NotAllowed(why) | discord::Error::Invalid(why)) => {
+            log::warn(format!(
+                "a pop wasn't posted: {why}; pick a channel in Settings, under Pops on Discord"
+            ));
+            Ok(())
+        }
         Err(err) => {
             // Not sent: release the claim for the retry.
             let _ = storage::execute(
@@ -1026,13 +1040,7 @@ fn ping(job: &Job) -> Result<(), JobError> {
                     Db::timestamp(payload.chunk_arrival),
                 ],
             );
-            match err {
-                discord::Error::NotAllowed(why) => {
-                    log::warn(format!("ping not allowed: {why}"));
-                    Err(JobError::Permanent(why))
-                }
-                other => Err(retry("sending the ping", other)),
-            }
+            Err(retry("sending the ping", err))
         }
     }
 }
@@ -1756,10 +1764,22 @@ fn settings_page() -> Result<Page, PageError> {
                     .required(),)
             )
             .group(
-                SettingsGroup::new("Pops on Discord")
-                .field(// A channel no longer assigned to the app starts on "No
-                // pings": a select can't start on a value it doesn't list.
-                Field::select("ping_channel", "Ping pops to", channels.clone())
+                // A channel no longer assigned to the app starts on "No
+                // pings" (a select can't start on a value it doesn't list),
+                // and the group says why nothing is posted.
+                if settings
+                    .channel
+                    .as_ref()
+                    .is_some_and(|c| !channels.iter().any(|(id, _)| id == c))
+                {
+                    SettingsGroup::new("Pops on Discord").description(
+                        "The channel pops went to isn't this app's any more, so none are \
+                         posted: pick one.",
+                    )
+                } else {
+                    SettingsGroup::new("Pops on Discord")
+                }
+                .field(Field::select("ping_channel", "Ping pops to", channels.clone())
                     .value(
                         settings
                             .channel

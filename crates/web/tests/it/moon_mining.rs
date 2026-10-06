@@ -553,6 +553,49 @@ async fn moon_mining_end_to_end(db: PgPool) {
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
     assert!(settings.body.contains("No pings"), "{}", settings.body);
+    assert!(
+        settings
+            .body
+            .contains("The channel pops went to isn&#39;t this app&#39;s any more"),
+        "{}",
+        settings.body
+    );
+    // The next pop isn't posted, and its job is done, not dead: the log
+    // says why.
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key LIKE 'pop:%'",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(&h).await;
+    let messages = h
+        .discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path().ends_with("/messages"))
+        .count();
+    assert_eq!(messages, 1);
+    let dead: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND state = 'dead'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(dead, 0);
+    let warned: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.plugin_logs WHERE plugin_id = $1 AND level = 'warn' \
+         AND message LIKE 'a pop wasn''t posted%'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(warned, 1);
 
     // Blue see only the old-moon list, once granted it.
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
