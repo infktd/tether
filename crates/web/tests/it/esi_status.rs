@@ -1,7 +1,8 @@
 //! The ESI Status app end to end (aa-esi-status): installed from its real
-//! component and migration, its check reading ESI's own status through the
-//! host's public `esi-status`, and the page, open to anyone signed in,
-//! showing each status's routes (the worst first) and the history.
+//! component and migrations, its check reading ESI's own status through
+//! the host's public `esi-status`, and the status page, open to anyone
+//! signed in: the verdict, what needs attention and since when, the areas,
+//! the last day's outages and each change.
 
 use std::sync::OnceLock;
 
@@ -31,12 +32,14 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_esi_status.sql");
+    let first = plugin_file("migrations/0001_esi_status.sql");
+    let second = plugin_file("migrations/0002_since_and_changes.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_esi_status.sql", migration.as_bytes()),
+        ("migrations/0001_esi_status.sql", first.as_bytes()),
+        ("migrations/0002_since_and_changes.sql", second.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -90,24 +93,32 @@ async fn esi_status_end_to_end(db: PgPool) {
     check(&h).await;
     let res = page(&h, &at, &pilot).await;
     assert!(res.body.contains("compatibility date 20"), "{}", res.body);
-    // The worst first: the degraded route's table before the OK ones.
-    let degraded = res.body.find("/markets/{region_id}/orders").unwrap();
-    let ok = res.body.find("/alliances").unwrap();
-    assert!(degraded < ok, "{}", res.body);
+    // The verdict, in words, and what it means.
+    assert!(res.body.contains("1 of 3 routes not OK"), "{}", res.body);
     assert!(
-        res.body.contains("good chance of being slow"),
+        res.body
+            .contains("Degraded: these routes have a good chance of being slow"),
         "{}",
         res.body
     );
+    // What needs attention first, then the areas, the worst first.
+    let attention = res.body.find("Needs attention").unwrap();
+    let degraded = res.body.find("/markets/{region_id}/orders").unwrap();
+    let areas = res.body.find("By area").unwrap();
+    assert!(attention < degraded && degraded < areas, "{}", res.body);
+    assert!(res.body.contains(">1 degraded<"), "{}", res.body);
+    let markets = res.body[areas..].find(">Markets<").unwrap();
+    let alliances = res.body[areas..].find(">Alliances<").unwrap();
+    assert!(markets < alliances, "{}", res.body);
 
     // Recovered: the history shows the change.
     mount_status(&h, "OK", 1).await;
-    sqlx::query(
+    for moved in [
         r#"UPDATE "plugin_tether.esi-status".checks SET checked_at = checked_at - interval '5 minutes'"#,
-    )
-    .execute(&h.db)
-    .await
-    .unwrap();
+        r#"UPDATE "plugin_tether.esi-status".tracking SET started = started - interval '5 minutes'"#,
+    ] {
+        sqlx::query(moved).execute(&h.db).await.unwrap();
+    }
     check(&h).await;
     let res = page(&h, &at, &pilot).await;
     assert!(
@@ -115,11 +126,55 @@ async fn esi_status_end_to_end(db: PgPool) {
         "{}",
         res.body
     );
-    assert!(res.body.contains("Status history"), "{}", res.body);
-    let changes: i64 =
+    assert!(res.body.contains("All 3 routes OK"), "{}", res.body);
+    assert!(!res.body.contains("Needs attention"), "{}", res.body);
+    // The change, newest first, and the incident: the stretch it was
+    // degraded, over.
+    assert!(res.body.contains("Changes, newest first"), "{}", res.body);
+    let incidents = res.body.find("Incidents, last 24 hours").unwrap();
+    let areas = res.body.find("By area").unwrap();
+    assert!(
+        res.body[incidents..areas].contains(">Degraded<"),
+        "{}",
+        res.body
+    );
+    // Which area it was in, from the route's change.
+    assert!(
+        res.body[incidents..areas].contains(">Markets<"),
+        "{}",
+        res.body
+    );
+    assert!(
+        !res.body.contains("Every route was OK at every check"),
+        "{}",
+        res.body
+    );
+    assert!(!res.body.contains(">Ongoing<"), "{}", res.body);
+    let checks: i64 =
         sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.esi-status".checks"#)
             .fetch_one(&h.db)
             .await
             .unwrap();
-    assert_eq!(changes, 2);
+    assert_eq!(checks, 2);
+    let changed: (String, String) = sqlx::query_as(
+        r#"SELECT was, status FROM "plugin_tether.esi-status".changes WHERE path = '/markets/{region_id}/orders'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(changed, ("Degraded".to_owned(), "OK".to_owned()));
+
+    // Checks that stopped: the page says it's out of date.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.esi-status".checks SET checked_at = checked_at - interval '1 hour'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = page(&h, &at, &pilot).await;
+    assert!(
+        res.body.contains("Out of date: the last check was 1h"),
+        "{}",
+        res.body
+    );
 }
