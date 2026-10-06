@@ -930,7 +930,7 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
         Column::text("Problem"),
         Column::text(""),
     ])
-    .title("Your personal data sources")
+    .title("In the library")
     .empty("None yet: add one of your registered characters below.");
     for r in &added.rows {
         let id = int(r, 0);
@@ -955,8 +955,8 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
         ]);
     }
     let mut add = Table::new(vec![Column::text("Character"), Column::text("")])
-        .title("Add a personal data source")
-        .empty("All your registered characters are data sources.");
+        .title("Add a character")
+        .empty("All your registered characters are in the library.");
     for c in registered.iter().filter(|c| !added_ids.contains(&c.id)) {
         add = add.row(vec![
             character(c.id, c.name.clone()).into(),
@@ -966,10 +966,10 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
                 .into(),
         ]);
     }
-    let mut page = Page::new("Data sources").description(
+    let mut page = Page::new("My blueprints").description(
             "Your characters whose own blueprints are in the library. Register a character for this app \
              first (it reads its blueprints, industry jobs and assets). Corporations' blueprints come \
-             from corporate data sources, added with Add data source with a Director's character.",
+             from the app's data sources, each a Director's character, under Manage.",
         )
     .table(mine);
     if registered.is_empty() {
