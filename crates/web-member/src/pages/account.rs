@@ -7,11 +7,10 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use tether_db::{accounts, permissions};
+use tether_db::accounts;
 
 use super::{
-    CHARACTER_AUDIT, CharacterRow, DashboardWidget, PageError, Shell, annotate, is_htmx, load,
-    render, stay,
+    CharacterRow, DASHBOARD_GROUPS, PageError, Shell, annotate, is_htmx, load, render, stay,
 };
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -70,14 +69,10 @@ struct ProfilePage {
     shell: Shell,
     state_style: &'static str,
     state_name: String,
-    is_owner: bool,
     characters: Vec<CharacterRow>,
+    /// The account's first groups, under the title, and how many more.
     groups: Vec<String>,
-    permissions: Vec<String>,
-    /// Member Audit's My Characters, leading the Dashboard: the pilot's
-    /// character audit, with AA's own panels after it.
-    lead: Option<DashboardWidget>,
-    widgets: Vec<DashboardWidget>,
+    more_groups: usize,
 }
 
 /// `GET /profile`: the page is the Dashboard now, as in AA.
@@ -85,9 +80,10 @@ pub async fn to_dashboard() -> Redirect {
     Redirect::permanent("/dashboard")
 }
 
-/// `GET /dashboard`: AA's Dashboard (characters, state, groups). With
-/// Member Audit it's the pilot's character audit: My Characters' card grid
-/// first, then AA's panels, compactly.
+/// `GET /dashboard` without the character audit (Member Audit not
+/// installed, or not for this account; with it, the Dashboard is its My
+/// characters): AA's Characters, compactly, under the account's state and
+/// groups.
 pub async fn profile(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
@@ -97,52 +93,18 @@ pub async fn profile(
     };
     let mut loaded = load(&state, &session, "profile").await?;
     annotate(&state, session.account, &mut loaded.characters).await?;
-    let groups = tether_db::groups::names_for(&state.db, session.account).await?;
-    let held = permissions::effective(&state.db, session.account).await?;
-    let blacklisted = tether_db::states::account_state(&state.db, session.account)
-        .await?
-        .is_some_and(|s| s.is_blacklist());
-    let mut widgets: Vec<(String, usize, DashboardWidget)> = state
-        .plugins
-        .widgets()
-        .into_iter()
-        .filter(|w| {
-            tether_web_core::plugins::may_open(&w.access, blacklisted, |p| held.contains(p))
-        })
-        .map(|w| {
-            (
-                w.plugin_id.clone(),
-                w.index,
-                DashboardWidget {
-                    url: format!("/dashboard/widgets/{}/{}", w.plugin_id, w.index),
-                    title: w.title,
-                },
-            )
-        })
-        .collect();
-    // With Member Audit (and access to it), the Dashboard is the pilot's
-    // character audit, as Jay asked: its My Characters widget first.
-    // Without a main it can't show anything (apps see accounts through
-    // their main): AA's Characters, with Make main, instead.
-    let lead = widgets
-        .iter()
-        .position(|(plugin, index, _)| plugin == CHARACTER_AUDIT && *index == 0)
-        .map(|i| widgets.remove(i).2)
-        .filter(|_| !loaded.shell.no_main);
-    let widgets = widgets.into_iter().map(|(_, _, w)| w).collect();
-    let permissions = held.into_iter().collect();
+    let mut groups = tether_db::groups::names_for(&state.db, session.account).await?;
+    let more_groups = groups.len().saturating_sub(DASHBOARD_GROUPS);
+    groups.truncate(DASHBOARD_GROUPS);
     Ok(render(
         StatusCode::OK,
         &ProfilePage {
             shell: loaded.shell,
             state_style: loaded.state.style(),
             state_name: loaded.state.name,
-            is_owner: loaded.is_owner,
             characters: loaded.characters,
             groups,
-            permissions,
-            lead,
-            widgets,
+            more_groups,
         },
     ))
 }

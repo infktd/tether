@@ -986,7 +986,7 @@ async fn actions_answer_in_place_with_a_toast(db: PgPool) {
     assert!(message.contains("on this page any more"), "{message}");
     assert_eq!(tone, "problem");
 
-    // From a Dashboard widget: back to the Dashboard, in place.
+    // From another page (the Dashboard, say): back there, in place.
     let res = send(
         &h.app,
         boosted(post(uri, "_form=close&id=8", &owner), "/dashboard"),
@@ -1056,7 +1056,8 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
          [[views]]\nlabel = \"Overview\"\npath = \"\"\n\n\
          [[views]]\nlabel = \"Values\"\npath = \"values\"\n\n\
          [action]\nlabel = \"New block\"\npath = \"blocks\"\n\n\
-         [[manage]]\nlabel = \"Secret\"\npath = \"admin/secret\"\n",
+         [[manage]]\nlabel = \"Secret\"\npath = \"admin/secret\"\n\n\
+         [[navigation]]\nlabel = \"Frame\"\npath = \"\"\n",
         key.public()
     );
     let component = component();
@@ -1075,10 +1076,15 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
         .unwrap();
     }
 
-    // A member: the views and the action, no Manage.
+    // A member: the views and the action, no Manage, and the app's sidebar
+    // link marked on every page of it.
     let values = page(&h, "/plugins/acme.frame/values", &pilot).await;
     assert_eq!(values.status, StatusCode::OK, "{}", values.body);
     let body = &values.body;
+    assert!(
+        body.contains(r#"<a href="/plugins/acme.frame" class="nav-item" aria-current="page">"#),
+        "{body}"
+    );
     assert!(
         body.contains(r#"<nav class="views-bar" aria-label="Views">"#),
         "{body}"

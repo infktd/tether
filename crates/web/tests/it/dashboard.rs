@@ -1,12 +1,10 @@
-//! The Dashboard (AA's): admin panels for system admins, and widgets
-//! plugins add, each shown to whoever may open its page.
+//! The Dashboard: the pilot's characters, with system admins' panel on
+//! Administration instead, and no widgets from apps.
 
 use std::sync::OnceLock;
 
 use axum::http::StatusCode;
 use sqlx::PgPool;
-use tether_core::states::StateId;
-use tether_db::permissions::Grantee;
 use tether_plugins::testing::{self, Key};
 
 use crate::common::*;
@@ -22,8 +20,8 @@ fn component() -> Vec<u8> {
         .clone()
 }
 
-/// Widgets for `values` (needs `view`), `admin/secret` (admins only) and
-/// `failed` (the plugin errors).
+/// An app declaring widgets, as packages built before the Dashboard became
+/// the character audit did.
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(1);
     let manifest = format!(
@@ -85,93 +83,24 @@ async fn system_admins_get_the_system_panel_on_administration(db: PgPool) {
     );
 }
 
+/// The Dashboard is the pilot's characters (Jay, 2026-10-06): apps add no
+/// widgets to it. A package that still declares them installs and runs,
+/// and the Dashboard doesn't load them.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn plugin_widgets_follow_their_pages(db: PgPool) {
+async fn widgets_are_read_and_ignored(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, CHRIBBA).await;
-    let pilot = log_in_as(&h, MITTANI, None).await;
     install(&h, &owner).await;
-    let ore = format!(r#"hx-get="/dashboard/widgets/{ID}/0""#);
-    let secret = format!(r#"hx-get="/dashboard/widgets/{ID}/1""#);
-
-    // Without `view`, nothing: no widget, and the fragment is a 404.
-    assert!(!page(&h, "/dashboard", &pilot).await.body.contains(&ore));
-    let denied = page(&h, &format!("/dashboard/widgets/{ID}/0"), &pilot).await;
-    assert_eq!(denied.status, StatusCode::NOT_FOUND);
-
-    for state in [MEMBER_STATE, BLUE_STATE, GUEST_STATE] {
-        tether_db::permissions::grant(
-            &h.db,
-            "plugin.acme.widgets.view",
-            Grantee::State(StateId(state)),
-        )
-        .await
-        .unwrap();
-    }
-    let dashboard = page(&h, "/dashboard", &pilot).await;
-    assert!(dashboard.body.contains(&ore), "{}", dashboard.body);
-    assert!(!dashboard.body.contains(&secret), "admins only");
-    assert!(page(&h, "/dashboard", &owner).await.body.contains(&secret));
-
-    let widget = page(&h, &format!("/dashboard/widgets/{ID}/0"), &pilot).await;
-    assert_eq!(widget.status, StatusCode::OK, "{}", widget.body);
-    assert!(widget.body.contains("Ore"), "{}", widget.body);
-    assert!(
-        widget
-            .body
-            .contains(&format!(r#"href="/plugins/{ID}/values""#)),
-        "links to its page: {}",
-        widget.body
+    let dashboard = page(&h, "/dashboard", &owner).await;
+    assert_eq!(dashboard.status, StatusCode::OK, "{}", dashboard.body);
+    assert!(!dashboard.body.contains("widget"), "{}", dashboard.body);
+    assert!(!dashboard.body.contains(ID), "{}", dashboard.body);
+    assert_eq!(
+        page(&h, &format!("/dashboard/widgets/{ID}/0"), &owner)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
     );
-    // Sections only: tabs stay on the page.
-    assert!(!widget.body.contains("first tab"), "{}", widget.body);
-    assert!(!widget.body.contains("<html"), "a fragment");
-
-    // A failing plugin costs its own widget only, and says so politely.
-    let broken = page(&h, &format!("/dashboard/widgets/{ID}/2"), &pilot).await;
-    assert_eq!(broken.status, StatusCode::OK, "{}", broken.body);
-    assert!(broken.body.contains("couldn't load"), "{}", broken.body);
-    assert!(
-        !broken.body.contains("on fire"),
-        "plugin error text stays in its log"
-    );
-
-    // Its heading is the link: no stray "Open", and no watermark on the
-    // Dashboard.
-    assert!(
-        widget.body.contains(&format!(
-            r#"<h2 class="widget-title"><a href="/plugins/{ID}/values">Ore "#
-        )),
-        "{}",
-        widget.body
-    );
-    assert!(!widget.body.contains(">Open<"), "{}", widget.body);
-    assert!(!widget.body.contains("Viewing as"), "{}", widget.body);
-
-    let missing = page(&h, &format!("/dashboard/widgets/{ID}/9"), &pilot).await;
-    assert_eq!(missing.status, StatusCode::NOT_FOUND);
-    let no_plugin = page(&h, "/dashboard/widgets/no.such/0", &pilot).await;
-    assert_eq!(no_plugin.status, StatusCode::NOT_FOUND);
-    let not_a_number = page(&h, &format!("/dashboard/widgets/{ID}/x"), &pilot).await;
-    assert_eq!(not_a_number.status, StatusCode::NOT_FOUND);
-
-    // A widget is a page view: it shares the page's rate limit.
-    loop {
-        let res = page(&h, &format!("/plugins/{ID}/values"), &pilot).await;
-        if res.status == StatusCode::TOO_MANY_REQUESTS {
-            break;
-        }
-        assert_eq!(res.status, StatusCode::OK);
-    }
-    let limited = page(&h, &format!("/dashboard/widgets/{ID}/0"), &pilot).await;
-    assert!(limited.body.contains("couldn't load"), "{}", limited.body);
-
-    // Signed out, the same for an installed plugin as for none.
-    for uri in [
-        format!("/dashboard/widgets/{ID}/0"),
-        "/dashboard/widgets/no.such/0".to_owned(),
-        format!("/dashboard/widgets/{ID}/x"),
-    ] {
-        assert_eq!(send(&h.app, get(&uri, &[])).await.location(), "/login");
-    }
+    let values = page(&h, &format!("/plugins/{ID}/values"), &owner).await;
+    assert_eq!(values.status, StatusCode::OK, "{}", values.body);
 }

@@ -13,8 +13,11 @@
         <p class="page-desc">Updated {{ corp.fetched }}</p>
       </div>
     </div>
-    {% if can_update %}<form method="post" action="/corpstats/{{ corp.id }}/update"><button type="submit" class="btn" data-variant="outline">Update Now</button></form>{% endif %}
+    <div class="page-head-actions">
+      {% if can_update %}<form method="post" action="/corpstats/{{ corp.id }}/update"><button type="submit" class="btn" data-variant="outline">Update Now</button></form>{% endif %}
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
 
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">

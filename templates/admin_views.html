@@ -1,0 +1,8 @@
+{#- An admin page's group, as the views bar under its header (DESIGN.md,
+    Administration): included by every page with a page header, drawn on
+    admin pages only. -#}
+{% if !shell.admin_views.is_empty() %}
+<nav class="views-bar" aria-label="{{ shell.admin_group }}">
+  {% for v in shell.admin_views %}<a href="{{ v.href }}"{% if v.current %} aria-current="page"{% endif %}>{{ v.label }}</a>{% endfor %}
+</nav>
+{% endif %}

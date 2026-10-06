@@ -229,9 +229,6 @@ async fn fleet_operations_end_to_end(db: PgPool) {
     let a = log_in_as(&h, PILOT_A, None).await;
     let blue = log_in_as(&h, "1887431749:gigX", None).await;
     assert_eq!(ops_page(&h, &blue, 0).await.status, StatusCode::NOT_FOUND);
-    let widget = format!("/dashboard/widgets/{ID}/0");
-    assert!(!page(&h, "/dashboard", &blue).await.body.contains(&widget));
-    assert_eq!(page(&h, &widget, &blue).await.status, StatusCode::NOT_FOUND);
     grant(&h, &owner, "optimer_view", BLUE_STATE).await;
     grant(&h, &owner, "optimer_view", MEMBER_STATE).await;
     grant(&h, &owner, "optimer_management", MEMBER_STATE).await;
@@ -318,8 +315,8 @@ async fn fleet_operations_end_to_end(db: PgPool) {
     );
     type_id(&h, "Stratop").await;
 
-    // The Dashboard's Upcoming Fleets: the next five, soonest first, not
-    // past ones.
+    // More operations ahead. The Dashboard shows the pilot's characters
+    // only (Jay, 2026-10-06): no Upcoming Fleets there.
     for hours in 60..64 {
         let res = create(
             &h,
@@ -335,44 +332,15 @@ async fn fleet_operations_end_to_end(db: PgPool) {
     }
     let dashboard = page(&h, "/dashboard", &blue).await;
     assert!(
-        dashboard.body.contains(&format!(r#"hx-get="{widget}""#)),
+        !dashboard.body.contains("Upcoming Fleets"),
         "{}",
         dashboard.body
     );
-    assert!(
-        dashboard.body.contains("Upcoming Fleets"),
-        "{}",
-        dashboard.body
-    );
-    let fleets = page(&h, &widget, &blue).await;
-    assert_eq!(fleets.status, StatusCode::OK, "{}", fleets.body);
-    let first = fleets
-        .body
-        .find("Home Defence (moved)")
-        .expect("the next op");
-    let second = fleets.body.find("Second Fleet").expect("then this one");
-    assert!(first < second, "{}", fleets.body);
-    for shown in [
-        "Later 60",
-        "Later 61",
-        "Later 62",
-        "Stratop",
-        "data-countdown",
-    ] {
-        assert!(fleets.body.contains(shown), "{shown}: {}", fleets.body);
-    }
-    assert!(
-        !fleets.body.contains("Later 63"),
-        "five only: {}",
-        fleets.body
-    );
-    assert!(!fleets.body.contains("Old Roam"), "{}", fleets.body);
-    assert!(
-        fleets
-            .body
-            .contains(&format!(r#"href="/plugins/{ID}/widget""#)),
-        "{}",
-        fleets.body
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/widget"), &blue)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
     );
 
     // Deleting: from the row on the list, and from the operation's page.
@@ -461,10 +429,6 @@ async fn a_board_of_long_operations_still_renders(db: PgPool) {
         assert_eq!(list.status, StatusCode::OK, "{}", list.body);
         assert!(list.body.contains("all that fit"), "{}", list.body);
     }
-    // The Dashboard's five, as ever.
-    let widget = page(&h, &format!("/dashboard/widgets/{ID}/0"), &owner).await;
-    assert_eq!(widget.status, StatusCode::OK, "{}", widget.body);
-    assert!(widget.body.contains("data-countdown"), "{}", widget.body);
 
     // Past the 100 types the select holds, an operation's own type is
     // written in by name, so saving it keeps it.

@@ -46,10 +46,13 @@
         <p class="page-desc max-w-3xl">Arrange the sidebar: rename, reorder, hide, group pages into sections and folders, and add your own links. Everyone still sees only the pages they may open; hiding a page only takes it off the sidebar. Pages and apps added later appear in their usual section.</p>
       </div>
     </div>
-    <form method="post" action="/admin/menu/reset" hx-confirm="Put the sidebar back as Tether ships it? Your sections, folders and links are deleted.">
-      <button type="submit" class="btn" data-variant="outline">Reset</button>
-    </form>
+    <div class="page-head-actions">
+      <form method="post" action="/admin/menu/reset" hx-confirm="Put the sidebar back as Tether ships it? Your sections, folders and links are deleted.">
+        <button type="submit" class="btn" data-variant="outline">Reset</button>
+      </form>
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
   {% for s in sections %}

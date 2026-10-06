@@ -13,10 +13,13 @@
         <p class="page-desc max-w-3xl">Every member against each requirement, as Tether judges them now. Check now applies them at once: members who fail leave, or start a grace period.</p>
       </div>
     </div>
-    <form method="post" action="/securegroups/audit/{{ id }}/check">
-      <button type="submit" class="btn" data-variant="outline">Check now</button>
-    </form>
+    <div class="page-head-actions">
+      <form method="post" action="/securegroups/audit/{{ id }}/check">
+        <button type="submit" class="btn" data-variant="outline">Check now</button>
+      </form>
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
   <section class="card data-card">
     <header>

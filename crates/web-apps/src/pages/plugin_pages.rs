@@ -593,7 +593,7 @@ fn progress(progress: &Progress, now: chrono::DateTime<chrono::Utc>) -> Progress
 
 /// What drawing a page's sections needs: whose page it is, where its forms
 /// and actions post, and ids for confirmation popovers (unique on the
-/// screen: a Dashboard shows several widgets).
+/// screen).
 pub struct Ctx<'a> {
     pub plugin: &'a str,
     /// The page's address with its query: forms and actions post here.
@@ -1027,6 +1027,19 @@ pub struct ContentView {
     /// Every view is audited: kept out of htmx's history cache, so back
     /// and forward ask the server (and are recorded) again.
     pub audited: bool,
+    /// The character audit's main page drawn as the Dashboard: its header
+    /// is the Dashboard's.
+    pub home: Option<HomeView>,
+}
+
+/// The Dashboard's header over the character audit (DESIGN.md,
+/// Dashboard): the account's state and its first groups.
+pub struct HomeView {
+    pub state_style: &'static str,
+    pub state_name: String,
+    pub groups: Vec<String>,
+    /// Groups beyond those shown.
+    pub more_groups: usize,
 }
 
 #[derive(Template)]
@@ -1072,6 +1085,52 @@ struct Opened {
     site: String,
     /// The app's views, Manage pages and action for this viewer.
     frame: Frame,
+    /// The character audit's main page, drawn as the Dashboard.
+    home: Option<Home>,
+}
+
+/// Reads what the Dashboard draws around the character audit's main page:
+/// the footers under the account's characters and the account's groups.
+async fn with_home(state: &AppState, opened: &mut Opened) -> Result<(), PageError> {
+    if let Some(home) = &mut opened.home {
+        home.feet = super::card_feet(state, opened.account).await?;
+        home.groups = tether_db::groups::names_for(&state.db, opened.account).await?;
+    }
+    Ok(())
+}
+
+/// The Dashboard's address, and the page name that marks its sidebar
+/// link.
+const DASHBOARD: &str = "/dashboard";
+const DASHBOARD_ACTIVE: &str = "profile";
+
+/// The character audit's main page drawn as the Dashboard (DESIGN.md,
+/// Dashboard): Tether's footers under the account's characters, and its
+/// state and groups under the title (`with_home` reads the footers and
+/// groups).
+struct Home {
+    feet: std::collections::HashMap<i64, CardFoot>,
+    state_style: &'static str,
+    state_name: String,
+    groups: Vec<String>,
+}
+
+/// The app's sidebar link a page sits under: the `[[navigation]]` entry
+/// covering it (the longest path), else the app's main page.
+fn nav_path<'a>(manifest: &'a manifest::Manifest, path: &str) -> &'a str {
+    manifest
+        .navigation
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .filter(|p| {
+            p.is_empty()
+                || path == *p
+                || path
+                    .strip_prefix(*p)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .max_by_key(|p| p.len())
+        .unwrap_or("")
 }
 
 /// Everything before the plugin is called. Anything that doesn't pass is
@@ -1115,7 +1174,7 @@ async fn open(
     if !may(path) {
         return Err(missing());
     }
-    let frame = frame(&running.manifest, path, may);
+    let mut frame = frame(&running.manifest, path, may);
     let viewer = viewer(state, &session, &running, &perms).await?;
     // Change character: one of the account's own, not the main
     // (`identity.acting`).
@@ -1153,10 +1212,34 @@ async fn open(
         .filter(|(k, _)| k != TAB && table_page_key(k).is_none())
         .collect();
     // Not "plugins": that's the admin page; the plugin's own link is
-    // marked through active_href.
-    let mut shell = load(state, &session, "plugin-page").await?.shell;
+    // marked through active_href, on every page of the app.
+    let loaded = load(state, &session, "plugin-page").await?;
+    let mut shell = loaded.shell;
+    // The character audit's pages belong to the Dashboard (DESIGN.md,
+    // Dashboard): it stays marked, and the app's main page is the
+    // Dashboard itself.
+    let audit = id == super::CHARACTER_AUDIT && shell.character_audit;
+    let home = if audit {
+        shell.active = DASHBOARD_ACTIVE;
+        let main = page_href(id, "");
+        for view in &mut frame.views {
+            if view.href == main {
+                view.href = DASHBOARD.to_owned();
+            }
+        }
+        // Its footers and groups are read by `with_home`, once the page
+        // is to be drawn (not for the redirect, nor over the budget).
+        path.is_empty().then(|| Home {
+            feet: std::collections::HashMap::new(),
+            state_style: loaded.state.style(),
+            state_name: loaded.state.name,
+            groups: Vec::new(),
+        })
+    } else {
+        shell.active_href = page_href(id, nav_path(&running.manifest, path));
+        None
+    };
     let href = page_href(id, path);
-    shell.active_href = href.clone();
     let href = if raw.is_empty() {
         href
     } else {
@@ -1179,6 +1262,7 @@ async fn open(
             owners,
             site: state.site.origin().to_owned(),
             frame,
+            home,
         },
     ))
 }
@@ -1358,7 +1442,6 @@ enum Via {
     Page,
     Reload,
     Form,
-    Widget,
 }
 
 impl Via {
@@ -1367,7 +1450,6 @@ impl Via {
             Via::Page => "page",
             Via::Reload => "reload",
             Via::Form => "form",
-            Via::Widget => "widget",
         }
     }
 }
@@ -1534,10 +1616,13 @@ fn draw(
         parts.push(format!("{TAB}={i}"));
         format!("{}?{}", page_href(&id, &opened.path), parts.join("&"))
     };
-    let ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
+    let mut ctx = Ctx::new(&id, &opened.href, "page".to_owned(), &opened.site)
         .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
         .adding_owners(owner_back(&opened))
         .with_popups(page_rules::popup_forms(page));
+    if let Some(home) = &opened.home {
+        ctx = ctx.with_feet(&home.feet);
+    }
     let sections: Vec<SectionView> =
         arrange(page.sections.iter().map(|s| section(&ctx, s)).collect());
     let tab_sections: Vec<SectionView> = page
@@ -1647,12 +1732,33 @@ fn draw(
         (links, page_action, Vec::new())
     };
     // The account's main, whichever character it acts as: a screenshot
-    // names who took it.
-    let watermark = format!(
-        "Viewing as {} · {} EVE",
-        opened.viewer.main.name,
-        chrono::Utc::now().format("%Y-%m-%d %H:%M")
-    );
+    // names who took it. Not on the Dashboard (DESIGN.md).
+    let watermark = if opened.home.is_some() {
+        String::new()
+    } else {
+        format!(
+            "Viewing as {} · {} EVE",
+            opened.viewer.main.name,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M")
+        )
+    };
+    let home = opened.home.as_ref().map(|h| HomeView {
+        state_style: h.state_style,
+        state_name: h.state_name.clone(),
+        groups: h
+            .groups
+            .iter()
+            .take(super::DASHBOARD_GROUPS)
+            .cloned()
+            .collect(),
+        more_groups: h.groups.len().saturating_sub(super::DASHBOARD_GROUPS),
+    });
+    // The character audit's pages lead back to the Dashboard.
+    let app_href = if id == super::CHARACTER_AUDIT && opened.shell.character_audit {
+        DASHBOARD.to_owned()
+    } else {
+        page_href(&id, "")
+    };
     let manifest = &opened.running.manifest;
     let section = manifest
         .navigation
@@ -1666,14 +1772,26 @@ fn draw(
         .map_or("Apps", |(_, label)| label);
     let content = ContentView {
         app_name: manifest.plugin.name.clone(),
-        icon: tether_web_core::plugins::icon_of(manifest),
-        app_href: tether_web_core::plugins::page_href(&manifest.plugin.id, ""),
+        icon: if home.is_some() {
+            "grid"
+        } else {
+            tether_web_core::plugins::icon_of(manifest)
+        },
+        app_href,
         section,
         manage,
         in_manage: opened.frame.in_manage,
         sub_links,
-        title: page.title.clone(),
-        description: page.description.clone(),
+        title: if home.is_some() {
+            "Dashboard".to_owned()
+        } else {
+            page.title.clone()
+        },
+        description: if home.is_some() {
+            None
+        } else {
+            page.description.clone()
+        },
         links,
         buttons,
         sections,
@@ -1694,6 +1812,7 @@ fn draw(
         href: opened.href.clone(),
         owners: opened.owners,
         audited,
+        home,
     };
     let mut response = if alone {
         render(status, &PluginContent { c: content })
@@ -1721,98 +1840,62 @@ fn draw(
     response
 }
 
-#[derive(Template)]
-#[template(path = "dashboard_widget.html")]
-struct WidgetFragment {
-    title: String,
-    /// The widget's page.
-    href: String,
-    sections: Vec<SectionView>,
-    /// The plugin failed, or the viewer opened too many of its pages; its
-    /// log says why (admins read it there).
-    failed: bool,
-}
-
-/// `GET /dashboard/widgets/{plugin}/{index}`: a plugin's Dashboard widget,
-/// a fragment loaded after the Dashboard: its page's sections (not its
-/// tabs). Checked and rate limited as opening the page is, so anyone who
-/// may not open it gets the same 404 as for nothing. A plugin that fails
-/// costs only its own widget.
-pub async fn widget(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Path((id, index)): Path<(String, String)>,
-) -> Result<Response, PageError> {
-    // Signed in first: whether a plugin is installed is nobody else's
-    // business.
-    let session = session.ok_or_else(AppError::unauthorized)?;
-    let index: usize = index.parse().map_err(|_| missing())?;
-    manifest::check_id(&id).map_err(|_| missing())?;
-    let running = state.plugins.running(&id).ok_or_else(missing)?;
-    let widget = running
-        .manifest
-        .widgets
-        .get(index)
-        .cloned()
-        .ok_or_else(missing)?;
-    let href = page_href(&id, &widget.path);
-    let unavailable = |title: String, href: String| WidgetFragment {
-        title,
-        href,
-        sections: Vec::new(),
-        failed: true,
-    };
-    // The Dashboard's lead (Member Audit's My Characters): Tether adds its
-    // own footer to the cards of the viewer's characters.
-    let lead = id == super::CHARACTER_AUDIT && index == 0;
-    let fragment = match open(&state, Some(session), &id, &widget.path, None).await {
-        Ok((session, opened)) => {
-            // The page's own budget: a widget is a page view.
-            if state
-                .limits
-                .plugin_pages
-                .check((session.account.0, id.clone()), std::time::Instant::now())
-                .is_err()
+/// `GET /dashboard` for whoever may open the character audit's main page
+/// (`Shell::character_audit`): that page, as the Dashboard (DESIGN.md,
+/// Dashboard). `None` for everyone else, and whenever the app can't show
+/// it now (failed, or the viewer opened too many of its pages): the
+/// account's own Dashboard then, so an app's trouble never costs anyone
+/// their Dashboard. The app's log says why (admins read it there).
+pub async fn home(
+    state: &AppState,
+    session: CurrentSession,
+    headers: &HeaderMap,
+) -> Result<Option<Response>, PageError> {
+    if state.plugins.running(super::CHARACTER_AUDIT).is_none() {
+        return Ok(None);
+    }
+    let (session, mut opened) =
+        match open(state, Some(session), super::CHARACTER_AUDIT, "", None).await {
+            Ok(opened) => opened,
+            // Not for this account, or no main yet.
+            Err(err)
+                if matches!(
+                    err.0.status(),
+                    StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+                ) =>
             {
-                unavailable(widget.title, href)
-            } else {
-                match render_page(&state, &opened, Via::Widget).await {
-                    Ok(page) => {
-                        let feet = if lead {
-                            super::card_feet(&state, session.account).await?
-                        } else {
-                            Default::default()
-                        };
-                        // Popover ids unique among the Dashboard's widgets.
-                        let ctx = Ctx::new(
-                            &id,
-                            &opened.href,
-                            format!("widget-{index}-{id}"),
-                            &opened.site,
-                        )
-                        .registering(!opened.running.manifest.capabilities.esi.user.is_empty())
-                        .adding_owners(owner_back(&opened))
-                        .with_feet(&feet)
-                        .with_popups(page_rules::popup_forms(&page));
-                        WidgetFragment {
-                            title: widget.title,
-                            sections: arrange(
-                                page.sections.iter().map(|s| section(&ctx, s)).collect(),
-                            ),
-                            href,
-                            failed: false,
-                        }
-                    }
-                    Err(_) => unavailable(widget.title, href),
-                }
+                return Ok(None);
             }
-        }
-        Err(err) if err.0.status() == StatusCode::NOT_FOUND => return Err(err),
-        Err(err) if err.0.status() == StatusCode::UNAUTHORIZED => return Err(err),
-        // No main yet, and the like: nothing to show, politely.
-        Err(_) => unavailable(widget.title, href),
+            Err(err) => return Err(err),
+        };
+    if opened.home.is_none()
+        || state
+            .limits
+            .plugin_pages
+            .check(
+                (session.account.0, super::CHARACTER_AUDIT.to_owned()),
+                std::time::Instant::now(),
+            )
+            .is_err()
+    {
+        return Ok(None);
+    }
+    with_home(state, &mut opened).await?;
+    let via = if is_reload(headers) {
+        Via::Reload
+    } else {
+        Via::Page
     };
-    Ok(render(StatusCode::OK, &fragment))
+    Ok(match render_page(state, &opened, via).await {
+        Ok(page) => Some(draw(
+            opened,
+            &page,
+            StatusCode::OK,
+            None,
+            content_alone(headers),
+        )),
+        Err(_) => None,
+    })
 }
 
 // ---- handlers ---------------------------------------------------------------
@@ -1849,7 +1932,12 @@ async fn show(
     let reload = is_reload(&headers);
     let alone = content_alone(&headers);
     let shown = async {
-        let (session, opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
+        let (session, mut opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
+        // The character audit's main page is the Dashboard: its address
+        // shows it. Its content alone (a reload) still comes from here.
+        if opened.home.is_some() && !alone {
+            return Ok(Redirect::to(DASHBOARD).into_response());
+        }
         if let Err(retry) = state
             .limits
             .plugin_pages
@@ -1857,6 +1945,7 @@ async fn show(
         {
             return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
         }
+        with_home(&state, &mut opened).await?;
         let via = if reload { Via::Reload } else { Via::Page };
         let page = render_page(&state, &opened, via).await?;
         Ok::<_, PageError>(draw(opened, &page, StatusCode::OK, None, alone))
@@ -1884,7 +1973,8 @@ enum Posted {
     Whole,
     /// From the page itself: its content, swapped in place.
     InPlace,
-    /// From another page (a Dashboard widget): back there, in place.
+    /// From another page (the Dashboard, for the character audit): back
+    /// there, in place.
     Elsewhere(String),
 }
 
@@ -1976,7 +2066,7 @@ async fn post(
     posted: Vec<(String, String)>,
 ) -> Result<Response, PageError> {
     let from = Posted::of(&state, &headers, &page_href(&id, &path));
-    let (session, opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
+    let (session, mut opened) = open(&state, session, &id, &path, raw.as_deref()).await?;
     if let Err(retry) = state
         .limits
         .plugin_submits
@@ -1984,6 +2074,7 @@ async fn post(
     {
         return Err(AppError::too_many_requests(retry.as_secs().max(1)).into());
     }
+    with_home(&state, &mut opened).await?;
     if posted.len() > MAX_FORM_PAIRS {
         return Err(AppError::bad_request("That form has too many fields.").into());
     }

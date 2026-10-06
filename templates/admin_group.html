@@ -13,10 +13,13 @@
         {% if !group.description.is_empty() %}<p class="page-desc">{{ group.description }}</p>{% endif %}
       </div>
     </div>
-    <form method="post" action="/admin/groups/{{ group.id }}/delete" hx-confirm="Delete the group {{ group.name }}? Its members lose what it granted.">
-      <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete group</button>
-    </form>
+    <div class="page-head-actions">
+      <form method="post" action="/admin/groups/{{ group.id }}/delete" hx-confirm="Delete the group {{ group.name }}? Its members lose what it granted.">
+        <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete group</button>
+      </form>
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
   {% if let Some(n) = notice %}<div class="alert" role="status"><section>{{ n }}</section></div>{% endif %}
 

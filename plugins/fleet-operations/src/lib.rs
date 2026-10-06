@@ -36,8 +36,6 @@ const TYPE_OPTIONS: i64 = 100;
 /// Rows per list, within the host's page limits.
 const UPCOMING_ROWS: i64 = 500;
 const PAST_ROWS: i64 = 200;
-/// AA's Dashboard widget shows the next five.
-const WIDGET_ROWS: i64 = 5;
 
 const MANAGE: &str = "optimer_management";
 
@@ -55,7 +53,6 @@ impl Plugin for FleetOperations {
         }
         match path {
             "" => ops_page(&viewer),
-            "widget" => widget_page(),
             "add" => add_page(None, None),
             _ => Err(PageError::NotFound),
         }
@@ -408,34 +405,6 @@ fn ops_page(viewer: &Viewer) -> Result<Page, PageError> {
                 ops_table(&past, now, manage, false, "No past operations.").title(past_title),
             )],
         ))
-}
-
-/// AA's Dashboard widget: the next five operations.
-fn widget_page() -> Result<Page, PageError> {
-    let now = Utc::now();
-    let mut table = Table::new(vec![
-        Column::text("Operation"),
-        Column::text("Type"),
-        Column::text("Form-up system"),
-        Column::numeric("EVE time"),
-        Column::numeric("Starts in"),
-    ])
-    .empty("No upcoming fleets.");
-    for op in upcoming(WIDGET_ROWS)? {
-        table = table.row(vec![
-            op.name.clone().into(),
-            type_value(&op),
-            op.system.clone().into(),
-            time(rfc3339(op.start)),
-            starts_in(now, op.start),
-        ]);
-    }
-    // On the Dashboard only the table shows; opened on its own, the link
-    // leads to the full list.
-    Ok(Page::new("Upcoming Fleets")
-        .description("The next five fleet operations")
-        .link("All Operations", "")
-        .table(table))
 }
 
 // ---- adding and editing ------------------------------------------------------

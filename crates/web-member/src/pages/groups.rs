@@ -83,6 +83,10 @@ struct GroupsPage {
     available: Vec<GroupCard>,
     notice: Option<String>,
     error: Option<String>,
+    /// What the account's state, groups and own grants give it, at the
+    /// foot of the page.
+    permissions: Vec<String>,
+    is_owner: bool,
 }
 
 async fn groups_page(
@@ -99,6 +103,10 @@ async fn groups_page(
         .partition(|g| g.is_member);
     requirements(&state.db, &mut mine).await?;
     requirements(&state.db, &mut available).await?;
+    let permissions = tether_db::permissions::effective(&state.db, session.account)
+        .await?
+        .into_iter()
+        .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -111,6 +119,8 @@ async fn groups_page(
                 available,
                 notice,
                 error: error.map(|e| e.message().to_owned()),
+                permissions,
+                is_owner: loaded.is_owner,
             },
         ),
     ))

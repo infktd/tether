@@ -519,9 +519,10 @@ async fn member_audit_end_to_end(db: PgPool) {
     // is off by default.
     assert_eq!(sections, 23, "{:?}", plugin_warnings(&h).await);
 
-    // My Characters: Tether's Register Character card first, then a card
-    // per character with its portrait, logos and facts, and the totals.
-    let mine = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    // My characters, which is the Dashboard: Tether's Register Character
+    // card first, then a card per character with its portrait, logos and
+    // facts, and the totals.
+    let mine = page(&h, "/dashboard", &owner).await;
     assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
     let body = &mine.body;
     let register = body.find(&format!(
@@ -1006,6 +1007,23 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
         warnings.iter().any(|w| w.contains("who owns characters")),
         "{warnings:?}"
     );
+    // Nor does it stand in for the Dashboard: the account's own one, and
+    // the package's main page at its own address.
+    let dashboard = page(&h, "/dashboard", &owner).await;
+    assert!(
+        !dashboard.body.contains("Register another character"),
+        "{}",
+        dashboard.body
+    );
+    assert!(
+        dashboard.body.contains(r#"id="characters""#),
+        "{}",
+        dashboard.body
+    );
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}"), &owner).await.status,
+        StatusCode::OK
+    );
 }
 
 /// Skill sets has a page rule of its own (view_skill_sets), as the Finder,
@@ -1070,7 +1088,7 @@ async fn who_sees_what(db: PgPool) {
             "{uri}"
         );
     }
-    let home = page(&h, &format!("/plugins/{ID}"), &blue).await;
+    let home = page(&h, "/dashboard", &blue).await;
     assert_eq!(home.status, StatusCode::OK);
     // Nor their views: the bar shows what they may open.
     assert!(
@@ -1523,75 +1541,114 @@ async fn member_audit_feeds_secure_groups(db: PgPool) {
 
 // ---- the Dashboard ----------------------------------------------------------
 
-/// With Member Audit and its basic access, the Dashboard is the pilot's
-/// character audit: My Characters' cards first (Register Character leading
-/// them), then AA's Characters and Membership panels. Without access, the
-/// Dashboard as before.
+/// With Member Audit and its basic access, the Dashboard is its My
+/// characters (DESIGN.md, Dashboard): the Dashboard's header, the
+/// account's state and groups under the title, the totals and a row per
+/// character with Tether's status and Make main, Register another
+/// character, and nothing else. The app's own main page is the Dashboard,
+/// its sidebar link goes, and its other pages lead back to it. Without
+/// access, the account's own Dashboard.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn the_dashboard_is_the_character_audit(db: PgPool) {
     let (h, owner) = synced(db).await;
-    let widget = format!("/dashboard/widgets/{ID}/0");
     let dashboard = page(&h, "/dashboard", &owner).await;
     assert_eq!(dashboard.status, StatusCode::OK, "{}", dashboard.body);
     let body = &dashboard.body;
-    let audit = body
-        .find(r#"id="character-audit""#)
-        .expect("My Characters leads");
-    assert!(body.contains(&format!(r#"hx-get="{widget}""#)), "{body}");
-    let membership = body
-        .find(r#"aria-labelledby="membership""#)
-        .expect("Membership");
-    assert!(audit < membership, "{body}");
-    // No duplicate Characters table, and one way to add a character: the
-    // grid's own card, not the header's button too.
-    assert!(!body.contains(r#"id="characters""#), "{body}");
-    assert!(!body.contains("Add character"), "{body}");
-    assert!(body.contains("Change Main with EVE login"), "{body}");
-    assert!(!body.contains(r#"aria-label="Summary""#), "{body}");
-    assert!(!body.contains("Viewing as"), "{body}");
-    // Drawn once, not again among the other widgets.
-    assert_eq!(body.matches(&widget).count(), 1, "{body}");
-
-    let cards = page(&h, &widget, &owner).await;
-    assert_eq!(cards.status, StatusCode::OK, "{}", cards.body);
-    let register = cards
-        .body
+    for part in [
+        r#"<h1 class="page-title">Dashboard</h1>"#,
+        r#"<div class="page-eyebrow">Account</div>"#,
+        r#"class="page-membership""#,
+        "Wallets",
+        "Register another character",
+        "Change Main with EVE login",
+        "grid-card-foot",
+    ] {
+        assert!(body.contains(part), "{part}: {body}");
+    }
+    let register = body
         .find(&format!(r#"href="/register?app={ID}""#))
-        .expect("Register Character");
-    let first = cards
-        .body
+        .expect("Register another character");
+    let first = body
         .find(&format!(r#"href="/plugins/{ID}/character/{CHRIBBA}""#))
-        .expect("Chribba's card");
-    assert!(register < first, "{}", cards.body);
+        .expect("Chribba's row");
+    assert!(register < first, "{body}");
     assert!(
-        cards.body.contains(&format!(
+        body.contains(&format!(
             "https://images.evetech.net/characters/{CHRIBBA}/portrait?size=128"
         )),
-        "{}",
-        cards.body
+        "{body}"
     );
-    assert!(cards.body.contains("Wallets"), "{}", cards.body);
-    // Tether's footer on the pilot's own card: its status (Chribba is the
-    // main already: nothing to make main).
-    assert!(cards.body.contains("grid-card-foot"), "{}", cards.body);
-    assert!(!cards.body.contains(">Make main<"), "{}", cards.body);
+    // Chribba is the main already: nothing to make main. No other app's
+    // boxes, no watermark, and one way to add a character.
+    assert!(!body.contains(">Make main<"), "{body}");
+    assert!(!body.contains("widget-title"), "{body}");
+    assert!(!body.contains("Viewing as"), "{body}");
+    assert!(!body.contains("Add character"), "{body}");
+    // The views of the app the viewer may open (the owner: all of them),
+    // the first being the Dashboard; the Dashboard marked in the sidebar,
+    // and no sidebar link of the app's own.
     assert!(
-        cards.body.contains("Register another character"),
-        "{}",
-        cards.body
+        body.contains(r#"<a href="/dashboard" aria-current="page">My characters</a>"#),
+        "{body}"
     );
-    assert!(!cards.body.contains(">Open<"), "{}", cards.body);
-    assert!(!cards.body.contains("Viewing as"), "{}", cards.body);
+    assert!(
+        body.contains(&format!(
+            r#"<a href="/plugins/{ID}/finder">Character finder</a>"#
+        )),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"<a href="/dashboard" class="nav-item" aria-current="page">"#),
+        "{body}"
+    );
+    assert!(
+        !body.contains(&format!(r#"<a href="/plugins/{ID}" class="nav-item""#)),
+        "{body}"
+    );
 
-    // Someone without Member Audit's access: the Dashboard as it was.
+    // The app's main page is the Dashboard; its content alone (a reload)
+    // still comes from its address, as the Dashboard.
+    let main = send(&h.app, get(&format!("/plugins/{ID}"), &[(SESSION, &owner)])).await;
+    assert_eq!(main.status, StatusCode::SEE_OTHER);
+    assert_eq!(main.location(), "/dashboard");
+    let mut req = get(&format!("/plugins/{ID}"), &[(SESSION, &owner)]);
+    req.headers_mut()
+        .insert("hx-request", "true".parse().unwrap());
+    req.headers_mut()
+        .insert("hx-trigger", "plugin-content".parse().unwrap());
+    let reload = send(&h.app, req).await;
+    assert_eq!(reload.status, StatusCode::OK, "{}", reload.body);
+    assert!(
+        reload
+            .body
+            .contains(r#"<h1 class="page-title">Dashboard</h1>"#),
+        "{}",
+        reload.body
+    );
+    assert!(!reload.body.contains("<html"), "{}", reload.body);
+    // Its other pages keep the Dashboard marked and lead back to it.
+    let finder = page(&h, &format!("/plugins/{ID}/finder"), &owner).await;
+    assert!(
+        finder
+            .body
+            .contains(r#"<a href="/dashboard" class="nav-item" aria-current="page">"#),
+        "{}",
+        finder.body
+    );
+    assert!(
+        finder
+            .body
+            .contains(r#"<a href="/dashboard">My characters</a>"#),
+        "{}",
+        finder.body
+    );
+
+    // Someone without Member Audit's access: the account's own Dashboard.
     let guest = log_in_as(&h, "443630591:The Mittani", None).await;
     let theirs = page(&h, "/dashboard", &guest).await.body;
-    assert!(!theirs.contains("character-audit"), "{theirs}");
-    assert!(theirs.contains(r#"aria-label="Summary""#), "{theirs}");
-    assert_eq!(
-        page(&h, &widget, &guest).await.status,
-        StatusCode::NOT_FOUND
-    );
+    assert!(!theirs.contains("Register another character"), "{theirs}");
+    assert!(theirs.contains(r#"id="characters""#), "{theirs}");
+    assert!(theirs.contains("Add character"), "{theirs}");
 }
 
 /// A big hangar: more than the host takes in one call's parameters, so it

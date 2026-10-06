@@ -72,6 +72,7 @@ name = "Mining ledger"     # up to 60 characters
 version = "0.3.1"          # MAJOR.MINOR.PATCH, no leading zeros
 host_api = "1"
 description = "Moon mining for the corp"                  # optional, up to 300 characters
+icon = "moon"              # optional: its sidebar and header icon, one of Tether's (see The app shell)
 repository = "https://github.com/example/mining-ledger"   # optional
 
 [publisher]
@@ -87,8 +88,8 @@ notify = true                       # notices in the bell (see Notices)
 
 [capabilities.esi]
 user = ["esi-wallet.read_character_wallet.v1"]              # pilots register characters for your app with these
-data_source = ["esi-industry.read_corporation_mining.v1"]  # characters an admin designates
-# owner_permissions = ["manage_contacts"]                 # which permissions add them (default: your add_… ones)
+data_source = ["esi-industry.read_corporation_mining.v1"]  # characters people with your add_… permissions add as data sources
+# owner_permissions = ["manage_contacts"]                 # which permissions add data sources (default: your add_… ones)
 
 [[capabilities.schedules]]
 name = "sync_mining"
@@ -176,18 +177,39 @@ label = "Mining"
 path = ""
 section = "industry"   # optional: account, fleet, industry, corporation, apps (the default) or admin
 
-[[widgets]]            # Dashboard cards (at most 3), shown to whoever may open their page
-title = "Next chunks"
-path = "widget"        # the page's sections are drawn on the Dashboard (not its tabs), with a link to the page
+[[views]]              # the app shell: your views bar, in order; the first is the main page
+label = "Overview"
+path = ""
+[[views]]
+label = "Reports"
+path = "reports"
+
+[action]               # one primary action, the header's button on every page but its own
+label = "New ledger"
+path = "add"
+
+[[manage]]             # pages for those who run the app, in the Manage menu after Settings
+label = "Ore types"
+path = "ores"
 ```
 
 - Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.
 - A `[[navigation]]` link goes in its `section` of the sidebar: `account`, `fleet`, `industry`, `corporation`, `apps` or `admin`. Leave it out for `apps`; any other name gets the package refused. It's only where the link starts out: admins can move, rename or hide it on the Menu page, and a section with nothing in it isn't shown.
 - A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
 - A rule names a `permission` or says `signed_in = true`, never both. `signed_in` pages open to every account signed in with a main, Guests included and the Blacklist not (it holds only what an admin grants it): use it only where AA asks no more than a login (applying to a corporation), and gate what they show and do with `viewer.can(...)` as usual. Admins see such rules at install as "any signed-in pilot", and an upgrade that opens a page asks them again.
-- `audit = true` on a rule writes every view of a page under it (opened, reloaded, shown on the Dashboard, or drawn for a form post) to Tether's audit log as `plugin.page_view`, with who, the path and the query, before your plugin is called. Use it for pages showing someone else's private data, such as their mail. A view that can't be recorded isn't shown.
+- `audit = true` on a rule writes every view of a page under it (opened, reloaded, or drawn for a form post) to Tether's audit log as `plugin.page_view`, with who, the path and the query, before your plugin is called. Use it for pages showing someone else's private data, such as their mail. A view that can't be recorded isn't shown.
 - Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
 - Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.
+
+### The app shell
+
+Tether draws every app's frame, the same for all of them: the page header (your icon, your app's name over the page's title, its description), the views bar, the primary action and the Manage menu. You declare them in `plugin.toml`; your pages return only their content.
+
+- `icon` (in `[plugin]`): one of `activity`, `blueprint`, `book`, `box`, `chart`, `citadel`, `clipboard`, `clock`, `contract`, `crosshair`, `flag`, `globe`, `hexagon`, `megaphone`, `moon`, `package`, `radio`, `scan-user`, `scroll`, `shield`, `users`. Without one, a generic package.
+- `[[views]]`: your views bar, in order: at most 8, labels up to 30 characters, in sentence case. The first is your main page (`path = ""`), usually "Overview". Declare at least that one if your app has a sidebar link. One view alone draws no bar.
+- `[action]`: your one primary action ("New ledger"), a button in the header on every page but its own. A page's own `.button(...)` (a record's Edit) takes its place on that page. Name actions that create something "New ...".
+- `[[manage]]`: pages for those who run the app, in the Manage menu after Settings (which Tether adds when a `[[pages]]` rule covers `settings`). Not your main page, and nothing under `settings`. On a Manage page the bar shows the Manage pages and the eyebrow reads "<App> · Manage".
+- Each entry shows only to whoever may open its page under your `[[pages]]` rules, so nobody sees a link they can't follow: give a view or action meant for fewer people its own rule. An action open to holders of either of two permissions can't be said with one rule; draw it as each page's `.button(...)` for those who hold one (Fleet Activity Tracking's New FAT link does).
 
 ## Pages
 
@@ -207,10 +229,10 @@ path = "widget"        # the page's sections are drawn on the Dashboard (not its
   - `countdown(rfc3339)`: the time left ("2d 4h 13m"), ticking in the browser, the EVE time on hover, "done" once it's passed;
   - `progress(fraction)`: a thin bar, 0 to 1, with `.label(...)`; `.between(from, to)` (two RFC 3339 instants) makes it fill live, e.g. for a skill in training;
   - `action(label, form)` and `actions(vec![...])` (at most 4 side by side): buttons that post, for row actions (see Forms);
-  - `add_owner(label)`: Tether's own Add owner button with your words ("Log in with the fleet boss"), for apps with data-source scopes, drawn only for those who may add owners, with Tether's own line and the scopes beside it; the login comes back to the page with `owner=<character id>` in the query. Anyone can type a query, so treat `owner` as a hint: use it only if it's one of the viewer's characters and in `esi::data_sources()`, and check the choice again when the form is posted;
+  - `add_owner(label)`: Tether's own Add data source button with your words ("Log in with the fleet boss"), for apps with data-source scopes, drawn only for those who may add data sources, with Tether's own line and the scopes beside it; the login comes back to the page with `owner=<character id>` in the query. Anyone can type a query, so treat `owner` as a hint: use it only if it's one of the viewer's characters and in `esi::data_sources()`, and check the choice again when the form is posted;
   - `share(path)`: one of your pages as its full address, to paste outside Tether (a register link in fleet chat), read-only with a Copy button. You give a link path; Tether writes the site's address before it (you never learn it, and can't give any other address).
 - Use `Tone::Accent` for the single most important thing on a screen, and nothing else.
-- Page links: `.link(label, path)` adds one of your pages beside the title (at most 8, sub-pages such as "Skill Sets · Character Finder · Reports"); the page shown is marked. `.button(label, path)` adds one as a primary button ("Create timer"). Put sub-page links here rather than in a card at the bottom.
+- Your app's views, its primary action and its Manage pages are Tether's to draw, from `plugin.toml` (see The app shell): don't add links to them. `.link(label, path)` adds a record's own pages, drawn as chips under the views bar (a character's Skills · Assets · Wallet; at most 8); the page shown is marked. `.button(label, path)` is the page's own primary action (a record's Edit), shown in the header instead of the app's `[action]` on that page.
 - Live pages: `.refresh(seconds)` (5 to 300; anything else is brought into that range) makes Tether reload the page's content in place at that interval, for as long as your render keeps asking: say "Syncing..." and fill in as a job stores data, then leave it out. Pages with a form never reload (someone may be typing). Each reload is a page view (the 120 a minute count).
 
 Builders keep this short:
@@ -239,9 +261,6 @@ let table = Table::new(vec![Column::text("Moon"), Column::text("Owner"), Column:
 
 Page::new("Moons")
     .description("Extractions from our structures")
-    .link("Moons", "")
-    .link("Reports", "reports")
-    .button("Plan extraction", "plan")
     .profile(
         Profile::new(character(90_000_001, "Example Pilot"))
             .subtitle("Main of 3 characters")
@@ -478,12 +497,12 @@ Plugins never see a token or build an ESI URL. You name an endpoint and whose to
 
 - the endpoint is one Tether offers plugins (below) and its scope is declared in your `plugin.toml` and was approved;
 - for a **user** scope (`capabilities.esi.user`): the character is one of your app's characters, as Alliance Auth's apps work: it is registered for your app, its account holds one of your permissions (any of them, in any state) and its token carries every one of your user scopes. A token with the scopes granted for something else isn't a registration. Pilots register (and unregister) characters for your app themselves, through Tether's Register Character for it (`/register?app=<your id>`; a card grid's `.register()` card leads there), in one EVE login; installing your app requires nothing of anyone, and an admin may require your scopes of a state (the States page). Only scopes a character endpoint below uses are accepted. Keep the list short; each scope asks every pilot for more;
-- for a **data-source** scope (`capabilities.esi.data_source`): the character is one of your app's owners (AA's Add Owner): a holder of one of your `add_…` permissions (as AA's `add_refinery_owner`, `add_structure_owner`, `add_fatlink`; not `manage`), or of those you name instead in `capabilities.esi.owner_permissions` (for AA names that don't start `add_`, as aa-contacts' `manage_alliance_contacts`; 1 to 10 of your permissions, shown to the admin at install), or an app admin, added their own character, in one EVE login, and it's in use at once (no admin approval, as in Alliance Auth). It stays in use while the character is on that account and in the corporation it was added for. Corporation endpoints read that character's corporation. The host draws Add owner in your pages' header; `add_owner(label)` puts the same button in your own content, and brings the pilot back with `owner=<character id>` in the query (untrusted: check it). Declare an `add_…` permission if pilots should add owners; without one only app admins can, and the install review says which permissions add owners.
+- for a **data-source** scope (`capabilities.esi.data_source`): the character is one of your app's data sources (AA's Add Owner): a holder of one of your `add_…` permissions (as AA's `add_refinery_owner`, `add_structure_owner`, `add_fatlink`; not `manage`), or of those you name instead in `capabilities.esi.owner_permissions` (for AA names that don't start `add_`, as aa-contacts' `manage_alliance_contacts`; 1 to 10 of your permissions, shown to the admin at install), or an app admin, added their own character, in one EVE login, and it's in use at once (no admin approval, as in Alliance Auth). It stays in use while the character is on that account and in the corporation it was added for. Corporation endpoints read that character's corporation. The host draws Add data source in your pages' header; `add_owner(label)` puts the same button in your own content, and brings the pilot back with `owner=<character id>` in the query (untrusted: check it). Declare an `add_…` permission if pilots should add owners; without one only app admins can, and the install review says which permissions add owners.
 
 ```rust
 use tether_plugin_sdk::esi::{self, Subject};
 
-// Corporation data, through each data source (an owner, e.g. a Station Manager).
+// Corporation data, through each data source (e.g. a Station Manager's character).
 for source in esi::data_sources() {
     for body in esi::get_all("corporation-mining-extractions", Subject::DataSource(source.id), &[])? {
         let extractions: Vec<serde_json::Value> = serde_json::from_str(&body)?;
@@ -601,7 +620,7 @@ A few endpoints change something in EVE. Call them with `esi::post(endpoint, Sub
 |---|---|---|
 | `character-fitting-save` | `esi-fittings.write_fittings.v1` | ESI's fitting JSON: `name` (1 to 50 characters), `description` (at most 500), `ship_type_id`, and `items`, 1 to 512 of `{"flag", "quantity", "type_id"}` with ESI's slot flags (`HiSlot0`, `MedSlot0`, `LoSlot0`, `RigSlot0`, `SubSystemSlot0`, `ServiceSlot0`... `DroneBay`, `FighterBay`, `Cargo`) and a quantity of 1 to 1,000,000. Answers `{"fitting_id"}`. |
 
-- Only in `submit`, while a pilot posts one of your forms: never in `render`, a widget or a job (`NotAllowed`). The pilot presses your button; you save to their character.
+- Only in `submit`, while a pilot posts one of your forms: never in `render` or a job (`NotAllowed`). The pilot presses your button; you save to their character.
 - Only for one of that pilot's own characters (`identity::viewer()`'s `characters`) that is one of your app's characters (registered for it with the write scope): anyone else's is `NotAllowed`, an unregistered one `NotRegistered`.
 - The host parses the body into ESI's type and sends that: a body that isn't ESI's fitting is `Invalid` before anything reaches ESI. At most 64 KiB.
 - Sent once, never retried: a failure saves nothing, and the pilot may press again. Each write is in your access log and, as the pilot, on the audit log.

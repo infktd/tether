@@ -4,17 +4,22 @@
     (its live stream says), assets/live.js gets it again too. -#}
 {%- import "plugin_sections.html" as plugin -%}
 {%- import "icons.html" as icons -%}
+{%- import "membership.html" as membership -%}
 <div id="plugin-content" class="plugin-content"{% if let Some(seconds) = c.refresh %} hx-get="{{ c.href }}" hx-trigger="every {{ seconds }}s" hx-swap="outerHTML" data-live{% endif %}{% if let Some(app) = c.live %} data-app="{{ app }}" data-href="{{ c.href }}"{% endif %}>
   {#- The page header (DESIGN.md): the app's icon, its name over the
       page's title (the section's when the page is named after the app),
-      and on the right the one primary action, never on its own page. -#}
+      and on the right the one primary action, never on its own page. The
+      character audit's main page is the Dashboard: its header, with the
+      account's state and groups under the title. -#}
   <div class="page-head">
     <div class="page-id">
       <span class="page-icon" aria-hidden="true">{% call icons::icon(c.icon) %}{% endcall %}</span>
       <div class="min-w-0">
-        <div class="page-eyebrow">{% if c.in_manage %}<a href="{{ c.app_href }}">{{ c.app_name }}</a> · Manage{% else if c.title == c.app_name %}{{ c.section }}{% else %}{{ c.app_name }}{% endif %}</div>
+        <div class="page-eyebrow">{% if c.home.is_some() %}Account{% else if c.in_manage %}<a href="{{ c.app_href }}">{{ c.app_name }}</a> · Manage{% else if c.title == c.app_name %}{{ c.section }}{% else %}{{ c.app_name }}{% endif %}</div>
         <h1 class="page-title">{{ c.title }}</h1>
-        {% if let Some(d) = c.description %}<p class="page-desc">{{ d }}</p>{% endif %}
+        {% if let Some(h) = c.home %}
+        {% call membership::line(h.state_style, h.state_name.as_str(), h.groups.as_slice(), h.more_groups) %}{% endcall %}
+        {% else if let Some(d) = c.description %}<p class="page-desc">{{ d }}</p>{% endif %}
       </div>
     </div>
     <div class="page-head-actions">
@@ -58,6 +63,11 @@
   </nav>
   {% call plugin::sections(c.tab_sections) %}{% endcall %}
   {% endif %}
+  {% if c.home.is_some() %}
+  <form method="post" action="/profile/main/login" hx-boost="false" class="flex justify-end">
+    <button type="submit" class="btn" data-variant="ghost" data-size="sm" title="Log in with any character to make it your main">Change Main with EVE login</button>
+  </form>
+  {% endif %}
   {% include "app_owners.html" %}
-  <p class="self-end text-[11px] font-mono text-faint select-none" aria-hidden="true">{{ c.watermark }}</p>
+  {% if !c.watermark.is_empty() %}<p class="self-end text-[11px] font-mono text-faint select-none" aria-hidden="true">{{ c.watermark }}</p>{% endif %}
 </div>

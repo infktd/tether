@@ -1,7 +1,7 @@
 //! Administration (DESIGN.md): every admin page in one place, grouped by
 //! what it's about. The sidebar shows one Administration item; its
-//! overview (`/admin`) and the rail on each admin page list the pages a
-//! viewer may open, and nothing else.
+//! overview (`/admin`) lists the pages a viewer may open, and each admin
+//! page its group's, as the views bar under its header; nothing else.
 
 use crate::pages::AdminNav;
 
@@ -255,10 +255,19 @@ pub fn listed(nav: &AdminNav, active: &str) -> Vec<Listed> {
         .collect()
 }
 
-/// The rail an admin page shows, if `active` is one (not the overview,
-/// whose tiles are the same list).
-pub fn rail(nav: &AdminNav, active: &str) -> Option<Vec<Listed>> {
-    (active != OVERVIEW && is_admin_page(active)).then(|| listed(nav, active))
+/// An admin page's group as the views bar under its header (DESIGN.md,
+/// Administration): the group's label, and its pages the viewer may open,
+/// the one shown marked. Nothing on the overview (its tiles are the same
+/// list), off admin pages, or for a group of one page.
+pub fn views(nav: &AdminNav, active: &str) -> (&'static str, Vec<Link>) {
+    if active == OVERVIEW || !is_admin_page(active) {
+        return ("", Vec::new());
+    }
+    listed(nav, active)
+        .into_iter()
+        .find(|group| group.pages.iter().any(|p| p.current))
+        .filter(|group| group.pages.len() > 1)
+        .map_or(("", Vec::new()), |group| (group.label, group.pages))
 }
 
 #[cfg(test)]

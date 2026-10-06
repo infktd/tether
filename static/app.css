@@ -492,9 +492,6 @@
   .justify-end {
     justify-content: flex-end;
   }
-  .gap-0\.5 {
-    gap: calc(var(--spacing) * 0.5);
-  }
   .gap-1 {
     gap: var(--spacing);
   }
@@ -629,9 +626,6 @@
   }
   .pr-2 {
     padding-right: calc(var(--spacing) * 2);
-  }
-  .pb-1 {
-    padding-bottom: var(--spacing);
   }
   .pb-2 {
     padding-bottom: calc(var(--spacing) * 2);
@@ -7880,14 +7874,14 @@
   .page-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
     gap: calc(var(--spacing) * 4);
   }
   .page-id {
     display: flex;
     min-width: 0px;
-    align-items: center;
+    align-items: flex-start;
     gap: calc(var(--spacing) * 3.5);
     flex: 1 1 360px;
   }
@@ -7902,6 +7896,7 @@
     border-color: var(--color-faint);
     background-color: var(--color-card);
     color: var(--color-foreground);
+    margin-top: 18px;
   }
   .page-icon > svg {
     width: 22px;
@@ -7917,17 +7912,40 @@
   }
   .page-id .page-title {
     margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .page-desc {
     margin-top: var(--spacing);
     font-size: 13px;
     color: var(--color-foreground-soft);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .page-membership {
+    margin-top: calc(var(--spacing) * 1.5);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--spacing) * 1.5);
   }
   .page-head-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: calc(var(--spacing) * 2);
+    margin-top: 20px;
+  }
+  @media (max-width: 639px) {
+    .page-id .page-title {
+      white-space: normal;
+    }
+    .page-head-actions {
+      margin-top: 0;
+    }
   }
   .page-head-actions:empty {
     display: none;
@@ -8466,11 +8484,6 @@
     grid-template-columns: 236px minmax(0,1fr);
     min-height: calc(100vh - 52px);
   }
-  @media (width >= 80rem) {
-    .app-shell.has-rail {
-      grid-template-columns: 236px 208px minmax(0,1fr);
-    }
-  }
   .app-sidebar {
     position: sticky;
     display: flex;
@@ -8493,20 +8506,6 @@
   }
   .nav-toggle {
     display: none;
-  }
-  .admin-rail {
-    position: sticky;
-    display: none;
-    flex-direction: column;
-    align-self: flex-start;
-    border-right-style: var(--tw-border-style);
-    border-right-width: 1px;
-    background-color: var(--color-sidebar);
-    @media (width >= 80rem) {
-      display: flex;
-    }
-    top: 52px;
-    height: calc(100vh - 52px);
   }
   .account-button {
     display: flex;
@@ -8592,37 +8591,6 @@
   }
   .user-menu-item[aria-current="page"] {
     background-color: var(--color-accent);
-    color: var(--color-foreground);
-  }
-  .admin-rail-item {
-    display: flex;
-    height: calc(var(--spacing) * 8);
-    align-items: center;
-    border-radius: var(--radius-sm);
-    padding-inline: calc(var(--spacing) * 3);
-    font-size: var(--text-sm);
-    line-height: var(--tw-leading, var(--text-sm--line-height));
-    color: var(--color-muted-foreground);
-    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
-    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
-    transition-duration: var(--tw-duration, var(--default-transition-duration));
-    --tw-duration: 150ms;
-    transition-duration: 150ms;
-    &:hover {
-      @media (hover: hover) {
-        background-color: var(--color-accent);
-      }
-    }
-    &:hover {
-      @media (hover: hover) {
-        color: var(--color-foreground);
-      }
-    }
-  }
-  .admin-rail-item[aria-current="page"] {
-    background-color: var(--color-accent);
-    --tw-font-weight: var(--font-weight-medium);
-    font-weight: var(--font-weight-medium);
     color: var(--color-foreground);
   }
   .admin-tile {
@@ -9260,20 +9228,6 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--accent);
-  }
-  .admin-rail-item {
-    border-radius: 0;
-  }
-  .admin-rail-item[aria-current="page"] {
-    background: var(--muted);
-    gap: 10px;
-  }
-  .admin-rail-item[aria-current="page"]::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    background: var(--accent);
-    flex-shrink: 0;
   }
   .account-button, .user-menu, .user-menu-item, .admin-tile, .admin-tile-icon {
     border-radius: 0;
@@ -11257,7 +11211,7 @@
 }
 @layer components {
   @media (max-width: 767px) {
-    .app-shell, .app-shell.has-rail {
+    .app-shell {
       grid-template-columns: minmax(0, 1fr);
     }
     .app-sidebar[popover]:not(:popover-open) {
@@ -11297,6 +11251,286 @@
       padding-left: 0;
       border-left: 0;
     }
+  }
+}
+.card-grid:has(> .grid-card-register) {
+  container: roster / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  background-origin: border-box;
+  background-repeat: no-repeat;
+  background-image: linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket)), linear-gradient(var(--bracket), var(--bracket));
+  background-size: 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px;
+  background-position: left top, left top, right top, right top, left bottom, left bottom, right bottom, right bottom;
+  & > .grid-card:not(.grid-card-register) {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(200px, 1.5fr) minmax(72px, 0.7fr) minmax(112px, 1fr) minmax(64px, 0.55fr) minmax(96px, 0.75fr) minmax(150px, 1.4fr) minmax(0, 0.85fr) auto;
+    align-items: center;
+    column-gap: 20px;
+    min-height: 58px;
+    padding: 10px 18px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
+    overflow: visible;
+    animation: none;
+    transition: background-color 120ms;
+  }
+  & > .grid-card:not(.grid-card-register):hover {
+    background-color: var(--muted);
+  }
+  & .grid-card > div:first-child {
+    align-self: stretch;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  & .grid-card-picture :is(.entity-img, .entity-initials)[data-size="lg"] {
+    width: 36px;
+    height: 36px;
+    font-size: 12px;
+  }
+  & .grid-card-logos {
+    display: none;
+  }
+  & .grid-card > div:first-child > div {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+  }
+  & .grid-card > div:first-child > div > :is(span, p) {
+    flex-basis: 100%;
+  }
+  & .grid-card-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  & .grid-card-name a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  & .grid-card > div:first-child .badge {
+    padding: 0 5px;
+    font-size: 10px;
+    line-height: 16px;
+  }
+  & .grid-card-facts {
+    display: contents;
+  }
+  & .grid-card-facts > div {
+    position: relative;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    pointer-events: none;
+  }
+  & .grid-card-facts dt {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  & .grid-card-facts dt::after {
+    display: none;
+  }
+  & .grid-card-facts dd {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+  & .grid-card-facts > div:is(:nth-child(3), :nth-child(4)) dd {
+    text-align: right;
+  }
+  & .grid-card-facts dd .meter-value {
+    width: 100%;
+    min-width: 0;
+  }
+  & .grid-card-facts dd .segbar > span {
+    height: 4px;
+  }
+  & > .grid-card-register + .grid-card .grid-card-facts dt, & > .grid-card-register + .grid-card::before {
+    position: absolute;
+    top: -33px;
+    left: 0;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  & > .grid-card-register + .grid-card {
+    margin-top: 32px;
+  }
+  & > .grid-card-register + .grid-card::before {
+    content: "Character";
+    top: -23px;
+    left: 18px;
+  }
+  & > .grid-card-register + .grid-card .grid-card-facts > div:is(:nth-child(3), :nth-child(4)) dt {
+    left: auto;
+    right: 0;
+  }
+  & .grid-card-foot {
+    position: relative;
+    z-index: 1;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+  }
+  & .grid-card-foot > span:empty {
+    display: none;
+  }
+  & .grid-card-foot .badge[data-variant="secondary"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+  & .grid-card-foot .badge[data-variant="secondary"]::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: var(--info);
+  }
+  & .grid-card-foot .btn {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  & > .grid-card-register {
+    order: 99;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 18px;
+    border: 0;
+    border-top: 1px dashed var(--faint);
+    border-radius: 0;
+    background: none;
+    animation: none;
+  }
+  & > .grid-card-register .grid-card-plus {
+    width: 36px;
+    height: 36px;
+    background: none;
+    outline: 1px dashed var(--faint);
+    outline-offset: -1px;
+  }
+  & > .grid-card-register .grid-card-name {
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  & > .grid-card-register > span:last-child {
+    font-size: 12.5px;
+  }
+}
+@container roster (max-width: 1180px) {
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) {
+    grid-template-columns: minmax(190px, 1.5fr) minmax(72px, 0.7fr) minmax(108px, 1fr) minmax(60px, 0.55fr) minmax(92px, 0.75fr) minmax(140px, 1.4fr) auto;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div:nth-child(6) {
+    display: none;
+  }
+}
+@container roster (max-width: 1000px) {
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) {
+    grid-template-columns: minmax(170px, 1.5fr) minmax(64px, 0.7fr) minmax(100px, 1fr) minmax(56px, 0.55fr) minmax(84px, 0.75fr) minmax(120px, 1.4fr);
+    column-gap: 16px;
+    row-gap: 6px;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > .grid-card-foot {
+    grid-column: 1 / 4;
+    grid-row: 2;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding-left: 48px;
+  }
+}
+@container roster (max-width: 720px) {
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 12px;
+    padding: 14px 16px;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > div:first-child, .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > .grid-card-foot {
+    grid-column: 1 / -1;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > .grid-card-foot {
+    grid-row: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 0;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div:nth-child(6) {
+    display: flex;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div:is(:nth-child(3), :nth-child(4)) dd {
+    text-align: left;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card .grid-card-facts dt, .card-grid:has(> .grid-card-register) > .grid-card-register + .grid-card .grid-card-facts dt {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register + .grid-card::before {
+    content: none;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register + .grid-card {
+    margin-top: 0;
+    border-top: 0;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register > span:last-child {
+    flex-basis: 100%;
+    padding-left: 48px;
   }
 }
 @property --tw-rotate-x {

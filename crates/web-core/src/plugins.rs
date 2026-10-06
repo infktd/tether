@@ -220,17 +220,6 @@ pub fn may_open(
     }
 }
 
-/// A Dashboard widget of a running plugin.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WidgetItem {
-    pub plugin_id: String,
-    /// Its place in the manifest's `[[widgets]]`.
-    pub index: usize,
-    pub title: String,
-    /// Who may open its page.
-    pub access: manifest::PageAccess,
-}
-
 /// A sidebar link to a running plugin's page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavItem {
@@ -440,27 +429,6 @@ impl Plugins {
                     plugin_id: id.clone(),
                     icon,
                 })
-            })
-            .collect()
-    }
-
-    /// Every running plugin's Dashboard widgets, by plugin name.
-    pub fn widgets(&self) -> Vec<WidgetItem> {
-        self.all_running()
-            .into_iter()
-            .flat_map(|r| {
-                let id = r.manifest.plugin.id.clone();
-                r.manifest
-                    .widgets
-                    .iter()
-                    .enumerate()
-                    .map(|(index, widget)| WidgetItem {
-                        plugin_id: id.clone(),
-                        index,
-                        title: widget.title.clone(),
-                        access: r.manifest.page_access(&widget.path),
-                    })
-                    .collect::<Vec<_>>()
             })
             .collect()
     }

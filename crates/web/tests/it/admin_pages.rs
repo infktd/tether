@@ -123,16 +123,29 @@ async fn the_sidebar_shows_only_permitted_admin_links(db: PgPool) {
     ] {
         assert!(overview.body.contains(part), "overview lists {part}");
     }
+    // No second column of admin links (Jay, 2026-10-06): the overview
+    // lists them all, and each admin page shows its group's pages as the
+    // views bar under its header, the page marked.
+    assert!(!overview.body.contains("admin-rail"), "{}", overview.body);
     assert!(
-        !overview.body.contains(r#"class="admin-rail""#),
-        "no rail on the overview"
+        !overview.body.contains(r#"class="views-bar""#),
+        "{}",
+        overview.body
     );
-    // Every admin page carries the rail, its page marked.
     let states = page(&h, "/admin/states", &owner).await.body;
-    assert!(states.contains(r#"class="admin-rail""#));
-    assert!(states.contains(
-        r#"<a href="/admin/states" class="admin-rail-item" aria-current="page">States</a>"#
-    ));
+    assert!(!states.contains("admin-rail"), "{states}");
+    assert!(
+        states.contains(r#"<nav class="views-bar" aria-label="Access">"#),
+        "{states}"
+    );
+    assert!(
+        states.contains(r#"<a href="/admin/states" aria-current="page">States</a>"#),
+        "{states}"
+    );
+    assert!(
+        states.contains(r#"<a href="/admin/permissions">Permissions</a>"#),
+        "{states}"
+    );
     // Administration stays marked in the sidebar.
     assert!(states.contains(r#"<a href="/admin" class="nav-item" aria-current="page">"#));
 

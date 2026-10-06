@@ -20,31 +20,34 @@
         </div>
       </div>
     </div>
-    <div class="flex flex-wrap items-center gap-2">
-    {% if superuser_controls && active %}
-    {% if owner %}
-    <form method="post" action="/admin/users/{{ id }}/superuser/revoke" hx-confirm="Stop {{ main_name }} being a superuser? They keep only what their state, groups and own grants give them.">
-      <button type="submit" class="btn" data-variant="outline">Revoke superuser</button>
-    </form>
-    {% else %}
-    <form method="post" action="/admin/users/{{ id }}/superuser" hx-confirm="Make {{ main_name }} a superuser? Superusers hold every permission, including making and revoking other superusers.">
-      <button type="submit" class="btn" data-variant="outline">Make superuser</button>
-    </form>
-    {% endif %}
-    {% endif %}
-    {% if !owner %}
-    {% if active %}
-    <form method="post" action="/admin/users/{{ id }}/deactivate" hx-confirm="Deactivate {{ main_name }}? They become Guest, lose every permission and group service, and can't sign in until reactivated.">
-      <button type="submit" class="btn btn-destructive-outline" data-variant="outline">Deactivate</button>
-    </form>
-    {% else %}
-    <form method="post" action="/admin/users/{{ id }}/reactivate">
-      <button type="submit" class="btn" data-variant="primary">Reactivate</button>
-    </form>
-    {% endif %}
-    {% endif %}
+    <div class="page-head-actions">
+      <div class="flex flex-wrap items-center gap-2">
+      {% if superuser_controls && active %}
+      {% if owner %}
+      <form method="post" action="/admin/users/{{ id }}/superuser/revoke" hx-confirm="Stop {{ main_name }} being a superuser? They keep only what their state, groups and own grants give them.">
+        <button type="submit" class="btn" data-variant="outline">Revoke superuser</button>
+      </form>
+      {% else %}
+      <form method="post" action="/admin/users/{{ id }}/superuser" hx-confirm="Make {{ main_name }} a superuser? Superusers hold every permission, including making and revoking other superusers.">
+        <button type="submit" class="btn" data-variant="outline">Make superuser</button>
+      </form>
+      {% endif %}
+      {% endif %}
+      {% if !owner %}
+      {% if active %}
+      <form method="post" action="/admin/users/{{ id }}/deactivate" hx-confirm="Deactivate {{ main_name }}? They become Guest, lose every permission and group service, and can't sign in until reactivated.">
+        <button type="submit" class="btn btn-destructive-outline" data-variant="outline">Deactivate</button>
+      </form>
+      {% else %}
+      <form method="post" action="/admin/users/{{ id }}/reactivate">
+        <button type="submit" class="btn" data-variant="primary">Reactivate</button>
+      </form>
+      {% endif %}
+      {% endif %}
+      </div>
     </div>
   </div>
+  {% include "admin_views.html" %}
 
   {% include "admin_error.html" %}
 

@@ -78,7 +78,7 @@ async fn login_page(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn profile_shows_characters_state_and_permissions(db: PgPool) {
+async fn the_dashboard_shows_characters_and_state(db: PgPool) {
     let h = harness(db, true).await;
     assert_eq!(
         send(&h.app, get("/dashboard", &[])).await.location(),
@@ -98,14 +98,21 @@ async fn profile_shows_characters_state_and_permissions(db: PgPool) {
     // label, and can be made the main from their row.
     assert_eq!(html.matches("</svg> Main</span>").count(), 1, "{html}");
     assert!(!html.contains(">Alt<"));
+    // The state and groups under the title; the permissions are on
+    // Groups, behind a disclosure, not a wall.
+    assert!(html.contains(r#"class="page-membership""#), "{html}");
     assert!(html.contains(r#"data-state="guest""#));
-    // Permissions: behind a disclosure, not a wall.
+    assert!(!html.contains("admin.states"), "{html}");
+    let groups = send(&h.app, get("/groups", &[(SESSION, &token)])).await;
     assert!(
-        html.contains(r#"<details class="card card-disclosure">"#),
-        "{html}"
+        groups
+            .body
+            .contains(r#"<details class="card card-disclosure">"#),
+        "{}",
+        groups.body
     );
     assert!(
-        html.contains("admin.states"),
+        groups.body.contains("admin.states"),
         "owner sees their permissions"
     );
     assert!(html.contains(r#"action="/profile/main""#));

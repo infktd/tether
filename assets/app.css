@@ -393,16 +393,20 @@
   }
 
   /* The page header (DESIGN.md): an icon tile, the eyebrow over the
-     title, and on the right the one primary action. */
+     title, and on the right the one primary action. Everything hangs from
+     the top, the tile and the buttons level with the title, so a longer
+     or missing description never moves them; the title keeps to one line
+     and the description to two. */
   .page-head {
-    @apply flex flex-wrap items-end justify-between gap-4;
+    @apply flex flex-wrap items-start justify-between gap-4;
   }
   .page-id {
-    @apply flex min-w-0 items-center gap-3.5;
+    @apply flex min-w-0 items-start gap-3.5;
     flex: 1 1 360px;
   }
   .page-icon {
     @apply grid size-11 shrink-0 place-items-center border border-faint bg-card text-foreground;
+    margin-top: 18px;
   }
   .page-icon > svg {
     width: 22px;
@@ -418,12 +422,33 @@
   }
   .page-id .page-title {
     margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .page-desc {
     @apply mt-1 text-[13px] text-foreground-soft;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  /* The Dashboard's state and groups, under its title. */
+  .page-membership {
+    @apply mt-1.5 flex flex-wrap items-center gap-1.5;
   }
   .page-head-actions {
     @apply flex flex-wrap items-center gap-2;
+    margin-top: 20px;
+  }
+  /* A phone: the title may wrap, and the buttons sit under it. */
+  @media (max-width: 639px) {
+    .page-id .page-title {
+      white-space: normal;
+    }
+    .page-head-actions {
+      margin-top: 0;
+    }
   }
   .page-head-actions:empty {
     display: none;
@@ -790,17 +815,11 @@
   }
 }
 
-/* The shell (DESIGN.md): the sidebar, and on admin pages the rail beside
-   it, stay put while the page scrolls. The rail shows from 1280px;
-   narrower, the sidebar's Administration item and the overview do its
-   job. */
+/* The shell (DESIGN.md): the sidebar stays put while the page scrolls. */
 @layer components {
   .app-shell {
     @apply grid grid-cols-[236px_minmax(0,1fr)];
     min-height: calc(100vh - 52px);
-  }
-  .app-shell.has-rail {
-    @apply xl:grid-cols-[236px_208px_minmax(0,1fr)];
   }
   .app-sidebar {
     @apply sticky flex flex-col self-start border-r bg-sidebar;
@@ -820,11 +839,6 @@
   }
   .nav-toggle {
     display: none;
-  }
-  .admin-rail {
-    @apply sticky hidden flex-col self-start border-r bg-sidebar xl:flex;
-    top: 52px;
-    height: calc(100vh - 52px);
   }
 
   /* The account menu: the signed-in character, at the command bar's
@@ -855,12 +869,6 @@
   }
   .user-menu-item[aria-current="page"] {
     @apply bg-accent text-foreground;
-  }
-  .admin-rail-item {
-    @apply flex h-8 items-center rounded-sm px-3 text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground;
-  }
-  .admin-rail-item[aria-current="page"] {
-    @apply bg-accent font-medium text-foreground;
   }
   .admin-tile {
     @apply flex items-start gap-3 rounded-lg border bg-card p-4 transition-colors duration-150 hover:bg-accent;
@@ -1526,20 +1534,6 @@
     font-size: 11px;
     color: var(--accent);
   }
-  .admin-rail-item {
-    border-radius: 0;
-  }
-  .admin-rail-item[aria-current="page"] {
-    background: var(--muted);
-    gap: 10px;
-  }
-  .admin-rail-item[aria-current="page"]::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    background: var(--accent);
-    flex-shrink: 0;
-  }
   .account-button,
   .user-menu,
   .user-menu-item,
@@ -2106,8 +2100,8 @@
 /* Motion (DESIGN.md): short, opacity first, nothing that bounces, and none
    at all for anyone who asks for less. */
 @media (prefers-reduced-motion: no-preference) {
-  /* A page's content rises 4px into place as it arrives. The rail and the
-     sidebar stay put. */
+  /* A page's content rises 4px into place as it arrives. The sidebar stays
+     put. */
   main > * {
     animation: tether-enter 180ms cubic-bezier(0.2, 0, 0, 1) backwards;
   }
@@ -2262,8 +2256,7 @@
    opens, a lean strip, readouts two to a row. Last, so it wins. */
 @layer components {
   @media (max-width: 767px) {
-    .app-shell,
-    .app-shell.has-rail {
+    .app-shell {
       grid-template-columns: minmax(0, 1fr);
     }
     .app-sidebar[popover]:not(:popover-open) {
@@ -2305,5 +2298,333 @@
       padding-left: 0;
       border-left: 0;
     }
+  }
+}
+
+/* Roster (the character audit, DESIGN.md): the account's characters as
+ the rows of one panel, a header band over the columns, and Register
+ another character as a dashed row at the end. Character grids only
+ (the ones with the register card); other card grids keep their cards.
+ Narrow, each row stacks into a small card. Outside the layers, so it
+ wins over the utility classes on the cards' markup. */
+.card-grid:has(> .grid-card-register) {
+  container: roster / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  background-origin: border-box;
+  background-repeat: no-repeat;
+  background-image:
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket)),
+    linear-gradient(var(--bracket), var(--bracket));
+  background-size: 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px;
+  background-position: left top, left top, right top, right top, left bottom, left bottom, right bottom, right bottom;
+
+  /* A character: one row. */
+  & > .grid-card:not(.grid-card-register) {
+    position: relative;
+    display: grid;
+    grid-template-columns:
+      minmax(200px, 1.5fr) minmax(72px, 0.7fr) minmax(112px, 1fr) minmax(64px, 0.55fr)
+      minmax(96px, 0.75fr) minmax(150px, 1.4fr) minmax(0, 0.85fr) auto;
+    align-items: center;
+    column-gap: 20px;
+    min-height: 58px;
+    padding: 10px 18px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
+    overflow: visible;
+    animation: none;
+    transition: background-color 120ms;
+  }
+  & > .grid-card:not(.grid-card-register):hover {
+    background-color: var(--muted);
+  }
+
+  /* Who: a 36px framed portrait, the name and its badges, then the
+     corporation and alliance. */
+  & .grid-card > div:first-child {
+    align-self: stretch;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  & .grid-card-picture :is(.entity-img, .entity-initials)[data-size="lg"] {
+    width: 36px;
+    height: 36px;
+    font-size: 12px;
+  }
+  & .grid-card-logos {
+    display: none;
+  }
+  & .grid-card > div:first-child > div {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+  }
+  & .grid-card > div:first-child > div > :is(span, p) {
+    flex-basis: 100%;
+  }
+  & .grid-card-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  /* The whole row opens the character; Make main and the status link
+     stay on top. */
+  & .grid-card-name a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  & .grid-card > div:first-child .badge {
+    padding: 0 5px;
+    font-size: 10px;
+    line-height: 16px;
+  }
+
+  /* The readings: cells of the row, their labels in the header band
+     over the first row only. */
+  & .grid-card-facts {
+    display: contents;
+  }
+  & .grid-card-facts > div {
+    position: relative;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    pointer-events: none;
+  }
+  & .grid-card-facts dt {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  & .grid-card-facts dt::after {
+    display: none;
+  }
+  & .grid-card-facts dd {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+  & .grid-card-facts > div:is(:nth-child(3), :nth-child(4)) dd {
+    text-align: right;
+  }
+  & .grid-card-facts dd .meter-value {
+    width: 100%;
+    min-width: 0;
+  }
+  & .grid-card-facts dd .segbar > span {
+    height: 4px;
+  }
+  & > .grid-card-register + .grid-card .grid-card-facts dt,
+  & > .grid-card-register + .grid-card::before {
+    position: absolute;
+    top: -33px;
+    left: 0;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  /* The header band: room over the first row. */
+  & > .grid-card-register + .grid-card {
+    margin-top: 32px;
+  }
+  & > .grid-card-register + .grid-card::before {
+    content: "Character";
+    top: -23px;
+    left: 18px;
+  }
+  & > .grid-card-register + .grid-card .grid-card-facts > div:is(:nth-child(3), :nth-child(4)) dt {
+    left: auto;
+    right: 0;
+  }
+
+  /* Status and Make main, at the end of the row. */
+  & .grid-card-foot {
+    position: relative;
+    z-index: 1;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+  }
+  & .grid-card-foot > span:empty {
+    display: none;
+  }
+  & .grid-card-foot .badge[data-variant="secondary"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+  & .grid-card-foot .badge[data-variant="secondary"]::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: var(--info);
+  }
+  & .grid-card-foot .btn {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  /* Register another character: a dashed row at the end. */
+  & > .grid-card-register {
+    order: 99;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 18px;
+    border: 0;
+    border-top: 1px dashed var(--faint);
+    border-radius: 0;
+    background: none;
+    animation: none;
+  }
+  & > .grid-card-register .grid-card-plus {
+    width: 36px;
+    height: 36px;
+    background: none;
+    outline: 1px dashed var(--faint);
+    outline-offset: -1px;
+  }
+  & > .grid-card-register .grid-card-name {
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  & > .grid-card-register > span:last-child {
+    font-size: 12.5px;
+  }
+}
+
+/* Without room for every column: Last update goes first. The same
+   selectors as above, so these win. */
+@container roster (max-width: 1180px) {
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) {
+    grid-template-columns:
+      minmax(190px, 1.5fr) minmax(72px, 0.7fr) minmax(108px, 1fr) minmax(60px, 0.55fr)
+      minmax(92px, 0.75fr) minmax(140px, 1.4fr) auto;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div:nth-child(6) {
+    display: none;
+  }
+}
+
+/* Narrower still: the status and Make main go under the name, so every
+   reading keeps its column. */
+@container roster (max-width: 1000px) {
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) {
+    grid-template-columns:
+      minmax(170px, 1.5fr) minmax(64px, 0.7fr) minmax(100px, 1fr) minmax(56px, 0.55fr)
+      minmax(84px, 0.75fr) minmax(120px, 1.4fr);
+    column-gap: 16px;
+    row-gap: 6px;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > .grid-card-foot {
+    grid-column: 1 / 4;
+    grid-row: 2;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding-left: 48px;
+  }
+}
+
+/* Narrow: each character a small card, the readings three abreast with
+   their own labels. */
+@container roster (max-width: 720px) {
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 12px;
+    padding: 14px 16px;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > div:first-child,
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > .grid-card-foot {
+    grid-column: 1 / -1;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card:not(.grid-card-register) > .grid-card-foot {
+    grid-row: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 0;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div:nth-child(6) {
+    display: flex;
+  }
+  .card-grid:has(> .grid-card-register) .grid-card-facts > div:is(:nth-child(3), :nth-child(4)) dd {
+    text-align: left;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card .grid-card-facts dt,
+  .card-grid:has(> .grid-card-register) > .grid-card-register + .grid-card .grid-card-facts dt {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register + .grid-card::before {
+    content: none;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register + .grid-card {
+    margin-top: 0;
+    border-top: 0;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .card-grid:has(> .grid-card-register) > .grid-card-register > span:last-child {
+    flex-basis: 100%;
+    padding-left: 48px;
   }
 }

@@ -134,11 +134,6 @@ label = "Member Audit"
 path = ""
 section = "corporation"
 
-# The Dashboard leads with it: a card per character.
-[[widgets]]
-title = "My Characters"
-path = ""
-
 # aa-securegroups' Member Audit filters. Each character passes or not;
 # one passing character is enough for its account.
 [[filters]]
@@ -177,7 +172,7 @@ label = "Item (its exact name, e.g. a ship)"
 kind = "text"
 
 [[views]]
-label = "Overview"
+label = "My characters"
 path = ""
 
 [[views]]

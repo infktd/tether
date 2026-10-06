@@ -182,8 +182,9 @@ fn card(row: &[Db], training: Option<&Training>, main: bool) -> Profile {
     profile
 }
 
-/// My Characters: Tether's Register Character card, then a card per
-/// character, and all of them together. Also the Dashboard's widget.
+/// My characters: a card per character (Tether draws them as rows), Tether's
+/// Register another character, and all of them together. Tether shows it
+/// as the Dashboard.
 pub(crate) fn my_characters(viewer: &Viewer) -> Result<Page, PageError> {
     let mine = ids_param(viewer);
     let rows = query(

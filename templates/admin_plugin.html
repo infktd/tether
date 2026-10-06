@@ -14,19 +14,22 @@
         <p class="page-desc">{% if let Some(d) = about.description %}{{ d }} · {% endif %}Version <span class="num">{{ about.version }}</span>, installed {{ installed }} EVE</p>
       </div>
     </div>
-    {% if enabled %}
-    <div class="flex items-center gap-3">
-      {% if settings %}<a class="btn" data-variant="primary" href="/plugins/{{ about.id }}/settings">Settings</a>{% endif %}
-      <form method="post" action="/admin/plugins/{{ about.id }}/disable">
-        <button type="submit" class="btn" data-variant="outline">Disable</button>
+    <div class="page-head-actions">
+      {% if enabled %}
+      <div class="flex items-center gap-3">
+        {% if settings %}<a class="btn" data-variant="primary" href="/plugins/{{ about.id }}/settings">Settings</a>{% endif %}
+        <form method="post" action="/admin/plugins/{{ about.id }}/disable">
+          <button type="submit" class="btn" data-variant="outline">Disable</button>
+        </form>
+      </div>
+      {% else %}
+      <form method="post" action="/admin/plugins/{{ about.id }}/enable">
+        <button type="submit" class="btn" data-variant="primary">Enable</button>
       </form>
+      {% endif %}
     </div>
-    {% else %}
-    <form method="post" action="/admin/plugins/{{ about.id }}/enable">
-      <button type="submit" class="btn" data-variant="primary">Enable</button>
-    </form>
-    {% endif %}
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
   {% if let Some(why) = failure %}<div class="alert" data-variant="destructive" role="alert"><section><strong>It couldn't be loaded.</strong> <span class="break-words">{{ why }}</span> Its data and settings are kept.</section></div>{% endif %}
   {% if let Some(why) = incompatible %}

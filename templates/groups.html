@@ -14,6 +14,7 @@
       </div>
     </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
   {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
 
@@ -85,5 +86,15 @@
     </table>
     {% endif %}
   </section>
+  {% if !permissions.is_empty() %}
+  {#- What the state, groups and own grants give: a long list, behind a
+      disclosure (DESIGN.md, Page hygiene). -#}
+  <details class="card card-disclosure">
+    <summary>Your permissions <span class="num font-normal text-muted-foreground">{{ permissions.len() }}</span><span class="ml-auto text-xs font-normal text-muted-foreground">{% if is_owner %}Superuser: everything{% else %}From your state, groups and own grants{% endif %}</span></summary>
+    <section class="flex flex-wrap gap-2">
+      {% for p in permissions %}<span class="badge" data-variant="outline">{{ p }}</span>{% endfor %}
+    </section>
+  </details>
+  {% endif %}
 </div>
 {% endblock %}

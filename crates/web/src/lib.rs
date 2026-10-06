@@ -60,7 +60,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/openapi.json", get(openapi::spec))
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
-        .route("/dashboard", get(pages::profile))
+        .route("/dashboard", get(dashboard))
         .route(
             "/dashboard/access-tokens",
             get(pages::access_tokens::index).post(pages::access_tokens::create),
@@ -68,10 +68,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/dashboard/access-tokens/{id}/revoke",
             post(pages::access_tokens::revoke),
-        )
-        .route(
-            "/dashboard/widgets/{plugin}/{index}",
-            get(pages::plugin_pages::widget),
         )
         // The old name (before AA's): kept so bookmarks still work.
         .route("/profile", get(pages::to_dashboard))
@@ -656,6 +652,21 @@ fn admin_plugins_route() -> axum::routing::MethodRouter<AppState> {
             .layer(DefaultBodyLimit::max(pages::plugins::UPLOAD_BODY_LIMIT)),
     );
     route
+}
+
+/// `GET /dashboard`: the character audit's My characters for whoever may
+/// open it (DESIGN.md, Dashboard), else the account's own Dashboard.
+async fn dashboard(
+    State(state): State<AppState>,
+    session: Option<auth::CurrentSession>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, pages::PageError> {
+    if let Some(session) = &session
+        && let Some(page) = pages::plugin_pages::home(&state, session.clone(), &headers).await?
+    {
+        return Ok(page);
+    }
+    pages::profile(State(state), session).await
 }
 
 /// Liveness: the process is up and serving HTTP.

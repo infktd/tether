@@ -14,8 +14,11 @@
         {% if restricted %}<p class="page-desc">Restricted: on the admin pages, only a superuser adds or removes members directly.</p>{% endif %}
       </div>
     </div>
-    <a href="/group-management/{{ id }}/audit" class="btn" data-variant="outline">Audit Log</a>
+    <div class="page-head-actions">
+      <a href="/group-management/{{ id }}/audit" class="btn" data-variant="outline">Audit Log</a>
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
   <section class="card">

@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "manage_menu.html" as manage -%}
 {% block title %}Fleet Pings{% endblock %}
 {% block breadcrumb %}Fleet&nbsp;/&nbsp;<span class="text-foreground">Fleet Pings</span>{% endblock %}
 {% block content %}
@@ -13,8 +14,11 @@
         <p class="page-desc">Post a fleet to Discord and ping who you choose, or copy it for EVE and other chats. Mentions typed into the text don't ping anyone.</p>
       </div>
     </div>
-    {% if settings %}<a class="btn" data-variant="outline" href="/admin/pings">{% call icons::icon("settings") %}{% endcall %} Settings</a>{% endif %}
+    <div class="page-head-actions">
+      {% if settings %}{% call manage::menu("Fleet Pings", "Settings", "/admin/pings") %}{% endcall %}{% endif %}
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
   {% if offer.channels.is_empty() %}

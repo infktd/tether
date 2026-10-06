@@ -1,0 +1,10 @@
+{#- The account's state and its first groups, under the Dashboard's title
+    (DESIGN.md, Dashboard); each group, and the rest, open Groups. -#}
+{% macro line(state_style, state_name, groups, more_groups) -%}
+<div class="page-membership">
+  <span class="state-badge" data-state="{{ state_style }}">{{ state_name }}</span>
+  {% for g in groups %}<a class="badge" data-variant="outline" href="/groups">{{ g }}</a>{% endfor %}
+  {% if more_groups > 0 %}<a class="text-xs text-muted-foreground hover:text-foreground" href="/groups">{{ more_groups }} more</a>{% endif %}
+  {% if groups.is_empty() %}<a class="badge" data-variant="outline" href="/groups">Browse groups</a>{% endif %}
+</div>
+{%- endmacro %}

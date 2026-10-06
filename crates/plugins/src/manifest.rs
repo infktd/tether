@@ -70,8 +70,10 @@ pub struct Manifest {
     /// own (Settings, Data sources, Activity).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub manage: Vec<PageLink>,
-    /// Dashboard widgets, shown to whoever may open their page.
-    #[serde(default)]
+    /// Dashboard widgets, which Tether no longer shows (the Dashboard is
+    /// the character audit). Still read, so packages that declare them
+    /// load; never used.
+    #[serde(default, skip_serializing)]
     pub widgets: Vec<Widget>,
     /// Secure Groups filters it offers.
     #[serde(default)]
@@ -147,8 +149,8 @@ impl NavEntry {
     }
 }
 
-/// `[[widgets]]`: a Dashboard card showing one of the plugin's pages (its
-/// sections, not its tabs), with a link to the page.
+/// `[[widgets]]`, as packages built before the Dashboard became the
+/// character audit declare them: read, and ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Widget {
@@ -156,9 +158,6 @@ pub struct Widget {
     /// A page path; `""` for the plugin's main page.
     pub path: String,
 }
-
-/// Most widgets a plugin may add.
-pub const MAX_WIDGETS: usize = 3;
 
 /// The permissions renamed going from `from` to `to` (an upgrade, or a
 /// rollback going back over a rename), as (old name, new name) without the
@@ -718,13 +717,6 @@ impl Manifest {
                 }
                 check_text("a filter field label", &field.label, 60, true)?;
             }
-        }
-        if self.widgets.len() > MAX_WIDGETS {
-            return Err(bad(format!("more than {MAX_WIDGETS} [[widgets]]")));
-        }
-        for widget in &self.widgets {
-            check_text("a widget title", &widget.title, 40, true)?;
-            check_page_path("[[widgets]] path", &widget.path)?;
         }
         Ok(())
     }
@@ -1461,18 +1453,17 @@ manage = "Manage the mining ledger"
             "[[navigation]]\nlabel = \"A\"\npath = \"\"\n[[navigation]]\nlabel = \"B\"\npath = \"\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"mining\"\n",
             "[[navigation]]\nlabel = \"Go\"\npath = \"\"\nsection = \"Fleet\"\n",
-            "[[widgets]]\ntitle = \"\"\npath = \"\"\n",
-            "[[widgets]]\ntitle = \"Ore\"\npath = \"../core\"\n",
-            "[[widgets]]\ntitle = \"Ore\"\npath = \"\"\nsize = \"big\"\n",
-            &"[[widgets]]\ntitle = \"Ore\"\npath = \"\"\n".repeat(MAX_WIDGETS + 1),
         ] {
             assert!(Manifest::parse(&manifest(bad)).is_err(), "{bad}");
         }
-        let widgets = Manifest::parse(&manifest(
-            "[[widgets]]\ntitle = \"Ore\"\npath = \"ledger\"\n",
-        ))
-        .unwrap();
-        assert_eq!(widgets.widgets[0].path, "ledger");
+        // Widgets are gone from the Dashboard; packages declaring them
+        // still load.
+        assert!(
+            Manifest::parse(&manifest(
+                "[[widgets]]\ntitle = \"Ore\"\npath = \"ledger\"\n",
+            ))
+            .is_ok()
+        );
     }
 
     #[test]

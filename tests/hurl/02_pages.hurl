@@ -707,11 +707,6 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
-GET {{base}}/dashboard/widgets/acme.moons/0
-HTTP 303
-[Asserts]
-header "Location" == "/login"
-
 GET {{base}}/admin/users
 HTTP 303
 [Asserts]

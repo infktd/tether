@@ -39,12 +39,6 @@ label = "Fleet Operations"
 path = ""
 section = "fleet"
 
-# AA's "Upcoming Fleets" on the Dashboard: the next five ops, for
-# whoever holds optimer_view (the page rule for "" covers "widget").
-[[widgets]]
-title = "Upcoming Fleets"
-path = "widget"
-
 # The app shell (DESIGN.md): its views, action and Manage pages.
 [[views]]
 label = "Overview"

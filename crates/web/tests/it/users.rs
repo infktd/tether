@@ -179,10 +179,8 @@ async fn a_users_admin_cant_deactivate_someone_holding_more(db: PgPool) {
 
     let list = page(&h, "/admin/users", &pilot).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
-    assert!(
-        list.body.contains(r#"href="/admin/users""#),
-        "the rail links it"
-    );
+    // Their only page in the group: no views bar; the overview links it.
+    assert!(!list.body.contains(r#"class="views-bar""#), "{}", list.body);
     let landing = page(&h, "/admin", &pilot).await;
     assert!(
         landing.body.contains(r#"href="/admin/users""#),

@@ -199,13 +199,19 @@ pub struct Shell {
     /// The account lost its main (sold, or its token gone): Guest until
     /// the owner picks one (AA).
     pub no_main: bool,
+    /// The Dashboard is the character audit's My characters (DESIGN.md,
+    /// Dashboard): its app is installed and the account, with a main, may
+    /// open that page. The app's own sidebar link then goes, and its pages
+    /// mark the Dashboard.
+    pub character_audit: bool,
     /// Pending requests, when the account may open Group Management.
     pub group_management: Option<i64>,
     /// Unread notifications, for the top bar.
     pub unread: i64,
-    /// On Administration's pages: the rail of admin pages this account
-    /// may open.
-    pub admin_rail: Option<Vec<crate::admin_nav::Listed>>,
+    /// On Administration's pages: the page's group, as the views bar under
+    /// its header (`templates/admin_views.html`), and the group's name.
+    pub admin_views: Vec<crate::admin_nav::Link>,
+    pub admin_group: &'static str,
     /// Sidebar sections this browser folded.
     pub folded: Vec<String>,
     /// The site's own name, for the browser tab (`crate::site_name`).
@@ -408,8 +414,8 @@ pub async fn annotate(
     Ok(())
 }
 
-/// The app whose first widget, My Characters, leads the Dashboard when
-/// it's installed and the viewer may open it.
+/// The app whose main page, My characters, is the Dashboard for whoever
+/// may open it (DESIGN.md, Dashboard).
 pub const CHARACTER_AUDIT: &str = "tether.member-audit";
 
 /// A character's registration status as a chip: "Registered", or what
@@ -511,12 +517,8 @@ pub async fn card_feet(
         .collect())
 }
 
-/// A plugin's Dashboard widget, loaded after the page.
-pub struct DashboardWidget {
-    pub title: String,
-    /// The fragment's address.
-    pub url: String,
-}
+/// Groups named under the Dashboard's title; Groups lists them all.
+pub const DASHBOARD_GROUPS: usize = 4;
 
 pub struct Loaded {
     pub shell: Shell,
@@ -572,6 +574,21 @@ pub async fn load(
     } else {
         Some(tether_db::groups::pending_count(&state.db, &managed).await?)
     };
+    // Only the Member Audit that comes with Tether: a package under its id
+    // installed from elsewhere never stands in for the Dashboard.
+    let character_audit = account.main.is_some()
+        && state
+            .plugins
+            .running(CHARACTER_AUDIT)
+            .filter(|running| running.origin == tether_db::plugins::Origin::Bundled)
+            .is_some_and(|running| {
+                crate::plugins::may_open(
+                    &running.manifest.page_access(""),
+                    access.is_blacklist(),
+                    |p| perms.contains(p),
+                )
+            });
+    let audit_href = crate::plugins::page_href(CHARACTER_AUDIT, "");
     let plugin_nav = state
         .plugins
         .navigation()
@@ -579,6 +596,8 @@ pub async fn load(
         .filter(|item| {
             crate::plugins::may_open(&item.access, access.is_blacklist(), |p| perms.contains(p))
         })
+        // Its link would only lead to the Dashboard again.
+        .filter(|item| !(character_audit && item.href == audit_href))
         .map(|item| PluginNavLink {
             label: item.label,
             href: item.href,
@@ -613,6 +632,7 @@ pub async fn load(
         .acting
         .filter(|id| Some(*id) != main_id)
         .and_then(|id| account.characters.iter().find(|c| c.id == id));
+    let (admin_group, admin_views) = crate::admin_nav::views(&nav, active);
     Ok(Loaded {
         shell: Shell {
             user: ShellUser {
@@ -645,9 +665,11 @@ pub async fn load(
             active_href: String::new(),
             not_compliant,
             no_main: account.main.is_none(),
+            character_audit,
             group_management,
             unread: tether_db::notifications::unread(&state.db, session.account).await?,
-            admin_rail: crate::admin_nav::rail(&nav, active),
+            admin_views,
+            admin_group,
             folded: session.folded.clone(),
             site_name: crate::site_name::get(&state.db).await?,
             version: crate::updates::CURRENT,

@@ -1,10 +1,10 @@
 //! Member Audit (Alliance Auth's name for it, after aa-memberaudit; PRD
 //! F20).
 //!
-//! - **My Characters**: a card per character (portrait, logos, location,
-//!   ship, wallet, skill points, training, last update) after Tether's
-//!   Register Character card, with combined totals for multiboxers. It is
-//!   also the Dashboard's lead widget.
+//! - **My characters**: a row per character (portrait, location, ship,
+//!   wallet, skill points, training, last update) and Tether's Register
+//!   another character, with combined totals for multiboxers. Tether
+//!   shows it as the Dashboard.
 //! - **Character Sheet**: aa-memberaudit's tabs across a few pages:
 //!   Overview (with corporation history, roles and titles, killmails),
 //!   Skills (queue, skills by group, skill sets, attributes), Assets,

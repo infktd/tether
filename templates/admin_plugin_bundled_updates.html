@@ -14,13 +14,16 @@
         <p class="page-desc">Updates and rebuilds of apps included with Tether, waiting for review. Approving upgrades each in turn, exactly as its own review would, and stops at the first that fails.</p>
       </div>
     </div>
-    {% if bulk > 0 %}
-    <form method="post" action="/admin/plugin-bundled-updates/approve">
-      {% for a in apps %}{% if a.changes.is_some() %}<input type="hidden" name="app" value="{{ a.token }}">{% endif %}{% endfor %}
-      <button type="submit" class="btn" data-variant="primary">Approve and upgrade all <span class="num">{{ bulk }}</span></button>
-    </form>
-    {% endif %}
+    <div class="page-head-actions">
+      {% if bulk > 0 %}
+      <form method="post" action="/admin/plugin-bundled-updates/approve">
+        {% for a in apps %}{% if a.changes.is_some() %}<input type="hidden" name="app" value="{{ a.token }}">{% endif %}{% endfor %}
+        <button type="submit" class="btn" data-variant="primary">Approve and upgrade all <span class="num">{{ bulk }}</span></button>
+      </form>
+      {% endif %}
+    </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
   {% if apps.is_empty() %}

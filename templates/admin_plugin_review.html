@@ -14,19 +14,22 @@
         <p class="page-desc">{% if let Some(d) = about.description %}{{ d }} · {% endif %}{% if let Some(u) = upgrade %}{% if u.from == about.version %}Version <span class="num">{{ about.version }}</span>, rebuilt with this Tether{% else %}Version <span class="num">{{ u.from }}</span> to <span class="num">{{ about.version }}</span>{% endif %}{% else %}Version <span class="num">{{ about.version }}</span>{% endif %}{% if let Some(at) = uploaded %}, uploaded {{ at }} EVE{% else %}, included with Tether{% endif %}</p>
       </div>
     </div>
-    <div class="flex gap-2">
-      {% if let Some(action) = discard_action %}
-      <form method="post" action="{{ action }}">
-        <button type="submit" class="btn" data-variant="outline">Discard</button>
-      </form>
-      {% endif %}
-      <form method="post" action="{{ approve_action }}">
-        <input type="hidden" name="reviewed" value="{{ base }}">
-        {% if let Some(sha) = bundled_sha256 %}<input type="hidden" name="package" value="{{ sha }}">{% endif %}
-        <button type="submit" class="btn" data-variant="primary">{% if upgrade.is_some() %}Approve and upgrade{% else %}Approve and install{% endif %}</button>
-      </form>
+    <div class="page-head-actions">
+      <div class="flex gap-2">
+        {% if let Some(action) = discard_action %}
+        <form method="post" action="{{ action }}">
+          <button type="submit" class="btn" data-variant="outline">Discard</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ approve_action }}">
+          <input type="hidden" name="reviewed" value="{{ base }}">
+          {% if let Some(sha) = bundled_sha256 %}<input type="hidden" name="package" value="{{ sha }}">{% endif %}
+          <button type="submit" class="btn" data-variant="primary">{% if upgrade.is_some() %}Approve and upgrade{% else %}Approve and install{% endif %}</button>
+        </form>
+      </div>
     </div>
   </div>
+  {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
   <div class="alert" role="status">
