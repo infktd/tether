@@ -1921,7 +1921,15 @@
   .status-pill[data-tone="down"] {
     color: var(--destructive);
   }
+  .status-pill[data-tone="signal"] {
+    color: var(--accent);
+  }
+  a.status-pill:hover {
+    border-color: var(--bracket);
+    color: var(--foreground);
+  }
   .command-bar .up { background: var(--info); }
+  .command-bar .signal { background: var(--accent); }
   .command-bar .down { background: var(--destructive); }
 
   /* The trail: where the page is, at the head of the content. */

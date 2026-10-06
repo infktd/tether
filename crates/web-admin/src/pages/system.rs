@@ -1158,7 +1158,15 @@ struct StatusStrip {
     /// Pilots online, with thousands separators; `None` when ESI didn't
     /// answer (why is on Health, for admins).
     players: Option<String>,
+    /// ESI's word: `NOMINAL`, `LIMITED` (Tether is held back by its
+    /// limits now) or `UNREACHABLE`, and the mark's tone.
+    esi: (&'static str, &'static str),
+    /// ESI Status, where it runs: the pill links to it.
+    esi_status: Option<&'static str>,
 }
+
+/// The bundled ESI Status app, which any signed-in pilot may open.
+const ESI_STATUS: &str = "tether.esi-status";
 
 /// How long the strip's answer stands, success or not.
 const STRIP_FOR: std::time::Duration = std::time::Duration::from_secs(60);
@@ -1190,10 +1198,24 @@ pub async fn strip(
             }
         }
     };
+    let budget = state.esi.budget();
+    let held = budget.groups.iter().any(|g| g.held_for_secs.is_some())
+        || budget.error_remain.is_some_and(|r| r < BULK_ERROR_RESERVE);
+    let esi = match players {
+        None => ("UNREACHABLE", "down"),
+        Some(_) if held => ("LIMITED", "signal"),
+        Some(_) => ("NOMINAL", "up"),
+    };
     Ok(render(
         StatusCode::OK,
         &StatusStrip {
             players: players.map(super::grouped),
+            esi,
+            esi_status: state
+                .plugins
+                .running(ESI_STATUS)
+                .is_some()
+                .then_some("/plugins/tether.esi-status"),
         },
     ))
 }

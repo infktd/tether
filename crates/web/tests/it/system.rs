@@ -132,6 +132,14 @@ async fn the_status_strip_asks_esi_once_a_minute(db: PgPool) {
     let strip = page(&h, "/status/strip", &pilot).await;
     assert_eq!(strip.status, StatusCode::OK, "{}", strip.body);
     assert!(strip.body.contains("ESI UNREACHABLE"), "{}", strip.body);
+    // Tranquility stays in the bar, unknown rather than gone.
+    assert!(
+        strip
+            .body
+            .contains(r#"TQ <span class="text-foreground">—</span>"#),
+        "{}",
+        strip.body
+    );
     // Why is for admins, on System: pilots see only that it's down.
     assert!(
         !strip.body.contains("downtime") && !strip.body.contains("title="),
