@@ -225,6 +225,71 @@ async fn a_plugin_keeps_data_in_its_own_schema(db: PgPool) {
     uninstall(&h, &owner, "acme.notes").await;
 }
 
+/// The same statement first with a NULL, then with a value, on one
+/// connection: Postgres types the NULL from the statement (a timestamp,
+/// here), and a statement kept prepared from that run refused the value
+/// sent as text (22P03), as Member Audit's clones did for any character
+/// that had jumped after one that hadn't.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_statement_takes_a_null_then_a_value(db: PgPool) {
+    use tether_plugins::storage::Value;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(
+        &h,
+        &owner,
+        "acme.notes",
+        &[("migrations/0001_notes.sql", NOTES)],
+    )
+    .await;
+    let names = names(&h.db, "acme.notes").await;
+    let secret = "plugin.acme.notes.db_password";
+    let sealed = tether_db::secrets::get(&h.db, secret)
+        .await
+        .unwrap()
+        .unwrap();
+    let password = h
+        .key
+        .open(&sealed, &tether_db::secrets::context(secret))
+        .unwrap();
+    let options =
+        h.db.connect_options()
+            .as_ref()
+            .clone()
+            .username(&names.role_name)
+            .password(password.expose());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let storage = tether_plugins::storage::Storage::new("acme.notes", &names.schema_name, pool);
+    let sql = "INSERT INTO notes (body, at) VALUES ($1, $2::timestamptz)";
+    storage
+        .execute(sql, &[Value::Text("never".into()), Value::Null])
+        .await
+        .unwrap();
+    storage
+        .execute(
+            sql,
+            &[
+                Value::Text("jumped".into()),
+                Value::Text("2026-10-06T12:00:00Z".into()),
+            ],
+        )
+        .await
+        .unwrap();
+    let at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            r#"SELECT at FROM "{}".notes WHERE body = 'jumped'"#,
+            names.schema_name
+        )))
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    assert!(at.is_some());
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn a_plugin_role_can_reach_nothing_else(db: PgPool) {
     let h = harness(db, true).await;

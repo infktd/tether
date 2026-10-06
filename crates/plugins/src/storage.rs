@@ -240,6 +240,19 @@ fn value_bytes(value: &Value) -> usize {
         }
 }
 
+/// A plugin's statement, not kept prepared on its connection: Postgres
+/// types a parameter sent as NULL from the statement itself (`$3` in
+/// `$3::timestamptz` becomes a timestamp), and a statement kept from such
+/// a run would refuse the same parameter sent as text the next time
+/// (22P03, "incorrect binary data format"). Each run is typed by its own
+/// values.
+fn unprepared<'q>(
+    sql: sqlx::AssertSqlSafe<String>,
+    args: PgArguments,
+) -> sqlx::query::Query<'q, sqlx::Postgres, PgArguments> {
+    sqlx::query_with(sql, args).persistent(false)
+}
+
 impl Storage {
     /// `schema` is the plugin's schema name, made only of `[a-z0-9._-]`.
     pub fn new(plugin: &str, schema: &str, pool: PgPool) -> Self {
@@ -342,7 +355,7 @@ impl Storage {
         let mut rows = Vec::new();
         let mut bytes = 0usize;
         {
-            let mut stream = sqlx::query_with(plugin_sql(sql), args).fetch(&mut *tx);
+            let mut stream = unprepared(plugin_sql(sql), args).fetch(&mut *tx);
             // `fetch` returns a boxed stream; its `poll_next` is callable
             // without importing the trait.
             while let Some(row) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
@@ -380,7 +393,7 @@ impl Storage {
         let args = arguments(sql, params, &mut 0)?;
         let mut tx = self.begin().await?;
         self.reset(&mut tx).await?;
-        let done = sqlx::query_with(plugin_sql(sql), args)
+        let done = unprepared(plugin_sql(sql), args)
             .execute(&mut *tx)
             .await
             .map_err(|e| self.error(e))?;
@@ -404,7 +417,7 @@ impl Storage {
         let mut counts = Vec::with_capacity(prepared.len());
         for (sql, args) in prepared {
             self.reset(&mut tx).await?;
-            let done = sqlx::query_with(plugin_sql(&sql), args)
+            let done = unprepared(plugin_sql(&sql), args)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| self.error(e))?;
