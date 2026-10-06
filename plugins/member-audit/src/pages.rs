@@ -333,7 +333,14 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
                     .into(),
                     o.state.name.clone().into(),
                 ),
-                None => ("".into(), "".into(), "".into()),
+                // Tether names the main and state only of characters that
+                // serve the app now: one whose registration or a scope
+                // lapsed says so, rather than three blanks.
+                None => (
+                    "".into(),
+                    "".into(),
+                    badge("Not registered now", Tone::Warning).into(),
+                ),
             };
             vec![
                 if access.may_open(id) {

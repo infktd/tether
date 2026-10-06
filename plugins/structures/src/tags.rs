@@ -24,13 +24,14 @@ use crate::{VISIBLE, failed, int, retry, text, with_rows};
 /// at most 30 fields).
 pub const MAX_USER_TAGS: i64 = 25;
 
-pub const STYLES: [(&str, &str); 6] = [
-    ("default", "Default"),
-    ("primary", "Primary"),
-    ("success", "Success (green)"),
-    ("info", "Info (blue)"),
-    ("warning", "Warning (orange)"),
-    ("danger", "Danger (red)"),
+/// The styles offered, named as Tether draws them (aa-structures'
+/// Bootstrap styles, stored before, draw as the nearest: primary blue,
+/// info grey).
+pub const STYLES: [(&str, &str); 4] = [
+    ("default", "Grey"),
+    ("success", "Blue"),
+    ("warning", "Signal"),
+    ("danger", "Red"),
 ];
 
 pub struct Tag {
@@ -46,7 +47,7 @@ pub struct Tag {
 
 pub fn tone(style: &str) -> Tone {
     match style {
-        "success" => Tone::Success,
+        "success" | "primary" => Tone::Success,
         "warning" => Tone::Warning,
         "danger" => Tone::Danger,
         _ => Tone::Neutral,

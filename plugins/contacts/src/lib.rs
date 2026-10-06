@@ -27,15 +27,13 @@ use tether_plugin_sdk::{
 const UPDATE: &str = "update";
 const MAX_NOTES: u32 = 2_000;
 const MAX_LINKS: i64 = 20;
-const COLORS: [(&str, &str); 8] = [
-    ("primary", "Blue"),
-    ("secondary", "Gray"),
-    ("success", "Green"),
+/// The colours offered, named as Tether draws them (Bootstrap's others,
+/// stored before, draw as the nearest).
+const COLORS: [(&str, &str); 4] = [
+    ("secondary", "Grey"),
+    ("success", "Blue"),
+    ("warning", "Signal"),
     ("danger", "Red"),
-    ("warning", "Yellow"),
-    ("info", "Cyan"),
-    ("light", "Light"),
-    ("dark", "Dark"),
 ];
 
 struct Contacts;
@@ -198,16 +196,16 @@ fn entity(kind: &str, id: i64, name: String) -> Value {
     }
 }
 
-/// A standing as EVE colours it: blue above zero, red below.
+/// A standing as EVE colours it: blue above zero, red below, neutral
+/// plain.
 fn standing(value: f64) -> Value {
-    let tone = if value > 0.0 {
-        Tone::Success
+    if value > 0.0 {
+        badge(format!("{value:+.1}"), Tone::Success).into()
     } else if value < 0.0 {
-        Tone::Danger
+        badge(format!("{value:+.1}"), Tone::Danger).into()
     } else {
-        Tone::Neutral
-    };
-    badge(format!("{value:+.1}"), tone).into()
+        "0.0".into()
+    }
 }
 
 fn word(kind: &str) -> &'static str {
@@ -612,8 +610,7 @@ fn contact_page(
             .empty("No server links.");
         for l in &links.rows {
             let tone = match text(l, 4).as_str() {
-                "primary" | "info" => Tone::Accent,
-                "success" => Tone::Success,
+                "success" | "primary" | "info" => Tone::Success,
                 "danger" => Tone::Danger,
                 "warning" => Tone::Warning,
                 _ => Tone::Neutral,

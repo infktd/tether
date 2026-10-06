@@ -1595,12 +1595,14 @@ fn contacts(who: &Subject) -> Result<Page, PageError> {
 
 /// A standing, `+5.0`, as a badge in the in-game colours' spirit (words
 /// with the colour, never the colour alone).
+/// A standing as EVE colours it: blue above zero, red below, neutral
+/// plain.
 fn standing(s: f64) -> Value {
     let text = format!("{s:+.1}");
     match s {
         s if s > 0.0 => badge(text, Tone::Success).into(),
         s if s < 0.0 => badge(text, Tone::Danger).into(),
-        _ => badge(text, Tone::Neutral).into(),
+        _ => "0.0".into(),
     }
 }
 
