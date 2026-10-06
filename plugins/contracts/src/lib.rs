@@ -240,7 +240,19 @@ fn sync() -> Result<(), JobError> {
                 )
                 .map_err(|e| retry("noting a corporation", e))?;
             }
-            Err(err) => problems.push(format!("corporation {corp}: contracts not read: {err:?}")),
+            Err(err) => {
+                // By name where the app has read it, never by id.
+                let name =
+                    storage::query("SELECT name FROM names WHERE id = $1", &[(*corp).into()])
+                        .ok()
+                        .and_then(|found| found.rows.first().map(|r| text(r, 0)))
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| "A corporation".to_owned());
+                problems.push(format!(
+                    "{name}: contracts not read: {}",
+                    esi::describe(&err)
+                ));
+            }
         }
     }
     read_items(&sources)?;

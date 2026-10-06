@@ -617,6 +617,22 @@ async fn member_audit_end_to_end(db: PgPool) {
         assert!(sheet.contains(text), "{text}");
     }
     assert!(!sheet.contains("Corporation roles"), "roles are off");
+    assert!(!sheet.contains("not read yet"), "every section was read");
+    // A section never read shows no numbers, rather than zeros.
+    sqlx::query(
+        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'clones'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let clones = page(
+        &h,
+        &format!("/plugins/{ID}/character/{CHRIBBA}/clones"),
+        &owner,
+    )
+    .await
+    .body;
+    assert_eq!(clones.matches("not read yet").count(), 4, "{clones}");
     // The owner's own character: Mail beside the title.
     assert!(sheet.contains(&format!(
         r#"<a href="/plugins/{ID}/mail/{CHRIBBA}">Mail</a>"#

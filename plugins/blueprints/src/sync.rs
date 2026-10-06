@@ -31,6 +31,15 @@ pub struct Owner {
     pub subject: Subject,
 }
 
+/// An owner by name for a problem's words, never its id.
+fn who(owner: &Owner) -> String {
+    if owner.name.is_empty() {
+        format!("An unnamed {}", owner.kind)
+    } else {
+        owner.name.clone()
+    }
+}
+
 /// Corporate owners (each corporation once, through its first data
 /// source) and personal owners still registered for the app. The second
 /// list is personal owners no longer registered (their pilot left, or
@@ -189,11 +198,8 @@ pub fn blueprints() -> Result<(), JobError> {
                 store_blueprints(owner, &pages(bodies))?;
             }
             Err(err) => {
-                let why = format!("{err:?}");
-                problems.push(format!(
-                    "{} {}: blueprints not read: {why}",
-                    owner.kind, owner.id
-                ));
+                let why = esi::describe(&err);
+                problems.push(format!("{}: blueprints not read: {why}", who(owner)));
                 note_owner(owner, Some(why))?;
             }
         }
@@ -289,8 +295,9 @@ pub fn jobs() -> Result<(), JobError> {
         match read {
             Ok(list) => store_jobs(owner, &list)?,
             Err(err) => problems.push(format!(
-                "{} {}: jobs not read: {err:?}",
-                owner.kind, owner.id
+                "{}: jobs not read: {}",
+                who(owner),
+                esi::describe(&err)
             )),
         }
     }
@@ -380,8 +387,9 @@ pub fn places() -> Result<(), JobError> {
         match found {
             Ok(found) => store_places(owner, &found)?,
             Err(err) => problems.push(format!(
-                "{} {}: places not read: {err:?}",
-                owner.kind, owner.id
+                "{}: places not read: {}",
+                who(owner),
+                esi::describe(&err)
             )),
         }
     }
@@ -570,7 +578,7 @@ fn name_places(owners: &[Owner]) -> Result<(), JobError> {
                         found = Some(place_named(&answer.body));
                         break;
                     }
-                    Err(err) => why.push(format!("{} {}: {err:?}", owner.kind, owner.id)),
+                    Err(err) => why.push(format!("{}: {}", who(owner), esi::describe(&err))),
                 }
             }
             if found.is_none() {

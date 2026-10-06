@@ -211,6 +211,34 @@ pub mod esi {
     pub use crate::bindings::tether::plugin::esi::{Error, Named, Response, Subject};
     pub use crate::bindings::tether::plugin::identity::Character;
 
+    /// What went wrong, in words for a page, a notice or a log line:
+    /// never the error's Rust form (`Status(403)`).
+    pub fn describe(err: &Error) -> String {
+        match err {
+            Error::NotAllowed(why) => format!("not allowed: {why}"),
+            Error::NotRegistered => "the character isn't registered for this app, or its login \
+                                     lacks a scope the app needs"
+                .to_owned(),
+            Error::NotADataSource => {
+                "the character isn't one of this app's data sources".to_owned()
+            }
+            Error::Token => {
+                "the character's EVE login stopped working: it needs logging in again".to_owned()
+            }
+            Error::Status(403) => {
+                "ESI refused (403): the character lacks an in-game role or a scope".to_owned()
+            }
+            Error::Status(404) => "ESI found nothing there (404)".to_owned(),
+            Error::Status(code) if *code >= 500 => {
+                format!("ESI had trouble ({code}): it's tried again later")
+            }
+            Error::Status(code) => format!("ESI answered {code}"),
+            Error::Invalid(why) => why.clone(),
+            Error::TooLarge => "ESI's answer was larger than a call may return".to_owned(),
+            Error::Unavailable => "ESI or Tether couldn't be reached".to_owned(),
+        }
+    }
+
     /// Calls a catalogue endpoint as `subject`. `params` are the endpoint's
     /// extra ids (e.g. `observer_id`); `page` is for paged endpoints.
     pub fn get(

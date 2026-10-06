@@ -109,11 +109,11 @@ enum Stop {
 impl From<EsiError> for Stop {
     fn from(err: EsiError) -> Self {
         match err {
-            EsiError::Token | EsiError::NotRegistered => Stop::Character(format!("{err:?}")),
+            EsiError::Token | EsiError::NotRegistered => Stop::Character(esi::describe(&err)),
             EsiError::Unavailable => Stop::Unavailable,
             // Over the host's limit after all (an endpoint that cost two).
             EsiError::Invalid(why) if why.contains("ESI calls") => Stop::Run,
-            other => Stop::Section(format!("{other:?}")),
+            other => Stop::Section(esi::describe(&other)),
         }
     }
 }

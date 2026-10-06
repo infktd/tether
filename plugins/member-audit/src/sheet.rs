@@ -118,6 +118,26 @@ impl Freshness {
         ))
     }
 
+    /// Whether a section has been tried at all: one that hasn't shows no
+    /// numbers (its zeros would read as facts).
+    pub fn tried(&self, section: &str) -> bool {
+        self.0.iter().any(|(name, ..)| name == section)
+    }
+
+    /// `stat` as it is once its section has been tried, else "—" and "not
+    /// read yet".
+    pub fn stat(&self, section: &str, stat: Stat) -> Stat {
+        if self.tried(section) {
+            stat
+        } else {
+            Stat {
+                value: "".into(),
+                caption: Some("not read yet".to_owned()),
+                ..stat
+            }
+        }
+    }
+
     /// A line saying how fresh these sections are, for the end of a tab
     /// (aa-memberaudit's "Last update" under each).
     pub fn line(&self, sections: &[&str]) -> Section {
@@ -743,14 +763,20 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
     let queue_end = when(head, 4).filter(|t| *t > now);
     let page = sheet_page(who, "Skills")
         .stats(vec![
-            Stat::new("Skill points", int(head, 0)),
-            Stat::new("Unallocated", int(head, 1)),
-            Stat::new("Skills", int(head, 2)).caption(format!("{} at V", int(head, 3))),
-            Stat::new(
-                "Queue ends",
-                queue_end.map_or_else(
-                    || badge("Empty", Tone::Warning).into(),
-                    |t| countdown(rfc3339(t)),
+            fresh.stat("skills", Stat::new("Skill points", int(head, 0))),
+            fresh.stat("skills", Stat::new("Unallocated", int(head, 1))),
+            fresh.stat(
+                "skills",
+                Stat::new("Skills", int(head, 2)).caption(format!("{} at V", int(head, 3))),
+            ),
+            fresh.stat(
+                "skills",
+                Stat::new(
+                    "Queue ends",
+                    queue_end.map_or_else(
+                        || badge("Empty", Tone::Warning).into(),
+                        |t| countdown(rfc3339(t)),
+                    ),
                 ),
             ),
         ])
@@ -834,8 +860,8 @@ fn assets(who: &Subject, location: Option<i64>) -> Result<Page, PageError> {
         }),
     );
     let mut page = sheet_page(who, "Assets").stats(vec![
-        Stat::new("Items", total),
-        Stat::new("Locations", count(places.len())),
+        fresh.stat("assets", Stat::new("Items", total)),
+        fresh.stat("assets", Stat::new("Locations", count(places.len()))),
     ]);
     page = page.table(places_table);
     if let Some(root) = chosen {
@@ -1107,10 +1133,19 @@ fn wallet(who: &Subject) -> Result<Page, PageError> {
     );
     Ok(sheet_page(who, "Wallet")
         .stats(vec![
-            Stat::new("Balance", opt_float(head, 0).map_or_else(|| "".into(), isk)),
-            Stat::new("Income", isk(float(head, 1))).caption("the last 30 days"),
-            Stat::new("Spending", isk(float(head, 2))).caption("the last 30 days"),
-            Stat::new("Loyalty points", int(head, 3)),
+            fresh.stat(
+                "wallet",
+                Stat::new("Balance", opt_float(head, 0).map_or_else(|| "".into(), isk)),
+            ),
+            fresh.stat(
+                "journal",
+                Stat::new("Income", isk(float(head, 1))).caption("the last 30 days"),
+            ),
+            fresh.stat(
+                "journal",
+                Stat::new("Spending", isk(float(head, 2))).caption("the last 30 days"),
+            ),
+            fresh.stat("loyalty", Stat::new("Loyalty points", int(head, 3))),
         ])
         .tab(
             "Journal",
@@ -1263,16 +1298,21 @@ fn clones(who: &Subject) -> Result<Page, PageError> {
         &[id.into()],
     )?;
     let mut page = sheet_page(who, "Clones and implants")
-        .stats(vec![
-            Stat::new("Jump clones", count(jump_clones.len())),
-            Stat::new("Implants", count(implants.len())),
-            Stat::new("Last clone jump", time_or_blank(head, 2)),
-            Stat::new("Home station", text(head, 0)).caption(format!(
-                "changed {}",
-                when(head, 3)
-                    .map_or_else(|| "never".to_owned(), |t| t.format("%Y-%m-%d").to_string())
-            )),
-        ])
+        .stats(
+            [
+                Stat::new("Jump clones", count(jump_clones.len())),
+                Stat::new("Implants", count(implants.len())),
+                Stat::new("Last clone jump", time_or_blank(head, 2)),
+                Stat::new("Home station", text(head, 0)).caption(format!(
+                    "changed {}",
+                    when(head, 3)
+                        .map_or_else(|| "never".to_owned(), |t| t.format("%Y-%m-%d").to_string())
+                )),
+            ]
+            .into_iter()
+            .map(|stat| fresh.stat("clones", stat))
+            .collect(),
+        )
         .table(active);
     for r in &jump_clones {
         let implants: Vec<(i64, String)> =
