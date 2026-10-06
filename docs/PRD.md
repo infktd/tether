@@ -286,7 +286,7 @@ Phase 1, feel and look:
 
 Phase 2, the app shell:
 
-- [ ] The manifest declares an app's views, primary action and manage pages; Tether draws its header, views bar and Manage menu, and apps' own page links and buttons go
+- [ ] The manifest declares an app's views, primary action and manage pages; Tether draws its header, views bar and Manage pages, and apps' own page links and buttons go
 - [ ] Data sources: one page per app under Manage (character, corporation, role check, last read, status, coverage, a link to send a Director), the notice when one stops working, and Activity under Manage (jobs, schedules, log, ESI calls)
 - [x] All 17 apps moved over, each with a version bump
 

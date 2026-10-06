@@ -66,7 +66,7 @@ pub struct Manifest {
     /// Its one primary action, in its header on every view but its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<PageLink>,
-    /// Pages for those who run the app, in its Manage menu with Tether's
+    /// Pages for those who run the app, its Manage pages with Tether's
     /// own (Settings, Data sources, Activity).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub manage: Vec<PageLink>,

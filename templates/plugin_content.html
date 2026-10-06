@@ -25,15 +25,11 @@
     <div class="page-head-actions">
       {% for b in c.buttons %}{% if !b.current %}<a class="btn" data-variant="primary" href="{{ b.href }}">{{ b.label }}</a>{% endif %}{% endfor %}
       {% include "app_owners_button.html" %}
-      {#- The Manage menu (DESIGN.md, App shell): the app's pages for those
-          who run it, Settings first. -#}
-      {% if !c.manage.is_empty() %}
-      <details class="menu-details">
-        <summary class="btn" data-variant="outline">{% call icons::icon("sliders") %}{% endcall %} Manage</summary>
-        <nav class="menu-panel" aria-label="Manage {{ c.app_name }}">
-          {% for m in c.manage %}<a href="{{ m.href }}">{{ m.label }}</a>{% endfor %}
-        </nav>
-      </details>
+      {#- Manage (DESIGN.md, App shell): for those who run the app, the
+          first of its manage pages (Settings first), whose views bar is
+          the rest. -#}
+      {% if let Some(first) = c.manage.first() %}
+      <a class="btn manage-link" data-variant="outline" href="{{ first.href }}">{% call icons::icon("sliders") %}{% endcall %} Manage</a>
       {% endif %}
     </div>
   </div>

@@ -1,11 +1,7 @@
-{#- The Manage menu (DESIGN.md, App shell) on a core page: the outline
-    button with the sliders icon, opening its Administration page for those
-    who run it. App pages draw the same from their manifest
-    (plugin_content.html). -#}
+{#- Manage (DESIGN.md, App shell) on a core page: the outline button with
+    the sliders icon, opening its Administration page for those who run
+    it. App pages draw the same from their manifest (plugin_content.html). -#}
 {%- import "icons.html" as icons -%}
 {% macro menu(name, label, href) -%}
-<details class="menu-details">
-  <summary class="btn" data-variant="outline">{% call icons::icon("sliders") %}{% endcall %} Manage</summary>
-  <nav class="menu-panel" aria-label="Manage {{ name }}"><a href="{{ href }}">{{ label }}</a></nav>
-</details>
+<a class="btn manage-link" data-variant="outline" href="{{ href }}" title="{{ name }}: {{ label }}">{% call icons::icon("sliders") %}{% endcall %} Manage</a>
 {%- endmacro %}

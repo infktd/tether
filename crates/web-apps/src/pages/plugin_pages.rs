@@ -1107,7 +1107,8 @@ pub struct ContentView {
     /// The sidebar section the app's link sits in by default, for the
     /// eyebrow when a page is named after the app itself.
     pub section: &'static str,
-    /// The app's Manage menu (DESIGN.md, App shell), for those who run it.
+    /// The app's Manage pages (DESIGN.md, App shell), for those who run it:
+    /// Manage opens the first.
     pub manage: Vec<TabLink>,
     /// The page is one of the app's Manage pages: its eyebrow says so and
     /// its bar shows the Manage pages.

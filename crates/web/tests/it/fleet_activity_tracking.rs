@@ -304,16 +304,27 @@ async fn fat_links_clicks_expiry_and_managing(db: PgPool) {
     assert_eq!(details.status, StatusCode::OK, "{}", details.body);
     assert!(details.body.contains("Home defense"));
     assert!(details.body.contains("CTA"));
-    // The views and Manage menu Tether draws from the manifest, New FAT
-    // link as the header's button, and the link's own buttons: Close, and
-    // Delete asking first.
-    for href in ["links", "stats", "fleet-types", "logs"] {
+    // The views and Manage Tether draws from the manifest (Manage opens
+    // Settings, whose bar is the Manage pages), New FAT link as the
+    // header's button, and the link's own buttons: Close, and Delete
+    // asking first.
+    for href in ["links", "stats", "settings"] {
         assert!(
             details
                 .body
                 .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
             "{href}: {}",
             details.body
+        );
+    }
+    let settings = open(&h, "settings", &owner).await;
+    for href in ["fleet-types", "logs"] {
+        assert!(
+            settings
+                .body
+                .contains(&format!("href=\"/plugins/{ID}/{href}\"")),
+            "{href}: {}",
+            settings.body
         );
     }
     assert!(

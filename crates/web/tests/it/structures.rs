@@ -536,7 +536,7 @@ async fn structures_end_to_end(db: PgPool) {
     ] {
         assert!(list.body.contains(seen), "{seen}: {}", list.body);
     }
-    // The views and the Manage menu Tether draws (Settings, for managers);
+    // The views and Manage, which Tether draws (Settings, for managers);
     // owners' logos, types' icons, and the reinforced Keep's timer
     // counting down. The tag settings open from Settings, as a chip.
     assert!(

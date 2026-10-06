@@ -94,7 +94,7 @@ path = "ledger"
 label = "Upload surveys"
 path = "upload"
 
-[[manage]]                         # the Manage menu, after Tether's Settings
+[[manage]]                         # the Manage pages, after Tether's Settings
 label = "Ore prices"
 path = "prices"
 ```

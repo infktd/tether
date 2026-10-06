@@ -1106,7 +1106,7 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
         "{body}"
     );
     assert!(
-        !body.contains("menu-details"),
+        !body.contains("manage-link"),
         "no Manage for a member: {body}"
     );
     // The action isn't offered on its own page, and a page under no view
@@ -1121,12 +1121,15 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
         blocks.body
     );
 
-    // Whoever runs it: Manage, Settings first, then the app's own pages.
+    // Whoever runs it: Manage opens the first manage page, Settings.
     let values = page(&h, "/plugins/acme.frame/values", &owner).await;
-    let menu = values.body.split(r#"class="menu-panel""#).nth(1).unwrap();
-    let settings = menu.find(">Settings</a>").unwrap();
-    let secret = menu.find(">Secret</a>").unwrap();
-    assert!(settings < secret, "{menu}");
+    assert!(
+        values.body.contains(
+            r#"<a class="btn manage-link" data-variant="outline" href="/plugins/acme.frame/settings">"#
+        ),
+        "{}",
+        values.body
+    );
     // On a Manage page: the eyebrow says so, and the bar is the Manage pages.
     let secret = page(&h, "/plugins/acme.frame/admin/secret", &owner).await;
     let body = &secret.body;
@@ -1144,5 +1147,11 @@ async fn the_manifest_draws_the_apps_frame(db: PgPool) {
         ),
         "{body}"
     );
-    assert!(!body.contains("menu-details"), "{body}");
+    // Settings first, then the app's own pages; no Manage button here.
+    let bar = body.split(r#"aria-label="Manage">"#).nth(1).unwrap();
+    assert!(
+        bar.find(">Settings</a>").unwrap() < bar.find(">Secret</a>").unwrap(),
+        "{bar}"
+    );
+    assert!(!body.contains("manage-link"), "{body}");
 }

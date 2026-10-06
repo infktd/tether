@@ -349,18 +349,6 @@
     if (names.length) event.detail.headers["HX-In-Place"] = names.join(" ");
   });
 
-  // Menus that open under their button (an app's Manage): a click
-  // elsewhere, or Escape, closes them.
-  document.addEventListener("click", (event) => {
-    for (const menu of document.querySelectorAll("details.menu-details[open]")) {
-      if (!menu.contains(event.target)) menu.open = false;
-    }
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    for (const menu of document.querySelectorAll("details.menu-details[open]")) menu.open = false;
-  });
-
   // Popups (DESIGN.md, Popups): a button opening one of the page's forms
   // puts its hidden values into the form, its sentence at the top, and
   // shows it; Cancel, Escape or a click outside closes it. The form posts
