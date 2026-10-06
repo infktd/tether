@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}{{ c.title }}{% endblock %}
-{% block breadcrumb %}{% if c.title != plugin_name %}{{ plugin_name }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">{{ c.title }}</span>{% endblock %}
+{% block breadcrumb %}{{ c.section }}&nbsp;/&nbsp;{% if c.title != plugin_name %}<a href="{{ c.app_href }}">{{ plugin_name }}</a>&nbsp;/&nbsp;{% endif %}<span class="text-foreground">{{ c.title }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6 relative" hx-boost="true"{% if c.audited %} hx-history="false"{% endif %}>
   {% include "plugin_content.html" %}

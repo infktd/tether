@@ -3,30 +3,38 @@
     seconds, until a render no longer asks. Once the app's data changed
     (its live stream says), assets/live.js gets it again too. -#}
 {%- import "plugin_sections.html" as plugin -%}
+{%- import "icons.html" as icons -%}
 <div id="plugin-content" class="plugin-content"{% if let Some(seconds) = c.refresh %} hx-get="{{ c.href }}" hx-trigger="every {{ seconds }}s" hx-swap="outerHTML" data-live{% endif %}{% if let Some(app) = c.live %} data-app="{{ app }}" data-href="{{ c.href }}"{% endif %}>
-  <div class="page-header">
-    <div class="min-w-0">
-      <h1 class="page-title">{{ c.title }}</h1>
-      {% if let Some(d) = c.description %}<p class="text-muted-foreground mt-1">{{ d }}</p>{% endif %}
+  {#- The page header (DESIGN.md): the app's icon, its name over the
+      page's title (the section's when the page is named after the app),
+      and on the right the one primary action, never on its own page. -#}
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon(c.icon) %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">{% if c.title == c.app_name %}{{ c.section }}{% else %}{{ c.app_name }}{% endif %}</div>
+        <h1 class="page-title">{{ c.title }}</h1>
+        {% if let Some(d) = c.description %}<p class="page-desc">{{ d }}</p>{% endif %}
+      </div>
     </div>
-    {#- Always under the title, whatever how many there are: every app's
-        header reads the same (DESIGN.md, Page header). -#}
-    <div class="page-actions">
-      {% if !c.links.is_empty() %}
-      <nav class="tab-nav" aria-label="Pages">
-        {% for l in c.links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}
-      </nav>
-      {% endif %}
-      {% for b in c.buttons %}<a class="btn" data-variant="primary" href="{{ b.href }}"{% if b.current %} aria-current="page"{% endif %}>{{ b.label }}</a>{% endfor %}
+    <div class="page-head-actions">
+      {% for b in c.buttons %}{% if !b.current %}<a class="btn" data-variant="primary" href="{{ b.href }}">{{ b.label }}</a>{% endif %}{% endfor %}
       {% include "app_owners_button.html" %}
     </div>
   </div>
+  {#- The app's views (DESIGN.md, Views bar): one row, the current one
+      underlined in the signal. -#}
+  {% if !c.links.is_empty() %}
+  <nav class="views-bar" aria-label="Views">
+    {% for l in c.links %}<a href="{{ l.href }}"{% if l.current %} aria-current="page"{% endif %}>{{ l.label }}</a>{% endfor %}
+  </nav>
+  {% endif %}
   {% if let Some(error) = c.error %}<div class="alert" data-variant="destructive" role="alert"><section>{{ error }}</section></div>{% endif %}
   {% call plugin::sections(c.sections) %}{% endcall %}
   {% if !c.tabs.is_empty() %}
   {#- A tab swaps the content alone, keeps the scroll position and goes
       in the history (DESIGN.md, Page hygiene and state). -#}
-  <nav class="tab-nav self-start" aria-label="Tabs" hx-target="#plugin-content" hx-swap="outerHTML show:none" hx-push-url="true">
+  <nav class="view-chips self-start" aria-label="Tabs" hx-target="#plugin-content" hx-swap="outerHTML show:none" hx-push-url="true">
     {% for t in c.tabs %}
     <a href="{{ t.href }}"{% if t.current %} aria-current="page"{% endif %}>{{ t.label }}</a>
     {% endfor %}

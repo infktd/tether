@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {%- import "organization.html" as organization -%}
 {% macro request_table(title, rows, empty) %}
   <section class="card data-card">
@@ -38,9 +39,15 @@
 {% block breadcrumb %}<span class="text-foreground">Group Management</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div>
-    <h1 class="page-title">Group Management</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">Requests for the groups you lead. Accepting a join checks the pilot's state can still be in the group.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("users") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Group Management</h1>
+        <p class="page-desc max-w-3xl">Requests for the groups you lead. Accepting a join checks the pilot's state can still be in the group.</p>
+      </div>
+    </div>
   </div>
   {% let tab = "requests" %}{% include "group_management_tabs.html" %}
   {% include "admin_error.html" %}

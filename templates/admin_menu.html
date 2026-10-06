@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}Menu{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/system">System</a>&nbsp;/&nbsp;<span class="text-foreground">Menu</span>{% endblock %}
 {% macro arrows(reference) %}
@@ -36,10 +37,14 @@
 {% endmacro %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div class="flex flex-wrap items-start justify-between gap-4">
-    <div>
-      <h1 class="page-title">Menu</h1>
-      <p class="text-muted-foreground mt-1 max-w-3xl">Arrange the sidebar: rename, reorder, hide, group pages into sections and folders, and add your own links. Everyone still sees only the pages they may open; hiding a page only takes it off the sidebar. Pages and apps added later appear in their usual section.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("folder") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Administration</div>
+        <h1 class="page-title">Menu</h1>
+        <p class="page-desc max-w-3xl">Arrange the sidebar: rename, reorder, hide, group pages into sections and folders, and add your own links. Everyone still sees only the pages they may open; hiding a page only takes it off the sidebar. Pages and apps added later appear in their usual section.</p>
+      </div>
     </div>
     <form method="post" action="/admin/menu/reset" hx-confirm="Put the sidebar back as Tether ships it? Your sections, folders and links are deleted.">
       <button type="submit" class="btn" data-variant="outline">Reset</button>

@@ -4,9 +4,15 @@
 {% block breadcrumb %}<span class="text-foreground">Groups</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div>
-    <h1 class="page-title">Groups</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">Groups add access on top of your state. Open groups take you in at once; for the rest, the group's leaders decide.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("layers") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Groups</h1>
+        <p class="page-desc max-w-3xl">Groups add access on top of your state. Open groups take you in at once; for the rest, the group's leaders decide.</p>
+      </div>
+    </div>
   </div>
   {% include "admin_error.html" %}
   {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}

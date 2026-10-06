@@ -4,10 +4,14 @@
 {% block breadcrumb %}<span class="text-foreground">Notifications</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div class="flex items-end justify-between gap-4">
-    <div>
-      <h1 class="page-title">Notifications</h1>
-      <p class="text-muted-foreground mt-1">Your latest 50. Opening one marks it read.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("bell") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Notifications</h1>
+        <p class="page-desc">Your latest 50. Opening one marks it read.</p>
+      </div>
     </div>
     <div class="flex gap-2">
       <form method="post" action="/notifications/read-all"><button type="submit" class="btn" data-variant="outline"{% if shell.unread == 0 %} disabled{% endif %}>{% call icons::icon("check") %}{% endcall %} Mark all read</button></form>

@@ -14,10 +14,14 @@
 {% endmacro %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-<div class="flex items-end justify-between gap-4">
-  <div>
-    <h1 class="page-title">Dashboard</h1>
-    <p class="text-muted-foreground mt-1">{% if lead.is_some() %}Your characters at a glance, your access state and groups.{% else %}Your characters, access state and groups.{% endif %}</p>
+<div class="page-head">
+  <div class="page-id">
+    <span class="page-icon" aria-hidden="true">{% call icons::icon("grid") %}{% endcall %}</span>
+    <div class="min-w-0">
+      <div class="page-eyebrow">Account</div>
+      <h1 class="page-title">Dashboard</h1>
+      <p class="page-desc">{% if lead.is_some() %}Your characters at a glance, your access state and groups.{% else %}Your characters, access state and groups.{% endif %}</p>
+    </div>
   </div>
   {#- One way to add a character: the card grid's own card when Member
       Audit leads, else this. -#}

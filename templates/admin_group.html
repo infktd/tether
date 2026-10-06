@@ -4,10 +4,14 @@
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div class="flex items-end justify-between gap-4">
-    <div>
-      <h1 class="page-title flex items-center gap-2">{{ group.name }} <span class="badge" data-variant="outline">{{ group.label }}</span>{% if group.compliance %} <span class="badge" data-variant="outline">Compliance</span>{% endif %}</h1>
-      {% if !group.description.is_empty() %}<p class="text-muted-foreground mt-1">{{ group.description }}</p>{% endif %}
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("users") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Groups</div>
+        <h1 class="page-title flex items-center gap-2">{{ group.name }} <span class="badge" data-variant="outline">{{ group.label }}</span>{% if group.compliance %} <span class="badge" data-variant="outline">Compliance</span>{% endif %}</h1>
+        {% if !group.description.is_empty() %}<p class="page-desc">{{ group.description }}</p>{% endif %}
+      </div>
     </div>
     <form method="post" action="/admin/groups/{{ group.id }}/delete" hx-confirm="Delete the group {{ group.name }}? Its members lose what it granted.">
       <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete group</button>

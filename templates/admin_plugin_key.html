@@ -1,11 +1,18 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}Key for {{ plugin_id }}{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/plugins">Apps</a>&nbsp;/&nbsp;<span class="text-foreground">Key for {{ plugin_id }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div>
-    <h1 class="page-title">Publisher key</h1>
-    <p class="text-muted-foreground mt-1">Every package for <span class="num">{{ plugin_id }}</span> must be signed with this key.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("lock") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Apps</div>
+        <h1 class="page-title">Publisher key</h1>
+        <p class="page-desc">Every package for <span class="num">{{ plugin_id }}</span> must be signed with this key.</p>
+      </div>
+    </div>
   </div>
   {% include "admin_error.html" %}
 

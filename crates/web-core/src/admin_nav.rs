@@ -120,7 +120,7 @@ pub const PAGES: &[Page] = &[
         active: "corpstats",
         label: "Corporation Stats",
         href: "/corpstats",
-        icon: "activity",
+        icon: "chart",
         group: "members",
         about: "Each corporation's mains, members and unregistered characters.",
     },

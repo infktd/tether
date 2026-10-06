@@ -4,9 +4,15 @@
 {% block breadcrumb %}<span class="text-foreground">Secure Groups</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div>
-    <h1 class="page-title">Secure Groups</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">Groups you're in by meeting their requirements. Each shows how you stand against them now; you can join or ask once you meet them all, and leave a group when a requirement stops passing, after its grace period if it has one.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("shield") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Secure Groups</h1>
+        <p class="page-desc max-w-3xl">Groups you're in by meeting their requirements. Each shows how you stand against them now; you can join or ask once you meet them all, and leave a group when a requirement stops passing, after its grace period if it has one.</p>
+      </div>
+    </div>
   </div>
   {% include "admin_error.html" %}
 

@@ -1,13 +1,18 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {%- import "organization.html" as organization -%}
 {% block title %}{{ name }}{% endblock %}
 {% block breadcrumb %}<a href="/group-management">Group Management</a>&nbsp;/&nbsp;<a href="/group-management/membership">Group Membership</a>&nbsp;/&nbsp;<span class="text-foreground">{{ name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div class="flex items-end justify-between gap-4">
-    <div>
-      <h1 class="page-title flex items-center gap-2">{{ name }} <span class="badge" data-variant="outline">{{ label }}</span></h1>
-      {% if restricted %}<p class="text-muted-foreground mt-1">Restricted: on the admin pages, only a superuser adds or removes members directly.</p>{% endif %}
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("users") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Group Management</div>
+        <h1 class="page-title flex items-center gap-2">{{ name }} <span class="badge" data-variant="outline">{{ label }}</span></h1>
+        {% if restricted %}<p class="page-desc">Restricted: on the admin pages, only a superuser adds or removes members directly.</p>{% endif %}
+      </div>
     </div>
     <a href="/group-management/{{ id }}/audit" class="btn" data-variant="outline">Audit Log</a>
   </div>

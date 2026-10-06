@@ -1,11 +1,18 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}{{ name }}{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;<a href="/admin/permissions/audit">Permissions Audit</a>&nbsp;/&nbsp;<span class="text-foreground num">{{ name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
-  <div>
-    <h1 class="page-title num">{{ name }}</h1>
-    <p class="text-muted-foreground mt-1">{{ description }}</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("search") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Permissions Audit</div>
+        <h1 class="page-title num">{{ name }}</h1>
+        <p class="page-desc">{{ description }}</p>
+      </div>
+    </div>
   </div>
   <section class="card data-card">
     <header><h2>Who holds it <span class="num text-muted-foreground font-normal">{{ holders.len() }}</span></h2></header>

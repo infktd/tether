@@ -4,13 +4,17 @@
 {% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;{% if let Some(a) = app %}<a href="/register">Register Character</a>&nbsp;/&nbsp;<span class="text-foreground">{{ a.name }}</span>{% else %}<span class="text-foreground">Register Character</span>{% endif %}{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
-  <div>
+  <div class="page-head">
+  <div class="page-id">
+  <span class="page-icon" aria-hidden="true">{% call icons::icon("plus") %}{% endcall %}</span>
+  <div class="min-w-0">
+    <div class="page-eyebrow">Account</div>
     {% if let Some(a) = app %}
     <h1 class="page-title">Register for {{ a.name }}</h1>
     {% if done %}
-    <p class="text-muted-foreground mt-1">Every character on your account is registered for {{ a.name }}: it reads them all.</p>
+    <p class="page-desc">Every character on your account is registered for {{ a.name }}: it reads them all.</p>
     {% else %}
-    <p class="text-muted-foreground mt-1 max-w-3xl">{{ a.name }} reads only the characters you register for it here. Register one by logging in with it on EVE's site, which grants the access below; unregister it and {{ a.name }} stops reading it.</p>
+    <p class="page-desc max-w-3xl">{{ a.name }} reads only the characters you register for it here. Register one by logging in with it on EVE's site, which grants the access below; unregister it and {{ a.name }} stops reading it.</p>
     {% endif %}
     {% if flagged %}{% if let Some(target) = target %}
     <p class="text-sm text-muted-foreground mt-2 max-w-3xl">Your state, <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>, also needs something from your characters: <a class="underline underline-offset-4" href="/register">see what</a>. Registering here grants that too.</p>
@@ -19,16 +23,18 @@
     <h1 class="page-title">Register Character</h1>
     {% if let Some(target) = target %}
     {% if done %}
-    <p class="text-muted-foreground mt-1">You're all set: every character is registered for <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>.</p>
+    <p class="page-desc">You're all set: every character is registered for <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>.</p>
     {% else if flagged %}
-    <p class="text-muted-foreground mt-1 max-w-3xl">You're <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>, which needs every character on your account, main and alts, to grant the access below. Some features (and anything your admins tie to compliance) wait until they all do.</p>
+    <p class="page-desc max-w-3xl">You're <span class="state-badge" data-state="{{ target_style }}">{{ target }}</span>, which needs every character on your account, main and alts, to grant the access below. Some features (and anything your admins tie to compliance) wait until they all do.</p>
     {% else %}
-    <p class="text-muted-foreground mt-1 max-w-3xl"><span class="state-badge" data-state="{{ target_style }}">{{ target }}</span> needs every character on your account to grant the access below.</p>
+    <p class="page-desc max-w-3xl"><span class="state-badge" data-state="{{ target_style }}">{{ target }}</span> needs every character on your account to grant the access below.</p>
     {% endif %}
     {% else %}
-    <p class="text-muted-foreground mt-1 max-w-3xl">You're Guest, which needs nothing from your characters. If your alliance or corporation is covered by a state, your main's affiliation decides it; ask an admin if that looks wrong.</p>
+    <p class="page-desc max-w-3xl">You're Guest, which needs nothing from your characters. If your alliance or corporation is covered by a state, your main's affiliation decides it; ask an admin if that looks wrong.</p>
     {% endif %}
     {% endif %}
+  </div>
+  </div>
   </div>
 
   {% if !required.is_empty() %}

@@ -185,17 +185,6 @@
     display: none;
   }
 
-  /* Page tabs (DESIGN.md): a segmented control of links. */
-  .tab-nav {
-    @apply inline-flex w-fit items-center gap-1 rounded-md bg-muted p-1;
-  }
-  .tab-nav > a {
-    @apply inline-flex h-8 items-center gap-2 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground;
-  }
-  .tab-nav > a[aria-current="page"] {
-    @apply bg-background text-foreground;
-  }
-
   /* The unread count on the top bar's bell. */
   .notification-count {
     @apply absolute -right-1 -top-1 min-w-4 bg-highlight px-1 text-center text-[10px] font-medium leading-4 text-background;
@@ -403,15 +392,105 @@
     cursor: not-allowed;
   }
 
-  /* App pages (DESIGN.md, Plugins). The header: title on the left, the
-     page's own links on the right. */
-  .page-header {
-    @apply flex flex-wrap items-start justify-between gap-4;
+  /* The page header (DESIGN.md): an icon tile, the eyebrow over the
+     title, and on the right the one primary action. */
+  .page-head {
+    @apply flex flex-wrap items-end justify-between gap-4;
   }
-  /* An app's page links and buttons: one row under its title, in every
-     app, however many there are. */
-  .page-header:has(> .page-actions) {
-    @apply flex-col justify-start;
+  .page-id {
+    @apply flex min-w-0 items-center gap-3.5;
+    flex: 1 1 360px;
+  }
+  .page-icon {
+    @apply grid size-11 shrink-0 place-items-center border border-faint bg-card text-foreground;
+  }
+  .page-icon > svg {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.5;
+  }
+  .page-eyebrow {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .page-id .page-title {
+    margin-top: 4px;
+  }
+  .page-desc {
+    @apply mt-1 text-[13px] text-foreground-soft;
+  }
+  .page-head-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .page-head-actions:empty {
+    display: none;
+  }
+
+  /* The views bar (DESIGN.md): an app's views in one row, the current one
+     underlined in the signal; it scrolls sideways where it doesn't fit. */
+  .views-bar {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .views-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .views-bar > a {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--muted-foreground);
+    transition:
+      background-color 150ms ease-out,
+      color 150ms ease-out;
+  }
+  .views-bar > a:hover {
+    background: var(--muted);
+    color: var(--foreground);
+  }
+  .views-bar > a[aria-current="page"] {
+    color: var(--foreground);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+
+  /* View chips (DESIGN.md): which part of a list is shown, as one
+     segmented group. */
+  .view-chips {
+    display: flex;
+    flex-wrap: wrap;
+    width: fit-content;
+    max-width: 100%;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .view-chips > a {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    padding: 0 12px;
+    font-size: 12.5px;
+    color: var(--foreground-soft);
+    transition:
+      background-color 150ms ease-out,
+      color 150ms ease-out;
+  }
+  .view-chips > a:hover {
+    color: var(--foreground);
+  }
+  .view-chips > a[aria-current="page"] {
+    background: var(--border);
+    color: var(--foreground);
+    font-weight: 500;
   }
   /* A long table's pages (DESIGN.md, Tables): where you are, and the
      way on. */
@@ -434,9 +513,6 @@
   }
   .user-menu-item[aria-current="true"] {
     @apply bg-accent text-foreground;
-  }
-  .page-actions {
-    @apply flex w-full flex-wrap items-center gap-3;
   }
   /* A live page's content: its own element for htmx to swap, laid out as
      if it weren't there (and so never faded on a swap). */
@@ -1059,42 +1135,6 @@
     border-top: 1px solid #161d26;
   }
 
-  /* Tabs and filter keys: spaced capitals; the active key is raised and
-     cut. */
-  .tab-nav {
-    display: inline-flex;
-    width: fit-content;
-    align-items: center;
-    gap: 2px;
-    background: transparent;
-    padding: 0;
-    border-radius: 0;
-  }
-  .tab-nav > a {
-    display: inline-flex;
-    height: 30px;
-    align-items: center;
-    gap: 6px;
-    padding: 0 14px;
-    border: 1px solid transparent;
-    border-radius: 0;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--muted-foreground);
-  }
-  .tab-nav > a:hover {
-    color: var(--foreground);
-  }
-  .tab-nav > a[aria-current="page"] {
-    background: var(--muted);
-    border-color: var(--faint);
-    color: var(--foreground);
-    font-weight: 600;
-    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut-sm)), calc(100% - var(--cut-sm)) 100%, 0 100%);
-  }
-
   /* Readouts: an overline over a mono value, split by seams, no boxes. */
   .stat {
     padding: 0 22px;
@@ -1608,10 +1648,6 @@
     color: var(--muted-foreground);
   }
 
-  /* The page header's parts. */
-  .page-over {
-    margin-bottom: 6px;
-  }
   .toaster .toast .toast-content {
     border-radius: 0;
   }

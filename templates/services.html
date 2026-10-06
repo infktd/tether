@@ -1,11 +1,18 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}Services{% endblock %}
 {% block breadcrumb %}<span class="text-foreground">Services</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
-  <div>
-    <h1 class="page-title">Services</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">The alliance's services you can use. Access comes with your state and groups; if you lose it, you're removed from the service.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("message") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Services</h1>
+        <p class="page-desc max-w-3xl">The alliance's services you can use. Access comes with your state and groups; if you lose it, you're removed from the service.</p>
+      </div>
+    </div>
   </div>
   {% if let Some(discord) = discord %}
   <section class="card data-card">

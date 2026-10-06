@@ -1,12 +1,17 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}{{ corp.name }}{% endblock %}
 {% block breadcrumb %}<a href="/corpstats">Corporation Stats</a>&nbsp;/&nbsp;<span class="text-foreground">{{ corp.name }}</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6" hx-boost="true">
-  <div class="flex items-end justify-between gap-4">
-    <div>
-      <h1 class="page-title">{{ corp.name }}</h1>
-      <p class="text-muted-foreground mt-1">Updated {{ corp.fetched }}</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("chart") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Corporation Stats</div>
+        <h1 class="page-title">{{ corp.name }}</h1>
+        <p class="page-desc">Updated {{ corp.fetched }}</p>
+      </div>
     </div>
     {% if can_update %}<form method="post" action="/corpstats/{{ corp.id }}/update"><button type="submit" class="btn" data-variant="outline">Update Now</button></form>{% endif %}
   </div>
@@ -19,7 +24,7 @@
     <div class="card stat"><div class="stat-label">Unregistered</div><div class="stat-value num">{{ corp.unregistered }}</div></div>
   </div>
 
-  <nav class="tab-nav" aria-label="Corporation Stats">
+  <nav class="view-chips" aria-label="Corporation Stats">
     <a href="/corpstats/{{ corp.id }}?tab=mains"{% if tab == "mains" %} aria-current="page"{% endif %}>Mains</a>
     <a href="/corpstats/{{ corp.id }}?tab=members"{% if tab == "members" %} aria-current="page"{% endif %}>Members</a>
     <a href="/corpstats/{{ corp.id }}?tab=unregistered"{% if tab == "unregistered" %} aria-current="page"{% endif %}>Unregistered</a>

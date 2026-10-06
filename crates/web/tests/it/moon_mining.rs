@@ -371,7 +371,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
         );
     }
     assert!(
-        moons.body.contains("aria-label=\"Pages\""),
+        moons.body.contains("aria-label=\"Views\""),
         "{}",
         moons.body
     );
@@ -586,7 +586,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
     assert!(!seen.body.contains("Fresh moons"));
     // Blue have the old moons and Moons (as aa-moonmining's navbar), no
     // more.
-    assert!(seen.body.contains("aria-label=\"Pages\""), "{}", seen.body);
+    assert!(seen.body.contains("aria-label=\"Views\""), "{}", seen.body);
     assert!(seen.body.contains(&format!("href=\"/plugins/{ID}/moons\"")));
     assert!(
         !seen

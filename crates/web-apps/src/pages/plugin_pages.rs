@@ -988,6 +988,14 @@ fn section(ctx: &Ctx, section: &Section) -> SectionView {
 
 /// Everything below the top bar: what a live page reloads.
 pub struct ContentView {
+    /// The app's name, its icon (DESIGN.md, Page header) and its first
+    /// page's address.
+    pub app_name: String,
+    pub icon: &'static str,
+    pub app_href: String,
+    /// The sidebar section the app's link sits in by default, for the
+    /// eyebrow when a page is named after the app itself.
+    pub section: &'static str,
     pub title: String,
     pub description: Option<String>,
     /// The page's own links beside the title.
@@ -1507,7 +1515,22 @@ fn draw(
         opened.viewer.main.name,
         chrono::Utc::now().format("%Y-%m-%d %H:%M")
     );
+    let manifest = &opened.running.manifest;
+    let section = manifest
+        .navigation
+        .first()
+        .map(|entry| entry.section())
+        .and_then(|name| {
+            tether_web_core::menu::SECTIONS
+                .iter()
+                .find(|(n, _)| *n == name)
+        })
+        .map_or("Apps", |(_, label)| label);
     let content = ContentView {
+        app_name: manifest.plugin.name.clone(),
+        icon: tether_web_core::plugins::icon_of(manifest),
+        app_href: tether_web_core::plugins::page_href(&manifest.plugin.id, ""),
+        section,
         title: page.title.clone(),
         description: page.description.clone(),
         links,

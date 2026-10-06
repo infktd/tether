@@ -1,11 +1,18 @@
 {% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
 {% block title %}Access tokens{% endblock %}
 {% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;<span class="text-foreground">Access tokens</span>{% endblock %}
 {% block content %}
 <div class="flex flex-col gap-6">
-  <div>
-    <h1 class="page-title">Access tokens</h1>
-    <p class="text-muted-foreground mt-1 max-w-3xl">Tokens let bots and scripts use Tether's API as you: send one as <span class="num">Authorization: Bearer …</span>. A token does only what you tick, only while you still may, and only on the admin API (and reading your account). It never works on pages, and can't change your main, your EVE tokens, your groups or other tokens.</p>
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("scroll") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Access tokens</h1>
+        <p class="page-desc max-w-3xl">Tokens let bots and scripts use Tether's API as you: send one as <span class="num">Authorization: Bearer …</span>. A token does only what you tick, only while you still may, and only on the admin API (and reading your account). It never works on pages, and can't change your main, your EVE tokens, your groups or other tokens.</p>
+      </div>
+    </div>
   </div>
   {% include "admin_error.html" %}
 
