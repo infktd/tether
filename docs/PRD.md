@@ -275,6 +275,40 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 - [x] Live app pages: when an app's job has run, its open pages refresh the content in place over server-sent events (`LISTEN` on Postgres, no new service), replacing timed reloads; a page with a form being filled in waits until it's posted or left
 - [x] Core pages edit in place where it helps (group members, permissions, Discord mappings, state covers): one row's change answers with that row, not the page
 
+**One Tether** (Jay, 2026-10-06: every page "truly looks like" the mock-up, https://claude.ai/artifact/Edvv5nBKef4vUMpyFwrxbZ, and feels fluid, on the stack we have: askama, Basecoat classes restyled with our tokens, htmx and a little host JavaScript; no SPA and no npm, since ESI's data is cached anyway and nothing here needs more. Tether owns every app's layout: apps declare their views and actions and return data, Tether draws the frame. "Data source" replaces "owner" where it means a character an app reads corporation data through. Audit and decisions D1–D6: https://claude.ai/artifact/Gc7wwpiNzUNWaBgiFqi2sr.)
+
+Phase 1, feel and look:
+
+- [ ] Fluid navigation: Back and Forward show the page again at once from the tab's memory (never written to the browser's storage, gone on logout or when the tab closes), with its scroll position and without the arrival motion, refreshing it from the server only when it is more than two minutes old; nothing reloads the whole page; page changes cross-fade (the browser's view transitions, none under reduced motion) while the command bar and sidebar stay still, the sidebar keeping its scroll position
+- [ ] The shell: DESIGN.md's command bar (wordmark, site name, EVE clock, TQ, ESI, bell, the account menu at the top right), trail at the head of the content, and sidebar (an icon for every item, apps' from a new manifest `icon` chosen from Tether's set; counts; the active item's signal bar; the foot with data source health and the version)
+- [ ] Page header and views bar on every page, core and app alike (eyebrow, icon tile, title, one primary action, Manage; the current view underlined in the signal), and view chips where tabs choose part of a list
+- [ ] Words: "data source" for owners everywhere people read it (pages, Administration, Token Management, toasts, docs), sentence case, "New" to create and "Add" to put in a list
+
+Phase 2, the app shell:
+
+- [ ] The manifest declares an app's views, primary action and manage pages; Tether draws its header, views bar and Manage menu, and apps' own page links and buttons go
+- [ ] Data sources: one page per app under Manage (character, corporation, role check, last read, status, coverage, a link to send a Director), the notice when one stops working, and Activity under Manage (jobs, schedules, log, ESI calls)
+- [ ] All 17 apps moved over, each with a version bump
+
+Phase 3, lists and settings:
+
+- [ ] The toolbar on every list (the search in the address, filter chips, view chips) in place of search cards and filter tabs; row names as links; the record panel for a selected row
+- [ ] Settings in grouped sections with one save bar, CHANGED marks and a warning before leaving unsaved changes
+
+Phase 4, core, Administration and phone:
+
+- [ ] Core lists on the toolbar; the audit log filtered by who, action, app and date, and exported as CSV
+- [ ] Administration's Health page and Instance settings (System split in two)
+- [ ] The ⌘K command palette: pages, pilots and actions, only what the viewer may open
+- [ ] Phone: the views bar scrolls with a fade, toolbars fold into one search line and Filters, the primary action at the bottom; a skip link; a WCAG 2.2 AA pass
+
+Phase 5, release 1.0:
+
+- [ ] Tagged releases with a changelog and a "What's new" note after each upgrade
+- [ ] Documentation for admins, members and app developers
+- [ ] A sessions page with Sign out everywhere
+- [ ] An optional metrics endpoint, off by default
+
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
 
 **Pre-launch checklist** (deferred from milestone 0's acceptance; everything stays local until the project is further along, and these must pass before the first alliance goes live)
