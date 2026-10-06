@@ -359,7 +359,7 @@ fn sync() -> Result<(), JobError> {
     let now = Utc::now();
     let sources = sources_by_corporation();
     if sources.is_empty() {
-        log::info("no owners added yet");
+        log::info("no data sources added yet");
         return Ok(());
     }
     let mut budget = Budget(ESI_BUDGET);
@@ -1318,7 +1318,7 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
             Column::numeric(""),
         ])
         .title("Extractions")
-        .empty("No extractions running. Has an owner been added?"),
+        .empty("No extractions running. Has a data source been added?"),
         upcoming.iter().map(|p| {
             vec![
                 p.moon.clone().into(),

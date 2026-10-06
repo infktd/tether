@@ -425,7 +425,7 @@ fn index_page(viewer: &Viewer) -> Result<Page, PageError> {
         Column::text(""),
     ])
     .title("Contacts")
-    .empty("None you're in: an owner (a character added with Add owner) brings its corporation and alliance.");
+    .empty("None you're in: a data source (a character added with Add data source) brings its corporation and alliance.");
     for r in &rows.rows {
         let (kind, id) = (text(r, 0), int(r, 1));
         if !sees(viewer, &kind, id) {

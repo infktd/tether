@@ -173,16 +173,16 @@ interface page {
         /// link path, as for `link`. The host writes the site's address
         /// before it and draws it read-only with a Copy button.
         share(string),
-        /// Tether's own Add owner button, with these words (e.g. "Log in
-        /// with the fleet boss"; "Add owner" when empty), for apps with
-        /// data-source scopes: one EVE login with one of the viewer's own
-        /// characters adds it as the app's data source, and brings them
-        /// back to this page with that character's id as `owner` in the
-        /// query. Anyone can type a query: treat `owner` as a hint, and use
-        /// it only if it's one of the viewer's characters and one of
-        /// `esi.data-sources`. Drawn only for those who may add owners
-        /// (holders of an `add_...` permission of the app, and app
-        /// admins), with the host's own words and the scopes beside it;
+        /// Tether's own Add data source button (AA's Add Owner), with these
+        /// words (e.g. "Log in with the fleet boss"; "Add data source" when
+        /// empty), for apps with data-source scopes: one EVE login with one
+        /// of the viewer's own characters adds it as the app's data source,
+        /// and brings them back to this page with that character's id as
+        /// `owner` in the query. Anyone can type a query: treat `owner` as
+        /// a hint, and use it only if it's one of the viewer's characters
+        /// and one of `esi.data-sources`. Drawn only for those who may add
+        /// data sources (holders of an `add_...` permission of the app, and
+        /// app admins), with the host's own words and the scopes beside it;
         /// nothing for anyone else.
         add-owner(string),
         /// A skill's level (see `levels`).

@@ -1,5 +1,5 @@
 //! The Blueprints app (aa-blueprints) end to end: installed from its real
-//! component and migration; a corporate owner added through Add owner; its
+//! component and migration; a corporate data source added through Add data source; its
 //! blueprints, running jobs and where they are read; the library as each
 //! viewer may see it; and a request for copies taken, fulfilled and told
 //! about, in the bell and on Discord.

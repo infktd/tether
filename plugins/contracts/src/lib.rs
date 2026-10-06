@@ -1,6 +1,6 @@
 //! Contracts (Jay, 2026-09-29; what Bastion's contract notices did).
 //!
-//! - **Owners**: characters added with Add owner by `add_contract_owner`
+//! - **Data sources**: characters added with Add data source by `add_contract_owner`
 //!   holders; each one's corporation's contracts are read every five
 //!   minutes, and those assigned to the corporation kept.
 //! - **Discord** (`manage` picks the channel and what's sent): a card when
@@ -908,7 +908,7 @@ fn index_page() -> Result<Page, PageError> {
         Column::text("Status"),
     ])
     .title("Contracts assigned to the corporations")
-    .empty("No contracts yet. Has an owner been added?");
+    .empty("No contracts yet. Has a data source been added?");
     for r in &rows.rows {
         let price = float(r, 5);
         let kind = text(r, 1);

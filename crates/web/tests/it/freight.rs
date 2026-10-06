@@ -1,5 +1,5 @@
 //! The Freight app end to end (aa-freight): installed from its real
-//! component and migration; the contract handler added through Add owner;
+//! component and migration; the contract handler added through Add data source;
 //! its corporation's courier contracts read and kept as the operation mode
 //! says; stations named from ESI and a structure added by hand; a priced
 //! route; the calculator, the contracts checked against the pricing, My

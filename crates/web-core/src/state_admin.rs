@@ -381,7 +381,7 @@ async fn check_reach(
     Err(AppError::new(
         axum::http::StatusCode::FORBIDDEN,
         format!(
-            "{} grants {}, which you don't hold. Only someone who holds it (or the owner) can change who is in it.",
+            "{} grants {}, which you don't hold. Only someone who holds it (or a superuser) can change who is in it.",
             names.join(" and "),
             missing
                 .iter()

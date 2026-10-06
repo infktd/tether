@@ -1524,7 +1524,7 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
     assert_eq!(create.status, StatusCode::OK, "{}", create.body);
     assert!(
         create.body.contains(&format!(
-            r#"<form method="post" action="/apps/{ID}/owners/add" hx-boost="false" class="flex flex-wrap items-center gap-2"><input type="hidden" name="back" value="links/create"><button type="submit" class="btn" data-variant="outline" data-size="sm">Log in with the fleet boss</button><span class="text-xs text-muted-foreground">Adds one of your characters as this app's owner, used at once · EVE asks for:</span><span class="badge num" data-variant="outline">esi-fleets.read_fleet.v1</span></form>"#
+            r#"<form method="post" action="/apps/{ID}/owners/add" hx-boost="false" class="flex flex-wrap items-center gap-2"><input type="hidden" name="back" value="links/create"><button type="submit" class="btn" data-variant="outline" data-size="sm">Log in with the fleet boss</button><span class="text-xs text-muted-foreground">Adds one of your characters as this app's data source, used at once · EVE asks for:</span><span class="badge num" data-variant="outline">esi-fleets.read_fleet.v1</span></form>"#
         )),
         "{}",
         create.body

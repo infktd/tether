@@ -122,7 +122,7 @@ tether_plugin_sdk::export!(Structures);
 
 /// The app's pages beside the title, as aa-structures' navbar: the list
 /// and the public customs offices for everyone, the settings and tags for
-/// managers. The host adds Add owner.
+/// managers. The host adds Add data source.
 fn with_links(page: Page, viewer: &Viewer) -> Page {
     let mut page = page;
     if viewer.can("basic_access") {
@@ -2147,7 +2147,7 @@ fn starbase_table(rows: Vec<Vec<Value>>) -> Table {
             Column::text("Tags"),
         ])
         .title("Starbases")
-        .empty("No starbases. They're read with the owner's Director role."),
+        .empty("No starbases. They're read with a data source's Director role."),
         rows,
     )
 }
@@ -2196,7 +2196,7 @@ fn orbital_table(rows: Vec<Vec<Value>>) -> Table {
             Column::text("Tags"),
         ])
         .title("Customs offices and skyhooks")
-        .empty("No customs offices or skyhooks. They're read with the owner's Director role."),
+        .empty("No customs offices or skyhooks. They're read with a data source's Director role."),
         rows,
     )
 }
@@ -2490,7 +2490,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             vec![
                 Section::Table(owner_table),
                 Section::Text(
-                    "Add owner logs in with a character with the in-game Station Manager role. \
+                    "Add data source logs in with a character with the in-game Station Manager role. \
                      Its corporation's structures show \
                      here within the hour; starbases, customs offices, skyhooks and fittings need \
                      the Director role."
@@ -2765,8 +2765,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             Column::numeric("Next try"),
             Column::text(""),
         ])
-        .title("Owners' sync characters")
-        .empty("No owners yet: Add owner logs in with a Station Manager."),
+        .title("Data sources")
+        .empty("No data sources yet: Add data source logs in with a Station Manager."),
         owner_rows,
     );
     let sent_table = with_rows(
@@ -2876,11 +2876,11 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         .table(routing_table)
         .table(owner_table)
         .text(
-            "An owner ESI refused (a lost role or token) is left alone for an hour, doubling up \
-             to a day. Once it's fixed in game, Retry now reads it again. As aa-structures, an \
-             owner can have up to 10 sync characters (Add owner with another of its Station \
-             Managers): they take turns reading notifications, cutting the delay from about ten \
-             minutes to one.",
+            "A data source ESI refused (a lost role or token) is left alone for an hour, doubling \
+             up to a day. Once it's fixed in game, Retry now reads it again. As aa-structures, a \
+             corporation can have up to 10 data sources (Add data source with another of its \
+             Station Managers): they take turns reading notifications, cutting the delay from \
+             about ten minutes to one.",
         )
         .table(sent_table))
 }

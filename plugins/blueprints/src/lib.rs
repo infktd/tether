@@ -1,7 +1,7 @@
 //! Blueprints: aa-blueprints, AA's Blueprint Library (Jay, 2026-10-04).
 //!
 //! - **Owners**: corporations, through a Director's character added with
-//!   Add owner by `add_corporate_blueprint_owner` holders; and pilots'
+//!   Add data source by `add_corporate_blueprint_owner` holders; and pilots'
 //!   own characters, registered for the app and added on Owners by
 //!   `add_personal_blueprint_owner` holders. Their blueprints are read
 //!   every 3 hours, running jobs every hour, places every 12 (`sync`).
@@ -252,7 +252,7 @@ fn header(page: Page, access: &Access) -> Page {
         page = page.link("Open requests", "open");
     }
     if access.add_personal {
-        page = page.link("Owners", "owners");
+        page = page.link("Data sources", "owners");
     }
     page
 }
@@ -430,7 +430,7 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
     let mut table = Table::new(columns)
         .title("Blueprints")
         .empty(if filter.is_empty() {
-            "No blueprints yet. Has an owner been added?"
+            "No blueprints yet. Has a data source been added?"
         } else {
             "No blueprint matches."
         });
@@ -953,7 +953,7 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
         Column::text("Problem"),
         Column::text(""),
     ])
-    .title("Your personal owners")
+    .title("Your personal data sources")
     .empty("None yet: add one of your registered characters below.");
     for r in &added.rows {
         let id = int(r, 0);
@@ -978,8 +978,8 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
         ]);
     }
     let mut add = Table::new(vec![Column::text("Character"), Column::text("")])
-        .title("Add a personal owner")
-        .empty("All your registered characters are owners.");
+        .title("Add a personal data source")
+        .empty("All your registered characters are data sources.");
     for c in registered.iter().filter(|c| !added_ids.contains(&c.id)) {
         add = add.row(vec![
             character(c.id, c.name.clone()).into(),
@@ -990,10 +990,10 @@ fn owners_page(access: &Access) -> Result<Page, PageError> {
         ]);
     }
     let mut page = header(
-        Page::new("Owners").description(
+        Page::new("Data sources").description(
             "Your characters whose own blueprints are in the library. Register a character for this app \
              first (it reads its blueprints, industry jobs and assets). Corporations' blueprints come \
-             from corporate owners, added with Add owner with a Director's character.",
+             from corporate data sources, added with Add data source with a Director's character.",
         ),
         access,
     )

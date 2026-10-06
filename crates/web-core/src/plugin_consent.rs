@@ -122,7 +122,7 @@ pub async fn start_offer(
     .await
 }
 
-/// After an Add owner login, in the callback: adds the character, in use
+/// After an Add data source login, in the callback: adds the character, in use
 /// at once, if it's on the signed-in account and SSO granted every scope
 /// the plugin needs, for the corporation EVE says it's in now (a character
 /// new to Tether too); then the app's schedules run now, so it reads its

@@ -506,7 +506,7 @@ impl Manifest {
         if let Some(owners) = &c.esi.owner_permissions {
             if c.esi.data_source.is_empty() {
                 return Err(bad(
-                    "capabilities.esi.owner_permissions needs data_source scopes to add owners for",
+                    "capabilities.esi.owner_permissions needs data_source scopes to add data sources for",
                 ));
             }
             if owners.is_empty() || owners.len() > 10 {

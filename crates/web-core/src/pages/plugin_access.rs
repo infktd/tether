@@ -1,9 +1,10 @@
-//! An app's owners (AA's Add Owner), around the app's own pages: the host
-//! draws an "Add owner" button in the page header for those who may add a
-//! character as the app's data source (`plugin_consent::may_offer`), and
-//! on the app's main page the owners: every source, with Remove, for app
-//! admins (`admin.plugins`); the viewer's own, with Withdraw, for everyone
-//! else. Owners are in use once added, as in AA: nobody approves them.
+//! An app's data sources (AA's owners, added with its Add Owner), around
+//! the app's own pages: the host draws an "Add data source" button in the
+//! page header for those who may add a character as the app's data source
+//! (`plugin_consent::may_offer`), and on the app's main page its data
+//! sources: every one, with Remove, for app admins (`admin.plugins`); the
+//! viewer's own, with Withdraw, for everyone else. Data sources are in use
+//! once added, as in AA: nobody approves them.
 //! Plugins never see any of it.
 
 use std::collections::BTreeSet;
@@ -47,7 +48,7 @@ pub struct GoneRow {
 /// What an app's page shows of its owners, for apps with data sources.
 pub struct Owners {
     pub plugin_id: String,
-    /// "Add owner" in the header.
+    /// "Add data source" in the header.
     pub can_offer: bool,
     /// Sees every source, with Remove (app admins).
     pub can_manage: bool,

@@ -1854,7 +1854,7 @@ async fn aa_structures_rules(db: PgPool) {
     );
 
     // A second sync character for the corporation (aa-structures' up to
-    // 10), added with Add owner like the first: the two take turns, so
+    // 10), added with Add data source like the first: the two take turns, so
     // notifications are read between syncs.
     Mock::given(method("POST"))
         .and(path("/characters/affiliation"))

@@ -419,6 +419,6 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for ClientIp {
 fn finished() -> AppError {
     AppError::new(
         StatusCode::GONE,
-        "Setup is finished; the owner manages this instance.",
+        "Setup is finished; superusers manage this instance.",
     )
 }

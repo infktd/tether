@@ -774,7 +774,7 @@ fn value(ctx: &Ctx, value: &Value) -> ValueView {
         Value::AddOwner(label) => ValueView {
             add_owner: ctx.owner_back.as_ref().map(|(back, scopes)| AddOwnerView {
                 label: if label.trim().is_empty() {
-                    "Add owner".to_owned()
+                    "Add data source".to_owned()
                 } else {
                     label.clone()
                 },
@@ -2352,6 +2352,6 @@ mod tests {
         let unnamed = value(&ctx(Some("")), &Value::AddOwner(" ".to_owned()))
             .add_owner
             .expect("drawn");
-        assert_eq!(unnamed.label, "Add owner");
+        assert_eq!(unnamed.label, "Add data source");
     }
 }

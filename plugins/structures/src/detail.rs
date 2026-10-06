@@ -222,7 +222,7 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
         page = page.table(with_rows(
             Table::new(vec![Column::text("Fuel"), Column::numeric("Quantity")])
                 .title("Fuel bay")
-                .empty("Not read yet (the owner needs the Director role)."),
+                .empty("Not read yet (its data source needs the Director role)."),
             fuels.iter().map(|(t, q)| {
                 vec![
                     typed(

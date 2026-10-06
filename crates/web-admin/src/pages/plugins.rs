@@ -1648,13 +1648,13 @@ mod tests {
     fn owners_line(m: &Manifest) -> String {
         capabilities(m)
             .into_iter()
-            .find(|c| c.title.contains("owners"))
+            .find(|c| c.title.contains("data sources"))
             .map(|c| c.detail)
             .unwrap_or_default()
     }
 
     #[test]
-    fn the_review_says_who_adds_owners() {
+    fn the_review_says_who_adds_data_sources() {
         let with = manifest("manage = \"Manage\"\nadd_refinery_owner = \"Can add refinery owner\"");
         let line = owners_line(&with);
         assert!(

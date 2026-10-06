@@ -1,5 +1,5 @@
 //! The Contracts app end to end: installed from its real component and
-//! migration; an owner added through Add owner; the first read taken as
+//! migration; a data source added through Add data source; the first read taken as
 //! the backlog; then new contracts assigned to the corporation posted as
 //! cards, their price checked against the Janice appraisal their
 //! description links (read with the admin's key), one asking no ISK said

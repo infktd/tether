@@ -427,13 +427,13 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     install(&h, &owner).await;
     mount_esi(&h).await;
 
-    // Add owner is on the app's own page (AA's), with its owners.
+    // Add data source is on the app's own page (AA's Add Owner), with its data sources.
     let main = page(&h, "/plugins/acme.esi", &owner).await.body;
     assert!(
         main.contains(r#"action="/apps/acme.esi/owners/add""#),
         "{main}"
     );
-    assert!(main.contains("No owners yet"), "{main}");
+    assert!(main.contains("No data sources yet"), "{main}");
     let (asked, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "196379789:Chribba").await;
     assert!(asked.contains(&MINING.to_owned()), "{asked:?}");
     // In use at once, as AA's Add Owner: nobody approves it.
@@ -473,7 +473,7 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     // used for, with Withdraw.
     let tokens = page(&h, "/tokens", &owner).await.body;
     assert!(
-        tokens.contains("App owners") && tokens.contains("ESI probe"),
+        tokens.contains("App data sources") && tokens.contains("ESI probe"),
         "{tokens}"
     );
     let withdraw = format!("/apps/acme.esi/owners/{CHRIBBA}/withdraw?from=tokens");
@@ -487,7 +487,7 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
         !page(&h, "/tokens", &owner)
             .await
             .body
-            .contains("App owners")
+            .contains("App data sources")
     );
     let out = esi(&h, "corporation-mining-extractions", ("source", CHRIBBA)).await;
     assert_eq!(out, "err Error::NotADataSource");
@@ -522,7 +522,7 @@ async fn a_new_character_added_as_owner_is_in_use_at_once(db: PgPool) {
         .mount(&h.esi_server)
         .await;
 
-    // gigX comes to Tether through Add owner, once.
+    // gigX comes to Tether through Add data source, once.
     let (_, owner) = grant(&h, &owner, "/apps/acme.esi/owners/add", "1887431749:gigX").await;
     let corporation: Option<i64> = sqlx::query_scalar(
         "SELECT corporation_id FROM core.plugin_data_sources WHERE plugin_id = $1 \
@@ -596,7 +596,7 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     grant_to_guests(&h, &owner, "view").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await;
     assert_eq!(main.status, StatusCode::OK, "{}", main.body);
-    assert!(!main.body.contains("Add owner"), "{}", main.body);
+    assert!(!main.body.contains("Add data source"), "{}", main.body);
     assert!(!main.body.contains("owners-title"), "{}", main.body);
     let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
@@ -604,7 +604,7 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     // Nor may the app's manage permission, as in AA.
     grant_to_guests(&h, &owner, "manage").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
-    assert!(!main.contains("Add owner"), "{main}");
+    assert!(!main.contains("Add data source"), "{main}");
     let res = send(&h.app, form("/apps/acme.esi/owners/add", "", &pilot)).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
 
@@ -612,7 +612,7 @@ async fn only_add_owner_holders_add_and_only_admins_remove(db: PgPool) {
     // at once, and sees only their own.
     grant_to_guests(&h, &owner, "add_owner").await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await.body;
-    assert!(main.contains("Add owner"), "{main}");
+    assert!(main.contains("Add data source"), "{main}");
     let (asked, pilot) = grant(
         &h,
         &pilot,

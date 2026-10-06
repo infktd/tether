@@ -21,7 +21,7 @@
 //! - **ESI-tracked fleets** (aa-afat's): a link can follow the fleet an FC's
 //!   character is boss of, adding a FAT (with ship and system) for everyone
 //!   in it. As in aa-afat, the FC logs in with the fleet boss from Create
-//!   FAT Link (Tether's Add owner: the character becomes the app's data
+//!   FAT Link (Tether's Add data source: the character becomes the app's data
 //!   source, no approval), and it's offered there at once. One keyed job
 //!   polls every tracked fleet each minute while any is tracked; tracking
 //!   stops when the fleet ends, the character isn't boss, ESI refuses, the
@@ -571,7 +571,7 @@ fn stop_text(reason: &str, character: &str) -> String {
         ),
         "refused" => "ESI refused to show the fleet (403).".to_owned(),
         "data_source" => format!(
-            "{character} is no longer an owner of this app (withdrawn, removed, or moved corporation). Log in with the fleet boss again on Create FAT Link."
+            "{character} is no longer a data source of this app (withdrawn, removed, or moved corporation). Log in with the fleet boss again on Create FAT Link."
         ),
         "token" => format!("{character}'s login has expired: they need to log in again."),
         "cap" => "Tracking stopped after six hours.".to_owned(),
@@ -816,7 +816,7 @@ fn links_page(viewer: &Viewer, page_number: i64) -> Result<Page, PageError> {
     Ok(page)
 }
 
-/// The character Add owner just added, from the query Tether brings the
+/// The character Add data source just added, from the query Tether brings the
 /// FC back with (`owner`). Anyone can type a query, so it's only a hint:
 /// `create_page` uses it only if it's one of the viewer's own characters
 /// that is a data source, and `create_link` checks the choice again.
@@ -859,7 +859,7 @@ fn already_tracked(character_id: i64) -> Result<String, PageError> {
 }
 
 /// Create FAT Link, aa-afat's clickable or ESI-tracked link. `added` is
-/// the fleet boss Add owner just logged in with, chosen for tracking.
+/// the fleet boss Add data source just logged in with, chosen for tracking.
 fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Result<Page, PageError> {
     if !can_create(viewer) {
         return Err(PageError::Forbidden);

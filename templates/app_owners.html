@@ -1,22 +1,22 @@
-{#- An app's owners (AA's Add Owner), on its main page: the characters
+{#- An app's data sources (AA's owners), on its main page: the characters
     whose corporation data the app reads, in use once added. App admins
     see them all, with Remove; everyone else sees their own, with
     Withdraw. Drawn by the host: plugins never see it. -#}
 {% if let Some(o) = c.owners %}{% if o.panel %}
 <section class="card data-card" id="owners" aria-labelledby="owners-title">
   <header>
-    <h2 id="owners-title">Owners <span class="num text-muted-foreground font-normal">{{ o.rows.len() }}</span></h2>
-    <p>Characters whose corporation's data this app reads.{% if o.can_manage %} You see every owner, and can remove any.{% else %} You can withdraw yours at any time.{% endif %}</p>
+    <h2 id="owners-title">Data sources <span class="num text-muted-foreground font-normal">{{ o.rows.len() }}</span></h2>
+    <p>Characters whose corporation's data this app reads.{% if o.can_manage %} You see every data source, and can remove any.{% else %} You can withdraw yours at any time.{% endif %}</p>
     {#- The details, and the scopes, behind a disclosure (DESIGN.md, Page
         hygiene). -#}
     <details class="inline-disclosure text-xs text-muted-foreground mt-2">
-      <summary><span><span class="num">{{ o.scopes.len() }}</span> ESI scope{% if o.scopes.len() != 1 %}s{% endif %} · how owners work</span></summary>
-      <p class="mt-2 max-w-prose">An owner's corporation data is read through the in-game role ESI asks for.{% if o.can_offer %} Add owner logs in with one of your characters; the app uses it at once, while it stays in that corporation.{% endif %} The app never sees a login token.</p>
+      <summary><span><span class="num">{{ o.scopes.len() }}</span> ESI scope{% if o.scopes.len() != 1 %}s{% endif %} · how data sources work</span></summary>
+      <p class="mt-2 max-w-prose">A data source's corporation data is read through the in-game role ESI asks for.{% if o.can_offer %} Add data source logs in with one of your characters; the app uses it at once, while it stays in that corporation.{% endif %} The app never sees a login token.</p>
       <div class="flex flex-wrap gap-2 mt-2">{% for s in o.scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div>
     </details>
   </header>
   {% if o.rows.is_empty() %}
-  <p class="px-5 pb-5 text-sm text-muted-foreground">{% if o.can_manage %}No owners yet.{% else %}You haven't added a character yet.{% endif %}{% if o.can_offer %} Add owner logs in with one.{% endif %}</p>
+  <p class="px-5 pb-5 text-sm text-muted-foreground">{% if o.can_manage %}No data sources yet.{% else %}You haven't added a character yet.{% endif %}{% if o.can_offer %} Add data source logs in with one.{% endif %}</p>
   {% else %}
   <table class="table">
     <thead><tr><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col">Added by</th><th scope="col">Status</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>

@@ -46,7 +46,7 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
                  permissions. {}{}",
                 c.esi.user.join(", "),
                 if manifest.permissions.is_empty() {
-                    "It adds no permissions, so only the owner can. "
+                    "It adds no permissions, so only superusers can. "
                 } else {
                     ""
                 },
@@ -76,7 +76,7 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
     if !c.esi.data_source.is_empty() {
         let adders: Vec<&str> = crate::plugin_consent::owner_permissions(manifest);
         add(
-            "ESI access through its owners' characters",
+            "ESI access through its data sources' characters",
             format!(
                 "{}. Owners (AA's Add Owner) are added, and used at once, by {}: each logs in \
                  with one of their own characters. You can see and remove any owner on the \

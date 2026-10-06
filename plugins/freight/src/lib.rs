@@ -1,6 +1,6 @@
 //! Freight (aa-freight).
 //!
-//! - **Contract handler**: the owner (a character added with Add owner by a
+//! - **Contract handler**: the data source (a character added with Add data source by a
 //!   `setup_contract_handler` holder; chosen with the mode when there are
 //!   several) whose corporation's courier contracts
 //!   are read every ten minutes, kept as the operation mode says (aa-freight's
@@ -404,9 +404,9 @@ fn sync() -> Result<(), JobError> {
     }
     let Some(handler) = handler(&settings) else {
         return sync_failed(if settings.handler_id.is_some() {
-            "The contract handler is no longer an owner: choose another under Operation mode."
+            "The contract handler is no longer a data source: choose another under Operation mode."
         } else {
-            "There are several owners: choose the contract handler under Operation mode."
+            "There are several data sources: choose the contract handler under Operation mode."
         });
     };
     if settings.handler_id.is_none() {
@@ -1206,12 +1206,13 @@ fn index_page(viewer: &Viewer, calculation: Option<Calculation>) -> Result<Page,
             }
         }
         None if !sources.is_empty() => {
-            card = card
-                .description("Choose which owner is the contract handler, under Operation mode.");
+            card = card.description(
+                "Choose which data source is the contract handler, under Operation mode.",
+            );
         }
         None => {
             card = card.description(
-                "None yet: a holder of Setup contract handler adds one with Add owner, a director of the corporation the contracts are assigned to (with the contracts scope).",
+                "None yet: a holder of Setup contract handler adds one with Add data source, a director of the corporation the contracts are assigned to (with the contracts scope).",
             );
         }
     }
@@ -1244,7 +1245,7 @@ fn index_page(viewer: &Viewer, calculation: Option<Calculation>) -> Result<Page,
             form = form.field(
                 select("handler", "Contract handler", owners, &chosen)
                     .required()
-                    .help("The owner whose corporation's contracts are read. Changing it, or the mode, starts the contracts afresh."),
+                    .help("The data source whose corporation's contracts are read. Changing it, or the mode, starts the contracts afresh."),
             );
         }
         page = page.form(

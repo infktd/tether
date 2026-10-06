@@ -1,5 +1,5 @@
 //! The Contacts app end to end (aa-contacts): installed from its real
-//! component and migration; an owner added through Add owner by a holder
+//! component and migration; a data source added through Add data source by a holder
 //! of AA's manage permissions (the manifest's owner_permissions); its
 //! corporation's and alliance's contacts and labels read; seen by those
 //! with a character in them (superusers all); notes and server links by

@@ -44,7 +44,7 @@ pub async fn refresh_account(
 
 /// Fetches and stores the current affiliations of `ids` (one bulk ESI
 /// call), without evaluating any state: for a character that must be
-/// placed in its corporation before the rest of a login runs (Add owner).
+/// placed in its corporation before the rest of a login runs (Add data source).
 pub async fn refresh_affiliations(
     db: &PgPool,
     esi: &Esi,
