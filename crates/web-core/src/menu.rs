@@ -141,11 +141,19 @@ pub const BUILTINS: &[Builtin] = &[
     ),
     b(
         "system",
-        "System",
+        "Health",
         "/admin/system",
         "activity",
         "admin",
         "system",
+    ),
+    b(
+        "settings",
+        "Settings",
+        "/admin/settings",
+        "settings",
+        "admin",
+        "settings",
     ),
     b(
         "plugins",
@@ -160,7 +168,7 @@ pub const BUILTINS: &[Builtin] = &[
         "blacklist",
         "Blacklist",
         "/blacklist",
-        "shield",
+        "ban",
         "admin",
         "blacklist",
     ),
@@ -176,7 +184,7 @@ pub const BUILTINS: &[Builtin] = &[
         "autogroups",
         "Auto Groups",
         "/admin/autogroups",
-        "layers",
+        "grid",
         "admin",
         "autogroups",
     ),
@@ -184,7 +192,7 @@ pub const BUILTINS: &[Builtin] = &[
         "permissions",
         "Permissions",
         "/admin/permissions",
-        "shield",
+        "lock",
         "admin",
         "permissions",
     ),
@@ -220,7 +228,7 @@ pub const BUILTINS: &[Builtin] = &[
         "admin",
         "audit",
     ),
-    b("setup", "Setup", "/setup", "settings", "admin", "setup"),
+    b("setup", "Setup", "/setup", "plug", "admin", "setup"),
 ];
 
 /// Admin-section items shown in the sidebar by default: Administration,
@@ -999,6 +1007,34 @@ pub async fn edit(
 
 #[cfg(test)]
 mod tests {
+    /// The sidebar tells its items apart by icon too: Tether's own outside
+    /// Admin, and every app that comes with Tether, each a different one.
+    #[test]
+    fn the_default_sidebar_icons_differ() {
+        let apps = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins"))
+            .unwrap()
+            .filter_map(|dir| {
+                let toml = std::fs::read_to_string(dir.ok()?.path().join("plugin.toml")).ok()?;
+                let line = toml.lines().find(|l| l.starts_with("icon = "))?;
+                Some(
+                    line.trim_start_matches("icon = ")
+                        .trim_matches('"')
+                        .to_owned(),
+                )
+            });
+        let mut seen = std::collections::BTreeMap::new();
+        let own = super::BUILTINS
+            .iter()
+            .filter(|b| b.section != "admin")
+            .map(|b| (b.icon.to_owned(), b.key.to_owned()));
+        let apps = apps.map(|icon| (icon.clone(), format!("an app's {icon}")));
+        for (icon, what) in own.chain(apps) {
+            if let Some(before) = seen.insert(icon.clone(), what.clone()) {
+                panic!("{before} and {what} share the {icon} icon");
+            }
+        }
+    }
+
     #[test]
     fn every_icon_in_the_sidebar_is_drawn() {
         let icons = include_str!("../../../templates/icons.html");

@@ -72,7 +72,7 @@ pub const PAGES: &[Page] = &[
         active: "autogroups",
         label: "Auto Groups",
         href: "/admin/autogroups",
-        icon: "layers",
+        icon: "grid",
         group: "access",
         about: "A group for every corporation and alliance in chosen states, kept up to date.",
     },
@@ -80,7 +80,7 @@ pub const PAGES: &[Page] = &[
         active: "permissions",
         label: "Permissions",
         href: "/admin/permissions",
-        icon: "shield",
+        icon: "lock",
         group: "access",
         about: "What each state and group may do in Tether and its apps.",
     },
@@ -104,7 +104,7 @@ pub const PAGES: &[Page] = &[
         active: "blacklist",
         label: "Blacklist",
         href: "/blacklist",
-        icon: "shield",
+        icon: "ban",
         group: "members",
         about: "Pilots, corporations and alliances kept out, with notes on why.",
     },
@@ -160,7 +160,7 @@ pub const PAGES: &[Page] = &[
         active: "settings",
         label: "Settings",
         href: "/admin/settings",
-        icon: "sliders",
+        icon: "settings",
         group: "instance",
         about: "The site's name, the accent colour, notifications kept per user, and update checks.",
     },
@@ -184,7 +184,7 @@ pub const PAGES: &[Page] = &[
         active: "setup",
         label: "Setup",
         href: "/setup",
-        icon: "settings",
+        icon: "plug",
         group: "instance",
         about: "The setup wizard: the EVE application and the alliance this instance is for.",
     },
@@ -289,6 +289,16 @@ pub fn views(nav: &AdminNav, active: &str) -> (&'static str, Vec<Link>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admin_pages_have_their_own_icons() {
+        let mut seen = std::collections::BTreeMap::new();
+        for page in PAGES {
+            if let Some(before) = seen.insert(page.icon, page.label) {
+                panic!("{before} and {} share the {} icon", page.label, page.icon);
+            }
+        }
+    }
 
     #[test]
     fn every_page_is_in_a_group_and_permitted_by_something() {

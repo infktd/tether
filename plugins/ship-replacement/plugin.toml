@@ -4,7 +4,7 @@
 [plugin]
 id = "tether.ship-replacement"
 name = "Ship Replacement"
-icon = "shield"
+icon = "life-buoy"
 version = "0.3.3"
 host_api = "1"
 description = "SRP fleets: pilots request SRP for their losses by zKillboard link; SRP managers approve, reject and set payouts, with totals per fleet."

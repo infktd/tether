@@ -205,7 +205,7 @@ path = "ores"
 
 Tether draws every app's frame, the same for all of them: the page header (your icon, your app's name over the page's title, its description), the views bar, the primary action and Manage. You declare them in `plugin.toml`; your pages return only their content.
 
-- `icon` (in `[plugin]`): one of `activity`, `blueprint`, `book`, `box`, `chart`, `citadel`, `clipboard`, `clock`, `contract`, `crosshair`, `flag`, `globe`, `hexagon`, `megaphone`, `moon`, `package`, `radio`, `scan-user`, `scroll`, `shield`, `users`. Without one, a generic package.
+- `icon` (in `[plugin]`): one of `activity`, `blueprint`, `book`, `box`, `chart`, `citadel`, `clipboard`, `clock`, `contract`, `crosshair`, `flag`, `globe`, `hexagon`, `life-buoy`, `megaphone`, `moon`, `package`, `pin`, `radio`, `scan-user`, `scroll`, `shield`, `users`. Without one, a generic package.
 - `[[views]]`: your views bar, in order: at most 8, labels up to 30 characters, in sentence case. The first is your main page (`path = ""`), usually "Overview". Declare at least that one if your app has a sidebar link. One view alone draws no bar.
 - `[action]`: your one primary action ("New ledger"), a button in the header on every page but its own. A page's own `.button(...)` (a record's Edit) takes its place on that page. Name actions that create something "New ...".
 - `[[manage]]`: pages for those who run the app, after Settings (which Tether adds when a `[[pages]]` rule covers `settings`): the header's Manage button opens the first, and the bar on those pages lists them all. Not your main page, and nothing under `settings`. On a Manage page the bar shows the Manage pages and the eyebrow reads "<App> · Manage".
