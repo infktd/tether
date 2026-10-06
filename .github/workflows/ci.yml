@@ -140,14 +140,14 @@ jobs:
         run: scripts/check-app-versions.sh "$BASE"
 
   # static/app.css is committed so `cargo build` needs no extra step; this
-  # rebuilds it with the pinned Tailwind CLI and fails if it's stale.
+  # rebuilds it with the pinned Tailwind CLI and fails if it's stale (the
+  # same script runs before every push).
   css:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: scripts/css.sh
       - name: Committed stylesheet is current
-        run: git diff --exit-code static/app.css
+        run: scripts/check-css.sh
 
   # Every crate tagged `[package.metadata.tether] target = "wasm32-wasip2"`
   # is built and linted for that target, and must come out as a component.

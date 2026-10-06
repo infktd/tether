@@ -132,6 +132,7 @@ scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image
 scripts/check-app-versions.sh origin/main   # before pushing: any change under plugins/<app> bumps that app's version (0.0.1 for a patch) in plugin.toml and Cargo.toml together; CI's app-versions job fails otherwise (Jay: changed apps under old numbers conflict on the Apps page)
 BUNDLED_APPS_DIR=dist/apps cargo run -p tether-server --features dev   # offer them under "Included with Tether"
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output
+scripts/check-css.sh   # before pushing (CI's css job): fails if the committed static/app.css isn't what the templates build
 scripts/css.sh --watch   # beside a debug `cargo run`: debug builds serve static/app.css and assets/*.js from disk, so CSS and JS changes show on a reload without rebuilding (templates still need one)
 deploy/install.sh localhost    # writes deploy/.env once, pins the published image (newest release, else :edge), pulls it and starts the stack (bundled Caddy)
 deploy/install.sh --build localhost   # build the image from this clone instead (tether:local, docker-compose.build.yml); what CI's install test does
