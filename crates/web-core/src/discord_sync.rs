@@ -282,8 +282,8 @@ pub async fn sync_member(
     }
     if synced.unremoved > 0 {
         return Err(JobError::retry(format!(
-            "Discord refused to take {} role(s) whose mapping was removed; move the bot's role above them",
-            synced.unremoved
+            "Discord refused to take {} whose mapping was removed; move the bot's role above them",
+            crate::pages::plural(synced.unremoved as i64, "role", "roles")
         )));
     }
     Ok(())

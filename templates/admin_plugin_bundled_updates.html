@@ -35,7 +35,7 @@
     <header class="flex items-start justify-between gap-4">
       <div>
         <h2>{{ a.name }}</h2>
-        <p>{% if a.rebuilt %}Rebuilt with this Tether: version <span class="num">{{ a.to }}</span> again, another package.{% else %}Version <span class="num">{{ a.from }}</span> to <span class="num">{{ a.to }}</span>.{% endif %} {% if a.new_migrations > 0 %}{% if snapshots %}Its <span class="num">{{ a.new_migrations }}</span> new database migration(s) run after a snapshot of its data.{% else %}Its <span class="num">{{ a.new_migrations }}</span> new database migration(s) run with no snapshot: snapshots are off here.{% endif %}{% else %}Its data stays as it is.{% endif %}</p>
+        <p>{% if a.rebuilt %}Rebuilt with this Tether: version <span class="num">{{ a.to }}</span> again, another package.{% else %}Version <span class="num">{{ a.from }}</span> to <span class="num">{{ a.to }}</span>.{% endif %} {% if a.new_migrations > 0 %}{% if snapshots %}{% if a.new_migrations == 1 %}Its new database migration runs{% else %}Its <span class="num">{{ a.new_migrations }}</span> new database migrations run{% endif %} after a snapshot of its data.{% else %}{% if a.new_migrations == 1 %}Its new database migration runs{% else %}Its <span class="num">{{ a.new_migrations }}</span> new database migrations run{% endif %} with no snapshot: snapshots are off here.{% endif %}{% else %}Its data stays as it is.{% endif %}</p>
       </div>
       <a class="btn shrink-0" data-variant="outline" data-size="sm" href="/admin/plugin-bundled/{{ a.id }}">Review on its own</a>
     </header>

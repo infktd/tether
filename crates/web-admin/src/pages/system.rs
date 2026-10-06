@@ -22,7 +22,7 @@ use tether_jobs::schedule::{LastRun, ScheduleRow};
 use tether_jobs::{JobId, JobState};
 
 use super::admin::guard;
-use super::{PageError, Shell, ago, grouped, plural, render, until};
+use super::{PageError, Shell, ago, every, grouped, plural, render, until};
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::error::AppError;
@@ -163,21 +163,6 @@ pub struct ScheduleView {
     pub next: String,
     pub next_at: String,
     pub last: Option<LastView>,
-}
-
-/// `every hour`, `every 5 minutes`, `every 2 days`.
-fn every(secs: i32) -> String {
-    let (n, one, many) = match secs {
-        s if s % 86_400 == 0 => (s / 86_400, "day", "days"),
-        s if s % 3_600 == 0 => (s / 3_600, "hour", "hours"),
-        s if s % 60 == 0 => (s / 60, "minute", "minutes"),
-        s => (s, "second", "seconds"),
-    };
-    if n == 1 {
-        format!("every {one}")
-    } else {
-        format!("every {} {many}", grouped(i64::from(n)))
-    }
 }
 
 fn time(at: DateTime<Utc>) -> String {
@@ -377,7 +362,7 @@ impl Readings {
         }
         let every = format!(
             "Roles and nicknames, {}",
-            every(crate::discord_sync::SYNC_ALL_EVERY.as_secs() as i32)
+            every(i64::try_from(crate::discord_sync::SYNC_ALL_EVERY.as_secs()).unwrap_or(i64::MAX))
         );
         match self.last_runs.get("discord.sync_all") {
             Some(run) if run.state == JobState::Dead => line(
@@ -620,7 +605,7 @@ impl Readings {
                         name: self.apps.get(id).cloned().unwrap_or_else(|| id.to_owned()),
                         href: format!("/admin/plugins/{id}"),
                     }),
-                    every: every(s.every_secs),
+                    every: every(i64::from(s.every_secs)),
                     enabled: s.enabled,
                     next: until(seconds_since(self.now, s.next_run_at)),
                     next_at: time(s.next_run_at),
@@ -1216,17 +1201,6 @@ pub async fn strip(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn schedules_read_in_plain_words() {
-        assert_eq!(every(3_600), "every hour");
-        assert_eq!(every(6 * 3_600), "every 6 hours");
-        assert_eq!(every(300), "every 5 minutes");
-        assert_eq!(every(60), "every minute");
-        assert_eq!(every(86_400), "every day");
-        assert_eq!(every(2 * 86_400), "every 2 days");
-        assert_eq!(every(45), "every 45 seconds");
-    }
 
     fn line(tone: Tone) -> SystemLine {
         SystemLine {

@@ -37,7 +37,7 @@
     </section>
     <footer class="flex justify-between">
       <button type="submit" class="btn" data-variant="primary">Save</button>
-      <button type="submit" class="btn btn-destructive-outline" data-variant="outline" formaction="/admin/autogroups/{{ c.id }}/delete" hx-confirm="Delete this config and its {{ c.groups.len() }} groups? Their members lose what the groups granted.">{% call icons::icon("trash") %}{% endcall %} Delete</button>
+      <button type="submit" class="btn btn-destructive-outline" data-variant="outline" formaction="/admin/autogroups/{{ c.id }}/delete" hx-confirm="{% if c.groups.len() == 1 %}Delete this config and its group? Its members lose what the group granted.{% else if c.groups.is_empty() %}Delete this config? It has no groups yet.{% else %}Delete this config and its {{ c.groups.len() }} groups? Their members lose what the groups granted.{% endif %}">{% call icons::icon("trash") %}{% endcall %} Delete</button>
     </footer>
   </form>
   {% endfor %}

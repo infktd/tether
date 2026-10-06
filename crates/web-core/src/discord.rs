@@ -802,8 +802,8 @@ async fn strip(
     // dead-letter, where an admin sees it) rather than count it as done.
     if !refused.is_empty() {
         return Err(JobError::retry(format!(
-            "Discord refused to take {} role(s); move the bot's role above them",
-            refused.len()
+            "Discord refused to take {}; move the bot's role above them",
+            crate::pages::plural(refused.len() as i64, "role", "roles")
         )));
     }
     Ok(())

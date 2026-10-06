@@ -10,8 +10,8 @@
       <span class="page-icon" aria-hidden="true">{% call icons::icon("users") %}{% endcall %}</span>
       <div class="min-w-0">
         <div class="page-eyebrow">Groups</div>
-        <h1 class="page-title flex items-center gap-2">{{ group.name }} <span class="badge" data-variant="outline">{{ group.label }}</span>{% if group.compliance %} <span class="badge" data-variant="outline">Compliance</span>{% endif %}</h1>
-        {% if !group.description.is_empty() %}<p class="page-desc">{{ group.description }}</p>{% endif %}
+        <h1 class="page-title">{{ group.name }}</h1>
+        <p class="page-desc flex flex-wrap items-center gap-2"><span class="badge" data-variant="outline">{{ group.label }}</span>{% if group.compliance %}<span class="badge" data-variant="outline">Compliance</span>{% endif %}{% if !group.description.is_empty() %}<span>{{ group.description }}</span>{% endif %}</p>
       </div>
     </div>
     <div class="page-head-actions">

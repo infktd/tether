@@ -1717,7 +1717,7 @@
     border-color: color-mix(in srgb, var(--destructive) 45%, var(--background));
   }
 
-  /* Sidebar and rail: overline headings with a hairline, indented items,
+  /* Sidebar: overline headings with a hairline, indented items,
      the current one raised with a signal square. */
   .nav-heading {
     display: flex;

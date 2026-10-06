@@ -63,7 +63,7 @@
             </div>
           </td>
           <td>
-            {% if let Some(c) = r.corporation %}{{ c }}{% endif %}
+            {% if let Some(c) = r.corporation %}{{ c }}{% else %}<span class="blank">—</span>{% endif %}
             {% if let Some(a) = r.alliance %}<div class="text-xs text-muted-foreground">{{ a }}</div>{% endif %}
           </td>
           <td><span class="state-badge" data-state="{{ r.state_style }}">{{ r.state }}</span></td>

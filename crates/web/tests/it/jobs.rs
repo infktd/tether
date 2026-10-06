@@ -426,7 +426,7 @@ async fn declared_schedules_follow_the_plugin(db: PgPool) {
         page(&h, "/admin/plugins/acme.jobs", &owner)
             .await
             .body
-            .contains("every 30 minute(s)")
+            .contains("every 30 minutes")
     );
 
     // Off with the plugin, back on with it, gone with it.

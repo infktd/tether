@@ -150,7 +150,7 @@
           <button type="submit" class="btn" data-variant="outline">Save</button>
         </form>
       </div>
-      <form method="post" action="/admin/states/{{ c.id }}/delete" hx-confirm="Delete {{ c.name }}? Its {{ c.accounts }} account(s) move to the next state that covers them, and its permissions and Discord roles are removed.{% if c.builtin %} It's built in: apps and required scopes that rely on it stop applying.{% endif %}">
+      <form method="post" action="/admin/states/{{ c.id }}/delete" hx-confirm="Delete {{ c.name }}? {% if c.accounts == 1 %}Its one account moves to the next state that covers it, and{% else if c.accounts > 1 %}Its {{ c.accounts }} accounts move to the next state that covers them, and{% else %}No account is in it, and{% endif %} its permissions and Discord roles are removed.{% if c.builtin %} It's built in: apps and required scopes that rely on it stop applying.{% endif %}">
         <button type="submit" class="btn btn-destructive-outline" data-variant="outline">{% call icons::icon("trash") %}{% endcall %} Delete</button>
       </form>
     </footer>

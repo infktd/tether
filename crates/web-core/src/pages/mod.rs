@@ -110,6 +110,22 @@ pub fn plural(n: i64, one: &str, many: &str) -> String {
     format!("{} {}", grouped(n), if n == 1 { one } else { many })
 }
 
+/// A schedule's interval in words: `every hour`, `every 5 minutes`,
+/// `every 2 days`.
+pub fn every(secs: i64) -> String {
+    let (n, one, many) = match secs {
+        s if s > 0 && s % 86_400 == 0 => (s / 86_400, "day", "days"),
+        s if s > 0 && s % 3_600 == 0 => (s / 3_600, "hour", "hours"),
+        s if s > 0 && s % 60 == 0 => (s / 60, "minute", "minutes"),
+        s => (s, "second", "seconds"),
+    };
+    if n == 1 {
+        format!("every {one}")
+    } else {
+        format!("every {} {many}", grouped(n))
+    }
+}
+
 /// How long ago, in its largest whole unit: `just now`, `4m ago`, `3h ago`,
 /// `2d ago`.
 pub fn ago(seconds: i64) -> String {
@@ -718,13 +734,24 @@ pub async fn load(
 
 #[cfg(test)]
 mod tests {
-    use super::{ago, initials, plural, until};
+    use super::{ago, every, initials, plural, until};
 
     #[test]
     fn counts_take_their_noun() {
         assert_eq!(plural(1, "warning", "warnings"), "1 warning");
         assert_eq!(plural(0, "warning", "warnings"), "0 warnings");
         assert_eq!(plural(12_400, "pilot", "pilots"), "12,400 pilots");
+    }
+
+    #[test]
+    fn schedules_read_in_plain_words() {
+        assert_eq!(every(3_600), "every hour");
+        assert_eq!(every(6 * 3_600), "every 6 hours");
+        assert_eq!(every(300), "every 5 minutes");
+        assert_eq!(every(60), "every minute");
+        assert_eq!(every(86_400), "every day");
+        assert_eq!(every(2 * 86_400), "every 2 days");
+        assert_eq!(every(45), "every 45 seconds");
     }
 
     #[test]

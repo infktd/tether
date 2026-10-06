@@ -178,7 +178,7 @@ pub const PAGES: &[Page] = &[
         href: "/admin/audit",
         icon: "scroll",
         group: "instance",
-        about: "Every admin action and access change, newest first.",
+        about: "Every admin action and sign-in change, newest first.",
     },
     Page {
         active: "setup",

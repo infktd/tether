@@ -12,7 +12,7 @@
     {% for t in things %}
     <tr>
       <td class="font-medium">
-        {% if let Some(o) = t.option %}{% if let Some(c) = o.color %}<svg class="inline-block size-3 align-middle mr-1" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="{{ c }}"/></svg>{% endif %}{% endif %}{{ t.label }}
+        {% if let Some(o) = t.option %}{% if let Some(c) = o.color %}<svg class="inline-block size-3 align-middle mr-1" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" fill="{{ c }}"/></svg>{% endif %}{% endif %}{{ t.label }}
         {% if let Some(o) = t.option %}{% if let Some(l) = o.link %}<div class="text-xs text-muted-foreground break-all">{{ l }}</div>{% endif %}{% endif %}
       </td>
       <td class="w-full whitespace-normal">
