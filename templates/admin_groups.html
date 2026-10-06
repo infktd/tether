@@ -52,9 +52,10 @@
     {% endif %}
   </section>
 
-  <form class="card" method="post" action="/admin/groups">
+  <form class="card" method="post" action="/admin/groups" id="new-group">
     <header><h2>New group</h2><p>New groups start Internal and Hidden, as in Alliance Auth: untick Internal to let pilots find and request it.</p></header>
     <section class="grid gap-4">
+      <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="secure" value="on"{% if form.secure %} checked{% endif %}> <span><span class="font-medium">Secure Group</span> · pilots apply for it on Secure Groups once they pass the filters you add next, as in allianceauth-secure-groups. Never Internal: pilots must see it to apply.</span></label>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="grid gap-2">
           <label class="label" for="name">Name</label>

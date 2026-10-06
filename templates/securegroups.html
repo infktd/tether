@@ -14,6 +14,11 @@
         <p class="page-desc max-w-3xl">Groups you're in by meeting their requirements. Each shows how you stand against them now; you can join or ask once you meet them all, and leave a group when a requirement stops passing, after its grace period if it has one.</p>
       </div>
     </div>
+    {% if shell.nav.groups %}
+    <div class="page-head-actions">
+      <a class="btn" data-variant="primary" href="/admin/groups?secure=on#new-group" hx-boost="false">{% call icons::icon("plus") %}{% endcall %} New Secure Group</a>
+    </div>
+    {% endif %}
   </div>
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}

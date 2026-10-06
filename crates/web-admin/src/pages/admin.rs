@@ -155,6 +155,8 @@ pub struct NewGroupForm {
     pub name: String,
     pub description: String,
     pub flags: Flags,
+    /// A Secure Group: pilots apply for it once they pass its filters.
+    pub secure: bool,
 }
 
 impl Default for NewGroupForm {
@@ -168,8 +170,29 @@ impl Default for NewGroupForm {
                 hidden: true,
                 ..Flags::default()
             },
+            secure: false,
         }
     }
+}
+
+impl NewGroupForm {
+    /// A Secure Group's: pilots must see it to apply, so neither Internal
+    /// nor Hidden.
+    fn secure() -> Self {
+        Self {
+            flags: Flags::default(),
+            secure: true,
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct GroupsQuery {
+    /// `on`: the new-group form starts as a Secure Group's (the Secure
+    /// Groups page's New Secure Group).
+    #[serde(default)]
+    secure: String,
 }
 
 #[derive(Template)]
@@ -219,9 +242,15 @@ async fn groups_page(
 pub async fn groups(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(query): Query<GroupsQuery>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
-    groups_page(&state, shell, NewGroupForm::default(), None).await
+    let form = if query.secure == "on" {
+        NewGroupForm::secure()
+    } else {
+        NewGroupForm::default()
+    };
+    groups_page(&state, shell, form, None).await
 }
 
 /// `POST /admin/groups`
@@ -231,12 +260,18 @@ pub async fn create_group(
     Form(fields): Form<Fields>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
-    let form = NewGroupForm {
+    let secure = checked(&fields, "secure");
+    let mut form = NewGroupForm {
         name: field(&fields, "name").to_owned(),
         description: field(&fields, "description").to_owned(),
         flags: flags_from(&fields),
+        secure,
     };
-    match crate::groups::create(
+    // Pilots must see a Secure Group to apply for it.
+    if secure {
+        form.flags.internal = false;
+    }
+    let id = match crate::groups::create(
         &state.db,
         session.account,
         &form.name,
@@ -245,11 +280,29 @@ pub async fn create_group(
     )
     .await
     {
-        Ok(id) => Ok(super::stay::back(
+        Ok(id) => id,
+        Err(err) => return groups_page(&state, shell, form, Some(err)).await,
+    };
+    if !secure {
+        return Ok(super::stay::back(
             &format!("/admin/groups/{}", id.0),
             "Group created.",
+        ));
+    }
+    // AA's defaults: enabled, in the hourly updates, taking requests.
+    match crate::smart_groups::set_settings(
+        &state.db,
+        session.account,
+        id,
+        Some(tether_db::smart_groups::Settings::default()),
+    )
+    .await
+    {
+        Ok(()) => Ok(super::stay::back(
+            &format!("/admin/groups/{}", id.0),
+            "Secure Group created: add its filters under Secure Group.",
         )),
-        Err(err) => groups_page(&state, shell, form, Some(err)).await,
+        Err(err) => on_group(&state, shell, id.0, Err(err)).await,
     }
 }
 

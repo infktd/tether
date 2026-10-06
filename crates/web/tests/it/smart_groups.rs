@@ -998,6 +998,61 @@ async fn expressions_exemptions_factions_and_services(db: PgPool) {
     );
 }
 
+/// A Secure Group made in one step from the New group form, which the
+/// Secure Groups page's New Secure Group opens set: never Internal, so
+/// pilots see it to apply, and a smart group with AA's defaults whose
+/// filters come next.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_secure_group_is_made_in_one_step(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, CHRIBBA).await;
+    let pilot = log_in_as(&h, MITTANI, None).await; // Guest
+    grant_state(&h, &owner, "securegroups.access_sec_group", GUEST_STATE).await;
+
+    // The button is the admins': it opens the form set for one.
+    let secure = page(&h, "/securegroups", &owner).await.body;
+    assert!(
+        secure.contains(r#"href="/admin/groups?secure=on#new-group""#),
+        "{secure}"
+    );
+    let listed = page(&h, "/securegroups", &pilot).await.body;
+    assert!(!listed.contains("New Secure Group"), "{listed}");
+    let set = page(&h, "/admin/groups?secure=on", &owner).await.body;
+    assert!(set.contains(r#"name="secure" value="on" checked"#), "{set}");
+    assert!(
+        !set.contains(r#"name="internal" value="on" checked"#),
+        "{set}"
+    );
+
+    // Internal ticked as well: a Secure Group never is.
+    let res = send(
+        &h.app,
+        form("/admin/groups", "name=Scouts&secure=on&internal=on", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (id, internal): (i64, bool) =
+        sqlx::query_as("SELECT id, internal FROM core.groups WHERE name = 'Scouts'")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(res.location(), format!("/admin/groups/{id}"));
+    assert!(!internal);
+    let (enabled, auto_join): (bool, bool) =
+        sqlx::query_as("SELECT enabled, auto_join FROM core.smart_groups WHERE group_id = $1")
+            .bind(id)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert!(enabled && !auto_join);
+
+    // Its filters next; then pilots who pass may apply.
+    filter(&h, &owner, id, &format!("kind=state&states={GUEST_STATE}")).await;
+    let listed = page(&h, "/securegroups", &pilot).await.body;
+    assert!(listed.contains("Scouts"), "{listed}");
+    assert!(listed.contains(">Request</button>"), "{listed}");
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn the_secure_groups_page_and_its_audit_follow_aas_permissions(db: PgPool) {
     let h = harness(db, true).await;
