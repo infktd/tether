@@ -145,6 +145,34 @@ pub struct PinRow {
 }
 
 #[derive(Template)]
+#[template(path = "admin_data_sources.html")]
+struct DataSourcesPage {
+    shell: Shell,
+    rows: Vec<tether_web_core::pages::plugin_access::SourceRow>,
+    broken: usize,
+}
+
+/// `GET /admin/data-sources`: every app's data sources, those not working
+/// first; each app's own page adds and removes them. The sidebar's foot
+/// and Health link here.
+pub async fn data_sources(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+) -> Result<Response, PageError> {
+    let (_, shell) = guard(&state, session, ADMIN_PLUGINS, "data_sources").await?;
+    let rows = tether_web_core::pages::plugin_access::every_source(&state).await?;
+    let broken = rows.iter().filter(|r| r.broken()).count();
+    Ok(render(
+        StatusCode::OK,
+        &DataSourcesPage {
+            shell,
+            rows,
+            broken,
+        },
+    ))
+}
+
+#[derive(Template)]
 #[template(path = "admin_plugins.html")]
 struct PluginsPage {
     shell: Shell,

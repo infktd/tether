@@ -440,14 +440,58 @@ pub async fn load(
     Ok(())
 }
 
-/// Every app's data sources, working and not, by the Data sources page's
-/// rules on the last day's calls, as its notice judges them: the
-/// sidebar's foot and the System page. A stopped app's 403s aren't
-/// counted (whether its data is a corporation's is in its manifest).
-pub async fn source_health(state: &AppState) -> Result<(i64, i64), AppError> {
+/// One data source on Administration's Data sources page: its app, and
+/// how it's doing as the app's notice judges it.
+pub struct SourceRow {
+    pub app: String,
+    /// Where its app shows it, with Add data source and Remove: the app's
+    /// Data sources page, or its admin page while it doesn't run.
+    pub href: String,
+    pub character_id: i64,
+    pub name: String,
+    pub corporation_id: i64,
+    pub corporation: String,
+    /// When the app last read through it (`4m ago`) and the full EVE time;
+    /// empty if it never has (in the last day).
+    pub last_read: String,
+    pub last_read_at: String,
+    pub tone: &'static str,
+    pub status: &'static str,
+    pub why: String,
+}
+
+impl SourceRow {
+    /// Not working: refused, or reading nothing.
+    pub fn broken(&self) -> bool {
+        self.tone == "warn" || self.tone == "danger"
+    }
+}
+
+/// A data source, judged as its app's notice judges it.
+struct Judged {
+    plugin_id: String,
+    source: plugin_esi::DataSource,
+    tone: &'static str,
+    status: &'static str,
+    why: String,
+    /// Its last good read in the last day.
+    last_ok: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Judged {
+    fn broken(&self) -> bool {
+        self.tone == "warn" || self.tone == "danger"
+    }
+}
+
+/// Every app's data sources, each judged by the Data sources page's rules
+/// on the last day's calls, as its app's notice judges it. A stopped app's
+/// 403s aren't held against it (whether its data is a corporation's is in
+/// its manifest). It checks nothing.
+async fn judged(state: &AppState) -> Result<Vec<Judged>, AppError> {
     let sources = plugin_esi::all_data_sources(&state.db).await?;
     if sources.is_empty() {
-        return Ok((0, 0));
+        return Ok(Vec::new());
     }
     let mut ids: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
     ids.sort();
@@ -461,22 +505,114 @@ pub async fn source_health(state: &AppState) -> Result<(i64, i64), AppError> {
         .collect();
     let since = chrono::Utc::now() - chrono::Duration::days(1);
     let reads = plugin_esi::source_reads(&state.db, &ids, since).await?;
-    let broken = sources
-        .iter()
-        .filter(|(id, d)| {
-            let read: Vec<&plugin_esi::SourceReads> = reads
-                .iter()
-                .filter(|r| &r.plugin_id == id && r.character_id == d.character.id)
-                .collect();
-            let (tone, _, _) = health(source_state(d), &read, corporate.contains(id), false);
-            tone == "warn" || tone == "danger"
+    let mut by_source: std::collections::HashMap<(&str, i64), Vec<&plugin_esi::SourceReads>> =
+        std::collections::HashMap::new();
+    for r in &reads {
+        by_source
+            .entry((r.plugin_id.as_str(), r.character_id))
+            .or_default()
+            .push(r);
+    }
+    Ok(sources
+        .into_iter()
+        .map(|(plugin_id, source)| {
+            let read = by_source
+                .get(&(plugin_id.as_str(), source.character.id))
+                .map_or(&[][..], Vec::as_slice);
+            let (tone, status, why) = health(
+                source_state(&source),
+                read,
+                corporate.contains(&plugin_id),
+                false,
+            );
+            let last_ok = read.iter().filter_map(|r| r.last_ok).max();
+            Judged {
+                plugin_id,
+                source,
+                tone,
+                status,
+                why,
+                last_ok,
+            }
         })
-        .count();
-    let working = sources.len() - broken;
-    Ok((
-        i64::try_from(working).unwrap_or(i64::MAX),
-        i64::try_from(broken).unwrap_or(i64::MAX),
-    ))
+        .collect())
+}
+
+/// Every app's data sources and how each is doing (see `judged`), named
+/// for Administration's Data sources page: those not working first, then
+/// by app and character. It checks nothing: only for a caller that has
+/// checked `admin.plugins`.
+pub async fn every_source(state: &AppState) -> Result<Vec<SourceRow>, AppError> {
+    let judged = judged(state).await?;
+    if judged.is_empty() {
+        return Ok(Vec::new());
+    }
+    let running: Vec<String> = state
+        .plugins
+        .all_running()
+        .into_iter()
+        .map(|r| r.manifest.plugin.id.clone())
+        .collect();
+    let apps: std::collections::BTreeMap<String, String> = tether_db::plugins::list(&state.db)
+        .await?
+        .into_iter()
+        .map(|p| (p.id, p.name))
+        .collect();
+    let mut corporations: Vec<i64> = judged
+        .iter()
+        .filter_map(|j| j.source.character.corporation_id)
+        .collect();
+    corporations.sort_unstable();
+    corporations.dedup();
+    let names = tether_db::compliance::cached_names(&state.db, &corporations).await?;
+    let now = chrono::Utc::now();
+    let mut rows: Vec<SourceRow> = judged
+        .into_iter()
+        .map(|j| {
+            let id = j.plugin_id;
+            let corporation_id = j.source.character.corporation_id.unwrap_or(0);
+            SourceRow {
+                app: apps.get(&id).cloned().unwrap_or_else(|| id.clone()),
+                href: if running.contains(&id) {
+                    format!("/plugins/{id}/data-sources")
+                } else {
+                    format!("/admin/plugins/{id}")
+                },
+                character_id: j.source.character.id,
+                name: j.source.character.name,
+                corporation: names
+                    .get(&corporation_id)
+                    .cloned()
+                    .unwrap_or_else(|| "Unknown corporation".to_owned()),
+                corporation_id,
+                last_read: j
+                    .last_ok
+                    .map_or_else(String::new, |at| super::ago((now - at).num_seconds())),
+                last_read_at: j.last_ok.map_or_else(String::new, |at| {
+                    format!("{} EVE", at.format("%Y-%m-%d %H:%M:%S"))
+                }),
+                tone: j.tone,
+                status: j.status,
+                why: j.why,
+            }
+        })
+        .collect();
+    let rank = |tone: &str| match tone {
+        "danger" => 0,
+        "warn" => 1,
+        _ => 2,
+    };
+    rows.sort_by(|a, b| (rank(a.tone), &a.app, &a.name).cmp(&(rank(b.tone), &b.app, &b.name)));
+    Ok(rows)
+}
+
+/// How many of every app's data sources work and don't (see `judged`):
+/// the sidebar's foot and Health, which show only the counts.
+pub async fn source_health(state: &AppState) -> Result<(i64, i64), AppError> {
+    let judged = judged(state).await?;
+    let broken = judged.iter().filter(|j| j.broken()).count();
+    let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    Ok((count(judged.len() - broken), count(broken)))
 }
 
 /// The member corporations and how the app reads each: through a working

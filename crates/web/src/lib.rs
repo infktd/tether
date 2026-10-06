@@ -275,6 +275,7 @@ pub fn router(state: AppState) -> Router {
             post(pages::pings::unrestrict),
         )
         .route("/admin/system", get(pages::system::system))
+        .route("/admin/data-sources", get(pages::plugins::data_sources))
         .route(
             "/admin/settings",
             get(pages::system::settings).post(pages::system::save_settings),

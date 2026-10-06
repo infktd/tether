@@ -149,6 +149,14 @@ pub const PAGES: &[Page] = &[
         about: "Install, upgrade and roll back apps, and approve what they may reach.",
     },
     Page {
+        active: "data_sources",
+        label: "Data sources",
+        href: "/admin/data-sources",
+        icon: "database",
+        group: "integrations",
+        about: "Every app's data sources, and whether each one works.",
+    },
+    Page {
         active: "system",
         label: "Health",
         href: "/admin/system",
@@ -214,7 +222,7 @@ pub fn may(nav: &AdminNav, page: &Page) -> bool {
         "compliance" => nav.compliance,
         "corpstats" => nav.corpstats,
         "discord" | "pings_settings" => nav.discord,
-        "plugins" => nav.plugins,
+        "plugins" | "data_sources" => nav.plugins,
         "system" | "settings" | "menu" => nav.system,
         "audit" => nav.audit,
         "setup" => nav.setup,

@@ -866,12 +866,33 @@ async fn data_sources_say_how_they_are_doing_and_what_they_cover(db: PgPool) {
         main.contains(r#"<span class="num text-highlight">1</span> not working"#),
         "{main}"
     );
+    // The sidebar's foot opens Administration's Data sources: every app's
+    // sources, those not working first, each linking to its app's page.
+    assert!(
+        main.contains(r#"<a href="/admin/data-sources" class="source-health">"#),
+        "{main}"
+    );
+    let all = page(&h, "/admin/data-sources", &owner).await;
+    assert_eq!(all.status, StatusCode::OK, "{}", all.body);
+    for part in [
+        r#"<a href="/plugins/acme.esi/data-sources""#,
+        ">Refused by ESI</span>",
+        "ESI refused mining observers (403)",
+        r#"<span class="num">1</span> not working"#,
+        r#"<a href="/admin/data-sources" aria-current="page">Data sources</a>"#,
+    ] {
+        assert!(all.body.contains(part), "{part}: {}", all.body);
+    }
     // Not to those who only use the app.
     grant_to_guests(&h, &owner, "view").await;
     let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
     let main = page(&h, "/plugins/acme.esi", &pilot).await;
     assert_eq!(main.status, StatusCode::OK, "{}", main.body);
     assert!(!main.body.contains("ESI refused"), "{}", main.body);
+    assert_eq!(
+        page(&h, "/admin/data-sources", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
 
     // Its login revoked: the source reads nothing, whatever it calls.
     sqlx::query("UPDATE core.character_tokens SET state = 'revoked' WHERE character_id = $1")

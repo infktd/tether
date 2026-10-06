@@ -95,7 +95,7 @@
         for those who run apps, and this build's version. -#}
     <div class="sidebar-foot">
       {% if let Some(h) = shell.data_sources %}
-      <a href="/admin/plugins" class="source-health">
+      <a href="/admin/data-sources" class="source-health">
         <span class="ov">Data sources</span>
         <span class="source-health-bar" aria-hidden="true">{% for ok in h.cells() %}<span{% if !ok %} data-broken{% endif %}></span>{% endfor %}</span>
         <span class="text-xs text-foreground-soft"><span class="num text-foreground">{{ h.working }}</span> working{% if h.broken > 0 %} · <span class="num text-highlight">{{ h.broken }}</span> not working{% endif %}</span>

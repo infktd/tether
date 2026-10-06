@@ -217,6 +217,9 @@ struct Readings {
     last_runs: HashMap<String, LastRun>,
     discord: bool,
     sources: (i64, i64),
+    /// The viewer may open Administration's Data sources (`admin.plugins`):
+    /// the line links there.
+    sources_link: bool,
     updates: updates::Status,
     /// Installed apps' names, by id.
     apps: HashMap<String, String>,
@@ -240,6 +243,7 @@ impl Readings {
             last_runs,
             discord: crate::discord::is_configured(state).await?,
             sources: tether_web_core::pages::plugin_access::source_health(state).await?,
+            sources_link: false,
             updates: updates::status(&state.db).await?,
             apps: tether_db::plugins::list(&state.db)
                 .await?
@@ -492,7 +496,7 @@ impl Readings {
                 "All working".to_owned()
             },
             tone: if broken > 0 { Tone::Warn } else { Tone::Ok },
-            href: Some("/admin/plugins"),
+            href: self.sources_link.then_some("/admin/data-sources"),
         })
     }
 
@@ -662,7 +666,8 @@ async fn health_page(
     shell: Shell,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
-    let readings = Readings::take(state).await?;
+    let mut readings = Readings::take(state).await?;
+    readings.sources_link = shell.nav.plugins;
     let lines = readings.lines();
     let dead: Vec<DeadJob> = tether_jobs::list(&state.db, Some(JobState::Dead), DEAD_SHOWN)
         .await?
@@ -771,7 +776,10 @@ pub async fn summary(
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     session.require(&state, ADMIN_SYSTEM).await?;
-    let readings = Readings::take(&state).await?;
+    let mut readings = Readings::take(&state).await?;
+    readings.sources_link = tether_db::permissions::effective(&state.db, session.account)
+        .await?
+        .contains(tether_core::permissions::ADMIN_PLUGINS);
     let lines = readings.lines();
     Ok(render(
         StatusCode::OK,

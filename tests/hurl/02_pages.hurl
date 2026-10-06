@@ -1020,6 +1020,11 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/data-sources
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/admin/plugin-uploads/1
 HTTP 303
 [Asserts]
