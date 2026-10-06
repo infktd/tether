@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Token Management{% endblock %}
 {% block breadcrumb %}<span class="text-foreground">Token Management</span>{% endblock %}
 {% block content %}
@@ -75,7 +76,7 @@
         <tr>
           <td class="font-medium">{{ o.name }}</td>
           <td>{{ o.plugin_name }}</td>
-          <td>{% if o.state == "active" %}<span class="badge" data-variant="secondary">active</span>{% else %}<span class="badge" data-variant="outline">not used</span>{% endif %}</td>
+          <td>{% if o.state == "active" %}{% call ui::status("ok", "Active") %}{% endcall %}{% else %}{% call ui::status("off", "Not used") %}{% endcall %}{% endif %}</td>
           <td class="text-right">
             <form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ o.character_id }}/withdraw?from=tokens" hx-confirm="Withdraw {{ o.name }} from {{ o.plugin_name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>
           </td>

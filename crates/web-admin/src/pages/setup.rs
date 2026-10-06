@@ -157,7 +157,9 @@ fn choose_view(s: &SetupStatus, change_sso: bool, can_manage_states: bool) -> Se
 fn steps(s: &SetupStatus) -> Vec<Step> {
     let done = [
         s.owner_exists || s.unlocked,
-        s.sso_configured,
+        // An owner signed in through an EVE application, wherever its
+        // settings came from.
+        s.sso_configured || s.owner_exists,
         s.owner_exists,
         matches!(s.state, SetupState::Complete),
     ];

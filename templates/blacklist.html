@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Blacklist{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Blacklist</span>{% endblock %}
 {% macro tiers(prefix, restricted, ultra) %}
@@ -86,9 +87,9 @@
           </td>
           <td class="w-full whitespace-normal">
             <div class="flex flex-wrap gap-1 mb-1">
-              {% if n.blacklisted %}<span class="badge" data-variant="destructive">Blacklisted</span>{% endif %}
-              {% if n.restricted %}<span class="badge" data-variant="secondary">Restricted</span>{% endif %}
-              {% if n.ultra_restricted %}<span class="badge" data-variant="secondary">Ultra restricted</span>{% endif %}
+              {% if n.blacklisted %}{% call ui::status("danger", "Blacklisted") %}{% endcall %}{% endif %}
+              {% if n.restricted %}{% call ui::status("warn", "Restricted") %}{% endcall %}{% endif %}
+              {% if n.ultra_restricted %}{% call ui::status("warn", "Ultra restricted") %}{% endcall %}{% endif %}
             </div>
             <div class="break-words text-sm">{{ n.note }}</div>
             {% if access.comments && !v.comments.is_empty() %}

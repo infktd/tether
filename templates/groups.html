@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Groups{% endblock %}
 {% block breadcrumb %}<span class="text-foreground">Groups</span>{% endblock %}
 {% block content %}
@@ -38,7 +39,7 @@
             {% if g.internal %}
             <span class="text-xs text-muted-foreground">Admins manage this group</span>
             {% else if g.pending == "leave" %}
-            <span class="badge" data-variant="outline">Leave requested</span>
+            {% call ui::status("off", "Leave requested") %}{% endcall %}
             {% else %}
             <form method="post" action="/groups/{{ g.id }}/leave" hx-confirm="Leave {{ g.name }}?">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Leave</button>
@@ -71,7 +72,7 @@
           <td class="text-right">
             {% if g.pending == "join" %}
             <form method="post" action="/groups/{{ g.id }}/retract" class="inline-flex items-center gap-2">
-              <span class="badge" data-variant="outline">Requested</span>
+              {% call ui::status("off", "Requested") %}{% endcall %}
               <button type="submit" class="btn" data-variant="ghost" data-size="sm">Withdraw</button>
             </form>
             {% else %}

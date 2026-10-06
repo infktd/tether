@@ -2,6 +2,7 @@
     whose corporation data the app reads, in use once added. App admins
     see them all, with Remove; everyone else sees their own, with
     Withdraw. Drawn by the host: plugins never see it. -#}
+{%- import "ui.html" as ui -%}
 {% if let Some(o) = c.owners %}{% if o.panel %}
 <section class="card data-card" id="owners" aria-labelledby="owners-title">
   <header>
@@ -37,7 +38,7 @@
           </div>
         </td>
         <td><div class="text-sm">{{ r.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ r.when }} EVE</div></td>
-        <td>{% if r.state == "active" %}<span class="badge" data-variant="secondary">active</span>{% else if r.state == "suspended" %}<span class="badge" data-variant="destructive">account deactivated, blacklisted or changed: not used</span>{% else %}<span class="badge" data-variant="destructive">changed corporation: add it again</span>{% endif %}</td>
+        <td>{% if r.state == "active" %}{% call ui::status("ok", "Active") %}{% endcall %}{% else if r.state == "suspended" %}{% call ui::status("danger", "Not used: account deactivated, blacklisted or changed") %}{% endcall %}{% else %}{% call ui::status("danger", "Changed corporation: add it again") %}{% endcall %}{% endif %}</td>
         <td class="text-right">
           <div class="inline-flex gap-2">
             {% if r.own %}<form method="post" action="/apps/{{ o.plugin_id }}/owners/{{ r.character_id }}/withdraw" hx-confirm="Withdraw {{ r.name }}? The app stops reading its corporation's data."><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Withdraw</button></form>

@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}{% if let Some(a) = app %}Register for {{ a.name }}{% else %}Register Character{% endif %}{% endblock %}
 {% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;{% if let Some(a) = app %}<a href="/register">Register Character</a>&nbsp;/&nbsp;<span class="text-foreground">{{ a.name }}</span>{% else %}<span class="text-foreground">Register Character</span>{% endif %}{% endblock %}
 {% block content %}
@@ -70,11 +71,11 @@
           </td>
           <td>
             {% if let Some(problem) = c.problem %}
-            <span class="badge" data-variant="{% if app.is_some() %}outline{% else %}destructive{% endif %}">{{ problem }}</span>
+            {% if app.is_some() %}{% call ui::status("warn", problem.as_str()) %}{% endcall %}{% else %}{% call ui::status("danger", problem.as_str()) %}{% endcall %}{% endif %}
             {% else if required.is_empty() %}
             <span class="text-sm text-muted-foreground">Nothing needed</span>
             {% else %}
-            <span class="badge" data-variant="secondary">{% call icons::icon("check") %}{% endcall %} Registered</span>
+            {% call ui::status("ok", "Registered") %}{% endcall %}
             {% endif %}
           </td>
           <td class="text-right">

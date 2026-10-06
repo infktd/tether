@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {%- import "manage_menu.html" as manage -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Fleet Pings{% endblock %}
 {% block breadcrumb %}Fleet&nbsp;/&nbsp;<span class="text-foreground">Fleet Pings</span>{% endblock %}
 {% block content %}
@@ -121,9 +122,9 @@
             {% if p.status == "failed" %}{% if let Some(e) = p.error %}<div class="text-xs text-destructive mt-1">{{ e }}</div>{% endif %}{% endif %}
           </td>
           <td>
-            {% if p.status == "sent" %}<span class="badge" data-variant="secondary">Sent</span>
-            {% else if p.status == "failed" %}<span class="badge" data-variant="destructive">Failed</span>
-            {% else %}<span class="badge" data-variant="outline">Retrying</span>{% endif %}
+            {% if p.status == "sent" %}{% call ui::status("ok", "Sent") %}{% endcall %}
+            {% else if p.status == "failed" %}{% call ui::status("danger", "Failed") %}{% endcall %}
+            {% else %}{% call ui::status("warn", "Retrying") %}{% endcall %}{% endif %}
           </td>
         </tr>
         {% endfor %}

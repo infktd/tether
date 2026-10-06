@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Users{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<span class="text-foreground">Users</span>{% endblock %}
 {% block content %}
@@ -69,7 +70,7 @@
           <td class="num">{{ r.characters }}</td>
           <td>
             {% if r.owner %}<span class="badge" data-variant="outline">Superuser</span>{% endif %}
-            {% if !r.active %}<span class="badge" data-variant="destructive">Deactivated</span>{% endif %}
+            {% if !r.active %}{% call ui::status("danger", "Deactivated") %}{% endcall %}{% endif %}
           </td>
         </tr>
         {% endfor %}

@@ -539,9 +539,9 @@ async fn check_now_runs_one_group_and_check_shows_each_filter(db: PgPool) {
     assert_eq!(passes.status, StatusCode::OK, "{}", passes.body);
     for part in [
         r#"<h3 class="font-medium" id="check-title">gigX</h3>"#,
-        r#"<span class="badge" data-variant="secondary">passes</span>"#,
-        r#"<span class="badge" data-variant="secondary">pass</span><span>state is Member</span>"#,
-        r#"<span class="badge" data-variant="outline">member</span>"#,
+        r#"<span class="status-line" data-tone="ok">Passes</span>"#,
+        r#"<span class="status-line" data-tone="ok">Pass</span><span>state is Member</span>"#,
+        r#"<span class="status-line" data-tone="ok">Member</span>"#,
     ] {
         assert!(passes.body.contains(part), "{part}\n\n{}", passes.body);
     }
@@ -574,9 +574,9 @@ async fn check_now_runs_one_group_and_check_shows_each_filter(db: PgPool) {
     )
     .await;
     for part in [
-        r#"<span class="badge" data-variant="destructive">doesn't pass</span>"#,
-        r#"<span class="badge" data-variant="destructive">fail</span><span>state is Member</span>"#,
-        r#"<span class="badge" data-variant="outline">not a member</span>"#,
+        r#"<span class="status-line" data-tone="danger">Fails</span>"#,
+        r#"<span class="status-line" data-tone="danger">Fail</span><span>state is Member</span>"#,
+        r#"<span class="status-line" data-tone="off">Not a member</span>"#,
     ] {
         assert!(fails.body.contains(part), "{part}\n\n{}", fails.body);
     }

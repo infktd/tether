@@ -78,9 +78,9 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         add(
             "ESI access through its data sources' characters",
             format!(
-                "{}. Owners (AA's Add Owner) are added, and used at once, by {}: each logs in \
-                 with one of their own characters. You can see and remove any owner on the \
-                 app's page.",
+                "{}. Data sources (Alliance Auth's owners) are added, and used at once, by {}: \
+                 each logs in with one of their own characters. You can see and remove any \
+                 data source on the app's page.",
                 c.esi.data_source.join(", "),
                 if adders.is_empty() {
                     "app admins only".to_owned()

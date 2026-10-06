@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {%- macro app_table(rows, statuses) -%}
 <table class="table">
   <thead><tr><th scope="col">App</th><th scope="col">Version</th>{% if statuses %}<th scope="col">Status</th>{% endif %}<th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
@@ -10,8 +11,8 @@
         <div class="font-medium flex items-center gap-2">{% if p.is_installed %}<a href="/admin/plugins/{{ p.id }}" class="hover:underline">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}{% if !p.included %} <span class="badge" data-variant="outline">Third party</span>{% endif %}</div>
         {% if let Some(d) = p.description %}<div class="text-xs text-muted-foreground">{{ d }}</div>{% else %}<div class="text-xs text-muted-foreground num">{{ p.id }}</div>{% endif %}
       </td>
-      <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div class="text-xs"><span class="badge" data-variant="secondary"><span class="num">{{ v }}</span> available</span></div>{% else if p.rebuilt %}<div class="text-xs"><span class="badge" data-variant="secondary">Rebuilt with this Tether</span></div>{% endif %}</td>
-      {% if statuses %}<td class="whitespace-normal"><span class="badge" data-variant="{{ p.variant }}">{{ p.status }}</span>{% if let Some(why) = p.incompatible %}<div class="text-xs text-muted-foreground mt-1">Built for a different version of Tether's app interface. {% if p.review.is_some() || p.update.is_some() %}Review its update to run it again.{% else %}Install a version built for this Tether.{% endif %}</div><details class="inline-disclosure text-xs mt-1"><summary>The error</summary><p class="mt-1 break-words num">{{ why }}</p></details>{% endif %}</td>{% endif %}
+      <td><span class="num">{{ p.version }}</span>{% if let Some(v) = p.update %}<div>{% call ui::status_with("warn") %}<span class="num">{{ v }}</span> available{% endcall %}</div>{% else if p.rebuilt %}<div>{% call ui::status("warn", "Rebuilt with this Tether") %}{% endcall %}</div>{% endif %}</td>
+      {% if statuses %}<td class="whitespace-normal">{% call ui::status(p.tone, p.status) %}{% endcall %}{% if let Some(why) = p.incompatible %}<div class="text-xs text-muted-foreground mt-1">Built for a different version of Tether's app interface. {% if p.review.is_some() || p.update.is_some() %}Review its update to run it again.{% else %}Install a version built for this Tether.{% endif %}</div><details class="inline-disclosure text-xs mt-1"><summary>The error</summary><p class="mt-1 break-words num">{{ why }}</p></details>{% endif %}</td>{% endif %}
       <td class="text-right">
         {% if !p.is_installed %}{% if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">Review and install</a>{% endif %}
         {% else if let Some(r) = p.review %}<a class="btn" data-variant="primary" data-size="sm" href="{{ r }}">{% if p.rebuilt %}Review rebuild{% else %}Review update{% endif %}</a>

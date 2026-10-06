@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Secure Groups{% endblock %}
 {% block breadcrumb %}<span class="text-foreground">Secure Groups</span>{% endblock %}
 {% block content %}
@@ -31,8 +32,8 @@
             <div class="font-medium">{{ o.group.name }}</div>
             {% if !o.group.description.is_empty() %}<div class="text-xs text-muted-foreground">{{ o.group.description }}</div>{% endif %}
             <div class="flex flex-wrap gap-1 mt-1">
-              {% if o.member %}<span class="badge" data-variant="secondary">Member</span>{% endif %}
-              {% if let Some(until) = o.grace_until %}<span class="badge" data-variant="destructive">Leaving <span class="num">{{ crate::pages::securegroups::date(until) }}</span> EVE</span>{% endif %}
+              {% if o.member %}{% call ui::status("ok", "Member") %}{% endcall %}{% endif %}
+              {% if let Some(until) = o.grace_until %}{% call ui::status_with("warn") %}Leaving <span class="num">{{ crate::pages::securegroups::date(until) }}</span> EVE{% endcall %}{% endif %}
             </div>
           </td>
           <td class="w-full whitespace-normal">
@@ -40,16 +41,16 @@
             {% if o.filters.is_empty() %}<p class="text-sm text-muted-foreground">None yet.</p>{% else %}
             <ul class="grid gap-1 text-sm" role="list">
               {% for f in o.filters %}
-              <li class="flex items-center gap-2">{% match f.passes %}{% when Some(true) %}<span class="badge" data-variant="secondary">pass</span>{% when Some(false) %}<span class="badge" data-variant="destructive">fail</span>{% when None %}<span class="badge" data-variant="outline">unknown</span>{% endmatch %}<span>{{ f.text }}</span></li>
+              <li class="flex items-center gap-2">{% match f.passes %}{% when Some(true) %}{% call ui::status("ok", "Pass") %}{% endcall %}{% when Some(false) %}{% call ui::status("danger", "Fail") %}{% endcall %}{% when None %}{% call ui::status("off", "Unknown") %}{% endcall %}{% endmatch %}<span>{{ f.text }}</span></li>
               {% endfor %}
             </ul>
             {% endif %}
           </td>
           <td class="text-right">
             {% if o.pending == Some("join") %}
-            <span class="badge" data-variant="outline">Requested</span>
+            {% call ui::status("off", "Requested") %}{% endcall %}
             {% else if o.pending == Some("leave") %}
-            <span class="badge" data-variant="outline">Leave requested</span>
+            {% call ui::status("off", "Leave requested") %}{% endcall %}
             {% else if o.member %}
             <form method="post" action="/securegroups/{{ o.group.id.0 }}/leave" hx-confirm="Leave {{ o.group.name }}?">
               <button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Leave</button>

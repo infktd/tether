@@ -552,7 +552,10 @@ async fn hosts_a_new_version_adds_stay_refused_until_approved(db: PgPool) {
     .await;
     assert!(out.contains("approved secrets"), "{out}");
     let admin = page(&h, "/admin/plugins/acme.http", &owner).await.body;
-    assert!(admin.contains("new.example.com: not approved"), "{admin}");
+    assert!(
+        admin.contains(r#"<span class="num">new.example.com</span>: not approved"#),
+        "{admin}"
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

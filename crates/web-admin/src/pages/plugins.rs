@@ -101,7 +101,8 @@ pub struct PluginRow {
     pub description: Option<String>,
     pub version: String,
     pub status: &'static str,
-    pub variant: &'static str,
+    /// The status line's tone.
+    pub tone: &'static str,
     /// It comes with Tether.
     pub included: bool,
     pub is_installed: bool,
@@ -166,12 +167,13 @@ struct PluginsPage {
 
 use plugins::newer;
 
+/// An app's status as a status line: its word and tone (DESIGN.md).
 fn status_label(status: &Status, enabled: bool) -> (&'static str, &'static str) {
     match (status, enabled) {
-        (Status::Running, _) => ("Running", "secondary"),
-        (Status::Failed(_) | Status::Incompatible(_), _) => ("Failed to load", "destructive"),
-        (Status::Stopped, true) => ("Starting", "outline"),
-        (Status::Stopped, false) => ("Disabled", "outline"),
+        (Status::Running, _) => ("Running", "ok"),
+        (Status::Failed(_) | Status::Incompatible(_), _) => ("Failed to load", "danger"),
+        (Status::Stopped, true) => ("Starting", "off"),
+        (Status::Stopped, false) => ("Disabled", "off"),
     }
 }
 
@@ -211,7 +213,7 @@ async fn list_page(
         .iter()
         .map(|p| {
             let status = state.plugins.status(&p.id);
-            let (label, variant) = status_label(&status, p.enabled);
+            let (label, tone) = status_label(&status, p.enabled);
             let bundled_app = included.get(&p.id);
             // A bundled app's updates come with Tether, never from GitHub.
             let offer = bundled_app.and_then(|app| {
@@ -229,7 +231,7 @@ async fn list_page(
             };
             PluginRow {
                 status: label,
-                variant,
+                tone,
                 included: bundled_app.is_some(),
                 is_installed: true,
                 description: bundled_app
@@ -267,7 +269,7 @@ async fn list_page(
                 description: b.description.clone(),
                 version: b.version.clone(),
                 status: "Not installed",
-                variant: "outline",
+                tone: "off",
                 included: true,
                 is_installed: false,
                 update: None,
@@ -955,7 +957,8 @@ struct PluginPage {
     /// the app's own header.
     settings: bool,
     status: &'static str,
-    variant: &'static str,
+    /// The status line's tone.
+    tone: &'static str,
     failure: Option<String>,
     /// It failed to load because it doesn't fit this Tether's app
     /// interface; the error, for admins.
@@ -1020,7 +1023,7 @@ async fn plugin_page(
         .package()
         .clone();
     let status = state.plugins.status(id);
-    let (label, variant) = status_label(&status, installed.enabled);
+    let (label, tone) = status_label(&status, installed.enabled);
     let sources = tether_db::plugin_sources::status(&state.db, id).await?;
     let release_url = match (state.plugins.github(), &sources.source, &sources.latest_url) {
         (Some(github), Some(repo), Some(url)) => github.release_link(repo, url),
@@ -1090,8 +1093,14 @@ async fn plugin_page(
             message: l.message,
         })
         .collect();
-    let sources = tether_db::plugin_esi::data_sources(&state.db, id)
-        .await?
+    let sources = tether_db::plugin_esi::data_sources(&state.db, id).await?;
+    // Corporations by name from the names cache (DESIGN.md: no raw ids).
+    let corporations: Vec<i64> = sources
+        .iter()
+        .filter_map(|d| d.character.corporation_id)
+        .collect();
+    let corporations = tether_db::compliance::cached_names(&state.db, &corporations).await?;
+    let sources = sources
         .into_iter()
         .map(|d| {
             let state = super::plugin_access::source_state(&d);
@@ -1100,7 +1109,8 @@ async fn plugin_page(
                 corporation: d
                     .character
                     .corporation_id
-                    .map_or_else(|| "unknown".to_owned(), |c| c.to_string()),
+                    .and_then(|c| corporations.get(&c).cloned())
+                    .unwrap_or_else(|| "Unknown corporation".to_owned()),
                 name: d.character.name,
                 offered_by: d.offered_by.unwrap_or_else(|| "Someone".to_owned()),
                 when: time(d.offered_at),
@@ -1220,7 +1230,7 @@ async fn plugin_page(
                     .iter()
                     .any(|p| p.path == tether_plugins::manifest::SETTINGS_PATH),
             status: label,
-            variant,
+            tone,
             failure: if plugins::sha256(&installed.package) != installed.package_sha256 {
                 Some(
                     "The stored package isn't the one that was approved, so it won't load. \

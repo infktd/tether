@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}{{ group.name }}{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<a href="/admin/groups">Groups</a>&nbsp;/&nbsp;<span class="text-foreground">{{ group.name }}</span>{% endblock %}
 {% block content %}
@@ -243,15 +244,15 @@
         <div class="rounded-sm border p-4 grid gap-3" role="status" aria-labelledby="check-title">
           <div class="flex flex-wrap items-center gap-2">
             <h3 class="font-medium" id="check-title">{{ c.name }}</h3>
-            {% if c.passes %}<span class="badge" data-variant="secondary">passes</span>{% else %}<span class="badge" data-variant="destructive">doesn't pass</span>{% endif %}
-            {% if c.member %}<span class="badge" data-variant="outline">member</span>{% else %}<span class="badge" data-variant="outline">not a member</span>{% endif %}
+            {% if c.passes %}{% call ui::status("ok", "Passes") %}{% endcall %}{% else %}{% call ui::status("danger", "Fails") %}{% endcall %}{% endif %}
+            {% if c.member %}{% call ui::status("ok", "Member") %}{% endcall %}{% else %}{% call ui::status("off", "Not a member") %}{% endcall %}{% endif %}
             {% if let Some(until) = c.grace_until %}<span class="text-xs text-muted-foreground">in a grace period until <span class="num">{{ until.format("%Y-%m-%d %H:%M") }}</span> EVE</span>{% endif %}
           </div>
           {% if let Some(why) = c.blocked %}<p class="text-sm">{{ why }}</p>{% endif %}
           {% if c.filters.is_empty() %}<p class="text-sm text-muted-foreground">No filters yet.</p>{% else %}
           <ul class="grid gap-1.5 text-sm" role="list">
             {% for f in c.filters %}
-            <li class="flex items-center gap-2">{% match f.passes %}{% when Some(true) %}<span class="badge" data-variant="secondary">pass</span>{% when Some(false) %}<span class="badge" data-variant="destructive">fail</span>{% when None %}<span class="badge" data-variant="outline">unknown</span>{% endmatch %}<span>{{ f.text }}</span></li>
+            <li class="flex items-center gap-2">{% match f.passes %}{% when Some(true) %}{% call ui::status("ok", "Pass") %}{% endcall %}{% when Some(false) %}{% call ui::status("danger", "Fail") %}{% endcall %}{% when None %}{% call ui::status("off", "Unknown") %}{% endcall %}{% endmatch %}<span>{{ f.text }}</span></li>
             {% endfor %}
           </ul>
           {% endif %}

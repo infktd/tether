@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}{{ main_name }}{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<a href="/admin/users">Users</a>&nbsp;/&nbsp;<span class="text-foreground">{{ main_name }}</span>{% endblock %}
 {% block content %}
@@ -15,7 +16,7 @@
         <div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span class="state-badge" data-state="{{ state_style }}">{{ state }}</span>
           {% if owner %}<span class="badge" data-variant="outline">Superuser</span>{% endif %}
-          {% if !active %}<span class="badge" data-variant="destructive">Deactivated</span>{% endif %}
+          {% if !active %}{% call ui::status("danger", "Deactivated") %}{% endcall %}{% endif %}
           <span>Account <span class="num">{{ id }}</span>, joined <span class="num">{{ joined }}</span></span>
         </div>
       </div>
@@ -72,8 +73,8 @@
           </td>
           <td>
             {% match c.row.token.as_deref() %}
-            {% when Some("valid") %}<span class="badge" data-variant="outline">Valid</span>
-            {% when Some(_) %}<span class="badge" data-variant="destructive">Revoked</span>
+            {% when Some("valid") %}{% call ui::status("ok", "Valid") %}{% endcall %}
+            {% when Some(_) %}{% call ui::status("danger", "Revoked") %}{% endcall %}
             {% when None %}<span class="text-muted-foreground">None</span>
             {% endmatch %}
           </td>

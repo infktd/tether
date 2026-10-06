@@ -1621,7 +1621,7 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
 
     // The owners card on the app's page: active, no approval anywhere.
     let main = open(&h, "", &owner).await.body;
-    assert!(main.contains(">active</span>"), "{main}");
+    assert!(main.contains(">Active</span>"), "{main}");
     assert!(!main.contains("/approve"), "{main}");
     assert!(!main.contains("waiting for an admin"), "{main}");
 }

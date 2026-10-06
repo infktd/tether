@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {%- import "plugin_changes.html" as changes -%}
+{%- import "ui.html" as ui -%}
 {% block title %}{{ about.name }}{% endblock %}
 {% block breadcrumb %}<a href="/admin" class="hover:text-foreground">Administration</a>&nbsp;/&nbsp;{% if !shell.admin_group.is_empty() %}{{ shell.admin_group }}&nbsp;/&nbsp;{% endif %}<a href="/admin/plugins">Apps</a>&nbsp;/&nbsp;<span class="text-foreground">{{ about.name }}</span>{% endblock %}
 {% block content %}
@@ -10,7 +11,8 @@
       <span class="page-icon" aria-hidden="true">{% call icons::icon("package") %}{% endcall %}</span>
       <div class="min-w-0">
         <div class="page-eyebrow">Apps</div>
-        <h1 class="page-title">{{ about.name }} <span class="badge align-middle" data-variant="{{ variant }}">{{ status }}</span></h1>
+        <h1 class="page-title">{{ about.name }}</h1>
+        <p class="page-desc">{% call ui::status(tone, status) %}{% endcall %}</p>
         <p class="page-desc">{% if let Some(d) = about.description %}{{ d }} · {% endif %}Version <span class="num">{{ about.version }}</span>, installed {{ installed }} EVE</p>
       </div>
     </div>
@@ -58,9 +60,9 @@
         {% for d in sources %}
         <tr>
           <td class="font-medium">{{ d.name }}</td>
-          <td class="num">{{ d.corporation }}</td>
+          <td>{{ d.corporation }}</td>
           <td><div class="text-sm">{{ d.offered_by }}</div><div class="text-xs text-muted-foreground num">{{ d.when }} EVE</div></td>
-          <td>{% if d.state == "active" %}<span class="badge" data-variant="secondary">active</span>{% else if d.state == "suspended" %}<span class="badge" data-variant="destructive">account deactivated, blacklisted or changed: not used</span>{% else %}<span class="badge" data-variant="destructive">changed corporation: add it again</span>{% endif %}</td>
+          <td>{% if d.state == "active" %}{% call ui::status("ok", "Active") %}{% endcall %}{% else if d.state == "suspended" %}{% call ui::status("danger", "Not used: account deactivated, blacklisted or changed") %}{% endcall %}{% else %}{% call ui::status("danger", "Changed corporation: add it again") %}{% endcall %}{% endif %}</td>
           <td class="text-right">
             <div class="inline-flex gap-2">
               <form method="post" action="/admin/plugins/{{ about.id }}/sources/{{ d.character_id }}/remove"><button type="submit" class="btn btn-destructive-outline" data-variant="outline" data-size="sm">Remove</button></form>
@@ -115,8 +117,8 @@
   <section class="card data-card">
     <header><h2>HTTPS requests</h2><p>The hosts you approved for this app; it can reach nothing else. Tether sends each request, adds the secrets below, and records every one here (the query string isn't kept), for 90 days; EVE time.</p></header>
     <section class="flex flex-wrap gap-2 px-5">
-      {% for h in http_hosts %}<span class="badge num" data-variant="secondary">{{ h }}</span>{% endfor %}
-      {% for h in http_unapproved %}<span class="badge num" data-variant="destructive">{{ h }}: not approved, refused</span>{% endfor %}
+      {% for h in http_hosts %}<span class="badge num" data-variant="outline">{{ h }}</span>{% endfor %}
+      {% for h in http_unapproved %}{% call ui::status_with("danger") %}<span class="num">{{ h }}</span>: not approved, refused{% endcall %}{% endfor %}
     </section>
     {% if !http_secrets.is_empty() %}
     <table class="table">
@@ -126,7 +128,7 @@
         <tr>
           <td class="num">{{ s.name }}</td>
           <td><div class="num">{{ s.host }}</div><div class="text-xs text-muted-foreground num">{{ s.header }} header</div></td>
-          <td>{% if let Some(at) = s.set %}<span class="badge" data-variant="secondary">set</span> <span class="text-xs text-muted-foreground num">{{ at }} EVE</span>{% else %}<span class="badge" data-variant="outline">not set</span>{% endif %}</td>
+          <td>{% if let Some(at) = s.set %}<div>{% call ui::status("ok", "Set") %}{% endcall %}</div><div class="text-xs text-muted-foreground num">{{ at }} EVE</div>{% else %}{% call ui::status("off", "Not set") %}{% endcall %}{% endif %}</td>
           <td class="text-right">
             <form method="post" action="/admin/plugins/{{ about.id }}/secrets/{{ s.name }}" class="inline-flex items-center gap-2">
               <label class="sr-only" for="secret-{{ s.name }}">Value for {{ s.name }}</label>
@@ -168,7 +170,7 @@
       <tbody>
         {% for s in schedules %}
         <tr>
-          <td class="num">{{ s.name }}{% if !s.enabled %} <span class="badge" data-variant="outline">off</span>{% endif %}</td>
+          <td class="num">{{ s.name }}{% if !s.enabled %} {% call ui::status("off", "Off") %}{% endcall %}{% endif %}</td>
           <td>{{ s.every }}</td>
           <td class="num">{{ s.last_run }}</td>
           <td class="num">{{ s.next_run }}</td>
@@ -189,7 +191,7 @@
       <thead><tr><th scope="col">Job</th><th scope="col">Key</th><th scope="col">Runs</th><th scope="col">Tries</th></tr></thead>
       <tbody>
         {% for j in upcoming %}
-        <tr><td class="num">{{ j.name }}{% if j.state == "running" %} <span class="badge" data-variant="secondary">running</span>{% endif %}</td><td class="num">{{ j.key }}</td><td class="num">{{ j.when }}</td><td class="num">{{ j.attempts }}</td></tr>
+        <tr><td class="num">{{ j.name }}{% if j.state == "running" %} {% call ui::status("ok", "Running") %}{% endcall %}{% endif %}</td><td class="num">{{ j.key }}</td><td class="num">{{ j.when }}</td><td class="num">{{ j.attempts }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -234,7 +236,7 @@
     <header><h2>Updates</h2><p>This app comes with Tether: newer versions and rebuilds arrive with newer versions of Tether, never from GitHub or a file. One that asks for nothing new is applied when Tether starts (unless you rolled back from it); the rest only after you review them.</p></header>
     <section class="grid gap-4">
       <dl class="grid gap-4 text-sm">
-        <div class="grid gap-1"><dt class="font-medium">Included with this Tether</dt><dd class="text-muted-foreground"><span class="num">{{ inc.version }}</span>{% if inc.newer %} <span class="badge" data-variant="secondary">Newer than {{ about.version }}</span>{% else if inc.rebuilt %} <span class="badge" data-variant="secondary">Rebuilt with this Tether</span>{% endif %}</dd></div>
+        <div class="grid gap-1"><dt class="font-medium">Included with this Tether</dt><dd class="text-muted-foreground"><span class="num">{{ inc.version }}</span>{% if inc.newer %} {% call ui::status_with("warn") %}Newer than <span class="num">{{ about.version }}</span>{% endcall %}{% else if inc.rebuilt %} {% call ui::status("warn", "Rebuilt with this Tether") %}{% endcall %}{% endif %}</dd></div>
       </dl>
       {% if inc.newer %}
       <div><a class="btn" data-variant="primary" href="/admin/plugin-bundled/{{ about.id }}">Review version <span class="num">{{ inc.version }}</span></a></div>
@@ -245,11 +247,11 @@
   </section>
   {% else %}
   <section class="card">
-    <header><h2>Updates</h2><p>{% if let Some(repo) = updates.source %}Newer versions are looked for in <a class="underline" href="https://github.com/{{ repo }}" rel="noreferrer noopener" target="_blank"><span class="num">{{ repo }}</span></a>{% if updates.checks_on %} once a day{% else %}, but update checks are off (Dashboard){% endif %}.{% else %}Name the GitHub repository this app is published in and Tether looks there for newer versions once a day while update checks are on.{% endif %} A newer version is installed only after you review it.</p></header>
+    <header><h2>Updates</h2><p>{% if let Some(repo) = updates.source %}Newer versions are looked for in <a class="underline" href="https://github.com/{{ repo }}" rel="noreferrer noopener" target="_blank"><span class="num">{{ repo }}</span></a>{% if updates.checks_on %} once a day{% else %}, but update checks are off (<a class="underline" href="/admin/settings">Settings</a>){% endif %}.{% else %}Name the GitHub repository this app is published in and Tether looks there for newer versions once a day while update checks are on.{% endif %} A newer version is installed only after you review it.</p></header>
     <section class="grid gap-4">
       {% if updates.source.is_some() %}
       <dl class="grid gap-4 text-sm">
-        <div class="grid gap-1"><dt class="font-medium">Newest published</dt><dd class="text-muted-foreground">{% if let Some(v) = updates.latest %}<span class="num">{{ v }}</span>{% if updates.newer %} <span class="badge" data-variant="secondary">Newer than {{ about.version }}</span>{% endif %}{% if let Some(url) = updates.release_url %} · <a class="underline" href="{{ url }}" rel="noreferrer noopener" target="_blank">release notes</a>{% endif %}{% else %}Not checked yet{% endif %}</dd></div>
+        <div class="grid gap-1"><dt class="font-medium">Newest published</dt><dd class="text-muted-foreground">{% if let Some(v) = updates.latest %}<span class="num">{{ v }}</span>{% if updates.newer %} {% call ui::status_with("warn") %}Newer than <span class="num">{{ about.version }}</span>{% endcall %}{% endif %}{% if let Some(url) = updates.release_url %} · <a class="underline" href="{{ url }}" rel="noreferrer noopener" target="_blank">release notes</a>{% endif %}{% else %}Not checked yet{% endif %}</dd></div>
         {% if let Some(at) = updates.checked_at %}<div class="grid gap-1"><dt class="font-medium">Last checked</dt><dd class="text-muted-foreground num">{{ at }} EVE</dd></div>{% endif %}
         {% if let Some(why) = updates.error %}<div class="grid gap-1"><dt class="font-medium">Last check failed</dt><dd class="text-muted-foreground break-words">{{ why }}</dd></div>{% endif %}
       </dl>

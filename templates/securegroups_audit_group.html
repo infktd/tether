@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}{{ name }}: Secure Group Audit{% endblock %}
 {% block breadcrumb %}<a href="/securegroups/audit" class="hover:text-foreground">Secure Group Audit</a>&nbsp;/&nbsp;<span class="text-foreground">{{ name }}</span>{% endblock %}
 {% block content %}
@@ -36,7 +37,7 @@
         <tr>
           <td class="font-medium">{{ r.main_name }}</td>
           {% for c in r.checks %}
-          <td class="text-center">{% match c %}{% when Some(true) %}<span class="badge" data-variant="secondary">pass</span>{% when Some(false) %}<span class="badge" data-variant="destructive">fail</span>{% when None %}<span class="badge" data-variant="outline">unknown</span>{% endmatch %}</td>
+          <td class="text-center">{% match c %}{% when Some(true) %}{% call ui::status("ok", "Pass") %}{% endcall %}{% when Some(false) %}{% call ui::status("danger", "Fail") %}{% endcall %}{% when None %}{% call ui::status("off", "Unknown") %}{% endcall %}{% endmatch %}</td>
           {% endfor %}
           <td class="whitespace-normal text-sm">
             {% if let Some(why) = r.blocked %}{{ why }}{% else if let Some(until) = r.grace_until %}Leaving <span class="num">{{ crate::pages::securegroups::date(until) }}</span> EVE{% else %}<span class="text-muted-foreground">Kept</span>{% endif %}

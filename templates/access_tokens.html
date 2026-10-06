@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
 {% block title %}Access tokens{% endblock %}
 {% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;<span class="text-foreground">Access tokens</span>{% endblock %}
 {% block content %}
@@ -38,7 +39,7 @@
         <tr>
           <td><div class="font-medium">{{ t.name }}</div><div class="text-xs text-muted-foreground num">{{ t.prefix }}…</div></td>
           <td class="w-full whitespace-normal"><div class="flex flex-wrap gap-1">{% for s in t.scopes %}<span class="badge num" data-variant="outline">{{ s }}</span>{% endfor %}</div></td>
-          <td class="num">{% if self.expired(t) %}<span class="badge" data-variant="destructive">Expired</span>{% else %}{{ self.when(t.expires_at) }}{% endif %}</td>
+          <td class="num">{% if self.expired(t) %}{% call ui::status("danger", "Expired") %}{% endcall %}{% else %}{{ self.when(t.expires_at) }}{% endif %}</td>
           <td class="num">{% if let Some(u) = t.last_used_at %}{{ self.when(u) }}{% else %}<span class="text-muted-foreground">Never</span>{% endif %}</td>
           <td>
             <form method="post" action="/dashboard/access-tokens/{{ t.id }}/revoke" hx-boost="true" hx-confirm="Revoke {{ t.name }}? Anything using it stops working.">

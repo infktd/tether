@@ -16,3 +16,9 @@
   <span class="verdict-detail num">{{ detail }}</span>
 </div>
 {%- endmacro %}
+
+{#- A status line whose words carry markup (a number, a date): the body
+    is the words. -#}
+{% macro status_with(tone) -%}
+<span class="status-line" data-tone="{{ tone }}">{{ caller() }}</span>
+{%- endmacro %}

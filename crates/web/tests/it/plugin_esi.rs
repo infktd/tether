@@ -438,7 +438,7 @@ async fn data_sources_are_added_and_in_use_at_once(db: PgPool) {
     assert!(asked.contains(&MINING.to_owned()), "{asked:?}");
     // In use at once, as AA's Add Owner: nobody approves it.
     let main = page(&h, "/plugins/acme.esi", &owner).await.body;
-    assert!(main.contains(">active</span>"), "{main}");
+    assert!(main.contains(">Active</span>"), "{main}");
     assert!(!main.contains("/approve"), "{main}");
     assert!(!main.contains("waiting"), "{main}");
     // Not on the Dashboard any more.
@@ -539,7 +539,7 @@ async fn a_new_character_added_as_owner_is_in_use_at_once(db: PgPool) {
     assert!(out.contains("40165678"), "{out}");
     let main = page(&h, "/plugins/acme.esi", &owner).await.body;
     assert!(
-        main.contains("gigX") && main.contains(">active</span>"),
+        main.contains("gigX") && main.contains(">Active</span>"),
         "{main}"
     );
 
