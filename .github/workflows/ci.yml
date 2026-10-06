@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# A pull request's newer push cancels its older run. Every push to main and
+# every release tag runs to the end: each publishes its own image.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}-{1}', github.ref_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -20,7 +26,7 @@ env:
 
 jobs:
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       # rust-toolchain.toml pins the channel, components and wasm target;
@@ -37,7 +43,7 @@ jobs:
           fi
 
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y mold
@@ -45,8 +51,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  # Tether's tests, the longest job, so it does nothing else: the offline
+  # query data, the doctests and the dev features have jobs of their own,
+  # in parallel. nextest runs each test in its own process, in parallel
+  # (the database tests each get their own database).
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: timescale/timescaledb:2.30.1-pg16
@@ -70,15 +80,6 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y mold postgresql-client-16
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,rustls
-      - name: Offline query data is current
-        run: |
-          sqlx migrate run
-          SQLX_OFFLINE=false cargo sqlx prepare --workspace --check
-      # nextest runs each test in its own process, in parallel (the
-      # database tests each get their own database). Doctests, which it
-      # doesn't run, go through cargo test.
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --version 0.9.146 --locked
       - run: cargo nextest run --workspace --no-fail-fast --profile ci
@@ -95,9 +96,64 @@ jobs:
               text = err[-1500:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
               print(f"::error title={case.get('classname')} {case.get('name')}::{text}")
           PY
+
+  # The committed .sqlx/ data is what the queries need: every other job
+  # builds with it offline.
+  sqlx-offline:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: timescale/timescaledb:2.30.1-pg16
+        env:
+          POSTGRES_USER: tether
+          POSTGRES_PASSWORD: tether
+          POSTGRES_DB: tether
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tether"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://tether:tether@localhost:5432/tether
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y mold
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,rustls
+      - name: Offline query data is current
+        run: |
+          sqlx migrate run
+          SQLX_OFFLINE=false cargo sqlx prepare --workspace --check
+
+  # What the test job leaves out: doctests (nextest doesn't run them), and
+  # only the tests the dev features change (rerunning the whole web suite
+  # with them would double the time).
+  test-extra:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: timescale/timescaledb:2.30.1-pg16
+        env:
+          POSTGRES_USER: tether
+          POSTGRES_PASSWORD: tether
+          POSTGRES_DB: tether
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tether"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://tether:tether@localhost:5432/tether
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y mold
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --doc
-      # Only the tests the dev features change (the rest ran just above):
-      # rerunning the whole web suite with them doubled this job's time.
       - name: Tests with the dev features
         run: |
           cargo test -p tether-web --features dev-login,dev-docs --test it -- dev_login:: openapi::
@@ -108,7 +164,7 @@ jobs:
   # of them. (The Hurl tests also check the release image has no upload
   # route.)
   dev-features-guard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y mold
@@ -129,7 +185,7 @@ jobs:
   # it had before the push (scripts/check-app-versions.sh): instances tell
   # an app's builds apart by number.
   app-versions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -143,7 +199,7 @@ jobs:
   # rebuilds it with the pinned Tailwind CLI and fails if it's stale (the
   # same script runs before every push).
   css:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Committed stylesheet is current
@@ -154,7 +210,7 @@ jobs:
   # A missing `export!` only fails at wasm link time, so the native jobs
   # above can't catch it.
   wasm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: rustup show
@@ -297,7 +353,7 @@ jobs:
   # and each proxy's compose files resolve. Nothing is pulled or started:
   # the image for this commit isn't published yet.
   deploy-files:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
@@ -362,7 +418,7 @@ jobs:
   # comment); the read-only jobs above use version tags.
   publish-image:
     if: github.event_name == 'push'
-    needs: [fmt, clippy, test, dev-features-guard, css, wasm, docker, deploy-files, app-versions]
+    needs: [fmt, clippy, test, sqlx-offline, test-extra, dev-features-guard, css, wasm, docker, deploy-files, app-versions]
     strategy:
       matrix:
         include:
@@ -416,11 +472,13 @@ jobs:
             org.opencontainers.image.licenses=GPL-2.0-or-later
           build-args: TETHER_REVISION=${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          # Layer cache for main's builds only. Any action in a job on a
-          # main push can write the Actions cache, including the read-only
-          # jobs' unpinned ones, so releases build without it.
-          cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,scope=tether-{0}', matrix.arch) || '' }}
-          cache-to: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,mode=max,scope=tether-{0}', matrix.arch) || '' }}
+          # Main's builds take every layer the docker job just built for
+          # this commit on the same runner (only the revision label and
+          # the final layers differ), so publishing is mostly the push.
+          # Any action in a job on a main push can write the Actions cache,
+          # including the read-only jobs' unpinned ones, so releases build
+          # without it.
+          cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,scope=install-test-{0}', matrix.runner) || '' }}
           no-cache: ${{ startsWith(github.ref, 'refs/tags/') }}
       - name: Record the digest
         env:

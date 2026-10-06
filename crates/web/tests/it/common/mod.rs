@@ -731,6 +731,7 @@ pub async fn log_in_owner(h: &Harness, character: &str) -> String {
 /// Every guest the tests build: the apps and the test guests.
 const GUESTS: &[&str] = &[
     "hello-plugin",
+    "blueprints",
     "bulletin-board",
     "contacts",
     "contracts",
