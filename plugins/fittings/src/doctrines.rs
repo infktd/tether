@@ -93,21 +93,23 @@ pub(crate) fn list(access: &Access) -> Result<Page, PageError> {
     let (doctrines, fits) = totals.first().map_or((0, 0), |r| (int(r, 0), int(r, 1)));
     let ids: Vec<i64> = rows.iter().map(|r| int(r, 0)).collect();
     let categories = category_names(access, &doctrine_categories_sql(), &ids)?;
-    let mut page = primary(
-        Page::new("Doctrines").description("Doctrines and the fits in them"),
-        access,
-        "New doctrine",
-        "add-doctrine",
-    )
+    // New doctrine once there are fits to put in one; before, the
+    // header's New fit (the app's action) is the first step.
+    let page = Page::new("Doctrines").description("Doctrines and the fits in them");
+    let mut page = if fits > 0 {
+        primary(page, access, "New doctrine", "add-doctrine")
+    } else {
+        page
+    }
     .stats(vec![
         Stat::new("Doctrines", doctrines),
         Stat::new("Fits", fits),
     ]);
     if rows.is_empty() {
-        return Ok(page.text(if access.manage {
-            "No doctrines yet. Add fits, then a doctrine to put them in."
-        } else {
-            "No doctrines yet."
+        return Ok(page.text(match (access.manage, fits) {
+            (true, 0) => "No fits yet: New fit adds the first, and doctrines group them.",
+            (true, _) => "No doctrines yet: New doctrine groups fits into one.",
+            (false, _) => "No doctrines yet.",
         }));
     }
     let mut grid = CardGrid::new();

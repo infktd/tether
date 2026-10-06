@@ -77,7 +77,7 @@ path = ""
 section = "fleet"
 
 [[views]]
-label = "Overview"
+label = "Doctrines"
 path = ""
 
 [[views]]
