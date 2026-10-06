@@ -151,8 +151,11 @@ async fn sovereignty_timer_end_to_end(db: PgPool) {
     ] {
         assert!(res.body.contains(text), "{text}: {}", res.body);
     }
-    // No change yet on the active one.
-    assert!(res.body.contains("60% → 60%: no change"), "{}", res.body);
+    // No change yet on the active one, which is Active rather than a
+    // countdown; the others show no score before they start.
+    assert!(res.body.contains("60% · no change"), "{}", res.body);
+    assert!(res.body.contains(">Active<"), "{}", res.body);
+    assert_eq!(res.body.matches("60%").count(), 1, "{}", res.body);
 
     // The next sync: the attackers gain on the active one.
     mount_campaigns(
@@ -167,11 +170,7 @@ async fn sovereignty_timer_end_to_end(db: PgPool) {
     .await;
     sync(&h).await;
     let res = page(&h, &at, &owner).await;
-    assert!(
-        res.body.contains("60% → 55%: attackers gaining"),
-        "{}",
-        res.body
-    );
+    assert!(res.body.contains("55% · attackers gaining"), "{}", res.body);
     // Each sync queues the next, 30 seconds on, once.
     let next: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM core.jobs WHERE job_key = 'sync-next' AND state = 'queued'",

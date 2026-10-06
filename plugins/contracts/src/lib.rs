@@ -902,7 +902,8 @@ fn index_page() -> Result<Page, PageError> {
         Column::text("Type"),
         Column::text("Issued by"),
         Column::text("Location"),
-        Column::numeric("Price"),
+        // A courier contract's is the reward it pays.
+        Column::numeric("Price or reward"),
         Column::numeric("Janice buy"),
         Column::text("Check"),
         Column::text("Status"),

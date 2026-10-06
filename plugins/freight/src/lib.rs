@@ -722,14 +722,12 @@ struct Contract {
     days_to_complete: Option<i64>,
     issued: Option<DateTime<Utc>>,
     expires: Option<DateTime<Utc>>,
-    accepted: Option<DateTime<Utc>>,
-    completed: Option<DateTime<Utc>>,
     title: String,
 }
 
 const CONTRACT_COLUMNS: &str = "contract_id, issuer_id, issuer_corporation_id, acceptor_id, \
      start_location, end_location, status, volume, reward, collateral, days_to_complete, \
-     date_issued, date_expired, date_accepted, date_completed, title";
+     date_issued, date_expired, title";
 
 fn contracts(where_clause: &str, params: &[Db]) -> Result<Vec<Contract>, storage::Error> {
     let rows = storage::query(
@@ -756,9 +754,7 @@ fn contracts(where_clause: &str, params: &[Db]) -> Result<Vec<Contract>, storage
             days_to_complete: r.get(10).and_then(Db::as_integer),
             issued: when(r, 11),
             expires: when(r, 12),
-            accepted: when(r, 13),
-            completed: when(r, 14),
-            title: text(r, 15),
+            title: text(r, 13),
         })
         .collect())
 }
@@ -1507,11 +1503,9 @@ fn contract_row(
         isk(c.collateral),
         m3(c.volume).into(),
         when_value(c.issued),
-        when_value(if c.status == "outstanding" {
-            c.expires
-        } else {
-            c.completed.or(c.accepted)
-        }),
+        // When it expires (or expired), whatever became of it: the column
+        // says Expires, so nothing else goes in it.
+        when_value(c.expires),
     ]
 }
 

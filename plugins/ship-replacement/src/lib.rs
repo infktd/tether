@@ -320,13 +320,15 @@ fn totals(row: &[Db]) -> Totals {
     }
 }
 
-fn total_stats(t: &Totals) -> Vec<Stat> {
+/// The totals' cards; `over` says which fleets they add up ("open
+/// fleets", "every fleet", "this fleet").
+fn total_stats(t: &Totals, over: &str) -> Vec<Stat> {
     vec![
-        Stat::new("Requests", t.requests),
+        Stat::new("Requests", t.requests).caption(format!("on {over}")),
         Stat::new("Pending", t.pending).caption("waiting for a decision"),
         Stat::new("Losses", isk(t.requested)).caption("zKillboard's value"),
         Stat::new("Total ISK Cost", isk(t.cost)).caption("every payout set"),
-        Stat::new("Paid", isk(t.paid)),
+        Stat::new("Paid", isk(t.paid)).caption(format!("on {over}")),
         Stat::new("Outstanding", isk(t.approved - t.paid)).caption("approved, not paid"),
     ]
 }
@@ -413,15 +415,24 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
         ]);
     }
 
-    let mut page = Page::new("Ship Replacement")
-        .description("SRP fleets, and your requests for your losses on them");
+    // Overview is the open fleets; All fleets is every one, completed too.
+    let mut page = if all {
+        Page::new("All fleets")
+            .description("Every SRP fleet, open or completed, and your requests for your losses")
+    } else {
+        Page::new("Ship Replacement")
+            .description("Open SRP fleets, and your requests for your losses on them")
+    };
     // AA's Total ISK Cost, over the fleets listed.
     let sums = query(
         &format!("{TOTALS} WHERE $1 OR fleet_id IN (SELECT id FROM fleets WHERE NOT completed)"),
         &[all.into()],
     )?;
     if let Some(row) = sums.first() {
-        page = page.stats(total_stats(&totals(row)));
+        page = page.stats(total_stats(
+            &totals(row),
+            if all { "every fleet" } else { "open fleets" },
+        ));
     }
     Ok(page.table(table).table(my))
 }
@@ -889,7 +900,7 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
         page = page.text(note);
     }
     if let Some(row) = sums.first() {
-        page = page.stats(total_stats(&totals(row)));
+        page = page.stats(total_stats(&totals(row), "this fleet"));
     }
     Ok(page.card(about).table(table))
 }

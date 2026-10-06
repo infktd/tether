@@ -479,11 +479,13 @@ fn fill_in_affiliations() -> Result<(), JobError> {
     Ok(())
 }
 
-fn name_of(id: i64, fallback: &str) -> Result<String, PageError> {
+/// A name read for the app, or `unknown` in words (never an id) when it
+/// hasn't been yet.
+fn name_of(id: i64, unknown: &str) -> Result<String, PageError> {
     let rows = query("SELECT name FROM names WHERE id = $1", &[id.into()])?;
     Ok(rows
         .first()
-        .map_or_else(|| format!("{fallback} {id}"), |r| text(r, 0)))
+        .map_or_else(|| unknown.to_owned(), |r| text(r, 0)))
 }
 
 // ---- links -----------------------------------------------------------------
@@ -1997,8 +1999,8 @@ fn grouped(
     Ok(pivot(&rows))
 }
 
-const CORPORATION_LABEL: &str = "coalesce(n.name, 'Corporation ' || f.corporation_id::text)";
-const ALLIANCE_LABEL: &str = "coalesce(n.name, 'Alliance ' || f.alliance_id::text)";
+const CORPORATION_LABEL: &str = "coalesce(n.name, 'Unknown corporation')";
+const ALLIANCE_LABEL: &str = "coalesce(n.name, 'Unknown alliance')";
 
 fn year_card(path: &str, year: i32) -> Card {
     let mut card = Card::new("Year").field("Showing", year.to_string());
@@ -2203,7 +2205,7 @@ fn corporation_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageErr
         return Err(PageError::Forbidden);
     }
     let filter = "f.corporation_id = $3";
-    let name = name_of(id, "Corporation")?;
+    let name = name_of(id, "Unknown corporation")?;
     let (stats, months) = scope_summary(filter, id, year)?;
     let pilots = grouped(
         "f.character_id",
@@ -2233,7 +2235,7 @@ fn alliance_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError>
         return Err(PageError::Forbidden);
     }
     let filter = "f.alliance_id = $3";
-    let name = name_of(id, "Alliance")?;
+    let name = name_of(id, "Unknown alliance")?;
     let (stats, months) = scope_summary(filter, id, year)?;
     let corporations = grouped(
         "f.corporation_id",
@@ -2293,7 +2295,7 @@ fn character_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError
             &[id.into()],
         )?
         .first()
-        .map_or_else(|| format!("Character {id}"), |r| text(r, 0)),
+        .map_or_else(|| "Unknown character".to_owned(), |r| text(r, 0)),
     };
     let (stats, months) = scope_summary(filter, id, year)?;
     let fleets = can_create(viewer);

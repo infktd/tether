@@ -2755,8 +2755,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         Table::new(vec![
             Column::text("Corporation"),
             Column::text("Character"),
-            Column::numeric("Structures read"),
-            Column::numeric("Notifications read"),
+            Column::numeric("Structures last read"),
+            Column::numeric("Notifications last read"),
             Column::text("Status"),
             Column::text("Last problem"),
             Column::numeric("Next try"),

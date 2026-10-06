@@ -413,8 +413,8 @@ fn campaigns_page(_viewer: &Viewer) -> Result<Page, PageError> {
         )
         .tab("Active", vec![Section::Table(table(&active, now, empty))])
         .text(
-            "Progress of an active campaign is the defenders' score: the one 30 seconds before, \
-             the trend, and now.",
+            "Progress is the defenders' score once a campaign is active, and which side gained \
+             since 30 seconds before.",
         )
         .refresh(REFRESH))
 }
@@ -435,40 +435,53 @@ fn table(rows: &[&Row], now: DateTime<Utc>, empty: &str) -> Table {
     .empty(empty);
     for row in rows {
         let c = &row.campaign;
-        let name = |name: &str, id: i64| {
+        // A name not read yet: in words, never an id (the host names an
+        // alliance it knows).
+        let place = |name: &str, unknown: &str| {
             if name.is_empty() {
-                id.to_string()
+                unknown.to_owned()
             } else {
                 name.to_owned()
             }
         };
         let defender: Value = match c.defender {
-            Some(id) => alliance(id, name(&row.defender, id)).into(),
+            Some(id) => alliance(id, row.defender.clone()).into(),
             None => "".into(),
         };
-        let progress: Value = match (status(c.start, now), c.score) {
-            (Status::Active, Some(score)) => {
-                let (tone, trend) = match row.previous {
-                    Some(before) if score > before => (Tone::Success, "defenders gaining"),
-                    Some(before) if score < before => (Tone::Danger, "attackers gaining"),
-                    _ => (Tone::Neutral, "no change"),
-                };
-                let before = row.previous.map_or_else(|| "?".to_owned(), percent);
-                badge(format!("{before} → {}: {trend}", percent(score)), tone).into()
-            }
-            (_, Some(score)) => percent(score).into(),
+        let active = status(c.start, now) == Status::Active;
+        // The defenders' score and which way it's going, once the campaign
+        // is on; before, there's no score to show.
+        let progress: Value = match (active, c.score) {
+            (true, Some(score)) => match row.previous {
+                Some(before) if score > before => badge(
+                    format!("{} · defenders gaining", percent(score)),
+                    Tone::Success,
+                )
+                .into(),
+                Some(before) if score < before => badge(
+                    format!("{} · attackers gaining", percent(score)),
+                    Tone::Danger,
+                )
+                .into(),
+                _ => format!("{} · no change", percent(score)).into(),
+            },
             _ => "".into(),
         };
         table = table.row(vec![
-            name(&row.system, c.system).into(),
-            name(&row.constellation, c.constellation).into(),
+            place(&row.system, "Unknown system").into(),
+            place(&row.constellation, "Unknown constellation").into(),
             row.region.clone().into(),
             defender,
             event_name(&c.event_type).into(),
             row.adm
                 .map_or_else(|| "".into(), |adm| format!("{adm:.1}").into()),
             time(rfc3339(c.start)),
-            countdown(rfc3339(c.start)),
+            // Started: under way, not a countdown that reads "done".
+            if active {
+                badge("Active", Tone::Warning).into()
+            } else {
+                countdown(rfc3339(c.start))
+            },
             progress,
         ]);
     }
