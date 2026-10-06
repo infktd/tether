@@ -63,7 +63,7 @@ impl Plugin for MoonMining {
         let segments: Vec<&str> = request.path.split('/').collect();
         match segments.as_slice() {
             [""] => extractions_page(&viewer),
-            ["moons"] => moons::moons_page(&viewer, &moons::Filter::default()),
+            ["moons"] => moons::moons_page(&viewer, &moons::Filter::from(&request)),
             ["moon", id] => moons::moon_page(&viewer, id.parse().map_err(|_| PageError::NotFound)?),
             ["upload"] => moons::upload_page(&viewer, None),
             ["extraction", structure, at] => extraction::page(
@@ -85,10 +85,6 @@ impl Plugin for MoonMining {
             ("settings", "settings") => save_settings(&viewer, &submission),
             ("planner", form) if form.starts_with("cadence_") => {
                 save_cadence(&viewer, form, &submission)
-            }
-            ("moons", "filter") => {
-                let filter = moons::Filter::from(&submission);
-                Ok(SubmitResult::Page(moons::moons_page(&viewer, &filter)?))
             }
             ("upload", "survey") => moons::upload(&viewer, &submission),
             _ => Err(PageError::NotFound),

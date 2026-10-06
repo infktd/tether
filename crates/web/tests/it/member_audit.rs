@@ -767,26 +767,28 @@ async fn member_audit_end_to_end(db: PgPool) {
             .unwrap();
     assert_eq!(roles, 0);
 
-    // Character Finder (the owner holds everything), with its search box.
+    // Character Finder (the owner holds everything), its search the
+    // toolbar's, in the address: its own, by what the table doesn't show
+    // too.
     let finder = page(&h, &format!("/plugins/{ID}/finder?q=chrib"), &owner).await;
     assert_eq!(finder.status, StatusCode::OK, "{}", finder.body);
     assert!(finder.body.contains(&format!("character/{CHRIBBA}")));
-    let searched = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/finder"),
-            "_form=search&q=holding",
-            &owner,
-        ),
-    )
-    .await;
+    assert!(
+        finder.body.contains(r#"name="q" value="chrib""#) && !finder.body.contains("data-instant"),
+        "{}",
+        finder.body
+    );
+    let searched = page(&h, &format!("/plugins/{ID}/finder?q=holding"), &owner).await;
     assert_eq!(searched.status, StatusCode::OK, "{}", searched.body);
     assert!(
         searched.body.contains(&format!("character/{CHRIBBA}")),
         "{}",
         searched.body
     );
-    let none = send(
+    let none = page(&h, &format!("/plugins/{ID}/finder?q=nobody"), &owner).await;
+    assert!(none.body.contains("No characters match."), "{}", none.body);
+    // The search form it had is gone.
+    let res = send(
         &h.app,
         form(
             &format!("/plugins/{ID}/finder"),
@@ -795,7 +797,7 @@ async fn member_audit_end_to_end(db: PgPool) {
         ),
     )
     .await;
-    assert!(none.body.contains("No characters match."), "{}", none.body);
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
 
     // A skill set, and who can use it.
     let bad = send(

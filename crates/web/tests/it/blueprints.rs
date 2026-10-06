@@ -488,9 +488,15 @@ async fn blueprints_end_to_end(db: PgPool) {
     assert!(!library.body.contains("Corp Hangar 2"), "{}", library.body);
     assert!(!library.body.contains("Copying"), "{}", library.body);
     assert!(library.body.contains(">Request<"), "{}", library.body);
-    // A search goes in the address, and its rows' buttons still match.
-    let res = post(&h, &pilot, "", "_form=search&q=Merlin Blue").await;
-    assert_eq!(res.location(), format!("/plugins/{ID}?q=Merlin%20Blue"));
+    // The search is the toolbar's, the app's own, in the address (its rows'
+    // buttons still match).
+    assert!(
+        library
+            .body
+            .contains(r#"placeholder="Search blueprints and owners""#),
+        "{}",
+        library.body
+    );
     let found = page(&h, &format!("/plugins/{ID}?q=Merlin%20Blue"), &pilot).await;
     assert!(found.body.contains("Merlin Blueprint"), "{}", found.body);
     assert!(!found.body.contains("Rifter Blueprint"), "{}", found.body);

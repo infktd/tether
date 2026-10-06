@@ -296,6 +296,36 @@ async fn sync(h: &Harness) -> Vec<String> {
     .unwrap()
 }
 
+/// The app's jobs and its unsent messages, for an assertion's message:
+/// what didn't run or send when a count comes up short.
+async fn backlog(h: &Harness) -> String {
+    let jobs: Vec<String> = sqlx::query_scalar(
+        "SELECT concat_ws(' · ', payload->>'name', state, attempts, last_error, \
+                'runs in ' || to_char(run_at - now(), 'HH24:MI:SS')) FROM core.jobs \
+         WHERE plugin_id = $1 AND state <> 'succeeded' ORDER BY id",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    let unsent: Vec<(String, Option<String>)> = sqlx::query_as(
+        r#"SELECT message, failed FROM "plugin_tether.structures".outbox
+           WHERE sent_at IS NULL ORDER BY id"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    let logs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT level, message FROM core.plugin_logs WHERE plugin_id = $1 \
+         AND level IN ('info', 'warn', 'error') ORDER BY id DESC LIMIT 20",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    format!("jobs not done: {jobs:?}\nunsent: {unsent:?}\nlatest logs: {logs:?}")
+}
+
 async fn discord_messages(h: &Harness) -> Vec<String> {
     h.discord_server
         .received_requests()
@@ -1301,7 +1331,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     // Attacks were sent (the tower, the customs office and the tower's
     // reinforcement from its state); no fuel alert.
     let sent = discord_messages(&h).await;
-    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert_eq!(sent.len(), 3, "{sent:?}\n{}", backlog(&h).await);
     assert_eq!(
         sent[0],
         "Starbase under attack: Home Tower (Caldari Control Tower) at Jita IV - Moon 4 in Jita \
@@ -1407,7 +1437,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     let problems = sync(&h).await;
     assert!(problems.is_empty(), "{problems:?}");
     let sent = discord_messages(&h).await;
-    assert_eq!(sent.len(), 5, "{sent:?}");
+    assert_eq!(sent.len(), 5, "{sent:?}\n{}", backlog(&h).await);
     let fuel = &sent[3..];
     assert!(
         fuel.iter().any(|m| m.starts_with(
@@ -1476,27 +1506,31 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let res = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}"),
-            &format!("_form=filter_tags&tag_{staging}=on"),
-            &owner,
-        ),
-    )
-    .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    assert_eq!(res.location(), format!("/plugins/{ID}/tags/{staging}"));
-    let filtered = page(&h, &format!("/plugins/{ID}/tags/{staging}"), &owner).await;
-    assert_eq!(filtered.status, StatusCode::OK, "{}", filtered.body);
+    // The toolbar's tag filter (any of those chosen), in the address; a
+    // tag's own link (the Tags tab's) shows the same.
+    for uri in [
+        format!("/plugins/{ID}?tag={staging}"),
+        format!("/plugins/{ID}/tags/{staging}"),
+    ] {
+        let filtered = page(&h, &uri, &owner).await;
+        assert_eq!(filtered.status, StatusCode::OK, "{uri}: {}", filtered.body);
+        assert!(
+            filtered.body.contains("Structures tagged Staging"),
+            "{uri}: {}",
+            filtered.body
+        );
+        assert!(filtered.body.contains("Jita - Keep"), "{}", filtered.body);
+        assert!(
+            !filtered.body.contains("Jita - Metenox"),
+            "{uri}: {}",
+            filtered.body
+        );
+    }
+    let filtered = page(&h, &format!("/plugins/{ID}?tag={staging}"), &owner).await;
     assert!(
-        filtered.body.contains("Structures tagged Staging"),
-        "{}",
-        filtered.body
-    );
-    assert!(filtered.body.contains("Jita - Keep"), "{}", filtered.body);
-    assert!(
-        !filtered.body.contains("Jita - Metenox"),
+        filtered.body.contains(&format!(
+            r#"<a href="/plugins/{ID}" aria-label="Take off Tag: Staging">"#
+        )),
         "{}",
         filtered.body
     );

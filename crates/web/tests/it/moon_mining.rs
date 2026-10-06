@@ -738,10 +738,35 @@ async fn surveys_values_moons_and_reports(db: PgPool) {
         "Kimotoro, The Forge",
         "Jita - Drill One",
         "R64",
-        &format!("href=\"/plugins/{ID}/moon/40009081\""),
+        // A moon's name opens its record panel beside the list.
+        &format!("href=\"/plugins/{ID}/moons?moon=40009081\""),
     ] {
         assert!(moons.body.contains(part), "{part}: {}", moons.body);
     }
+    // Its panel: what its page has, in short, and the way there; the
+    // list as it was (its tab and search kept).
+    let panel = page(
+        &h,
+        &format!("/plugins/{ID}/moons?_tab=1&q=moon&moon=40009081"),
+        &owner,
+    )
+    .await;
+    assert_eq!(panel.status, StatusCode::OK, "{}", panel.body);
+    for part in [
+        r#"<aside class="record-panel bk""#,
+        r#"class="record-panel-title">Jita IV - Moon 4</h2>"#,
+        "Moon · R64",
+        "Jita - Drill One",
+        &format!(r#"href="/plugins/{ID}/moon/40009081">Open moon</a>"#),
+        &format!(r#"href="/plugins/{ID}/moons?q=moon&#38;_tab=1" aria-label="Close""#),
+        r#"<tr data-selected aria-current="true">"#,
+    ] {
+        assert!(panel.body.contains(part), "{part}: {}", panel.body);
+    }
+    // One the viewer may not see, or that isn't there, opens nothing.
+    let none = page(&h, &format!("/plugins/{ID}/moons?moon=1"), &owner).await;
+    assert_eq!(none.status, StatusCode::OK, "{}", none.body);
+    assert!(!none.body.contains("record-panel"), "{}", none.body);
     assert!(!moons.body.contains("Jita IV - Moon 6"), "{}", moons.body);
     assert!(has_isk(&moons.body, &moon4), "{moon4}: {}", moons.body);
     // All Moons: surveyed ones too (Sylvite 0.5 × 20,000, a month).
@@ -752,16 +777,9 @@ async fn surveys_values_moons_and_reports(db: PgPool) {
     assert!(mine.body.contains("Jita IV - Moon 6"), "{}", mine.body);
     // Not surveyed by anyone: not the owner's upload.
     assert!(!mine.body.contains("Jita IV - Moon 5"), "{}", mine.body);
-    // A search narrows the tab it's made from.
-    let searched = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/moons?_tab=1"),
-            "_form=filter&q=moon%206&rarity=",
-            &owner,
-        ),
-    )
-    .await;
+    // The toolbar's search, in the address, narrows the tab it's made
+    // from; the app searches its own data (owners it doesn't show too).
+    let searched = page(&h, &format!("/plugins/{ID}/moons?_tab=1&q=moon+6"), &owner).await;
     assert_eq!(searched.status, StatusCode::OK, "{}", searched.body);
     assert!(searched.body.contains("Jita IV - Moon 6"));
     assert!(
@@ -769,17 +787,28 @@ async fn surveys_values_moons_and_reports(db: PgPool) {
         "{}",
         searched.body
     );
-    let r64 = send(
-        &h.app,
-        form(
-            &format!("/plugins/{ID}/moons?_tab=1"),
-            "_form=filter&q=&rarity=64",
-            &owner,
-        ),
-    )
-    .await;
+    assert!(
+        searched
+            .body
+            .contains(r#"placeholder="Search moons, systems, regions, refineries, owners""#)
+            && !searched.body.contains("data-instant"),
+        "{}",
+        searched.body
+    );
+    let r64 = page(&h, &format!("/plugins/{ID}/moons?_tab=1&rarity=64"), &owner).await;
     assert!(r64.body.contains("Jita IV - Moon 4"), "{}", r64.body);
     assert!(!r64.body.contains("Jita IV - Moon 6"), "{}", r64.body);
+    // The filter applied, as a chip; the tab kept when it's taken off.
+    assert!(
+        r64.body.contains(&format!(
+            r#"<a href="/plugins/{ID}/moons?_tab=1" aria-label="Take off Rarity: R64">"#
+        )),
+        "{}",
+        r64.body
+    );
+    // Any other rarity is none.
+    let any = page(&h, &format!("/plugins/{ID}/moons?_tab=1&rarity=5"), &owner).await;
+    assert!(any.body.contains("Jita IV - Moon 6"), "{}", any.body);
 
     // A moon's details: composition with icons, value, the last survey.
     let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
@@ -935,6 +964,25 @@ async fn surveys_values_moons_and_reports(db: PgPool) {
     assert!(theirs.body.contains("Jita IV - Moon 5"), "{}", theirs.body);
     assert!(!theirs.body.contains("Jita - Drill Two"), "{}", theirs.body);
     assert!(!theirs.body.contains("Jita IV - Moon 4"), "{}", theirs.body);
+    // Nor does their search find moons by refinery or owner: that would
+    // tell them which moons are ours.
+    assert!(
+        theirs
+            .body
+            .contains(r#"placeholder="Search moons, systems, regions""#),
+        "{}",
+        theirs.body
+    );
+    for q in ["Drill+Two", "Chribba"] {
+        let found = page(&h, &format!("/plugins/{ID}/moons?_tab=0&q={q}"), &blue).await;
+        assert!(
+            !found.body.contains("Jita IV - Moon 5"),
+            "{q}: {}",
+            found.body
+        );
+    }
+    let found = page(&h, &format!("/plugins/{ID}/moons?q=Moon+5"), &blue).await;
+    assert!(found.body.contains("Jita IV - Moon 5"), "{}", found.body);
     assert_eq!(
         page(&h, &format!("/plugins/{ID}/moon/40009084"), &blue)
             .await

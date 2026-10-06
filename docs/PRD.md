@@ -292,7 +292,7 @@ Phase 2, the app shell:
 
 Phase 3, lists and settings:
 
-- [ ] The toolbar on every list (the search in the address, filter chips, view chips) in place of search cards and filter tabs; row names as links; the record panel for a selected row
+- [x] The toolbar on every list (the search in the address, filter chips, view chips) in place of search cards and filter tabs; row names as links; the record panel for a selected row. Tether draws it on every app page with a list: its own search among the rows a page shows (from 8 rows; every page of them), or the app's search of its own data (`toolbar`), the app's filters (one value or several, as tags) and its tabs. Moon Mining, Member Audit's Finder, HR, Blueprints, Fittings and Structures' tag filter moved onto it; row names open their records (entities can link: a pilot's or a corporation's name with its picture); Moon Mining's Moons opens a moon's record panel (the mock-up's). Other apps adopt panels as their lists call for one
 - [ ] Settings in grouped sections with one save bar, CHANGED marks and a warning before leaving unsaved changes
 
 Phase 4, core, Administration and phone:

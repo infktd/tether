@@ -43,7 +43,7 @@ impl Plugin for Fittings {
         let parts: Vec<&str> = request.path.split('/').collect();
         match parts.as_slice() {
             [""] => doctrines::list(&access),
-            ["fits"] => fits::list(&access, query_value(&request, "q")),
+            ["fits"] => fits::list(&access, request.search()),
             ["fit", id] => fits::page(&access, &viewer, number(id)?, None),
             ["doctrine", id] => doctrines::page(&access, number(id)?),
             ["categories"] => categories::list(&access),
@@ -68,12 +68,6 @@ impl Plugin for Fittings {
         let path = submission.request.path.clone();
         let parts: Vec<&str> = path.split('/').collect();
         let form = submission.form.as_str();
-        if let (["fits"], "search") = (parts.as_slice(), form) {
-            return Ok(SubmitResult::Page(fits::list(
-                &access,
-                submission.value("q"),
-            )?));
-        }
         // A pilot's own: saving a fit to their character, reading its skills.
         if let (["fit", id], "save_to_eve" | "read_skills") = (parts.as_slice(), form) {
             let id = number(id)?;
@@ -264,14 +258,6 @@ fn number(text: &str) -> Result<i64, PageError> {
         .ok()
         .filter(|n| *n > 0)
         .ok_or(PageError::NotFound)
-}
-
-fn query_value<'a>(request: &'a Request, key: &str) -> &'a str {
-    request
-        .query
-        .iter()
-        .find(|(k, _)| k == key)
-        .map_or("", |(_, v)| v.as_str())
 }
 
 /// At most `max` bytes of `text`, cut at a character, with "…" if cut

@@ -4,7 +4,7 @@ use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
     Column, Field, Form, Page, PageError, Section, Submission, SubmitResult, Table, Tone, badge,
-    character, link, log,
+    character, log,
 };
 
 use crate::access::Access;
@@ -296,7 +296,11 @@ pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
                 Table::new(vec![Column::text("Character")]).empty("Nobody yet."),
                 able.iter().map(|(id, n)| {
                     if access.may_open(*id) {
-                        vec![link(n.clone(), format!("character/{id}")).into()]
+                        vec![
+                            character(*id, n.clone())
+                                .link(format!("character/{id}"))
+                                .into(),
+                        ]
                     } else {
                         vec![character(*id, n.clone()).into()]
                     }

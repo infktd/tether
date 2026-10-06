@@ -26,8 +26,8 @@ use tether_plugin_sdk::notify::{self, Level};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
     CardGrid, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, actions, badge, character, corporation, item_type,
-    log, time,
+    SubmitResult, Table, Tone, Toolbar, Value, action, actions, badge, character, corporation,
+    item_type, log, time,
 };
 
 const SYNC_BLUEPRINTS: &str = "sync_blueprints";
@@ -44,15 +44,9 @@ impl Plugin for Blueprints {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let access = Access::of(&viewer);
-        let q = request
-            .query
-            .iter()
-            .find(|(k, _)| k == "q")
-            .map(|(_, v)| v.clone())
-            .unwrap_or_default();
         let parts: Vec<&str> = request.path.split('/').collect();
         match parts.as_slice() {
-            [""] => library(&access, &q),
+            [""] => library(&access, request.search()),
             ["requests"] => my_requests(&access),
             ["open"] => open_requests(&access),
             ["owners"] => owners_page(&access),
@@ -67,12 +61,6 @@ impl Plugin for Blueprints {
         let path = submission.request.path.clone();
         let parts: Vec<&str> = path.split('/').collect();
         match (parts.as_slice(), submission.form.as_str()) {
-            // The search goes in the address, so it stays on a reload and
-            // its Request buttons match when posted.
-            ([""], "search") => Ok(SubmitResult::Redirect(match submission.value("q").trim() {
-                "" => String::new(),
-                q => format!("?q={}", encode(q)),
-            })),
             ([""], "request") => request_copy(
                 &access,
                 number(submission.value("item"))?,
@@ -329,32 +317,6 @@ const WITHIN: &str = "(SELECT jsonb_agg(jsonb_build_array(w ->> 0, w ->> 1, coal
      FROM jsonb_array_elements(coalesce(b.within, '[]')) w \
      LEFT JOIN names wn ON wn.id = (w ->> 0)::bigint)::text";
 
-/// The longest search the address carries, encoded (Tether's redirect
-/// query is at most 200 bytes, `q=` included).
-const MAX_ENCODED_SEARCH: usize = 190;
-
-/// A search as the address carries it: percent-encoded, cut to whole
-/// characters that fit.
-fn encode(text: &str) -> String {
-    let mut out = String::new();
-    for c in text.chars() {
-        let mut bytes = [0u8; 4];
-        let mut piece = String::new();
-        for b in c.encode_utf8(&mut bytes).bytes() {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-                piece.push(char::from(b));
-            } else {
-                piece.push_str(&format!("%{b:02X}"));
-            }
-        }
-        if out.len() + piece.len() > MAX_ENCODED_SEARCH {
-            break;
-        }
-        out.push_str(&piece);
-    }
-    out
-}
-
 /// The library: identical blueprints (type, owner, ME, TE, runs, place)
 /// as one row with their count, each with a Request button.
 fn library(access: &Access, q: &str) -> Result<Page, PageError> {
@@ -468,13 +430,9 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
                 .map_or_else(|| Value::from("not yet"), time),
         ),
     ])
-    .form(
-        Form::new("search", "Search").field(
-            Field::text("q", "Search", 100)
-                .value(q)
-                .help("Part of a blueprint's or an owner's name."),
-        ),
-    );
+    // Its own search (Tether's toolbar, in the address), by a blueprint's
+    // or an owner's name, among more than it lists.
+    .toolbar(Toolbar::new().search("Search blueprints and owners"));
     // Which owners failed, and why, is for those who set the app up: it
     // names owners viewers elsewhere may not see.
     if access.manage
@@ -1109,14 +1067,6 @@ mod tests {
             "Amarr VIII › Hangar"
         );
         assert_eq!(place_text(None, None, "Undefined"), "Not read yet");
-    }
-
-    #[test]
-    fn a_search_fits_the_address() {
-        assert_eq!(encode("Merlin Blue"), "Merlin%20Blue");
-        let long = encode(&"Ж".repeat(100));
-        assert!(long.len() <= MAX_ENCODED_SEARCH, "{}", long.len());
-        assert!(long.ends_with("%96"), "{long}");
     }
 
     #[test]

@@ -6,7 +6,7 @@
 id = "tether.fittings"
 name = "Fittings"
 icon = "hexagon"
-version = "0.2.5"
+version = "0.2.6"
 host_api = "1"
 description = "Doctrines and ship fits: paste a fit as EFT, see it by slot with its required skills, copy it back into EVE, and group fits into doctrines."
 

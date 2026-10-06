@@ -42,8 +42,8 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat, Submission, SubmitResult,
-    Table, Tone, Value, action, alliance, badge, character, corporation, countdown, defenses,
-    item_type, link, log, time,
+    Table, Tone, Toolbar, Value, action, alliance, badge, character, corporation, countdown,
+    defenses, item_type, link, log, time,
 };
 
 use crate::notification::{Category, Context, Fields};
@@ -136,7 +136,22 @@ fn with_chips(page: Page, path: &str) -> Page {
 fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
     let path = request.path.as_str();
     if path.is_empty() {
-        return list_page(viewer, Filter::default());
+        // The toolbar's tag filter (any of them), in the address.
+        let tags: Vec<i64> = request
+            .params("tag")
+            .iter()
+            .filter_map(|id| id.parse::<i32>().ok())
+            .filter(|id| *id > 0)
+            .map(i64::from)
+            .take(30)
+            .collect();
+        return list_page(
+            viewer,
+            Filter {
+                owner: None,
+                tags: (!tags.is_empty()).then_some(tags),
+            },
+        );
     }
     if let Some(corp) = path.strip_prefix("owner/") {
         let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
@@ -179,9 +194,6 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
     // Every form's page checks the viewer may open it (the host), and
     // managers' forms need manage (the host, for settings pages; here,
     // for the structure page's tags).
-    if submission.form == "filter_tags" {
-        return Ok(tags::submit_filter(submission));
-    }
     if let Some(id) = path.strip_prefix("structure/") {
         let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
         if submission.form != "structure_tags"
@@ -2471,16 +2483,22 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
                 orbitals.rows.iter().map(|r| orbital_row(r)).collect(),
             ))],
         )
-        .tab(
-            "Tags",
-            vec![
-                Section::Form(tags::filter_form(
-                    &all_tags,
-                    filter.tags.as_deref().unwrap_or_default(),
-                )),
-                Section::Table(tags::tag_table(&all_tags)),
-            ],
+        .tab("Tags", vec![Section::Table(tags::tag_table(&all_tags))]);
+    // The tag filter (aa-structures' "Filter by tag"): any of those
+    // chosen, on the whole list (an owner's page has its own owner).
+    if filter.owner.is_none() && !all_tags.is_empty() {
+        page = page.toolbar(
+            Toolbar::new().filter_any(
+                "tag",
+                "Tag",
+                all_tags
+                    .iter()
+                    .take(100)
+                    .map(|t| (t.id.to_string(), t.name.clone()))
+                    .collect(),
+            ),
         );
+    }
     if filter.owner.is_none() && filter.tags.is_none() {
         page = page.tab(
             "Owners",

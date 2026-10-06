@@ -83,10 +83,6 @@ impl Plugin for MemberAudit {
             ("skill-sets", "delete_set") if viewer.can("manage") => {
                 sets::delete_set(&viewer, submission.value("set"))
             }
-            ("finder", "search") if access.finder => Ok(SubmitResult::Page(pages::finder_page(
-                &access,
-                submission.value("q"),
-            )?)),
             (_, "update_character") => sheet::update_now(&access, &submission),
             (_, "share_character") => sheet::share(&access, &submission, true),
             (_, "unshare_character") => sheet::share(&access, &submission, false),

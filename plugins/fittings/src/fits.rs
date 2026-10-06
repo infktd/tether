@@ -7,7 +7,8 @@ use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, CardGrid, CodeBlock, Column, Field, Form, Page, PageError, Profile, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, badge, character, item_type, link, log, time,
+    SubmitResult, Table, Tone, Toolbar, Value, action, badge, character, item_type, link, log,
+    time,
 };
 
 use crate::eft::{self, Problem, Slot};
@@ -283,13 +284,9 @@ pub(crate) fn list(access: &Access, q: &str) -> Result<Page, PageError> {
     Ok(Page::new("All fits")
         .description("Every fit, by hull. Open one to copy it into EVE.")
         .stats(vec![Stat::new("Fits", total)])
-        .form(
-            Form::new("search", "Search").field(
-                Field::text("q", "Search", 100)
-                    .value(q)
-                    .help("Part of a fit's name, hull, role, doctrine or category."),
-            ),
-        )
+        // Its own search (Tether's toolbar, in the address): by doctrine and
+        // category too, which the table doesn't show.
+        .toolbar(Toolbar::new().search("Search fits, hulls, roles, doctrines, categories"))
         .table(table))
 }
 

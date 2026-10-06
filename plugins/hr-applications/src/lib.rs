@@ -28,8 +28,8 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat,
-    Submission, SubmitResult, Table, Tone, Value, action, actions, alliance, badge, character,
-    corporation, link, log, time,
+    Submission, SubmitResult, Table, Tone, Toolbar, Value, action, actions, alliance, badge,
+    character, corporation, link, log, time,
 };
 
 /// The host's fields per form; one is the applicant's consent.
@@ -64,7 +64,7 @@ impl Plugin for HrApplications {
             ["create"] => create_page(&viewer),
             ["apply", form] => apply_page(&viewer, id(form)?, None),
             ["view", app] => personal_view(&viewer, id(app)?),
-            ["review"] => review_page(&viewer, None),
+            ["review"] => review_page(&viewer, Some(request.search())),
             ["review", app] => review_view(&viewer, id(app)?, None),
             ["forms"] => forms_page(&viewer, None),
             ["forms", form] => form_page(id(form)?, None),
@@ -94,10 +94,6 @@ impl Plugin for HrApplications {
             // Delete, from the application's row or its page.
             ([""], "delete") => delete_own(&viewer, id(submission.value("application"))?),
             (["view", app], "delete") => delete_own(&viewer, id(app)?),
-            (["review"], "search") => Ok(SubmitResult::Page(review_page(
-                &viewer,
-                Some(submission.value("q").trim()),
-            )?)),
             // A queue row's buttons.
             (["review"], "claim" | "decide" | "delete") => review_action(
                 &viewer,
@@ -826,14 +822,9 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
             Stat::new("Yours", count(yours)).caption("you're reviewing"),
             Stat::new("Reviewed", count(reviewed.len())),
         ]);
-    let mut search_field = Field::text("q", "Character name", 100)
-        .required()
-        .help("Any of the applicant's characters, or part of a name.");
-    if let Some(q) = &search {
-        page = page.text(format!("Applications with a character named like \"{q}\"."));
-        search_field = search_field.value(q.clone());
-    }
-    page = page.form(Form::new("search", "Search applications").field(search_field));
+    // Its own search, by any of the applicant's characters (the table
+    // shows the main alone).
+    page = page.toolbar(Toolbar::new().search("Search applicants' characters"));
     Ok(page
         .tab(
             "Pending",
@@ -983,7 +974,7 @@ fn review_action(
     };
     let note = |text: &str| {
         Ok(SubmitResult::Page(if from_list {
-            review_page(viewer, None)?.text(text)
+            review_page(viewer, Some(submission.request.search()))?.text(text)
         } else {
             review_view(viewer, app, Some(text))?
         }))

@@ -187,12 +187,27 @@ fn name(id: i64) -> Result<String, PageError> {
 }
 
 fn entity(kind: &str, id: i64, name: String) -> Value {
-    match kind {
-        "character" => character(id, name).into(),
-        "corporation" => corporation(id, name).into(),
-        "alliance" => alliance(id, name).into(),
-        "faction" => faction(id, name).into(),
-        _ => name.into(),
+    linked(kind, id, name, None)
+}
+
+/// An entity whose name opens one of the app's pages about it (a row's
+/// name opening its record).
+fn linked(kind: &str, id: i64, name: String, path: Option<String>) -> Value {
+    let picture = match kind {
+        "character" => character(id, name),
+        "corporation" => corporation(id, name),
+        "alliance" => alliance(id, name),
+        "faction" => faction(id, name),
+        _ => {
+            return match path {
+                Some(path) => link(name, path).into(),
+                None => name.into(),
+            };
+        }
+    };
+    match path {
+        Some(path) => picture.link(path).into(),
+        None => picture.into(),
     }
 }
 
@@ -435,7 +450,7 @@ fn index_page(viewer: &Viewer) -> Result<Page, PageError> {
             text(r, 2)
         };
         table = table.row(vec![
-            link(shown, format!("{kind}/{id}")).into(),
+            linked(&kind, id, shown, Some(format!("{kind}/{id}"))),
             word(&kind).into(),
             int(r, 5).into(),
             when(r, 3).map_or_else(|| "".into(), |t| time(rfc3339(t))),
@@ -480,9 +495,6 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
     if links {
         columns.push(Column::numeric("Server links"));
     }
-    if notes || links {
-        columns.push(Column::text(""));
-    }
     let mut table = Table::new(columns)
         .title("Contacts")
         .empty("No contacts, or not read yet.");
@@ -494,8 +506,14 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
         } else {
             text(r, 3)
         };
+        // The contact's name opens its notes and server links.
         let mut row: Vec<Value> = vec![
-            entity(&kind_of_contact, contact, shown),
+            linked(
+                &kind_of_contact,
+                contact,
+                shown,
+                (notes || links).then(|| format!("{kind}/{id}/contact/{contact}")),
+            ),
             word_of_contact(&kind_of_contact).into(),
             standing(float(r, 2)),
             text(r, 5).into(),
@@ -509,9 +527,6 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
         }
         if links {
             row.push(int(r, 6).into());
-        }
-        if notes || links {
-            row.push(link("Open", format!("{kind}/{id}/contact/{contact}")).into());
         }
         table = table.row(row);
     }

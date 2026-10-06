@@ -606,8 +606,15 @@ async fn hr_applications_end_to_end(db: PgPool) {
             .body
             .contains("Applications to your main&#39;s corporation")
     );
-    let found = post(&h, &owner, "review", "_form=search&q=GIGX").await;
+    // The toolbar's search, the app's own: by any of the applicant's
+    // characters, in the address.
+    let found = open(&h, &owner, "review?q=GIGX").await;
     assert_eq!(found.status, StatusCode::OK, "{}", found.body);
+    assert!(
+        found.body.contains(r#"name="q" value="GIGX""#),
+        "{}",
+        found.body
+    );
     assert!(found.body.contains(&format!("review/{blue_owner_app}")));
     assert!(!found.body.contains(&format!("review/{pilot_app}")));
     assert!(

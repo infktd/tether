@@ -162,36 +162,6 @@ pub fn parse_filter(path: &str) -> Option<Vec<i64>> {
     (!ids.is_empty() && ids.len() <= 30).then_some(ids)
 }
 
-/// The filter form on the list: a checkbox per tag.
-pub fn filter_form(tags: &[Tag], selected: &[i64]) -> Form {
-    let mut form = Form::new("filter_tags", "Filter")
-        .title("Filter by tag")
-        .description("Structures with any of the tags ticked. Tick none to see every structure.");
-    for tag in tags.iter().take(30) {
-        form = form.field(Field::checkbox(
-            format!("tag_{}", tag.id),
-            tag.name.clone(),
-            selected.contains(&tag.id),
-        ));
-    }
-    form
-}
-
-/// Where the filter form goes: the list filtered by the ticked tags.
-pub fn submit_filter(submission: &Submission) -> SubmitResult {
-    let tags = all().unwrap_or_default();
-    let ticked: Vec<String> = tags
-        .iter()
-        .filter(|t| submission.checked(&format!("tag_{}", t.id)))
-        .map(|t| t.id.to_string())
-        .collect();
-    if ticked.is_empty() {
-        SubmitResult::Redirect("".into())
-    } else {
-        SubmitResult::Redirect(format!("tags/{}", ticked.join("-")))
-    }
-}
-
 /// The Tags tab: each tag with its structures, linking to the filter.
 pub fn tag_table(tags: &[Tag]) -> Table {
     with_rows(

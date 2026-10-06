@@ -8,8 +8,8 @@ use tether_plugin_sdk::esi;
 use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::Value as Db;
 use tether_plugin_sdk::{
-    CardGrid, Column, Field, Form, Page, PageError, Profile, Request, Stat, Table, Tone, Value,
-    alliance, badge, character, corporation, faction, isk, item_type, link, progress,
+    CardGrid, Column, Page, PageError, Profile, Request, Stat, Table, Tone, Toolbar, Value,
+    alliance, badge, character, corporation, faction, isk, item_type, progress,
 };
 
 use crate::access::Access;
@@ -247,17 +247,13 @@ pub(crate) fn my_characters(viewer: &Viewer) -> Result<Page, PageError> {
 
 /// The Character Finder: the characters in the viewer's scope, searched by
 /// character, corporation or alliance name.
+/// Character Finder: its search is the toolbar's, in the address, and
+/// finds by what the table doesn't show too (a main's name).
 pub(crate) fn finder(access: &Access, request: &Request) -> Result<Page, PageError> {
-    let q = request
-        .query
-        .iter()
-        .find(|(k, _)| k == "q")
-        .map(|(_, v)| v.as_str())
-        .unwrap_or_default();
-    finder_page(access, q)
+    finder_page(access, request.search())
 }
 
-pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
+fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
     if !access.finder {
         return Err(PageError::NotFound);
     }
@@ -343,8 +339,12 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
                 ),
             };
             vec![
+                // The name opens the character's sheet, for those who
+                // may open it.
                 if access.may_open(id) {
-                    link(text(r, 1), format!("character/{id}")).into()
+                    character(id, text(r, 1))
+                        .link(format!("character/{id}"))
+                        .into()
                 } else {
                     character(id, text(r, 1)).into()
                 },
@@ -384,13 +384,7 @@ pub(crate) fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
             Stat::new("Characters", total.first().map_or(0, |r| int(r, 0)))
                 .caption("in your scope"),
         ])
-        .form(
-            Form::new("search", "Search").field(
-                Field::text("q", "Character, corporation, alliance or main", 100)
-                    .value(q.clone())
-                    .help("Part of a name is enough."),
-            ),
-        )
+        .toolbar(Toolbar::new().search("Search characters, corporations, alliances, mains"))
         .table(table))
 }
 
