@@ -10919,6 +10919,16 @@
     opacity: 0.35;
   }
 }
+@keyframes tether-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
 @keyframes breathe {
   50% {
     opacity: 0.6;
@@ -10927,6 +10937,18 @@
 @media (prefers-reduced-motion: no-preference) {
   main > * {
     animation: tether-enter 180ms cubic-bezier(0.2, 0, 0, 1) backwards;
+  }
+  main {
+    view-transition-name: page;
+  }
+  ::view-transition-old(page) {
+    animation: tether-fade-out 90ms ease-out both;
+  }
+  ::view-transition-new(page) {
+    animation: none;
+  }
+  ::view-transition-group(page) {
+    animation-duration: 0s;
   }
   html[data-stay] main > * {
     animation-duration: 0s;

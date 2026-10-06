@@ -6,9 +6,9 @@
 // the page reads fine without it. Nothing here animates: values change in
 // place. Every instant comes from an attribute the host wrote.
 (() => {
-  // Pages are never kept in the browser (htmx-config's historyCacheSize is
-  // 0: Back asks the server, which checks the session). A cache an older
-  // Tether left behind goes.
+  // Pages are never kept in the browser's storage (htmx-config's
+  // historyCacheSize is 0; Back and Forward use the tab's memory, below).
+  // A cache an older Tether left behind goes.
   try {
     localStorage.removeItem("htmx-history-cache");
   } catch (_) {}
@@ -76,18 +76,121 @@
       return false;
     }
   };
+  // Moving to another page cross-fades it (DESIGN.md, Motion): the
+  // browser's view transition, which htmx runs where the browser has one.
+  // The sidebar keeps its scroll position across every page change.
+  // A transition skipped (a second click before the first finished) still
+  // swaps the page; only its animation is dropped, so that isn't an error.
+  if (document.startViewTransition) {
+    const start = document.startViewTransition.bind(document);
+    document.startViewTransition = (update) => {
+      const transition = start(update);
+      transition.ready.catch(() => {});
+      transition.finished.catch(() => {});
+      return transition;
+    };
+  }
+  const sidebarNav = () => document.querySelector(".app-sidebar nav");
+  let sidebarTop = null;
+  const keepSidebar = () => {
+    sidebarTop = sidebarNav()?.scrollTop ?? null;
+  };
+  const putSidebar = () => {
+    const nav = sidebarNav();
+    if (nav && sidebarTop !== null) nav.scrollTop = sidebarTop;
+    sidebarTop = null;
+  };
   document.addEventListener("htmx:beforeSwap", (event) => {
     const detail = event.detail;
     if (detail.target !== document.body) return;
     const request = detail.requestConfig || {};
     const path = detail.pathInfo && detail.pathInfo.requestPath;
-    if (request.boosted && request.verb === "get" && !detail.swapOverride && samePage(path)) {
-      detail.swapOverride = "innerHTML show:none";
+    if (request.boosted && request.verb === "get" && !detail.swapOverride) {
+      // A hidden tab can't run a view transition (the browser refuses it).
+      const transition = document.hidden ? "" : " transition:true";
+      detail.swapOverride = samePage(path) ? "innerHTML show:none" : "innerHTML show:window:top" + transition;
     }
     if (/show:none/.test(detail.swapOverride || "")) root.dataset.stay = "";
+    keepSidebar();
+  });
+  document.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target === document.body) putSidebar();
   });
   document.addEventListener("htmx:afterSettle", (event) => {
     if (event.detail.target !== document.body || !("stay" in root.dataset)) return;
+    setTimeout(() => {
+      delete root.dataset.stay;
+    }, 300);
+  });
+
+  // Back and Forward (DESIGN.md, Motion): the tab keeps the pages it has
+  // shown in its memory, so going back shows one at once, where it was
+  // scrolled to, without the arrival motion; one kept for more than two
+  // minutes is shown at once and fetched again behind it. htmx's own
+  // history cache, which would write pages to the browser's storage, stays
+  // off: nothing here is written anywhere, and closing the tab or logging
+  // out (a full navigation) forgets it all. Audited pages are never kept
+  // (htmx doesn't offer pages marked hx-history="false").
+  const FRESH_FOR = 120000;
+  const KEEP = 12;
+  const memory = new Map();
+  // Where each page was scrolled to, kept even after its page is let go,
+  // and always put back (at once, not smoothly): the browser's own restore
+  // knows only positions from before htmx swapped the page.
+  const scrolls = new Map();
+  const scrollBack = (path) => {
+    window.scrollTo({ top: scrolls.get(path) ?? 0, behavior: "instant" });
+  };
+  const keepable = (elt) => {
+    // A filter box keeps its words with the rows they hid.
+    for (const input of elt.querySelectorAll(".table-filter input")) input.setAttribute("value", input.value);
+    const copy = elt.cloneNode(true);
+    const transient = ["htmx-request", "htmx-settling", "htmx-swapping", "htmx-added"];
+    for (const el of copy.querySelectorAll(transient.map((c) => "." + c).join(","))) el.classList.remove(...transient);
+    for (const el of copy.querySelectorAll("[data-disabled-by-htmx]")) {
+      el.removeAttribute("disabled");
+      el.removeAttribute("data-disabled-by-htmx");
+    }
+    for (const dialog of copy.querySelectorAll("dialog[open]")) dialog.removeAttribute("open");
+    return copy.innerHTML;
+  };
+  document.addEventListener("htmx:beforeHistorySave", (event) => {
+    const { path, historyElt } = event.detail;
+    memory.delete(path);
+    memory.set(path, { content: keepable(historyElt), title: document.title, at: Date.now() });
+    scrolls.set(path, window.scrollY);
+    while (memory.size > KEEP) memory.delete(memory.keys().next().value);
+  });
+  document.addEventListener("htmx:historyCacheMiss", (event) => {
+    root.dataset.stay = "";
+    keepSidebar();
+    const page = memory.get(event.detail.path);
+    if (!page || !window.htmx) return;
+    window.htmx.swap(
+      event.detail.historyElt,
+      page.content,
+      { swapStyle: "innerHTML", swapDelay: 0, settleDelay: 0 },
+      { contextElement: event.detail.historyElt, title: page.title },
+    );
+    putSidebar();
+    scrollBack(event.detail.path);
+    if (Date.now() - page.at >= FRESH_FOR) return;
+    // Recent enough: nothing to fetch. htmx is told which page is shown,
+    // as its own restore would, or it would keep the next one under the
+    // wrong address; without session storage it fetches the page instead.
+    try {
+      sessionStorage.setItem("htmx-current-path-for-history", event.detail.path);
+    } catch (_) {
+      return;
+    }
+    event.preventDefault();
+    setTimeout(() => {
+      delete root.dataset.stay;
+    }, 300);
+  });
+  document.addEventListener("htmx:historyRestore", (event) => {
+    putSidebar();
+    scrollBack(event.detail.path);
     setTimeout(() => {
       delete root.dataset.stay;
     }, 300);

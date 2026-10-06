@@ -428,6 +428,13 @@ async fn security_headers_on_pages_errors_and_api(db: PgPool) {
     }
     let login = send(&h.app, get("/login", &[])).await.body;
     assert!(login.contains(r#"<meta name="robots" content="noindex, nofollow, noarchive">"#));
+    // Pages never go into the browser's storage (htmx's history cache is
+    // off; Back and Forward use the tab's memory, assets/live.js), and
+    // Back never reloads the whole page.
+    assert!(
+        login.contains(r#""historyCacheSize": 0, "refreshOnHistoryMiss": false"#),
+        "{login}"
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
