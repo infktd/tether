@@ -273,7 +273,17 @@ pub fn timeline(plugin: &str, t: &Timeline, now: DateTime<Utc>) -> TimelineView 
                         planned: item.planned,
                         href: item.link.as_deref().map(|p| page_href(plugin, p)),
                         when: format!("{} EVE", start.format("%a %H:%M")),
-                        left_text: super::plugin_pages::countdown_text(seconds),
+                        left_text: match end {
+                            // A stretch under way, or over: its times,
+                            // not "done".
+                            Some(end) if start <= now && end > now => {
+                                format!("since {}", start.format("%H:%M"))
+                            }
+                            Some(end) if start <= now => {
+                                format!("{}–{}", start.format("%H:%M"), end.format("%H:%M"))
+                            }
+                            _ => super::plugin_pages::countdown_text(seconds),
+                        },
                     })
                 })
                 .collect(),
@@ -401,5 +411,40 @@ mod tests {
         assert_eq!(item.width.as_deref(), Some("tl-w50"));
         assert_eq!(item.tone, "signal");
         assert_eq!(item.href.as_deref(), Some("/plugins/acme.ops/op/1"));
+        assert_eq!(item.left_text, "T− 12h 00m");
+    }
+
+    #[test]
+    fn a_stretch_that_started_shows_its_times() {
+        let now = utc("2026-10-06T12:00:00Z").unwrap();
+        let bar = |at: &str, until: &str| LaneItem {
+            label: "Degraded".to_owned(),
+            at: at.to_owned(),
+            until: Some(until.to_owned()),
+            tone: Tone::Warning,
+            planned: false,
+            link: None,
+        };
+        let t = Timeline {
+            title: None,
+            from: "2026-10-05T12:00:00Z".to_owned(),
+            to: "2026-10-06T12:00:00Z".to_owned(),
+            lanes: vec![Lane {
+                label: "Markets".to_owned(),
+                caption: None,
+                items: vec![
+                    bar("2026-10-06T02:10:00Z", "2026-10-06T03:40:00Z"),
+                    bar("2026-10-06T11:20:00Z", "2026-10-06T13:00:00Z"),
+                ],
+            }],
+            windows: Vec::new(),
+        };
+        let v = timeline("acme.status", &t, now);
+        let texts: Vec<&str> = v.lanes[0]
+            .items
+            .iter()
+            .map(|i| i.left_text.as_str())
+            .collect();
+        assert_eq!(texts, vec!["02:10–03:40", "since 11:20"]);
     }
 }

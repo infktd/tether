@@ -1676,12 +1676,18 @@ fn shows_others(page: &Page, viewer: &Viewer) -> bool {
 }
 
 /// An entity an app knows only by its id so far (its name not read yet),
-/// which it names with the id itself.
+/// which it names with nothing, the id itself, or a stand-in of its kind
+/// and the id ("Corporation 98000001").
 fn unnamed(e: &Entity) -> bool {
     let name = e.name.trim();
+    let id = e.id.to_string();
+    let stand_in = name
+        .strip_suffix(id.as_str())
+        .map(str::trim_end)
+        .is_some_and(|word| matches!(word, "Character" | "Corporation" | "Alliance" | "Faction"));
     // Tether's names cache holds characters, corporations, alliances and
     // factions: never an item's.
-    !matches!(e.kind, EntityKind::Type) && e.id > 0 && (name.is_empty() || name == e.id.to_string())
+    !matches!(e.kind, EntityKind::Type) && e.id > 0 && (name.is_empty() || name == id || stand_in)
 }
 
 /// Names for entities an app doesn't know the name of yet (DESIGN.md: no
@@ -2432,6 +2438,25 @@ pub async fn download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stand_in_names_count_as_unnamed() {
+        let e = |kind, id, name: &str| Entity {
+            kind,
+            id,
+            name: name.to_owned(),
+        };
+        let corp = EntityKind::Corporation;
+        assert!(unnamed(&e(corp, 98_000_001, "")));
+        assert!(unnamed(&e(corp, 98_000_001, "98000001")));
+        assert!(unnamed(&e(corp, 98_000_001, "Corporation 98000001")));
+        assert!(unnamed(&e(EntityKind::Character, 9, "Character 9")));
+        assert!(!unnamed(&e(corp, 98_000_001, "Acme Corp")));
+        // A real name that merely ends in a number.
+        assert!(!unnamed(&e(corp, 7, "Squadron 7")));
+        // Items aren't in Tether's names cache.
+        assert!(!unnamed(&e(EntityKind::Type, 34, "")));
+    }
 
     fn table(title: &str, columns: &[&str]) -> SectionView {
         SectionView::Table(TableView {
