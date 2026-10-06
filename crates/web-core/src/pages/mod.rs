@@ -210,6 +210,35 @@ pub struct Shell {
     pub folded: Vec<String>,
     /// The site's own name, for the browser tab (`crate::site_name`).
     pub site_name: Option<String>,
+    /// This build's version, at the sidebar's foot.
+    pub version: &'static str,
+    /// For holders of `admin.system`: a newer release is out.
+    pub update_available: bool,
+    /// For app admins: every app's data sources, working and not.
+    pub data_sources: Option<SourceHealth>,
+}
+
+/// Data sources working and not, for the sidebar's foot.
+pub struct SourceHealth {
+    pub working: i64,
+    pub broken: i64,
+}
+
+impl SourceHealth {
+    /// The segmented bar: a cell per data source (at most 24), broken
+    /// ones last.
+    pub fn cells(&self) -> Vec<bool> {
+        let total = (self.working + self.broken).clamp(0, 24);
+        let broken = self.broken.clamp(0, total);
+        (0..total).map(|i| i < total - broken).collect()
+    }
+}
+
+impl Shell {
+    /// The site name's initials, for the command bar's chip.
+    pub fn site_initials(&self) -> Option<String> {
+        self.site_name.as_deref().map(initials)
+    }
 }
 
 /// The sidebar items an account may see: built-in pages by its
@@ -255,7 +284,7 @@ pub fn menu_items(
         .chain(
             plugin_nav
                 .iter()
-                .map(|l| crate::menu::plugin_item(&l.label, &l.href, l.section)),
+                .map(|l| crate::menu::plugin_item(&l.label, &l.href, l.section, l.icon)),
         )
         .collect()
 }
@@ -265,6 +294,8 @@ pub struct PluginNavLink {
     pub href: String,
     /// Its default sidebar section.
     pub section: &'static str,
+    /// The app's icon (its manifest's, else a generic one).
+    pub icon: &'static str,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -552,6 +583,7 @@ pub async fn load(
             label: item.label,
             href: item.href,
             section: item.section,
+            icon: item.icon,
         })
         .collect::<Vec<_>>();
     let menu =
@@ -618,6 +650,15 @@ pub async fn load(
             admin_rail: crate::admin_nav::rail(&nav, active),
             folded: session.folded.clone(),
             site_name: crate::site_name::get(&state.db).await?,
+            version: crate::updates::CURRENT,
+            update_available: nav.system && crate::updates::status(&state.db).await?.newer,
+            data_sources: if nav.plugins {
+                let (working, broken) =
+                    tether_db::plugin_esi::data_source_health(&state.db).await?;
+                (working + broken > 0).then_some(SourceHealth { working, broken })
+            } else {
+                None
+            },
         },
         state: access,
         is_owner: account.is_owner,

@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.esi-status"
 name = "ESI Status"
-version = "0.1.0"
+icon = "radio"
+version = "0.1.1"
 host_api = "1"
 description = "ESI's status route by route (OK, degraded, down, recovering), as ESI reports it, and how it went over the last 24 hours."
 

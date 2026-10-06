@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.contracts"
 name = "Contracts"
-version = "0.1.2"
+icon = "contract"
+version = "0.1.3"
 host_api = "1"
 description = "Every contract assigned to your corporation, posted to Discord as it comes in, completes or ends, its price checked against the Janice appraisal linked in its description."
 

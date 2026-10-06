@@ -280,7 +280,7 @@ Decisions from the milestone 2 kickoff are folded into the tasks below. New crat
 Phase 1, feel and look:
 
 - [x] Fluid navigation: Back and Forward show the page again at once from the tab's memory (never written to the browser's storage, gone on logout or when the tab closes), with its scroll position and without the arrival motion, refreshing it from the server only when it is more than two minutes old; nothing reloads the whole page; page changes cross-fade (the browser's view transitions, none under reduced motion) while the command bar and sidebar stay still, the sidebar keeping its scroll position
-- [ ] The shell: DESIGN.md's command bar (wordmark, site name, EVE clock, TQ, ESI, bell, the account menu at the top right), trail at the head of the content, and sidebar (an icon for every item, apps' from a new manifest `icon` chosen from Tether's set; counts; the active item's signal bar; the foot with data source health and the version)
+- [x] The shell: DESIGN.md's command bar (wordmark, site name, EVE clock, TQ, ESI, bell, the account menu at the top right; its search field arrives with the command palette), trail at the head of the content, and sidebar (an icon for every item, apps' from a new manifest `icon` chosen from Tether's set; counts; the active item's signal bar; the foot with data source health and the version)
 - [ ] Page header and views bar on every page, core and app alike (eyebrow, icon tile, title, one primary action, Manage; the current view underlined in the signal), and view chips where tabs choose part of a list
 - [ ] Words: "data source" for owners everywhere people read it (pages, Administration, Token Management, toasts, docs), sentence case, "New" to create and "Add" to put in a list
 
@@ -308,6 +308,10 @@ Phase 5, release 1.0:
 - [ ] Documentation for admins, members and app developers
 - [ ] A sessions page with Sign out everywhere
 - [ ] An optional metrics endpoint, off by default
+
+**Apps against Alliance Auth** (Jay, 2026-10-06: once One Tether is done, "really address our plugins and their parity/improvement over alliance auth"). For each bundled app, set side by side with the Alliance Auth module or community app it replaces: what matches, what is missing, and what Tether does better, then the gaps closed one app at a time.
+
+- [ ] A parity review of every bundled app against its AA counterpart, written into docs/AA_PARITY.md, with the gaps and improvements listed here as items
 
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
 

@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.sov-timer"
 name = "Sovereignty Timer"
-version = "0.1.0"
+icon = "flag"
+version = "0.1.1"
 host_api = "1"
 description = "Sovereignty campaigns across New Eden: the system, its defender and ADM, when it starts and, once active, how the defense is going."
 

@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.structure-timers"
 name = "Structure Timers"
-version = "0.2.2"
+icon = "clock"
+version = "0.2.3"
 host_api = "1"
 description = "Structure timers in EVE time: upcoming and past, important ones marked, and corporation-only timers seen by the creator's corporation alone."
 

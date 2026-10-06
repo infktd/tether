@@ -164,6 +164,29 @@ pub async fn data_sources(pool: &PgPool, plugin_id: &str) -> Result<Vec<DataSour
         .collect())
 }
 
+/// Every app's data sources, working and not (the sidebar's foot for app
+/// admins): working is approved, still in the corporation it was approved
+/// for, on the active, unblacklisted account that offered it.
+pub async fn data_source_health(pool: &PgPool) -> Result<(i64, i64), sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        SELECT count(*) FILTER (WHERE ok) AS "working!", count(*) FILTER (WHERE NOT ok) AS "broken!"
+        FROM (
+            SELECT d.approved_at IS NOT NULL
+                   AND c.corporation_id = d.corporation_id
+                   AND COALESCE(ca.id = d.offered_by AND ca.active AND NOT core.blacklisted(ca.id), false)
+                   AS ok
+            FROM core.plugin_data_sources d
+            JOIN core.characters c ON c.id = d.character_id
+            LEFT JOIN core.accounts ca ON ca.id = c.account_id
+        ) s
+        "#
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((row.working, row.broken))
+}
+
 /// A data source's alliance (the character's own), for alliance endpoints;
 /// none when it's in none or isn't an approved source.
 pub async fn approved_source_alliance<'e>(

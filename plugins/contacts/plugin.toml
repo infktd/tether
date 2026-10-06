@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.contacts"
 name = "Contacts"
-version = "0.1.0"
+icon = "book"
+version = "0.1.1"
 host_api = "1"
 description = "Alliance and corporation contacts with their standings and labels, notes and server links, for the members of each."
 

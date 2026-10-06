@@ -60,13 +60,13 @@ pub const BUILTINS: &[Builtin] = &[
         "dashboard",
         "Dashboard",
         "/dashboard",
-        "user",
+        "grid",
         "account",
         "profile",
     ),
     // Token Management and access tokens are in the account menu (the
     // signed-in character, bottom of the sidebar), not here.
-    b("groups", "Groups", "/groups", "users", "account", "groups"),
+    b("groups", "Groups", "/groups", "layers", "account", "groups"),
     b(
         "group_management",
         "Group Management",
@@ -115,7 +115,7 @@ pub const BUILTINS: &[Builtin] = &[
         "corpstats",
         "Corporation Stats",
         "/corpstats",
-        "activity",
+        "chart",
         "corporation",
         "corpstats",
     ),
@@ -246,7 +246,7 @@ pub struct Available {
 /// An app's sidebar link as an item: keyed by its page. `section` is the
 /// default section its manifest names (Apps if it isn't one of
 /// [`SECTIONS`]).
-pub fn plugin_item(label: &str, href: &str, section: &str) -> Available {
+pub fn plugin_item(label: &str, href: &str, section: &str, icon: &'static str) -> Available {
     let section = SECTIONS
         .iter()
         .find(|(name, _)| *name == section)
@@ -255,7 +255,7 @@ pub fn plugin_item(label: &str, href: &str, section: &str) -> Available {
         key: format!("plugin:{}", href.trim_start_matches("/plugins/")),
         label: label.to_owned(),
         href: href.to_owned(),
-        icon: "package",
+        icon,
         section,
         active: "",
         badge: None,
@@ -999,6 +999,18 @@ pub async fn edit(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_icon_in_the_sidebar_is_drawn() {
+        let icons = include_str!("../../../templates/icons.html");
+        let drawn = |name: &str| icons.contains(&format!("when \"{name}\""));
+        for name in tether_plugins::manifest::ICONS {
+            assert!(drawn(name), "an app's icon {name} isn't in icons.html");
+        }
+        for b in super::BUILTINS {
+            assert!(drawn(b.icon), "{} has no icon {}", b.key, b.icon);
+        }
+    }
+
     use super::*;
 
     fn labels(sections: &[Section]) -> Vec<&str> {
@@ -1022,9 +1034,14 @@ mod tests {
     #[test]
     fn apps_go_in_the_section_they_name_and_empty_sections_hide() {
         let items = vec![
-            plugin_item("Moon Mining", "/plugins/tether.moon-mining", "industry"),
-            plugin_item("Hello", "/plugins/example.hello", "apps"),
-            plugin_item("Odd", "/plugins/example.odd", "nowhere"),
+            plugin_item(
+                "Moon Mining",
+                "/plugins/tether.moon-mining",
+                "industry",
+                "moon",
+            ),
+            plugin_item("Hello", "/plugins/example.hello", "apps", "package"),
+            plugin_item("Odd", "/plugins/example.odd", "nowhere", "package"),
         ];
         let all = build(&[], items);
         assert_eq!(
@@ -1051,6 +1068,7 @@ mod tests {
             "Moon Mining",
             "/plugins/tether.moon-mining",
             "industry",
+            "moon",
         )];
         let shown = visible(build(&[], items));
         let industry = &shown[0];

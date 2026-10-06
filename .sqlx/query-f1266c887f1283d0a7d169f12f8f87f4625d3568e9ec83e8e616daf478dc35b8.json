@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*) FILTER (WHERE ok) AS \"working!\", count(*) FILTER (WHERE NOT ok) AS \"broken!\"\n        FROM (\n            SELECT d.approved_at IS NOT NULL\n                   AND c.corporation_id = d.corporation_id\n                   AND COALESCE(ca.id = d.offered_by AND ca.active AND NOT core.blacklisted(ca.id), false)\n                   AS ok\n            FROM core.plugin_data_sources d\n            JOIN core.characters c ON c.id = d.character_id\n            LEFT JOIN core.accounts ca ON ca.id = c.account_id\n        ) s\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "working!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "broken!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "f1266c887f1283d0a7d169f12f8f87f4625d3568e9ec83e8e616daf478dc35b8"
+}

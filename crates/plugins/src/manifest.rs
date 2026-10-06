@@ -257,7 +257,37 @@ pub struct Identity {
     pub description: Option<String>,
     /// `https://github.com/<owner>/<repo>`.
     pub repository: Option<String>,
+    /// Its icon in the sidebar and its pages' headers: one of [`ICONS`].
+    /// Left out, a generic one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
+
+/// The icons an app may choose (`[plugin] icon`), all in Tether's own set
+/// (`templates/icons.html`), so an app never ships a picture.
+pub const ICONS: &[&str] = &[
+    "activity",
+    "blueprint",
+    "book",
+    "box",
+    "chart",
+    "citadel",
+    "clipboard",
+    "clock",
+    "contract",
+    "crosshair",
+    "flag",
+    "globe",
+    "hexagon",
+    "megaphone",
+    "moon",
+    "package",
+    "radio",
+    "scan-user",
+    "scroll",
+    "shield",
+    "users",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -452,6 +482,14 @@ impl Manifest {
             github_repo(repo).ok_or_else(|| {
                 bad("plugin.repository must be https://github.com/<owner>/<repo>")
             })?;
+        }
+        if let Some(icon) = &p.icon
+            && !ICONS.contains(&icon.as_str())
+        {
+            return Err(bad(format!(
+                "plugin.icon {icon:?} isn't one of Tether's icons: {}",
+                ICONS.join(", ")
+            )));
         }
         if let Some(publisher) = &self.publisher {
             check_key(&publisher.key)?;
@@ -1013,6 +1051,24 @@ mod tests {
         ))
         .unwrap();
         assert!(permission_renames(Some(&other), &renamed).is_empty());
+    }
+
+    #[test]
+    fn an_icon_is_one_of_tethers() {
+        let with = |icon: &str| {
+            Manifest::parse(
+                &manifest("").replace("repository =", &format!("icon = \"{icon}\"\nrepository =")),
+            )
+        };
+        assert_eq!(with("moon").unwrap().plugin.icon.as_deref(), Some("moon"));
+        for refused in ["", "rocket", "https://example.com/i.svg", "Moon"] {
+            let err = with(refused).unwrap_err();
+            assert!(err.0.contains("plugin.icon"), "{refused}: {err:?}");
+        }
+        // Left out: none, and none written back.
+        let plain = Manifest::parse(&manifest("")).unwrap();
+        assert_eq!(plain.plugin.icon, None);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("icon"));
     }
 
     fn manifest(extra: &str) -> String {

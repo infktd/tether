@@ -1,7 +1,7 @@
 {%- import "icons.html" as icons -%}
 {%- macro nav_link(l) -%}
 <a href="{{ l.href }}" class="nav-item"{% if l.is_current(shell.active, shell.active_href) %} aria-current="page"{% endif %}{% if l.new_tab %} target="_blank" rel="noopener noreferrer"{% endif %}>
-  {% call icons::icon(l.icon) %}{% endcall %} {{ l.label }}{% if let Some(pending) = l.badge %}{% if *pending > 0 %} <span class="ml-auto num text-xs text-highlight" aria-label="{{ pending }} pending">{{ pending }}</span>{% endif %}{% endif %}
+  {% call icons::icon(l.icon) %}{% endcall %} <span class="nav-label">{{ l.label }}</span>{% if let Some(pending) = l.badge %}{% if *pending > 0 %} <span class="nav-count" aria-label="{{ pending }} pending">{{ pending }}</span>{% endif %}{% endif %}
 </a>
 {%- endmacro -%}
 <!doctype html>
@@ -18,18 +18,55 @@
 <body hx-boost="true" hx-indicator="#page-progress">
 {#- The sky (DESIGN.md, Motion): one fixed layer behind the page. -#}
 <div class="sky" aria-hidden="true" hx-preserve id="sky"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>
-{#- The status strip: wordmark, EVE time, Tranquility and ESI, the page's
-    trail, the bell. -#}
-<header class="status-strip">
+{#- The command bar (DESIGN.md): wordmark, the site's name, EVE time,
+    Tranquility and ESI, the bell, and the account menu. -#}
+<header class="command-bar">
   {#- Phones: the sidebar is a popover this opens (no script). -#}
   <button type="button" class="nav-toggle btn" data-variant="ghost" data-size="icon" popovertarget="main-nav" aria-label="Menu">{% call icons::icon("menu") %}{% endcall %}</button>
   <a href="/" class="wordmark" aria-label="Tether, home">{% include "wordmark.html" %}</a>
-  {#- Kept across navigations (hx-preserve): the clock doesn't blank and
-      the status isn't fetched again on every page. -#}
-  <span>EVE <span class="text-foreground" id="eve-clock" data-eve-clock hx-preserve>--:--:--</span></span>
-  <span id="tq-status" hx-get="/status/strip" hx-trigger="load, every 60s" hx-swap="innerHTML" hx-preserve class="hidden md:flex items-center gap-7"></span>
-  <nav class="trail" aria-label="Breadcrumb">{% block breadcrumb %}{% endblock %}</nav>
+  {% if let Some(site) = shell.site_name %}<span class="site-chip"><span class="site-chip-mark num" aria-hidden="true">{% if let Some(i) = shell.site_initials() %}{{ i }}{% endif %}</span><span class="site-chip-name">{{ site }}</span></span>{% endif %}
+  <span class="command-bar-gap"></span>
+  <div class="command-status">
+    {#- Kept across navigations (hx-preserve): the clock doesn't blank and
+        the status isn't fetched again on every page. -#}
+    <span>EVE <span class="text-foreground" id="eve-clock" data-eve-clock hx-preserve>--:--:--</span></span>
+    <span id="tq-status" hx-get="/status/strip" hx-trigger="load, every 60s" hx-swap="innerHTML" hx-preserve class="command-status-live"></span>
+  </div>
   {% include "notification_bell.html" %}
+  {#- The account menu: the browser's own popover, so it needs no script,
+      and Escape or a click outside closes it. -#}
+  <button type="button" class="account-button" popovertarget="user-menu" aria-label="Account menu for {{ shell.user.name }}">
+    {% let avatar_name = shell.user.name.as_str() %}{% let avatar_id = shell.user.character_id %}{% let avatar_size = 32 %}{% let avatar_class = "size-[26px]" %}
+    {% include "avatar.html" %}
+    <span class="account-name">{{ shell.user.name }}</span>
+  </button>
+  <nav id="user-menu" class="user-menu" popover aria-label="Account">
+    <div class="user-menu-who">
+      <span class="block truncate text-sm font-medium">{{ shell.user.name }}</span>
+      <span class="block text-xs text-muted-foreground">{% if shell.user.acting %}Acting as · {% endif %}{{ shell.user.state_name }}</span>
+    </div>
+    {% if !shell.user.switch.is_empty() %}
+    {#- Change character: who apps see you as. Permissions stay the
+        account's. -#}
+    <div class="user-menu-heading">Act as</div>
+    {% for c in shell.user.switch %}
+    <form method="post" action="/profile/acting">
+      <input type="hidden" name="character_id" value="{{ c.id }}">
+      <button type="submit" class="user-menu-item w-full"{% if c.current %} aria-current="true"{% endif %}>
+        {% let avatar_name = c.name.as_str() %}{% let avatar_id = c.id %}{% let avatar_size = 32 %}{% let avatar_class = "size-5" %}
+        {% include "avatar.html" %}
+        <span class="min-w-0 flex-1 truncate text-left">{{ c.name }}</span>{% if c.is_main %}<span class="text-xs text-muted-foreground">Main</span>{% endif %}
+      </button>
+    </form>
+    {% endfor %}
+    <div class="border-t mt-1 pt-1"></div>
+    {% endif %}
+    <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
+    <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
+    <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">
+      <button type="submit" class="user-menu-item w-full">{% call icons::icon("log-out") %}{% endcall %} Log out</button>
+    </form>
+  </nav>
 </header>
 <div class="app-shell{% if shell.admin_rail.is_some() %} has-rail{% endif %}">
   <aside class="app-sidebar" id="main-nav" popover>
@@ -54,41 +91,20 @@
       </details>
       {% endfor %}
     </nav>
-    <div class="border-t p-2">
-      {#- The account menu: the browser's own popover, so it needs no
-          script, and Escape or a click outside closes it. -#}
-      <button type="button" class="user-button" popovertarget="user-menu" aria-label="Account menu for {{ shell.user.name }}">
-        {% let avatar_name = shell.user.name.as_str() %}{% let avatar_id = shell.user.character_id %}{% let avatar_size = 36 %}{% let avatar_class = "size-9" %}
-        {% include "avatar.html" %}
-        <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium">{{ shell.user.name }}</span>
-          <span class="block text-xs text-muted-foreground">{% if shell.user.acting %}Acting as · {% endif %}{{ shell.user.state_name }}</span>
-        </span>
-        {% call icons::icon("chevrons") %}{% endcall %}
-      </button>
-      <nav id="user-menu" class="user-menu" popover aria-label="Account">
-        {% if !shell.user.switch.is_empty() %}
-        {#- Change character: who apps see you as. Permissions stay the
-            account's. -#}
-        <div class="user-menu-heading">Act as</div>
-        {% for c in shell.user.switch %}
-        <form method="post" action="/profile/acting">
-          <input type="hidden" name="character_id" value="{{ c.id }}">
-          <button type="submit" class="user-menu-item w-full"{% if c.current %} aria-current="true"{% endif %}>
-            {% let avatar_name = c.name.as_str() %}{% let avatar_id = c.id %}{% let avatar_size = 32 %}{% let avatar_class = "size-5" %}
-            {% include "avatar.html" %}
-            <span class="min-w-0 flex-1 truncate text-left">{{ c.name }}</span>{% if c.is_main %}<span class="text-xs text-muted-foreground">Main</span>{% endif %}
-          </button>
-        </form>
-        {% endfor %}
-        <div class="border-t mt-1 pt-1"></div>
-        {% endif %}
-        <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
-        <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
-        <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">
-          <button type="submit" class="user-menu-item w-full">{% call icons::icon("log-out") %}{% endcall %} Log out</button>
-        </form>
-      </nav>
+    {#- The foot (DESIGN.md, Sidebar navigation): the apps' data sources
+        for those who run apps, and this build's version. -#}
+    <div class="sidebar-foot">
+      {% if let Some(h) = shell.data_sources %}
+      <a href="/admin/plugins" class="source-health">
+        <span class="ov">Data sources</span>
+        <span class="source-health-bar" aria-hidden="true">{% for ok in h.cells() %}<span{% if !ok %} data-broken{% endif %}></span>{% endfor %}</span>
+        <span class="text-xs text-foreground-soft"><span class="num text-foreground">{{ h.working }}</span> working{% if h.broken > 0 %} · <span class="num text-highlight">{{ h.broken }}</span> not working{% endif %}</span>
+      </a>
+      {% endif %}
+      <div class="sidebar-version num">
+        <span>TETHER {{ shell.version }}</span>
+        {% if shell.update_available %}<a href="/admin/system" class="text-highlight">UPDATE AVAILABLE</a>{% endif %}
+      </div>
     </div>
   </aside>
   {% if let Some(rail) = shell.admin_rail %}
@@ -109,7 +125,10 @@
   {% endif %}
   <div class="flex flex-col min-w-0 relative">
     <div id="page-progress" class="page-progress htmx-indicator" aria-hidden="true"></div>
-    <main class="px-4 py-5 md:px-9 md:py-7 flex flex-col gap-5 w-full max-w-[1440px]">
+    <main class="px-4 py-5 md:px-7 md:py-[22px] flex flex-col gap-5 w-full max-w-[1440px]">
+      {#- The trail (DESIGN.md): where this page is, at the head of the
+          content. -#}
+      <nav class="trail" aria-label="Breadcrumb">{% block breadcrumb %}{% endblock %}</nav>
       {% if shell.no_main %}
       <div class="alert" data-variant="destructive" role="status">
         <section class="flex flex-wrap items-center justify-between gap-3">

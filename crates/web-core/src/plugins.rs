@@ -242,6 +242,20 @@ pub struct NavItem {
     pub access: manifest::PageAccess,
     /// Its default sidebar section (`[[navigation]] section`).
     pub section: &'static str,
+    /// The app's icon: its manifest's `[plugin] icon`, else a generic one.
+    pub icon: &'static str,
+}
+
+/// An app's icon as Tether draws it: its manifest's choice (checked to be
+/// one of [`manifest::ICONS`] when it was installed), else a package.
+pub fn icon_of(manifest: &tether_plugins::manifest::Manifest) -> &'static str {
+    manifest
+        .plugin
+        .icon
+        .as_deref()
+        .and_then(|icon| manifest::ICONS.iter().find(|known| **known == icon))
+        .copied()
+        .unwrap_or("package")
 }
 
 /// The plugins running in this process.
@@ -417,12 +431,14 @@ impl Plugins {
             .into_iter()
             .flat_map(|r| {
                 let id = r.manifest.plugin.id.clone();
+                let icon = icon_of(&r.manifest);
                 r.manifest.navigation.iter().map(move |entry| NavItem {
                     href: page_href(&id, &entry.path),
                     access: r.manifest.page_access(&entry.path),
                     section: entry.section(),
                     label: entry.label.clone(),
                     plugin_id: id.clone(),
+                    icon,
                 })
             })
             .collect()

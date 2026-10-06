@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.bulletin-board"
 name = "Bulletin Board"
-version = "0.1.0"
+icon = "megaphone"
+version = "0.1.1"
 host_api = "1"
 description = "Bulletins for everyone, or only for members of some groups, newest first."
 

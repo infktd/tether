@@ -53,6 +53,7 @@ Everything else in a package is refused, as are symlinks, encrypted entries, rep
 [plugin]
 id = "acme.mining-ledger"          # up to 50 lowercase letters, digits, single . - _
 name = "Mining ledger"
+icon = "moon"                     # optional: one of Tether's icons (tether_plugins::manifest::ICONS)
 version = "0.3.1"
 host_api = "1"
 repository = "https://github.com/example/mining-ledger"

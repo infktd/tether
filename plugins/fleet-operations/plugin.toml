@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.fleet-operations"
 name = "Fleet Operations"
-version = "0.1.1"
+icon = "crosshair"
+version = "0.1.2"
 host_api = "1"
 description = "Fleet operations in EVE time: upcoming and past ops with doctrine, form-up system, FC and type, counting down, and the next ones on the Dashboard."
 

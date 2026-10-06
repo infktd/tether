@@ -675,22 +675,22 @@
 @layer components {
   .app-shell {
     @apply grid grid-cols-[236px_minmax(0,1fr)];
-    min-height: calc(100vh - 40px);
+    min-height: calc(100vh - 52px);
   }
   .app-shell.has-rail {
     @apply xl:grid-cols-[236px_208px_minmax(0,1fr)];
   }
   .app-sidebar {
     @apply sticky flex flex-col self-start border-r bg-sidebar;
-    top: 40px;
-    height: calc(100vh - 40px);
+    top: 52px;
+    height: calc(100vh - 52px);
   }
   /* The sidebar is a popover (for phones) that wider screens always show
      in its column: undo the browser's popover box there. */
   .app-sidebar[popover] {
     display: flex;
     inset: auto;
-    top: 40px;
+    top: 52px;
     width: auto;
     margin: 0;
     overflow: visible;
@@ -701,21 +701,29 @@
   }
   .admin-rail {
     @apply sticky hidden flex-col self-start border-r bg-sidebar xl:flex;
-    top: 40px;
-    height: calc(100vh - 40px);
+    top: 52px;
+    height: calc(100vh - 52px);
   }
 
-  /* The account menu: the signed-in character opens it. */
-  .user-button {
-    @apply flex w-full items-center gap-3 rounded-sm p-2 text-left transition-colors duration-150 hover:bg-accent;
+  /* The account menu: the signed-in character, at the command bar's
+     right, opens it under itself. */
+  .account-button {
+    @apply flex h-8 shrink-0 items-center gap-2 pr-1.5 pl-1 text-left transition-colors duration-150 hover:bg-muted;
   }
-  .user-button > svg {
-    @apply text-muted-foreground;
+  .account-button .avatar-img,
+  .account-button .avatar-initials {
+    @apply border border-faint;
+  }
+  .account-name {
+    @apply max-w-40 truncate text-[13px];
   }
   .user-menu {
-    @apply m-0 w-[212px] flex-col gap-0.5 border bg-card p-1 text-foreground;
+    @apply m-0 w-[232px] flex-col gap-0.5 border bg-card p-1 text-foreground;
     position: fixed;
-    inset: auto auto 72px 12px;
+    inset: 56px 12px auto auto;
+  }
+  .user-menu-who {
+    @apply border-b px-3 pt-2 pb-2.5 mb-1;
   }
   .user-menu:popover-open {
     display: flex;
@@ -1404,19 +1412,32 @@
     color: var(--foreground-soft);
   }
   .nav-item > svg {
-    width: 15px;
-    height: 15px;
-    color: var(--muted-foreground);
+    width: 16px;
+    height: 16px;
+    stroke-width: 1.6;
   }
   .nav-item:hover {
     background: var(--muted);
+    color: var(--foreground);
   }
+  /* The current page: raised, with the signal bar on its left edge. */
   .nav-item[aria-current="page"] {
     background: var(--muted);
     color: var(--foreground);
     font-weight: 500;
+    box-shadow: inset 2px 0 0 var(--accent);
   }
-  .nav-item[aria-current="page"] > svg {
+  .nav-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav-count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
     color: var(--accent);
   }
   .admin-rail-item {
@@ -1433,7 +1454,7 @@
     background: var(--accent);
     flex-shrink: 0;
   }
-  .user-button,
+  .account-button,
   .user-menu,
   .user-menu-item,
   .admin-tile,
@@ -1441,48 +1462,151 @@
     border-radius: 0;
   }
 
-  /* The status strip across the top. */
-  .status-strip {
+  /* The command bar across the top (DESIGN.md). */
+  .command-bar {
     position: sticky;
     top: 0;
     z-index: 20;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 28px;
-    height: 40px;
+    gap: 8px 18px;
+    min-height: 52px;
     padding: 0 20px;
     border-bottom: 1px solid var(--border);
     background: var(--sidebar);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--foreground-soft);
     white-space: nowrap;
   }
-  .status-strip .wordmark {
+  .command-bar .wordmark {
     display: flex;
     align-items: center;
     gap: 10px;
-    width: 196px;
-    font-family: var(--font-sans);
     font-stretch: 125%;
     font-weight: 700;
     font-size: 14px;
     letter-spacing: 0.18em;
     color: var(--foreground);
   }
-  .status-strip .trail {
+  .site-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    max-width: 260px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .site-chip-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    background: var(--border);
+    font-size: 9px;
+    color: var(--foreground);
+  }
+  .site-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .command-bar-gap {
+    flex: 1 1 0;
+  }
+  .command-status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--foreground-soft);
+  }
+  .command-status-live {
+    display: none;
+    align-items: center;
+    gap: 16px;
+  }
+  @media (min-width: 768px) {
+    .command-status-live {
+      display: flex;
+    }
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+  }
+  .status-pill[data-tone="down"] {
+    color: var(--destructive);
+  }
+  .command-bar .up { background: var(--info); }
+  .command-bar .down { background: var(--destructive); }
+
+  /* The trail: where the page is, at the head of the content. */
+  .trail {
     min-width: 0;
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 11px;
     text-transform: uppercase;
+    color: var(--muted-foreground);
   }
-  .status-strip .trail a:hover {
+  .trail a {
+    color: var(--foreground-soft);
+  }
+  .trail a:hover,
+  .trail .text-foreground {
     color: var(--foreground);
   }
-  .status-strip .up { background: var(--info); }
-  .status-strip .down { background: var(--destructive); }
+  .trail:empty {
+    display: none;
+  }
+
+  /* The sidebar's foot: the apps' data sources, then the version. */
+  .sidebar-foot {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .source-health {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    transition: background-color 150ms ease-out;
+  }
+  .source-health:hover {
+    background: var(--muted);
+  }
+  .source-health-bar {
+    display: flex;
+    gap: 2px;
+  }
+  .source-health-bar > span {
+    flex-grow: 1;
+    height: 6px;
+    background: var(--info);
+  }
+  .source-health-bar > span[data-broken] {
+    background: var(--accent);
+  }
+  .sidebar-version {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 2px;
+    font-size: 10.5px;
+    color: var(--muted-foreground);
+  }
 
   /* The page header's parts. */
   .page-over {
@@ -2065,7 +2189,7 @@
     }
     .app-sidebar[popover]:popover-open {
       position: fixed;
-      inset: 40px auto 0 0;
+      inset: 52px auto 0 0;
       z-index: 30;
       align-self: stretch;
       width: min(280px, 85vw);
@@ -2079,18 +2203,14 @@
       display: inline-flex;
       margin-left: -8px;
     }
-    .status-strip {
-      gap: 12px;
+    .command-bar {
+      gap: 8px;
       padding: 0 12px;
     }
-    .status-strip .wordmark {
-      width: auto;
-    }
-    .status-strip .trail {
+    .site-chip,
+    .command-status,
+    .account-name {
       display: none;
-    }
-    .status-strip #notification-bell {
-      margin-left: auto;
     }
     .readouts {
       display: grid;

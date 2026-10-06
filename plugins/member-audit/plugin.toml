@@ -3,7 +3,8 @@
 [plugin]
 id = "tether.member-audit"
 name = "Member Audit"
-version = "0.4.3"
+icon = "scan-user"
+version = "0.4.4"
 host_api = "1"
 description = "A full character viewer (aa-memberaudit's): skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails and more; Character Finder, Skill Sets and reports."
 

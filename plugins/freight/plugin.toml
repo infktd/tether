@@ -4,7 +4,8 @@
 [plugin]
 id = "tether.freight"
 name = "Freight"
-version = "0.1.1"
+icon = "box"
+version = "0.1.2"
 host_api = "1"
 description = "A central freight service: priced routes, a reward calculator, the courier contracts checked against the pricing, statistics, and notices to pilots and customers on Discord."
 
