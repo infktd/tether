@@ -46,6 +46,8 @@ const STRUCTURES: &[&str] = &[
     "POS (Small)",
     "POS (Medium)",
     "POS (Large)",
+    // aa-structures' moon extraction timers are these.
+    "Moon Mining Cycle",
     "Other",
 ];
 

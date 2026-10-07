@@ -134,6 +134,14 @@ async fn structure_timers_end_to_end(db: PgPool) {
     assert_eq!(both.status, StatusCode::OK, "{}", both.body);
     assert!(both.body.contains("not both"), "{}", both.body);
     assert!(both.body.contains("value=\"Typo\""), "{}", both.body);
+    // AA's structure choices, its Moon Mining Cycle (aa-structures'
+    // extraction timers) among them.
+    assert!(
+        both.body
+            .contains("<option value=\"Moon Mining Cycle\">Moon Mining Cycle</option>"),
+        "{}",
+        both.body
+    );
     let neither = create(&h, &owner, "Typo", "&eve_time=&days=&hours=&minutes=").await;
     assert!(
         neither
