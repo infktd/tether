@@ -1311,6 +1311,66 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     assert!(out.contains("image id is positive"), "{out}");
 }
 
+/// Discord refusing the bot is final for the app, so it moves on (Moon
+/// Mining finishes its job, the relays mark the one message failed);
+/// only a passing failure says "try later". Before, every refusal came
+/// back Unavailable: pings retried until dead and outboxes jammed.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn discord_refusing_the_bot_is_final_for_the_app(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            "/admin/plugins/acme.esi/channels",
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    async fn answer(h: &Harness, status: u16, body: serde_json::Value) -> String {
+        h.discord_server.reset().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(&h.discord_server)
+            .await;
+        probe(h, "send", &[("text", "Moon popped")]).await
+    }
+
+    // The bot may not post there, or the channel was deleted in Discord.
+    let out = answer(
+        &h,
+        403,
+        serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+    )
+    .await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    assert!(
+        out.contains("give it View Channel and Send Messages"),
+        "{out}"
+    );
+    let out = answer(
+        &h,
+        404,
+        serde_json::json!({"code": 10003, "message": "Unknown Channel"}),
+    )
+    .await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    assert!(out.contains("That channel no longer exists"), "{out}");
+    // Discord down: try later.
+    let out = answer(
+        &h,
+        500,
+        serde_json::json!({"code": 0, "message": "Internal Server Error"}),
+    )
+    .await;
+    assert_eq!(out, "err Error::Unavailable");
+}
+
 // ---- the character viewer's endpoints, and syncing right away --------------
 
 const MAIL: &str = "esi-mail.read_mail.v1";

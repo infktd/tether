@@ -769,8 +769,9 @@ interface discord {
     }
 
     variant error {
-        /// Not an assigned channel, not approved, or not now (pages can't
-        /// send).
+        /// Not an assigned channel, not approved, not now (pages can't
+        /// send), or Discord refused the bot there; sending again won't
+        /// help until an admin fixes it.
         not-allowed(string),
         /// The text breaks a limit; which.
         invalid(string),

@@ -753,7 +753,18 @@ async fn discord_send(
         )
         .await
         .map(|_| ())
-        .map_err(|e| unavailable(e.to_string()))
+        .map_err(|e| {
+            // Only a passing failure is worth sending again. Discord
+            // refusing the bot (no access to the channel, a channel
+            // deleted, a token revoked) stays until an admin fixes it, so
+            // the app hears it as final and moves on to its next message.
+            if e.is_transient() || matches!(e, tether_discord::DiscordError::Protocol(_)) {
+                unavailable(e.to_string())
+            } else {
+                tracing::warn!(plugin, error = %e, "plugin Discord send refused");
+                DiscordError::NotAllowed(crate::pings::explain(&e))
+            }
+        })
 }
 
 impl Services for PluginServices {

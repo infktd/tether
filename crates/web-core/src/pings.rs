@@ -994,7 +994,7 @@ pub async fn deliver(
     }
 }
 
-fn explain(err: &DiscordError) -> String {
+pub(crate) fn explain(err: &DiscordError) -> String {
     match err.code() {
         Some(tether_discord::codes::MISSING_ACCESS | tether_discord::codes::MISSING_PERMISSIONS) => {
             "The bot can't post in that channel: give it View Channel and Send Messages there (and Mention Everyone for @everyone)".to_owned()
