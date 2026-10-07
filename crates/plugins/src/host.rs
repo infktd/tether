@@ -75,6 +75,8 @@ pub struct CallState {
     esi_writes: usize,
     discord_sends: usize,
     notify_calls: usize,
+    /// The form poster's `notify.submitter-reference`, once asked for.
+    submitter: Option<String>,
     filter_reports: usize,
     http_calls: usize,
     /// Whether a storage write changed any row: what tells open pages to
@@ -104,6 +106,7 @@ impl CallState {
             esi_writes: 0,
             discord_sends: 0,
             notify_calls: 0,
+            submitter: None,
             filter_reports: 0,
             http_calls: 0,
             changed: false,
@@ -566,6 +569,45 @@ impl tether::plugin::notify::Host for CallState {
                 level,
                 except,
             )
+            .await
+    }
+
+    async fn submitter_reference(&mut self) -> Result<String, services::NotifyError> {
+        // Only the pilot posting the form, as the host built them: never
+        // in a page or a job, and never for an account the app names.
+        let account = match (&self.viewer, self.writes_allowed) {
+            (Some(viewer), true) => viewer.account_id,
+            _ => {
+                return Err(services::NotifyError::Invalid(
+                    "a submitter reference is only for the pilot posting a form, in submit"
+                        .to_owned(),
+                ));
+            }
+        };
+        if let Some(reference) = &self.submitter {
+            return Ok(reference.clone());
+        }
+        let services = self
+            .services
+            .clone()
+            .ok_or(services::NotifyError::Unavailable)?;
+        let reference = services
+            .notify_submitter_reference(self.plugin.clone(), account)
+            .await?;
+        self.submitter = Some(reference.clone());
+        Ok(reference)
+    }
+
+    async fn submitter(
+        &mut self,
+        reference: String,
+        title: String,
+        message: String,
+        level: services::NotifyLevel,
+    ) -> Result<bool, services::NotifyError> {
+        let services = self.notifying()?;
+        services
+            .notify_submitter(self.plugin.clone(), reference, title, message, level)
             .await
     }
 }

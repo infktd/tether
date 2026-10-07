@@ -10,8 +10,8 @@
 //! one); a job named `fail` asks to be retried, `boom` gives up.
 //!
 //! HTTP too: `http?url=&method=post&body=&secret=&h=<name>:<value>`, and
-//! `http_repeat?url=&n=` for limits. Notices: `notify-account` and
-//! `notify-holders`.
+//! `http_repeat?url=&n=` for limits. Notices: `notify-account`,
+//! `notify-holders`, `notify-submitter-reference` and `notify-submitter`.
 //!
 //! Pages are read-only, so tests that write or queue go through `submit`,
 //! which runs the same probe.
@@ -250,6 +250,24 @@ fn probe(request: Request) -> Result<Page, PageError> {
             arg("except").and_then(|a| a.parse().ok()),
         ) {
             Ok(reached) => format!("ok {reached}"),
+            Err(e) => format!("err {e:?}"),
+        },
+        // notify-submitter-reference (twice, to show it's the same)
+        "notify-submitter-reference" => {
+            match (notify::submitter_reference(), notify::submitter_reference()) {
+                (Ok(a), Ok(b)) if a == b => format!("ok {a}"),
+                (Ok(a), Ok(b)) => format!("differ {a} {b}"),
+                (Err(e), _) | (_, Err(e)) => format!("err {e:?}"),
+            }
+        }
+        // notify-submitter?reference=&title=&message=
+        "notify-submitter" => match notify::submitter(
+            &arg("reference").unwrap_or_default(),
+            &arg("title").unwrap_or_default(),
+            &arg("message").unwrap_or_default(),
+            notify::Level::Info,
+        ) {
+            Ok(sent) => format!("ok {sent}"),
             Err(e) => format!("err {e:?}"),
         },
         "download-files" => downloads::files()

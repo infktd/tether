@@ -1,7 +1,9 @@
 //! Apps' notices in Tether's notifications (the `notify` interface), as AA
 //! apps `notify`: plain text, the app's name before the title, only to
 //! accounts holding one of the app's own permissions (its audience, which
-//! it could reach anyway through `holders`), and within limits. Each is
+//! it could reach anyway through `holders`) or to an account that submitted
+//! one of its forms, by the reference the host gave the app then (an
+//! applicant, a requester; Jay, 2026-10-07), and within limits. Each is
 //! stored as the app's and shown with its id, which no other app can take,
 //! so no app passes for Tether or another app; and each app keeps only its
 //! newest few of an account's notices, so none can push the rest out.
@@ -233,4 +235,83 @@ pub async fn to_holders(
     }
     tracing::info!(plugin, recipients = reached, "app notice sent");
     Ok(reached)
+}
+
+/// `notify.submitter-reference`: the form poster's reference, `account`
+/// being the viewer the host built (the caller makes sure).
+pub async fn submitter_reference(
+    db: &PgPool,
+    plugins: &Weak<Plugins>,
+    plugin: &str,
+    account: i64,
+) -> Result<String, NotifyError> {
+    running(plugins, plugin)?;
+    tether_db::submitters::reference(db, plugin, AccountId(account))
+        .await
+        .map_err(|e| unavailable(plugin, &e))
+}
+
+/// Whether `reference` could be one the host made: 32 lowercase hex
+/// digits. Anything else isn't looked up.
+fn well_formed(reference: &str) -> bool {
+    reference.len() == 32
+        && reference
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// `notify.submitter`: to the account behind one of the app's own
+/// references, whatever it holds; nobody else.
+#[allow(clippy::too_many_arguments)]
+pub async fn to_submitter(
+    db: &PgPool,
+    plugins: &Weak<Plugins>,
+    limits: &Limits,
+    plugin: &str,
+    reference: &str,
+    title: &str,
+    message: &str,
+    level: NotifyLevel,
+) -> Result<bool, NotifyError> {
+    let manifest = running(plugins, plugin)?;
+    let notice = notice(&manifest, title, message, level)?;
+    if !well_formed(reference) {
+        return Err(NotifyError::Invalid(
+            "that isn't a submitter reference".to_owned(),
+        ));
+    }
+    // Every try counts, as `account`'s.
+    charge(limits, plugin)?;
+    let Some(account) = tether_db::submitters::account(db, plugin, reference)
+        .await
+        .map_err(|e| unavailable(plugin, &e))?
+    else {
+        return Ok(false);
+    };
+    if !allowed(limits, plugin, account.0) {
+        return Ok(false);
+    }
+    send(db, plugin, account.0, &notice).await?;
+    tracing::info!(plugin, recipients = 1, "app notice sent to a submitter");
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::well_formed;
+
+    #[test]
+    fn only_references_the_host_could_have_made_are_looked_up() {
+        assert!(well_formed("0123456789abcdef0123456789abcdef"));
+        for bad in [
+            "",
+            "0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0",
+            "0123456789ABCDEF0123456789abcdef",
+            "0123456789abcdef0123456789abcde%",
+            "42",
+        ] {
+            assert!(!well_formed(bad), "{bad}");
+        }
+    }
 }

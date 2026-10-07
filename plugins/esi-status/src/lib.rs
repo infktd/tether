@@ -437,6 +437,31 @@ fn summary(counts: &BTreeMap<&'static str, usize>) -> String {
         .join(" · ")
 }
 
+/// aa-esi-status' count per status: each status (worst first), how many
+/// routes have it, and their share of all routes, to two places
+/// ("0.00%" for none).
+fn by_status<'a>(
+    statuses: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'static str, usize, String)> {
+    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for status in statuses {
+        *counts.entry(known(status)).or_default() += 1;
+    }
+    let total: usize = counts.values().sum();
+    STATUSES
+        .iter()
+        .map(|(status, _, _)| {
+            let count = counts.get(status).copied().unwrap_or(0);
+            let share = if total > 0 {
+                count as f64 * 100.0 / total as f64
+            } else {
+                0.0
+            };
+            (*status, count, format!("{share:.2}%"))
+        })
+        .collect()
+}
+
 fn status_page() -> Result<Page, PageError> {
     let routes = storage::query(
         "SELECT method, path, status, since FROM routes ORDER BY path, method LIMIT 2000",
@@ -553,18 +578,32 @@ fn status_page() -> Result<Page, PageError> {
         }),
     ]);
 
-    // What needs attention, worst and longest first, after what each
-    // status there means.
-    if !not_ok.is_empty() {
-        let meanings: Vec<String> = STATUSES
+    // aa-esi-status' cards: how many routes have each status, and their
+    // share, with what it means.
+    let mut counts = Table::new(vec![
+        Column::text("Status"),
+        Column::numeric("Routes"),
+        Column::numeric("Share"),
+        Column::text("Meaning"),
+    ])
+    .title("By status");
+    for (status, count, share) in by_status(routes.iter().map(|r| r.status)) {
+        let meaning = STATUSES
             .iter()
-            .filter(|(s, _, _)| not_ok.iter().any(|r| r.status == *s))
-            .map(|(s, meaning, _)| {
-                let meaning = meaning.replacen("These routes", "these routes", 1);
-                format!("{s}: {meaning}")
-            })
-            .collect();
-        page = page.text(meanings.join("\n"));
+            .find(|(s, _, _)| *s == status)
+            .map_or("", |(_, meaning, _)| *meaning);
+        counts = counts.row(vec![
+            badge(status, tone(status)).into(),
+            i64::try_from(count).unwrap_or(i64::MAX).into(),
+            share.into(),
+            meaning.into(),
+        ]);
+    }
+    page = page.table(counts);
+
+    // What needs attention, worst and longest first (By status says what
+    // each status means).
+    if !not_ok.is_empty() {
         let mut table = Table::new(vec![
             Column::text("Route"),
             Column::text("Method"),
@@ -774,6 +813,29 @@ mod tests {
         assert_eq!(routes[1].2, "Degraded");
         assert_eq!(routes[2].2, "Unknown");
         assert!(parse("nonsense").1.is_empty());
+    }
+
+    #[test]
+    fn routes_are_counted_by_status() {
+        let counted = by_status(["OK", "OK", "Degraded", "Sideways"]);
+        assert_eq!(
+            counted,
+            vec![
+                ("Down", 0, "0.00%".to_owned()),
+                ("Degraded", 1, "25.00%".to_owned()),
+                ("Recovering", 0, "0.00%".to_owned()),
+                ("Unknown", 1, "25.00%".to_owned()),
+                ("OK", 2, "50.00%".to_owned()),
+            ]
+        );
+        let thirds = by_status(["OK", "OK", "Down"]);
+        assert_eq!(thirds[0], ("Down", 1, "33.33%".to_owned()));
+        assert_eq!(thirds[4], ("OK", 2, "66.67%".to_owned()));
+        assert!(
+            by_status([])
+                .iter()
+                .all(|(_, n, s)| *n == 0 && s == "0.00%")
+        );
     }
 
     #[test]

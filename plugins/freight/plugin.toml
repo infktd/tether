@@ -5,7 +5,7 @@
 id = "tether.freight"
 name = "Freight"
 icon = "box"
-version = "0.1.6"
+version = "0.1.7"
 host_api = "1"
 description = "A central freight service: priced routes, a reward calculator, the courier contracts checked against the pricing, statistics, and notices to pilots and customers on Discord."
 
@@ -40,9 +40,9 @@ setup_contract_handler = "Can setup contract handler"
 manage = "Manage pricing and settings (aa-freight's admin site)"
 
 [permission_notes]
-basic_access = "Usually Member, or whoever ships with the service. Holders open Freight: the contract handler, the priced routes, and their own courier contracts (My contracts)."
-use_calculator = "Usually given with basic access, to whoever ships with the service. Holders work out a route's reward for a volume and a collateral, and how to issue the contract."
-view_contracts = "For haulers and the service's staff. Holders see every outstanding and in-progress courier contract: issuers, routes, rewards, collateral and the check against the pricing."
+basic_access = "Usually Member, or whoever ships with the service. Holders open Freight: the contract handler and the priced routes."
+use_calculator = "Usually given with basic access, to whoever ships with the service. Holders work out a route's reward for a volume and a collateral, and how to issue the contract, and see their own courier contracts (My contracts)."
+view_contracts = "For haulers and the service's staff. Holders see every courier contract, active or not: issuers, routes, rewards, collateral and the check against the pricing."
 view_statistics = "For the service's leads. Holders see the last 90 days' finished contracts by route, pilot, pilot corporation and customer."
 add_location = "For the service's leads. Holders add and remove route ends: stations by ID, and structures by ID and name."
 setup_contract_handler = "For the service's leads. Holders add the contract handler, a character whose corporation's courier contracts are read, and choose the operation mode. Changing either starts the contracts afresh."
@@ -51,6 +51,11 @@ manage = "For the service's leads (aa-freight's admin site). Holders set the rou
 [[pages]]
 path = ""
 permission = "basic_access"
+
+# aa-freight's My Contracts (freight/views.py:70-71).
+[[pages]]
+path = "mine"
+permission = "use_calculator"
 
 [[pages]]
 path = "contracts"

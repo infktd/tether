@@ -42,12 +42,14 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_contacts.sql");
     let rotation = plugin_file("migrations/0002_update_rotation.sql");
+    let kept = plugin_file("migrations/0003_kept_contacts.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_contacts.sql", migration.as_bytes()),
         ("migrations/0002_update_rotation.sql", rotation.as_bytes()),
+        ("migrations/0003_kept_contacts.sql", kept.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -271,6 +273,113 @@ async fn contacts_end_to_end(db: PgPool) {
     for text in ["Shoot on sight", "Comms", "https://discord.gg/x", "hunter2"] {
         assert!(contact.body.contains(text), "{text}: {}", contact.body);
     }
+    // A server link is changed on its own page (aa-contacts'
+    // update_server_link), in any of AA's eight colours.
+    let link: i32 = sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.contacts".server_links"#)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    let edit = format!("{at}/link/{link}");
+    let res = page(&h, &format!("/plugins/{ID}/{edit}"), &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for text in ["Cyan", "Light", "Dark", "Delete server link"] {
+        assert!(res.body.contains(text), "{text}: {}", res.body);
+    }
+    let res = post(
+        &h,
+        &owner,
+        &edit,
+        "_form=edit_link&name=Voice&url=ts3.example.org&password=&color=info",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let saved: (String, String, String, String) = sqlx::query_as(
+        r#"SELECT name, url, password, color FROM "plugin_tether.contacts".server_links"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        saved,
+        (
+            "Voice".to_owned(),
+            "ts3.example.org".to_owned(),
+            String::new(),
+            "info".to_owned()
+        )
+    );
+    // Checked as when added: the form comes back with the problem.
+    let res = post(
+        &h,
+        &owner,
+        &edit,
+        "_form=edit_link&name=Voice&url=has+spaces&password=&color=info",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("with no spaces"), "{}", res.body);
+    // Another contact's path doesn't reach it.
+    let res = post(
+        &h,
+        &owner,
+        &format!("corporation/{CORP}/contact/{FRIEND}/link/{link}"),
+        "_form=edit_link&name=Moved&url=x&password=&color=info",
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // Both gone from EVE's list: the one with notes and a server link
+    // stays, at standing 0 without labels (aa-contacts); the other goes.
+    let corp_contacts = |body: serde_json::Value, priority: u8| {
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORP}/contacts")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "1")
+                    .set_body_json(body),
+            )
+            .with_priority(priority)
+    };
+    corp_contacts(serde_json::json!([]), 2)
+        .mount(&h.esi_server)
+        .await;
+    update(&h).await;
+    let kept: Vec<(i64, f64, String, bool)> = sqlx::query_as(
+        r#"SELECT contact_id, standing, label_ids, in_eve FROM "plugin_tether.contacts".contacts
+           WHERE kind = 'corporation' ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, vec![(HOSTILE, 0.0, String::new(), false)]);
+    let corp = page(&h, &format!("/plugins/{ID}/corporation/{CORP}"), &owner).await;
+    assert!(corp.body.contains("Not in EVE&#39;s list"), "{}", corp.body);
+    assert!(!corp.body.contains("Friendly Corp"), "{}", corp.body);
+    let contact = page(&h, &format!("/plugins/{ID}/{at}"), &owner).await;
+    assert!(
+        contact.body.contains("No longer in EVE&#39;s list"),
+        "{}",
+        contact.body
+    );
+    // Back in EVE's list: as EVE has it again.
+    corp_contacts(
+        serde_json::json!([
+            { "contact_id": HOSTILE, "contact_type": "alliance", "standing": -10.0, "label_ids": [1] },
+        ]),
+        1,
+    )
+    .mount(&h.esi_server)
+    .await;
+    update(&h).await;
+    let back: (f64, String, bool) = sqlx::query_as(
+        r#"SELECT standing, label_ids, in_eve FROM "plugin_tether.contacts".contacts
+           WHERE kind = 'corporation' AND contact_id = $1"#,
+    )
+    .bind(HOSTILE)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(back, (-10.0, "1".to_owned(), true));
 
     // A member of the corporation without the notes and links permissions:
     // the contacts, not the notes, links or the update.
@@ -295,6 +404,14 @@ async fn contacts_end_to_end(db: PgPool) {
             .status,
         StatusCode::NOT_FOUND
     );
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/{edit}"), &member)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let res = post(&h, &member, &edit, "_form=delete_link").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let res = post(&h, &member, &format!("corporation/{CORP}"), "_form=update").await;
     assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
@@ -500,4 +617,66 @@ async fn a_run_s_tail_is_read_by_a_follow_up(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(untried, 0);
+}
+
+/// Every contact is listed, as aa-contacts' (`aa_contacts/api/common.py:81-85`):
+/// 500 a page, each page linked beside the title; the search finds among
+/// them all.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_contact_is_listed_a_page_at_a_time(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount(&h).await;
+    let owner = add_owner(&h, &owner).await;
+    update(&h).await;
+    // 1,100 more, below the two read (standing -10 sorts them last).
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.contacts".contacts
+               (kind, entity_id, contact_id, contact_type, standing)
+           SELECT 'corporation', $1, 90000000 + n, 'character', -10 FROM generate_series(1, 1100) n"#,
+    )
+    .bind(CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.contacts".names (id, name)
+           SELECT 90000000 + n, 'Pilot ' || lpad(n::text, 4, '0') FROM generate_series(1, 1100) n"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let list = format!("/plugins/{ID}/corporation/{CORP}");
+    let first = page(&h, &list, &owner).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    for text in [
+        "Friendly Corp",
+        "Contacts 1 to 500 of 1,102, by standing.",
+        "501 to 1,000",
+        &format!("href=\"{list}/page/3\""),
+        "Update now",
+    ] {
+        assert!(first.body.contains(text), "{text}: {}", first.body);
+    }
+    let last = page(&h, &format!("{list}/page/3"), &owner).await;
+    assert_eq!(last.status, StatusCode::OK, "{}", last.body);
+    for text in ["Contacts 1,001 to 1,102 of 1,102", "Pilot 0999"] {
+        assert!(last.body.contains(text), "{text}: {}", last.body);
+    }
+    assert!(!last.body.contains("Friendly Corp"), "{}", last.body);
+    for gone in ["page/4", "page/1", "page/0"] {
+        assert_eq!(
+            page(&h, &format!("{list}/{gone}"), &owner).await.status,
+            StatusCode::NOT_FOUND,
+            "{gone}"
+        );
+    }
+    // The search, among every contact (by name or label), from any page.
+    let found = page(&h, &format!("{list}/page/3?q=pilot+1099"), &owner).await;
+    assert!(found.body.contains("Pilot 1099"), "{}", found.body);
+    assert!(!found.body.contains("Pilot 1100"), "{}", found.body);
+    let found = page(&h, &format!("{list}?q=reds"), &owner).await;
+    assert!(found.body.contains("Pandemic Horde"), "{}", found.body);
+    assert!(!found.body.contains("Friendly Corp"), "{}", found.body);
 }

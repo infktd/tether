@@ -61,7 +61,8 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
              s.fuel_expires, s.state, s.state_timer_end, s.unanchors_at, s.reinforce_hour, \
              s.services::text, coalesce(m.name, ''), coalesce(s.planet_name, p.name, ''), \
              s.details::text, s.fuel_blocks, s.strontium, s.magmatic_gas, s.gas_expires, \
-             s.has_core, s.fuel_read_at, s.onlined_since, s.corporation_id, coalesce(s.type_id, 0) \
+             s.has_core, s.fuel_read_at, s.onlined_since, s.corporation_id, coalesce(s.type_id, 0), \
+             s.last_online \
          FROM structures s LEFT JOIN names t ON t.id = s.type_id \
          LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
          LEFT JOIN names r ON r.id = y.region_id LEFT JOIN names o ON o.id = s.corporation_id \
@@ -113,6 +114,14 @@ pub fn page(viewer: &Viewer, id: i64) -> Result<Page, PageError> {
     if kind == "upwell" {
         if let Some(h) = opt_int(row, 11) {
             general = general.field("Reinforce hour", format!("{h:02}:00"));
+        }
+        // aa-structures' power mode, and when a service was last online.
+        general = general.field(
+            "Power",
+            crate::power_mode(when(row, 7), when(row, 25), &text(row, 8), now).badge(),
+        );
+        if let Some(t) = when(row, 25) {
+            general = general.field("Last online", time(rfc3339(t)));
         }
         general = general
             .field("Services", services_text(&text(row, 12)))

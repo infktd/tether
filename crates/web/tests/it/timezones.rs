@@ -104,6 +104,10 @@ async fn time_zones_end_to_end(db: PgPool) {
         "{}",
         fleet.body
     );
+    // That's over by now: aa-timezones says so instead of a time left.
+    assert!(fleet.body.contains("Time left"), "{}", fleet.body);
+    assert!(fleet.body.contains("Already over"), "{}", fleet.body);
+    assert!(!fleet.body.contains("data-countdown"), "{}", fleet.body);
     // US / Eastern is UTC-4 in summer.
     assert!(fleet.body.contains("13:30"), "{}", fleet.body);
     assert!(fleet.body.contains("UTC-04:00"), "{}", fleet.body);
@@ -127,6 +131,11 @@ async fn time_zones_end_to_end(db: PgPool) {
     let when: i64 = res.location().rsplit('/').next().unwrap().parse().unwrap();
     let expected = (before + Duration::hours(26)).timestamp();
     assert!((when - expected).abs() < 60, "{when} {expected}");
+    // Its page counts down to it, kept current while open.
+    let timer = page(&h, res.location(), &pilot).await;
+    assert!(timer.body.contains("Time left"), "{}", timer.body);
+    assert!(timer.body.contains("data-countdown"), "{}", timer.body);
+    assert!(!timer.body.contains("Already over"), "{}", timer.body);
     let res = post(
         &h,
         &pilot,

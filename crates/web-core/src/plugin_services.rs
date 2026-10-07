@@ -1448,6 +1448,38 @@ impl Services for PluginServices {
         })
     }
 
+    fn notify_submitter_reference(
+        &self,
+        plugin: String,
+        account: i64,
+    ) -> Fut<Result<String, NotifyError>> {
+        let (db, plugins) = (self.deps.db.clone(), self.plugins.clone());
+        Box::pin(async move {
+            crate::plugin_notify::submitter_reference(&db, &plugins, &plugin, account).await
+        })
+    }
+
+    fn notify_submitter(
+        &self,
+        plugin: String,
+        reference: String,
+        title: String,
+        message: String,
+        level: NotifyLevel,
+    ) -> Fut<Result<bool, NotifyError>> {
+        let (db, plugins, limits) = (
+            self.deps.db.clone(),
+            self.plugins.clone(),
+            self.notices.clone(),
+        );
+        Box::pin(async move {
+            crate::plugin_notify::to_submitter(
+                &db, &plugins, &limits, &plugin, &reference, &title, &message, level,
+            )
+            .await
+        })
+    }
+
     fn doctrines_publish(
         &self,
         plugin: String,

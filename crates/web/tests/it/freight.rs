@@ -45,6 +45,7 @@ async fn install(h: &Harness, owner: &str) {
     let migration = plugin_file("migrations/0001_freight.sql");
     let cards = plugin_file("migrations/0002_outbox_cards.sql");
     let mentions = plugin_file("migrations/0003_pilot_mentions.sql");
+    let pages = plugin_file("migrations/0004_outbox_pages.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -52,6 +53,7 @@ async fn install(h: &Harness, owner: &str) {
         ("migrations/0001_freight.sql", migration.as_bytes()),
         ("migrations/0002_outbox_cards.sql", cards.as_bytes()),
         ("migrations/0003_pilot_mentions.sql", mentions.as_bytes()),
+        ("migrations/0004_outbox_pages.sql", pages.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -313,6 +315,8 @@ async fn discord_messages(h: &Harness) -> Vec<String> {
                     field["value"].as_str().unwrap()
                 ));
             }
+            // What the title opens.
+            lines.push(format!("url: {}", card["url"].as_str().unwrap_or_default()));
             lines.join("\n")
         })
         .collect()
@@ -556,9 +560,10 @@ async fn freight_end_to_end(db: PgPool) {
         .await;
     sync(&h).await;
     let sent = discord_messages(&h).await;
-    // 101 to pilots (priced) and its customer; 105 to its customer only
-    // (no pricing, not every contract announced); 104's delivery is old.
-    assert_eq!(sent.len(), 3, "{sent:#?}");
+    // 101 to pilots (priced) and its customer; 105 to nobody (no pricing,
+    // not every contract announced, as aa-freight's customer notices too);
+    // 104's delivery is old.
+    assert_eq!(sent.len(), 2, "{sent:#?}");
     let pilots: Vec<&String> = sent
         .iter()
         .filter(|m| m.contains("New courier contract"))
@@ -571,6 +576,19 @@ async fn freight_end_to_end(db: PgPool) {
         "{}",
         pilots[0]
     );
+    // Each card's title opens the app, as aa-freight's: the contracts for
+    // pilots, My contracts for customers.
+    assert!(
+        pilots[0].ends_with(&format!("url: {SITE}/plugins/{ID}/contracts")),
+        "{}",
+        pilots[0]
+    );
+    assert!(
+        sent.iter()
+            .filter(|m| m.contains("your courier contract"))
+            .all(|m| m.ends_with(&format!("url: {SITE}/plugins/{ID}/mine"))),
+        "{sent:#?}"
+    );
     // Customers' notices mention nobody (aa-freight's mention is pilots').
     assert!(
         sent.iter()
@@ -578,11 +596,7 @@ async fn freight_end_to_end(db: PgPool) {
             .all(|m| m.starts_with("content: \n")),
         "{sent:#?}"
     );
-    assert!(
-        sent.iter()
-            .any(|m| m.contains("waiting to be picked up") && m.contains("No pricing")),
-        "{sent:#?}"
-    );
+    assert!(!sent.iter().any(|m| m.contains("No pricing")), "{sent:#?}");
     // The customers' channel is shared: no collateral or cargo there.
     assert!(
         sent.iter()
@@ -592,11 +606,11 @@ async fn freight_end_to_end(db: PgPool) {
     );
     // Each once.
     sync(&h).await;
-    assert_eq!(discord_messages(&h).await.len(), 3);
+    assert_eq!(discord_messages(&h).await.len(), 2);
 
     // A state without a Discord role (Blue here): the notice goes out
     // unmentioned, not lost, and Pricing says why, with the fix. Every
-    // contract announced now: 105, unpriced, to pilots.
+    // contract announced now: 105, unpriced, to pilots and its customer.
     let res = post(
         &h,
         &owner,
@@ -612,11 +626,16 @@ async fn freight_end_to_end(db: PgPool) {
     let sent = discord_messages(&h).await;
     assert_eq!(sent.len(), 4, "{sent:#?}");
     assert!(
-        sent[3].starts_with("content: \nNew courier contract"),
+        sent[2].starts_with("content: \nNew courier contract"),
+        "{}",
+        sent[2]
+    );
+    assert!(sent[2].contains("No pricing for this route"), "{}", sent[2]);
+    assert!(
+        sent[3].contains("waiting to be picked up") && sent[3].contains("No pricing"),
         "{}",
         sent[3]
     );
-    assert!(sent[3].contains("No pricing for this route"), "{}", sent[3]);
     let failed: i64 = sqlx::query_scalar(
         r#"SELECT count(*) FROM "plugin_tether.freight".outbox WHERE failed IS NOT NULL"#,
     )
@@ -660,6 +679,42 @@ async fn freight_end_to_end(db: PgPool) {
         "{}",
         contracts.body
     );
+    // Active and All (aa-freight's two lists): delivered ones only in All.
+    assert!(
+        contracts.body.contains("Active contracts") && !contracts.body.contains("Finished"),
+        "{}",
+        contracts.body
+    );
+    let all = format!("/plugins/{ID}/contracts?_tab=1");
+    let contracts = page(&h, &all, &owner).await;
+    for text in ["All contracts", "Finished", "Emperor Family Academy"] {
+        assert!(contracts.body.contains(text), "{text}: {}", contracts.body);
+    }
+    // Past the newest 400, All says how many there are.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.freight".contracts (contract_id, issuer_id,
+               issuer_corporation_id, start_location, end_location, status, date_issued)
+           SELECT 1000 + n, $1, $2, $3, $4, 'finished', now() - interval '20 days'
+           FROM generate_series(1, 400) n"#,
+    )
+    .bind(PILOT_A)
+    .bind(OTHER_CORP)
+    .bind(JITA)
+    .bind(AMARR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let contracts = page(&h, &all, &owner).await;
+    assert_eq!(contracts.status, StatusCode::OK, "{}", contracts.body);
+    assert!(
+        contracts.body.contains("The newest 400 of 404 contracts."),
+        "{}",
+        contracts.body
+    );
+    sqlx::query(r#"DELETE FROM "plugin_tether.freight".contracts WHERE contract_id > 1000"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
     // Statistics: the delivered one, by route and pilot.
     let stats = page(&h, &format!("/plugins/{ID}/statistics"), &owner).await;
     for text in [
@@ -671,21 +726,22 @@ async fn freight_end_to_end(db: PgPool) {
         assert!(stats.body.contains(text), "{text}: {}", stats.body);
     }
 
-    // A pilot with basic access: their own contracts; not the others.
+    // A pilot with basic access: the app, not My contracts (aa-freight's
+    // is use_calculator's) or the others.
     let pilot = log_in_as(&h, "443630591:Pilot A", None).await;
     assert_eq!(
         page(&h, &format!("/plugins/{ID}"), &pilot).await.status,
         StatusCode::NOT_FOUND
     );
     grant(&h, account_of(&h, PILOT_A).await, "basic_access").await;
-    let mine = page(&h, &format!("/plugins/{ID}/mine"), &pilot).await;
-    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
-    assert!(
-        mine.body.contains("Emperor Family Academy"),
-        "{}",
-        mine.body
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/mine"), &pilot)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
     );
     let index = page(&h, &format!("/plugins/{ID}"), &pilot).await;
+    assert!(!index.body.contains("My contracts"), "{}", index.body);
     assert!(!index.body.contains("Reward calculator"), "{}", index.body);
     assert!(
         !index.body.contains("name=\"_form\" value=\"mode\""),
@@ -718,6 +774,27 @@ async fn freight_end_to_end(db: PgPool) {
     )
     .await;
     assert_ne!(res.status, StatusCode::OK, "{}", res.body);
+    // With use_calculator, their own contracts in aa-freight's statuses:
+    // outstanding, in progress, finished and failed, not cancelled ones.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.freight".contracts (contract_id, issuer_id,
+               issuer_corporation_id, start_location, end_location, status, date_issued, title)
+           VALUES (107, $1, $2, $3, $4, 'cancelled', now(), 'Called off')"#,
+    )
+    .bind(PILOT_A)
+    .bind(OTHER_CORP)
+    .bind(JITA)
+    .bind(AMARR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    grant(&h, account_of(&h, PILOT_A).await, "use_calculator").await;
+    let mine = page(&h, &format!("/plugins/{ID}/mine"), &pilot).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    for text in ["Emperor Family Academy", "Finished"] {
+        assert!(mine.body.contains(text), "{text}: {}", mine.body);
+    }
+    assert!(!mine.body.contains("Called off"), "{}", mine.body);
 
     // At most 100 locations, so the route selects always draw.
     sqlx::query(
@@ -763,4 +840,86 @@ async fn freight_end_to_end(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(left, 99);
+}
+
+/// My Alliance keeps the contracts assigned to the alliance by its
+/// members only, as aa-freight (`freight/models/contract_handlers.py:343`);
+/// one kept already is followed to its end though its issuer has left.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn my_alliance_keeps_its_members_contracts(db: PgPool) {
+    const ALLIANCE: i64 = 159826257;
+    let h = harness(db, true).await;
+    Mock::given(method("POST"))
+        .and(path("/characters/affiliation"))
+        .respond_with(AffiliationFixture::load())
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let owner = add_handler(&h, &owner).await;
+    sqlx::query("UPDATE core.characters SET alliance_id = $1 WHERE id = $2")
+        .bind(ALLIANCE)
+        .bind(CHRIBBA)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = post(
+        &h,
+        &owner,
+        "handler",
+        &format!("_form=mode&handler={CHRIBBA}&mode=my_alliance"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let assigned = |id, issuer| {
+        contract(
+            id,
+            "courier",
+            ALLIANCE,
+            issuer,
+            (JITA, AMARR),
+            "outstanding",
+            1.0,
+            Duration::hours(-1),
+        )
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/contracts")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                // Chribba is in the alliance; Pilot A isn't.
+                .set_body_json(serde_json::json!([
+                    assigned(201, CHRIBBA),
+                    assigned(202, PILOT_A)
+                ])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    sync(&h).await;
+    let kept = || async {
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT contract_id FROM "plugin_tether.freight".contracts ORDER BY 1"#,
+        )
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(kept().await, vec![201]);
+    // One kept already stays, though its issuer has left the alliance.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.freight".contracts (contract_id, issuer_id,
+               issuer_corporation_id, start_location, end_location, status, date_issued)
+           VALUES (202, $1, $2, $3, $4, 'outstanding', now())"#,
+    )
+    .bind(PILOT_A)
+    .bind(OTHER_CORP)
+    .bind(JITA)
+    .bind(AMARR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    assert_eq!(kept().await, vec![201, 202]);
 }

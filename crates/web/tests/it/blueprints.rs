@@ -745,12 +745,13 @@ async fn blueprints_end_to_end(db: PgPool) {
     .unwrap();
 
     // Only builders of the owner's corporation may act on a request: not
-    // the outsider, even with the permission.
+    // the outsider, even with the permission. (3003 is the Merlin
+    // original; 3002, the copy, offers no Request.)
     let res = send(
         &h.app,
         form(
             &format!("/plugins/{ID}?q=Merlin%20Blue"),
-            "_form=request&item=3002",
+            "_form=request&item=3003",
             &pilot,
         ),
     )
@@ -763,13 +764,180 @@ async fn blueprints_end_to_end(db: PgPool) {
     .fetch_all(&h.db)
     .await
     .unwrap();
-    assert_eq!(runs, vec![(3001, Some(5)), (3002, None)]);
+    assert_eq!(runs, vec![(3001, Some(5)), (3003, None)]);
     // Hidden values the page didn't offer aren't taken.
     let forged = post(&h, &pilot, "", "_form=request&item=999&runs=1").await;
     assert_eq!(forged.status, StatusCode::CONFLICT, "{}", forged.body);
     grant(&h, OUTSIDER, &["manage_requests"]).await;
     let open = page(&h, &format!("/plugins/{ID}/open"), &outsider).await;
     assert!(!open.body.contains("Merlin Blueprint"), "{}", open.body);
+
+    // The pilot cancels their own: the builders are told, as AA tells
+    // its approvers, on Discord (not every approver's bell)...
+    let merlin = request_of(&h, &schema, 3003).await;
+    page(&h, &format!("/plugins/{ID}/requests"), &pilot).await;
+    let res = post(
+        &h,
+        &pilot,
+        "requests",
+        &format!("_form=cancel_own&request={merlin}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let posted = cards(&h).await;
+    let last = posted.last().unwrap();
+    assert_eq!(last["title"], "Request canceled: Merlin Blueprint");
+    assert_eq!(
+        last["description"],
+        "The Mittani has canceled their request for Merlin Blueprint."
+    );
+    // ... and the builder who took one, in the bell.
+    let res = post(&h, &pilot, "", "_form=request&item=3001").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let rifter = request_of(&h, &schema, 3001).await;
+    page(&h, &format!("/plugins/{ID}/open"), &owner).await;
+    let res = post(
+        &h,
+        &owner,
+        "open",
+        &format!("_form=mark&request={rifter}&to=in_progress"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    page(&h, &format!("/plugins/{ID}/requests"), &pilot).await;
+    let res = post(
+        &h,
+        &pilot,
+        "requests",
+        &format!("_form=cancel_own&request={rifter}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        notices(&h, owner_account).await.last().unwrap(),
+        "Blueprints: Rifter Blueprint request canceled | \
+         The Mittani has canceled their request for Rifter Blueprint."
+    );
+    assert_eq!(
+        cards(&h).await.last().unwrap()["title"],
+        "Request canceled: Rifter Blueprint"
+    );
+    // Cancelling it again changes nothing and tells nobody.
+    let before = cards(&h).await.len();
+    post(
+        &h,
+        &pilot,
+        "requests",
+        &format!("_form=cancel_own&request={rifter}"),
+    )
+    .await;
+    assert_eq!(cards(&h).await.len(), before);
+}
+
+/// The cards the app posted to Discord.
+async fn cards(h: &Harness) -> Vec<serde_json::Value> {
+    h.discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
+        .map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["embeds"][0].clone())
+        .collect()
+}
+
+/// The newest request for blueprint `item`.
+async fn request_of(h: &Harness, schema: &str, item: i64) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT max(id) FROM "{schema}".requests WHERE item_id = {item}"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+const FORMULA_BP: i64 = 46166;
+
+/// aa-blueprints offers Create Request only on originals that aren't
+/// reaction formulas (`view_blueprint_content.html:27`, `:88`).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn copies_only_of_originals_never_of_formulas(db: PgPool) {
+    let h = harness(db, true).await;
+    mount_blueprints(
+        &h,
+        serde_json::json!([
+            blueprint(3001, RIFTER_BP, JITA, "Hangar", -1),
+            blueprint(3002, MERLIN_BP, JITA, "Hangar", 10),
+            blueprint(3005, FORMULA_BP, JITA, "Hangar", -1),
+        ]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/assets")))
+        .respond_with(paged(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    mount_world(&h).await;
+    let owner = set_up(&h).await;
+    sync(&h).await;
+    let offered =
+        |body: &str, item: i64| body.contains(&format!("&#34;item&#34;:&#34;{item}&#34;"));
+
+    // The formula isn't named yet: it waits, as one can't tell.
+    let library = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        library.body.contains("Merlin Blueprint"),
+        "{}",
+        library.body
+    );
+    assert!(offered(&library.body, 3001), "{}", library.body);
+    assert!(!offered(&library.body, 3002), "{}", library.body);
+    assert!(!offered(&library.body, 3005), "{}", library.body);
+    assert!(
+        library.body.contains("Request copies of the originals."),
+        "{}",
+        library.body
+    );
+    // Named, it's a formula: still none.
+    let schema = schema(&h).await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"INSERT INTO "{schema}".names (id, name) VALUES ($1, $2)
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"#
+    )))
+    .bind(FORMULA_BP)
+    .bind("Caesarium Cadmide Reaction Formula")
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let library = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        library.body.contains("Caesarium Cadmide Reaction Formula"),
+        "{}",
+        library.body
+    );
+    assert!(!offered(&library.body, 3005), "{}", library.body);
+    let res = post(&h, &owner, "", "_form=request&item=3005").await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+
+    // The app checks it too: an original when the page was drawn, a copy
+    // by the time it's asked for, isn't requested.
+    let library = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(offered(&library.body, 3001), "{}", library.body);
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"UPDATE "{schema}".blueprints SET runs = 10 WHERE item_id = 3001"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = post(&h, &owner, "", "_form=request&item=3001").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let requests: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT count(*) FROM "{schema}".requests"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(requests, 0);
 }
 
 /// Structure names are asked only through Member characters: never Blue,

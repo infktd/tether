@@ -5,7 +5,7 @@
 id = "tether.blueprints"
 name = "Blueprints"
 icon = "blueprint"
-version = "0.1.11"
+version = "0.1.12"
 host_api = "1"
 description = "The corporations' and pilots' blueprint library, with ME, TE, runs, where each is and what's running, and requests for copies the owners fulfil."
 
@@ -66,7 +66,7 @@ manage = "Change the Discord channel new requests are posted to"
 # Who each permission is usually for, under it on Permissions.
 [permission_notes]
 basic_access = "Usually Member. Holders see the library: the blueprints of owners in their corporations, or their alliance with the alliance-wide permission. Without it nobody opens the app."
-request_blueprints = "Usually Member, for pilots who build. Holders ask the owners' builders for copies of any blueprint they can see, and hear back in their notifications."
+request_blueprints = "Usually Member, for pilots who build. Holders ask the owners' builders for copies of any original they can see (not reaction formulas), and hear back in their notifications."
 manage_requests = "For the builders who make copies. Holders take, fulfil, re-open or cancel requests for their own corporation's or own characters' blueprints only."
 add_personal_blueprint_owner = "Usually Member. Holders add their own registered characters' blueprints to the library, where their corporation sees them."
 add_corporate_blueprint_owner = "For directors or the CEO only: holders add a Director's character whose corporation's blueprints, industry jobs and assets the app then reads."

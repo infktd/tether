@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT account_id FROM core.plugin_submitters WHERE plugin_id = $1 AND reference = $2 AND last_posted_at > now() - make_interval(days => $3)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_submitters",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eca013d4915c72c17425c694e442dc5bfeb7d2533f1bcadede9931037f6bf9fe"
+}

@@ -51,7 +51,7 @@ fn plugin_file(name: &str) -> String {
 }
 
 /// The plugin's migrations, in order.
-const MIGRATIONS: [&str; 7] = [
+const MIGRATIONS: [&str; 8] = [
     "migrations/0001_structures.sql",
     "migrations/0002_timers_corporation_only.sql",
     "migrations/0003_starbases_orbitals_tags.sql",
@@ -59,6 +59,7 @@ const MIGRATIONS: [&str; 7] = [
     "migrations/0005_all_notification_types.sql",
     "migrations/0006_outbox_cards.sql",
     "migrations/0007_aa_defaults.sql",
+    "migrations/0008_last_online.sql",
 ];
 
 /// The real package, signed with a test key.
@@ -3398,4 +3399,414 @@ async fn a_mention_without_a_role_is_sent_plain_never_failed(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(failed, 0, "{}", backlog(&h).await);
+}
+
+/// An owner whose two structures are out of fuel: the Keep with a service
+/// online, the Drill with none.
+async fn out_of_fuel(h: &Harness) -> String {
+    let owner = log_in_owner(h, "196379789:Chribba").await;
+    install(h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(h, now, &times).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(json(serde_json::json!([
+            {
+                "structure_id": KEEP, "name": "Jita - Keep", "corporation_id": CHRIBBA_CORP,
+                "type_id": 35832, "system_id": SYSTEM, "profile_id": 1,
+                "services": [{ "name": "Market", "state": "online" }],
+                "state": "shield_vulnerable",
+            },
+            {
+                "structure_id": DRILL, "name": "Jita - Drill", "corporation_id": CHRIBBA_CORP,
+                "type_id": 35835, "system_id": SYSTEM, "profile_id": 1,
+                "services": [{ "name": "Moon Drilling", "state": "offline" }],
+                "state": "shield_vulnerable",
+            },
+        ])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(h, &owner).await;
+    assert!(sync(h).await.is_empty());
+    owner
+}
+
+/// The fuel cell of a structure's row on the list.
+fn row_of<'a>(body: &'a str, name: &str) -> &'a str {
+    let at = body
+        .find(&format!(">{name}<"))
+        .unwrap_or_else(|| panic!("{name}: {body}"));
+    let end = body[at..].find("</tr>").map_or(body.len(), |e| at + e);
+    &body[at..end]
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn power_modes_as_aa_structures(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    // aa-structures' power modes: out of fuel with a service online, low
+    // power; never seen with one online, "Abandoned?".
+    let list = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        row_of(&list.body, "Jita - Keep").contains(">Low power<"),
+        "{}",
+        list.body
+    );
+    assert!(
+        row_of(&list.body, "Jita - Drill").contains(">Abandoned?<"),
+        "{}",
+        list.body
+    );
+    // Seven days without a service online: Abandoned. The next sync keeps
+    // when one was last seen.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".structures SET last_online = now() - interval '8 days'
+           WHERE structure_id = $1"#,
+    )
+    .bind(KEEP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".structures SET last_online = now() - interval '8 days'
+           WHERE structure_id = $1"#,
+    )
+    .bind(DRILL)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(r#"UPDATE "plugin_tether.structures".owners SET structures_at = NULL"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert!(sync(&h).await.is_empty());
+    let list = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    // The Keep's Market was online again at this sync: low power.
+    assert!(
+        row_of(&list.body, "Jita - Keep").contains(">Low power<"),
+        "{}",
+        list.body
+    );
+    assert!(
+        row_of(&list.body, "Jita - Drill").contains(">Abandoned<"),
+        "{}",
+        list.body
+    );
+    // The structure's page says so, with when a service was last online.
+    let drill = page(&h, &format!("/plugins/{ID}/structure/{DRILL}"), &owner).await;
+    assert!(drill.body.contains(">Abandoned<"), "{}", drill.body);
+    assert!(drill.body.contains("Last online"), "{}", drill.body);
+}
+
+/// `n` structures of `kind` for Chribba Corp, ids from `first`, out of fuel.
+async fn seed_structures(h: &Harness, kind: &str, first: i64, n: i64) {
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".structures
+               (structure_id, corporation_id, kind, name, type_id, system_id, state)
+           SELECT $1 + g, $2, $3, $3 || ' ' || g, 35832, $4, 'shield_vulnerable'
+           FROM generate_series(0, $5 - 1) g"#,
+    )
+    .bind(first)
+    .bind(CHRIBBA_CORP)
+    .bind(kind)
+    .bind(SYSTEM)
+    .bind(n)
+    .execute(&h.db)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_tab_says_when_its_cut(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    let list = format!("/plugins/{ID}");
+    // Few enough: nothing to say.
+    let all = page(&h, &list, &owner).await;
+    assert!(!all.body.contains("Showing the first"), "{}", all.body);
+    // More than each tab shows (aa-structures pages through every row):
+    // 62 out of fuel, 121 starbases, 501 customs offices (public), 81
+    // timers.
+    seed_structures(&h, "upwell", 2_000_000_000_000, 60).await;
+    seed_structures(&h, "starbase", 2_100_000_000_000, 121).await;
+    seed_structures(&h, "customs_office", 2_200_000_000_000, 501).await;
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".timers (structure_id, kind, at, corporation_id)
+           SELECT $1, 'Armor', now() + make_interval(hours => g + 1), $2
+           FROM generate_series(0, 80) g"#,
+    )
+    .bind(KEEP)
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".owner_settings (corporation_id, pocos_public)
+           VALUES ($1, true) ON CONFLICT (corporation_id) DO UPDATE SET pocos_public = true"#,
+    )
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    for (tab, says) in [
+        (1, "Showing the first 60 of 62"),
+        (3, "Showing the first 80 of 81"),
+        (4, "Showing the first 120 of 121"),
+        (5, "Showing the first 150 of 501"),
+    ] {
+        let shown = page(&h, &format!("{list}?_tab={tab}"), &owner).await;
+        assert_eq!(shown.status, StatusCode::OK, "{tab}: {}", shown.body);
+        assert!(shown.body.contains(says), "{tab}: {says}: {}", shown.body);
+    }
+    let pocos = page(&h, &format!("{list}/pocos"), &owner).await;
+    assert_eq!(pocos.status, StatusCode::OK, "{}", pocos.body);
+    assert!(
+        pocos.body.contains("Showing the first 500 of 501"),
+        "{}",
+        pocos.body
+    );
+}
+
+/// A fuel alert config's (start, end, repeat, ping, enabled).
+async fn fuel_config(h: &Harness, id: i32) -> (i32, i32, i32, String, bool) {
+    sqlx::query_as(
+        r#"SELECT start_hours, end_hours, repeat_hours, ping, enabled
+           FROM "plugin_tether.structures".fuel_alert_configs WHERE id = $1"#,
+    )
+    .bind(id)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+async fn fuel_sent(h: &Harness, table: &str) -> i64 {
+    // `table` comes from this file.
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT count(*) FROM "plugin_tether.structures".{table}"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn fuel_alert_configs_edited_enabled_and_disabled(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    add_fuel_alert(&h, &owner, 48, 24).await;
+    let id: i32 = sqlx::query_scalar(
+        r#"SELECT id FROM "plugin_tether.structures".fuel_alert_configs WHERE start_hours = 48"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    for part in [">Enabled<", ">Edit<", ">Disable<", "Change fuel alert"] {
+        assert!(settings.body.contains(part), "{part}: {}", settings.body);
+    }
+    // What it sent is kept through a change of ping alone, and forgotten
+    // with a new range or repeat (aa-structures'), so structures in the
+    // new range are told again.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".fuel_alerts_sent (structure_id, config_id)
+           VALUES ($1, $2)"#,
+    )
+    .bind(KEEP)
+    .bind(id)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let edit = |body: String| {
+        let (h, owner) = (&h, &owner);
+        async move { post(h, owner, "settings", &body).await }
+    };
+    let res = edit(format!(
+        "_form=edit_fuel_alert&config={id}&start_hours=48&end_hours=24&repeat_hours=0&ping=danger"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        fuel_config(&h, id).await,
+        (48, 24, 0, "danger".to_owned(), true)
+    );
+    assert_eq!(fuel_sent(&h, "fuel_alerts_sent").await, 1);
+    let res = edit(format!(
+        "_form=edit_fuel_alert&config={id}&start_hours=72&end_hours=12&repeat_hours=6&ping=none"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        fuel_config(&h, id).await,
+        (72, 12, 6, "none".to_owned(), true)
+    );
+    assert_eq!(fuel_sent(&h, "fuel_alerts_sent").await, 0);
+    // Its rules hold as when adding.
+    let res = edit(format!(
+        "_form=edit_fuel_alert&config={id}&start_hours=12&end_hours=24&repeat_hours=0&ping=none"
+    ))
+    .await;
+    assert!(
+        res.body.contains("End must be less than its Start"),
+        "{}",
+        res.body
+    );
+    assert_eq!(fuel_config(&h, id).await.0, 72);
+    // Disabled: no new alerts (the job reads enabled ones only); enabled
+    // again.
+    let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=off")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(!fuel_config(&h, id).await.4);
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(settings.body.contains(">Disabled<"), "{}", settings.body);
+    assert!(settings.body.contains(">Enable<"), "{}", settings.body);
+    let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=on")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(fuel_config(&h, id).await.4);
+
+    // Jump fuel alerts the same.
+    let res = edit("_form=add_jump_fuel_alert&threshold=100000&ping=none".to_owned()).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let jump: i32 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.structures".jump_fuel_alert_configs"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".jump_fuel_alerts_sent (structure_id, config_id)
+           VALUES ($1, $2)"#,
+    )
+    .bind(KEEP)
+    .bind(jump)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = edit(format!(
+        "_form=edit_jump_fuel_alert&config={jump}&threshold=50000&ping=warning"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (threshold, ping): (i32, String) = sqlx::query_as(
+        r#"SELECT threshold, ping FROM "plugin_tether.structures".jump_fuel_alert_configs"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!((threshold, ping.as_str()), (50000, "warning"));
+    assert_eq!(fuel_sent(&h, "jump_fuel_alerts_sent").await, 0);
+    let res = edit(format!(
+        "_form=toggle_jump_fuel_alert&config={jump}&enabled=off"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let enabled: bool = sqlx::query_scalar(
+        r#"SELECT enabled FROM "plugin_tether.structures".jump_fuel_alert_configs"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(!enabled);
+    // A button the page doesn't offer (an enable for an enabled one) is
+    // refused.
+    let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=on")).await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+/// The test notices in Chribba's notifications.
+async fn test_notices(h: &Harness) -> Vec<String> {
+    notices(h, CHRIBBA)
+        .await
+        .into_iter()
+        .filter(|n| n.contains("Test notification"))
+        .collect()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_test_notification_to_a_channel(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    // No channel yet: nothing to test.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        !settings.body.contains("Test a channel"),
+        "{}",
+        settings.body
+    );
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings.body.contains("Test a channel"),
+        "{}",
+        settings.body
+    );
+    // The message goes, and the one who asked hears it worked, as
+    // aa-structures' test notification.
+    let ok = Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount_as_scoped(&h.discord_server)
+        .await;
+    let test = format!("_form=test_channel&channel={DISCORD_PING_CHANNEL}");
+    let res = post(&h, &owner, "settings", &test).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    let sent = discord_messages(&h).await;
+    assert!(
+        sent.iter()
+            .any(|m| m.starts_with("Test message from Structures for #") && m.contains("Chribba")),
+        "{sent:?}"
+    );
+    let told = test_notices(&h).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains(": OK |"), "{told:?}");
+    drop(ok);
+    // Discord refuses it: they hear it failed, and why.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({ "code": 50013, "message": "Missing Permissions" }),
+            ),
+        )
+        .mount(&h.discord_server)
+        .await;
+    let res = post(&h, &owner, "settings", &test).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    let told = test_notices(&h).await;
+    assert_eq!(told.len(), 2, "{told:?}");
+    assert!(
+        told[1].contains(": failed |") && told[1].contains("can't post in that channel"),
+        "{told:?}"
+    );
+    // Only a channel the app has.
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        "_form=test_channel&channel=600000000000000099",
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 }

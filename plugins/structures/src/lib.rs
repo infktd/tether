@@ -42,16 +42,17 @@ mod routing;
 mod tags;
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tether_plugin_sdk::discord::{self, Mention};
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
+use tether_plugin_sdk::notify;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm, SettingsGroup,
-    Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, alliance, badge,
-    character, corporation, countdown, defenses, item_type, link, log, time,
+    Action, Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm,
+    SettingsGroup, Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, actions,
+    alliance, badge, character, corporation, countdown, defenses, item_type, link, log, time,
 };
 
 use crate::notification::{Category, Context, Fields};
@@ -79,6 +80,8 @@ const SHORT_ROWS: i64 = 60;
 const GATE_ROWS: i64 = 50;
 const TIMER_ROWS: i64 = 80;
 const OWNER_ROWS: i64 = 60;
+/// Rows of the public customs office list (6 columns).
+const POCO_ROWS: i64 = 500;
 /// Fuel alert configs' hours: a year at most.
 const MAX_ALERT_HOURS: i64 = 8760;
 /// Fuel alerts queued per run.
@@ -97,6 +100,9 @@ const NOTIFICATIONS_GAP: Duration = Duration::seconds(60);
 const MAX_PUBLISHED: i64 = 500;
 /// A relayed message's characters, at most: under the host's 1,500.
 const MAX_MESSAGE_CHARS: usize = 1_400;
+/// The one-off job that sends a channel's test message (pages can't post
+/// to Discord).
+const TEST_JOB: &str = "test_message";
 /// The one-off job that publishes timers at once (after a settings change).
 const PUBLISH_JOB: &str = "publish_timers";
 /// The assets read again a minute after a sync, while Tether still reads a
@@ -128,6 +134,7 @@ impl Plugin for Structures {
             NOTIFICATIONS_JOB => notifications_between_syncs(),
             PUBLISH_JOB => publish_timers(),
             ASSETS_JOB => assets_again(),
+            TEST_JOB => send_test(&job),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -233,6 +240,11 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         ("settings", "settings") => save_settings(viewer, submission),
         ("settings", "add_fuel_alert") => add_fuel_alert(viewer, submission),
         ("settings", "delete_fuel_alert") => delete_fuel_alert(viewer, submission),
+        ("settings", "edit_fuel_alert") => edit_fuel_alert(viewer, submission),
+        ("settings", "toggle_fuel_alert") => toggle_fuel_alert(viewer, submission),
+        ("settings", "edit_jump_fuel_alert") => edit_jump_fuel_alert(viewer, submission),
+        ("settings", "toggle_jump_fuel_alert") => toggle_jump_fuel_alert(viewer, submission),
+        ("settings", "test_channel") => test_channel(viewer, submission),
         ("settings", "add_jump_fuel_alert") => add_jump_fuel_alert(viewer, submission),
         ("settings", "delete_jump_fuel_alert") => delete_jump_fuel_alert(viewer, submission),
         // A row's Retry now, in the settings' owner table.
@@ -1143,11 +1155,14 @@ fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
         Statement::new(
             "INSERT INTO structures (structure_id, corporation_id, kind, name, type_id, system_id, fuel_expires, \
                  blocks_expires, state, state_timer_start, state_timer_end, unanchors_at, reinforce_hour, \
-                 next_reinforce_hour, next_reinforce_apply, services, updated_at) \
+                 next_reinforce_hour, next_reinforce_apply, services, last_online, updated_at) \
              SELECT structure_id, $2, 'upwell', coalesce(name, 'Structure ' || structure_id::text), type_id, \
                  system_id, fuel_expires, fuel_expires, coalesce(state, 'unknown'), state_timer_start, \
                  state_timer_end, unanchors_at, reinforce_hour, next_reinforce_hour, next_reinforce_apply, \
-                 coalesce(services, '[]'::jsonb), now() \
+                 coalesce(services, '[]'::jsonb), \
+                 CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(services, '[]'::jsonb)) v \
+                                   WHERE v ->> 'state' = 'online') THEN now() END, \
+                 now() \
              FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, type_id bigint, \
                  system_id bigint, fuel_expires timestamptz, state text, state_timer_start timestamptz, \
                  state_timer_end timestamptz, unanchors_at timestamptz, reinforce_hour integer, \
@@ -1160,6 +1175,7 @@ fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
                  unanchors_at = EXCLUDED.unanchors_at, reinforce_hour = EXCLUDED.reinforce_hour, \
                  next_reinforce_hour = EXCLUDED.next_reinforce_hour, \
                  next_reinforce_apply = EXCLUDED.next_reinforce_apply, services = EXCLUDED.services, \
+                 last_online = coalesce(EXCLUDED.last_online, structures.last_online), \
                  updated_at = now()",
             vec![Db::json(concat(bodies)), corp.into()],
         ),
@@ -2275,7 +2291,7 @@ const STRUCTURE_ROW: &str = "SELECT s.structure_id, s.name, coalesce(t.name, 'Ty
         coalesce((SELECT string_agg(g.name, ', ' ORDER BY g.sort_order, g.name) FROM structure_tags st \
             JOIN tags g ON g.id = st.tag_id WHERE st.structure_id = s.structure_id), ''), \
         coalesce(m.name, s.planet_name, pl.name, ''), s.strontium, s.details::text, s.unanchors_at, \
-        s.corporation_id, coalesce(s.type_id, 0) \
+        s.corporation_id, coalesce(s.type_id, 0), s.last_online \
      FROM structures s \
      LEFT JOIN names t ON t.id = s.type_id \
      LEFT JOIN systems y ON y.system_id = s.system_id \
@@ -2296,9 +2312,64 @@ fn name_link(row: &[Db]) -> Value {
     link(text(row, 1), format!("structure/{}", int(row, 0))).into()
 }
 
-/// Fuel expiry and time left, toned by the first alert.
+/// After this long without a service online, an Upwell structure out of
+/// fuel is Abandoned (aa-structures').
+const ABANDONED_AFTER: Duration = Duration::days(7);
+
+/// aa-structures' power modes (`models/structures_1.py:527-545`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Power {
+    Full,
+    Low,
+    Abandoned,
+    /// "Abandoned?": out of fuel, and never seen with a service online.
+    MaybeAbandoned,
+}
+
+impl Power {
+    fn badge(self) -> Value {
+        match self {
+            Power::Full => badge("Full power", Tone::Success),
+            Power::Low => badge("Low power", Tone::Warning),
+            Power::Abandoned => badge("Abandoned", Tone::Danger),
+            Power::MaybeAbandoned => badge("Abandoned?", Tone::Warning),
+        }
+        .into()
+    }
+}
+
+/// An Upwell structure's power mode: full power while its fuel lasts;
+/// out of fuel, low power for 7 days after a service was last seen
+/// online, then abandoned; never seen online, low power while anchoring,
+/// else "Abandoned?".
+fn power_mode(
+    fuel_expires: Option<DateTime<Utc>>,
+    last_online: Option<DateTime<Utc>>,
+    state: &str,
+    now: DateTime<Utc>,
+) -> Power {
+    if fuel_expires.is_some_and(|t| t > now) {
+        return Power::Full;
+    }
+    match last_online {
+        Some(at) if at >= now - ABANDONED_AFTER => Power::Low,
+        Some(_) => Power::Abandoned,
+        None if matches!(state, "anchoring" | "anchor_vulnerable") => Power::Low,
+        None => Power::MaybeAbandoned,
+    }
+}
+
+/// Fuel expiry and time left, toned by the first alert; out of fuel, an
+/// Upwell structure's power mode.
 fn fuel_cells(row: &[Db], now: DateTime<Utc>, alert: i64) -> (Value, Value) {
-    match when(row, 6) {
+    let upwell = text(row, 14) == "upwell";
+    let fuel = when(row, 6);
+    if upwell && fuel.is_none_or(|t| t <= now) {
+        let mode = power_mode(fuel, when(row, 23), &text(row, 8), now);
+        let expires = fuel.map_or_else(|| "".into(), |t| time(rfc3339(t)));
+        return (expires, mode.badge());
+    }
+    match fuel {
         Some(t) => {
             let d = t - now;
             let tone = if d < Duration::hours(24) {
@@ -2310,7 +2381,6 @@ fn fuel_cells(row: &[Db], now: DateTime<Utc>, alert: i64) -> (Value, Value) {
             };
             (time(rfc3339(t)), badge(left(d), tone).into())
         }
-        None if text(row, 14) == "upwell" => ("".into(), badge("Low power", Tone::Warning).into()),
         None => ("".into(), "Unknown".into()),
     }
 }
@@ -2537,18 +2607,32 @@ fn jump_gate_tab(
         rows,
     );
     let mut sections = vec![Section::Table(table)];
-    if total > GATE_ROWS {
-        sections.push(Section::Text(format!(
-            "Showing the first {GATE_ROWS} of {total}: pick an owner on the Owners tab, or tags, \
-             to see theirs."
-        )));
-    }
+    sections.extend(cut(GATE_ROWS, total));
     sections.push(Section::Text(
         "Liquid ozone in each gate's fuel bay, as its corporation's assets last said. They're \
          read with a data source's Director role: until then the figure is empty."
             .to_owned(),
     ));
     Ok(sections)
+}
+
+/// A tab cut at `shown` rows of `total` says so (aa-structures pages
+/// through every row, `views/structures.py:188-195`), and how to see the
+/// rest: an owner's page or tags narrow the list.
+fn cut(shown: i64, total: i64) -> Option<Section> {
+    (total > shown).then(|| {
+        Section::Text(format!(
+            "Showing the first {shown} of {total}: pick an owner on the Owners tab, or tags, to \
+             see theirs."
+        ))
+    })
+}
+
+/// A tab's sections: its table, then a line if it was cut.
+fn tab_of(table: Table, shown: i64, total: i64) -> Vec<Section> {
+    let mut sections = vec![Section::Table(table)];
+    sections.extend(cut(shown, total));
+    sections
 }
 
 /// What the list shows: an owner's, or those with any of some tags.
@@ -2667,6 +2751,17 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         )
         .map_err(|e| failed("reading timers", e))
     };
+    let timer_count = storage::query(
+        &format!(
+            "SELECT count(*) FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
+             {scope} AND t.at > now() AND ($8 OR t.kind <> 'Unanchoring')"
+        ),
+        &[params.clone(), vec![unanchoring.into()]].concat(),
+    )
+    .map_err(|e| failed("counting timers", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
     let structure_timers = timers_of(false, TIMER_ROWS)?;
     let extractions = timers_of(true, TIMER_ROWS - count(structure_timers.rows.len()))?;
     let mut timers: Vec<&Vec<Db>> = structure_timers
@@ -2690,6 +2785,17 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         &visible,
     )
     .map_err(|e| failed("reading owners", e))?;
+    let owner_count = storage::query(
+        &format!(
+            "SELECT count(DISTINCT o.corporation_id) FROM owners o WHERE {}",
+            VISIBLE.replace("s.corporation_id", "o.corporation_id")
+        ),
+        &visible,
+    )
+    .map_err(|e| failed("counting owners", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
 
     let row = counts.rows.first();
     let count_of = |i: usize| row.map_or(0, |r| int(r, i));
@@ -2715,11 +2821,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         "No structures yet. Owners' structures appear within the hour.",
         rows_of(&upwell),
     )));
-    if total > LIST_ROWS {
-        list.push(Section::Text(format!(
-            "Showing the first {LIST_ROWS} of {total}: pick an owner on the Owners tab, or tags, to see theirs."
-        )));
-    }
+    list.extend(cut(LIST_ROWS, total));
     let timer_table = with_rows(
         Table::new(vec![
             Column::numeric("When (EVE)"),
@@ -2810,47 +2912,59 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         .tab("Structures", list)
         .tab(
             "Low fuel",
-            vec![Section::Table(structure_table(
-                &format!("Under {alert} hours of fuel, or low power"),
-                "No structure is low on fuel.",
-                rows_of(&low),
-            ))],
+            tab_of(
+                structure_table(
+                    &format!("Under {alert} hours of fuel, or low power"),
+                    "No structure is low on fuel.",
+                    rows_of(&low),
+                ),
+                SHORT_ROWS,
+                low_count,
+            ),
         )
         .tab(
             "Reinforced",
-            vec![Section::Table(structure_table(
-                "Reinforced or vulnerable",
-                "No structure is reinforced.",
-                rows_of(&reinforced),
-            ))],
-        )
-        .tab(
-            "Timers",
-            vec![
-                Section::Table(timer_table),
-                Section::Text(
-                    "From structures' states and their notifications, and moon extractions' \
-                     chunks if the settings say so. Structure Timers shows them too, as \
-                     automatic timers (corporation-only if the settings say so)."
-                        .to_owned(),
+            tab_of(
+                structure_table(
+                    "Reinforced or vulnerable",
+                    "No structure is reinforced.",
+                    rows_of(&reinforced),
                 ),
-            ],
+                SHORT_ROWS,
+                reinforced_count,
+            ),
         )
+        .tab("Timers", {
+            let mut sections = tab_of(timer_table, TIMER_ROWS, timer_count);
+            sections.push(Section::Text(
+                "From structures' states and their notifications, and moon extractions' \
+                 chunks if the settings say so. Structure Timers shows them too, as \
+                 automatic timers (corporation-only if the settings say so)."
+                    .to_owned(),
+            ));
+            sections
+        })
         .tab(
             "Starbases",
-            vec![Section::Table(starbase_table(
-                starbases
-                    .rows
-                    .iter()
-                    .map(|r| starbase_row(r, now, alert, unanchoring))
-                    .collect(),
-            ))],
+            tab_of(
+                starbase_table(
+                    starbases
+                        .rows
+                        .iter()
+                        .map(|r| starbase_row(r, now, alert, unanchoring))
+                        .collect(),
+                ),
+                STARBASE_ROWS,
+                starbase_count,
+            ),
         )
         .tab(
             "Orbitals",
-            vec![Section::Table(orbital_table(
-                orbitals.rows.iter().map(|r| orbital_row(r)).collect(),
-            ))],
+            tab_of(
+                orbital_table(orbitals.rows.iter().map(|r| orbital_row(r)).collect()),
+                ORBITAL_ROWS,
+                orbital_count,
+            ),
         );
     if let Some(gates) = &gates {
         page = page.tab(
@@ -2875,18 +2989,25 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         );
     }
     if filter.owner.is_none() && filter.tags.is_none() {
+        let mut sections = vec![Section::Table(owner_table)];
+        if owner_count > OWNER_ROWS {
+            sections.push(Section::Text(format!(
+                "Showing the first {OWNER_ROWS} of {owner_count} owners, by name."
+            )));
+        }
         page = page.tab(
             "Owners",
-            vec![
-                Section::Table(owner_table),
-                Section::Text(
+            [
+                sections,
+                vec![Section::Text(
                     "Add data source logs in with a character with the in-game Station Manager role. \
                      Its corporation's structures show \
                      here within the hour; starbases, customs offices, skyhooks and fittings need \
                      the Director role."
                         .to_owned(),
-                ),
-            ],
+                )],
+            ]
+            .concat(),
         );
     }
     Ok(page)
@@ -2898,6 +3019,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
 /// known to Tether).
 fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
     let rows = storage::query(
+        &format!(
         "SELECT coalesce(o.name, 'Corporation ' || s.corporation_id::text), \
              coalesce(y.name, sn.name, 'System ' || s.system_id::text), y.security_status, \
              coalesce(r.name, ''), coalesce(s.planet_name, p.name, ''), s.details::text, s.corporation_id, \
@@ -2906,10 +3028,21 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
          LEFT JOIN names o ON o.id = s.corporation_id \
          LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
          LEFT JOIN names r ON r.id = y.region_id LEFT JOIN names p ON p.id = s.planet_id \
-         WHERE s.kind = 'customs_office' ORDER BY 4, 2, 5 LIMIT 500",
+         WHERE s.kind = 'customs_office' ORDER BY 4, 2, 5 LIMIT {POCO_ROWS}"
+        ),
         &[],
     )
     .map_err(|e| failed("reading customs offices", e))?;
+    let total = storage::query(
+        "SELECT count(*) FROM structures s \
+         JOIN owner_settings w ON w.corporation_id = s.corporation_id AND w.pocos_public \
+         WHERE s.kind = 'customs_office'",
+        &[],
+    )
+    .map_err(|e| failed("counting customs offices", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
     let (corp, alliance) = (viewer.main.corporation_id, viewer.main.alliance_id);
     let table = with_rows(
         Table::new(vec![
@@ -2962,15 +3095,20 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
             ]
         }),
     );
-    Ok(Page::new("Customs offices")
+    let mut page = Page::new("Customs offices")
         .description("Customs offices their owners opened to everyone who may open Structures")
-        .table(table)
-        .text(
-            "Access and tax for your main's corporation and alliance. As aa-structures, access \
+        .table(table);
+    if total > POCO_ROWS {
+        page = page.text(format!(
+            "Showing the first {POCO_ROWS} of {total}, by region and system."
+        ));
+    }
+    Ok(page.text(
+        "Access and tax for your main's corporation and alliance. As aa-structures, access \
              and tax for pilots in neither (\"Yes (?)\": the neutral standing rate) may not be \
              accurate: they depend on the owner's standings towards you, which Tether doesn't \
              know.",
-        ))
+    ))
 }
 
 /// Whether a customs office lets in pilots of neither its corporation nor
@@ -3321,13 +3459,15 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         }
         form = form.group(types);
     }
-    let page = page.settings(form);
+    let page = with_test_form(page.settings(form));
     let types = settings.notification_types.as_ref();
     Ok(page
         .table(fuel_alert_table()?)
         .form(fuel_alert_form(types))
+        .form(edit_fuel_alert_form())
         .table(jump_fuel_alert_table()?)
         .form(jump_fuel_alert_form(types))
+        .form(edit_jump_fuel_alert_form())
         .table(routing_table)
         .table(owner_table)
         .text(
@@ -3463,6 +3603,116 @@ fn ticked_types(submission: &Submission) -> Vec<String> {
         .collect()
 }
 
+// ---- test notifications ------------------------------------------------------
+
+/// aa-structures' "Send test notification to selected webhook": a form
+/// with the app's channels, while it has any.
+fn with_test_form(page: Page) -> Page {
+    let channels: Vec<(String, String)> = discord::channels()
+        .into_iter()
+        .map(|c| (c.id, format!("#{}", c.name)))
+        .collect();
+    if channels.is_empty() {
+        return page;
+    }
+    page.form(
+        Form::new("test_channel", "Send test notification")
+            .title("Test a channel")
+            .description(
+                "Posts a test message to the channel, as aa-structures' test notification, \
+                 to check the bot may post there. You hear in your notifications whether it \
+                 worked.",
+            )
+            .field(Field::select("channel", "Channel", channels).required()),
+    )
+}
+
+#[derive(Serialize, Deserialize)]
+struct TestMessage {
+    channel: String,
+    name: String,
+    account_id: i64,
+    by: String,
+}
+
+fn test_channel(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let id = submission.value("channel");
+    let channel = discord::channels()
+        .into_iter()
+        .find(|c| c.id == id)
+        .ok_or(PageError::NotFound)?;
+    let payload = TestMessage {
+        channel: channel.id.clone(),
+        name: channel.name.clone(),
+        account_id: viewer.account_id,
+        by: viewer.main.name.clone(),
+    };
+    let payload =
+        serde_json::to_string(&payload).map_err(|e| failed("queuing the test message", e))?;
+    jobs::enqueue(
+        NewJob::new(TEST_JOB)
+            .key(format!("test:{}:{}", channel.id, viewer.account_id))
+            .payload(payload),
+    )
+    .map_err(|e| failed("queuing the test message", e))?;
+    log::info(format!(
+        "test message to #{} asked by {} ({})",
+        channel.name, viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// Sends a test message, then tells whoever asked how it went, as
+/// aa-structures' send_test_notifications_to_webhook. Not tried again:
+/// the notice says what went wrong.
+fn send_test(job: &Job) -> Result<(), JobError> {
+    let test: TestMessage = serde_json::from_str(&job.payload)
+        .map_err(|e| JobError::Permanent(format!("test message payload: {e}")))?;
+    let sent = discord::send(
+        &test.channel,
+        &format!(
+            "Test message from Structures for #{}, sent by {}.",
+            test.name, test.by
+        ),
+        Mention::None,
+    );
+    let (level, title, message) = match &sent {
+        Ok(()) => (
+            notify::Level::Success,
+            format!("Test notification to #{}: OK", test.name),
+            format!("The test message to #{} was sent.", test.name),
+        ),
+        Err(err) => (
+            notify::Level::Danger,
+            format!("Test notification to #{}: failed", test.name),
+            format!(
+                "The test message to #{} wasn't sent: {}",
+                test.name,
+                match err {
+                    discord::Error::NotAllowed(why) | discord::Error::Invalid(why) => why.clone(),
+                    discord::Error::RateLimited => {
+                        "Discord asked Tether to slow down; try again in a minute.".to_owned()
+                    }
+                    discord::Error::Unavailable => "Discord couldn't be reached.".to_owned(),
+                }
+            ),
+        ),
+    };
+    if let Err(err) = &sent {
+        log::warn(format!("test message to #{}: {err:?}", test.name));
+    }
+    // Never tried again once sent: a retry would post it again.
+    if let Err(err) = notify::account(
+        test.account_id,
+        &notification::clip(&title, notify::MAX_TITLE),
+        &notification::clip(&message, notify::MAX_MESSAGE),
+        level,
+    ) {
+        log::warn(format!("telling who asked for the test message: {err:?}"));
+    }
+    Ok(())
+}
+
 // ---- fuel alert configs ------------------------------------------------------
 
 /// aa-structures' fuel alert configs, each with Delete.
@@ -3482,6 +3732,7 @@ fn fuel_alert_table() -> Result<Table, PageError> {
             Column::numeric("End (hours left)"),
             Column::numeric("Repeat (hours)"),
             Column::text("Ping"),
+            Column::text("Status"),
             Column::text(""),
         ])
         .title("Fuel alerts")
@@ -3490,30 +3741,68 @@ fn fuel_alert_table() -> Result<Table, PageError> {
              their types are ticked. Add one below for more.",
         ),
         rows.rows.iter().map(|r| {
-            let (start, end) = (int(r, 1), int(r, 2));
+            let (id, start, end, repeat) = (int(r, 0), int(r, 1), int(r, 2), int(r, 3));
+            let enabled = r.get(5).and_then(Db::as_bool).unwrap_or(true);
+            let ping = ping_label(&text(r, 4));
             vec![
                 start.into(),
                 end.into(),
-                match int(r, 3) {
+                match repeat {
                     0 => "Once".into(),
                     h => h.into(),
                 },
-                match text(r, 4).as_str() {
-                    "danger" => "Danger role",
-                    "warning" => "Warning role",
-                    _ => "None",
-                }
-                .into(),
-                action("Delete", "delete_fuel_alert")
-                    .field("config", int(r, 0).to_string())
-                    .tone(Tone::Danger)
-                    .confirm(format!(
-                        "The alert between {start} and {end} hours of fuel left is deleted."
-                    ))
-                    .into(),
+                ping.into(),
+                enabled_badge(enabled),
+                actions(vec![
+                    // Opens the change form in a popup, for this one.
+                    action("Edit", "edit_fuel_alert")
+                        .field("config", id.to_string())
+                        .confirm(format!(
+                            "Change the alert between {start} and {end} hours of fuel left \
+                             (repeat {}, ping {ping}).",
+                            if repeat == 0 {
+                                "once".to_owned()
+                            } else {
+                                format!("every {repeat}h")
+                            }
+                        )),
+                    toggle_action("toggle_fuel_alert", id, enabled),
+                    action("Delete", "delete_fuel_alert")
+                        .field("config", id.to_string())
+                        .tone(Tone::Danger)
+                        .confirm(format!(
+                            "The alert between {start} and {end} hours of fuel left is deleted."
+                        )),
+                ]),
             ]
         }),
     ))
+}
+
+/// A fuel or jump fuel alert's ping, in words.
+fn ping_label(ping: &str) -> &'static str {
+    match ping {
+        "danger" => "Danger role",
+        "warning" => "Warning role",
+        _ => "None",
+    }
+}
+
+/// aa-structures' is_enabled: a disabled config sends no new alerts.
+fn enabled_badge(enabled: bool) -> Value {
+    if enabled {
+        badge("Enabled", Tone::Success)
+    } else {
+        badge("Disabled", Tone::Neutral)
+    }
+    .into()
+}
+
+/// A row's Disable or Enable.
+fn toggle_action(form: &str, id: i64, enabled: bool) -> Action {
+    action(if enabled { "Disable" } else { "Enable" }, form)
+        .field("config", id.to_string())
+        .field("enabled", if enabled { "off" } else { "on" })
 }
 
 /// A fuel or jump fuel alert's ping: aa-structures' @here unless picked.
@@ -3583,7 +3872,12 @@ fn fuel_alert_form(types: Option<&Vec<String>>) -> Form {
         .field(alert_ping_field())
 }
 
-fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+/// A fuel alert config's start, end and repeat hours, and its ping.
+type FuelAlert = (i64, i64, i64, String);
+
+/// A fuel alert form's values: start, end, repeat and ping, or what's
+/// wrong with them (for the settings page).
+fn fuel_alert_values(submission: &Submission) -> Result<Result<FuelAlert, String>, PageError> {
     let number = |name: &str| -> Result<i64, PageError> {
         submission
             .value(name)
@@ -3603,15 +3897,24 @@ fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResu
         || !(0..=MAX_ALERT_HOURS).contains(&end)
         || !(0..=MAX_ALERT_HOURS).contains(&repeat)
     {
-        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+        return Ok(Err(format!(
             "A fuel alert's hours are whole numbers up to {MAX_ALERT_HOURS} (a year)."
-        )))?));
+        )));
     }
     if end >= start {
-        return Ok(SubmitResult::Page(settings_page(Some(
-            "A fuel alert's End must be less than its Start: it alerts between them.",
-        ))?));
+        return Ok(Err(
+            "A fuel alert's End must be less than its Start: it alerts between them.".to_owned(),
+        ));
     }
+    Ok(Ok((start, end, repeat, ping.to_owned())))
+}
+
+fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let (start, end, repeat, ping) = match fuel_alert_values(submission)? {
+        Ok(values) => values,
+        Err(problem) => return Ok(SubmitResult::Page(settings_page(Some(&problem))?)),
+    };
+    let ping = ping.as_str();
     let added = storage::execute(
         &format!(
             "INSERT INTO fuel_alert_configs (start_hours, end_hours, repeat_hours, ping) \
@@ -3628,6 +3931,98 @@ fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResu
     log::info(format!(
         "fuel alert {start}h to {end}h (repeat {repeat}h, ping {ping}) added by {} ({})",
         viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// The popup a fuel alert's Edit opens: its new values (aa-structures'
+/// admin edits a config in place).
+fn edit_fuel_alert_form() -> Form {
+    let hours = |name: &str, label: &str, min: f64| {
+        Field::number(name, label)
+            .range(Some(min), Some(MAX_ALERT_HOURS as f64), true)
+            .required()
+    };
+    Form::new("edit_fuel_alert", "Save fuel alert")
+        .title("Change fuel alert")
+        .field(hours("start_hours", "Start (hours left)", 1.0))
+        .field(hours("end_hours", "End (hours left)", 0.0))
+        .field(
+            Field::number("repeat_hours", "Repeat (hours)")
+                .range(Some(0.0), Some(MAX_ALERT_HOURS as f64), true)
+                .value("0")
+                .help("0: once in the range.")
+                .required(),
+        )
+        .field(alert_ping_field())
+}
+
+/// A config's id from a row's hidden field.
+fn config_id(submission: &Submission) -> Result<i64, PageError> {
+    submission
+        .value("config")
+        .parse()
+        .map_err(|_| PageError::NotFound)
+}
+
+/// Changes a fuel alert config. As aa-structures, a new range or repeat
+/// forgets what it sent, so structures in the new range are told again.
+fn edit_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let (start, end, repeat, ping) = match fuel_alert_values(submission)? {
+        Ok(values) => values,
+        Err(problem) => return Ok(SubmitResult::Page(settings_page(Some(&problem))?)),
+    };
+    let params: Vec<Db> = vec![
+        config.into(),
+        start.into(),
+        end.into(),
+        repeat.into(),
+        ping.as_str().into(),
+    ];
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM fuel_alerts_sent WHERE config_id = $1 AND EXISTS (SELECT 1 FROM fuel_alert_configs c \
+             WHERE c.id = $1 AND (c.start_hours, c.end_hours, c.repeat_hours) \
+                 IS DISTINCT FROM ($2::integer, $3::integer, $4::integer))",
+            params[..4].to_vec(),
+        ),
+        Statement::new(
+            "UPDATE fuel_alert_configs SET start_hours = $2, end_hours = $3, repeat_hours = $4, ping = $5 \
+             WHERE id = $1",
+            params,
+        ),
+    ])
+    .map_err(|e| failed("changing the fuel alert", e))?;
+    log::info(format!(
+        "fuel alert {config} changed to {start}h to {end}h (repeat {repeat}h, ping {ping}) by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// The posted enabled state of a row's Enable or Disable.
+fn enabled_value(submission: &Submission) -> Result<bool, PageError> {
+    match submission.value("enabled") {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(PageError::NotFound),
+    }
+}
+
+fn toggle_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let enabled = enabled_value(submission)?;
+    storage::execute(
+        "UPDATE fuel_alert_configs SET enabled = $2 WHERE id = $1",
+        &[config.into(), enabled.into()],
+    )
+    .map_err(|e| failed("changing the fuel alert", e))?;
+    log::info(format!(
+        "fuel alert {config} {} by {} ({})",
+        if enabled { "enabled" } else { "disabled" },
+        viewer.main.name,
+        viewer.main.id
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }
@@ -3655,7 +4050,7 @@ const MAX_OZONE: i64 = 1_000_000;
 fn jump_fuel_alert_table() -> Result<Table, PageError> {
     let rows = storage::query(
         &format!(
-            "SELECT id, threshold, ping FROM jump_fuel_alert_configs ORDER BY threshold DESC, id LIMIT {}",
+            "SELECT id, threshold, ping, enabled FROM jump_fuel_alert_configs ORDER BY threshold DESC, id LIMIT {}",
             MAX_FUEL_CONFIGS * 2
         ),
         &[],
@@ -3665,27 +4060,33 @@ fn jump_fuel_alert_table() -> Result<Table, PageError> {
         Table::new(vec![
             Column::numeric("Below (units of liquid ozone)"),
             Column::text("Ping"),
+            Column::text("Status"),
             Column::text(""),
         ])
         .title("Jump fuel alerts")
         .empty("No jump fuel alerts: add one below."),
         rows.rows.iter().map(|r| {
-            let threshold = int(r, 1);
+            let (id, threshold) = (int(r, 0), int(r, 1));
+            let enabled = r.get(3).and_then(Db::as_bool).unwrap_or(true);
+            let ping = ping_label(&text(r, 2));
             vec![
                 threshold.into(),
-                match text(r, 2).as_str() {
-                    "danger" => "Danger role",
-                    "warning" => "Warning role",
-                    _ => "None",
-                }
-                .into(),
-                action("Delete", "delete_jump_fuel_alert")
-                    .field("config", int(r, 0).to_string())
-                    .tone(Tone::Danger)
-                    .confirm(format!(
-                        "The alert below {threshold} units of liquid ozone is deleted."
-                    ))
-                    .into(),
+                ping.into(),
+                enabled_badge(enabled),
+                actions(vec![
+                    action("Edit", "edit_jump_fuel_alert")
+                        .field("config", id.to_string())
+                        .confirm(format!(
+                            "Change the alert below {threshold} units of liquid ozone (ping {ping})."
+                        )),
+                    toggle_action("toggle_jump_fuel_alert", id, enabled),
+                    action("Delete", "delete_jump_fuel_alert")
+                        .field("config", id.to_string())
+                        .tone(Tone::Danger)
+                        .confirm(format!(
+                            "The alert below {threshold} units of liquid ozone is deleted."
+                        )),
+                ]),
             ]
         }),
     ))
@@ -3747,6 +4148,78 @@ fn add_jump_fuel_alert(
     log::info(format!(
         "jump fuel alert below {threshold} (ping {ping}) added by {} ({})",
         viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// The popup a jump fuel alert's Edit opens.
+fn edit_jump_fuel_alert_form() -> Form {
+    Form::new("edit_jump_fuel_alert", "Save jump fuel alert")
+        .title("Change jump fuel alert")
+        .field(
+            Field::number("threshold", "Below (units of liquid ozone)")
+                .range(Some(1.0), Some(MAX_OZONE as f64), true)
+                .required(),
+        )
+        .field(alert_ping_field())
+}
+
+/// Changes a jump fuel alert config. As aa-structures, a new threshold
+/// forgets what it sent.
+fn edit_jump_fuel_alert(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let threshold: i64 = submission
+        .value("threshold")
+        .parse()
+        .map_err(|_| PageError::Failed("threshold wasn't a whole number".to_owned()))?;
+    let ping = submission.value("ping");
+    if !matches!(ping, "none" | "warning" | "danger") {
+        return Err(PageError::NotFound);
+    }
+    if !(1..=MAX_OZONE).contains(&threshold) {
+        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+            "A jump fuel alert's threshold is a whole number from 1 to {MAX_OZONE}."
+        )))?));
+    }
+    let params: Vec<Db> = vec![config.into(), threshold.into(), ping.into()];
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM jump_fuel_alerts_sent WHERE config_id = $1 AND EXISTS (SELECT 1 \
+             FROM jump_fuel_alert_configs c WHERE c.id = $1 AND c.threshold <> $2::integer)",
+            params[..2].to_vec(),
+        ),
+        Statement::new(
+            "UPDATE jump_fuel_alert_configs SET threshold = $2, ping = $3 WHERE id = $1",
+            params,
+        ),
+    ])
+    .map_err(|e| failed("changing the jump fuel alert", e))?;
+    log::info(format!(
+        "jump fuel alert {config} changed to below {threshold} (ping {ping}) by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+fn toggle_jump_fuel_alert(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let enabled = enabled_value(submission)?;
+    storage::execute(
+        "UPDATE jump_fuel_alert_configs SET enabled = $2 WHERE id = $1",
+        &[config.into(), enabled.into()],
+    )
+    .map_err(|e| failed("changing the jump fuel alert", e))?;
+    log::info(format!(
+        "jump fuel alert {config} {} by {} ({})",
+        if enabled { "enabled" } else { "disabled" },
+        viewer.main.name,
+        viewer.main.id
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }
@@ -4120,6 +4593,34 @@ mod tests {
         assert_eq!(left(Duration::hours(76)), "3d 4h");
         assert_eq!(left(Duration::minutes(312)), "5h 12m");
         assert_eq!(left(Duration::minutes(-1)), "none");
+    }
+
+    #[test]
+    fn power_modes_as_aa_structures() {
+        let now = Utc::now();
+        let day = Duration::days(1);
+        // Fuel left: full power, whatever else.
+        assert_eq!(
+            power_mode(Some(now + day), None, "online", now),
+            Power::Full
+        );
+        // Out of fuel: low power for 7 days after a service was online.
+        assert_eq!(power_mode(None, Some(now - day), "online", now), Power::Low);
+        assert_eq!(
+            power_mode(Some(now - day), Some(now - day * 6), "online", now),
+            Power::Low
+        );
+        assert_eq!(
+            power_mode(None, Some(now - day * 8), "online", now),
+            Power::Abandoned
+        );
+        // Never seen online: "Abandoned?", unless it's anchoring.
+        assert_eq!(
+            power_mode(None, None, "shield_vulnerable", now),
+            Power::MaybeAbandoned
+        );
+        assert_eq!(power_mode(None, None, "anchoring", now), Power::Low);
+        assert_eq!(power_mode(None, None, "anchor_vulnerable", now), Power::Low);
     }
 
     #[test]

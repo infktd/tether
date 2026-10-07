@@ -5,7 +5,8 @@
 //!   minutes, and those assigned to the corporation kept.
 //! - **Discord** (`manage` picks the channel and what's sent): a card when
 //!   a contract comes in, when it's completed, and when it expires or is
-//!   rejected, cancelled or deleted, each switchable. A contract's
+//!   rejected, cancelled or deleted, each switchable, its title opening
+//!   the app's page. A contract's
 //!   description may link a Janice appraisal: its buy total is read once
 //!   (with the admin's Janice API key, the app's secret) and the price
 //!   checked against it, within a tolerance set in Settings. Contracts
@@ -50,6 +51,8 @@ const RELAY_GAP_SECONDS: i64 = 15;
 const RELAY_BACKOFF_SECONDS: i64 = 60;
 /// Contracts listed on the page.
 const LISTED: i64 = 100;
+/// The page cards' titles open: the contracts.
+const PAGE: &str = "";
 /// Contracts' JSON per storing statement: the host takes 1 MiB of
 /// parameters a call.
 const STORE_BYTES: usize = 512 * 1024;
@@ -815,8 +818,10 @@ fn relay() -> Result<(), JobError> {
         let card = opt_text(row, 3)
             .and_then(|c| serde_json::from_str(&c).ok())
             .and_then(|c| card::embed(&c));
+        // The card's title opens the app's page, as aa-freight's
+        // (`freight/models/contracts.py:337-347`).
         let sent = match &card {
-            Some(card) => discord::send_embed(&text(row, 1), card, Mention::None),
+            Some(card) => discord::send_linked_embed(&text(row, 1), card, PAGE, Mention::None),
             None => discord::send(&text(row, 1), &text(row, 2), Mention::None),
         };
         match sent {

@@ -1135,7 +1135,8 @@ interface downloads {
 }
 
 /// Notices in Tether's notifications (the bell), as AA apps `notify`:
-/// plain text to pilots who use this app. The host puts the app's name
+/// plain text to pilots who use this app, and to those who submitted its
+/// forms (`submitter`). The host puts the app's name
 /// before the title, skips one already waiting unread, and limits how
 /// many an app sends. Only from submit or a job. Needs `notify = true`.
 interface notify {
@@ -1159,6 +1160,19 @@ interface notify {
     /// To every holder of `permission`, one of this app's own, but
     /// `except` (the one who acted, say); how many it reached.
     holders: func(permission: string, title: string, message: string, level: level, except: option<s64>) -> result<u32, error>;
+
+    /// Only while handling a form the viewer posted (`submit`): a
+    /// reference to their account, to keep with what they submitted (an
+    /// application, a request) and reach them later with `submitter`,
+    /// whether or not they hold any of this app's permissions. One per
+    /// account and app, always the same; it tells nothing about the
+    /// account and means nothing to another app. It reaches them for a
+    /// year after the last form post it was asked for in.
+    submitter-reference: func() -> result<string, error>;
+    /// To the account behind one of this app's `submitter-reference`s;
+    /// false if it's gone, past its year, or past the hourly limit for
+    /// them. Limits as `account`.
+    submitter: func(reference: string, title: string, message: string, level: level) -> result<bool, error>;
 }
 
 world plugin {

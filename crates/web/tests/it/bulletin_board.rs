@@ -261,3 +261,115 @@ async fn a_new_bulletin_reaches_open_boards(db: PgPool) {
         None
     );
 }
+
+/// As aa-bulletin-board's form, a new bulletin's groups are picked as it's
+/// written: it's never open to everyone first.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn groups_are_picked_when_a_bulletin_is_made(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let a = log_in_as(&h, "443630591:Pilot A", None).await;
+    let b = log_in_as(&h, "406944591:Pilot B", None).await;
+    let (a_account, b_account) = (account(&h, 443630591).await, account(&h, 406944591).await);
+    for account in [a_account, b_account] {
+        grant(&h, account, "basic_access").await;
+    }
+    let scouts: i64 =
+        sqlx::query_scalar("INSERT INTO core.groups (name) VALUES ('Scouts') RETURNING id")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO core.group_members (group_id, account_id) VALUES ($1, $2)")
+        .bind(scouts)
+        .bind(b_account)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let ids = || async {
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT group_id FROM "plugin_tether.bulletin-board".bulletin_groups
+               JOIN "plugin_tether.bulletin-board".bulletins b ON b.id = bulletin_id
+               WHERE b.title = 'Scouting' ORDER BY group_id"#,
+        )
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    };
+
+    let new = page(&h, &format!("/plugins/{ID}/new"), &owner).await;
+    assert_eq!(new.status, StatusCode::OK, "{}", new.body);
+    assert!(new.body.contains("Only for Scouts"), "{}", new.body);
+
+    // A group that isn't there (or can't be offered) is refused.
+    let res = post(
+        &h,
+        &owner,
+        "new",
+        "_form=bulletin&title=Scouting&content=Eyes+up.&group=999999",
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(ids().await.is_empty());
+    // A problem keeps the ticks.
+    let res = post(
+        &h,
+        &owner,
+        "new",
+        &format!(
+            "_form=bulletin&title=Scouting&content={}&g_{scouts}=on",
+            "Line.%0A%0A".repeat(30)
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("at most 29 paragraphs"), "{}", res.body);
+    assert!(res.body.contains("checked"), "{}", res.body);
+
+    let res = post(
+        &h,
+        &owner,
+        "new",
+        &format!("_form=bulletin&title=Scouting&content=Eyes+up.&g_{scouts}=on"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(ids().await, vec![scouts]);
+    // B (a scout) reads it from the start; A never does.
+    assert!(
+        page(&h, &format!("/plugins/{ID}"), &b)
+            .await
+            .body
+            .contains("Scouting")
+    );
+    assert!(
+        !page(&h, &format!("/plugins/{ID}"), &a)
+            .await
+            .body
+            .contains("Scouting")
+    );
+
+    // With more groups than fit as boxes, one is picked from a list.
+    sqlx::query(
+        "INSERT INTO core.groups (name) SELECT 'Squad ' || n FROM generate_series(1, 20) n",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let new = page(&h, &format!("/plugins/{ID}/new"), &owner).await;
+    assert!(!new.body.contains("Only for Scouts"), "{}", new.body);
+    assert!(new.body.contains("Who reads it"), "{}", new.body);
+    sqlx::query(r#"DELETE FROM "plugin_tether.bulletin-board".bulletins"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = post(
+        &h,
+        &owner,
+        "new",
+        &format!("_form=bulletin&title=Scouting&content=Eyes+up.&group={scouts}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(ids().await, vec![scouts]);
+}

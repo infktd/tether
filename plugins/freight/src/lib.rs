@@ -4,8 +4,8 @@
 //!   `setup_contract_handler` holder; chosen with the mode when there are
 //!   several) whose corporation's courier contracts
 //!   are read every ten minutes, kept as the operation mode says (aa-freight's
-//!   four: contracts to the alliance; to the corporation from its members,
-//!   from the alliance's, or from anyone).
+//!   four: contracts to the alliance from its members; to the corporation
+//!   from its members, from the alliance's, or from anyone).
 //! - **Pricing** (`manage`, aa-freight's admin site): routes between
 //!   locations, one way or both, with a base price, a minimum, a price per
 //!   m3 (with the handler's global modifier when a route uses it), a price
@@ -14,9 +14,10 @@
 //!   mention, announcing every contract).
 //! - **Calculator** (`use_calculator`): a route's reward for a volume and a
 //!   collateral, with how to issue the contract.
-//! - **Contracts** (`view_contracts`): the outstanding and in-progress
-//!   ones, each checked against its route's pricing. **My contracts**: the
-//!   viewer's own. **Statistics** (`view_statistics`): the last 90 days'
+//! - **Contracts** (`view_contracts`): Active (the outstanding and
+//!   in-progress ones) and All, each checked against its route's pricing. **My contracts**
+//!   (`use_calculator`): the viewer's own, outstanding, in progress,
+//!   finished or failed. **Statistics** (`view_statistics`): the last 90 days'
 //!   finished contracts by route, pilot, pilot corporation and customer.
 //! - **Locations** (`add_location`): stations by id (named from ESI) and
 //!   structures by id and name (apps can't read structures).
@@ -24,12 +25,15 @@
 //!   Discord role of the state Settings names (aa-freight's
 //!   FREIGHT_DISCORD_MENTIONS, none by default; without a role mapped to
 //!   that state they go unmentioned, and Settings says so), and each
-//!   contract's status changes to the customers' channel, naming only the
+//!   contract's status changes to the customers' channel (both for priced
+//!   contracts only, unless every contract is announced), naming only the
 //!   issuer and route and mentioning nobody (apps can't message people, as
 //!   aa-freight's direct messages do).
 
 mod card;
 mod pricing;
+
+use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
 use pricing::{Pricing, for_route, thousands};
@@ -39,9 +43,9 @@ use tether_plugin_sdk::identity::{self, Character, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Field, Form, Page, PageError, Plugin, Request, SettingsForm, SettingsGroup,
-    Submission, SubmitResult, Table, Tone, Value, action, actions, badge, character, corporation,
-    isk, link, log, time,
+    Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm,
+    SettingsGroup, Submission, SubmitResult, Table, Tone, Value, action, actions, badge, character,
+    corporation, isk, link, log, time,
 };
 
 const SYNC: &str = "sync";
@@ -59,6 +63,8 @@ const RELAY_GAP_SECONDS: i64 = 15;
 const RELAY_BACKOFF_SECONDS: i64 = 60;
 const DISCORD_MAX: usize = 1_500;
 const MAX_ROWS: i64 = 500;
+/// All contracts' rows: with Active's, within a page's 10,000 values.
+const ALL_ROWS: i64 = 400;
 const MAX_PRICINGS: i64 = 100;
 /// Locations are route ends in selects, which hold at most 100 options.
 const MAX_LOCATIONS: i64 = 100;
@@ -67,7 +73,7 @@ const MODES: [(&str, &str, &str); 4] = [
     (
         "my_alliance",
         "My Alliance",
-        "Contracts assigned to the handler's alliance.",
+        "Contracts assigned to the handler's alliance by its members.",
     ),
     (
         "my_corporation",
@@ -85,6 +91,11 @@ const MODES: [(&str, &str, &str); 4] = [
         "Contracts assigned to the handler's corporation by anyone.",
     ),
 ];
+/// The pages Discord cards' titles open, as aa-freight's
+/// (`freight/models/contracts.py:335-341`): pilots' the contracts (Active,
+/// where a new one is; aa-freight's All), customers' their own.
+const PILOT_PAGE: &str = "contracts";
+const CUSTOMER_PAGE: &str = "mine";
 /// Statuses a contract's issuer hears about, as aa-freight's customer
 /// notifications.
 const CUSTOMER_STATUSES: [&str; 4] = ["outstanding", "in_progress", "finished", "failed"];
@@ -102,8 +113,17 @@ impl Plugin for Freight {
                 need(&viewer, "setup_contract_handler")?;
                 handler_page()
             }
-            ["mine"] => mine_page(&viewer),
-            ["contracts"] => contracts_page(),
+            ["mine"] => {
+                // The manifest's rule asks for it too (aa-freight's).
+                need(&viewer, "use_calculator")?;
+                mine_page(&viewer)
+            }
+            ["contracts"] => {
+                // The manifest's rule asks for it too: All is every
+                // customer's contracts.
+                need(&viewer, "view_contracts")?;
+                contracts_page()
+            }
             ["statistics"] => statistics_page(),
             ["locations"] => locations_page(None),
             ["pricing"] => pricing_page(None),
@@ -505,7 +525,10 @@ fn sync_failed(why: &str) -> Result<(), JobError> {
 }
 
 /// The contracts the operation mode keeps (all are courier contracts
-/// assigned to its organization already).
+/// assigned to its organization already). In both alliance modes, as
+/// aa-freight's: those whose issuer is in the handler's alliance
+/// (`freight/models/contract_handlers.py:343-350`); a contract kept once is
+/// followed to its end, though its issuer leaves the alliance meanwhile.
 fn keep(
     mode: &str,
     handler: &Character,
@@ -516,7 +539,7 @@ fn keep(
             .into_iter()
             .filter(|c| c["issuer_corporation_id"].as_i64() == Some(handler.corporation_id))
             .collect()),
-        "corp_in_alliance" => {
+        "my_alliance" | "corp_in_alliance" => {
             let Some(alliance) = handler.alliance_id else {
                 return Ok(Vec::new());
             };
@@ -524,23 +547,48 @@ fn keep(
                 .iter()
                 .filter_map(|c| c["issuer_id"].as_i64())
                 .collect();
-            let in_alliance: Vec<i64> = affiliations(&issuers)?
+            let members: Vec<i64> = affiliations(&issuers)?
                 .into_iter()
                 .filter(|(_, _, a)| *a == Some(alliance))
                 .map(|(character, _, _)| character)
                 .collect();
+            let kept = stored(&couriers)?;
             Ok(couriers
                 .into_iter()
-                .filter(|c| {
-                    c["issuer_id"]
-                        .as_i64()
-                        .is_some_and(|id| in_alliance.contains(&id))
-                })
+                .filter(|c| from_member(c, &members, &kept))
                 .collect())
         }
-        // my_alliance and corp_public: everything assigned.
+        // corp_public: everything assigned.
         _ => Ok(couriers),
     }
+}
+
+/// Whether a contract's issuer is one of the alliance's `members`, or the
+/// contract is one already kept.
+fn from_member(c: &serde_json::Value, members: &[i64], kept: &[i64]) -> bool {
+    c["issuer_id"]
+        .as_i64()
+        .is_some_and(|id| members.contains(&id))
+        || c["contract_id"]
+            .as_i64()
+            .is_some_and(|id| kept.contains(&id))
+}
+
+/// Which of these contracts are stored already.
+fn stored(contracts: &[serde_json::Value]) -> Result<Vec<i64>, JobError> {
+    let list = contracts
+        .iter()
+        .filter_map(|c| c["contract_id"].as_i64())
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows = storage::query(
+        "SELECT contract_id FROM contracts \
+         WHERE contract_id = ANY(string_to_array($1, ',')::bigint[])",
+        &[list.into()],
+    )
+    .map_err(|e| retry("reading stored contracts", e))?;
+    Ok(rows.rows.iter().map(|r| int(r, 0)).collect())
 }
 
 /// Characters' corporations and alliances now, from ESI's public
@@ -804,10 +852,19 @@ const CONTRACT_COLUMNS: &str = "contract_id, issuer_id, issuer_corporation_id, a
      date_issued, date_expired, title";
 
 fn contracts(where_clause: &str, params: &[Db]) -> Result<Vec<Contract>, storage::Error> {
+    contracts_up_to(where_clause, params, MAX_ROWS)
+}
+
+/// The newest `limit` contracts `where_clause` picks.
+fn contracts_up_to(
+    where_clause: &str,
+    params: &[Db],
+    limit: i64,
+) -> Result<Vec<Contract>, storage::Error> {
     let rows = storage::query(
         &format!(
             "SELECT {CONTRACT_COLUMNS} FROM contracts {where_clause} \
-             ORDER BY date_issued DESC LIMIT {MAX_ROWS}"
+             ORDER BY date_issued DESC LIMIT {limit}"
         ),
         params,
     )?;
@@ -893,14 +950,15 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             let added = storage::execute(
                 "WITH claimed AS (UPDATE contracts SET notified_at = now() \
                      WHERE contract_id = $1 AND notified_at IS NULL RETURNING 1) \
-                 INSERT INTO outbox (channel, message, card, mention_state) \
-                 SELECT $2, $3, $4, $5 FROM claimed",
+                 INSERT INTO outbox (channel, message, card, mention_state, page) \
+                 SELECT $2, $3, $4, $5, $6 FROM claimed",
                 &[
                     c.id.into(),
                     channel.as_str().into(),
                     pilot_message(c, &names, check.as_ref()).into(),
                     pilot_card(c, &names, check.as_ref()),
                     settings.pilot_ping.clone().into(),
+                    PILOT_PAGE.into(),
                 ],
             )
             .map_err(|e| retry("queuing a pilot notice", e))?;
@@ -932,16 +990,25 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
         .map_err(|e| retry("reading status changes", e))?;
         for c in news.iter().filter(|c| !c.expired(now)) {
             let check = c.check(&pricings, settings.modifier);
+            // Priced contracts only, unless every contract is announced
+            // (aa-freight's FREIGHT_NOTIFY_ALL_CONTRACTS,
+            // `freight/managers.py:428-429`). Not noted: a pricing added
+            // while it's news still tells its customer.
+            if check.is_none() && !settings.notify_all {
+                continue;
+            }
             let added = storage::execute(
                 "WITH noticed AS (INSERT INTO customer_notices (contract_id, status) \
                      VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1) \
-                 INSERT INTO outbox (channel, message, card) SELECT $3, $4, $5 FROM noticed",
+                 INSERT INTO outbox (channel, message, card, page) \
+                 SELECT $3, $4, $5, $6 FROM noticed",
                 &[
                     c.id.into(),
                     c.status.as_str().into(),
                     channel.as_str().into(),
                     customer_message(c, &names, check.as_ref()).into(),
                     customer_card(c, &names, check.as_ref()),
+                    CUSTOMER_PAGE.into(),
                 ],
             )
             .map_err(|e| retry("queuing a customer notice", e))?;
@@ -1106,7 +1173,7 @@ fn relay() -> Result<(), JobError> {
     .map_err(|e| retry("expiring messages", e))?;
     let mut gap = RELAY_GAP_SECONDS;
     let waiting = storage::query(
-        "SELECT id, channel, message, card::text, mention_state FROM outbox \
+        "SELECT id, channel, message, card::text, mention_state, page FROM outbox \
          WHERE sent_at IS NULL AND failed IS NULL ORDER BY id LIMIT $1",
         &[(SENDS_PER_RUN as i64 + 1).into()],
     )
@@ -1131,9 +1198,13 @@ fn relay() -> Result<(), JobError> {
             .and_then(|c| serde_json::from_str(c).ok())
             .and_then(|c| card::embed(&c));
         let (channel, message) = (text(row, 1), text(row, 2));
-        let post = |mention: Mention| match &card {
-            Some(card) => discord::send_embed(&channel, card, mention),
-            None => discord::send(&channel, &message, mention),
+        // The card's title opens the app's page for it (queued before
+        // 0.1.7: none).
+        let page = row.get(5).and_then(Db::as_text).map(str::to_owned);
+        let post = |mention: Mention| match (&card, &page) {
+            (Some(card), Some(page)) => discord::send_linked_embed(&channel, card, page, mention),
+            (Some(card), None) => discord::send_embed(&channel, card, mention),
+            (None, _) => discord::send(&channel, &message, mention),
         };
         let mention = row.get(4).and_then(Db::as_text).map(str::to_owned);
         sends += 1;
@@ -1588,14 +1659,40 @@ fn contract_table(title: &str, empty: &str) -> Table {
     .empty(empty)
 }
 
+/// The names of the issuers and acceptors of `lists`' contracts, read at
+/// once (a page lists hundreds: a read each would outlast its time).
+fn people(lists: &[&[Contract]]) -> Result<HashMap<i64, String>, PageError> {
+    let ids = lists
+        .iter()
+        .flat_map(|list| list.iter())
+        .flat_map(|c| [Some(c.issuer), c.acceptor])
+        .flatten()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows = storage::query(
+        "SELECT id, name FROM names WHERE id = ANY(string_to_array($1, ',')::bigint[])",
+        &[ids.into()],
+    )
+    .map_err(|e| failed("reading names", e))?;
+    Ok(rows
+        .rows
+        .iter()
+        .map(|r| (int(r, 0), text(r, 1)))
+        .filter(|(_, name)| !name.is_empty())
+        .collect())
+}
+
 fn contract_row(
     c: &Contract,
     names: &[(i64, String)],
+    people: &HashMap<i64, String>,
     pricings: &[Pricing],
     modifier: Option<f64>,
     now: DateTime<Utc>,
 ) -> Vec<Value> {
     let check = c.check(pricings, modifier);
+    let who = |id: i64| people.get(&id).cloned().unwrap_or_else(|| id.to_string());
     vec![
         if c.title.is_empty() {
             c.route(names).into()
@@ -1608,9 +1705,9 @@ fn contract_row(
             status_badge(&c.status)
         },
         check_badge(check.as_ref()),
-        character(c.issuer, name_of(c.issuer)).into(),
+        character(c.issuer, who(c.issuer)).into(),
         c.acceptor
-            .map_or_else(|| "".into(), |a| character(a, name_of(a)).into()),
+            .map_or_else(|| "".into(), |a| character(a, who(a)).into()),
         isk(c.reward),
         isk(c.collateral),
         m3(c.volume).into(),
@@ -1631,18 +1728,29 @@ fn mine_page(viewer: &Viewer) -> Result<Page, PageError> {
         .map(|c| c.id.to_string())
         .collect::<Vec<_>>()
         .join(",");
+    // aa-freight's statuses for My Contracts (`freight/managers.py:262-272`),
+    // the same as its customers hear about.
     let list = contracts(
-        "WHERE issuer_id = ANY(string_to_array($1, ',')::bigint[])",
-        &[mine.into()],
+        "WHERE issuer_id = ANY(string_to_array($1, ',')::bigint[]) \
+         AND status = ANY(string_to_array($2, ','))",
+        &[mine.into(), CUSTOMER_STATUSES.join(",").into()],
     )
     .map_err(|e| failed("reading contracts", e))?;
     let now = Utc::now();
     let mut table = contract_table(
         "My contracts",
-        "No courier contracts from your characters to the freight service in the last 30 days.",
+        "No courier contracts from your characters to the freight service.",
     );
+    let people = people(&[&list])?;
     for c in &list {
-        table = table.row(contract_row(c, &names, &pricings, settings.modifier, now));
+        table = table.row(contract_row(
+            c,
+            &names,
+            &people,
+            &pricings,
+            settings.modifier,
+            now,
+        ));
     }
     Ok(Page::new("My contracts")
         .description("Your characters' courier contracts to the freight service")
@@ -1653,25 +1761,48 @@ fn contracts_page() -> Result<Page, PageError> {
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let names = places().map_err(|e| failed("reading locations", e))?;
     let pricings = pricing::all().map_err(|e| failed("reading pricings", e))?;
-    let list = contracts(
+    let now = Utc::now();
+    // aa-freight's Active Contracts (`freight/managers.py:247-255`).
+    let active = contracts(
         "WHERE status = 'in_progress' OR (status = 'outstanding' \
              AND (date_expired IS NULL OR date_expired > now()))",
         &[],
     )
     .map_err(|e| failed("reading contracts", e))?;
-    let now = Utc::now();
-    let mut table = contract_table(
+    // aa-freight's All Contracts (`freight/managers.py:257-260`): every
+    // status, the newest first.
+    let all = contracts_up_to("", &[], ALL_ROWS).map_err(|e| failed("reading contracts", e))?;
+    let people = people(&[&active, &all])?;
+    let row = |c: &Contract| contract_row(c, &names, &people, &pricings, settings.modifier, now);
+    let mut active_table = contract_table(
         "Active contracts",
         "No outstanding or in-progress contracts.",
     );
-    for c in &list {
-        table = table.row(contract_row(c, &names, &pricings, settings.modifier, now));
+    for c in &active {
+        active_table = active_table.row(row(c));
     }
+    let total = storage::query("SELECT count(*) FROM contracts", &[])
+        .map_err(|e| failed("counting contracts", e))?
+        .rows
+        .first()
+        .map(|r| int(r, 0))
+        .unwrap_or_default();
+    let mut all_table = contract_table("All contracts", "No contracts yet.");
+    for c in &all {
+        all_table = all_table.row(row(c));
+    }
+    let mut all_sections = Vec::new();
+    if total > ALL_ROWS {
+        all_sections.push(Section::Text(format!(
+            "The newest {ALL_ROWS} of {} contracts.",
+            thousands(total as f64)
+        )));
+    }
+    all_sections.push(Section::Table(all_table));
     Ok(Page::new("Contracts")
-        .description(
-            "Outstanding and in-progress courier contracts, checked against their route's pricing",
-        )
-        .table(table))
+        .description("Courier contracts, checked against their route's pricing")
+        .tab("Active", vec![Section::Table(active_table)])
+        .tab("All", all_sections))
 }
 
 fn statistics_page() -> Result<Page, PageError> {
@@ -2095,7 +2226,7 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
                     )
                     .field(
                         Field::checkbox("notify_all", "Announce every contract", settings.notify_all)
-                            .help("Also contracts on routes without a pricing."),
+                            .help("Pilots and customers hear about contracts on routes without a pricing too."),
                     ),
             ),
     ))
@@ -2349,6 +2480,11 @@ mod tests {
         let kept = keep("corp_public", &handler, vec![contract(100), contract(200)]);
         assert_eq!(kept.map(|k| k.len()).unwrap_or_default(), 2);
         assert_eq!(organization(&handler, "my_alliance"), Some(1_000));
+        // The alliance modes: a member's contract, or one kept already.
+        let c = serde_json::json!({ "contract_id": 7, "issuer_id": 5 });
+        assert!(from_member(&c, &[5], &[]));
+        assert!(from_member(&c, &[], &[7]));
+        assert!(!from_member(&c, &[6], &[8]));
         assert_eq!(organization(&handler, "corp_public"), Some(100));
     }
 }

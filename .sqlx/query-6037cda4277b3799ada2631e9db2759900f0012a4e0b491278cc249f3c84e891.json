@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.plugin_submitters (plugin_id, account_id) VALUES ($1, $2) ON CONFLICT (plugin_id, account_id) DO UPDATE SET last_posted_at = now() RETURNING reference",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reference",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugin_submitters",
+            "name": "reference"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6037cda4277b3799ada2631e9db2759900f0012a4e0b491278cc249f3c84e891"
+}
