@@ -2068,6 +2068,72 @@ async fn a_journal_read_in_part_says_so_until_read_whole(db: PgPool) {
     }
 }
 
+/// A longer keep on the Settings page reads back the journal a short one
+/// let go (ESI keeps 30 days), though the first page has nothing new.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_longer_keep_reads_the_journal_back(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let route = format!("/characters/{CHRIBBA}/wallet/journal");
+    // The second page ten days back.
+    let older: Vec<serde_json::Value> = (101..=200_i64)
+        .rev()
+        .map(|id| {
+            let at =
+                chrono::Utc::now() - chrono::Duration::days(10) + chrono::Duration::seconds(id);
+            serde_json::json!({
+                "id": id, "date": at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "ref_type": "player_donation", "amount": 1.0, "balance": 2.0,
+                "description": "Gift",
+            })
+        })
+        .collect();
+    for (page, body) in [
+        (1, journal_page((201..=300).rev(), 2)),
+        (
+            2,
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "2")
+                .set_body_json(older),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(body)
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    for (days, stored) in [(7, 100), (360, 200)] {
+        let saved = send(
+            &h.app,
+            form(
+                &format!("/plugins/{ID}/settings"),
+                &format!(
+                    "_form=settings&retention_days={days}&max_mails=250&sharing_timeout_minutes=0"
+                ),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        sqlx::query(
+            r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal'"#,
+        )
+        .execute(&h.db)
+        .await
+        .unwrap();
+        sync(&h).await;
+        assert_eq!(
+            journal_entries(&h).await.len(),
+            stored,
+            "keeping {days} days: {:?}",
+            plugin_warnings(&h).await
+        );
+        assert_eq!(journal_read(&h).await, (true, None));
+    }
+}
+
 /// A character's mail, ids `oldest` to `newest`, answered as ESI does:
 /// the newest 50, or the 50 before `last_mail_id`.
 struct MailHistory {
@@ -2101,10 +2167,11 @@ impl wiremock::Respond for MailHistory {
 /// Mail is paged back 50 headers a call (aa-memberaudit's `last_mail_id`):
 /// all that came since the last read, and on a first read older mail too,
 /// until the Settings' mails kept per character are stored or ESI has no
-/// more.
+/// more. Keeping more on the Settings page reads back what a smaller keep
+/// let go.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn mail_is_paged_back(db: PgPool) {
-    let (h, _) = synced(db).await;
+    let (h, owner) = synced(db).await;
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/mail")))
         .respond_with(MailHistory {
@@ -2166,6 +2233,26 @@ async fn mail_is_paged_back(db: PgPool) {
     mail_due().await.unwrap();
     sync(&h).await;
     assert_eq!(stored().await.unwrap(), (120, 931, 1050, false));
+
+    // Keeping fewer on the Settings page, then more again: what the
+    // smaller keep let go is read back.
+    for (keep, expected) in [(60, (60, 991, 1050, false)), (250, (120, 931, 1050, false))] {
+        let saved = send(
+            &h.app,
+            form(
+                &format!("/plugins/{ID}/settings"),
+                &format!(
+                    "_form=settings&retention_days=360&max_mails={keep}&sharing_timeout_minutes=0"
+                ),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        mail_due().await.unwrap();
+        sync(&h).await;
+        assert_eq!(stored().await.unwrap(), expected, "keeping {keep}");
+    }
 }
 
 /// More new mail than one read takes (4,500 since the last read, with

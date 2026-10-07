@@ -15,6 +15,8 @@ use crate::failed;
 pub(crate) const RETENTION_DAYS: (i64, i64, i64) = (7, 360, 3650);
 /// `MEMBERAUDIT_MAX_MAILS`: mails kept per character.
 pub(crate) const MAX_MAILS: (i64, i64, i64) = (1, 250, 5000);
+/// Days of wallet journal ESI gives.
+const ESI_JOURNAL_DAYS: i64 = 30;
 /// `MEMBERAUDIT_SHARING_TIMEOUT`, in minutes (0: until unshared). A year
 /// at most.
 pub(crate) const SHARING_TIMEOUT: (i64, i64, i64) = (0, 0, 525_600);
@@ -152,11 +154,27 @@ pub(crate) fn save(viewer: &Viewer, submission: &Submission) -> Result<SubmitRes
         ))?));
     };
     let roles = submission.checked("roles_enabled");
+    let before = for_page()?;
     let mut statements = vec![storage::Statement::new(
         "UPDATE settings SET retention_days = $1, max_mails = $2, roles_enabled = $3, \
          sharing_timeout_minutes = $4 WHERE id = 1",
         vec![retention.into(), mails.into(), roles.into(), sharing.into()],
     )];
+    // Keeping more: what the smaller keep left in ESI is read back on each
+    // character's next read (older mail; the journal, which ESI keeps
+    // 30 days).
+    if mails > before.max_mails || retention > before.retention_days {
+        statements.push(storage::Statement::new(
+            "UPDATE characters SET mail_older = true",
+            vec![],
+        ));
+    }
+    if retention > before.retention_days && before.retention_days < ESI_JOURNAL_DAYS {
+        statements.push(storage::Statement::new(
+            "UPDATE characters SET journal_gap = true",
+            vec![],
+        ));
+    }
     if !roles {
         // Off: what was read goes, and is read afresh if it's turned on.
         statements.push(storage::Statement::new("DELETE FROM roles", vec![]));
