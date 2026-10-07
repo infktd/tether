@@ -362,6 +362,47 @@ async fn buyback_end_to_end(db: PgPool) {
             .any(|t| t.contains("Your buyback contract has been accepted")),
         "{notices:?}"
     );
+
+    // A type pasted twice is one row; a pilot keeps at most 20
+    // calculations without a contract, the contracted one apart.
+    for _ in 0..21 {
+        let res = post(
+            &h,
+            &owner,
+            &format!("program/{program}"),
+            "_form=calculate&items=Tritanium%095%0ATritanium%095&donation=0",
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    let open: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.buyback".trackings WHERE contract_id IS NULL"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(open, 20);
+    let rows: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT i.quantity FROM "plugin_tether.buyback".tracking_items i
+           JOIN "plugin_tether.buyback".trackings t ON t.id = i.tracking_id
+           WHERE t.contract_id IS NULL"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        rows.len() == 20 && rows.iter().all(|q| *q == 10),
+        "{rows:?}"
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            r#"SELECT exists(SELECT 1 FROM "plugin_tether.buyback".trackings WHERE tracking_number = $1)"#
+        )
+        .bind(&number)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    );
 }
 
 /// A program restricted to a state the viewer isn't in: not listed, and

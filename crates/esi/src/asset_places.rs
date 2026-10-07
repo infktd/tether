@@ -255,6 +255,7 @@ pub(crate) fn hangar_items(tree: &AssetTree, structures: &[i64]) -> serde_json::
         .filter(|(_, held)| flag(held) == "OfficeFolder")
         .map(|(id, held)| (*id, held.location_id))
         .collect();
+    let structures: std::collections::HashSet<i64> = structures.iter().copied().collect();
     // Items in the asked structures' hangars: where each is.
     let mut in_hangar: HashMap<i64, (i64, &str)> = HashMap::new();
     for (id, held) in &tree.items {

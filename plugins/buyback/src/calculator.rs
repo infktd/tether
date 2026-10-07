@@ -19,8 +19,12 @@ use crate::programs::{self, Program};
 use crate::statics;
 use crate::{Access, Settings, failed, isk_text, settings};
 
-/// Most lines a paste is priced for (a big hangar, in a few calls).
-const MAX_LINES: usize = 2000;
+/// Most rows a paste is priced for, its repeated names merged: the
+/// host's tables show 500 rows.
+const MAX_ROWS: usize = 500;
+/// Calculations a pilot keeps uncontracted in one program; the oldest go
+/// past it.
+const MAX_OPEN: i64 = 20;
 
 /// The program's terms, in AA's words (`program_settings.py`).
 pub fn terms(p: &Program, settings: &Settings, locations: &[String]) -> Card {
@@ -330,13 +334,19 @@ pub fn submit(access: &Access, program_id: i64, s: &Submission) -> Result<Submit
             .form(form()),
         ));
     }
-    let mut lines = paste::lines(items);
-    lines.truncate(MAX_LINES);
+    let mut lines = paste::merged(paste::lines(items));
+    let cut = lines.len() > MAX_ROWS;
+    lines.truncate(MAX_ROWS);
     let calc =
         calculate(&program, &settings, &lines, donation).map_err(|e| failed("pricing", e))?;
     let priced = calc.rows.iter().any(|r| !r.rejected);
     let blocked = settings.disallow_any_disallowed && calc.rows.iter().any(|r| r.rejected);
     let mut page = base;
+    if cut {
+        page = page.card(Card::new("Paste cut short").description(format!(
+            "Only the first {MAX_ROWS} different items were priced. Sell the rest in another contract."
+        )));
+    }
     if blocked {
         page = page.card(
             Card::new("Calculation Failed")
@@ -385,14 +395,19 @@ fn keep(
         false,
     )?;
     let t = &calc.totals;
-    let items: Vec<serde_json::Value> = calc
-        .rows
+    // One row a type (a type pasted packed and assembled is two lines).
+    let mut by_type: Vec<(i64, i64, f64)> = Vec::new();
+    for r in calc.rows.iter().filter(|r| !r.rejected) {
+        let Some(type_id) = r.type_id else { continue };
+        match by_type.iter_mut().find(|(t, _, _)| *t == type_id) {
+            Some(row) => row.1 = row.1.saturating_add(r.quantity),
+            None => by_type.push((type_id, r.quantity, r.unit_value)),
+        }
+    }
+    let items: Vec<serde_json::Value> = by_type
         .iter()
-        .filter(|r| !r.rejected)
-        .filter_map(|r| {
-            Some(serde_json::json!({
-                "type_id": r.type_id?, "quantity": r.quantity, "buy_value": r.unit_value,
-            }))
+        .map(|(type_id, quantity, value)| {
+            serde_json::json!({ "type_id": type_id, "quantity": quantity, "buy_value": value })
         })
         .collect();
     let character = tether_plugin_sdk::identity::acting().map_or(access.viewer.main.id, |c| c.id);
@@ -423,6 +438,12 @@ fn keep(
                 Db::json(serde_json::Value::Array(items).to_string()),
                 number.clone().into(),
             ],
+        ),
+        Statement::new(
+            "DELETE FROM trackings WHERE id IN (SELECT id FROM trackings \
+                 WHERE program_id = $1 AND issuer_account = $2 AND contract_id IS NULL \
+                 ORDER BY created_at DESC, id DESC OFFSET $3)",
+            vec![program.id.into(), access.account().into(), MAX_OPEN.into()],
         ),
     ])
     .map_err(|e| format!("{e:?}"))?;

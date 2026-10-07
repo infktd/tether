@@ -2978,10 +2978,14 @@ mod tests {
     /// many pairs is refused without reading them all.
     #[test]
     fn form_posts_are_read_with_a_cap() {
-        let pairs = super::form_pairs(b"_form=calculate&items=Tritanium%091%2C000%0AVeldspar&notes=a+b&x")
-            .ok()
-            .unwrap();
-        assert_eq!(pairs[1], ("items".to_owned(), "Tritanium\t1,000\nVeldspar".to_owned()));
+        let pairs =
+            super::form_pairs(b"_form=calculate&items=Tritanium%091%2C000%0AVeldspar&notes=a+b&x")
+                .ok()
+                .unwrap();
+        assert_eq!(
+            pairs[1],
+            ("items".to_owned(), "Tritanium\t1,000\nVeldspar".to_owned())
+        );
         assert_eq!(pairs[2].1, "a b");
         assert_eq!(pairs[3], ("x".to_owned(), String::new()));
         assert!(super::form_pairs("a&".repeat(super::MAX_FORM_PAIRS + 1).as_bytes()).is_err());

@@ -21,7 +21,7 @@ pub fn render(access: &Access, request: &Request) -> Result<Page, PageError> {
         ["me"] => me(access),
         ["settings"] if access.manage_all() => app_settings(),
         ["program", id] => crate::calculator::page(access, id_of(id)?),
-        ["program", id, "prices"] => crate::manage::prices_page(access, id_of(id)?, request),
+        ["program", id, "prices"] => crate::manage::prices_page(access, id_of(id)?, None),
         ["program", id, "leaderboard"] => crate::stats::leaderboard(access, id_of(id)?, request),
         ["program", id, "performance"] => crate::stats::performance(access, id_of(id)?, request),
         ["tracking", number] => crate::stats::details(access, number),
@@ -107,9 +107,7 @@ fn index(access: &Access) -> Result<Page, PageError> {
         if leaderboard {
             row.push(link("Leaderboard", format!("program/{}/leaderboard", p.id)).into());
         }
-        let performance = p.manager_account == access.account()
-            || access.can("see_performance")
-            || access.manager();
+        let performance = access.can("see_performance") || p.editable_by(access);
         row.push(if performance {
             link("Performance", format!("program/{}/performance", p.id)).into()
         } else {
@@ -162,7 +160,7 @@ fn faq() -> Result<Page, PageError> {
         ));
     let rows = storage::query("SELECT header, body FROM faq ORDER BY position, id", &[])
         .map_err(|e| failed("reading the FAQ", e))?;
-    for r in &rows.rows {
+    for r in rows.rows.iter().take(crate::TABLE_ROWS) {
         page = page.card(Card::new(text(r, 0)).description(text(r, 1)));
     }
     Ok(page)

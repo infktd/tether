@@ -821,7 +821,7 @@ fn faq_page(access: &Access) -> Result<Page, PageError> {
         Column::text("Answer"),
         Column::text(""),
     ]);
-    for r in &rows.rows {
+    for r in rows.rows.iter().take(crate::TABLE_ROWS) {
         table = table.row(vec![
             text(r, 1).into(),
             text(r, 2).into(),
@@ -874,7 +874,13 @@ fn remove_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError
 
 /// AA's special taxes page: everyone who may use the program reads it;
 /// its managers add and remove entries.
-pub fn prices_page(access: &Access, program_id: i64, request: &Request) -> Result<Page, PageError> {
+/// A program's special prices; `problem`, why the last addition wasn't
+/// made (shown on the page the post answers with, never from a link).
+pub fn prices_page(
+    access: &Access,
+    program_id: i64,
+    problem: Option<String>,
+) -> Result<Page, PageError> {
     let program = crate::calculator::visible_program(access, program_id)?;
     let edit = program.editable_by(access);
     let items = storage::query(
@@ -933,7 +939,7 @@ pub fn prices_page(access: &Access, program_id: i64, request: &Request) -> Resul
         Column::text(""),
     ])
     .title("Special item taxes");
-    for r in &items.rows {
+    for r in items.rows.iter().take(crate::TABLE_ROWS) {
         let what: Value = match (opt_int(r, 1), opt_int(r, 2)) {
             (Some(t), _) => item_type(t, type_name(t)).into(),
             (_, Some(m)) => format!(
@@ -958,7 +964,7 @@ pub fn prices_page(access: &Access, program_id: i64, request: &Request) -> Resul
         Column::text(""),
     ])
     .title("Static prices");
-    for r in &statics_rows.rows {
+    for r in statics_rows.rows.iter().take(crate::TABLE_ROWS) {
         static_table = static_table.row(vec![
             item_type(int(r, 0), type_name(int(r, 0))).into(),
             Value::Isk(crate::float(r, 1)),
@@ -967,7 +973,7 @@ pub fn prices_page(access: &Access, program_id: i64, request: &Request) -> Resul
     }
     let mut watch_table = Table::new(vec![Column::text("Item or group"), Column::text("")])
         .title("Manual review watchlist");
-    for r in &watch.rows {
+    for r in watch.rows.iter().take(crate::TABLE_ROWS) {
         let what: Value = match (opt_int(r, 1), opt_int(r, 2)) {
             (Some(t), _) => item_type(t, type_name(t)).into(),
             (_, Some(g)) => format!(
@@ -984,12 +990,7 @@ pub fn prices_page(access: &Access, program_id: i64, request: &Request) -> Resul
         .table(static_table.empty("No static prices."))
         .table(watch_table.empty("Nothing on the watchlist."));
     if edit {
-        if let Some(problem) = request
-            .query
-            .iter()
-            .find(|(k, _)| k == "problem")
-            .map(|(_, v)| v.clone())
-        {
+        if let Some(problem) = problem {
             page = page.card(Card::new("Not added").description(problem));
         }
         page = page
@@ -1101,11 +1102,8 @@ pub fn prices_submit(
     }
     let back = format!("program/{}/prices", program.id);
     let problem = |why: String| -> Result<SubmitResult, PageError> {
-        let q: String = why.chars().filter(|c| !c.is_control()).take(300).collect();
-        Ok(SubmitResult::Redirect(format!(
-            "{back}?problem={}",
-            urlencode(&q)
-        )))
+        let why: String = why.chars().filter(|c| !c.is_control()).take(300).collect();
+        prices_page(access, program.id, Some(why)).map(SubmitResult::Page)
     };
     let tax = s
         .value("item_tax")
@@ -1213,16 +1211,4 @@ pub fn prices_submit(
     };
     result.map_err(|e| failed("saving", e))?;
     Ok(SubmitResult::Redirect(back))
-}
-
-fn urlencode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            b' ' => "+".to_owned(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }

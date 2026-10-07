@@ -247,6 +247,14 @@ pub(crate) fn upsert(
     Ok(before)
 }
 
+/// Characters of a tracking number it is found by.
+const TAIL: usize = 6;
+
+fn tail(number: &str) -> String {
+    let chars: Vec<char> = number.chars().collect();
+    chars[chars.len().saturating_sub(TAIL)..].iter().collect()
+}
+
 /// Normal buyback: each calculation not settled yet, against the
 /// contracts read (a title containing its tracking number).
 fn normal(fetched: &[(i64, EsiContract)], matched: &mut HashSet<i64>) -> Result<(), JobError> {
@@ -260,9 +268,28 @@ fn normal(fetched: &[(i64, EsiContract)], matched: &mut HashSet<i64>) -> Result<
     )
     .map_err(|e| retry("reading calculations", e))?;
     let view = fetched_view(fetched);
-    for r in &trackings.rows {
+    // Each calculation's first contract, by the number's last six
+    // characters (its random part): every six-character run of a title
+    // is looked up, rather than every title searched for every number.
+    let mut by_tail: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, r) in trackings.rows.iter().enumerate() {
+        by_tail.entry(tail(&text(r, 1))).or_default().push(i);
+    }
+    let mut first: HashMap<usize, usize> = HashMap::new();
+    for (ci, c) in view.iter().enumerate() {
+        let chars: Vec<char> = c.title.chars().collect();
+        for window in chars.windows(TAIL) {
+            let key: String = window.iter().collect();
+            for &ti in by_tail.get(&key).into_iter().flatten() {
+                if !first.contains_key(&ti) && c.title.contains(&text(&trackings.rows[ti], 1)) {
+                    first.insert(ti, ci);
+                }
+            }
+        }
+    }
+    for (ti, r) in trackings.rows.iter().enumerate() {
         let (tracking, number, program, issuer) = (int(r, 0), text(r, 1), int(r, 2), opt_int(r, 3));
-        let Some(c) = view.iter().find(|c| c.title.contains(&number)) else {
+        let Some(c) = first.get(&ti).map(|&ci| &view[ci]) else {
             continue;
         };
         matched.insert(c.contract_id);
@@ -565,7 +592,16 @@ fn checks_and_notices(contract_id: i64) -> Result<(), JobError> {
             "Contract location does not match program location".into(),
         ));
     }
-    if assignee == owner_corp && !is_corp {
+    if assignee != owner_corp && assignee != owner_char {
+        // AA flagged only the corporation/character swap; a contract to
+        // someone else entirely is the worse mistake.
+        flags.push((
+            "danger",
+            "Receiver mismatch".into(),
+            "Contract is made to someone other than the program's manager or their corporation"
+                .into(),
+        ));
+    } else if assignee == owner_corp && !is_corp {
         flags.push(("warning", "Receiver mismatch".into(), "Contract is made for the corporation while it should be made directly to the program manager's character".into()));
     } else if assignee != owner_corp && is_corp {
         flags.push(("warning", "Receiver mismatch".into(), "Contract is made for the program manager's character while it should be made to the manager's corporation".into()));
@@ -739,7 +775,7 @@ pub(crate) fn new_contract_notice(
             ["Volume", format!("{} m3", crate::float(r, 9).round())],
             ["Value", format!("{} ISK", crate::isk_text(price))],
         ],
-        "notes": flags.join("\n\n").chars().take(1000).collect::<String>(),
+        "notes": flags.join("\n\n"),
         "color": 0x005B_C0DE,
     });
     if !description.trim().is_empty() {
@@ -758,10 +794,25 @@ pub(crate) fn new_contract_notice(
     Ok(())
 }
 
+/// At most `max` characters, within Discord's limits however escaping
+/// lengthened the text.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut out: String = text.chars().take(max - 1).collect();
+    // Never end on an escaping backslash, which would escape the "…".
+    while out.ends_with('\\') {
+        out.pop();
+    }
+    out.push('…');
+    out
+}
+
 fn embed(card: &Value) -> Option<Embed> {
     let mut e = Embed::new(card["title"].as_str()?.to_owned());
     if let Some(d) = card["description"].as_str() {
-        e = e.description(d.to_owned());
+        e = e.description(clip(d, 1900));
     }
     if let Some(c) = card["color"].as_u64().and_then(|c| u32::try_from(c).ok()) {
         e = e.color(c);
@@ -770,11 +821,12 @@ fn embed(card: &Value) -> Option<Embed> {
         if let (Some(k), Some(v)) = (f[0].as_str(), f[1].as_str())
             && !v.is_empty()
         {
-            e = e.field(k.to_owned(), v.to_owned());
+            e = e.field(k.to_owned(), clip(v, 1000));
         }
     }
     if let Some(n) = card["notes"].as_str().filter(|n| !n.trim().is_empty()) {
-        e = e.wide_field("Notes", crate::escape(n));
+        // Escaped first, then cut: escaping lengthens the text.
+        e = e.wide_field("Notes", clip(&crate::escape(n), 1000));
     }
     Some(e.footer("Buyback"))
 }

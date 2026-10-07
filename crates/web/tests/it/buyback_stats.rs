@@ -559,6 +559,12 @@ async fn buyback_statistics(db: PgPool) {
     );
 
     // ---- leaderboard ------------------------------------------------------------
+    // Only with see_leaderboard (or for the program's managers).
+    assert_eq!(
+        open(&h, "program/1/leaderboard", &pilot).await.status,
+        StatusCode::NOT_FOUND
+    );
+    grant(&h, MITTANI, &["see_leaderboard"]).await;
     // The latest month first, with the one before.
     let board = open(&h, "program/1/leaderboard", &pilot).await;
     has(

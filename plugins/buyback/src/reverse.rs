@@ -59,6 +59,9 @@ const HANGARS: &str = "hangars";
 const MAX_FOLLOW_UPS: i64 = 30;
 /// Rows a table sends (the host pages them).
 const MAX_ROWS: usize = 500;
+/// Requests a pilot holds in one program without a contract: each
+/// reserves stock others can't buy.
+const MAX_OPEN_REQUESTS: i64 = 3;
 /// Structures one stock read asks about (the host's limit).
 const MAX_STRUCTURES: usize = 100;
 /// Containers the editor offers (a settings group's 30 fields; the
@@ -646,6 +649,11 @@ fn picker(access: &Access, id: i64, request: &Request) -> Result<Page, PageError
     let mut page = Page::new(format!("Buy from {}", p.name))
         .description(format!("Managed by {owner}."))
         .toolbar(toolbar);
+    if request.param("open") == "1" {
+        page = page.card(Card::new("No request was made").description(format!(
+            "You have {MAX_OPEN_REQUESTS} requests here without a contract. Contract or release one first."
+        )));
+    }
     if request.param("unavailable") == "1" {
         page = page.card(Card::new("Nothing was available").description(
             "Everything in your cart was reserved by others, so no request was made. Your cart is empty again.",
@@ -786,6 +794,18 @@ fn checkout(
     let items = cart(access.account(), p.id)?;
     if items.is_empty() {
         return Ok(SubmitResult::Redirect(format!("reverse/{}", p.id)));
+    }
+    let open = storage::query(
+        "SELECT count(*) FROM reverse_trackings \
+         WHERE program_id = $1 AND issuer_account = $2 AND contract_id IS NULL",
+        &[p.id.into(), access.account().into()],
+    )
+    .map_err(|e| failed("reading your requests", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
+    if open >= MAX_OPEN_REQUESTS {
+        return Ok(SubmitResult::Redirect(format!("reverse/{}?open=1", p.id)));
     }
     let rows = stock_rows(&p, true).map_err(|e| failed("pricing", e))?;
     let mut lines: Vec<Json> = Vec::new();
@@ -953,11 +973,11 @@ fn tracking_page(
     };
     let issuer = t.issuer_account == Some(access.account());
     let manager = access.manage_all() || program.as_ref().is_some_and(|p| p.editable_by(access));
-    let allowed = if settings.restrict_tracking_details {
-        issuer || manager
-    } else {
-        issuer || manager || access.basic()
-    };
+    let allowed = issuer
+        || manager
+        || (!settings.restrict_tracking_details
+            && access.basic()
+            && program.as_ref().is_some_and(|p| p.visible_to(access)));
     if !allowed {
         return Err(PageError::NotFound);
     }
@@ -1334,7 +1354,7 @@ fn contracted(filter: &str, ids: &[i64]) -> Result<Vec<Contracted>, PageError> {
              LEFT JOIN reverse_programs p ON p.id = t.program_id \
              WHERE {filter} IN (SELECT jsonb_array_elements_text($1::jsonb)::bigint) \
                AND (c.status = 'finished' OR c.date_expired IS NULL OR c.date_expired >= now()) \
-             ORDER BY c.date_issued DESC LIMIT 2000"
+             ORDER BY c.date_issued DESC LIMIT 500"
         ),
         &[json_ids(ids)],
     )
@@ -1439,7 +1459,7 @@ fn contracts_table(
         Column::text("Notes"),
     ]);
     let mut table = Table::new(columns);
-    for c in rows {
+    for c in rows.iter().take(MAX_ROWS) {
         let mut row: Vec<Value> = vec![
             c.program.clone().into(),
             link(

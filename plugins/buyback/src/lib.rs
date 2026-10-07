@@ -295,6 +295,9 @@ pub(crate) fn isk_text(v: f64) -> String {
     format!("{}{out}.{frac:02}", if cents < 0 { "-" } else { "" })
 }
 
+/// Rows a table shows (the host's limit).
+pub(crate) const TABLE_ROWS: usize = 500;
+
 /// Discord markdown out of names players choose.
 pub(crate) fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());

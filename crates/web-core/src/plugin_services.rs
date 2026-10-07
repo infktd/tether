@@ -662,7 +662,6 @@ fn image_url(image: &Image) -> Result<String, DiscordError> {
     ))
 }
 
-/// A plugin's card checked against Discord's limits, its text defused.
 /// The address of one of `plugin`'s own pages on this Tether, for a card's
 /// title: `page` a path as `[[pages]]` give it (letters, digits and
 /// `/-_.~`, a query of the same with `?=&%+,`), never another site's.
@@ -699,6 +698,7 @@ fn page_link(public_url: &str, plugin: &str, page: &str) -> Result<String, Disco
     ))
 }
 
+/// A plugin's card checked against Discord's limits, its text defused.
 fn card(mut embed: Embed) -> Result<DiscordEmbed, DiscordError> {
     let invalid = |why: &str| DiscordError::Invalid(why.to_owned());
     let len = |s: &str| s.chars().count();

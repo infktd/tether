@@ -330,7 +330,7 @@ fn contracts_table(
         Column::numeric("Price"),
         Column::text("Notes"),
     ]);
-    for r in rows {
+    for r in rows.iter().take(MAX_ROWS as usize) {
         table = table.row(vec![
             link(r.number.clone(), format!("tracking/{}", r.number)).into(),
             r.program_name
@@ -974,13 +974,14 @@ fn month_start(month: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d").ok()
 }
 
-/// A program the viewer may see the leaderboard of: one they may use
-/// (with basic access), or manage (B2: AA showed any program's).
+/// A program the viewer may see the leaderboard of: one they may use,
+/// with `see_leaderboard`, or one they manage (B2: AA showed any
+/// program's).
 fn leaderboard_program(access: &Access, id: i64) -> Result<Program, PageError> {
     let p = programs::get(id)
         .map_err(|e| failed("reading the program", e))?
         .ok_or(PageError::NotFound)?;
-    if (access.basic() && p.visible_to(access)) || p.editable_by(access) {
+    if (access.can("see_leaderboard") && p.visible_to(access)) || p.editable_by(access) {
         Ok(p)
     } else {
         Err(PageError::NotFound)
@@ -1027,7 +1028,9 @@ pub fn leaderboard(access: &Access, id: i64, request: &Request) -> Result<Page, 
     let month = months[at].clone();
     let mut sellers = by_month.get(&month).cloned().unwrap_or_default();
     sellers.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-    let names = entities(&sellers.iter().map(|s| s.0).collect::<Vec<_>>());
+    // The table's rows: the top sellers, and the month's totals.
+    let shown = sellers.len().min(MAX_ROWS as usize - 1);
+    let names = entities(&sellers[..shown].iter().map(|s| s.0).collect::<Vec<_>>());
     let path = format!("program/{}/leaderboard", program.id);
     let mut stats = vec![Stat::new("Month", month_label(&month))];
     if let Some(prev) = at.checked_sub(1).and_then(|i| months.get(i)) {
@@ -1049,7 +1052,7 @@ pub fn leaderboard(access: &Access, id: i64, request: &Request) -> Result<Page, 
     stats.push(Stat::new("Contract total", Value::Isk(total)));
     stats.push(Stat::new("Donation total", Value::Isk(donations)));
     let mut table = Table::new(columns).title(month_label(&month));
-    for (rank, (seller, sold, donated)) in sellers.iter().enumerate() {
+    for (rank, (seller, sold, donated)) in sellers[..shown].iter().enumerate() {
         let rank = rank + 1;
         let place: Value = match rank {
             1 => badge("1st", Tone::Accent).into(),
@@ -1075,14 +1078,13 @@ pub fn leaderboard(access: &Access, id: i64, request: &Request) -> Result<Page, 
 
 // ---- performance ---------------------------------------------------------------
 
-/// A program the viewer may see the performance of: `see_performance` or
-/// a manager, and a program they may use or manage (B2).
+/// A program the viewer may see the performance of: one they may use,
+/// with `see_performance`, or one they manage (B2).
 fn performance_program(access: &Access, id: i64) -> Result<Program, PageError> {
     let p = programs::get(id)
         .map_err(|e| failed("reading the program", e))?
         .ok_or(PageError::NotFound)?;
-    let may = (access.can("see_performance") || access.manager())
-        && (p.visible_to(access) || p.editable_by(access));
+    let may = (access.can("see_performance") && p.visible_to(access)) || p.editable_by(access);
     if may { Ok(p) } else { Err(PageError::NotFound) }
 }
 

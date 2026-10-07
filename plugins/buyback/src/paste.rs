@@ -57,6 +57,24 @@ pub fn lines(text: &str) -> Vec<Line> {
         .collect()
 }
 
+/// The lines with one row a name (packed and assembled apart), their
+/// quantities added, in the order each first appears: a paste of a
+/// big hangar lists a type many times, and its rows are kept and shown.
+pub fn merged(lines: Vec<Line>) -> Vec<Line> {
+    let mut out: Vec<Line> = Vec::new();
+    let mut at: std::collections::HashMap<(String, bool), usize> = std::collections::HashMap::new();
+    for line in lines {
+        match at.get(&(line.name.clone(), line.unpacked)) {
+            Some(&i) => out[i].quantity = out[i].quantity.saturating_add(line.quantity),
+            None => {
+                at.insert((line.name.clone(), line.unpacked), out.len());
+                out.push(line);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +111,19 @@ mod tests {
         );
         assert!(lines[3].unpacked);
         assert!(!is_inventory_paste("Tritanium 1000"));
+    }
+
+    #[test]
+    fn repeated_names_are_one_row() {
+        let merged = merged(lines(
+            "Tritanium\t10\nRifter\t\nTritanium\t5\nRifter\t\nRifter\t1\n",
+        ));
+        assert_eq!(merged.len(), 3);
+        assert_eq!(
+            (merged[0].name.as_str(), merged[0].quantity),
+            ("Tritanium", 15)
+        );
+        assert_eq!((merged[1].quantity, merged[1].unpacked), (2, true));
+        assert_eq!((merged[2].quantity, merged[2].unpacked), (1, false));
     }
 }
