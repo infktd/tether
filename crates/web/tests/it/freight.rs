@@ -673,21 +673,22 @@ async fn freight_end_to_end(db: PgPool) {
         assert!(stats.body.contains(text), "{text}: {}", stats.body);
     }
 
-    // A pilot with basic access: their own contracts; not the others.
+    // A pilot with basic access: the app, not My contracts (aa-freight's
+    // is use_calculator's) or the others.
     let pilot = log_in_as(&h, "443630591:Pilot A", None).await;
     assert_eq!(
         page(&h, &format!("/plugins/{ID}"), &pilot).await.status,
         StatusCode::NOT_FOUND
     );
     grant(&h, account_of(&h, PILOT_A).await, "basic_access").await;
-    let mine = page(&h, &format!("/plugins/{ID}/mine"), &pilot).await;
-    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
-    assert!(
-        mine.body.contains("Emperor Family Academy"),
-        "{}",
-        mine.body
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/mine"), &pilot)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
     );
     let index = page(&h, &format!("/plugins/{ID}"), &pilot).await;
+    assert!(!index.body.contains("My contracts"), "{}", index.body);
     assert!(!index.body.contains("Reward calculator"), "{}", index.body);
     assert!(
         !index.body.contains("name=\"_form\" value=\"mode\""),
@@ -720,6 +721,27 @@ async fn freight_end_to_end(db: PgPool) {
     )
     .await;
     assert_ne!(res.status, StatusCode::OK, "{}", res.body);
+    // With use_calculator, their own contracts in aa-freight's statuses:
+    // outstanding, in progress, finished and failed, not cancelled ones.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.freight".contracts (contract_id, issuer_id,
+               issuer_corporation_id, start_location, end_location, status, date_issued, title)
+           VALUES (107, $1, $2, $3, $4, 'cancelled', now(), 'Called off')"#,
+    )
+    .bind(PILOT_A)
+    .bind(OTHER_CORP)
+    .bind(JITA)
+    .bind(AMARR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    grant(&h, account_of(&h, PILOT_A).await, "use_calculator").await;
+    let mine = page(&h, &format!("/plugins/{ID}/mine"), &pilot).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    for text in ["Emperor Family Academy", "Finished"] {
+        assert!(mine.body.contains(text), "{text}: {}", mine.body);
+    }
+    assert!(!mine.body.contains("Called off"), "{}", mine.body);
 
     // At most 100 locations, so the route selects always draw.
     sqlx::query(

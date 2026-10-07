@@ -15,8 +15,9 @@
 //! - **Calculator** (`use_calculator`): a route's reward for a volume and a
 //!   collateral, with how to issue the contract.
 //! - **Contracts** (`view_contracts`): the outstanding and in-progress
-//!   ones, each checked against its route's pricing. **My contracts**: the
-//!   viewer's own. **Statistics** (`view_statistics`): the last 90 days'
+//!   ones, each checked against its route's pricing. **My contracts**
+//!   (`use_calculator`): the viewer's own, outstanding, in progress,
+//!   finished or failed. **Statistics** (`view_statistics`): the last 90 days'
 //!   finished contracts by route, pilot, pilot corporation and customer.
 //! - **Locations** (`add_location`): stations by id (named from ESI) and
 //!   structures by id and name (apps can't read structures).
@@ -103,7 +104,11 @@ impl Plugin for Freight {
                 need(&viewer, "setup_contract_handler")?;
                 handler_page()
             }
-            ["mine"] => mine_page(&viewer),
+            ["mine"] => {
+                // The manifest's rule asks for it too (aa-freight's).
+                need(&viewer, "use_calculator")?;
+                mine_page(&viewer)
+            }
             ["contracts"] => contracts_page(),
             ["statistics"] => statistics_page(),
             ["locations"] => locations_page(None),
@@ -1667,15 +1672,18 @@ fn mine_page(viewer: &Viewer) -> Result<Page, PageError> {
         .map(|c| c.id.to_string())
         .collect::<Vec<_>>()
         .join(",");
+    // aa-freight's statuses for My Contracts (`freight/managers.py:262-272`),
+    // the same as its customers hear about.
     let list = contracts(
-        "WHERE issuer_id = ANY(string_to_array($1, ',')::bigint[])",
-        &[mine.into()],
+        "WHERE issuer_id = ANY(string_to_array($1, ',')::bigint[]) \
+         AND status = ANY(string_to_array($2, ','))",
+        &[mine.into(), CUSTOMER_STATUSES.join(",").into()],
     )
     .map_err(|e| failed("reading contracts", e))?;
     let now = Utc::now();
     let mut table = contract_table(
         "My contracts",
-        "No courier contracts from your characters to the freight service in the last 30 days.",
+        "No courier contracts from your characters to the freight service.",
     );
     for c in &list {
         table = table.row(contract_row(c, &names, &pricings, settings.modifier, now));
