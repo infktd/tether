@@ -42,11 +42,12 @@ mod routing;
 mod tags;
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tether_plugin_sdk::discord::{self, Mention};
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
+use tether_plugin_sdk::notify;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm,
@@ -99,6 +100,9 @@ const NOTIFICATIONS_GAP: Duration = Duration::seconds(60);
 const MAX_PUBLISHED: i64 = 500;
 /// A relayed message's characters, at most: under the host's 1,500.
 const MAX_MESSAGE_CHARS: usize = 1_400;
+/// The one-off job that sends a channel's test message (pages can't post
+/// to Discord).
+const TEST_JOB: &str = "test_message";
 /// The one-off job that publishes timers at once (after a settings change).
 const PUBLISH_JOB: &str = "publish_timers";
 /// The assets read again a minute after a sync, while Tether still reads a
@@ -130,6 +134,7 @@ impl Plugin for Structures {
             NOTIFICATIONS_JOB => notifications_between_syncs(),
             PUBLISH_JOB => publish_timers(),
             ASSETS_JOB => assets_again(),
+            TEST_JOB => send_test(&job),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -239,6 +244,7 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         ("settings", "toggle_fuel_alert") => toggle_fuel_alert(viewer, submission),
         ("settings", "edit_jump_fuel_alert") => edit_jump_fuel_alert(viewer, submission),
         ("settings", "toggle_jump_fuel_alert") => toggle_jump_fuel_alert(viewer, submission),
+        ("settings", "test_channel") => test_channel(viewer, submission),
         ("settings", "add_jump_fuel_alert") => add_jump_fuel_alert(viewer, submission),
         ("settings", "delete_jump_fuel_alert") => delete_jump_fuel_alert(viewer, submission),
         // A row's Retry now, in the settings' owner table.
@@ -3453,7 +3459,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         }
         form = form.group(types);
     }
-    let page = page.settings(form);
+    let page = with_test_form(page.settings(form));
     let types = settings.notification_types.as_ref();
     Ok(page
         .table(fuel_alert_table()?)
@@ -3595,6 +3601,116 @@ fn ticked_types(submission: &Submission) -> Vec<String> {
         .filter(|(kind, _, _, _)| submission.checked(&type_field(kind)))
         .map(|(kind, _, _, _)| (*kind).to_owned())
         .collect()
+}
+
+// ---- test notifications ------------------------------------------------------
+
+/// aa-structures' "Send test notification to selected webhook": a form
+/// with the app's channels, while it has any.
+fn with_test_form(page: Page) -> Page {
+    let channels: Vec<(String, String)> = discord::channels()
+        .into_iter()
+        .map(|c| (c.id, format!("#{}", c.name)))
+        .collect();
+    if channels.is_empty() {
+        return page;
+    }
+    page.form(
+        Form::new("test_channel", "Send test notification")
+            .title("Test a channel")
+            .description(
+                "Posts a test message to the channel, as aa-structures' test notification, \
+                 to check the bot may post there. You hear in your notifications whether it \
+                 worked.",
+            )
+            .field(Field::select("channel", "Channel", channels).required()),
+    )
+}
+
+#[derive(Serialize, Deserialize)]
+struct TestMessage {
+    channel: String,
+    name: String,
+    account_id: i64,
+    by: String,
+}
+
+fn test_channel(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let id = submission.value("channel");
+    let channel = discord::channels()
+        .into_iter()
+        .find(|c| c.id == id)
+        .ok_or(PageError::NotFound)?;
+    let payload = TestMessage {
+        channel: channel.id.clone(),
+        name: channel.name.clone(),
+        account_id: viewer.account_id,
+        by: viewer.main.name.clone(),
+    };
+    let payload =
+        serde_json::to_string(&payload).map_err(|e| failed("queuing the test message", e))?;
+    jobs::enqueue(
+        NewJob::new(TEST_JOB)
+            .key(format!("test:{}:{}", channel.id, viewer.account_id))
+            .payload(payload),
+    )
+    .map_err(|e| failed("queuing the test message", e))?;
+    log::info(format!(
+        "test message to #{} asked by {} ({})",
+        channel.name, viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// Sends a test message, then tells whoever asked how it went, as
+/// aa-structures' send_test_notifications_to_webhook. Not tried again:
+/// the notice says what went wrong.
+fn send_test(job: &Job) -> Result<(), JobError> {
+    let test: TestMessage = serde_json::from_str(&job.payload)
+        .map_err(|e| JobError::Permanent(format!("test message payload: {e}")))?;
+    let sent = discord::send(
+        &test.channel,
+        &format!(
+            "Test message from Structures for #{}, sent by {}.",
+            test.name, test.by
+        ),
+        Mention::None,
+    );
+    let (level, title, message) = match &sent {
+        Ok(()) => (
+            notify::Level::Success,
+            format!("Test notification to #{}: OK", test.name),
+            format!("The test message to #{} was sent.", test.name),
+        ),
+        Err(err) => (
+            notify::Level::Danger,
+            format!("Test notification to #{}: failed", test.name),
+            format!(
+                "The test message to #{} wasn't sent: {}",
+                test.name,
+                match err {
+                    discord::Error::NotAllowed(why) | discord::Error::Invalid(why) => why.clone(),
+                    discord::Error::RateLimited => {
+                        "Discord asked Tether to slow down; try again in a minute.".to_owned()
+                    }
+                    discord::Error::Unavailable => "Discord couldn't be reached.".to_owned(),
+                }
+            ),
+        ),
+    };
+    if let Err(err) = &sent {
+        log::warn(format!("test message to #{}: {err:?}", test.name));
+    }
+    // Never tried again once sent: a retry would post it again.
+    if let Err(err) = notify::account(
+        test.account_id,
+        &notification::clip(&title, notify::MAX_TITLE),
+        &notification::clip(&message, notify::MAX_MESSAGE),
+        level,
+    ) {
+        log::warn(format!("telling who asked for the test message: {err:?}"));
+    }
+    Ok(())
 }
 
 // ---- fuel alert configs ------------------------------------------------------

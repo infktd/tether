@@ -3720,3 +3720,93 @@ async fn fuel_alert_configs_edited_enabled_and_disabled(db: PgPool) {
     let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=on")).await;
     assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 }
+
+/// The test notices in Chribba's notifications.
+async fn test_notices(h: &Harness) -> Vec<String> {
+    notices(h, CHRIBBA)
+        .await
+        .into_iter()
+        .filter(|n| n.contains("Test notification"))
+        .collect()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_test_notification_to_a_channel(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    // No channel yet: nothing to test.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        !settings.body.contains("Test a channel"),
+        "{}",
+        settings.body
+    );
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings.body.contains("Test a channel"),
+        "{}",
+        settings.body
+    );
+    // The message goes, and the one who asked hears it worked, as
+    // aa-structures' test notification.
+    let ok = Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount_as_scoped(&h.discord_server)
+        .await;
+    let test = format!("_form=test_channel&channel={DISCORD_PING_CHANNEL}");
+    let res = post(&h, &owner, "settings", &test).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    let sent = discord_messages(&h).await;
+    assert!(
+        sent.iter()
+            .any(|m| m.starts_with("Test message from Structures for #") && m.contains("Chribba")),
+        "{sent:?}"
+    );
+    let told = test_notices(&h).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains(": OK |"), "{told:?}");
+    drop(ok);
+    // Discord refuses it: they hear it failed, and why.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({ "code": 50013, "message": "Missing Permissions" }),
+            ),
+        )
+        .mount(&h.discord_server)
+        .await;
+    let res = post(&h, &owner, "settings", &test).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    let told = test_notices(&h).await;
+    assert_eq!(told.len(), 2, "{told:?}");
+    assert!(
+        told[1].contains(": failed |") && told[1].contains("can't post in that channel"),
+        "{told:?}"
+    );
+    // Only a channel the app has.
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        "_form=test_channel&channel=600000000000000099",
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
