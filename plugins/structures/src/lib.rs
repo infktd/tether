@@ -99,6 +99,9 @@ const MAX_PUBLISHED: i64 = 500;
 const MAX_MESSAGE_CHARS: usize = 1_400;
 /// The one-off job that publishes timers at once (after a settings change).
 const PUBLISH_JOB: &str = "publish_timers";
+/// The assets read again a minute after a sync, while Tether still reads a
+/// corporation's assets in the background (`orbitals::read_assets`).
+const ASSETS_JOB: &str = "assets_again";
 
 struct Structures;
 
@@ -124,6 +127,7 @@ impl Plugin for Structures {
             "relay" => relay(),
             NOTIFICATIONS_JOB => notifications_between_syncs(),
             PUBLISH_JOB => publish_timers(),
+            ASSETS_JOB => assets_again(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -479,8 +483,9 @@ impl Budget {
     }
 }
 
-/// What a call costs of the host's per-run limit: the structure assets
-/// check each page against the structures list (the host's `esi_cost`).
+/// What a call costs of the host's per-run limit (the host's `esi_cost`):
+/// the structure assets come from a read in the background, a system with
+/// its constellation.
 fn esi_cost(endpoint: &str) -> usize {
     match endpoint {
         "corporation-structure-assets" | "universe-system" => 2,
@@ -495,6 +500,9 @@ enum Outcome {
     BackOff(String),
     /// Try again next run.
     Later(String),
+    /// Tether is reading it in the background (the corporation's assets):
+    /// ask again on a later run, with nothing wrong to show.
+    Waiting,
 }
 
 fn call(
@@ -516,6 +524,12 @@ fn call(
                 .to_owned(),
         ),
         esi::Error::NotADataSource => Outcome::BackOff("no longer a data source in use".to_owned()),
+        // Every page of the assets is read in the background (the host's
+        // `corporation-structure-assets`): ready on a later run.
+        esi::Error::Unavailable if endpoint == "corporation-structure-assets" => Outcome::Waiting,
+        // More pages of assets than Tether reads (about two million
+        // items): asking again soon won't change it.
+        esi::Error::Invalid(why) if why.contains("pages of assets") => Outcome::BackOff(why),
         other => Outcome::Later(format!("{other:?}")),
     };
     let cost = esi_cost(endpoint);
@@ -530,8 +544,8 @@ fn call(
     // aren't started, so they don't use up the run's calls for nothing.
     let pages = usize::try_from(first.pages).unwrap_or(usize::MAX);
     let what = match endpoint {
-        "corporation-structure-assets" => "the corporation's assets",
         "corporation-structures" => "the corporation's structures",
+        "corporation-customs-offices" => "the corporation's customs offices",
         _ => "ESI's answer",
     };
     // Judged against what the hourly reads had after every corporation's
@@ -724,13 +738,31 @@ fn notifications_between_syncs() -> Result<(), JobError> {
 fn record(owner: i64, read: Read, outcome: &Outcome) -> Result<(), JobError> {
     let c = read.column();
     let (sql, params): (String, Vec<Db>) = match outcome {
-        Outcome::Ok(_) => (
-            format!(
-                "UPDATE owners SET {c}_at = now(), {c}_failures = 0, {c}_retry_at = NULL, \
-                 last_error = NULL WHERE character_id = $1"
-            ),
-            vec![owner.into()],
-        ),
+        // The problem shown goes only once no other read of this owner's is
+        // backing off or waiting to try again: one read working mustn't
+        // hide another's trouble.
+        Outcome::Ok(_) => {
+            let others = [
+                "structures",
+                "notifications",
+                "starbases",
+                "offices",
+                "assets",
+            ]
+            .iter()
+            .filter(|other| **other != c)
+            .map(|other| format!("{other}_failures = 0 AND {other}_retry_at IS NULL"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+            (
+                format!(
+                    "UPDATE owners SET {c}_at = now(), {c}_failures = 0, {c}_retry_at = NULL, \
+                     last_error = CASE WHEN {others} THEN NULL ELSE last_error END \
+                     WHERE character_id = $1"
+                ),
+                vec![owner.into()],
+            )
+        }
         Outcome::BackOff(why) => {
             log::warn(format!("{c} for owner {owner}: {why}; backing off"));
             (
@@ -740,6 +772,16 @@ fn record(owner: i64, read: Read, outcome: &Outcome) -> Result<(), JobError> {
                      last_error = $2 WHERE character_id = $1"
                 ),
                 vec![owner.into(), why.as_str().into()],
+            )
+        }
+        Outcome::Waiting => {
+            log::info(format!(
+                "{c} for owner {owner}: Tether is reading the corporation's assets; \
+                 they come in on a later sync"
+            ));
+            (
+                format!("UPDATE owners SET {c}_retry_at = NULL WHERE character_id = $1"),
+                vec![owner.into()],
             )
         }
         Outcome::Later(why) => {
@@ -797,6 +839,9 @@ fn sync_steps() -> Result<(), JobError> {
         read_notifications(&mut budget, corp)?;
     }
     budget.hourly();
+    // Assets Tether is still reading in the background: asked again a
+    // minute on.
+    let mut waiting = false;
     // Then the hourly reads, the corporation read longest ago first, so
     // one this run's calls didn't reach goes first next time.
     for corp in stalest_first(&corporations)? {
@@ -823,8 +868,12 @@ fn sync_steps() -> Result<(), JobError> {
         }
         if let Some(owner) = pick_owner(corp, Read::Assets)? {
             let outcome = orbitals::read_assets(&mut budget, corp, owner)?;
+            waiting |= matches!(outcome, Outcome::Waiting);
             record(owner, Read::Assets, &outcome)?;
         }
+    }
+    if waiting {
+        queue_assets_again()?;
     }
     orbitals::learn_sovereignty(&mut budget)?;
     learn_systems(&mut budget)?;
@@ -1939,6 +1988,49 @@ fn publish_timers() -> Result<(), JobError> {
 }
 
 /// Queues the relay when messages are waiting.
+/// Asks again for the assets a minute on (one waiting at a time).
+fn queue_assets_again() -> Result<(), JobError> {
+    jobs::enqueue(
+        NewJob::new(ASSETS_JOB)
+            .key(ASSETS_JOB)
+            .at(rfc3339(Utc::now() + Duration::minutes(1))),
+    )
+    .map_err(|e| retry("queuing the assets read", e))
+}
+
+/// The assets of corporations Tether was still reading in the background
+/// at the last sync (due, not read since): stored once ready, with what
+/// the sync works out from them (skyhooks' places, fuel and its alerts),
+/// and asked again a minute on while any still isn't.
+fn assets_again() -> Result<(), JobError> {
+    let corporations = storage::query("SELECT DISTINCT corporation_id FROM owners ORDER BY 1", &[])
+        .map_err(|e| retry("reading the owners", e))?;
+    let mut budget = Budget::new(ESI_BUDGET);
+    let mut waiting = false;
+    for row in &corporations.rows {
+        let corp = int(row, 0);
+        if let Some(owner) = pick_owner(corp, Read::Assets)? {
+            let outcome = orbitals::read_assets(&mut budget, corp, owner)?;
+            waiting |= matches!(outcome, Outcome::Waiting);
+            record(owner, Read::Assets, &outcome)?;
+        }
+    }
+    if waiting {
+        queue_assets_again()?;
+    }
+    learn_systems(&mut budget)?;
+    orbitals::learn_planets(&mut budget)?;
+    orbitals::resolve_orbitals()?;
+    learn_names(&mut budget)?;
+    orbitals::compute_fuel()?;
+    // The alerts the assets tell (fuel bays, a jump gate's liquid ozone),
+    // as a sync would.
+    fuel_alerts()?;
+    refuelled()?;
+    jump_fuel_alerts()?;
+    queue_relay(None)
+}
+
 fn queue_relay(at: Option<DateTime<Utc>>) -> Result<(), JobError> {
     let waiting = storage::query(
         "SELECT 1 FROM outbox WHERE sent_at IS NULL AND failed IS NULL LIMIT 1",

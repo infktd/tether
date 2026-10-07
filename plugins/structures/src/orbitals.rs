@@ -290,16 +290,17 @@ struct Asset {
 }
 
 /// What the corporation's assets say (the host passes only structures'
-/// slots and bays, and skyhooks): skyhooks, replaced whole; each Upwell
-/// structure's items, whether it has a quantum core and a fitting. Only a
-/// whole read is stored: until then the last one stands.
+/// slots and bays, and skyhooks, from every page however many, read in
+/// the background): skyhooks, replaced whole; each Upwell structure's
+/// items, whether it has a quantum core and a fitting. Only a whole read
+/// is stored: until one is ready the last one stands.
 pub fn read_assets(budget: &mut Budget, corp: i64, owner: i64) -> Result<Outcome, JobError> {
     let bodies = match call(
         budget,
         "corporation-structure-assets",
         Subject::DataSource(owner),
         &[],
-        true,
+        false,
     ) {
         Outcome::Ok(bodies) => bodies,
         other => return Ok(other),

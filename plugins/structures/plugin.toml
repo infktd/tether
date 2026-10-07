@@ -5,7 +5,7 @@
 id = "tether.structures"
 name = "Structures"
 icon = "citadel"
-version = "0.5.10"
+version = "0.5.11"
 host_api = "1"
 description = "Owners' Upwell structures, starbases, customs offices, skyhooks and jump gates with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner by type with pings by severity, fuel alerts, and notices to admins."
 

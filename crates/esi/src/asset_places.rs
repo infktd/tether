@@ -1,6 +1,8 @@
 //! `corporation-asset-places`: where a corporation's own items are, from
 //! every page of its assets, as aa-blueprints reads them
-//! (`update_locations_esi`: every page, the chain built from the list).
+//! (`update_locations_esi`: every page, the chain built from the list);
+//! and `corporation-structure-assets`, what sits in its structures, from
+//! the same read (Jay, 2026-10-07).
 //!
 //! A large corporation has hundreds of pages, more than an app's call may
 //! wait for, so the host reads them in the background: one page after
@@ -97,6 +99,7 @@ struct Held {
     location_id: i64,
     flag: u32,
     kind: u32,
+    quantity: i64,
 }
 
 impl AssetTree {
@@ -122,6 +125,7 @@ impl AssetTree {
                     location_id: a.location_id,
                     flag,
                     kind,
+                    quantity: a.quantity,
                 },
             );
         }
@@ -176,6 +180,55 @@ pub(crate) fn places_in(tree: &AssetTree, ids: &[i64]) -> serde_json::Value {
         })
         .collect();
     serde_json::Value::Array(body)
+}
+
+/// `corporation-structure-assets` from a read: what sits in structures'
+/// slots and bays, and the Orbital Skyhooks (`Asset::about_structures`),
+/// in item id order. Flags ships share only for items in `upwell`.
+pub(crate) fn structure_items(tree: &AssetTree, upwell: Option<&[i64]>) -> serde_json::Value {
+    let mut items: Vec<(i64, Asset)> = tree
+        .items
+        .iter()
+        .map(|(id, held)| (*id, tree.asset(*id, held)))
+        .filter(|(_, a)| a.about_structures(upwell))
+        .collect();
+    items.sort_unstable_by_key(|(id, _)| *id);
+    serde_json::Value::Array(
+        items
+            .into_iter()
+            .map(|(_, a)| {
+                serde_json::json!({
+                    "item_id": a.item_id,
+                    "type_id": a.type_id,
+                    "location_id": a.location_id,
+                    "location_flag": a.location_flag,
+                    "location_type": a.location_type,
+                    "quantity": a.quantity,
+                })
+            })
+            .collect(),
+    )
+}
+
+impl AssetTree {
+    /// The item as ESI listed it.
+    fn asset(&self, id: i64, held: &Held) -> Asset {
+        Asset {
+            item_id: id,
+            type_id: held.type_id,
+            location_id: held.location_id,
+            location_flag: self.text(held.flag).to_owned(),
+            location_type: self.text(held.kind).to_owned(),
+            quantity: held.quantity,
+        }
+    }
+
+    /// Whether any item sits in a slot or bay ships have too.
+    fn any_in_shared_slot(&self) -> bool {
+        self.items
+            .iter()
+            .any(|(id, held)| self.asset(*id, held).in_shared_slot())
+    }
 }
 
 /// One corporation and character's read.
@@ -299,6 +352,54 @@ impl Esi {
         params: &[(String, String)],
     ) -> Result<Response, EsiError> {
         let ids = item_ids(params)?;
+        let (tree, again) = self.kept_read(tokens, corporation, character).await?;
+        Ok(Response {
+            body: places_in(&tree, &ids),
+            pages: 1,
+            refetched: again,
+        })
+    }
+
+    /// `corporation-structure-assets` for `corporation`, from the same
+    /// read as [`Self::corporation_asset_places`] (every page, however
+    /// many): what sits in structures' slots and bays, and the skyhooks.
+    /// Items in slots ships have too pass only for the corporation's own
+    /// Upwell structures, read now with a fresh token when there are any.
+    pub async fn corporation_structure_assets(
+        &self,
+        tokens: TokenSource,
+        corporation: i64,
+        character: i64,
+    ) -> Result<Response, EsiError> {
+        let (tree, mut again) = self
+            .kept_read(tokens.clone(), corporation, character)
+            .await?;
+        let upwell = if tree.any_in_shared_slot() {
+            again += 1;
+            let token = tokens().await?;
+            let client = self.with_token(&token)?;
+            self.upwell_ids(&client, corporation).await
+        } else {
+            None
+        };
+        Ok(Response {
+            body: structure_items(&tree, upwell.as_deref()),
+            pages: 1,
+            refetched: again,
+        })
+    }
+
+    /// The read of the last hour for `corporation` with `character`'s
+    /// tokens, once ESI let the character read the first page again now
+    /// (with whether that was an extra request); [`EsiError::Pending`]
+    /// while one is under way (this call starts one if there is none), or
+    /// the error the last read ended with, for a few minutes.
+    async fn kept_read(
+        &self,
+        tokens: TokenSource,
+        corporation: i64,
+        character: i64,
+    ) -> Result<(Arc<AssetTree>, u32), EsiError> {
         let key = (corporation, character);
         let trees = &self.asset_trees;
         let next = {
@@ -337,11 +438,7 @@ impl Esi {
         match next {
             Next::Answer(read, tree) => {
                 let again = self.still_allowed(&tokens, key, read).await?;
-                Ok(Response {
-                    body: places_in(&tree, &ids),
-                    pages: 1,
-                    refetched: again,
-                })
+                Ok((tree, again))
             }
             Next::Fail(error) => Err(error),
             Next::Wait => Err(EsiError::Pending),
@@ -557,6 +654,36 @@ mod tests {
         let mut tree = AssetTree::default();
         tree.add(assets);
         tree
+    }
+
+    /// Structure assets from a read: slots and bays only structures have,
+    /// skyhooks in space, and slots ships share only in the corporation's
+    /// own Upwell structures; never hangars or ships' fittings.
+    #[test]
+    fn structure_items_are_what_sits_in_structures() {
+        const FORTIZAR: i64 = 1_035_000_000_001;
+        const SHIP: i64 = 1_035_000_000_002;
+        let tree = tree(vec![
+            asset(1, 35833, "ServiceSlot0", FORTIZAR, "item"),
+            asset(2, 4247, "StructureFuel", FORTIZAR, "item"),
+            asset(3, 2048, "HiSlot0", FORTIZAR, "item"),
+            asset(4, 2048, "HiSlot0", SHIP, "item"),
+            asset(5, 34, "Hangar", 60003760, "station"),
+            asset(6, 81080, "AutoFit", 30000142, "solar_system"),
+        ]);
+        let ids = |v: serde_json::Value| -> Vec<i64> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["item_id"].as_i64().unwrap())
+                .collect()
+        };
+        assert_eq!(ids(structure_items(&tree, Some(&[FORTIZAR]))), vec![1, 2, 3, 6]);
+        // The Upwell structures unread: shared slots pass for none.
+        assert_eq!(ids(structure_items(&tree, None)), vec![1, 2, 6]);
+        let fuel = &structure_items(&tree, None)[1];
+        assert_eq!(fuel["quantity"], 1);
+        assert_eq!(fuel["location_flag"], "StructureFuel");
     }
 
     /// Past the cap, the oldest kept reads go first, never the newest.

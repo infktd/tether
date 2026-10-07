@@ -293,13 +293,16 @@ pub const ENDPOINTS: &[Endpoint] = &[
         // The corporation's assets trimmed to what sits in structures'
         // slots and bays (`STRUCTURE_ASSET_FLAGS`: fittings, fighters,
         // fuel, quantum cores, moon material) and its Orbital Skyhooks:
-        // never its hangars, cargo, deliveries or anything else. Pages
-        // are ESI's (one may come back empty). CCP requires the Director
-        // role.
+        // never its hangars, cargo, deliveries or anything else. From
+        // every page, read in the background with
+        // `corporation-asset-places` (`asset_places`, the same read): until
+        // one is ready the call answers unavailable, so the app asks
+        // again (Jay, 2026-10-07). A call costs 2. CCP requires the
+        // Director role.
         name: "corporation-structure-assets",
         scope: ASSETS,
         about: About::Corporation,
-        paged: true,
+        paged: false,
         params: &[],
     },
     Endpoint {
@@ -1045,7 +1048,7 @@ impl Asset {
     /// In a structure's slot or bay, or a skyhook itself. Flags ships
     /// share count only for items in one of `upwell`, the corporation's
     /// Upwell structures (none if those couldn't be read).
-    fn about_structures(&self, upwell: Option<&[i64]>) -> bool {
+    pub(crate) fn about_structures(&self, upwell: Option<&[i64]>) -> bool {
         let flag = self.location_flag.as_str();
         let in_upwell = upwell.is_some_and(|ids| ids.contains(&self.location_id));
         STRUCTURE_ASSET_FLAGS.contains(&flag)
@@ -1055,7 +1058,7 @@ impl Asset {
     }
 
     /// In a slot or bay ships have too.
-    fn in_shared_slot(&self) -> bool {
+    pub(crate) fn in_shared_slot(&self) -> bool {
         let flag = self.location_flag.as_str();
         SHARED_ASSET_FLAGS.contains(&flag) || numbered(flag, SHARED_ASSET_FLAG_PREFIXES)
     }
@@ -1418,7 +1421,7 @@ impl Esi {
         Ok((response.into_inner(), pages, again))
     }
 
-    async fn upwell_ids(&self, client: &Client, corporation: i64) -> Option<Vec<i64>> {
+    pub(crate) async fn upwell_ids(&self, client: &Client, corporation: i64) -> Option<Vec<i64>> {
         let mut ids = Vec::new();
         let mut page = 1u32;
         loop {
@@ -2207,38 +2210,13 @@ impl Esi {
                     .corporation_id(corporation)
             ),
             "corporation-structure-assets" => {
-                let page = page.map_or(1, std::num::NonZeroU32::get);
-                let (assets, pages, again) = self
-                    .corporation_assets_page(&client, corporation, page, priority)
-                    .await?;
-                // Slots and bays ships share pass only for the
-                // corporation's own Upwell structures: never its ships'
-                // fittings (nor their item ids, which asset names and
-                // locations would take).
-                let upwell = if assets.iter().any(Asset::in_shared_slot) {
-                    self.upwell_ids(&client, corporation).await
-                } else {
-                    None
-                };
-                let items: Vec<serde_json::Value> = assets
-                    .into_iter()
-                    .filter(|a| a.about_structures(upwell.as_deref()))
-                    .map(|a| {
-                        serde_json::json!({
-                            "item_id": a.item_id,
-                            "type_id": a.type_id,
-                            "location_id": a.location_id,
-                            "location_flag": a.location_flag,
-                            "location_type": a.location_type,
-                            "quantity": a.quantity,
-                        })
-                    })
-                    .collect();
-                Ok(Response {
-                    body: serde_json::Value::Array(items),
-                    pages,
-                    refetched: again,
-                })
+                let token = token.clone();
+                let tokens: crate::asset_places::TokenSource = std::sync::Arc::new(move || {
+                    let token = token.clone();
+                    Box::pin(async move { Ok(token) })
+                });
+                self.corporation_structure_assets(tokens, corporation, character)
+                    .await
             }
             // Answered from a background read (`asset_places`); the host
             // gives that read a fresh token for each page, this one only.

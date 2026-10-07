@@ -403,7 +403,11 @@ async fn esi_get(
             extra_calls: 0,
         });
     }
-    let result = if endpoint.name == "corporation-asset-places" {
+    let background = matches!(
+        endpoint.name,
+        "corporation-asset-places" | "corporation-structure-assets"
+    );
+    let result = if background {
         // Every page of the corporation's assets is read in the background
         // (`tether_esi::asset_places`), each with a token the vault hands
         // out then: a read of hundreds of pages outlives one token. Each
@@ -437,9 +441,15 @@ async fn esi_get(
                 })
             })
         });
-        deps.esi
-            .corporation_asset_places(tokens, target.corporation_id, character, params)
-            .await
+        if endpoint.name == "corporation-structure-assets" {
+            deps.esi
+                .corporation_structure_assets(tokens, target.corporation_id, character)
+                .await
+        } else {
+            deps.esi
+                .corporation_asset_places(tokens, target.corporation_id, character, params)
+                .await
+        }
     } else {
         deps.esi
             .plugin_get(endpoint, &token, target, params, page)
