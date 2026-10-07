@@ -20,6 +20,9 @@ use crate::{int, query, text};
 pub(crate) const SKILLS: &str = "skills";
 /// Characters read per run: each is one ESI call of the 100 a run may make.
 const PER_RUN: usize = 90;
+/// A character tried this long ago is read again: within the schedule's 6
+/// hours, so a run reaches everyone the last one did.
+const DUE_HOURS: i64 = 5;
 
 /// The viewer's own characters registered for Fittings, the one they act
 /// as (Change character) first.
@@ -37,9 +40,10 @@ fn retry(what: &str, err: impl std::fmt::Debug) -> JobError {
     JobError::Retry(format!("{what}: {err:?}"))
 }
 
-/// Reads the skills of every registered character, oldest read first, and
-/// forgets characters no longer registered. More than a run can read
-/// queue another run.
+/// Reads the skills of the registered characters not tried in the last
+/// `DUE_HOURS`, never read first, then the oldest read, and forgets
+/// characters no longer registered. Postgres picks them, however many are
+/// registered; more than a run can read queue another run.
 pub(crate) fn sync() -> Result<(), JobError> {
     let registered = esi::characters();
     let ids: Vec<i64> = registered.iter().map(|c| c.id).collect();
@@ -53,30 +57,27 @@ pub(crate) fn sync() -> Result<(), JobError> {
         storage::Statement::new(
             "DELETE FROM skill_reads WHERE character_id <> ALL(\
              ARRAY(SELECT jsonb_array_elements_text($1::jsonb)::bigint))",
-            vec![ids_param],
+            vec![ids_param.clone()],
         ),
     ])
     .map_err(|e| retry("forgetting characters", e))?;
-    let read_at: Vec<(i64, Option<String>)> =
-        query("SELECT character_id, read_at FROM skill_reads", &[])
-            .map_err(|e| retry("reading when skills were read", e))?
-            .iter()
-            .map(|r| (int(r, 0), Some(text(r, 1)).filter(|t| !t.is_empty())))
-            .collect();
-    let mut order = registered;
-    // Never read first, then the oldest read.
-    order.sort_by_key(|c| {
-        read_at
-            .iter()
-            .find(|(id, _)| *id == c.id)
-            .and_then(|(_, at)| at.clone())
-            .unwrap_or_default()
-    });
-    let more = order.len() > PER_RUN;
-    for c in order.iter().take(PER_RUN) {
-        read(c).map_err(|e| retry("reading skills", e))?;
+    let due: Vec<i64> = query(
+        "SELECT x.id::bigint FROM jsonb_array_elements_text($1::jsonb) AS x(id) \
+         LEFT JOIN skill_reads s ON s.character_id = x.id::bigint \
+         WHERE s.tried_at IS NULL OR s.tried_at < now() - make_interval(hours => $2::int) \
+         ORDER BY s.read_at NULLS FIRST, x.id::bigint LIMIT $3",
+        &[ids_param, DUE_HOURS.into(), ((PER_RUN + 1) as i64).into()],
+    )
+    .map_err(|e| retry("finding whose skills to read", e))?
+    .iter()
+    .map(|r| int(r, 0))
+    .collect();
+    for id in due.iter().take(PER_RUN) {
+        if let Some(c) = registered.iter().find(|c| c.id == *id) {
+            read(c).map_err(|e| retry("reading skills", e))?;
+        }
     }
-    if more {
+    if due.len() > PER_RUN {
         jobs::enqueue(NewJob::new(SKILLS).key("skills_more"))
             .map_err(|e| retry("queueing the rest", e))?;
     }
@@ -128,10 +129,11 @@ pub(crate) fn read(c: &Character) -> Result<(), PageError> {
         Err(_) => Some("EVE didn't answer; tried again later"),
     };
     storage::execute(
-        "INSERT INTO skill_reads (character_id, name, read_at, problem) \
-         VALUES ($1, $2, CASE WHEN $3::text IS NULL THEN now() END, $3) \
+        "INSERT INTO skill_reads (character_id, name, read_at, problem, tried_at) \
+         VALUES ($1, $2, CASE WHEN $3::text IS NULL THEN now() END, $3, now()) \
          ON CONFLICT (character_id) DO UPDATE SET name = EXCLUDED.name, \
-         read_at = coalesce(EXCLUDED.read_at, skill_reads.read_at), problem = EXCLUDED.problem",
+         read_at = coalesce(EXCLUDED.read_at, skill_reads.read_at), problem = EXCLUDED.problem, \
+         tried_at = now()",
         &[
             c.id.into(),
             c.name.clone().into(),

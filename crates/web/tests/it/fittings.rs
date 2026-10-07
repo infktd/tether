@@ -41,12 +41,14 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let first = plugin_file("migrations/0001_fittings.sql");
     let pilots = plugin_file("migrations/0002_pilots.sql");
+    let tries = plugin_file("migrations/0003_skill_tries.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_fittings.sql", first.as_bytes()),
         ("migrations/0002_pilots.sql", pilots.as_bytes()),
+        ("migrations/0003_skill_tries.sql", tries.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -823,4 +825,67 @@ async fn pilots_see_whether_they_can_fly_a_fit_and_save_it_to_eve(db: PgPool) {
     )
     .await;
     assert_ne!(refused.status, StatusCode::OK, "{}", refused.body);
+}
+
+/// A big alliance registers more than 5,000 characters, more rows than
+/// the host returns at once: Postgres picks whose skills are due, so the
+/// run still reads the new one, and only those due.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn skills_are_read_however_many_are_registered(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
+    let h = harness_with_esi(db, true, esi_server().await).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    work(&h).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/skills")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "skills": [
+                {"skill_id": 3329, "active_skill_level": 1, "trained_skill_level": 1, "skillpoints_in_skill": 250},
+            ],
+            "total_sp": 250
+        })))
+        .mount(&h.esi_server)
+        .await;
+    sqlx::query("UPDATE core.schedules SET last_enqueued_at = now() - interval '1 hour'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let _owner = register(&h, &owner, "196379789:Chribba").await;
+    // 5,001 more on the account, registered too, read a minute ago.
+    for sql in [
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 2100000000 + n, account_id, 'Alt ' || n, corporation_id \
+         FROM core.characters, generate_series(1, 5001) n WHERE id = $1",
+        "INSERT INTO core.character_tokens (character_id, refresh_token, scopes) \
+         SELECT 2100000000 + n, refresh_token, scopes \
+         FROM core.character_tokens, generate_series(1, 5001) n WHERE character_id = $1",
+        "INSERT INTO core.app_characters (plugin_id, character_id) \
+         SELECT 'tether.fittings', 2100000000 + n FROM generate_series(1, 5001) n WHERE $1 > 0",
+        "INSERT INTO \"plugin_tether.fittings\".skill_reads (character_id, name, read_at, tried_at) \
+         SELECT 2100000000 + n, 'Alt ' || n, now() - interval '1 minute', \
+             now() - interval '1 minute' \
+         FROM generate_series(1, 5001) n WHERE $1 > 0",
+    ] {
+        sqlx::query(sql).bind(CHRIBBA).execute(&h.db).await.unwrap();
+    }
+    work(&h).await;
+    let read: Option<bool> = sqlx::query_scalar(
+        "SELECT read_at IS NOT NULL FROM \"plugin_tether.fittings\".skill_reads \
+         WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .fetch_optional(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(read, Some(true));
+    let asked = h
+        .esi_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/skills"))
+        .count();
+    assert_eq!(asked, 1, "only the one due");
 }
