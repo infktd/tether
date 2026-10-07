@@ -21,6 +21,9 @@
 //!   daily); see `value` for how.
 //! - Reports: moons' potential income, members' mining, uploads and ore
 //!   prices.
+//! - Admin notices (aa-moonmining's MOONMINING_ADMIN_NOTIFICATIONS_ENABLED,
+//!   on for a new install): holders of `manage`, superusers included, hear
+//!   when an owner is added and when ESI refuses one's refineries.
 
 mod extraction;
 mod moons;
@@ -35,6 +38,7 @@ use tether_plugin_sdk::discord::{self, Mention};
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
+use tether_plugin_sdk::notify::{self, Level};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Column, Field, Form, Lane, LaneItem, Page, PageError, Plugin, Request, Section, SettingsForm,
@@ -208,12 +212,17 @@ struct Settings {
     stale: Duration,
     /// Old moons listed beside the fresh ones on Extractions.
     old_shown: usize,
+    /// aa-moonmining's MOONMINING_ADMIN_NOTIFICATIONS_ENABLED.
+    admin_notices: bool,
+    /// Whether the owners in use when admin notices arrived are recorded
+    /// (as told already).
+    sources_known: bool,
 }
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
         "SELECT fresh_hours, ping_channel, pings, volume_per_day, days_per_month, stale_hours, \
-                old_moons_shown \
+                old_moons_shown, admin_notifications, sources_known \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -235,6 +244,14 @@ fn settings() -> Result<Settings, storage::Error> {
             .map(str::to_owned),
         pings: row
             .and_then(|r| r.get(2))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
+        admin_notices: row
+            .and_then(|r| r.get(7))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
+        sources_known: row
+            .and_then(|r| r.get(8))
             .and_then(Db::as_bool)
             .unwrap_or(false),
     })
@@ -311,7 +328,7 @@ enum Missed {
     /// pages.
     Budget,
     /// ESI (or the host) said no: logged.
-    Esi,
+    Esi(esi::Error),
 }
 
 /// Every page of an endpoint, within the budget.
@@ -329,7 +346,7 @@ fn get_pages(
         Ok(first) => first,
         Err(err) => {
             log::warn(format!("{what}: {}", esi::describe(&err)));
-            return Err(Missed::Esi);
+            return Err(Missed::Esi(err));
         }
     };
     let mut bodies = vec![first.body];
@@ -342,7 +359,7 @@ fn get_pages(
             Ok(response) => bodies.push(response.body),
             Err(err) => {
                 log::warn(format!("{what}: {}", esi::describe(&err)));
-                return Err(Missed::Esi);
+                return Err(Missed::Esi(err));
             }
         }
     }
@@ -372,8 +389,12 @@ fn pop_key(structure_id: i64, arrival: &str) -> String {
 
 /// One data source per corporation.
 fn sources_by_corporation() -> Vec<(i64, Subject)> {
+    by_corporation(&esi::data_sources())
+}
+
+fn by_corporation(sources: &[esi::Character]) -> Vec<(i64, Subject)> {
     let mut seen = Vec::new();
-    for source in esi::data_sources() {
+    for source in sources {
         if !seen.iter().any(|(c, _)| *c == source.corporation_id) {
             seen.push((source.corporation_id, Subject::DataSource(source.id)));
         }
@@ -381,14 +402,196 @@ fn sources_by_corporation() -> Vec<(i64, Subject)> {
     seen
 }
 
+// ---- admin notices -----------------------------------------------------------
+
+/// Notices a run sends at most (the host allows 10 notify calls a run).
+const NOTICES_PER_RUN: usize = 8;
+/// Owners announced a run at most.
+const OWNERS_PER_RUN: i64 = 5;
+
+/// aa-moonmining's admin notices (MOONMINING_ADMIN_NOTIFICATIONS_ENABLED),
+/// as AA's notify_admins tells every superuser: here every holder of
+/// `manage`, superusers included. Best effort.
+fn tell_admins(left: &mut usize, title: &str, message: &str, level: Level) {
+    if *left == 0 {
+        return;
+    }
+    *left -= 1;
+    if let Err(err) = notify::holders("manage", title, message, level, None) {
+        log::warn(format!("an admin notice wasn't sent: {err:?}"));
+    }
+}
+
+/// Records the owners (data sources) in use, so each one added is
+/// announced once. The first sync after admin notices arrived records an
+/// instance's owners as told already. A row stays when its source goes:
+/// the host's list can come back empty on a fault, and dropping rows
+/// would announce everyone again.
+fn note_sources(s: &Settings, all: &[esi::Character]) -> Result<(), JobError> {
+    if all.is_empty() {
+        return Ok(());
+    }
+    let rows: Vec<serde_json::Value> = all
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "character_id": c.id, "corporation_id": c.corporation_id, "name": c.name,
+            })
+        })
+        .collect();
+    storage::transaction(&[
+        Statement::new(
+            "INSERT INTO sources (character_id, corporation_id, character_name, announced) \
+             SELECT character_id, corporation_id, name, $2 \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, corporation_id bigint, name text) \
+             ON CONFLICT (character_id, corporation_id) DO UPDATE SET character_name = EXCLUDED.character_name",
+            vec![
+                Db::json(serde_json::Value::Array(rows).to_string()),
+                (!s.sources_known).into(),
+            ],
+        ),
+        Statement::new(
+            "UPDATE settings SET sources_known = true WHERE NOT sources_known",
+            vec![],
+        ),
+    ])
+    .map_err(|e| retry("recording owners", e))?;
+    Ok(())
+}
+
+/// aa-moonmining's "Owner added" notice for each owner not told yet, a
+/// few a run. With the notices off they're marked told, so turning them
+/// on announces only owners added after.
+fn announce_sources(
+    s: &Settings,
+    budget: &mut Budget,
+    notices: &mut usize,
+) -> Result<(), JobError> {
+    if !s.admin_notices {
+        storage::execute(
+            "UPDATE sources SET announced = true WHERE NOT announced",
+            &[],
+        )
+        .map_err(|e| retry("marking owners told", e))?;
+        return Ok(());
+    }
+    let rows = storage::query(
+        "SELECT s.character_id, s.corporation_id, s.character_name, n.name \
+         FROM sources s LEFT JOIN names n ON n.id = s.corporation_id \
+         WHERE NOT s.announced ORDER BY s.seen_at LIMIT $1",
+        &[OWNERS_PER_RUN.into()],
+    )
+    .map_err(|e| retry("reading owners", e))?;
+    // Corporations `places` couldn't name this run (out of calls).
+    let unnamed: Vec<i64> = rows
+        .rows
+        .iter()
+        .filter(|r| r.get(3).and_then(Db::as_text).is_none())
+        .map(|r| int(r, 1))
+        .collect();
+    let mut named: Vec<esi::Named> = Vec::new();
+    if !unnamed.is_empty() && budget.take() {
+        match esi::names(&unnamed) {
+            Ok(found) => named = found,
+            Err(err) => log::warn(format!("owners' corporations: {}", esi::describe(&err))),
+        }
+    }
+    for row in &rows.rows {
+        if *notices == 0 {
+            break;
+        }
+        let corp = int(row, 1);
+        let corporation = row
+            .get(3)
+            .and_then(Db::as_text)
+            .map(str::to_owned)
+            .or_else(|| named.iter().find(|n| n.id == corp).map(|n| n.name.clone()))
+            .unwrap_or_else(|| format!("corporation {corp}"));
+        tell_admins(
+            notices,
+            &format!("Owner added: {corporation}"),
+            &format!("{corporation} was added as new owner by {}.", text(row, 2)),
+            Level::Info,
+        );
+        storage::execute(
+            "UPDATE sources SET announced = true WHERE character_id = $1 AND corporation_id = $2",
+            &[int(row, 0).into(), corp.into()],
+        )
+        .map_err(|e| retry("marking an owner told", e))?;
+    }
+    Ok(())
+}
+
+/// aa-moonmining's "Owner disabled" notice, once a failing streak: ESI
+/// refused (403) the owner's refineries. aa-moonmining disables the owner
+/// there; Moon Mining keeps reading through it, and tells again only
+/// after a read has worked.
+fn owner_refused(
+    s: &Settings,
+    notices: &mut usize,
+    character: i64,
+    corp: i64,
+    err: &esi::Error,
+) -> Result<(), JobError> {
+    // A token that stopped working sends nothing, in aa-moonmining too.
+    if !matches!(err, esi::Error::Status(403)) || (s.admin_notices && *notices == 0) {
+        return Ok(());
+    }
+    let rows = storage::query(
+        "UPDATE sources s SET failing_since = now() \
+         WHERE character_id = $1 AND corporation_id = $2 AND failing_since IS NULL \
+         RETURNING character_name, (SELECT n.name FROM names n WHERE n.id = s.corporation_id)",
+        &[character.into(), corp.into()],
+    )
+    .map_err(|e| retry("marking an owner failing", e))?;
+    let Some(row) = rows.rows.first() else {
+        return Ok(());
+    };
+    if s.admin_notices {
+        let corporation = row
+            .get(1)
+            .and_then(Db::as_text)
+            .map_or_else(|| format!("corporation {corp}"), str::to_owned);
+        tell_admins(
+            notices,
+            &format!("Owner can't be read: {corporation}"),
+            &format!(
+                "{} can no longer read {corporation}'s refineries: {}. Moon Mining keeps trying \
+                 at each sync; its Data sources page shows how it's doing.",
+                text(row, 0),
+                esi::describe(err)
+            ),
+            Level::Danger,
+        );
+    }
+    Ok(())
+}
+
+/// A read that worked ends the owner's failing streak.
+fn owner_read(character: i64, corp: i64) -> Result<(), JobError> {
+    storage::execute(
+        "UPDATE sources SET failing_since = NULL \
+         WHERE character_id = $1 AND corporation_id = $2 AND failing_since IS NOT NULL",
+        &[character.into(), corp.into()],
+    )
+    .map_err(|e| retry("marking an owner read", e))?;
+    Ok(())
+}
+
+// ---- the sync ----------------------------------------------------------------
+
 /// Every 10 minutes, as aa-moonmining's run_regular_updates: each
 /// corporation's extractions and refineries, the longest unread first, a
-/// ping queued for each new or moved pop, then names. A run out of ESI
-/// calls carries on a minute later (`sync_more`) with the corporations it
-/// didn't reach, so every one is read however many there are.
+/// ping queued for each new or moved pop, then names, and the admin
+/// notices. A run out of ESI calls carries on a minute later
+/// (`sync_more`) with the corporations it didn't reach, so every one is
+/// read however many there are.
 fn sync(more: Option<&Job>) -> Result<(), JobError> {
     let now = Utc::now();
-    let sources = sources_by_corporation();
+    let settings = settings().map_err(|e| retry("reading settings", e))?;
+    let all = esi::data_sources();
+    note_sources(&settings, &all)?;
+    let sources = by_corporation(&all);
     if sources.is_empty() {
         log::info("no data sources added yet");
         return Ok(());
@@ -424,6 +627,7 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
     due.sort_by_key(|(at, _, _)| *at);
     let mut budget = Budget(ESI_BUDGET - PLACES_RESERVE);
     let mut queue = QUEUE_BUDGET;
+    let mut notices = NOTICES_PER_RUN;
     let (mut done, mut left) = (0, 0);
     for (i, (_, corp, subject)) in due.iter().enumerate() {
         // Two calls at least: extractions, then refineries.
@@ -432,17 +636,23 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
             break;
         }
         let whole = budget.0 == ESI_BUDGET - PLACES_RESERVE;
-        if read_corporation(&mut budget, &mut queue, *corp, *subject, now)? {
+        let character = match subject {
+            Subject::DataSource(id) => *id,
+            _ => 0,
+        };
+        match read_corporation(&mut budget, &mut queue, *corp, *subject, now)? {
+            Read::Done => owner_read(character, *corp)?,
+            Read::Refused(err) => owner_refused(&settings, &mut notices, character, *corp, &err)?,
             // Its pages ran past the run's calls: the next run reads it
             // first, with all of them. One that had them all waits for
             // the next round.
-            if !whole {
+            Read::OutOfCalls if !whole => {
                 left = due.len() - i;
                 break;
             }
-            log::warn(format!(
+            Read::OutOfCalls => log::warn(format!(
                 "corporation {corp}: its structures have more pages than one run may read"
-            ));
+            )),
         }
         storage::execute(
             "INSERT INTO corporations (corporation_id, synced_at) VALUES ($1, now()) \
@@ -499,19 +709,31 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
         .map_err(|e| retry("queuing the next sync", e))?;
     }
     budget.0 += PLACES_RESERVE;
-    places(&mut budget, &sources)
+    places(&mut budget, &sources)?;
+    announce_sources(&settings, &mut budget, &mut notices)
+}
+
+/// How reading a corporation went.
+enum Read {
+    /// Its refineries were read, and its extractions unless ESI refused
+    /// them.
+    Done,
+    /// ESI refused its refineries (logged).
+    Refused(esi::Error),
+    /// The run's calls ran out on its pages.
+    OutOfCalls,
 }
 
 /// One corporation's extractions (with the pings of those it no longer
-/// has taken back) and refineries; whether the run's calls ran out on its
-/// pages. ESI's refusals are logged and leave what's stored as it was.
+/// has taken back) and refineries. ESI's refusals leave what's stored as
+/// it was.
 fn read_corporation(
     budget: &mut Budget,
     queue: &mut usize,
     corp: i64,
     subject: Subject,
     now: DateTime<Utc>,
-) -> Result<bool, JobError> {
+) -> Result<Read, JobError> {
     match get_pages(
         budget,
         "corporation-mining-extractions",
@@ -554,8 +776,8 @@ fn read_corporation(
                 let _ = jobs::cancel(&pop_key(int(row, 0), &text(row, 1)));
             }
         }
-        Err(Missed::Budget) => return Ok(true),
-        Err(Missed::Esi) => {}
+        Err(Missed::Budget) => return Ok(Read::OutOfCalls),
+        Err(Missed::Esi(_)) => {}
     }
     // Refineries' names (a source without the role still has extractions).
     let bodies = match get_pages(
@@ -566,7 +788,8 @@ fn read_corporation(
         &format!("structures for corporation {corp}"),
     ) {
         Ok(bodies) => bodies,
-        Err(missed) => return Ok(matches!(missed, Missed::Budget)),
+        Err(Missed::Budget) => return Ok(Read::OutOfCalls),
+        Err(Missed::Esi(err)) => return Ok(Read::Refused(err)),
     };
     storage::transaction(&[Statement::new(
         // A refinery without a Moon Drill (one for reprocessing, say)
@@ -588,7 +811,7 @@ fn read_corporation(
         ],
     )])
     .map_err(|e| retry("storing structures", e))?;
-    Ok(false)
+    Ok(Read::Done)
 }
 
 /// Moons checked with ESI at most per run (one call each), well under the
@@ -726,7 +949,8 @@ fn places(budget: &mut Budget, sources: &[(i64, Subject)]) -> Result<(), JobErro
         "SELECT DISTINCT id FROM ( \
              SELECT system_id AS id FROM moons UNION SELECT system_id FROM structures \
              UNION SELECT constellation_id FROM systems UNION SELECT region_id FROM systems \
-             UNION SELECT corporation_id FROM extractions UNION SELECT type_id FROM ore_types) x \
+             UNION SELECT corporation_id FROM extractions UNION SELECT type_id FROM ore_types \
+             UNION SELECT corporation_id FROM sources) x \
              WHERE id IS NOT NULL AND id > 0",
         &[],
     )
@@ -1014,7 +1238,7 @@ fn ledger(more: Option<&Job>) -> Result<(), JobError> {
                 }
                 break;
             }
-            Err(Missed::Esi) => {
+            Err(Missed::Esi(_)) => {
                 ledger_tried(observer)?;
                 tried += 1;
                 refused += 1;
@@ -2045,7 +2269,18 @@ fn settings_page() -> Result<Page, PageError> {
                     .range(Some(1.0), Some(168.0), true)
                     .value(settings.stale.num_hours().to_string())
                     .help("Default: 12.")
-                    .required(),)),
+                    .required(),))
+            .group(SettingsGroup::new("Admin notices")
+                .field(Field::checkbox(
+                    "admin_notifications",
+                    "Tell admins when an owner is added or can't be read",
+                    settings.admin_notices,
+                )
+                .help(
+                    "As aa-moonmining's admin notifications (on there): a notice in Tether's \
+                     notifications for superusers and whoever holds Moon Mining's manage \
+                     permission.",
+                ))),
     ))
 }
 
@@ -2073,9 +2308,11 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         .value("old_moons_shown")
         .parse()
         .map_err(|_| PageError::Failed("old_moons_shown wasn't a number".into()))?;
+    let notices = submission.checked("admin_notifications");
     storage::execute(
         "UPDATE settings SET fresh_hours = $1, ping_channel = $2, pings = $3, volume_per_day = $4, \
-         days_per_month = $5, stale_hours = $6, old_moons_shown = $7 WHERE id = 1",
+         days_per_month = $5, stale_hours = $6, old_moons_shown = $7, admin_notifications = $8 \
+         WHERE id = 1",
         &[
             hours.into(),
             (!channel.is_empty()).then(|| channel.to_owned()).into(),
@@ -2084,13 +2321,15 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             days.into(),
             stale.into(),
             old_shown.into(),
+            notices.into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
     // Admins see who changed what in the plugin's log.
     log::info(format!(
         "settings changed by {} ({}): members-only {hours}h, channel {channel:?}, pings {}, \
-         {per_day} m³ a day, {days} days a month, past after {stale}h, {old_shown} old moons shown",
+         {per_day} m³ a day, {days} days a month, past after {stale}h, {old_shown} old moons \
+         shown, admin notices {notices}",
         viewer.main.name,
         viewer.main.id,
         submission.checked("pings")

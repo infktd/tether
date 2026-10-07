@@ -14,6 +14,9 @@ key = "PUBLISHER_KEY"
 [capabilities]
 storage = true
 discord = ["send_message"]
+# aa-moonmining's admin notices (MOONMINING_ADMIN_NOTIFICATIONS_ENABLED),
+# to holders of `manage`, superusers included, as AA's notify_admins.
+notify = true
 
 [capabilities.esi]
 # From the corporation of each owner (data-source character): a Station

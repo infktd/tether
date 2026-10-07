@@ -51,6 +51,7 @@ async fn install(h: &Harness, owner: &str) {
     let fourth = plugin_file("migrations/0004_old_moons_shown.sql");
     let fifth = plugin_file("migrations/0005_refinery_drills.sql");
     let sixth = plugin_file("migrations/0006_corporation_reads.sql");
+    let seventh = plugin_file("migrations/0007_admin_notifications.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -64,6 +65,10 @@ async fn install(h: &Harness, owner: &str) {
         ("migrations/0004_old_moons_shown.sql", fourth.as_bytes()),
         ("migrations/0005_refinery_drills.sql", fifth.as_bytes()),
         ("migrations/0006_corporation_reads.sql", sixth.as_bytes()),
+        (
+            "migrations/0007_admin_notifications.sql",
+            seventh.as_bytes(),
+        ),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -280,6 +285,27 @@ async fn work(h: &Harness) {
     while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
 }
 
+async fn account_of(h: &Harness, character: i64) -> i64 {
+    sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+        .bind(character)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+/// The app's notices an account has, oldest first: "title | message".
+async fn notices(h: &Harness, account: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT title || ' | ' || message FROM core.notifications \
+         WHERE account_id = $1 AND plugin_id = $2 ORDER BY id",
+    )
+    .bind(account)
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
 /// Runs one of the plugin's schedules now, whatever it logs.
 async fn run_due_now(h: &Harness, name: &str) {
     sqlx::query(
@@ -344,6 +370,15 @@ async fn moon_mining_end_to_end(db: PgPool) {
     run_schedule(&h, "roles").await;
     run_schedule(&h, "ledger").await;
     run_schedule(&h, "prices").await;
+    // aa-moonmining's admin notice, once: the superuser hears of the new
+    // owner.
+    let added = [
+        "Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as new owner by Chribba."
+            .to_owned(),
+    ];
+    assert_eq!(notices(&h, account_of(&h, CHRIBBA).await).await, added);
+    run_schedule(&h, "sync").await;
+    assert_eq!(notices(&h, account_of(&h, CHRIBBA).await).await, added);
 
     // Members (the owner holds everything): extractions, with names.
     let moons = page(&h, &format!("/plugins/{ID}"), &owner).await;
@@ -1469,4 +1504,210 @@ async fn every_corporation_is_read_however_many(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(read, [CHRIBBA_CORP, GIGX_CORP]);
+}
+
+/// A pilot's account, holding these of the app's permissions.
+async fn pilot_with(h: &Harness, character: &str, permissions: &[&str]) -> i64 {
+    log_in_as(h, character, None).await;
+    let id: i64 = character.split(':').next().unwrap().parse().unwrap();
+    let account = account_of(h, id).await;
+    for p in permissions {
+        sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+            .bind(format!("plugin.{ID}.{p}"))
+            .bind(account)
+            .execute(&h.db)
+            .await
+            .unwrap();
+    }
+    account
+}
+
+/// ESI refuses Chribba Corp's structures (the Station Manager role gone)
+/// for the next `times` reads.
+async fn refuse_structures(h: &Harness, times: u64) {
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(ResponseTemplate::new(403).set_body_json(
+            serde_json::json!({ "error": "Character does not have required role(s)" }),
+        ))
+        .up_to_n_times(times)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn admin_notices_follow_aa_moonmining(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // On for a new install, as aa-moonmining's default.
+    let on: bool = sqlx::query_scalar(
+        r#"SELECT admin_notifications FROM "plugin_tether.moon-mining".settings"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(on);
+    let manager = pilot_with(&h, "90000002:Manager", &["manage"]).await;
+    let miner = pilot_with(&h, "90000003:Miner", &["extractions_access"]).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    work(&h).await;
+    let superuser = account_of(&h, CHRIBBA).await;
+    let added =
+        "Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as new owner by Chribba.";
+    assert_eq!(notices(&h, superuser).await, [added]);
+    assert_eq!(notices(&h, manager).await, [added]);
+    assert!(notices(&h, miner).await.is_empty());
+
+    // ESI refuses the owner's refineries: told once, as danger.
+    refuse_structures(&h, 2).await;
+    run_due_now(&h, "sync").await;
+    let refused = "Moon Mining: Owner can't be read: Chribba Corp | Chribba can no longer read \
+                   Chribba Corp's refineries: ESI refused (403): the character lacks an in-game \
+                   role or a scope. Moon Mining keeps trying at each sync; its Data sources page \
+                   shows how it's doing.";
+    assert_eq!(notices(&h, manager).await, [added, refused]);
+    let level: String = sqlx::query_scalar(
+        "SELECT level FROM core.notifications WHERE account_id = $1 AND plugin_id = $2 \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(manager)
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(level, "danger");
+    run_due_now(&h, "sync").await;
+    assert_eq!(notices(&h, manager).await, [added, refused]);
+    // A read that works ends the streak.
+    run_due_now(&h, "sync").await;
+    let failing: Option<String> = sqlx::query_scalar(
+        r#"SELECT failing_since::text FROM "plugin_tether.moon-mining".sources"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(failing, None);
+    // Refused again: told again (the first read, as the host doesn't
+    // repeat an unread notice).
+    sqlx::query("UPDATE core.notifications SET read_at = now()")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    refuse_structures(&h, 1).await;
+    run_due_now(&h, "sync").await;
+    assert_eq!(notices(&h, manager).await, [added, refused, refused]);
+
+    // Turned off in Settings: nothing more.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
+             &days_per_month=30.4&stale_hours=12&old_moons_shown=5",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    run_due_now(&h, "sync").await;
+    sqlx::query("UPDATE core.notifications SET read_at = now()")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    refuse_structures(&h, 1).await;
+    run_due_now(&h, "sync").await;
+    assert_eq!(notices(&h, manager).await, [added, refused, refused]);
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings
+            .body
+            .contains("Tell admins when an owner is added or can&#39;t be read"),
+        "{}",
+        settings.body
+    );
+}
+
+/// The app's migrations run into an empty schema, with structures stored
+/// before the last if `in_use`: the admin notices and whether the owners
+/// were recorded.
+async fn migrated(db: &PgPool, schema: &str, in_use: bool) -> (bool, bool) {
+    // Its own connection, closed after: the search path is changed.
+    let mut conn = db.acquire().await.unwrap().detach();
+    // `schema` is one of this file's literals.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"CREATE SCHEMA "{schema}"; SET search_path = "{schema}""#
+    )))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let files = [
+        "0001_moon_mining.sql",
+        "0002_surveys_and_prices.sql",
+        "0003_tether_rules_optional.sql",
+        "0004_old_moons_shown.sql",
+        "0005_refinery_drills.sql",
+        "0006_corporation_reads.sql",
+    ];
+    for file in files {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(plugin_file(&format!(
+            "migrations/{file}"
+        ))))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    if in_use {
+        sqlx::query(
+            "INSERT INTO structures (structure_id, corporation_id, name) VALUES (1, 2, 'Drill')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(plugin_file(
+        "migrations/0007_admin_notifications.sql",
+    )))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query_as("SELECT admin_notifications, sources_known FROM settings")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn existing_installs_keep_no_admin_notices(db: PgPool) {
+    // An install already in use keeps none until a manager turns them on;
+    // a new one has them, as aa-moonmining.
+    assert_eq!(migrated(&db, "in_use", true).await, (false, false));
+    assert_eq!(migrated(&db, "fresh", false).await, (true, true));
+
+    // An upgraded install whose manager turned them on before its first
+    // sync: the owners in use then aren't news.
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    approve_source(&h, &owner).await;
+    sqlx::query(
+        r#"UPDATE "plugin_tether.moon-mining".settings SET admin_notifications = true,
+           sources_known = false"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(&h).await;
+    assert!(notices(&h, account_of(&h, CHRIBBA).await).await.is_empty());
+    let told: bool =
+        sqlx::query_scalar(r#"SELECT announced FROM "plugin_tether.moon-mining".sources"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert!(told);
 }
