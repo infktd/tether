@@ -44,12 +44,14 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_freight.sql");
     let cards = plugin_file("migrations/0002_outbox_cards.sql");
+    let mentions = plugin_file("migrations/0003_pilot_mentions.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_freight.sql", migration.as_bytes()),
         ("migrations/0002_outbox_cards.sql", cards.as_bytes()),
+        ("migrations/0003_pilot_mentions.sql", mentions.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -292,9 +294,11 @@ async fn discord_messages(h: &Harness) -> Vec<String> {
         .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
         .map(|r| {
             let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
-            // Every notice is a card: its parts, a line each.
+            // Every notice is a card: its parts, a line each, under the
+            // message's text (the mention, if any).
             let card = &body["embeds"][0];
             let mut lines = vec![
+                format!("content: {}", body["content"].as_str().unwrap_or_default()),
                 card["title"].as_str().unwrap().to_owned(),
                 card["author"]["name"]
                     .as_str()
@@ -498,14 +502,38 @@ async fn freight_end_to_end(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let c = DISCORD_PING_CHANNEL;
+    // aa-freight's FREIGHT_DISCORD_MENTIONS: none by default.
+    let ping: Option<String> =
+        sqlx::query_scalar(r#"SELECT pilot_ping FROM "plugin_tether.freight".settings"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(ping, None);
+    let pricing = page(&h, &format!("/plugins/{ID}/pricing"), &owner).await;
+    assert!(
+        pricing
+            .body
+            .contains("Pilot notices mention the role of state"),
+        "{}",
+        pricing.body
+    );
+    // Pilot notices mention Member's role (Tether's stand-in for @here).
     let res = post(
         &h,
         &owner,
         "pricing",
-        &format!("_form=settings&modifier=&pilot_channel={c}&customer_channel={c}"),
+        &format!(
+            "_form=settings&modifier=&pilot_channel={c}&customer_channel={c}&pilot_ping=+Member+"
+        ),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let ping: Option<String> =
+        sqlx::query_scalar(r#"SELECT pilot_ping FROM "plugin_tether.freight".settings"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(ping.as_deref(), Some("Member"));
     Mock::given(method("POST"))
         .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -526,6 +554,18 @@ async fn freight_end_to_end(db: PgPool) {
     assert!(pilots[0].contains("Contract check: OK"), "{}", pilots[0]);
     assert!(pilots[0].contains("Pilot A"), "{}", pilots[0]);
     assert!(
+        pilots[0].starts_with(&format!("content: <@&{DISCORD_MEMBER_ROLE}>\n")),
+        "{}",
+        pilots[0]
+    );
+    // Customers' notices mention nobody (aa-freight's mention is pilots').
+    assert!(
+        sent.iter()
+            .filter(|m| m.contains("your courier contract"))
+            .all(|m| m.starts_with("content: \n")),
+        "{sent:#?}"
+    );
+    assert!(
         sent.iter()
             .any(|m| m.contains("waiting to be picked up") && m.contains("No pricing")),
         "{sent:#?}"
@@ -540,6 +580,63 @@ async fn freight_end_to_end(db: PgPool) {
     // Each once.
     sync(&h).await;
     assert_eq!(discord_messages(&h).await.len(), 3);
+
+    // A state without a Discord role (Blue here): the notice goes out
+    // unmentioned, not lost, and Pricing says why, with the fix. Every
+    // contract announced now: 105, unpriced, to pilots.
+    let res = post(
+        &h,
+        &owner,
+        "pricing",
+        &format!(
+            "_form=settings&modifier=&pilot_channel={c}&customer_channel={c}&notify_all=on\
+             &pilot_ping=Blue"
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    sync(&h).await;
+    let sent = discord_messages(&h).await;
+    assert_eq!(sent.len(), 4, "{sent:#?}");
+    assert!(
+        sent[3].starts_with("content: \nNew courier contract"),
+        "{}",
+        sent[3]
+    );
+    assert!(sent[3].contains("No pricing for this route"), "{}", sent[3]);
+    let failed: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.freight".outbox WHERE failed IS NOT NULL"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(failed, 0);
+    let pricing = page(&h, &format!("/plugins/{ID}/pricing"), &owner).await;
+    assert!(
+        pricing
+            .body
+            .contains("went out without its mention: no Discord role is mapped to that state"),
+        "{}",
+        pricing.body
+    );
+    // Cleared: no mention, and nothing to say.
+    let res = post(
+        &h,
+        &owner,
+        "pricing",
+        &format!(
+            "_form=settings&modifier=&pilot_channel={c}&customer_channel={c}&notify_all=on\
+             &pilot_ping="
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let pricing = page(&h, &format!("/plugins/{ID}/pricing"), &owner).await;
+    assert!(
+        !pricing.body.contains("went out without its mention"),
+        "{}",
+        pricing.body
+    );
 
     // The contracts, checked.
     let contracts = page(&h, &format!("/plugins/{ID}/contracts"), &owner).await;

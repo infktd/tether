@@ -10,7 +10,8 @@
 //!   locations, one way or both, with a base price, a minimum, a price per
 //!   m3 (with the handler's global modifier when a route uses it), a price
 //!   per collateral percent, and limits on volume and collateral; the
-//!   settings (the modifier, the Discord channels, announcing every contract).
+//!   settings (the modifier, the Discord channels, the pilot notices'
+//!   mention, announcing every contract).
 //! - **Calculator** (`use_calculator`): a route's reward for a volume and a
 //!   collateral, with how to issue the contract.
 //! - **Contracts** (`view_contracts`): the outstanding and in-progress
@@ -19,9 +20,13 @@
 //!   finished contracts by route, pilot, pilot corporation and customer.
 //! - **Locations** (`add_location`): stations by id (named from ESI) and
 //!   structures by id and name (apps can't read structures).
-//! - **Discord**: new contracts to the pilots' channel, and each contract's
-//!   status changes to the customers' channel, naming only the issuer and
-//!   route (apps can't message people, as aa-freight's direct messages do).
+//! - **Discord**: new contracts to the pilots' channel, mentioning the
+//!   Discord role of the state Settings names (aa-freight's
+//!   FREIGHT_DISCORD_MENTIONS, none by default; without a role mapped to
+//!   that state they go unmentioned, and Settings says so), and each
+//!   contract's status changes to the customers' channel, naming only the
+//!   issuer and route and mentioning nobody (apps can't message people, as
+//!   aa-freight's direct messages do).
 
 mod card;
 mod pricing;
@@ -297,12 +302,18 @@ struct Settings {
     synced_at: Option<DateTime<Utc>>,
     sync_error: Option<String>,
     handler_id: Option<i64>,
+    /// aa-freight's FREIGHT_DISCORD_MENTIONS: the state whose Discord role
+    /// pilot notices mention.
+    pilot_ping: Option<String>,
+    /// When the last pilot notice went out without that mention.
+    pilot_ping_refused: Option<DateTime<Utc>>,
 }
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
         "SELECT operation_mode, price_per_volume_modifier, pilot_channel, customer_channel, \
-             notify_all, synced_at, sync_error, handler_id FROM settings WHERE id = 1",
+             notify_all, synced_at, sync_error, handler_id, pilot_ping, pilot_ping_refused \
+         FROM settings WHERE id = 1",
         &[],
     )?;
     let row = rows.rows.first().cloned().unwrap_or_default();
@@ -321,6 +332,8 @@ fn settings() -> Result<Settings, storage::Error> {
         synced_at: when(&row, 5),
         sync_error: optional_text(6),
         handler_id: row.get(7).and_then(Db::as_integer),
+        pilot_ping: optional_text(8),
+        pilot_ping_refused: when(&row, 9),
     })
 }
 
@@ -874,17 +887,20 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             .as_ref()
             .filter(|_| check.is_some() || settings.notify_all);
         // Claimed and queued in one statement, so two syncs at once can't
-        // both announce it.
+        // both announce it. Every pilot notice carries the mention, as
+        // aa-freight's.
         if let Some(channel) = send {
             let added = storage::execute(
                 "WITH claimed AS (UPDATE contracts SET notified_at = now() \
                      WHERE contract_id = $1 AND notified_at IS NULL RETURNING 1) \
-                 INSERT INTO outbox (channel, message, card) SELECT $2, $3, $4 FROM claimed",
+                 INSERT INTO outbox (channel, message, card, mention_state) \
+                 SELECT $2, $3, $4, $5 FROM claimed",
                 &[
                     c.id.into(),
                     channel.as_str().into(),
                     pilot_message(c, &names, check.as_ref()).into(),
                     pilot_card(c, &names, check.as_ref()),
+                    settings.pilot_ping.clone().into(),
                 ],
             )
             .map_err(|e| retry("queuing a pilot notice", e))?;
@@ -1090,12 +1106,16 @@ fn relay() -> Result<(), JobError> {
     .map_err(|e| retry("expiring messages", e))?;
     let mut gap = RELAY_GAP_SECONDS;
     let waiting = storage::query(
-        "SELECT id, channel, message, card::text FROM outbox WHERE sent_at IS NULL AND failed IS NULL \
-         ORDER BY id LIMIT $1",
+        "SELECT id, channel, message, card::text, mention_state FROM outbox \
+         WHERE sent_at IS NULL AND failed IS NULL ORDER BY id LIMIT $1",
         &[(SENDS_PER_RUN as i64 + 1).into()],
     )
     .map_err(|e| retry("reading the outbox", e))?;
+    let mut sends = 0;
     for row in waiting.rows.iter().take(SENDS_PER_RUN) {
+        if sends >= SENDS_PER_RUN {
+            break;
+        }
         let id = int(row, 0);
         let claimed = storage::execute(
             "UPDATE outbox SET sent_at = now() WHERE id = $1 AND sent_at IS NULL AND failed IS NULL",
@@ -1110,12 +1130,43 @@ fn relay() -> Result<(), JobError> {
             .and_then(Db::as_text)
             .and_then(|c| serde_json::from_str(c).ok())
             .and_then(|c| card::embed(&c));
-        let sent = match &card {
-            Some(card) => discord::send_embed(&text(row, 1), card, Mention::None),
-            None => discord::send(&text(row, 1), &text(row, 2), Mention::None),
+        let (channel, message) = (text(row, 1), text(row, 2));
+        let post = |mention: Mention| match &card {
+            Some(card) => discord::send_embed(&channel, card, mention),
+            None => discord::send(&channel, &message, mention),
         };
+        let mention = row.get(4).and_then(Db::as_text).map(str::to_owned);
+        sends += 1;
+        let mut sent = post(mention.clone().map_or(Mention::None, Mention::State));
+        // Refused with its mention: maybe no Discord role is mapped to the
+        // state, so it goes without (as Structures' pings). Past the host's
+        // limit for a run, the second try is rate limited and the message
+        // released for later, never failed.
+        let mut unmentioned = false;
+        if mention.is_some() && matches!(sent, Err(discord::Error::NotAllowed(_))) {
+            sends += 1;
+            sent = post(Mention::None);
+            unmentioned = true;
+        }
         match sent {
-            Ok(()) => {}
+            Ok(()) => {
+                // Sent: whether the mention went with it, known now (the
+                // host checks the channel before the mention).
+                if let Some(state) = &mention {
+                    if unmentioned {
+                        log::warn(format!(
+                            "a pilot notice went out without mentioning {state}: no Discord \
+                             role is mapped to it"
+                        ));
+                    }
+                    storage::execute(
+                        "UPDATE settings SET pilot_ping_refused = CASE WHEN $2 THEN now() END \
+                         WHERE id = 1 AND pilot_ping = $1",
+                        &[state.as_str().into(), unmentioned.into()],
+                    )
+                    .map_err(|e| retry("noting the mention", e))?;
+                }
+            }
             Err(discord::Error::NotAllowed(why) | discord::Error::Invalid(why)) => {
                 log::warn(format!("a Discord message wasn't sent: {why}"));
                 storage::execute(
@@ -2034,6 +2085,11 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
                             .help("New contracts, for pilots to pick up."),
                     )
                     .field(
+                        Field::text("pilot_ping", "Pilot notices mention the role of state", 64)
+                            .value(settings.pilot_ping.clone().unwrap_or_default())
+                            .help(pilot_ping_help(&settings)),
+                    )
+                    .field(
                         select("customer_channel", "Customers' channel", channels, settings.customer_channel.as_deref().unwrap_or_default())
                             .help("Each contract's status changes, naming its issuer and route. Everyone in the channel sees every customer's notices (aa-freight sends them privately; apps can't)."),
                     )
@@ -2043,6 +2099,23 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
                     ),
             ),
     ))
+}
+
+/// What the pilots' mention does, and, when the last pilot notice went
+/// out without it, that it can't take effect as things stand, with the
+/// fix (DESIGN.md, Works from defaults).
+fn pilot_ping_help(settings: &Settings) -> String {
+    let what = "aa-freight's FREIGHT_DISCORD_MENTIONS (such as @here). Tether's bot never pings \
+                @everyone or @here: it mentions the Discord role given to this state under \
+                Discord, Roles, e.g. Member. Empty: no mention.";
+    match (&settings.pilot_ping, settings.pilot_ping_refused) {
+        (Some(_), Some(at)) => format!(
+            "{what} The last pilot notice ({} EVE) went out without its mention: no Discord role \
+             is mapped to that state. Map one under Discord, Roles, or clear this.",
+            at.format("%Y-%m-%d %H:%M")
+        ),
+        _ => what.to_owned(),
+    }
 }
 
 fn edit_page(id: i64, problem: Option<(&str, &Submission)>) -> Result<Page, PageError> {
@@ -2208,24 +2281,38 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     let Ok(modifier) = optional(submission, "modifier") else {
         return Err(PageError::NotFound);
     };
+    let ping = submission.value("pilot_ping").trim();
+    if ping.chars().count() > 64 {
+        return Ok(SubmitResult::Page(
+            pricing_page(None)?.text("A state's name is at most 64 characters."),
+        ));
+    }
+    let ping = (!ping.is_empty()).then(|| ping.to_owned());
     let assigned: Vec<String> = discord::channels().into_iter().map(|c| c.id).collect();
     let channel = |name: &str| {
         let value = submission.value(name);
         assigned.iter().find(|id| id.as_str() == value).cloned()
     };
+    // A different state: whether its role is mapped is for its notices
+    // to find out.
     storage::execute(
         "UPDATE settings SET price_per_volume_modifier = $1, pilot_channel = $2, \
-             customer_channel = $3, notify_all = $4 WHERE id = 1",
+             customer_channel = $3, notify_all = $4, \
+             pilot_ping_refused = CASE WHEN pilot_ping IS NOT DISTINCT FROM $5 \
+                 THEN pilot_ping_refused END, \
+             pilot_ping = $5 \
+         WHERE id = 1",
         &[
             modifier.into(),
             channel("pilot_channel").into(),
             channel("customer_channel").into(),
             submission.checked("notify_all").into(),
+            ping.clone().into(),
         ],
     )
     .map_err(|e| failed("saving settings", e))?;
     log::info(format!(
-        "settings saved by {} ({})",
+        "settings saved by {} ({}); pilot notices mention {ping:?}",
         viewer.main.name, viewer.main.id
     ));
     Ok(SubmitResult::Redirect("pricing".to_owned()))
