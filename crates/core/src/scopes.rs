@@ -355,7 +355,8 @@ pub enum Problem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequiredApp {
     pub name: String,
-    /// Its user scopes: the token must carry them too.
+    /// Its user scopes: registering grants them (a character not yet
+    /// registered needs them, one registered counts without them).
     pub scopes: BTreeSet<String>,
     /// The characters registered for it.
     pub registered: BTreeSet<i64>,
@@ -364,19 +365,28 @@ pub struct RequiredApp {
     pub may_register: bool,
 }
 
-/// [`check`] for a state that also requires apps: `required` and every
-/// app's scopes on every character, and then each character registered
-/// for every app. A scope problem comes first (registering fixes both).
+/// [`check`] for a state that also requires apps: `required` (the state's
+/// own scopes) on every character, and each character registered for
+/// every app. A character registered for an app needs none of the app's
+/// scopes to count: one the app asked for after it registered doesn't
+/// undo the registration (aa-memberaudit's compliance is every character
+/// registered). One not yet registered needs the app's scopes too, and a
+/// scope problem comes first (registering fixes both).
 pub fn check_with_apps(
     required: &BTreeSet<String>,
     apps: &[RequiredApp],
     characters: &[(i64, Token)],
 ) -> Vec<(i64, Problem)> {
-    let mut all = required.clone();
-    for app in apps {
-        all.extend(app.scopes.iter().cloned());
-    }
-    let mut problems = check(&all, characters);
+    let mut problems: Vec<(i64, Problem)> = characters
+        .iter()
+        .flat_map(|(id, token)| {
+            let mut all = required.clone();
+            for app in apps.iter().filter(|app| !app.registered.contains(id)) {
+                all.extend(app.scopes.iter().cloned());
+            }
+            check(&all, &[(*id, token.clone())])
+        })
+        .collect();
     for (id, _) in characters {
         if problems.iter().any(|(p, _)| p == id) {
             continue;
@@ -523,13 +533,16 @@ mod tests {
             (1, valid(&["esi-skills.read_skills.v1"])),
             // The scope, but not registered for the app.
             (2, valid(&["esi-skills.read_skills.v1"])),
-            // Registered, but its token lost the scope.
+            // Registered before the app asked for the scope: still counts,
+            // as aa-memberaudit's compliance is every character registered.
             (3, valid(&["esi-assets.read_assets.v1"])),
             // A revoked token still counts with what it carried.
             (
                 4,
                 Token::Revoked(vec!["esi-skills.read_skills.v1".to_owned()]),
             ),
+            // Neither registered nor carrying the scope: the scope first.
+            (5, valid(&["esi-assets.read_assets.v1"])),
         ];
         assert_eq!(
             check_with_apps(&BTreeSet::new(), std::slice::from_ref(&app), &characters),
@@ -539,14 +552,23 @@ mod tests {
                     Problem::NotRegisteredFor(vec!["Member Audit".to_owned()])
                 ),
                 (
-                    3,
-                    Problem::Missing(vec!["esi-skills.read_skills.v1".to_owned()])
-                ),
-                (
                     4,
                     Problem::NotRegisteredFor(vec!["Member Audit".to_owned()])
                 ),
+                (
+                    5,
+                    Problem::Missing(vec!["esi-skills.read_skills.v1".to_owned()])
+                ),
             ]
+        );
+        // The state's own scopes are still needed by everyone.
+        let own = set(&["esi-clones.read_clones.v1"]);
+        assert_eq!(
+            check_with_apps(&own, std::slice::from_ref(&app), &characters[2..3]),
+            [(
+                3,
+                Problem::Missing(vec!["esi-clones.read_clones.v1".to_owned()])
+            )]
         );
         assert!(check_with_apps(&BTreeSet::new(), &[], &characters).is_empty());
         // Without one of the app's permissions the account can't register:

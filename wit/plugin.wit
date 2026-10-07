@@ -729,9 +729,10 @@ interface esi {
         /// Not an endpoint Tether offers plugins, or its scope isn't one
         /// this plugin was approved for, or the wrong kind of subject.
         not-allowed(string),
-        /// Not one of the plugin's characters: not registered for it, its
-        /// account holds none of the plugin's permissions, or its token
-        /// lacks a user scope.
+        /// Not one of the plugin's characters: not registered for it, or
+        /// its account holds none of the plugin's permissions. From `get`
+        /// and `post`, also a character whose token lacks the endpoint's
+        /// scope (`fetch` tells that apart: `missing-scope`).
         not-registered,
         /// Not a data source of this plugin (in use).
         not-a-data-source,
@@ -768,14 +769,40 @@ interface esi {
     post: func(endpoint: string, subject: subject, body: string) -> result<response, error>;
     /// The plugin's characters: registered for it, on accounts holding
     /// one of its permissions (any state, as Alliance Auth's apps), with
-    /// tokens carrying every one of its user scopes. The bundled Member
-    /// Audit also gets those whose token stopped working (not sold ones),
-    /// as aa-memberaudit keeps them; reading one answers `token`.
+    /// working tokens. A token registered before the plugin asked for
+    /// another scope still counts: only a call needing that scope is
+    /// refused (`fetch` answers `missing-scope`), and the pilot is asked
+    /// to register again. The bundled Member Audit also gets those whose
+    /// token stopped working (not sold ones), as aa-memberaudit keeps
+    /// them; reading one answers `token`.
     characters: func() -> list<character>;
     /// This plugin's data-source characters in use.
     data-sources: func() -> list<character>;
     /// Names for ids (public ESI; at most 1,000).
     names: func(ids: list<s64>) -> result<list<named>, error>;
+
+    /// What `fetch` answers: `error`'s cases, and `missing-scope`.
+    variant fetch-error {
+        not-allowed(string),
+        not-registered,
+        not-a-data-source,
+        token,
+        status(u16),
+        invalid(string),
+        too-large,
+        unavailable,
+        /// One of the plugin's characters, but its token lacks this scope,
+        /// which the endpoint needs: the plugin asked for it after the
+        /// pilot registered the character. Skip what needs it; the rest of
+        /// the character reads as before, and Tether asks the pilot to
+        /// register again.
+        missing-scope(string),
+    }
+
+    /// `get`, telling a call refused only because the character's token
+    /// lacks the endpoint's scope (`missing-scope`) from one that isn't
+    /// the plugin's at all (`not-registered`).
+    fetch: func(endpoint: string, subject: subject, params: list<tuple<string, string>>, page: option<u32>) -> result<response, fetch-error>;
 }
 
 /// Discord messages, for plugins approved for `send_message`, to channels

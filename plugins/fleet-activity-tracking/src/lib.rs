@@ -2106,7 +2106,9 @@ fn character_json(
     }
     match esi::get(endpoint, Subject::Character(id), &[], None) {
         Ok(response) => Ok(serde_json::from_str(&response.body).unwrap_or_default()),
-        Err(esi::Error::NotRegistered | esi::Error::NotAllowed(_)) => Err(Presence::NotRegistered),
+        Err(
+            esi::Error::NotRegistered | esi::Error::NotAllowed(_) | esi::Error::MissingScope(_),
+        ) => Err(Presence::NotRegistered),
         Err(esi::Error::Token) => Err(Presence::Token),
         Err(err) => {
             log::warn(format!("{endpoint} for a FAT: {err:?}"));
@@ -3287,7 +3289,9 @@ fn poll(link: &Tracked) -> Result<(), JobError> {
         Err(esi::Error::NotADataSource | esi::Error::NotAllowed(_)) => {
             return stop(link, "data_source");
         }
-        Err(esi::Error::Token | esi::Error::NotRegistered) => return stop(link, "token"),
+        Err(esi::Error::Token | esi::Error::NotRegistered | esi::Error::MissingScope(_)) => {
+            return stop(link, "token");
+        }
         Err(err @ esi::Error::Unavailable) => {
             // ESI out of reach, or the app's ESI errors paused by Tether:
             // not ESI's answer, so not counted. Again next minute.

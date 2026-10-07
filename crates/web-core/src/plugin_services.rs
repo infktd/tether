@@ -8,9 +8,13 @@
 //!   corporation ones);
 //! - the subject is one of the plugin's characters (user; F16): its
 //!   account holds one of the plugin's permissions, whatever its state,
-//!   it is registered for the plugin, and its token carries every one of
-//!   the plugin's user scopes; or a data source in use (corporation);
-//! - its token carries the scope.
+//!   it is registered for the plugin, and its token works; or a data
+//!   source in use (corporation);
+//! - its token carries the scope. A character registered before the
+//!   plugin asked for that scope is refused only this call
+//!   (`missing-scope`, from `esi.fetch`; `not-registered` from the older
+//!   `esi.get`): the rest of it reads as before, as aa-memberaudit's
+//!   sections each fetch a token for their own scope.
 //!
 //! The host fills in the ids; the plugin only names the endpoint and the
 //! subject, and never sees a token. Every call, allowed or not, goes to
@@ -30,10 +34,10 @@ use tether_esi::plugin::{About, Target, endpoint as find_endpoint};
 use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
-    DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted,
-    Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Member, MemberCharacter, Mention,
-    Named, NotifyError, NotifyLevel, Owner, Services, SharedDoctrine, SharedTimer, State, Subject,
-    Timer, TimerError,
+    DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FetchError, FilterError, FilterValue,
+    FilterWanted, Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Member, MemberCharacter,
+    Mention, Named, NotifyError, NotifyLevel, Owner, Services, SharedDoctrine, SharedTimer, State,
+    Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -240,17 +244,18 @@ fn builtin(builtin: Option<&str>) -> Option<Builtin> {
 }
 
 /// A short label for the access log.
-fn outcome(result: &Result<EsiReply, EsiError>) -> String {
+fn outcome<T>(result: &Result<T, FetchError>) -> String {
     match result {
         Ok(_) => "ok".to_owned(),
-        Err(EsiError::NotAllowed(_)) => "not allowed".to_owned(),
-        Err(EsiError::NotRegistered) => "not registered".to_owned(),
-        Err(EsiError::NotADataSource) => "not a data source".to_owned(),
-        Err(EsiError::Token) => "no usable token".to_owned(),
-        Err(EsiError::Status(status)) => format!("ESI {status}"),
-        Err(EsiError::Invalid(_)) => "invalid".to_owned(),
-        Err(EsiError::TooLarge) => "too large".to_owned(),
-        Err(EsiError::Unavailable) => "unavailable".to_owned(),
+        Err(FetchError::NotAllowed(_)) => "not allowed".to_owned(),
+        Err(FetchError::NotRegistered) => "not registered".to_owned(),
+        Err(FetchError::NotADataSource) => "not a data source".to_owned(),
+        Err(FetchError::Token) => "no usable token".to_owned(),
+        Err(FetchError::Status(status)) => format!("ESI {status}"),
+        Err(FetchError::Invalid(_)) => "invalid".to_owned(),
+        Err(FetchError::TooLarge) => "too large".to_owned(),
+        Err(FetchError::Unavailable) => "unavailable".to_owned(),
+        Err(FetchError::MissingScope(_)) => "token lacks the scope".to_owned(),
     }
 }
 
@@ -264,20 +269,22 @@ async fn esi_get(
     subject: Subject,
     params: &[(String, String)],
     page: Option<u32>,
-) -> Result<EsiReply, EsiError> {
+) -> Result<EsiReply, FetchError> {
     let running = plugins
         .upgrade()
         .and_then(|p| p.running(plugin))
-        .ok_or(EsiError::Unavailable)?;
+        .ok_or(FetchError::Unavailable)?;
     // Tether's built-in static data (`sde-*`): nobody's, no ESI call.
     if let Some(answer) = crate::static_data::get(name, params) {
-        return answer.map(|body| EsiReply {
-            response: EsiResponse { body, pages: 1 },
-            extra_calls: 0,
-        });
+        return answer
+            .map(|body| EsiReply {
+                response: EsiResponse { body, pages: 1 },
+                extra_calls: 0,
+            })
+            .map_err(tether_plugins::services::fetch_error);
     }
     let endpoint = find_endpoint(name).ok_or_else(|| {
-        EsiError::NotAllowed(format!("{name:?} isn't an endpoint plugins can call"))
+        FetchError::NotAllowed(format!("{name:?} isn't an endpoint plugins can call"))
     })?;
     if endpoint.about == About::Public {
         // No token and nobody's data: any plugin, any subject.
@@ -286,48 +293,48 @@ async fn esi_get(
             .plugin_get_public(endpoint, params)
             .await
             .map_err(|e| match e {
-                tether_esi::EsiError::Status(status) => EsiError::Status(status),
-                tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+                tether_esi::EsiError::Status(status) => FetchError::Status(status),
+                tether_esi::EsiError::InvalidInput(why) => FetchError::Invalid(why),
                 other => {
                     tracing::warn!(plugin, error = %other, "plugin ESI call");
-                    EsiError::Unavailable
+                    FetchError::Unavailable
                 }
             })?;
         let body = response.body.to_string();
         if body.len() > MAX_BODY_BYTES {
-            return Err(EsiError::TooLarge);
+            return Err(FetchError::TooLarge);
         }
         return Ok(reply(body, &response));
     }
     let approved = &running.manifest.capabilities.esi;
     let unavailable = |e: sqlx::Error| {
         tracing::error!(plugin, error = %e, "plugin ESI checks");
-        EsiError::Unavailable
+        FetchError::Unavailable
     };
     let target = match (endpoint.about, subject) {
         (About::Character, Subject::Character(id)) => {
             if !approved.user.iter().any(|s| s == endpoint.scope) {
-                return Err(EsiError::NotAllowed(format!(
+                return Err(FetchError::NotAllowed(format!(
                     "{} needs {}, which isn't one of this plugin's user scopes",
                     endpoint.name, endpoint.scope
                 )));
             }
-            let scopes = crate::compliance::allowed_plugin_scopes(approved.user.as_slice());
-            let registered =
-                tether_db::compliance::character_may_serve(&deps.db, plugin, id, &scopes)
-                    .await
-                    .map_err(unavailable)?;
+            // Registered, whatever scopes the app asked for since: the
+            // token's own check below refuses only what needs one it lacks.
+            let registered = tether_db::compliance::character_may_serve(&deps.db, plugin, id)
+                .await
+                .map_err(unavailable)?;
             if !registered {
                 // A character the bundled Member Audit keeps (its token
                 // stopped working): a token problem, so the app pauses it.
                 let kept = may_see_owners(plugin, running.origin)
-                    && tether_db::compliance::character_kept_broken(&deps.db, plugin, id, &scopes)
+                    && tether_db::compliance::character_kept_broken(&deps.db, plugin, id)
                         .await
                         .map_err(unavailable)?;
                 return Err(if kept {
-                    EsiError::Token
+                    FetchError::Token
                 } else {
-                    EsiError::NotRegistered
+                    FetchError::NotRegistered
                 });
             }
             Target {
@@ -338,7 +345,7 @@ async fn esi_get(
         }
         (About::Corporation, Subject::DataSource(id)) => {
             if !approved.data_source.iter().any(|s| s == endpoint.scope) {
-                return Err(EsiError::NotAllowed(format!(
+                return Err(FetchError::NotAllowed(format!(
                     "{} needs {}, which isn't one of this plugin's data-source scopes",
                     endpoint.name, endpoint.scope
                 )));
@@ -346,7 +353,7 @@ async fn esi_get(
             let corporation = db::approved_source_corporation(&deps.db, plugin, id)
                 .await
                 .map_err(unavailable)?
-                .ok_or(EsiError::NotADataSource)?;
+                .ok_or(FetchError::NotADataSource)?;
             // Alliance endpoints read the source's own alliance.
             let alliance = if endpoint.name.starts_with("alliance-") {
                 db::approved_source_alliance(&deps.db, plugin, id)
@@ -362,16 +369,16 @@ async fn esi_get(
             }
         }
         (About::Character, _) => {
-            return Err(EsiError::NotAllowed(format!(
+            return Err(FetchError::NotAllowed(format!(
                 "{} is about a character: use one of esi::characters()",
                 endpoint.name
             )));
         }
         (About::Public, _) => {
-            return Err(EsiError::Unavailable);
+            return Err(FetchError::Unavailable);
         }
         (About::Corporation, _) => {
-            return Err(EsiError::NotAllowed(format!(
+            return Err(FetchError::NotAllowed(format!(
                 "{} is about a corporation: use a data source",
                 endpoint.name
             )));
@@ -382,12 +389,18 @@ async fn esi_get(
         .access_token(target.character_id, &[endpoint.scope])
         .await
         .map_err(|e| match e {
+            // One of the app's characters, registered before the app asked
+            // for this scope: only what needs it is refused (as
+            // aa-memberaudit's sections each fetch a token for their own).
+            VaultError::MissingScopes(_) if endpoint.about == About::Character => {
+                FetchError::MissingScope(endpoint.scope.to_owned())
+            }
             VaultError::NoToken | VaultError::Revoked | VaultError::MissingScopes(_) => {
-                EsiError::Token
+                FetchError::Token
             }
             other => {
                 tracing::warn!(plugin, error = %other, "plugin ESI token");
-                EsiError::Unavailable
+                FetchError::Unavailable
             }
         })?;
     let names_structure = matches!(endpoint.name, "source-structure" | "universe-structure");
@@ -497,23 +510,23 @@ async fn esi_get(
                         extra_calls: lookup.calls,
                     })
                 }
-                None => Err(EsiError::Status(status)),
+                None => Err(FetchError::Status(status)),
             };
         }
         Err(e) => {
             return Err(match e {
-                tether_esi::EsiError::Status(status) => EsiError::Status(status),
-                tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+                tether_esi::EsiError::Status(status) => FetchError::Status(status),
+                tether_esi::EsiError::InvalidInput(why) => FetchError::Invalid(why),
                 // The assets are being read: the app asks again. Not a
                 // problem, nor an ESI error.
-                tether_esi::EsiError::Pending => EsiError::Unavailable,
-                tether_esi::EsiError::TooManyPages(pages) => EsiError::Invalid(format!(
+                tether_esi::EsiError::Pending => FetchError::Unavailable,
+                tether_esi::EsiError::TooManyPages(pages) => FetchError::Invalid(format!(
                     "the corporation has {pages} pages of assets, more than the {} Tether reads",
                     tether_esi::asset_places::MAX_ASSET_PAGES
                 )),
                 other => {
                     tracing::warn!(plugin, error = %other, "plugin ESI call");
-                    EsiError::Unavailable
+                    FetchError::Unavailable
                 }
             });
         }
@@ -523,7 +536,7 @@ async fn esi_get(
     }
     let body = response.body.to_string();
     if body.len() > MAX_BODY_BYTES {
-        return Err(EsiError::TooLarge);
+        return Err(FetchError::TooLarge);
     }
     Ok(reply(body, &response))
 }
@@ -568,8 +581,7 @@ async fn esi_post(
             "that isn't one of this pilot's characters".to_owned(),
         ));
     }
-    let scopes = crate::compliance::allowed_plugin_scopes(approved.user.as_slice());
-    if !tether_db::compliance::character_may_serve(&deps.db, plugin, character, &scopes)
+    if !tether_db::compliance::character_may_serve(&deps.db, plugin, character)
         .await
         .map_err(unavailable)?
     {
@@ -585,9 +597,10 @@ async fn esi_post(
         .access_token(character, &[endpoint.scope])
         .await
         .map_err(|e| match e {
-            VaultError::NoToken | VaultError::Revoked | VaultError::MissingScopes(_) => {
-                EsiError::Token
-            }
+            // Registered before the app asked for this scope: `post`
+            // answers that as it always has.
+            VaultError::MissingScopes(_) => EsiError::NotRegistered,
+            VaultError::NoToken | VaultError::Revoked => EsiError::Token,
             other => {
                 tracing::warn!(plugin, error = %other, "plugin ESI token");
                 EsiError::Unavailable
@@ -935,7 +948,7 @@ impl Services for PluginServices {
         subject: Subject,
         params: Vec<(String, String)>,
         page: Option<u32>,
-    ) -> Fut<Result<EsiReply, EsiError>> {
+    ) -> Fut<Result<EsiReply, FetchError>> {
         let (deps, plugins, throttle) = (
             self.deps.clone(),
             self.plugins.clone(),
@@ -948,7 +961,7 @@ impl Services for PluginServices {
                 Subject::Character(id) | Subject::DataSource(id) => Some(id),
             };
             if throttle.blocked(&plugin) {
-                return Err(EsiError::Unavailable);
+                return Err(FetchError::Unavailable);
             }
             let result = esi_get(
                 &deps, &plugins, &throttle, &plugin, &endpoint, subject, &params, page,
@@ -961,7 +974,7 @@ impl Services for PluginServices {
                     serde_json::from_str::<serde_json::Value>(&r.response.body)
                         .is_ok_and(|v| v["in_fleet"] == serde_json::Value::Bool(false))
                 });
-            if matches!(result, Err(EsiError::Status(_))) || not_in_fleet {
+            if matches!(result, Err(FetchError::Status(_))) || not_in_fleet {
                 throttle.error(&plugin);
             }
             // Only the catalogue's own names: a plugin's text isn't logged.
@@ -1017,7 +1030,11 @@ impl Services for PluginServices {
                 &plugin,
                 Some(character),
                 &logged_endpoint,
-                &outcome(&result),
+                &outcome(
+                    &result
+                        .as_ref()
+                        .map_err(|e| tether_plugins::services::fetch_error(e.clone())),
+                ),
             )
             .await
             {
@@ -1043,9 +1060,7 @@ impl Services for PluginServices {
             // The bundled Member Audit keeps a character whose token stopped
             // working, as aa-memberaudit does: its reads answer `token`.
             let keep_broken = may_see_owners(&plugin, running.origin);
-            match tether_db::compliance::serving_characters(&db, &plugin, &scopes, keep_broken)
-                .await
-            {
+            match tether_db::compliance::serving_characters(&db, &plugin, keep_broken).await {
                 Ok(rows) => rows.into_iter().map(character).collect(),
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin characters");

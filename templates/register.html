@@ -76,6 +76,9 @@
             <span class="text-sm text-muted-foreground">Nothing needed</span>
             {% else %}
             {% call ui::status("ok", "Registered") %}{% endcall %}
+            {% if let Some(allows) = c.register_again %}
+            <p class="text-xs text-muted-foreground mt-1">Register again to allow: {{ allows }}</p>
+            {% endif %}
             {% endif %}
           </td>
           <td class="text-right">
@@ -83,6 +86,10 @@
             {% if c.problem.is_some() %}
             <form method="post" action="{{ start_action }}">
               <button type="submit" class="btn" data-variant="primary" data-size="sm">Register {{ c.name }}</button>
+            </form>
+            {% else if c.register_again.is_some() %}
+            <form method="post" action="{{ start_action }}">
+              <button type="submit" class="btn" data-variant="outline" data-size="sm">Register again</button>
             </form>
             {% endif %}
             {% if c.unregister %}{% if let Some(a) = app %}

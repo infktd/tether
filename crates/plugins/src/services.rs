@@ -16,8 +16,38 @@ pub use crate::host::tether::plugin::doctrines::{
 };
 pub use crate::host::tether::plugin::downloads::{Error as DownloadError, File as DownloadFile};
 pub use crate::host::tether::plugin::esi::{
-    Error as EsiError, Named, Response as EsiResponse, Subject,
+    Error as EsiError, FetchError, Named, Response as EsiResponse, Subject,
 };
+
+/// `esi.get`'s answer for what `esi.fetch` answers: a token short of the
+/// endpoint's scope is `not-registered`, as `get` has always said.
+pub fn get_error(err: FetchError) -> EsiError {
+    match err {
+        FetchError::NotAllowed(why) => EsiError::NotAllowed(why),
+        FetchError::NotRegistered | FetchError::MissingScope(_) => EsiError::NotRegistered,
+        FetchError::NotADataSource => EsiError::NotADataSource,
+        FetchError::Token => EsiError::Token,
+        FetchError::Status(status) => EsiError::Status(status),
+        FetchError::Invalid(why) => EsiError::Invalid(why),
+        FetchError::TooLarge => EsiError::TooLarge,
+        FetchError::Unavailable => EsiError::Unavailable,
+    }
+}
+
+/// [`EsiError`] as `esi.fetch` answers it (the host's own refusals, such
+/// as a call over the budget).
+pub fn fetch_error(err: EsiError) -> FetchError {
+    match err {
+        EsiError::NotAllowed(why) => FetchError::NotAllowed(why),
+        EsiError::NotRegistered => FetchError::NotRegistered,
+        EsiError::NotADataSource => FetchError::NotADataSource,
+        EsiError::Token => FetchError::Token,
+        EsiError::Status(status) => FetchError::Status(status),
+        EsiError::Invalid(why) => FetchError::Invalid(why),
+        EsiError::TooLarge => FetchError::TooLarge,
+        EsiError::Unavailable => FetchError::Unavailable,
+    }
+}
 pub use crate::host::tether::plugin::filters::{
     Error as FilterError, Setting as FilterWanted, Value as FilterValue,
 };
@@ -85,6 +115,8 @@ pub type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 /// Tether's side of the ESI and Discord interfaces. `plugin` is the
 /// calling plugin's id, always from the host, never from the plugin.
 pub trait Services: Send + Sync + std::fmt::Debug {
+    /// A read, for `esi.get` and `esi.fetch`: `get` answers
+    /// [`FetchError::MissingScope`] as `not-registered` ([`get_error`]).
     fn esi_get(
         &self,
         plugin: String,
@@ -92,7 +124,7 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         subject: Subject,
         params: Vec<(String, String)>,
         page: Option<u32>,
-    ) -> Fut<Result<EsiReply, EsiError>>;
+    ) -> Fut<Result<EsiReply, FetchError>>;
     /// A write ([`crate::host`] has checked it's the pilot's own form post
     /// and `character` one of `account`'s characters).
     fn esi_post(

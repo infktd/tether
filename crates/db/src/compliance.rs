@@ -181,13 +181,13 @@ pub async fn accounts_lacking(
 }
 
 /// Compliant accounts in `state` with a character not registered for the
-/// app, or whose token lacks one of its `scopes`: those requiring the app
-/// would flag.
+/// app: those requiring the app would flag. A registered character counts
+/// whatever scopes the app asked for since (aa-memberaudit's compliance is
+/// every character registered).
 pub async fn accounts_lacking_app(
     pool: &PgPool,
     state: StateId,
     plugin_id: &str,
-    scopes: &[String],
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar!(
         r#"
@@ -195,16 +195,13 @@ pub async fn accounts_lacking_app(
         WHERE a.state_id = $1 AND a.compliant
           AND EXISTS (
             SELECT 1 FROM core.characters c
-            LEFT JOIN core.character_tokens t ON t.character_id = c.id
             WHERE c.account_id = a.id
-              AND (t.character_id IS NULL OR NOT (t.scopes @> $3)
-                   OR NOT EXISTS (SELECT 1 FROM core.app_characters r
-                                  WHERE r.plugin_id = $2 AND r.character_id = c.id))
+              AND NOT EXISTS (SELECT 1 FROM core.app_characters r
+                              WHERE r.plugin_id = $2 AND r.character_id = c.id)
           )
         "#,
         state.0,
         plugin_id,
-        scopes,
     )
     .fetch_one(pool)
     .await
@@ -527,14 +524,18 @@ pub async fn set_group_member(
 /// Whether the character is one of the app's characters (N8, F16): it is
 /// registered for the app (`core.app_characters`, as aa-memberaudit's own
 /// character list), its account holds one of the app's permissions (as
-/// Alliance Auth gates apps, whatever the state), and its token is valid
-/// and carries every one of `scopes`, the app's user scopes. What an app's
-/// user-scope call needs.
+/// Alliance Auth gates apps, whatever the state), and its token is valid.
+/// Not that the token carries every one of the app's user scopes: one the
+/// app asked for after the character registered refuses only the calls
+/// that need it (the vault checks each call's scope), as aa-memberaudit's
+/// sections each fetch a token for their own scope. Writes rely on an app
+/// that gains a write scope losing its registrations (`plugins::
+/// apply_manifest`, on upgrade and rollback alike): a pilot consents to
+/// every write by registering again.
 pub async fn character_may_serve(
     pool: &PgPool,
     plugin_id: &str,
     character_id: i64,
-    scopes: &[String],
 ) -> Result<bool, sqlx::Error> {
     let found = sqlx::query_scalar!(
         r#"
@@ -543,27 +544,25 @@ pub async fn character_may_serve(
         JOIN core.character_tokens t ON t.character_id = c.id
         JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $2
         WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)
-          AND t.state = 'valid' AND t.scopes @> $3
+          AND t.state = 'valid'
         "#,
         character_id,
         plugin_id,
-        scopes,
     )
     .fetch_optional(pool)
     .await?;
     Ok(found.is_some())
 }
 
-/// The app's characters: registered for it, on accounts holding one of its
-/// permissions, with tokens carrying every one of `scopes` (its user
-/// scopes). With `keep_broken` (the bundled Member Audit, as
-/// aa-memberaudit keeps a character whose token stopped working and only
-/// pauses its updates), also those whose token is revoked, deleted or short
-/// of a scope, though not one sold (its owner hash changed).
+/// The app's characters ([`character_may_serve`]): registered for it, on
+/// accounts holding one of its permissions, with valid tokens. With
+/// `keep_broken` (the bundled Member Audit, as aa-memberaudit keeps a
+/// character whose token stopped working and only pauses its updates),
+/// also those whose token is revoked or deleted, though not one sold (its
+/// owner hash changed).
 pub async fn serving_characters(
     pool: &PgPool,
     plugin_id: &str,
-    scopes: &[String],
     keep_broken: bool,
 ) -> Result<Vec<crate::plugin_esi::CharacterRow>, sqlx::Error> {
     sqlx::query_as!(
@@ -574,13 +573,12 @@ pub async fn serving_characters(
         JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1
         LEFT JOIN core.character_tokens t ON t.character_id = c.id
         WHERE core.holds_app_permission(c.account_id, $1)
-          AND ((t.state = 'valid' AND t.scopes @> $2)
-               OR ($3 AND (t.state IS DISTINCT FROM 'revoked'
+          AND (t.state = 'valid'
+               OR ($2 AND (t.state IS DISTINCT FROM 'revoked'
                            OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')))
         ORDER BY c.name
         "#,
         plugin_id,
-        scopes,
         keep_broken,
     )
     .fetch_all(pool)
@@ -589,12 +587,11 @@ pub async fn serving_characters(
 
 /// Whether the character is one [`serving_characters`] lists only with
 /// `keep_broken`: registered for the app, on an account holding one of its
-/// permissions, not sold, and its token not usable for `scopes`.
+/// permissions, not sold, and without a valid token.
 pub async fn character_kept_broken(
     pool: &PgPool,
     plugin_id: &str,
     character_id: i64,
-    scopes: &[String],
 ) -> Result<bool, sqlx::Error> {
     let found = sqlx::query_scalar!(
         r#"
@@ -603,13 +600,12 @@ pub async fn character_kept_broken(
         JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $2
         LEFT JOIN core.character_tokens t ON t.character_id = c.id
         WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)
-          AND (t.state = 'valid' AND t.scopes @> $3) IS NOT TRUE
+          AND t.state IS DISTINCT FROM 'valid'
           AND (t.state IS DISTINCT FROM 'revoked'
                OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')
         "#,
         character_id,
         plugin_id,
-        scopes,
     )
     .fetch_optional(pool)
     .await?;
@@ -1067,14 +1063,15 @@ pub struct TokenError {
     pub account: AccountId,
     pub character_id: i64,
     pub name: String,
-    /// EVE refused its login (not deleted by its pilot, nor short of a
-    /// scope): logging in again keeps it on the account.
+    /// EVE refused its login (not deleted by its pilot):
+    /// logging in again keeps it on the account.
     pub refused: bool,
 }
 
 /// aa-memberaudit's token-error check (`Character.fetch_token`): marks
 /// and returns the characters registered with `plugin_id` that have no
-/// token it can use (revoked or deleted, or short of one of its scopes)
+/// working token (revoked or deleted; one short of a scope the app asked
+/// for since is asked to register again instead, `take_scope_prompts`)
 /// and whose pilot hasn't been told since it last worked. Only pilots
 /// who still hold one of the app's permissions; never a sold character
 /// (AA's orphans aren't told either: it leaves the account at once).
@@ -1086,15 +1083,13 @@ pub async fn take_token_errors(
         r#"
         UPDATE core.app_characters r SET token_error_notified_at = now()
         FROM core.characters c
-        JOIN core.plugins p ON p.id = $1
         LEFT JOIN core.character_tokens t ON t.character_id = c.id
         WHERE r.plugin_id = $1 AND r.character_id = c.id
           AND r.token_error_notified_at IS NULL
           AND c.account_id IS NOT NULL
           AND core.holds_app_permission(c.account_id, $1)
           AND (t.character_id IS NULL
-               OR (t.state = 'revoked' AND t.revoked_reason IS DISTINCT FROM 'owner hash changed')
-               OR (t.state = 'valid' AND NOT t.scopes @> p.user_scopes))
+               OR (t.state = 'revoked' AND t.revoked_reason IS DISTINCT FROM 'owner hash changed'))
         RETURNING c.account_id AS "account_id!", c.id AS "character_id!", c.name AS "name!",
                   COALESCE(t.state = 'revoked' AND t.revoked_reason IS DISTINCT FROM 'deleted',
                            false) AS "refused!"
@@ -1125,14 +1120,86 @@ pub async fn clear_token_errors(
     let done = sqlx::query!(
         r#"
         UPDATE core.app_characters r SET token_error_notified_at = NULL
-        FROM core.character_tokens t, core.plugins p
-        WHERE r.plugin_id = $1 AND p.id = $1 AND t.character_id = r.character_id
+        FROM core.character_tokens t
+        WHERE r.plugin_id = $1 AND t.character_id = r.character_id
           AND r.token_error_notified_at IS NOT NULL
-          AND t.state = 'valid' AND t.scopes @> p.user_scopes
+          AND t.state = 'valid'
         "#,
         plugin_id,
     )
     .execute(&mut *conn)
     .await?;
     Ok(done.rows_affected())
+}
+
+/// A character registered for an app whose token lacks scopes the app
+/// asked for since: its pilot is asked to register it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopePrompt {
+    pub account: AccountId,
+    pub character_id: i64,
+    pub name: String,
+    pub plugin_id: String,
+    pub plugin_name: String,
+    /// The app's user scopes its token lacks.
+    pub missing: Vec<String>,
+}
+
+/// Marks and returns the characters registered for an enabled app whose
+/// valid token lacks some of the app's user scopes their pilot hasn't been
+/// asked for yet: the app reads them with the scopes they have, and the
+/// pilot is asked once to register again (a scope added later asks
+/// again). Only pilots who still hold one of the app's permissions. A
+/// character whose token carries every scope again is unmarked first.
+pub async fn take_scope_prompts(
+    conn: &mut sqlx::PgConnection,
+) -> Result<Vec<ScopePrompt>, sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE core.app_characters r SET scopes_prompted = NULL
+        FROM core.character_tokens t, core.plugins p
+        WHERE t.character_id = r.character_id AND p.id = r.plugin_id
+          AND r.scopes_prompted IS NOT NULL
+          AND t.state = 'valid' AND t.scopes @> p.user_scopes
+        "#
+    )
+    .execute(&mut *conn)
+    .await?;
+    let rows = sqlx::query!(
+        r#"
+        WITH short AS (
+            SELECT r.plugin_id, r.character_id, c.account_id, c.name,
+                   p.name AS plugin_name,
+                   ARRAY(SELECT s FROM unnest(p.user_scopes) AS s
+                         WHERE NOT s = ANY(t.scopes) ORDER BY s) AS missing
+            FROM core.app_characters r
+            JOIN core.characters c ON c.id = r.character_id
+            JOIN core.plugins p ON p.id = r.plugin_id
+            JOIN core.character_tokens t ON t.character_id = c.id
+            WHERE p.enabled AND t.state = 'valid' AND c.account_id IS NOT NULL
+              AND NOT t.scopes @> p.user_scopes
+              AND core.holds_app_permission(c.account_id, r.plugin_id)
+        )
+        UPDATE core.app_characters r SET scopes_prompted = short.missing
+        FROM short
+        WHERE r.plugin_id = short.plugin_id AND r.character_id = short.character_id
+          AND NOT COALESCE(r.scopes_prompted, '{}') @> short.missing
+        RETURNING short.account_id AS "account_id!", short.character_id AS "character_id!",
+                  short.name AS "name!", short.plugin_id AS "plugin_id!",
+                  short.plugin_name AS "plugin_name!", short.missing AS "missing!"
+        "#
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ScopePrompt {
+            account: AccountId(r.account_id),
+            character_id: r.character_id,
+            name: r.name,
+            plugin_id: r.plugin_id,
+            plugin_name: r.plugin_name,
+            missing: r.missing,
+        })
+        .collect())
 }

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.app_characters r SET token_error_notified_at = NULL\n        FROM core.character_tokens t\n        WHERE r.plugin_id = $1 AND t.character_id = r.character_id\n          AND r.token_error_notified_at IS NOT NULL\n          AND t.state = 'valid'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "926a709148847b1e8652af67cd3d5990bdccf0d031d1dedcb0f9a7e06a74502e"
+}

@@ -126,9 +126,27 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 .cloned()
                 .collect();
             let page = arg("page").and_then(|p| p.parse().ok());
-            match esi::get(&arg("endpoint").unwrap_or_default(), subject, &params, page) {
-                Ok(r) => format!("ok pages={} {}", r.pages, r.body),
-                Err(e) => format!("err {e:?}"),
+            let endpoint = arg("endpoint").unwrap_or_default();
+            // `raw=1`: the interface's older `get`, as packages built
+            // before `fetch` call it.
+            if arg("raw").is_some() {
+                let params: Vec<(String, String)> =
+                    params.into_iter().filter(|(k, _)| k != "raw").collect();
+                match tether_plugin_sdk::bindings::tether::plugin::esi::get(
+                    &endpoint, subject, &params, page,
+                ) {
+                    Ok(r) => format!("ok pages={} {}", r.pages, r.body),
+                    Err(e) => format!("err {e:?}"),
+                }
+            } else {
+                match esi::get(&endpoint, subject, &params, page) {
+                    Ok(r) => format!("ok pages={} {}", r.pages, r.body),
+                    // Named as the older error's cases are (`Error::Token`).
+                    Err(e) => format!(
+                        "err {}",
+                        format!("{e:?}").replacen("FetchError::", "Error::", 1)
+                    ),
+                }
             }
         }
         // esi-post?endpoint=&character=<id>&body=&times=<n, 1 if absent>
@@ -145,7 +163,10 @@ fn probe(request: Request) -> Result<Page, PageError> {
                         &arg("body").unwrap_or_default(),
                     ) {
                         Ok(r) => format!("ok {}", r.body),
-                        Err(e) => format!("err {e:?}"),
+                        Err(e) => format!(
+                            "err {}",
+                            format!("{e:?}").replacen("FetchError::", "Error::", 1)
+                        ),
                     }
                 })
                 .collect::<Vec<_>>()

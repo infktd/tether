@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH short AS (\n            SELECT r.plugin_id, r.character_id, c.account_id, c.name,\n                   p.name AS plugin_name,\n                   ARRAY(SELECT s FROM unnest(p.user_scopes) AS s\n                         WHERE NOT s = ANY(t.scopes) ORDER BY s) AS missing\n            FROM core.app_characters r\n            JOIN core.characters c ON c.id = r.character_id\n            JOIN core.plugins p ON p.id = r.plugin_id\n            JOIN core.character_tokens t ON t.character_id = c.id\n            WHERE p.enabled AND t.state = 'valid' AND c.account_id IS NOT NULL\n              AND NOT t.scopes @> p.user_scopes\n              AND core.holds_app_permission(c.account_id, r.plugin_id)\n        )\n        UPDATE core.app_characters r SET scopes_prompted = short.missing\n        FROM short\n        WHERE r.plugin_id = short.plugin_id AND r.character_id = short.character_id\n          AND NOT COALESCE(r.scopes_prompted, '{}') @> short.missing\n        RETURNING short.account_id AS \"account_id!\", short.character_id AS \"character_id!\",\n                  short.name AS \"name!\", short.plugin_id AS \"plugin_id!\",\n                  short.plugin_name AS \"plugin_name!\", short.missing AS \"missing!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "character_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.app_characters",
+            "name": "character_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "plugin_id!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.app_characters",
+            "name": "plugin_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "plugin_name!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "missing!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "9de39c7037249c21a0ade9199c4af1692cab3bb71b22a17081db3fbace3d438a"
+}

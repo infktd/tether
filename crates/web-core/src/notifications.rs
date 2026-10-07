@@ -100,6 +100,47 @@ pub async fn member_audit_token_error(
     .await
 }
 
+/// An app asked for more since `characters` registered for it: nothing is
+/// wrong, they're still read and still count, but registering again
+/// allows what the new scopes do.
+pub async fn register_again(
+    conn: &mut sqlx::PgConnection,
+    account: AccountId,
+    app: &str,
+    characters: &[&str],
+    scopes: &BTreeSet<&str>,
+) -> Result<(), sqlx::Error> {
+    let allows = scopes
+        .iter()
+        .map(|s| lowercase_first(tether_core::scopes::describe(s)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let names = match characters {
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => "your characters".to_owned(),
+    };
+    notify(
+        conn,
+        account,
+        Level::Info,
+        &format!("{app}: register again to allow more"),
+        Some(&format!(
+            "{app} now also asks to {allows}. Register {names} for {app} again (Register \
+             Character) to allow it. Until then {app} keeps reading everything else."
+        )),
+    )
+    .await
+}
+
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// "State changed to: {state}" (AA's).
 pub async fn state_changed(
     tx: &mut sqlx::PgConnection,

@@ -526,7 +526,7 @@ pub async fn preview(db: &PgPool, esi: &Esi, change: &Change) -> Result<Preview,
     if let Change::AddScope { state: id, .. } | Change::RequireApp { state: id, .. } = change {
         let short = match change {
             Change::RequireApp { plugin, .. } => {
-                tether_db::compliance::accounts_lacking_app(db, *id, plugin, &new_scopes).await?
+                tether_db::compliance::accounts_lacking_app(db, *id, plugin).await?
             }
             _ => tether_db::compliance::accounts_lacking(db, *id, &new_scopes).await?,
         };

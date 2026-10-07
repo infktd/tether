@@ -43,7 +43,10 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
                 "{}. Whoever holds one of its permissions (below), whatever their state, may \
                  register characters for it: one EVE login from the app grants these. It reads \
                  only the characters registered for it, while their pilots hold one of its \
-                 permissions. {}{}",
+                 permissions. A scope added in a later version is read for characters \
+                 registered before only where their login already carries it (granted for \
+                 your states or another app, as in Alliance Auth), and their pilots are asked \
+                 to register again. {}{}",
                 c.esi.user.join(", "),
                 if manifest.permissions.is_empty() {
                     "It adds no permissions, so only superusers can. "
