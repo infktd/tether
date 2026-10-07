@@ -1189,6 +1189,46 @@ async fn skill_sets_are_for_view_skill_sets(db: PgPool) {
     assert_eq!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
 }
 
+/// As aa-memberaudit keeps them: contracts go by when they expired, not
+/// when they were issued, so an old open one stays; and the mining ledger
+/// is kept whole.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn contracts_are_kept_by_expiry_and_mining_kept(db: PgPool) {
+    let (h, _owner) = synced(db).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"INSERT INTO "plugin_tether.member-audit".contracts
+             (character_id, contract_id, kind, status, availability, issuer_id, assignee_id,
+              acceptor_id, issued, expires)
+           VALUES ({CHRIBBA}, 9001, 'courier', 'outstanding', 'personal', {CHRIBBA}, 0, 0,
+                   now() - interval '400 days', now() + interval '10 days'),
+                  ({CHRIBBA}, 9002, 'courier', 'expired', 'personal', {CHRIBBA}, 0, 0,
+                   now() - interval '420 days', now() - interval '400 days');
+           INSERT INTO "plugin_tether.member-audit".mining
+             (character_id, day, type_id, solar_system_id, quantity)
+           VALUES ({CHRIBBA}, current_date - 200, 1230, {JITA}, 1000);"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let contracts: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT contract_id FROM "plugin_tether.member-audit".contracts
+           WHERE contract_id > 9000 ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    // The default keep is 360 days.
+    assert_eq!(contracts, vec![9001]);
+    let mined: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".mining WHERE day < current_date - 90"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(mined, 1);
+}
+
 /// aa-memberaudit's Character Finder lists every character of the pilots
 /// in scope, those not registered flagged (no sheet to open), the main
 /// marked, with its filters; and only the bundled Member Audit learns of

@@ -394,8 +394,10 @@ fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobErr
             "DELETE FROM mails WHERE at < now() - make_interval(days => $1::int)",
             vec![settings.retention_days.into()],
         ),
+        // Contracts by when they expire, as aa-memberaudit: an open one
+        // issued long ago stays while it can still be accepted.
         stmt(
-            "DELETE FROM contracts WHERE issued < now() - make_interval(days => $1::int)",
+            "DELETE FROM contracts WHERE expires < now() - make_interval(days => $1::int)",
             vec![settings.retention_days.into()],
         ),
         // MEMBERAUDIT_SHARING_TIMEOUT (0: until unshared).
@@ -410,10 +412,7 @@ fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobErr
             "DELETE FROM roles WHERE NOT (SELECT roles_enabled FROM settings WHERE id = 1)",
             vec![],
         ),
-        stmt(
-            "DELETE FROM mining WHERE day < current_date - 90",
-            vec![],
-        ),
+        // The mining ledger is kept, as aa-memberaudit keeps it.
     ]);
     storage::transaction(&first).map_err(|e| retry("storing characters", e))?;
     for chunk in chunks {
@@ -1045,10 +1044,23 @@ fn transactions(run: &mut Run, id: i64) -> Result<(), Stop> {
     )
 }
 
+/// Whether a contract expires after `cutoff` (one without a readable
+/// expiry is kept: the next clean-up settles it).
+fn kept_by_expiry(contract: &Json, cutoff: chrono::DateTime<Utc>) -> bool {
+    contract["date_expired"]
+        .as_str()
+        .and_then(crate::parse_time)
+        .is_none_or(|expires| expires > cutoff)
+}
+
 fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
     let (items, _) = run.pages("character-contracts", id)?;
+    // Those expired before the Settings keep aren't kept, as
+    // aa-memberaudit's (by expiry, not by issue).
+    let cutoff = Utc::now() - chrono::Duration::days(run.settings.retention_days);
     let items: Vec<Json> = items
         .into_iter()
+        .filter(|c| kept_by_expiry(c, cutoff))
         .map(|c| {
             for key in [
                 "issuer_id",
@@ -2119,6 +2131,16 @@ mod tests {
             assert!(!esi(code).refused(), "{code}");
         }
         assert!(!Stop::Section("unreadable".to_owned()).gone());
+    }
+
+    #[test]
+    fn contracts_are_kept_by_expiry() {
+        let cutoff = crate::parse_time("2026-07-01T00:00:00Z").unwrap();
+        let contract = |expired: &str| json!({ "date_issued": "2026-01-01T00:00:00Z", "date_expired": expired });
+        // Issued long before the keep, still open: kept.
+        assert!(kept_by_expiry(&contract("2026-12-01T00:00:00Z"), cutoff));
+        assert!(!kept_by_expiry(&contract("2026-06-30T00:00:00Z"), cutoff));
+        assert!(kept_by_expiry(&json!({}), cutoff));
     }
 
     #[test]
