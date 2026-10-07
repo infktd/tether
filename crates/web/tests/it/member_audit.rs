@@ -45,12 +45,13 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 5] = [
+const MIGRATIONS: [&str; 6] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
     "migrations/0004_aa_settings.sql",
     "migrations/0005_data_exports.sql",
+    "migrations/0006_passing_failures.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -1798,6 +1799,67 @@ async fn a_planet_two_characters_colonise_is_named(db: PgPool) {
         Some("Jita IV"),
         "{:?}",
         plugin_warnings(&h).await
+    );
+}
+
+/// ESI having trouble (a 503, as around downtime) while a mail's body, a
+/// contract's items and a planet's name are read: none is settled empty
+/// or put off for a week, and each is read once ESI answers again.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_passing_esi_failure_loses_nothing(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = bundling(db).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    // Each asked once, while ESI has trouble.
+    for route in [
+        format!("/characters/{CHRIBBA}/mail/{MAIL}"),
+        format!("/characters/{CHRIBBA}/contracts/{CONTRACT}/items"),
+        format!("/universe/planets/{PLANET}"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .set_body_json(serde_json::json!({ "error": "temporarily unavailable" })),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    work(&h).await;
+    register(&h, &owner).await;
+    sync(&h).await;
+    async fn read(h: &Harness) -> (Option<String>, bool, Option<String>, bool) {
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            r#"SELECT (SELECT body FROM "plugin_tether.member-audit".mails WHERE mail_id = {MAIL}),
+                      (SELECT items_read FROM "plugin_tether.member-audit".contracts WHERE contract_id = {CONTRACT}),
+                      (SELECT name FROM "plugin_tether.member-audit".names WHERE id = {PLANET}),
+                      EXISTS (SELECT 1 FROM "plugin_tether.member-audit".unnamed WHERE id = {PLANET})"#
+        )))
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    }
+    assert_eq!(read(&h).await, (None, false, None, false));
+    // ESI is back; the mail and contracts come round again.
+    sqlx::query(
+        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section IN ('mail', 'contracts')"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    assert_eq!(
+        read(&h).await,
+        (
+            Some("Fleet at 19:00\nBring logi".to_owned()),
+            true,
+            Some("Jita IV".to_owned()),
+            false
+        )
     );
 }
 

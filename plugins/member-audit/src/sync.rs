@@ -93,9 +93,13 @@ fn section_named(name: &str) -> Option<&'static Section> {
 
 /// Why a read stopped.
 enum Stop {
-    /// This section failed (an ESI error for it alone): recorded, and the
-    /// run goes on.
+    /// This section failed (its answer unreadable, or storing it): recorded,
+    /// and the run goes on.
     Section(String),
+    /// ESI answered this status for this section: as `Section`, except
+    /// that readers keeping a thing's answer for good (a mail's body, a
+    /// contract's items, a place's name) take only a final one as such.
+    Esi(u16, String),
     /// The character's token or registration: its other sections wait.
     Character(String),
     /// Out of calls: the run ends.
@@ -113,8 +117,25 @@ impl From<EsiError> for Stop {
             EsiError::Unavailable => Stop::Unavailable,
             // Over the host's limit after all (an endpoint that cost two).
             EsiError::Invalid(why) if why.contains("ESI calls") => Stop::Run,
+            EsiError::Status(code) => Stop::Esi(code, esi::describe(&err)),
             other => Stop::Section(esi::describe(&other)),
         }
+    }
+}
+
+impl Stop {
+    /// ESI says it's gone for good (404, 410: deleted, or kept no longer).
+    /// Anything else, a server error or a refusal to slow down included,
+    /// may pass.
+    fn gone(&self) -> bool {
+        matches!(self, Stop::Esi(404 | 410, _))
+    }
+
+    /// ESI's answer is final for what was asked: a client error (403: not
+    /// this character's to see; 404: gone), not one that passes (420 or
+    /// 429: slow down; 5xx: ESI's trouble).
+    fn refused(&self) -> bool {
+        matches!(self, Stop::Esi(code, _) if (400..500).contains(code) && !matches!(code, 420 | 429))
     }
 }
 
@@ -263,7 +284,7 @@ pub(crate) fn run(only: Option<i64>) -> Result<(), JobError> {
         }
         match read(&mut run, *character, section.name) {
             Ok(()) => record(*character, section.name, None),
-            Err(Stop::Section(why)) => {
+            Err(Stop::Section(why) | Stop::Esi(_, why)) => {
                 log::warn(format!("character {character}, {}: {why}", section.name));
                 record(*character, section.name, Some(&why));
             }
@@ -857,10 +878,11 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
         &items,
         id,
     )?;
-    // Items of item exchanges and auctions, a few new ones a run.
+    // Items of item exchanges and auctions, a few new ones a run (those
+    // ESI failed to give last time after the others).
     let pending = storage::query(
         "SELECT contract_id FROM contracts WHERE character_id = $1 AND NOT items_read \
-         AND kind IN ('item_exchange', 'auction') ORDER BY issued DESC LIMIT $2",
+         AND kind IN ('item_exchange', 'auction') ORDER BY items_tried_at NULLS FIRST, issued DESC LIMIT $2",
         &[id.into(), (DETAILS_PER_RUN as i64).into()],
     )
     .map_err(|e| Stop::Section(format!("reading contracts: {e:?}")))?;
@@ -873,7 +895,19 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
         ) {
             Ok(items) => items,
             // ESI keeps items only a while: gone is gone.
-            Err(Stop::Section(_)) => Vec::new(),
+            Err(stop) if stop.gone() => Vec::new(),
+            // A passing failure: asked again on a later read.
+            Err(Stop::Section(why) | Stop::Esi(_, why)) => {
+                log::warn(format!(
+                    "character {id}, contract {contract}'s items: {why}"
+                ));
+                store(&[stmt(
+                    "UPDATE contracts SET items_tried_at = now() \
+                     WHERE character_id = $1 AND contract_id = $2",
+                    vec![id.into(), contract.into()],
+                )])?;
+                continue;
+            }
             Err(other) => return Err(other),
         };
         run.ids
@@ -1179,7 +1213,7 @@ fn killmails(run: &mut Run, id: i64) -> Result<(), Stop> {
             ],
         ) {
             Ok(detail) => detail,
-            Err(Stop::Section(why)) => {
+            Err(Stop::Section(why) | Stop::Esi(_, why)) => {
                 log::warn(format!("killmail {killmail}: {why}"));
                 continue;
             }
@@ -1289,9 +1323,11 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
             vec![id.into(), run.settings.max_mails.into()],
         ),
     ])?;
-    // Bodies: each read once, newest first, a few a run.
+    // Bodies: each read once, newest first, a few a run (those ESI failed
+    // to give last time after the others).
     let pending = storage::query(
-        "SELECT mail_id FROM mails WHERE character_id = $1 AND body IS NULL ORDER BY at DESC LIMIT $2",
+        "SELECT mail_id FROM mails WHERE character_id = $1 AND body IS NULL \
+         ORDER BY body_tried_at NULLS FIRST, at DESC LIMIT $2",
         &[id.into(), (BODIES_PER_RUN as i64).into()],
     )
     .map_err(|e| Stop::Section(format!("reading mail: {e:?}")))?;
@@ -1310,7 +1346,16 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
                 MAX_BODY,
             ),
             // Deleted since: kept as a header without a body.
-            Err(Stop::Section(_)) => String::new(),
+            Err(stop) if stop.gone() => String::new(),
+            // A passing failure: asked again on a later read.
+            Err(Stop::Section(why) | Stop::Esi(_, why)) => {
+                log::warn(format!("character {id}, mail {mail_id}'s body: {why}"));
+                store(&[stmt(
+                    "UPDATE mails SET body_tried_at = now() WHERE character_id = $1 AND mail_id = $2",
+                    vec![id.into(), mail_id.into()],
+                )])?;
+                continue;
+            }
             Err(other) => return Err(other),
         };
         store(&[stmt(
@@ -1367,7 +1412,9 @@ fn mail_meta(run: &mut Run, id: i64) -> Result<(), Stop> {
 // ---- names -----------------------------------------------------------------
 
 /// Structures (by a character who may dock there) and planets: `names`
-/// can't name them. A few a run; a failure isn't asked again for a week.
+/// can't name them. A few a run; one that can't be named (ESI refused it,
+/// or the character can't ask) isn't asked again for a week, while ESI's
+/// passing trouble (5xx, 420) is asked again next run.
 fn name_places(run: &mut Run) -> Result<(), JobError> {
     let mut structures = std::mem::take(&mut run.structures);
     structures.sort_unstable();
@@ -1397,6 +1444,7 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         &[],
     )
     .map_err(|e| retry("finding unnamed planets", e))?;
+    // Asked, and named or not to be asked again for a week.
     let mut tried = Vec::new();
     let mut named = Vec::new();
     for (structure, character) in structures.into_iter().take(10) {
@@ -1406,7 +1454,6 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         if tried.contains(&structure) {
             continue;
         }
-        tried.push(structure);
         match run.json::<Json>(
             "universe-structure",
             character,
@@ -1417,8 +1464,10 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
                 named.push(json!({ "id": structure, "name": s["name"], "category": "structure" }));
             }
             Err(Stop::Run | Stop::Unavailable) => break,
+            Err(stop @ Stop::Esi(..)) if !stop.refused() => continue,
             Err(_) => {}
         }
+        tried.push(structure);
     }
     for row in &planets.rows {
         if run.calls <= NAME_RESERVE / 2 {
@@ -1428,7 +1477,6 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         if tried.contains(&planet) {
             continue;
         }
-        tried.push(planet);
         match run.json::<Json>(
             "universe-planet",
             character,
@@ -1436,8 +1484,10 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         ) {
             Ok(p) => named.push(json!({ "id": planet, "name": p["name"], "category": "planet" })),
             Err(Stop::Run | Stop::Unavailable) => break,
+            Err(stop @ Stop::Esi(..)) if !stop.refused() => continue,
             Err(_) => {}
         }
+        tried.push(planet);
     }
     let tried: Vec<Json> = tried.iter().map(|id| json!({ "id": id })).collect();
     // Each id once: an upsert can't touch a row twice.
@@ -1630,6 +1680,20 @@ mod tests {
             .map(|s| s.calls as f64 * 60.0 / s.every as f64)
             .sum();
         assert!(per_hour < 25.0, "{per_hour}");
+    }
+
+    #[test]
+    fn only_a_final_answer_settles_a_thing() {
+        let esi = |code| Stop::from(EsiError::Status(code));
+        assert!(esi(404).gone() && esi(410).gone());
+        for code in [403, 420, 429, 500, 502, 503, 504] {
+            assert!(!esi(code).gone(), "{code}");
+        }
+        assert!(esi(403).refused() && esi(404).refused());
+        for code in [420, 429, 500, 503, 504] {
+            assert!(!esi(code).refused(), "{code}");
+        }
+        assert!(!Stop::Section("unreadable".to_owned()).gone());
     }
 
     #[test]
