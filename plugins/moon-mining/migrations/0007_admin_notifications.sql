@@ -8,10 +8,15 @@ ALTER TABLE settings
     -- already), so turning the notices on announces only owners added
     -- after.
     ADD COLUMN sources_known boolean NOT NULL DEFAULT false;
+-- In use: anything only an owner brings in. Station Managers come from
+-- every owner's corporation roles, refineries or not, and the ledger
+-- keeps what observers ESI no longer lists held.
 UPDATE settings SET admin_notifications = true, sources_known = true
 WHERE NOT EXISTS (SELECT 1 FROM structures)
   AND NOT EXISTS (SELECT 1 FROM extractions)
   AND NOT EXISTS (SELECT 1 FROM observers)
+  AND NOT EXISTS (SELECT 1 FROM ledger)
+  AND NOT EXISTS (SELECT 1 FROM station_managers)
   AND NOT EXISTS (SELECT 1 FROM surveys)
   AND NOT EXISTS (SELECT 1 FROM cadences)
   AND NOT EXISTS (SELECT 1 FROM corporations);

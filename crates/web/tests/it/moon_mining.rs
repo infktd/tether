@@ -1631,13 +1631,13 @@ async fn admin_notices_follow_aa_moonmining(db: PgPool) {
     );
 }
 
-/// The app's migrations run into an empty schema, with structures stored
-/// before the last if `in_use`: the admin notices and whether the owners
-/// were recorded.
-async fn migrated(db: &PgPool, schema: &str, in_use: bool) -> (bool, bool) {
+/// The app's migrations run into an empty schema, with `seed` run before
+/// the last (data only an owner brings in): the admin notices and whether
+/// the owners were recorded.
+async fn migrated(db: &PgPool, schema: &str, seed: Option<&str>) -> (bool, bool) {
     // Its own connection, closed after: the search path is changed.
     let mut conn = db.acquire().await.unwrap().detach();
-    // `schema` is one of this file's literals.
+    // `schema` comes from this file.
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         r#"CREATE SCHEMA "{schema}"; SET search_path = "{schema}""#
     )))
@@ -1660,13 +1660,12 @@ async fn migrated(db: &PgPool, schema: &str, in_use: bool) -> (bool, bool) {
         .await
         .unwrap();
     }
-    if in_use {
-        sqlx::query(
-            "INSERT INTO structures (structure_id, corporation_id, name) VALUES (1, 2, 'Drill')",
-        )
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    if let Some(seed) = seed {
+        // `seed` comes from this file.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(seed))
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(plugin_file(
         "migrations/0007_admin_notifications.sql",
@@ -1684,8 +1683,23 @@ async fn migrated(db: &PgPool, schema: &str, in_use: bool) -> (bool, bool) {
 async fn existing_installs_keep_no_admin_notices(db: PgPool) {
     // An install already in use keeps none until a manager turns them on;
     // a new one has them, as aa-moonmining.
-    assert_eq!(migrated(&db, "in_use", true).await, (false, false));
-    assert_eq!(migrated(&db, "fresh", false).await, (true, true));
+    let in_use = [
+        "INSERT INTO structures (structure_id, corporation_id, name) VALUES (1, 2, 'Drill')",
+        // Owners whose corporations have no refineries: only the daily
+        // roles read shows them.
+        "INSERT INTO station_managers (character_id, corporation_id) VALUES (3, 2)",
+        // Mining kept from observers ESI no longer lists.
+        "INSERT INTO ledger (observer_id, character_id, type_id, day, corporation_id, quantity) \
+         VALUES (1, 3, 45491, '2026-10-01', 2, 100)",
+    ];
+    for (n, seed) in in_use.into_iter().enumerate() {
+        assert_eq!(
+            migrated(&db, &format!("in_use_{n}"), Some(seed)).await,
+            (false, false),
+            "{seed}"
+        );
+    }
+    assert_eq!(migrated(&db, "fresh", None).await, (true, true));
 
     // An upgraded install whose manager turned them on before its first
     // sync: the owners in use then aren't news.
