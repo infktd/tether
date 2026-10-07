@@ -4,7 +4,7 @@
 id = "tether.fleet-activity-tracking"
 name = "Fleet Activity Tracking"
 icon = "activity"
-version = "0.3.10"
+version = "0.3.11"
 host_api = "1"
 description = "FAT links for fleets, with fleet types and expiry, registered by pilots online in EVE (their system and ship recorded), or an FC's ESI fleet tracked while it runs; stats per alliance, corporation, pilot and month."
 
@@ -57,7 +57,7 @@ log_view = "Can view the modules log"
 [permission_notes]
 basic_access = "Usually Member. Holders register their characters on open FAT links and see their own FATs and statistics."
 add_fatlink = "For FCs. Holders create FAT links, track a fleet through its boss, and change any link, as in aa-afat."
-manage_afat = "For fleet officers. Holders change and delete any link, add and remove FATs, set the fleet types and settings, and see every corporation's and alliance's statistics, as in aa-afat."
+manage_afat = "For fleet officers. Holders change and delete any link, add and remove FATs, set the fleet types and settings, and see every corporation's and alliance's statistics and the Logs, as in aa-afat."
 stats_corporation_own = "For a corporation's leaders: their main's corporation's statistics, by pilot and month."
 stats_corporation_other = "For alliance leadership: every corporation's and alliance's statistics, allies included, and any pilot's."
 log_view = "For officers who keep an eye on FCs: the log of links made, changed and deleted, and FATs added and removed."
@@ -78,9 +78,10 @@ permission = "manage_afat"
 path = "settings"
 permission = "manage_afat"
 
+# aa-afat's Logs open for log_view or manage_afat (afat/views/logs.py:23).
 [[pages]]
 path = "logs"
-permission = "log_view"
+permission = ["log_view", "manage_afat"]
 
 [[navigation]]
 label = "Fleet Activity Tracking"

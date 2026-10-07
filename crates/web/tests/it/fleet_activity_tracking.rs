@@ -695,10 +695,12 @@ async fn permissions_follow_aa_afat(db: PgPool) {
 }
 
 /// As aa-afat, manage_afat opens every corporation's, alliance's and
-/// pilot's statistics, as stats_corporation_other does.
+/// pilot's statistics, as stats_corporation_other does, and the Logs, as
+/// log_view does (`afat/views/logs.py:23`).
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn managers_see_every_corporations_statistics(db: PgPool) {
     let (h, owner, line) = setup(db).await;
+    assert_eq!(open(&h, "logs", &line).await.status, StatusCode::NOT_FOUND);
     let alliance = format!("stats/alliance/{CHRIBBA_ALLIANCE}");
     let corporation = format!("stats/corporation/{CHRIBBA_CORP}");
     let pilot = format!("stats/character/{CHRIBBA}");
@@ -720,6 +722,8 @@ async fn managers_see_every_corporations_statistics(db: PgPool) {
     let stats = open(&h, "stats", &line).await;
     assert!(stats.body.contains("Alliances"), "{}", stats.body);
     assert!(stats.body.contains("Corporations"), "{}", stats.body);
+    let logs = open(&h, "logs", &line).await;
+    assert_eq!(logs.status, StatusCode::OK, "{}", logs.body);
     no_problems(&plugin_problems(&h).await);
 }
 
