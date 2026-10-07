@@ -5,7 +5,7 @@
 id = "tether.structure-timers"
 name = "Structure Timers"
 icon = "clock"
-version = "0.2.4"
+version = "0.2.5"
 host_api = "1"
 description = "Structure timers in EVE time: upcoming and past, important ones marked, and corporation-only timers seen by the creator's corporation alone."
 
@@ -23,6 +23,12 @@ timers = "read"
 [permissions]
 timer_view = "See structure timers"
 timer_management = "Create, edit and delete structure timers"
+
+# Who each is usually for, and what holding it means (Permissions shows
+# these under the descriptions).
+[permission_notes]
+timer_view = "Usually Member, and Blue if allies join your fights: everyone who should see upcoming timers. A corporation-only timer still shows only to its corporation."
+timer_management = "For FCs and directors who keep the board: holders add timers, and edit or delete anyone's (a corporation-only one only from its corporation; those from Structures change only there)."
 
 [[pages]]
 path = ""

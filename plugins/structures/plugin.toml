@@ -57,6 +57,18 @@ view_all_unanchoring_status = "Can view unanchoring timers for all structures th
 add_structure_owner = "Can add structure owner: one of your Station Managers, whose corporation's structures are read at once"
 manage = "Manage Structures: Discord channels, notification types and pings, fuel alerts, tags and owners' syncing"
 
+# Who each is usually for, and what holding it means (Permissions shows
+# these under the descriptions).
+[permission_notes]
+basic_access = "Usually Member. It opens Structures and its public customs office list; which structures it shows depends on the view permissions, so on its own it shows none."
+view_corporation_structures = "Usually Member: each pilot sees the structures, fuel and timers of their main's own corporation."
+view_alliance_structures = "For alliance officers, or Member in a close alliance: every member corporation's structures, fuel and timers."
+view_all_structures = "For leadership and logistics: every owner's structures, whichever corporation or alliance the pilot is in."
+view_structure_fit = "For leadership: fittings, quantum cores and what's in fuel bays show how a structure would hold up, so keep it to those who need it."
+view_all_unanchoring_status = "For leadership. Holders see which structures are unanchoring and when; everyone else sees their usual state with no unanchoring time, so a move or a sale stays quiet."
+add_structure_owner = "For Station Managers and directors who add their corporation: holders add a data source, a character with the in-game Station Manager role (Director for starbases, customs offices and fittings)."
+manage = "For the officers who run Structures: the Discord channels, pings, notification types, fuel alerts, tags and owners' syncing. Holders also get its admin notices (owners added, an owner's reads down or back), with superusers."
+
 [[pages]]
 path = ""
 permission = "basic_access"
