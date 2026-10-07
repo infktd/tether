@@ -358,7 +358,7 @@ Phase 5, release 1.0:
 - [ ] ESI Status: the count and share of routes per status (aa-esi-status `esistatus/tasks.py:356-396`)
 - [ ] Time Zones: the adjusted time's countdown and "Already over" (aa-timezones `templates/timezones/partials/timezones/time-until.html:4-7`)
 - [ ] Bulletin Board: groups picked when a bulletin is made (aa-bulletin-board `aa_bulletin_board/forms.py:61-69`, `views.py:92-94`)
-- [ ] Contracts: Discord cards linking to the app's page, as aa-freight's (`freight/models/contracts.py:337-347`); and before Buyback, decide how the two apps share buyback contracts (AA_PARITY.md, Contracts)
+- [x] Contracts: Discord cards linking to the app's page, as aa-freight's (`freight/models/contracts.py:337-347`); and before Buyback, decide how the two apps share buyback contracts (AA_PARITY.md, Contracts). Done 2026-10-07 for the cards: each card's title opens the app's page. How the two apps share buyback contracts is still Jay's to decide (AA_PARITY.md, Contracts, To decide)
 
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
 
