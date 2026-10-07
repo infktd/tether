@@ -219,12 +219,17 @@ struct Settings {
     /// Whether the owners in use when admin notices arrived are recorded
     /// (as told already).
     sources_known: bool,
+    /// aa-moonmining's MOONMINING_USE_REPROCESS_PRICING and
+    /// MOONMINING_REPROCESSING_YIELD (0 to 1).
+    reprocess: bool,
+    reprocessing_yield: f64,
 }
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
         "SELECT fresh_hours, ping_channel, pings, volume_per_day, days_per_month, stale_hours, \
-                old_moons_shown, admin_notifications, sources_known \
+                old_moons_shown, admin_notifications, sources_known, reprocess_pricing, \
+                reprocessing_yield \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -256,6 +261,13 @@ fn settings() -> Result<Settings, storage::Error> {
             .and_then(|r| r.get(8))
             .and_then(Db::as_bool)
             .unwrap_or(false),
+        reprocess: row
+            .and_then(|r| r.get(9))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
+        reprocessing_yield: row
+            .and_then(|r| float(r, 10))
+            .unwrap_or(value::REPROCESSING_YIELD),
     })
 }
 
@@ -264,12 +276,45 @@ impl Settings {
     fn window(&self) -> bool {
         self.fresh > Duration::zero()
     }
+
+    /// How ores are priced, in words for pages.
+    fn pricing(&self) -> String {
+        if self.reprocess {
+            format!(
+                "each ore priced by what it refines into at {} yield, at CCP's average prices",
+                value::percent(self.reprocessing_yield)
+            )
+        } else {
+            "CCP's average price of each ore".to_owned()
+        }
+    }
 }
 
 /// The settings values are worked out with, for pages.
 fn rates() -> Result<value::Rates, PageError> {
     Ok(settings().map_err(|e| failed("reading settings", e))?.rates)
 }
+
+/// How ores are priced, in words, for pages.
+fn pricing() -> Result<String, PageError> {
+    Ok(settings()
+        .map_err(|e| failed("reading settings", e))?
+        .pricing())
+}
+
+/// Works out every type's unit price (aa-moonmining's current_price):
+/// with reprocess pricing on, an ore's refined materials at their prices
+/// × the yield, per unit (a portion is `portion_size` units); else, or
+/// for a type with no materials, its average price, else its adjusted
+/// price. A material with no price counts as 0, as aa-moonmining's.
+const REPRICE: &str = "UPDATE prices p SET unit_price = coalesce( \
+         CASE WHEN (SELECT reprocess_pricing FROM settings WHERE id = 1) THEN \
+             (SELECT sum(m.quantity * coalesce(mp.average_price, mp.adjusted_price, 0)) \
+                     * (SELECT reprocessing_yield FROM settings WHERE id = 1) / max(m.portion_size) \
+              FROM ore_materials m LEFT JOIN prices mp ON mp.type_id = m.material_id \
+              WHERE m.type_id = p.type_id) \
+         END, \
+         p.average_price, p.adjusted_price)";
 
 // ---- jobs ------------------------------------------------------------------
 
@@ -1025,12 +1070,17 @@ fn prices() -> Result<(), JobError> {
         .map_err(|e| JobError::Retry(format!("market prices: unexpected answer: {e}")))?;
     // Ids from ESI only (moon ores, and what the ledgers say was mined):
     // surveys hold only moon ores, checked at upload.
-    let wanted = storage::query(
+    let ores = storage::query(
         "SELECT type_id FROM ore_types UNION SELECT DISTINCT type_id FROM ledger",
         &[],
     )
     .map_err(|e| retry("reading ore types", e))?;
-    let wanted: std::collections::BTreeSet<i64> = wanted.rows.iter().map(|r| int(r, 0)).collect();
+    let ores: Vec<i64> = ores.rows.iter().map(|r| int(r, 0)).collect();
+    // What they refine into (aa-moonmining reads every ore's materials),
+    // priced too, for reprocess pricing.
+    let materials = store_materials(&ores)?;
+    let wanted: std::collections::BTreeSet<i64> =
+        ores.iter().copied().chain(materials).collect();
     let rows: Vec<serde_json::Value> = all
         .into_iter()
         .filter(|p| wanted.contains(&p.type_id))
@@ -1052,9 +1102,75 @@ fn prices() -> Result<(), JobError> {
         &[Db::json(serde_json::Value::Array(rows).to_string())],
     )
     .map_err(|e| retry("storing prices", e))?;
-    log::info(format!("prices of {stored} ore types updated"));
+    storage::execute(REPRICE, &[]).map_err(|e| retry("working out unit prices", e))?;
+    log::info(format!("prices of {stored} ore types and materials updated"));
     let types: Vec<i64> = wanted.into_iter().collect();
     learn_names(&mut budget, &types)
+}
+
+/// Ids one static data call may ask for.
+const MATERIALS_PER_CALL: usize = 1000;
+
+/// What one portion of each ore refines into, from Tether's built-in
+/// static data (no ESI call), stored in place of what was: the materials'
+/// ids. A type the data doesn't know keeps no materials.
+fn store_materials(ores: &[i64]) -> Result<Vec<i64>, JobError> {
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for chunk in ores.chunks(MATERIALS_PER_CALL) {
+        let ids = chunk
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let body = match esi::get(
+            "sde-materials",
+            Subject::Character(0),
+            &[("ids".to_owned(), ids)],
+            None,
+        ) {
+            Ok(response) => response.body,
+            Err(err) => return Err(retry("reading ores' materials", err)),
+        };
+        let types: Vec<value::Materials> = serde_json::from_str(&body)
+            .map_err(|e| JobError::Retry(format!("ores' materials: unexpected answer: {e}")))?;
+        for t in types {
+            for m in t.materials.iter().filter(|m| m.quantity > 0) {
+                rows.push(serde_json::json!({
+                    "type_id": t.type_id,
+                    "material_id": m.type_id,
+                    "quantity": m.quantity,
+                    "portion_size": t.portion_size.max(1),
+                }));
+            }
+        }
+    }
+    let ids: Vec<i64> = rows
+        .iter()
+        .filter_map(|r| r["material_id"].as_i64())
+        .collect();
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM ore_materials WHERE type_id = ANY(string_to_array($1, ',')::bigint[])",
+            vec![
+                ores.iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into(),
+            ],
+        ),
+        Statement::new(
+            "INSERT INTO ore_materials (type_id, material_id, quantity, portion_size) \
+             SELECT type_id, material_id, quantity, portion_size \
+             FROM json_to_recordset($1::json) AS x(type_id bigint, material_id bigint, quantity bigint, \
+                  portion_size integer) \
+             ON CONFLICT (type_id, material_id) DO UPDATE SET quantity = EXCLUDED.quantity, \
+                  portion_size = EXCLUDED.portion_size",
+            vec![Db::json(serde_json::Value::Array(rows).to_string())],
+        ),
+    ])
+    .map_err(|e| retry("storing ores' materials", e))?;
+    Ok(ids)
 }
 
 /// Refused name look-ups a run tolerates.
@@ -1600,8 +1716,8 @@ const LEDGER_WINDOW: &str = "l.observer_id = e.structure_id \
      AND l.day >= (e.chunk_arrival AT TIME ZONE 'UTC')::date \
      AND l.day <= ((e.natural_decay + interval '2 days') AT TIME ZONE 'UTC')::date";
 
-/// An ore's unit price: CCP's average, else its adjusted price.
-const PRICE: &str = "coalesce(pr.average_price, pr.adjusted_price, 0)";
+/// An ore's unit price, as `REPRICE` worked it out (0 without one).
+const PRICE: &str = "coalesce(pr.unit_price, 0)";
 
 /// One extraction, with its moon, place and value.
 struct Pop {
@@ -2349,6 +2465,21 @@ fn settings_page() -> Result<Page, PageError> {
                     .value(settings.rates.days_per_month.to_string())
                     .help("Moons' monthly value uses this and the ore a day. Default: 30.4.")
                     .required(),)
+                .field(Field::checkbox(
+                    "reprocess_pricing",
+                    "Price ores by what they refine into",
+                    settings.reprocess,
+                )
+                .help(
+                    "As aa-moonmining's reprocess pricing (off there): each ore is worth its \
+                     refined materials at CCP's average prices, times the yield below. Off, an \
+                     ore is worth its own average price.",
+                ))
+                .field(Field::number("reprocessing_yield", "Reprocessing yield (%)")
+                    .range(Some(1.0), Some(100.0), false)
+                    .value(format!("{}", (settings.reprocessing_yield * 1000.0).round() / 10.0))
+                    .help("Used with reprocess pricing. Default: 85.")
+                    .required(),)
             )
             .group(SettingsGroup::new("Extractions")
                 .field(Field::number("stale_hours", "Hours after auto-fracture until an extraction is Past")
@@ -2395,27 +2526,36 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         .parse()
         .map_err(|_| PageError::Failed("old_moons_shown wasn't a number".into()))?;
     let notices = submission.checked("admin_notifications");
-    storage::execute(
-        "UPDATE settings SET fresh_hours = $1, ping_channel = $2, pings = $3, volume_per_day = $4, \
-         days_per_month = $5, stale_hours = $6, old_moons_shown = $7, admin_notifications = $8 \
-         WHERE id = 1",
-        &[
-            hours.into(),
-            (!channel.is_empty()).then(|| channel.to_owned()).into(),
-            submission.checked("pings").into(),
-            per_day.into(),
-            days.into(),
-            stale.into(),
-            old_shown.into(),
-            notices.into(),
-        ],
-    )
+    let reprocess = submission.checked("reprocess_pricing");
+    let yield_percent = number("reprocessing_yield")?;
+    storage::transaction(&[
+        Statement::new(
+            "UPDATE settings SET fresh_hours = $1, ping_channel = $2, pings = $3, volume_per_day = $4, \
+             days_per_month = $5, stale_hours = $6, old_moons_shown = $7, admin_notifications = $8, \
+             reprocess_pricing = $9, reprocessing_yield = $10 \
+             WHERE id = 1",
+            vec![
+                hours.into(),
+                (!channel.is_empty()).then(|| channel.to_owned()).into(),
+                submission.checked("pings").into(),
+                per_day.into(),
+                days.into(),
+                stale.into(),
+                old_shown.into(),
+                notices.into(),
+                reprocess.into(),
+                (yield_percent / 100.0).into(),
+            ],
+        ),
+        // Every value at once in the new way, as the prices stand.
+        Statement::new(REPRICE, vec![]),
+    ])
     .map_err(|e| failed("saving settings", e))?;
     // Admins see who changed what in the plugin's log.
     log::info(format!(
         "settings changed by {} ({}): members-only {hours}h, channel {channel:?}, pings {}, \
          {per_day} m³ a day, {days} days a month, past after {stale}h, {old_shown} old moons \
-         shown, admin notices {notices}",
+         shown, admin notices {notices}, reprocess pricing {reprocess} at {yield_percent}%",
         viewer.main.name,
         viewer.main.id,
         submission.checked("pings")

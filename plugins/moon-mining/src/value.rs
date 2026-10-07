@@ -10,18 +10,42 @@
 //!   `/markets/prices/`), as aa-moonmining's default
 //!   (`MOONMINING_USE_REPROCESS_PRICING` off). Where an ore has no
 //!   average, Tether uses its adjusted price; aa-moonmining counts it as
-//!   0. aa-moonmining's opt-in reprocess pricing (the refined materials ×
-//!   `MOONMINING_REPROCESSING_YIELD`, 0.85) needs each ore's materials
-//!   from CCP's static data, which ESI doesn't serve, so it isn't
-//!   offered.
+//!   0. With aa-moonmining's opt-in reprocess pricing on, an ore is worth
+//!   its refined materials (from the static data Tether bundles) at their
+//!   prices × `MOONMINING_REPROCESSING_YIELD` (0.85), per unit; SQL works
+//!   it out (`REPRICE`).
 
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 
 /// aa-moonmining's defaults.
 pub const VOLUME_PER_DAY: f64 = 960_400.0;
 pub const DAYS_PER_MONTH: f64 = 30.4;
 /// Every moon ore (R4 to R64, uncompressed) is 10 m³ a unit.
 pub const ORE_VOLUME: f64 = 10.0;
+/// aa-moonmining's MOONMINING_REPROCESSING_YIELD.
+pub const REPROCESSING_YIELD: f64 = 0.85;
+
+/// One type's refined materials, as the static data's `sde-materials`
+/// answers: per portion of `portion_size` units.
+#[derive(Debug, Deserialize)]
+pub struct Materials {
+    pub type_id: i64,
+    #[serde(default = "one")]
+    pub portion_size: i64,
+    #[serde(default)]
+    pub materials: Vec<Material>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Material {
+    pub type_id: i64,
+    pub quantity: i64,
+}
+
+fn one() -> i64 {
+    1
+}
 
 /// How much ore a drill pulls: the settings values are worked out with.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -147,6 +171,21 @@ mod tests {
 
     fn at(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn materials_read_as_the_static_data_answers() {
+        let read: Vec<Materials> = serde_json::from_str(
+            r#"[{"type_id":45490,"portion_size":100,"materials":[{"type_id":35,"quantity":8000}]},
+                {"type_id":1}]"#,
+        )
+        .unwrap();
+        assert_eq!(read[0].portion_size, 100);
+        assert_eq!(read[0].materials[0].type_id, 35);
+        assert_eq!(read[0].materials[0].quantity, 8000);
+        // A type it doesn't know the materials of: none, a unit a portion.
+        assert_eq!(read[1].portion_size, 1);
+        assert!(read[1].materials.is_empty());
     }
 
     #[test]

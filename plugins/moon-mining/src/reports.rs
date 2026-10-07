@@ -45,10 +45,10 @@ pub fn page(viewer: &Viewer) -> Result<Page, PageError> {
     }
     let (income, total, moons) = income_table()?;
     Ok(Page::new("Reports")
-        .description(
-            "Values at CCP's average price of each ore, read daily from ESI; mining from the \
-             refineries' mining ledgers.",
-        )
+        .description(format!(
+            "Values at {}, read daily from ESI; mining from the refineries' mining ledgers.",
+            crate::pricing()?
+        ))
         .stats(vec![
             Stat::new("Owned moons", moons),
             Stat::new("Potential income / month", isk(value::finite(total)))
@@ -222,7 +222,7 @@ fn uploads_table() -> Result<Table, PageError> {
 fn prices_table() -> Result<Table, PageError> {
     let rows = storage::query(
         "SELECT t.type_id, coalesce(n.name, 'Type ' || t.type_id::text), t.rarity, \
-                p.average_price, p.adjusted_price, p.updated_at \
+                p.average_price, p.adjusted_price, p.updated_at, p.unit_price \
          FROM ore_types t LEFT JOIN prices p ON p.type_id = t.type_id \
          LEFT JOIN names n ON n.id = t.type_id \
          WHERE p.type_id IS NOT NULL \
@@ -236,6 +236,7 @@ fn prices_table() -> Result<Table, PageError> {
             Column::text("Rarity"),
             Column::numeric("Average price"),
             Column::numeric("Adjusted price"),
+            Column::numeric("Price used"),
             Column::numeric("Updated"),
         ])
         .title("Ore prices")
@@ -246,6 +247,7 @@ fn prices_table() -> Result<Table, PageError> {
                 value::rarity(int(r, 2)).into(),
                 isk_or_blank(float(r, 3)),
                 isk_or_blank(float(r, 4)),
+                isk_or_blank(float(r, 6)),
                 when(r, 5).map_or_else(|| "".into(), |t| time(rfc3339(t))),
             ]
         }),

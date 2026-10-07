@@ -559,7 +559,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
             &format!("/plugins/{ID}/settings"),
             &format!(
                 "_form=settings&fresh_hours=4&ping_channel={DISCORD_PING_CHANNEL}&pings=on\
-                 &volume_per_day=960400&days_per_month=30.4&stale_hours=12&old_moons_shown=5"
+                 &volume_per_day=960400&days_per_month=30.4&stale_hours=12&old_moons_shown=5&reprocessing_yield=85"
             ),
             &owner,
         ),
@@ -737,7 +737,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
         form(
             &format!("/plugins/{ID}/settings"),
             "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
-             &days_per_month=30.4&stale_hours=12&old_moons_shown=5",
+             &days_per_month=30.4&stale_hours=12&old_moons_shown=5&reprocessing_yield=85",
             &owner,
         ),
     )
@@ -1997,7 +1997,7 @@ async fn admin_notices_follow_aa_moonmining(db: PgPool) {
         form(
             &format!("/plugins/{ID}/settings"),
             "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
-             &days_per_month=30.4&stale_hours=12&old_moons_shown=5",
+             &days_per_month=30.4&stale_hours=12&old_moons_shown=5&reprocessing_yield=85",
             &owner,
         ),
     )
@@ -2218,4 +2218,88 @@ async fn refineries_gone_own_no_moons(db: PgPool) {
         .unwrap();
     let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
     assert!(moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
+}
+
+/// Saves Settings with reprocess pricing on or off at `yield_percent`.
+async fn save_pricing(h: &Harness, owner: &str, on: bool, yield_percent: u32) {
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            &format!(
+                "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
+                 &days_per_month=30.4&stale_hours=12&old_moons_shown=5\
+                 &reprocessing_yield={yield_percent}{}",
+                if on { "&reprocess_pricing=on" } else { "" }
+            ),
+            owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn reprocess_pricing_values_ores_by_their_materials(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    // Zeolites refine (per 100 units, the bundled static data) into 8,000
+    // Pyerite, 400 Mexallon and 65 Atmospheric Gases.
+    Mock::given(method("GET"))
+        .and(path("/markets/prices"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "type_id": ZEOLITES, "average_price": 10000.0, "adjusted_price": 9000.0 },
+            { "type_id": 35, "average_price": 10.0, "adjusted_price": 9.0 },
+            { "type_id": 36, "average_price": 100.0, "adjusted_price": 90.0 },
+            { "type_id": 16634, "average_price": 2000.0, "adjusted_price": 1900.0 },
+        ])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    run_schedule(&h, "prices").await;
+    let prices = format!("/plugins/{ID}/reports?_tab=3");
+    // Off, as aa-moonmining's default: the ore's own average price.
+    let off = page(&h, &prices, &owner).await;
+    assert!(has_isk(&off.body, "10,000"), "{}", off.body);
+    assert!(!has_isk(&off.body, "2,125"), "{}", off.body);
+    assert!(
+        off.body.contains("CCP&#39;s average price of each ore"),
+        "{}",
+        off.body
+    );
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    for part in ["Price ores by what they refine into", "Reprocessing yield (%)"] {
+        assert!(settings.body.contains(part), "{part}: {}", settings.body);
+    }
+    // On at 85%: (8,000 × 10 + 400 × 100 + 65 × 2,000) × 0.85 ÷ 100 =
+    // 2,125 a unit, at once (no new read).
+    save_pricing(&h, &owner, true, 85).await;
+    let on = page(&h, &prices, &owner).await;
+    assert!(has_isk(&on.body, "2,125"), "{}", on.body);
+    assert!(on.body.contains("at 85.0% yield"), "{}", on.body);
+    // The yield counts: at 50%, 1,250.
+    save_pricing(&h, &owner, true, 50).await;
+    let half = page(&h, &prices, &owner).await;
+    assert!(has_isk(&half.body, "1,250"), "{}", half.body);
+    // And the next price read keeps to the setting.
+    run_schedule(&h, "prices").await;
+    let read = page(&h, &prices, &owner).await;
+    assert!(has_isk(&read.body, "1,250"), "{}", read.body);
+    // Off again: back to the ore's own price.
+    save_pricing(&h, &owner, false, 85).await;
+    let off = page(&h, &prices, &owner).await;
+    assert!(!has_isk(&off.body, "2,125"), "{}", off.body);
+    let used: f64 = sqlx::query_scalar(
+        r#"SELECT unit_price FROM "plugin_tether.moon-mining".prices WHERE type_id = $1"#,
+    )
+    .bind(ZEOLITES)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(used, 10000.0);
 }

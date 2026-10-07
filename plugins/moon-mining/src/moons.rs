@@ -34,7 +34,7 @@ pub(crate) const OWNED: &str = "WITH owned AS (SELECT * FROM (SELECT DISTINCT ON
 
 /// Σ share × unit price and the rarest class, per surveyed moon.
 const WORTH: &str = "(SELECT p.moon_id, \
-         sum(p.amount * coalesce(pr.average_price, pr.adjusted_price, 0))::float8 AS worth, \
+         sum(p.amount * coalesce(pr.unit_price, 0))::float8 AS worth, \
          max(t.rarity) AS rarity \
      FROM survey_products p LEFT JOIN prices pr ON pr.type_id = p.type_id \
      LEFT JOIN ore_types t ON t.type_id = p.type_id GROUP BY p.moon_id)";
@@ -206,10 +206,10 @@ pub fn moons_page(viewer: &Viewer, filter: &Filter) -> Result<Page, PageError> {
         ));
     }
     let mut page = Page::new("Moons")
-        .description(
-            "Moons with their ores from surveys, and what a month of mining them is worth at CCP's \
-             average price of each ore.",
-        )
+        .description(format!(
+            "Moons with their ores from surveys, and what a month of mining them is worth at {}.",
+            crate::pricing()?
+        ))
         .toolbar(
             Toolbar::new()
                 .search(if sees_owners(viewer) {
@@ -310,7 +310,7 @@ impl Moon {
         }
         let products: Vec<Ore> = storage::query(
             "SELECT p.type_id, coalesce(n.name, 'Type ' || p.type_id::text), coalesce(t.rarity, 0), p.amount, \
-                    coalesce(pr.average_price, pr.adjusted_price)::float8 \
+                    pr.unit_price::float8 \
              FROM survey_products p LEFT JOIN names n ON n.id = p.type_id \
              LEFT JOIN ore_types t ON t.type_id = p.type_id \
              LEFT JOIN prices pr ON pr.type_id = p.type_id \
@@ -457,8 +457,9 @@ pub fn moon_page(viewer: &Viewer, moon_id: i64) -> Result<Page, PageError> {
     let mut page = Page::new(name)
         .description(format!(
             "A month of mining: price × share × the {:.1} million m³ a drill pulls in a month ÷ \
-             10 m³ a unit of ore, at CCP's average price of the ore itself.",
-            rates.per_month() / 1e6
+             10 m³ a unit of ore, at {}.",
+            rates.per_month() / 1e6,
+            crate::pricing()?
         ))
         .card(card);
     if let Some(ring) = ring {
