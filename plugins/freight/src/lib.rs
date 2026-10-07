@@ -91,6 +91,11 @@ const MODES: [(&str, &str, &str); 4] = [
         "Contracts assigned to the handler's corporation by anyone.",
     ),
 ];
+/// The pages Discord cards' titles open, as aa-freight's
+/// (`freight/models/contracts.py:335-341`): pilots' the contracts (Active,
+/// where a new one is; aa-freight's All), customers' their own.
+const PILOT_PAGE: &str = "contracts";
+const CUSTOMER_PAGE: &str = "mine";
 /// Statuses a contract's issuer hears about, as aa-freight's customer
 /// notifications.
 const CUSTOMER_STATUSES: [&str; 4] = ["outstanding", "in_progress", "finished", "failed"];
@@ -945,14 +950,15 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             let added = storage::execute(
                 "WITH claimed AS (UPDATE contracts SET notified_at = now() \
                      WHERE contract_id = $1 AND notified_at IS NULL RETURNING 1) \
-                 INSERT INTO outbox (channel, message, card, mention_state) \
-                 SELECT $2, $3, $4, $5 FROM claimed",
+                 INSERT INTO outbox (channel, message, card, mention_state, page) \
+                 SELECT $2, $3, $4, $5, $6 FROM claimed",
                 &[
                     c.id.into(),
                     channel.as_str().into(),
                     pilot_message(c, &names, check.as_ref()).into(),
                     pilot_card(c, &names, check.as_ref()),
                     settings.pilot_ping.clone().into(),
+                    PILOT_PAGE.into(),
                 ],
             )
             .map_err(|e| retry("queuing a pilot notice", e))?;
@@ -994,13 +1000,15 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
             let added = storage::execute(
                 "WITH noticed AS (INSERT INTO customer_notices (contract_id, status) \
                      VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1) \
-                 INSERT INTO outbox (channel, message, card) SELECT $3, $4, $5 FROM noticed",
+                 INSERT INTO outbox (channel, message, card, page) \
+                 SELECT $3, $4, $5, $6 FROM noticed",
                 &[
                     c.id.into(),
                     c.status.as_str().into(),
                     channel.as_str().into(),
                     customer_message(c, &names, check.as_ref()).into(),
                     customer_card(c, &names, check.as_ref()),
+                    CUSTOMER_PAGE.into(),
                 ],
             )
             .map_err(|e| retry("queuing a customer notice", e))?;
@@ -1165,7 +1173,7 @@ fn relay() -> Result<(), JobError> {
     .map_err(|e| retry("expiring messages", e))?;
     let mut gap = RELAY_GAP_SECONDS;
     let waiting = storage::query(
-        "SELECT id, channel, message, card::text, mention_state FROM outbox \
+        "SELECT id, channel, message, card::text, mention_state, page FROM outbox \
          WHERE sent_at IS NULL AND failed IS NULL ORDER BY id LIMIT $1",
         &[(SENDS_PER_RUN as i64 + 1).into()],
     )
@@ -1190,9 +1198,13 @@ fn relay() -> Result<(), JobError> {
             .and_then(|c| serde_json::from_str(c).ok())
             .and_then(|c| card::embed(&c));
         let (channel, message) = (text(row, 1), text(row, 2));
-        let post = |mention: Mention| match &card {
-            Some(card) => discord::send_embed(&channel, card, mention),
-            None => discord::send(&channel, &message, mention),
+        // The card's title opens the app's page for it (queued before
+        // 0.1.7: none).
+        let page = row.get(5).and_then(Db::as_text).map(str::to_owned);
+        let post = |mention: Mention| match (&card, &page) {
+            (Some(card), Some(page)) => discord::send_linked_embed(&channel, card, page, mention),
+            (Some(card), None) => discord::send_embed(&channel, card, mention),
+            (None, _) => discord::send(&channel, &message, mention),
         };
         let mention = row.get(4).and_then(Db::as_text).map(str::to_owned);
         sends += 1;

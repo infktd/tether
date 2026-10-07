@@ -45,6 +45,7 @@ async fn install(h: &Harness, owner: &str) {
     let migration = plugin_file("migrations/0001_freight.sql");
     let cards = plugin_file("migrations/0002_outbox_cards.sql");
     let mentions = plugin_file("migrations/0003_pilot_mentions.sql");
+    let pages = plugin_file("migrations/0004_outbox_pages.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -52,6 +53,7 @@ async fn install(h: &Harness, owner: &str) {
         ("migrations/0001_freight.sql", migration.as_bytes()),
         ("migrations/0002_outbox_cards.sql", cards.as_bytes()),
         ("migrations/0003_pilot_mentions.sql", mentions.as_bytes()),
+        ("migrations/0004_outbox_pages.sql", pages.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -313,6 +315,8 @@ async fn discord_messages(h: &Harness) -> Vec<String> {
                     field["value"].as_str().unwrap()
                 ));
             }
+            // What the title opens.
+            lines.push(format!("url: {}", card["url"].as_str().unwrap_or_default()));
             lines.join("\n")
         })
         .collect()
@@ -571,6 +575,19 @@ async fn freight_end_to_end(db: PgPool) {
         pilots[0].starts_with(&format!("content: <@&{DISCORD_MEMBER_ROLE}>\n")),
         "{}",
         pilots[0]
+    );
+    // Each card's title opens the app, as aa-freight's: the contracts for
+    // pilots, My contracts for customers.
+    assert!(
+        pilots[0].ends_with(&format!("url: {SITE}/plugins/{ID}/contracts")),
+        "{}",
+        pilots[0]
+    );
+    assert!(
+        sent.iter()
+            .filter(|m| m.contains("your courier contract"))
+            .all(|m| m.ends_with(&format!("url: {SITE}/plugins/{ID}/mine"))),
+        "{sent:#?}"
     );
     // Customers' notices mention nobody (aa-freight's mention is pilots').
     assert!(
