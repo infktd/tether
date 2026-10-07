@@ -16,6 +16,10 @@
 //!   Fulfilled, Re-open, Cancel. The pilot hears each step in Tether's
 //!   notifications; builders get new requests on Discord (a notice to
 //!   every approver, as AA sends, would reach other corporations').
+//! - **Admin notices** (aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED,
+//!   on Settings): `manage` holders, superusers included, hear when an
+//!   owner is added: a personal one at once, a corporate one at the app's
+//!   next read.
 
 mod sync;
 
@@ -693,6 +697,15 @@ fn tell(account: i64, title: &str, message: &str, level: Level) {
     }
 }
 
+/// An admin notice (aa-blueprints' notify_admins): to holders of
+/// `manage`, which superusers hold, as AA tells its superusers. Best
+/// effort, as [`tell`].
+fn tell_admins(title: &str, message: &str, level: Level) {
+    if let Err(err) = notify::holders("manage", title, message, level, None) {
+        log::warn(format!("an admin notice wasn't sent: {err:?}"));
+    }
+}
+
 fn request_copy(access: &Access, item: i64, runs: &str) -> Result<SubmitResult, PageError> {
     if !access.request {
         return Err(PageError::Forbidden);
@@ -965,20 +978,31 @@ fn personal_owner(access: &Access, submission: &Submission) -> Result<SubmitResu
         return Err(PageError::Forbidden);
     }
     if submission.form == "add_owner" {
-        let registered = tether_plugin_sdk::esi::characters()
-            .iter()
-            .any(|c| c.id == id);
-        if !registered {
+        let Some(added) = tether_plugin_sdk::esi::characters()
+            .into_iter()
+            .find(|c| c.id == id)
+        else {
             return Err(PageError::Failed(
                 "that character isn't registered for the app".into(),
             ));
-        }
+        };
         storage::execute(
             "INSERT INTO personal_owners (character_id, account_id) VALUES ($1, $2) \
              ON CONFLICT (character_id) DO UPDATE SET account_id = EXCLUDED.account_id",
             &[id.into(), access.account.into()],
         )
         .map_err(|e| failed("adding the owner", e))?;
+        // aa-blueprints tells its admins about every owner added.
+        if settings().is_ok_and(|s| s.admin_notifications) {
+            tell_admins(
+                &format!("blueprint owner added: {}", added.name),
+                &format!(
+                    "{} was added as a new personal blueprint owner.",
+                    added.name
+                ),
+                Level::Info,
+            );
+        }
         // Read its blueprints now, and then where they are.
         for (name, delay) in [(SYNC_BLUEPRINTS, 0), (SYNC_JOBS, 60), (SYNC_PLACES, 120)] {
             let at = chrono::Utc::now() + chrono::Duration::seconds(delay);
@@ -1013,11 +1037,13 @@ struct Settings {
     channel: Option<String>,
     blueprints_at: Option<String>,
     sync_error: Option<String>,
+    /// aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED.
+    admin_notifications: bool,
 }
 
 fn settings() -> Result<Settings, storage::Error> {
     let rows = storage::query(
-        "SELECT channel, blueprints_at, sync_error FROM settings WHERE id = 1",
+        "SELECT channel, blueprints_at, sync_error, admin_notifications FROM settings WHERE id = 1",
         &[],
     )?;
     let row = rows.rows.first();
@@ -1025,6 +1051,7 @@ fn settings() -> Result<Settings, storage::Error> {
         channel: row.and_then(|r| opt_text(r, 0)),
         blueprints_at: row.and_then(|r| opt_text(r, 1)),
         sync_error: row.and_then(|r| opt_text(r, 2)),
+        admin_notifications: row.is_some_and(|r| flag(r, 3)),
     })
 }
 
@@ -1041,13 +1068,24 @@ fn settings_page() -> Result<Page, PageError> {
         .filter(|c| channels.iter().any(|(id, _)| id == c))
         .unwrap_or_default();
     Ok(Page::new("Blueprints settings").settings(
-        SettingsForm::new("settings").group(
-            SettingsGroup::new("Discord").field(
-                Field::select("channel", "Post new requests to", channels)
-                    .value(current)
-                    .help("A channel an admin assigned this app (Administration › Apps › Blueprints). Builders also hear in Tether's notifications."),
+        SettingsForm::new("settings")
+            .group(
+                SettingsGroup::new("Discord").field(
+                    Field::select("channel", "Post new requests to", channels)
+                        .value(current)
+                        .help("A channel an admin assigned this app (Administration › Apps › Blueprints). Builders also hear in Tether's notifications."),
+                ),
+            )
+            .group(
+                SettingsGroup::new("Admin notices").field(
+                    Field::checkbox(
+                        "admin_notifications",
+                        "Tell admins when a blueprint owner is added",
+                        settings.admin_notifications,
+                    )
+                    .help("As aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED. A notice in Tether's notifications to superusers and holders of this app's manage permission. A personal owner is announced when added, a corporate one at the app's next read."),
+                ),
             ),
-        ),
     ))
 }
 
@@ -1058,13 +1096,14 @@ fn save_settings(access: &Access, submission: &Submission) -> Result<SubmitResul
     let assigned: Vec<String> = discord::channels().into_iter().map(|c| c.id).collect();
     let value = submission.value("channel");
     let channel = assigned.iter().find(|id| id.as_str() == value).cloned();
+    let admin_notifications = submission.checked("admin_notifications");
     storage::execute(
-        "UPDATE settings SET channel = $1 WHERE id = 1",
-        &[channel.clone().into()],
+        "UPDATE settings SET channel = $1, admin_notifications = $2 WHERE id = 1",
+        &[channel.clone().into(), admin_notifications.into()],
     )
     .map_err(|e| failed("saving settings", e))?;
     log::info(format!(
-        "settings changed by {}: channel {channel:?}",
+        "settings changed by {}: channel {channel:?}, admin notices {admin_notifications}",
         access.name
     ));
     Ok(SubmitResult::Redirect("settings".into()))

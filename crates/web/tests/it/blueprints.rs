@@ -32,6 +32,9 @@ const OFFICE_JITA: i64 = 1_040_000_000_101;
 const OFFICE_KEEPSTAR: i64 = 1_040_000_000_102;
 const OFFICE_ATHANOR: i64 = 1_040_000_000_103;
 const CONTAINER: i64 = 1_040_000_000_201;
+/// The admin notice for Chribba's corporation, added as a corporate owner.
+const OWNER_ADDED: &str = "Blueprints: blueprint owner added: Otherworld Enterprises | \
+     Otherworld Enterprises was added as a new corporate blueprint owner by Chribba.";
 
 fn component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -464,7 +467,7 @@ async fn blueprints_end_to_end(db: PgPool) {
         &h,
         &owner,
         "settings",
-        &format!("_form=settings&channel={DISCORD_PING_CHANNEL}"),
+        &format!("_form=settings&channel={DISCORD_PING_CHANNEL}&admin_notifications=on"),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
@@ -488,6 +491,9 @@ async fn blueprints_end_to_end(db: PgPool) {
 
     let owner = add_owner(&h, &owner).await;
     sync(&h).await;
+    // Admins (superusers, and manage holders) hear of the owner added, as
+    // aa-blueprints' admin notices, once.
+    assert_eq!(notices(&h, owner_account).await, [OWNER_ADDED]);
 
     // The owner (a superuser) sees everything: the original with its
     // product's icon, where it is through the hangar and container, and
@@ -652,7 +658,7 @@ async fn blueprints_end_to_end(db: PgPool) {
         let res = post(&h, &pilot, "", "_form=request&item=3001&runs=5").await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     }
-    assert!(notices(&h, owner_account).await.is_empty());
+    assert_eq!(notices(&h, owner_account).await, [OWNER_ADDED]);
     let posted: Vec<serde_json::Value> = h
         .discord_server
         .received_requests()
@@ -1153,4 +1159,189 @@ async fn thousands_of_blueprints_are_stored_and_placed(db: PgPool) {
         count(r#"SELECT count(*) FROM "{schema}".blueprints"#).await,
         1_500
     );
+}
+
+/// aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED: on for a new
+/// install; a personal owner added is announced to superusers and
+/// `manage` holders at once, never to the pilot; off, nothing is.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn admin_notices_follow_aa_blueprints(db: PgPool) {
+    let h = harness(db, true).await;
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Corporation,
+        CORP,
+    )
+    .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let owner_account = grant(&h, CHRIBBA, &[]).await;
+    install(&h, &owner).await;
+    let schema = schema(&h).await;
+    let on: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT admin_notifications FROM "{schema}".settings"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(on, "on for a new install, as in aa-blueprints");
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings
+            .body
+            .contains("Tell admins when a blueprint owner is added"),
+        "{}",
+        settings.body
+    );
+    assert!(
+        settings
+            .body
+            .contains("BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED"),
+        "{}",
+        settings.body
+    );
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let pilot_account = grant(
+        &h,
+        MITTANI,
+        &["basic_access", "add_personal_blueprint_owner"],
+    )
+    .await;
+    log_in_as(&h, "1887431749:Outsider", None).await;
+    let manager_account = grant(&h, OUTSIDER, &["manage"]).await;
+    let pilot = register(&h, &pilot, "443630591:The Mittani").await;
+    personal(&h, &pilot, "add_owner", MITTANI).await;
+    let added = "Blueprints: blueprint owner added: The Mittani | \
+                 The Mittani was added as a new personal blueprint owner.";
+    assert_eq!(notices(&h, owner_account).await, [added]);
+    assert_eq!(notices(&h, manager_account).await, [added]);
+    assert!(notices(&h, pilot_account).await.is_empty());
+    // Turned off on Settings: none (read first, as a notice waiting
+    // unread isn't sent again anyway).
+    sqlx::query("UPDATE core.notifications SET read_at = now()")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = post(&h, &owner, "settings", "_form=settings&channel=").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    personal(&h, &pilot, "remove_owner", MITTANI).await;
+    personal(&h, &pilot, "add_owner", MITTANI).await;
+    assert_eq!(notices(&h, owner_account).await, [added]);
+    // On again: announced again, as AA tells of every add.
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        "_form=settings&channel=&admin_notifications=on",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    personal(&h, &pilot, "remove_owner", MITTANI).await;
+    personal(&h, &pilot, "add_owner", MITTANI).await;
+    assert_eq!(notices(&h, owner_account).await, [added, added]);
+}
+
+/// A corporate owner is announced by its corporation's name even when the
+/// hourly jobs read comes before the blueprints read that names it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_corporate_owner_is_announced_by_name_from_any_read(db: PgPool) {
+    let h = harness(db, true).await;
+    mount(&h).await;
+    set_up(&h).await;
+    // Only the jobs read: the others' runs are put off.
+    for name in ["sync_blueprints", "sync_places"] {
+        let schedule = format!("plugin:{ID}:{name}");
+        sqlx::query("DELETE FROM core.jobs WHERE schedule = $1 AND state = 'queued'")
+            .bind(&schedule)
+            .execute(&h.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE core.schedules SET next_run_at = now() + interval '1 day' WHERE name = $1",
+        )
+        .bind(&schedule)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    }
+    run_schedule(&h, "sync_jobs").await;
+    let owner_account = grant(&h, CHRIBBA, &[]).await;
+    assert_eq!(notices(&h, owner_account).await, [OWNER_ADDED]);
+    // Once.
+    sync(&h).await;
+    assert_eq!(notices(&h, owner_account).await.len(), 1);
+}
+
+/// An install already in use keeps what it did: no admin notices, nor a
+/// flood of its existing owners when a manager turns them on.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_install_in_use_keeps_no_admin_notices(db: PgPool) {
+    // The upgrade itself: an install with owners gets the setting off.
+    let migrations = migrations();
+    let (before, after): (Vec<_>, Vec<_>) = migrations
+        .iter()
+        .partition(|(name, _)| !name.ends_with("_admin_notifications.sql"));
+    let mut conn = db.acquire().await.unwrap();
+    for (schema, owned) in [("bp_in_use", true), ("bp_fresh", false)] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA {schema}; SET search_path = {schema}"
+        )))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        for (_, sql) in &before {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        if owned {
+            sqlx::raw_sql(
+                "INSERT INTO owners (kind, id, corporation_id) VALUES ('corporation', 1, 1)",
+            )
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+        for (_, sql) in &after {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        let got: (bool, bool) =
+            sqlx::query_as("SELECT admin_notifications, sources_known FROM settings")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(got, (!owned, !owned), "{schema}");
+    }
+    sqlx::raw_sql("RESET search_path")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+
+    // Through the app: its manager turned them on before its first read
+    // since the upgrade. The owners it had then aren't announced.
+    let h = harness(db, true).await;
+    mount(&h).await;
+    set_up(&h).await;
+    let schema = schema(&h).await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"UPDATE "{schema}".settings SET admin_notifications = true, sources_known = false"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let owner_account = grant(&h, CHRIBBA, &[]).await;
+    assert!(notices(&h, owner_account).await.is_empty());
+    let announced: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT bool_and(announced) FROM "{schema}".sources"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(announced);
 }
