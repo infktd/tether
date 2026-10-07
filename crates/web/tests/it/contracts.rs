@@ -385,6 +385,12 @@ async fn contracts_end_to_end(db: PgPool) {
     sync(&h).await;
     let sent = cards(&h).await;
     assert_eq!(sent.len(), 5, "{sent:#?}");
+    // Every card's title opens the app's page, as aa-freight's.
+    assert!(
+        sent.iter()
+            .all(|c| c["url"] == format!("{SITE}/plugins/{ID}")),
+        "{sent:#?}"
+    );
     let by = |needle: &str| {
         sent.iter()
             .find(|c| c.to_string().contains(needle))
