@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 8] = [
+const MIGRATIONS: [&str; 9] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -54,6 +54,7 @@ const MIGRATIONS: [&str; 8] = [
     "migrations/0006_passing_failures.sql",
     "migrations/0007_older_mail.sql",
     "migrations/0008_journal_gap.sql",
+    "migrations/0009_mail_gap.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -2165,6 +2166,64 @@ async fn mail_is_paged_back(db: PgPool) {
     mail_due().await.unwrap();
     sync(&h).await;
     assert_eq!(stored().await.unwrap(), (120, 931, 1050, false));
+}
+
+/// More new mail than one read takes (4,500 since the last read, with
+/// 5,000 kept): each read stores what it read and keeps its place, and
+/// the next goes on from there, so every read finishes and the mail
+/// comes in whole over a few reads.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_mail_backlog_comes_in_over_several_reads(db: PgPool) {
+    let (h, _) = synced(db).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/mail")))
+        .respond_with(MailHistory {
+            oldest: 1000,
+            newest: 5499,
+        })
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(format!(
+            r"^/characters/{CHRIBBA}/mail/\d+$"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "o7" })))
+        .with_priority(6)
+        .mount(&h.esi_server)
+        .await;
+    sqlx::query(r#"UPDATE "plugin_tether.member-audit".settings SET max_mails = 5000"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let read = || async {
+        sqlx::query(
+            r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'mail'"#,
+        )
+        .execute(&h.db)
+        .await
+        .unwrap();
+        sync(&h).await;
+        sqlx::query_as::<_, (i64, Option<i64>, bool)>(
+            r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".mails),
+                      (SELECT mail_gap FROM "plugin_tether.member-audit".characters),
+                      (SELECT ok FROM "plugin_tether.member-audit".section_syncs WHERE section = 'mail')"#,
+        )
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    };
+    // The newest 20 pages, and where the read got to.
+    assert_eq!(
+        read().await,
+        (1001, Some(4500), true),
+        "{:?}",
+        plugin_warnings(&h).await
+    );
+    for _ in 0..4 {
+        read().await;
+    }
+    assert_eq!(read().await, (4501, None, true));
 }
 
 /// ESI having trouble (a 503, as around downtime) while a mail's body, a
