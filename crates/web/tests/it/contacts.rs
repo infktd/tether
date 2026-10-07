@@ -618,3 +618,65 @@ async fn a_run_s_tail_is_read_by_a_follow_up(db: PgPool) {
     .unwrap();
     assert_eq!(untried, 0);
 }
+
+/// Every contact is listed, as aa-contacts' (`aa_contacts/api/common.py:81-85`):
+/// 500 a page, each page linked beside the title; the search finds among
+/// them all.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_contact_is_listed_a_page_at_a_time(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount(&h).await;
+    let owner = add_owner(&h, &owner).await;
+    update(&h).await;
+    // 1,100 more, below the two read (standing -10 sorts them last).
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.contacts".contacts
+               (kind, entity_id, contact_id, contact_type, standing)
+           SELECT 'corporation', $1, 90000000 + n, 'character', -10 FROM generate_series(1, 1100) n"#,
+    )
+    .bind(CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.contacts".names (id, name)
+           SELECT 90000000 + n, 'Pilot ' || lpad(n::text, 4, '0') FROM generate_series(1, 1100) n"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let list = format!("/plugins/{ID}/corporation/{CORP}");
+    let first = page(&h, &list, &owner).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    for text in [
+        "Friendly Corp",
+        "Contacts 1 to 500 of 1,102, by standing.",
+        "501 to 1,000",
+        &format!("href=\"{list}/page/3\""),
+        "Update now",
+    ] {
+        assert!(first.body.contains(text), "{text}: {}", first.body);
+    }
+    let last = page(&h, &format!("{list}/page/3"), &owner).await;
+    assert_eq!(last.status, StatusCode::OK, "{}", last.body);
+    for text in ["Contacts 1,001 to 1,102 of 1,102", "Pilot 0999"] {
+        assert!(last.body.contains(text), "{text}: {}", last.body);
+    }
+    assert!(!last.body.contains("Friendly Corp"), "{}", last.body);
+    for gone in ["page/4", "page/1", "page/0"] {
+        assert_eq!(
+            page(&h, &format!("{list}/{gone}"), &owner).await.status,
+            StatusCode::NOT_FOUND,
+            "{gone}"
+        );
+    }
+    // The search, among every contact (by name or label), from any page.
+    let found = page(&h, &format!("{list}/page/3?q=pilot+1099"), &owner).await;
+    assert!(found.body.contains("Pilot 1099"), "{}", found.body);
+    assert!(!found.body.contains("Pilot 1100"), "{}", found.body);
+    let found = page(&h, &format!("{list}?q=reds"), &owner).await;
+    assert!(found.body.contains("Pandemic Horde"), "{}", found.body);
+    assert!(!found.body.contains("Friendly Corp"), "{}", found.body);
+}

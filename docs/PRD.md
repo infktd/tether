@@ -353,7 +353,7 @@ Phase 5, release 1.0:
 - [ ] HR Applications: search by every character, corporation and alliance of the applicant (AA core `hrapplications/views.py:208-216`)
 - [x] Contacts: a contact gone from EVE's list kept while it has notes or server links (aa-contacts `aa_contacts/tasks.py:186-200`). Done 2026-10-07: kept at standing 0 without labels, marked "Not in EVE's list", and as EVE has it again if it comes back
 - [x] Contacts: edit a server link, and AA's eight colours (aa-contacts `aa_contacts/api/common.py:166-184`, `aa_contacts/models.py:166-174`). Done 2026-10-07: each link has its own page to change or delete it; AA's eight colours by AA's names, drawn in Tether's nearest tone
-- [ ] Contacts: every contact listed, not the first 500 (aa-contacts `aa_contacts/api/common.py:81-85`)
+- [x] Contacts: every contact listed, not the first 500 (aa-contacts `aa_contacts/api/common.py:81-85`). Done 2026-10-07: 500 a page, the pages linked beside the title with which contacts each holds, and a search by name or label among them all
 - [ ] Sovereignty Timer: the previous score kept until the score changes, and shown (aa-sov-timer `sovtimer/tasks.py:124-134`, `sovtimer/views.py:173-178`)
 - [ ] ESI Status: the count and share of routes per status (aa-esi-status `esistatus/tasks.py:356-396`)
 - [ ] Time Zones: the adjusted time's countdown and "Already over" (aa-timezones `templates/timezones/partials/timezones/time-until.html:4-7`)

@@ -11,7 +11,8 @@
 //!   they were.
 //! - **Who sees them**: anyone with a character in that alliance or
 //!   corporation; superusers every one (as aa-contacts).
-//! - **Contacts**: each with its standing and labels; notes for
+//! - **Contacts**: every one, 500 a page, with a search by name or label
+//!   among them all; each with its standing and labels; notes for
 //!   `view_*_notes` (edited with `manage_*_contacts` too), and server links
 //!   (a name, an address of any kind, a password, one of aa-contacts' eight
 //!   colours; each changed or deleted on its own page) for
@@ -29,8 +30,8 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Plugin, Request, Submission, SubmitResult, Table,
-    Tone, Value, action, actions, alliance, badge, character, corporation, faction, link, log,
-    time,
+    Tone, Toolbar, Value, action, actions, alliance, badge, character, corporation, faction, link,
+    log, time,
 };
 
 const UPDATE: &str = "update";
@@ -57,7 +58,12 @@ impl Plugin for Contacts {
         let parts: Vec<&str> = request.path.split('/').collect();
         match parts.as_slice() {
             [""] => index_page(&viewer),
-            [kind, id] => list_page(&viewer, kind_of(kind)?, number(id)?),
+            [kind, id] => list_page(&viewer, kind_of(kind)?, number(id)?, 1, request.search()),
+            // Past the first page of contacts.
+            [kind, id, "page", n] => match number(n)? {
+                1 => Err(PageError::NotFound),
+                n => list_page(&viewer, kind_of(kind)?, number(id)?, n, request.search()),
+            },
             [kind, id, "contact", contact] => {
                 contact_page(&viewer, kind_of(kind)?, number(id)?, number(contact)?, None)
             }
@@ -800,21 +806,82 @@ fn index_page(viewer: &Viewer) -> Result<Page, PageError> {
         .table(table))
 }
 
-fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
+/// Contacts a page lists (a table's limit).
+const PER_PAGE: i64 = 500;
+/// Pages of contacts linked beside the title at once (a page's limit).
+const PAGE_LINKS: i64 = 8;
+
+/// Where a list page is: the first page has none of its own.
+fn list_path(kind: &str, id: i64, n: i64) -> String {
+    if n <= 1 {
+        format!("{kind}/{id}")
+    } else {
+        format!("{kind}/{id}/page/{n}")
+    }
+}
+
+/// The pages linked beside the title: up to `PAGE_LINKS` of `pages`
+/// around page `n`.
+fn page_window(n: i64, pages: i64) -> std::ops::RangeInclusive<i64> {
+    let first = (n - PAGE_LINKS / 2).min(pages - PAGE_LINKS + 1).max(1);
+    first..=(first + PAGE_LINKS - 1).min(pages)
+}
+
+/// Every contact, a page of 500 at a time (aa-contacts lists them all,
+/// `aa_contacts/api/common.py:81-85`), or those whose name or a label has
+/// the search's words.
+fn list_page(
+    viewer: &Viewer,
+    kind: &str,
+    id: i64,
+    n: i64,
+    search: &str,
+) -> Result<Page, PageError> {
     seen(viewer, kind, id)?;
+    // A search finds among them all, from its first match.
+    let n = if search.is_empty() { n } else { 1 };
     let notes = viewer.can(&format!("view_{kind}_notes"));
     let links = viewer.can(&format!("view_{kind}_server_links"));
+    let picked = "c.kind = $1 AND c.entity_id = $2 AND ($3 = '' \
+         OR position(lower($3) IN lower(coalesce(n.name, ''))) > 0 \
+         OR EXISTS (SELECT 1 FROM labels l WHERE l.kind = c.kind AND l.entity_id = c.entity_id \
+             AND l.label_id::text = ANY(string_to_array(c.label_ids, ',')) \
+             AND position(lower($3) IN lower(l.name)) > 0))";
+    let total = storage::query(
+        &format!(
+            "SELECT count(*) FROM contacts c LEFT JOIN names n ON n.id = c.contact_id \
+             WHERE {picked}"
+        ),
+        &[kind.into(), id.into(), search.into()],
+    )
+    .map_err(|e| failed("counting contacts", e))?
+    .rows
+    .first()
+    .map(|r| int(r, 0))
+    .unwrap_or_default();
+    let pages = ((total + PER_PAGE - 1) / PER_PAGE).max(1);
+    if n > pages {
+        return Err(PageError::NotFound);
+    }
     let rows = storage::query(
-        "SELECT c.contact_id, c.contact_type, c.standing, coalesce(n.name, ''), c.notes, \
-             coalesce((SELECT string_agg(l.name, ', ' ORDER BY l.name) FROM labels l \
-                 WHERE l.kind = c.kind AND l.entity_id = c.entity_id \
-                   AND l.label_id::text = ANY(string_to_array(c.label_ids, ','))), ''), \
-             (SELECT count(*) FROM server_links s WHERE s.kind = c.kind \
-                 AND s.entity_id = c.entity_id AND s.contact_id = c.contact_id), c.in_eve \
-         FROM contacts c LEFT JOIN names n ON n.id = c.contact_id \
-         WHERE c.kind = $1 AND c.entity_id = $2 \
-         ORDER BY c.standing DESC, lower(coalesce(n.name, '')) LIMIT 500",
-        &[kind.into(), id.into()],
+        &format!(
+            "SELECT c.contact_id, c.contact_type, c.standing, coalesce(n.name, ''), c.notes, \
+                 coalesce((SELECT string_agg(l.name, ', ' ORDER BY l.name) FROM labels l \
+                     WHERE l.kind = c.kind AND l.entity_id = c.entity_id \
+                       AND l.label_id::text = ANY(string_to_array(c.label_ids, ','))), ''), \
+                 (SELECT count(*) FROM server_links s WHERE s.kind = c.kind \
+                     AND s.entity_id = c.entity_id AND s.contact_id = c.contact_id), c.in_eve \
+             FROM contacts c LEFT JOIN names n ON n.id = c.contact_id \
+             WHERE {picked} \
+             ORDER BY c.standing DESC, lower(coalesce(n.name, '')), c.contact_id \
+             LIMIT {PER_PAGE} OFFSET $4"
+        ),
+        &[
+            kind.into(),
+            id.into(),
+            search.into(),
+            ((n - 1) * PER_PAGE).into(),
+        ],
     )
     .map_err(|e| failed("reading contacts", e))?;
     let mut columns = vec![
@@ -831,7 +898,11 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
     }
     let mut table = Table::new(columns)
         .title("Contacts")
-        .empty("No contacts, or not read yet.");
+        .empty(if search.is_empty() {
+            "No contacts, or not read yet."
+        } else {
+            "No contacts or labels have those words."
+        });
     for r in &rows.rows {
         let contact = int(r, 0);
         let kind_of_contact = text(r, 1);
@@ -866,12 +937,55 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
     }
     let mut page = Page::new(format!("{} contacts: {}", word(kind), name(id)?))
         .description("Standings and labels as set in EVE, read hourly")
-        .table(table);
-    if viewer.can(&format!("manage_{kind}_contacts")) {
+        // Its own search, among every contact, not only those shown.
+        .toolbar(Toolbar::new().search("Search contacts and labels"));
+    if !search.is_empty() {
+        if total > PER_PAGE {
+            page = page.text(format!(
+                "The first {PER_PAGE} of {} matches: narrow the search to find the rest.",
+                thousands(total)
+            ));
+        }
+    } else if pages > 1 {
+        // Each page of them beside the title.
+        for p in page_window(n, pages) {
+            let last = (p * PER_PAGE).min(total);
+            page = page.link(
+                format!(
+                    "{} to {}",
+                    thousands((p - 1) * PER_PAGE + 1),
+                    thousands(last)
+                ),
+                list_path(kind, id, p),
+            );
+        }
+        page = page.text(format!(
+            "Contacts {} to {} of {}, by standing.",
+            thousands((n - 1) * PER_PAGE + 1),
+            thousands((n * PER_PAGE).min(total)),
+            thousands(total)
+        ));
+    }
+    page = page.table(table);
+    // Update now posts from the first page.
+    if n == 1 && viewer.can(&format!("manage_{kind}_contacts")) {
         page =
             page.card(Card::new("Update").field("Read them again", action("Update now", "update")));
     }
     Ok(page)
+}
+
+/// A count with thousands separators: 1,234.
+fn thousands(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 { format!("-{out}") } else { out }
 }
 
 /// Whether a contact is in EVE's list still (else kept for its notes or
@@ -1380,6 +1494,18 @@ mod tests {
         assert!(may_begin(0, Duration::from_secs(55)));
         assert!(may_begin(5, Duration::from_secs(10)));
         assert!(!may_begin(5, READ_FOR));
+    }
+
+    #[test]
+    fn every_contact_has_a_page() {
+        assert_eq!(list_path("corporation", 5, 1), "corporation/5");
+        assert_eq!(list_path("corporation", 5, 3), "corporation/5/page/3");
+        assert_eq!(page_window(1, 3), 1..=3);
+        assert_eq!(page_window(1, 20), 1..=8);
+        assert_eq!(page_window(10, 20), 6..=13);
+        assert_eq!(page_window(20, 20), 13..=20);
+        assert_eq!(thousands(1_102), "1,102");
+        assert_eq!(thousands(500), "500");
     }
 
     #[test]
