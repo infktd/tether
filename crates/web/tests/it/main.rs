@@ -61,3 +61,4 @@ mod transfers;
 mod upgrades;
 mod users;
 mod vault;
+mod whats_new;

@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.name AS \"name!\", first.from_version AS \"from!\", p.version AS \"to!\"\n        FROM core.plugins p\n        JOIN LATERAL (\n            SELECT l.details->>'from' AS from_version\n            FROM core.audit_log l\n            WHERE l.target = 'plugin:' || p.id AND l.action = 'plugin.upgraded' AND l.at > $1\n              AND l.details->>'from' IS NOT NULL\n            ORDER BY l.id\n            LIMIT 1\n        ) first ON true\n        WHERE first.from_version IS DISTINCT FROM p.version\n        ORDER BY p.name\n        LIMIT 30\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "from!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "to!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.plugins",
+            "name": "version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "aefe87d8fb368d04aa056c94f0ce91f66a50e1341a5e39a08749257ded8159c2"
+}

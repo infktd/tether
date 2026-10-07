@@ -1460,6 +1460,32 @@
   .popup > form > footer {
     @apply flex justify-end;
   }
+  /* What's new (assets/live.js): the notes of updates not seen yet. */
+  .whats-new > .card > footer {
+    @apply flex justify-end;
+  }
+  .whats-new-body {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .whats-new-release + .whats-new-release {
+    margin-top: 18px;
+  }
+  .whats-new-release h3 {
+    margin: 12px 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+  }
+  .whats-new-release ul {
+    list-style: disc;
+    padding-left: 1.1rem;
+    font-size: 13.5px;
+    color: var(--foreground-soft);
+  }
+  .whats-new-release li + li {
+    margin-top: 4px;
+  }
   /* A long table's filter box, above it inside its panel. */
   .table-filter {
     padding: 0 18px 10px;

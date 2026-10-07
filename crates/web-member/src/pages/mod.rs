@@ -12,3 +12,4 @@ pub mod groups;
 pub mod notifications;
 pub mod securegroups;
 pub mod tokens;
+pub mod whats_new;

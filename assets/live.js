@@ -499,6 +499,20 @@
     // A click on the backdrop (the dialog itself, not its card).
     if (target instanceof HTMLDialogElement && target.classList.contains("popup")) target.close();
   });
+  // What's new (DESIGN.md): the page carries it after an update. It opens
+  // once: opening it marks what it shows as read, so it doesn't come back
+  // on the next page, however it's closed.
+  const whatsNew = () => {
+    const box = document.getElementById("whats-new");
+    if (!(box instanceof HTMLDialogElement) || box.open || "opened" in box.dataset) return;
+    box.dataset.opened = "";
+    box.showModal();
+    fetch("/whats-new/seen", { method: "POST", headers: { "HX-Request": "true" } }).catch(() => {});
+  };
+  document.addEventListener("htmx:load", whatsNew);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", whatsNew);
+  else whatsNew();
+
   // Posted (the page is swapped in place): a popup left open closes. A
   // page with a popup form never reloads itself (any form stops that).
   document.addEventListener("htmx:beforeRequest", (event) => {

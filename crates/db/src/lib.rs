@@ -34,6 +34,7 @@ pub mod states;
 pub mod structure_names;
 pub mod tokens;
 pub mod users;
+pub mod whats_new;
 
 use std::time::Duration;
 

@@ -417,6 +417,9 @@
   .max-w-\[1440px\] {
     max-width: 1440px;
   }
+  .max-w-lg {
+    max-width: var(--container-lg);
+  }
   .max-w-md {
     max-width: var(--container-md);
   }
@@ -9131,6 +9134,32 @@
   .popup > form > footer {
     display: flex;
     justify-content: flex-end;
+  }
+  .whats-new > .card > footer {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .whats-new-body {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .whats-new-release + .whats-new-release {
+    margin-top: 18px;
+  }
+  .whats-new-release h3 {
+    margin: 12px 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+  }
+  .whats-new-release ul {
+    list-style: disc;
+    padding-left: 1.1rem;
+    font-size: 13.5px;
+    color: var(--foreground-soft);
+  }
+  .whats-new-release li + li {
+    margin-top: 4px;
   }
   .table-filter {
     padding: 0 18px 10px;

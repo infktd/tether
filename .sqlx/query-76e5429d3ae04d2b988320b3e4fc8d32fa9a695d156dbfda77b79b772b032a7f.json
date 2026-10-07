@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.accounts\n        SET whats_new_seen = COALESCE(whats_new_seen, $2),\n            whats_new_seen_at = COALESCE(whats_new_seen_at, now())\n        WHERE id = $1\n        RETURNING whats_new_seen AS \"release!\", whats_new_seen_at AS \"at!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "release!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "whats_new_seen"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "whats_new_seen_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "76e5429d3ae04d2b988320b3e4fc8d32fa9a695d156dbfda77b79b772b032a7f"
+}

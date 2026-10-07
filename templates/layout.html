@@ -63,6 +63,7 @@
     {% endif %}
     <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
     <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
+    <a href="/whats-new" class="user-menu-item"{% if shell.active == "whats_new" %} aria-current="page"{% endif %}>{% call icons::icon("book") %}{% endcall %} What's new</a>
     <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">
       <button type="submit" class="user-menu-item w-full">{% call icons::icon("log-out") %}{% endcall %} Log out</button>
     </form>
@@ -147,5 +148,38 @@
     <button type="button" class="btn" data-size="sm" data-variant="primary" id="confirm-box-go"></button>
   </div>
 </div>
+{% if let Some(w) = shell.whats_new %}
+{#- What's new (DESIGN.md): live.js opens it once after an update, and
+    opening it marks what it shows as read. -#}
+<dialog class="dialog popup whats-new" id="whats-new" aria-labelledby="whats-new-title">
+  <div class="card w-full max-w-lg">
+    <header>
+      <h2 id="whats-new-title">What's new</h2>
+      <p>Tether was updated since you last looked.</p>
+    </header>
+    <section class="whats-new-body">
+      {% for r in w.releases %}
+      <div class="whats-new-release">
+        <p class="ov num">{{ r.title }}</p>
+        {% for g in r.groups %}
+        {% if let Some(h) = g.heading %}<h3>{{ h }}</h3>{% endif %}
+        <ul>{% for n in g.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+        {% endfor %}
+      </div>
+      {% endfor %}
+      {% if !w.apps.is_empty() %}
+      <div class="whats-new-release">
+        <h3>Apps updated</h3>
+        <ul>{% for a in w.apps %}<li>{{ a.name }} <span class="num text-muted-foreground">{{ a.from }} → {{ a.to }}</span></li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+    </section>
+    <footer class="gap-2">
+      <a class="btn" data-variant="outline" href="/whats-new">{% if w.more > 0 %}{{ w.more }} earlier {% if w.more == 1 %}update{% else %}updates{% endif %}{% else %}Every update{% endif %}</a>
+      <button type="button" class="btn" data-variant="primary" data-close autofocus>Got it</button>
+    </footer>
+  </div>
+</dialog>
+{% endif %}
 </body>
 </html>

@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}What's new{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">What's new</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6 max-w-3xl">
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("book") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">What's new</h1>
+        <p class="page-desc">What changed in each update, newest first: what concerns everyone, the apps you use{% if shell.nav.any() %} and Administration{% endif %}.</p>
+      </div>
+    </div>
+  </div>
+  {% if releases.is_empty() %}
+  <section class="card"><p class="px-5 py-5 text-sm text-muted-foreground">Nothing yet.</p></section>
+  {% else %}
+  {% for r in releases %}
+  <section class="card whats-new-release">
+    <header><h2 class="num">{{ r.title }}</h2></header>
+    <section>
+      {% for g in r.groups %}
+      {% if let Some(h) = g.heading %}<h3>{{ h }}</h3>{% endif %}
+      <ul>{% for n in g.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+      {% endfor %}
+    </section>
+  </section>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

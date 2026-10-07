@@ -278,6 +278,9 @@ pub struct Shell {
     pub update_available: bool,
     /// For app admins: every app's data sources, working and not.
     pub data_sources: Option<SourceHealth>,
+    /// What's new since the viewer last looked, once after an update
+    /// (`crate::whats_new`).
+    pub whats_new: Option<crate::whats_new::WhatsNew>,
 }
 
 /// Data sources working and not, for the sidebar's foot.
@@ -594,6 +597,8 @@ pub struct Loaded {
     pub state: AccessState,
     pub is_owner: bool,
     pub characters: Vec<CharacterRow>,
+    /// The names of the apps the viewer may open (for What's new).
+    pub apps: Vec<String>,
 }
 
 pub async fn load(
@@ -702,6 +707,20 @@ pub async fn load(
         .filter(|id| Some(*id) != main_id)
         .and_then(|id| account.characters.iter().find(|c| c.id == id));
     let (admin_group, admin_views) = crate::admin_nav::views(&nav, active);
+    let apps: Vec<String> = state
+        .plugins
+        .all_running()
+        .into_iter()
+        .filter(|running| {
+            crate::plugins::may_open(
+                &running.manifest.page_access(""),
+                access.is_blacklist(),
+                |p| perms.contains(p),
+            )
+        })
+        .map(|running| running.manifest.plugin.name.clone())
+        .collect();
+    let whats_new = whats_new(state, session.account, &nav, &apps).await?;
     Ok(Loaded {
         shell: Shell {
             user: ShellUser {
@@ -743,6 +762,7 @@ pub async fn load(
             site_name: crate::site_name::get(&state.db).await?,
             version: crate::updates::CURRENT,
             update_available: nav.system && crate::updates::status(&state.db).await?.newer,
+            whats_new,
             data_sources: if nav.plugins {
                 let (working, broken) = plugin_access::source_health(state).await?;
                 (working + broken > 0).then_some(SourceHealth { working, broken })
@@ -753,7 +773,34 @@ pub async fn load(
         state: access,
         is_owner: account.is_owner,
         characters,
+        apps,
     })
+}
+
+/// What's new for the viewer since they last looked, if anything: the
+/// releases' notes that concern them and, for app admins, the apps updated
+/// since (`crate::whats_new`).
+async fn whats_new(
+    state: &AppState,
+    account: accounts::AccountId,
+    nav: &AdminNav,
+    apps: &[String],
+) -> Result<Option<crate::whats_new::WhatsNew>, PageError> {
+    let seen = tether_db::whats_new::seen(&state.db, account, crate::whats_new::latest()).await?;
+    let releases = crate::whats_new::for_viewer(
+        crate::whats_new::releases(),
+        seen.release,
+        &crate::whats_new::Viewer {
+            admin: nav.any(),
+            apps,
+        },
+    );
+    let updated = if nav.plugins {
+        tether_db::whats_new::app_updates_since(&state.db, seen.at).await?
+    } else {
+        Vec::new()
+    };
+    Ok(crate::whats_new::WhatsNew::build(releases, updated))
 }
 
 #[cfg(test)]

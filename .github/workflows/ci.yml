@@ -207,6 +207,19 @@ jobs:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: scripts/check-app-versions.sh "$BASE"
 
+  # A push that changes what Tether does adds a CHANGELOG.md entry
+  # (scripts/check-changelog.sh): pilots read it in What's new.
+  changelog:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Changes come with a changelog entry
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/check-changelog.sh "$BASE"
+
   # static/app.css is committed so `cargo build` needs no extra step; this
   # rebuilds it with the pinned Tailwind CLI and fails if it's stale (the
   # same script runs before every push).
@@ -432,7 +445,7 @@ jobs:
   # comment); the read-only jobs above use version tags.
   publish-image:
     if: github.event_name == 'push'
-    needs: [fmt, clippy, test, sqlx-offline, test-extra, dev-features-guard, css, wasm, docker, deploy-files, app-versions]
+    needs: [fmt, clippy, test, sqlx-offline, test-extra, dev-features-guard, css, wasm, docker, deploy-files, app-versions, changelog]
     strategy:
       matrix:
         include:

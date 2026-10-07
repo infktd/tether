@@ -289,6 +289,17 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/whats-new
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/whats-new/seen
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 GET {{base}}/static/notifications.js
 HTTP 200
 [Asserts]

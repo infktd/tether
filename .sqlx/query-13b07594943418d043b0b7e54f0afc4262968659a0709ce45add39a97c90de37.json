@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT whats_new_seen, whats_new_seen_at FROM core.accounts WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "whats_new_seen",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "whats_new_seen"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "whats_new_seen_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "whats_new_seen_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "13b07594943418d043b0b7e54f0afc4262968659a0709ce45add39a97c90de37"
+}

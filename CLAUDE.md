@@ -129,6 +129,7 @@ cargo clippy -p hello-plugin -p moon-mining -p member-audit -p fleet-activity-tr
 cargo build -p hello-plugin --target wasm32-wasip2 --release   # the plugin tests build their guests themselves
 scripts/package-plugin.sh plugins/moon-mining ~/.minisign/tether.key   # first-party plugins (plugins/*) -> dist/<id>-<version>.zip + .minisig
 scripts/bundle-apps.sh dist/apps   # every plugins/* app, unsigned, as the image bundles them (deploy/Dockerfile)
+scripts/check-changelog.sh origin/main   # before pushing: a push that changes what Tether does adds a CHANGELOG.md entry at the top (## YYYY-MM-DD, ### Everyone / ### Admins / ### <app name>, plain-words notes); pilots read it in the What's new popup, and CI's changelog job fails otherwise
 scripts/check-app-versions.sh origin/main   # before pushing: any change under plugins/<app> bumps that app's version (0.0.1 for a patch) in plugin.toml and Cargo.toml together; CI's app-versions job fails otherwise (Jay: changed apps under old numbers conflict on the Apps page)
 BUNDLED_APPS_DIR=dist/apps cargo run -p tether-server --features dev   # offer them under "Included with Tether"
 scripts/css.sh    # Tailwind standalone CLI (pinned, checksum-verified) -> static/app.css; commit the output

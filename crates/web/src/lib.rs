@@ -32,7 +32,7 @@ pub mod pages {
         act_as, change_main_login, home, login, make_main, profile, remove_character, to_dashboard,
     };
     pub use tether_web_member::pages::{
-        access_tokens, corpstats, groups, notifications, securegroups, tokens,
+        access_tokens, corpstats, groups, notifications, securegroups, tokens, whats_new,
     };
 }
 
@@ -100,6 +100,8 @@ pub fn router(state: AppState) -> Router {
             post(pages::notifications::delete_read),
         )
         .route("/notifications/stream", get(pages::notifications::stream))
+        .route("/whats-new", get(pages::whats_new::index))
+        .route("/whats-new/seen", post(pages::whats_new::seen))
         .route("/status/strip", get(pages::system::strip))
         .route("/notifications/{id}", get(pages::notifications::show))
         .route(

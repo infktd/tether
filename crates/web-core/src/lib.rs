@@ -55,5 +55,6 @@ pub mod theme;
 pub mod tokens;
 pub mod updates;
 pub mod upgrader;
+pub mod whats_new;
 
 pub use state::{AppState, Limits, Site, StripStatus};
