@@ -1056,9 +1056,6 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
     );
 }
 
-/// Reports count every skill set's characters, past the 500 a tab lists
-/// (and the tab says so), and show every set, though only the first ten
-/// by name have a tab (the host's most).
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn reports_count_every_set_and_character(db: PgPool) {
     let (h, owner) = synced(db).await;
@@ -1083,12 +1080,78 @@ async fn reports_count_every_set_and_character(db: PgPool) {
     for set in ["Doctrine 01", "Doctrine 11"] {
         assert!(finder_row(body, set).contains("601"), "{set}\n{body}");
     }
-    for text in [
-        "The first 500 of 601, by name",
-        "The first 10 skill sets by name each list their characters in a tab below.",
+    // The rows past the host's 500 are left to the filters, and it says so.
+    assert!(
+        body.contains("the first 500 rows, by group and name"),
+        "{body}"
+    );
+}
+
+/// aa-memberaudit's Skill Sets report: a row per group and character with
+/// its main, state, organisation, the sets it can use, whether it's the
+/// main and whether the group is a doctrine; its filters; Guests left out.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_skill_sets_report_has_aa_columns(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    for body in [
+        "_form=add_set&name=Guns&visible=on&skills=Gunnery+1",
+        "_form=add_group&name=Fleet&description=&doctrine=on&active=on&sets=Guns",
     ] {
-        assert!(body.contains(text), "{text}\n{body}");
+        let res = send(&h.app, form(&at, body, &owner)).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     }
+    let reports = format!("/plugins/{ID}/reports");
+    let body = page(&h, &reports, &owner).await.body;
+    // Chribba (his own main) can; Mate Alt, Corp Mate's alt, can't.
+    let row = finder_row(&body, ">Mate Alt<");
+    for text in ["Doctrine: Fleet", "Corp Mate", ">Member<", ">None<", ">No<"] {
+        assert!(row.contains(text), "{text}\n{row}");
+    }
+    let row = finder_row(&body, ">Chribba<");
+    assert!(row.contains(">Guns<") && row.contains(">Yes<"), "{row}");
+    // The filters: mains only, who has the skills, a state.
+    let mains = page(&h, &format!("{reports}?main=yes"), &owner).await.body;
+    assert!(
+        mains.contains("Corp Mate") && !mains.contains(">Mate Alt<"),
+        "{mains}"
+    );
+    let able = page(&h, &format!("{reports}?has=yes"), &owner).await.body;
+    assert!(
+        able.contains(">Chribba<") && !able.contains(">Corp Mate<"),
+        "{able}"
+    );
+    let member = page(&h, &format!("{reports}?state=Member"), &owner)
+        .await
+        .body;
+    assert!(member.contains(">Mate Alt<"), "{member}");
+    // A Guest's characters aren't in the report, as aa-memberaudit's (a
+    // Guest who may still use Member Audit).
+    sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ($1, $2)")
+        .bind(format!("plugin.{ID}.basic_access"))
+        .bind(GUEST_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE core.accounts SET state_id = $1 \
+         WHERE id = (SELECT account_id FROM core.characters WHERE id = $2)",
+    )
+    .bind(GUEST_STATE)
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let body = page(&h, &reports, &owner).await.body;
+    assert!(!body.contains("Mate Alt"), "{body}");
 }
 
 /// Skill sets has a page rule of its own (view_skill_sets), as the Finder,

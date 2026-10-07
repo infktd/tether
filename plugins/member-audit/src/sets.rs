@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use tether_plugin_sdk::identity::Viewer;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, RecordPanel, Section, Submission, SubmitResult, Table,
-    Tone, Value, action, badge, character, item_type, link, log,
+    Column, Field, Form, Page, PageError, RecordPanel, Submission, SubmitResult, Table, Tone,
+    Value, action, badge, character, item_type, link, log,
 };
 
 use crate::access::Access;
@@ -200,9 +200,6 @@ pub(crate) fn grouped<'a>(
 
 /// Characters listed at most (the host's rows per table).
 const MAX_LISTED: usize = 500;
-/// Skill sets with a tab of their own on Reports (the host's tabs per
-/// page).
-const MAX_TABS: usize = 10;
 
 /// SQL over `characters c` for those with every required level of set
 /// `$1`, of those `condition` picks.
@@ -236,18 +233,6 @@ fn able(set: &SkillSet, scope: &(String, Vec<Db>)) -> Result<Vec<(i64, String)>,
         .iter()
         .map(|r| (int(r, 0), text(r, 1)))
         .collect())
-}
-
-/// How many characters [`able`] would list, all of them.
-fn able_count(set: &SkillSet, scope: &(String, Vec<Db>)) -> Result<i64, PageError> {
-    let (condition, scope_params) = scope;
-    let sql = format!(
-        "SELECT count(*) FROM characters c WHERE {}",
-        able_where(condition)
-    );
-    Ok(query(&sql, &able_params(set, scope_params))?
-        .first()
-        .map_or(0, |r| int(r, 0)))
 }
 
 /// The viewer's own characters, as a scope for [`able`].
@@ -1179,94 +1164,6 @@ pub(crate) fn delete_group(viewer: &Viewer, group: &str) -> Result<SubmitResult,
         viewer.main.name, viewer.main.id
     ));
     Ok(SubmitResult::Redirect("skill-sets".into()))
-}
-
-/// Reports (aa-memberaudit's `reports_access`): the Skill Sets report,
-/// over the characters in the viewer's scope. Every set is counted, by
-/// group; the first [`MAX_TABS`] by name each list their characters in a
-/// tab.
-pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
-    if !access.reports {
-        return Err(PageError::NotFound);
-    }
-    let sets = skill_sets()?;
-    let groups = set_groups()?;
-    let scope = access.listed(2);
-    let mut page = Page::new("Reports").description(format!(
-        "Skill Sets: which characters can use each, of {}",
-        access.scope_words()
-    ));
-    let mut counts: BTreeMap<i64, i64> = BTreeMap::new();
-    for set in &sets {
-        counts.insert(set.id, able_count(set, &scope)?);
-    }
-    let mut summary = Vec::new();
-    for (group, members) in grouped(&sets, &groups) {
-        for set in members {
-            if summary.len() >= MAX_LISTED {
-                break;
-            }
-            summary.push(vec![
-                group
-                    .map_or_else(|| UNGROUPED.to_owned(), SetGroup::label)
-                    .into(),
-                set.value(),
-                yes_no(group.is_some_and(|g| g.doctrine)),
-                counts.get(&set.id).copied().unwrap_or(0).into(),
-            ]);
-        }
-    }
-    let mut tabs = Vec::new();
-    for set in sets.iter().take(MAX_TABS) {
-        let count = counts.get(&set.id).copied().unwrap_or(0);
-        let able = able(set, &scope)?;
-        let mut table = Table::new(vec![Column::text("Character")]).empty("Nobody yet.");
-        if usize::try_from(count).unwrap_or(usize::MAX) > able.len() {
-            table = table.title(format!(
-                "The first {} of {}, by name",
-                able.len(),
-                crate::sheet::grouped(count)
-            ));
-        }
-        tabs.push((
-            set.name.clone(),
-            with_rows(
-                table,
-                able.iter().map(|(id, n)| {
-                    if access.may_open(*id) {
-                        vec![
-                            character(*id, n.clone())
-                                .link(format!("character/{id}"))
-                                .into(),
-                        ]
-                    } else {
-                        vec![character(*id, n.clone()).into()]
-                    }
-                }),
-            ),
-        ));
-    }
-    page = page.table(with_rows(
-        Table::new(vec![
-            Column::text("Group"),
-            Column::text("Skill set"),
-            Column::text("Doctrine"),
-            Column::numeric("Characters"),
-        ])
-        .title("Skill Sets")
-        .empty("No skill sets yet."),
-        summary,
-    ));
-    if sets.len() > MAX_TABS {
-        page = page.text(format!(
-            "The first {MAX_TABS} skill sets by name each list their characters in a tab below. \
-             The others are counted above."
-        ));
-    }
-    for (name, table) in tabs {
-        page = page.tab(name, vec![Section::Table(table)]);
-    }
-    Ok(page)
 }
 
 #[cfg(test)]

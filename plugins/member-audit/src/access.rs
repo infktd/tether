@@ -94,6 +94,12 @@ impl<'a> Access<'a> {
         self.owners().get(&character)
     }
 
+    /// Every character registered with Member Audit, with its owner's
+    /// main and state (none when Tether doesn't say).
+    pub fn all_owners(&self) -> impl Iterator<Item = &Owner> {
+        self.owners().values()
+    }
+
     pub fn owns(&self, character: i64) -> bool {
         self.viewer.characters.iter().any(|c| c.id == character)
     }

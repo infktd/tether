@@ -286,7 +286,7 @@ fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
         &params[..scope_params],
     )?;
     let owners: Vec<_> = rows.iter().map(|r| access.owner(int(r, 0))).collect();
-    let organisations = corporation_names(
+    let organisations = names_of(
         owners
             .iter()
             .flatten()
@@ -388,9 +388,10 @@ fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
         .table(table))
 }
 
-/// Names for corporations (a main's may be no member character's):
+/// Names for corporations and alliances (a main's may be no member
+/// character's):
 /// stored, else asked of ESI (a page can't store them), else none.
-fn corporation_names(mut ids: Vec<i64>) -> Result<BTreeMap<i64, String>, PageError> {
+pub(crate) fn names_of(mut ids: Vec<i64>) -> Result<BTreeMap<i64, String>, PageError> {
     ids.retain(|id| *id > 0);
     ids.sort_unstable();
     ids.dedup();

@@ -29,6 +29,7 @@ mod filters;
 mod fitting;
 mod mail;
 mod pages;
+mod reports;
 mod sets;
 mod settings;
 mod sheet;
@@ -55,7 +56,7 @@ impl Plugin for MemberAudit {
             ["skill-sets"] => sets::skill_sets_page(&access, None),
             ["skill-sets", "set", id] => sets::set_page(&access, id, None),
             ["skill-sets", "group", id] => sets::group_page(&access, id, None),
-            ["reports"] => sets::reports(&access),
+            ["reports"] => reports::skill_sets_report(&access, &request),
             ["data-export"] if viewer.can("exports_access") => exports::page(None),
             ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {
