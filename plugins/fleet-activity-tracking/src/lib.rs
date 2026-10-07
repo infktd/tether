@@ -2297,6 +2297,12 @@ fn year_links(mut page: Page, path: &str, year: i32) -> Page {
     page
 }
 
+/// Every corporation's, alliance's and pilot's statistics: aa-afat's
+/// stats_corporation_other, which manage_afat includes.
+fn sees_every_corporation(viewer: &Viewer) -> bool {
+    viewer.can("stats_corporation_other") || viewer.can("manage_afat")
+}
+
 /// The viewer's "own corporation" for stats_corporation_own: the main's,
 /// as in aa-afat (an alt parked in another corporation doesn't count).
 fn viewer_corporations(viewer: &Viewer) -> Vec<i64> {
@@ -2329,7 +2335,7 @@ fn stats_page(viewer: &Viewer, year: i32) -> Result<Page, PageError> {
             &mine,
             character_link,
         ));
-    let other = viewer.can("stats_corporation_other");
+    let other = sees_every_corporation(viewer);
     let corporation_link = |id: i64, name: &str| -> Value {
         link(name, format!("stats/corporation/{id}/{year}")).into()
     };
@@ -2479,7 +2485,7 @@ fn fleet_type_table(filter: &str, id: i64, year: i32) -> Result<Table, PageError
 }
 
 fn corporation_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError> {
-    let allowed = viewer.can("stats_corporation_other")
+    let allowed = sees_every_corporation(viewer)
         || (viewer.can("stats_corporation_own") && viewer_corporations(viewer).contains(&id));
     if !allowed {
         return Err(PageError::Forbidden);
@@ -2514,7 +2520,7 @@ fn corporation_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageErr
 }
 
 fn alliance_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError> {
-    if !viewer.can("stats_corporation_other") {
+    if !sees_every_corporation(viewer) {
         return Err(PageError::Forbidden);
     }
     let filter = "f.alliance_id = $3";
@@ -2549,7 +2555,7 @@ fn alliance_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError>
 fn character_page(viewer: &Viewer, id: i64, year: i32) -> Result<Page, PageError> {
     let own = viewer.characters.iter().any(|c| c.id == id);
     let allowed = own
-        || viewer.can("stats_corporation_other")
+        || sees_every_corporation(viewer)
         // A pilot of the main's corporation: now, or (for characters the
         // app hasn't seen) when their FATs were recorded.
         || (viewer.can("stats_corporation_own")

@@ -694,6 +694,35 @@ async fn permissions_follow_aa_afat(db: PgPool) {
     no_problems(&plugin_problems(&h).await);
 }
 
+/// As aa-afat, manage_afat opens every corporation's, alliance's and
+/// pilot's statistics, as stats_corporation_other does.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn managers_see_every_corporations_statistics(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let alliance = format!("stats/alliance/{CHRIBBA_ALLIANCE}");
+    let corporation = format!("stats/corporation/{CHRIBBA_CORP}");
+    let pilot = format!("stats/character/{CHRIBBA}");
+    for at in [&alliance, &corporation, &pilot] {
+        assert_eq!(
+            open(&h, at, &line).await.status,
+            StatusCode::FORBIDDEN,
+            "{at}"
+        );
+    }
+    let stats = open(&h, "stats", &line).await;
+    assert!(!stats.body.contains("Alliances"), "{}", stats.body);
+
+    grant(&h, &owner, "manage_afat", MEMBER_STATE).await;
+    for at in [&alliance, &corporation, &pilot] {
+        let res = open(&h, at, &line).await;
+        assert_eq!(res.status, StatusCode::OK, "{at}: {}", res.body);
+    }
+    let stats = open(&h, "stats", &line).await;
+    assert!(stats.body.contains("Alliances"), "{}", stats.body);
+    assert!(stats.body.contains("Corporations"), "{}", stats.body);
+    no_problems(&plugin_problems(&h).await);
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn statistics_by_alliance_corporation_pilot_and_month(db: PgPool) {
     let (h, owner, line) = setup(db).await;
