@@ -974,14 +974,14 @@ fn month_start(month: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d").ok()
 }
 
-/// A program the viewer may see the leaderboard of: one they may use,
-/// with `see_leaderboard`, or one they manage (B2: AA showed any
-/// program's).
+/// A program the viewer may see the leaderboard of: one they may use
+/// (with basic access, as AA's view; `see_leaderboard` only lists the
+/// link), or manage (B2: AA showed any program's).
 fn leaderboard_program(access: &Access, id: i64) -> Result<Program, PageError> {
     let p = programs::get(id)
         .map_err(|e| failed("reading the program", e))?
         .ok_or(PageError::NotFound)?;
-    if (access.can("see_leaderboard") && p.visible_to(access)) || p.editable_by(access) {
+    if (access.basic() && p.visible_to(access)) || p.editable_by(access) {
         Ok(p)
     } else {
         Err(PageError::NotFound)
@@ -1078,13 +1078,15 @@ pub fn leaderboard(access: &Access, id: i64, request: &Request) -> Result<Page, 
 
 // ---- performance ---------------------------------------------------------------
 
-/// A program the viewer may see the performance of: one they may use,
-/// with `see_performance`, or one they manage (B2).
+/// A program the viewer may see the performance of: AA's
+/// `can_see_performance_test` (`see_performance` or a manager), and a
+/// program they may use or manage (B2).
 fn performance_program(access: &Access, id: i64) -> Result<Program, PageError> {
     let p = programs::get(id)
         .map_err(|e| failed("reading the program", e))?
         .ok_or(PageError::NotFound)?;
-    let may = (access.can("see_performance") && p.visible_to(access)) || p.editable_by(access);
+    let may = (access.can("see_performance") || access.manager())
+        && (p.visible_to(access) || p.editable_by(access));
     if may { Ok(p) } else { Err(PageError::NotFound) }
 }
 

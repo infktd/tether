@@ -7,7 +7,7 @@
 id = "tether.buyback"
 name = "Buyback"
 icon = "package"
-version = "0.1.0"
+version = "0.1.1"
 host_api = "1"
 description = "Buyback programs: members paste items for a price and contract them to the corporation; contracts are checked against the calculation. Reverse buyback sells corporation hangar stock to members."
 

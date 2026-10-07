@@ -107,7 +107,7 @@ fn index(access: &Access) -> Result<Page, PageError> {
         if leaderboard {
             row.push(link("Leaderboard", format!("program/{}/leaderboard", p.id)).into());
         }
-        let performance = access.can("see_performance") || p.editable_by(access);
+        let performance = access.can("see_performance") || access.manager();
         row.push(if performance {
             link("Performance", format!("program/{}/performance", p.id)).into()
         } else {
