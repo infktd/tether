@@ -913,7 +913,8 @@ struct TeamRequest {
 /// pilot, the ship, the fleet and its SRP code, the loss on zKillboard
 /// (built from the killmail's id, never the pasted link) and the
 /// additional info only when there is some. Names and info are escaped,
-/// so nothing pings or links.
+/// so nothing pings or links; the relay links the title to the fleet's
+/// requests.
 fn team_card(r: &TeamRequest) -> Embed {
     let mut card = Embed::new(format!("New SRP request: {}", r.ship_name))
         .author(
@@ -961,7 +962,7 @@ fn relay() -> Result<(), JobError> {
     // A request removed with its fleet takes its card along.
     let waiting = storage::query(
         "SELECT o.id, o.channel, f.name, f.srp_code, r.character_id, r.character_name, \
-             r.ship_type_id, r.ship_name, r.killmail_id, r.additional_info, r.created_at \
+             r.ship_type_id, r.ship_name, r.killmail_id, r.additional_info, r.created_at, f.id \
          FROM outbox o JOIN requests r ON r.id = o.request_id JOIN fleets f ON f.id = r.fleet_id \
          WHERE o.sent_at IS NULL AND o.failed IS NULL ORDER BY o.id LIMIT $1",
         &[SENDS_PER_RUN.into()],
@@ -988,7 +989,10 @@ fn relay() -> Result<(), JobError> {
             info: text(row, 9),
             requested: when(row, 10),
         });
-        match discord::send_embed(&text(row, 1), &card, Mention::None) {
+        // Its title opens the fleet's requests in Tether, as aa-srp's
+        // links to the SRP link's requests.
+        let fleet = format!("fleet/{}", int(row, 11));
+        match discord::send_linked_embed(&text(row, 1), &card, &fleet, Mention::None) {
             Ok(()) => {}
             // Not a channel of the app's any more, Discord not set up, or
             // a card the host refuses: it won't go later either.

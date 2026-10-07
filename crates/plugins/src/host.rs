@@ -319,7 +319,7 @@ impl tether::plugin::discord::Host for CallState {
         text: String,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, text, None, mention).await
+        self.discord(channel, text, None, None, mention).await
     }
 
     async fn send_embed(
@@ -328,7 +328,18 @@ impl tether::plugin::discord::Host for CallState {
         embed: services::Embed,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, String::new(), Some(embed), mention)
+        self.discord(channel, String::new(), Some(embed), None, mention)
+            .await
+    }
+
+    async fn send_linked_embed(
+        &mut self,
+        channel: String,
+        embed: services::Embed,
+        page: String,
+        mention: services::Mention,
+    ) -> Result<(), services::DiscordError> {
+        self.discord(channel, String::new(), Some(embed), Some(page), mention)
             .await
     }
 }
@@ -339,6 +350,7 @@ impl CallState {
         channel: String,
         text: String,
         embed: Option<services::Embed>,
+        page: Option<String>,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
         if self.jobs_refused {
@@ -355,7 +367,7 @@ impl CallState {
             .clone()
             .ok_or(services::DiscordError::Unavailable)?;
         services
-            .discord_send(self.plugin.clone(), channel, text, embed, mention)
+            .discord_send(self.plugin.clone(), channel, text, embed, page, mention)
             .await
     }
 }

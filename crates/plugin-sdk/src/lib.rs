@@ -315,6 +315,18 @@ pub mod discord {
         crate::bindings::tether::plugin::discord::send_embed(channel, embed, &mention)
     }
 
+    /// As [`send_embed`], the card's title a link to `page`, one of this
+    /// app's own pages by its path (`"fleet/12"`): Tether makes the address
+    /// on this instance.
+    pub fn send_linked_embed(
+        channel: &str,
+        embed: &Embed,
+        page: &str,
+        mention: Mention,
+    ) -> Result<(), Error> {
+        crate::bindings::tether::plugin::discord::send_linked_embed(channel, embed, page, &mention)
+    }
+
     impl Embed {
         /// A card with just a title; fill in the rest with the builders.
         pub fn new(title: impl Into<String>) -> Self {

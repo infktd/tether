@@ -841,6 +841,11 @@ interface discord {
     /// Posts a card to an assigned channel. The mention, if any, is the
     /// message's text above it.
     send-embed: func(channel: string, embed: embed, mention: mention) -> result<_, error>;
+    /// As `send-embed`, its title a link to `page`: one of this plugin's
+    /// own pages on this Tether, by its path as `[[pages]]` give it
+    /// (e.g. "fleet/12", a query allowed). The host makes the address, so
+    /// a card never links anywhere else.
+    send-linked-embed: func(channel: string, embed: embed, page: string, mention: mention) -> result<_, error>;
 }
 
 /// Background work on Tether's job queue: the schedules declared in

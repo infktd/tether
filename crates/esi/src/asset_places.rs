@@ -678,7 +678,10 @@ mod tests {
                 .map(|i| i["item_id"].as_i64().unwrap())
                 .collect()
         };
-        assert_eq!(ids(structure_items(&tree, Some(&[FORTIZAR]))), vec![1, 2, 3, 6]);
+        assert_eq!(
+            ids(structure_items(&tree, Some(&[FORTIZAR]))),
+            vec![1, 2, 3, 6]
+        );
         // The Upwell structures unread: shared slots pass for none.
         assert_eq!(ids(structure_items(&tree, None)), vec![1, 2, 6]);
         let fuel = &structure_items(&tree, None)[1];

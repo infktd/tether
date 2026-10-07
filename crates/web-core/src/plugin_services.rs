@@ -652,6 +652,42 @@ fn image_url(image: &Image) -> Result<String, DiscordError> {
 }
 
 /// A plugin's card checked against Discord's limits, its text defused.
+/// The address of one of `plugin`'s own pages on this Tether, for a card's
+/// title: `page` a path as `[[pages]]` give it (letters, digits and
+/// `/-_.~`, a query of the same with `?=&%+,`), never another site's.
+fn page_link(public_url: &str, plugin: &str, page: &str) -> Result<String, DiscordError> {
+    let invalid = || {
+        DiscordError::Invalid(
+            "a card links to one of this app's own pages, by its path (e.g. \"fleet/12\")"
+                .to_owned(),
+        )
+    };
+    let (path, query) = page.split_once('?').unwrap_or((page, ""));
+    let fits = |s: &str, more: &str| {
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/-_.~".contains(c) || more.contains(c))
+    };
+    if page.len() > 300
+        || path.starts_with('/')
+        || path.split('/').any(|part| part == "." || part == "..")
+        || path.contains("//")
+        || !fits(path, "")
+        || !fits(query, "?=&%+,")
+    {
+        return Err(invalid());
+    }
+    Ok(format!(
+        "{}{}{}",
+        public_url.trim_end_matches('/'),
+        crate::plugins::page_href(plugin, path.trim_end_matches('/')),
+        if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{query}")
+        }
+    ))
+}
+
 fn card(mut embed: Embed) -> Result<DiscordEmbed, DiscordError> {
     let invalid = |why: &str| DiscordError::Invalid(why.to_owned());
     let len = |s: &str| s.chars().count();
@@ -727,6 +763,7 @@ fn card(mut embed: Embed) -> Result<DiscordEmbed, DiscordError> {
     };
     Ok(DiscordEmbed {
         title: embed.title,
+        url: None,
         description: embed.description,
         color: embed.color.map(|c| c & 0x00ff_ffff),
         author: embed
@@ -757,6 +794,7 @@ async fn discord_send(
     channel: &str,
     text: &str,
     embed: Option<Embed>,
+    page: Option<String>,
     mention: Mention,
 ) -> Result<(), DiscordError> {
     let running = plugins
@@ -774,7 +812,10 @@ async fn discord_send(
             "this plugin wasn't approved to send Discord messages".to_owned(),
         ));
     }
-    let embed = embed.map(card).transpose()?;
+    let mut embed = embed.map(card).transpose()?;
+    if let (Some(card), Some(page)) = (embed.as_mut(), page) {
+        card.url = Some(page_link(&deps.public_url, plugin, &page)?);
+    }
     // A card may have no text of its own.
     if (embed.is_none() && text.trim().is_empty()) || text.chars().count() > MAX_MESSAGE {
         return Err(DiscordError::Invalid(format!(
@@ -1170,6 +1211,7 @@ impl Services for PluginServices {
         channel: String,
         text: String,
         embed: Option<Embed>,
+        page: Option<String>,
         mention: Mention,
     ) -> Fut<Result<(), DiscordError>> {
         // Refused there a moment ago: the same answer, without asking
@@ -1188,7 +1230,7 @@ impl Services for PluginServices {
         );
         Box::pin(async move {
             let result = discord_send(
-                &deps, &plugins, &refusals, &plugin, &channel, &text, embed, mention,
+                &deps, &plugins, &refusals, &plugin, &channel, &text, embed, page, mention,
             )
             .await;
             let outcome = if result.is_ok() {
@@ -1387,5 +1429,40 @@ impl Services for PluginServices {
         Box::pin(async move {
             crate::plugin_shared::published(&db, &plugins, &plugin, viewer_corporation).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::page_link;
+
+    /// A card links only to the app's own pages on this Tether.
+    #[test]
+    fn card_links_are_the_apps_own_pages() {
+        let link = |page: &str| page_link("https://auth.example.com/", "tether.srp", page);
+        assert_eq!(
+            link("fleet/12").unwrap(),
+            "https://auth.example.com/plugins/tether.srp/fleet/12"
+        );
+        assert_eq!(
+            link("fleet/12?page=2&sort=ship").unwrap(),
+            "https://auth.example.com/plugins/tether.srp/fleet/12?page=2&sort=ship"
+        );
+        assert_eq!(
+            link("").unwrap(),
+            "https://auth.example.com/plugins/tether.srp"
+        );
+        for bad in [
+            "/fleet/12",
+            "//evil.example",
+            "../../admin",
+            "fleet/../../admin",
+            "https://evil.example",
+            "fleet/12#x",
+            "fleet 12",
+            "fleet/12?next=https://evil.example",
+        ] {
+            assert!(link(bad).is_err(), "{bad}");
+        }
     }
 }

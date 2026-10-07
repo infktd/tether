@@ -116,13 +116,15 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// Whether `account` is an active superuser.
     fn identity_superuser(&self, account: i64) -> Fut<bool>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;
-    /// `text`, or with `embed` a card and no text of its own.
+    /// `text`, or with `embed` a card and no text of its own, its title a
+    /// link to the plugin's own `page` when one is given.
     fn discord_send(
         &self,
         plugin: String,
         channel: String,
         text: String,
         embed: Option<Embed>,
+        page: Option<String>,
         mention: Mention,
     ) -> Fut<Result<(), DiscordError>>;
     /// One outbound HTTPS request, to a host approved for `plugin`;

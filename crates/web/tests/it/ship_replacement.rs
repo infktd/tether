@@ -785,7 +785,7 @@ async fn srp_team_channel_gets_new_requests(db: PgPool) {
     // None by default, as aa-srp's: a request posts nothing.
     let res = post(&h, &manager, "add", &add_fleet("Op+Rock")).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let (_, code) = newest_fleet(&h).await;
+    let (fleet, code) = newest_fleet(&h).await;
     let uri = format!("request/{code}");
     let res = post(
         &h,
@@ -831,6 +831,8 @@ async fn srp_team_channel_gets_new_requests(db: PgPool) {
     assert_eq!(sent.len(), 1, "{sent:#?}");
     let card = &sent[0]["embeds"][0];
     assert_eq!(card["title"], "New SRP request: Rifter");
+    // Its title opens the fleet's requests in Tether (aa-srp's link).
+    assert_eq!(card["url"], format!("{SITE}/plugins/{ID}/fleet/{fleet}"));
     assert_eq!(card["author"]["name"], "Pilot A");
     let fields = card["fields"].to_string();
     for text in [

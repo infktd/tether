@@ -259,6 +259,8 @@ pub struct TextChannel {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Embed {
     pub title: String,
+    /// The title links here.
+    pub url: Option<String>,
     pub description: Option<String>,
     /// `0xRRGGBB`.
     pub color: Option<u32>,
@@ -303,6 +305,9 @@ impl Embed {
         });
         if let Some(description) = &self.description {
             embed["description"] = description.as_str().into();
+        }
+        if let Some(url) = &self.url {
+            embed["url"] = url.as_str().into();
         }
         if let Some(color) = self.color {
             embed["color"] = color.into();

@@ -6,6 +6,15 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ## 2026-10-07
 
+### Structures
+- Corporations with very large asset lists now show their structures' fittings, quantum cores, fuel and moon material bays, and their Orbital Skyhooks: Tether reads every page of the assets in the background, as Alliance Auth does.
+- A problem with one of an owner's reads stays shown until that read works again.
+
+### Ship Replacement
+- The SRP team's card in Discord links to the fleet's requests in Tether, as in Alliance Auth.
+
+## 2026-10-07
+
 ### Everyone
 - A "What's new" popup like this one now opens once after each update. Every update's notes stay under your account menu, What's new.
 
