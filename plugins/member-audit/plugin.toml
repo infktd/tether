@@ -90,7 +90,7 @@ view_skill_sets = "Can view skill sets for a character"
 # (Tether sends the notice when a character is unregistered).
 notified_on_character_removal = "Notified when member drops character"
 exports_access = "Can access data exports (every character's contracts and wallet journal)"
-manage = "Create and delete skill sets (on Skill sets, which view_skill_sets opens), and change Member Audit's settings"
+manage = "Create, change, copy and delete skill sets and their groups, and change Member Audit's settings"
 
 # Who each is for, for admins deciding whom to grant it (Permissions
 # shows it under the description).
@@ -107,7 +107,7 @@ view_everything = "A view scope for alliance leadership and auditors: every char
 view_skill_sets = "Usually Member. Holders see which of their characters can use each skill set (a doctrine, say), on the Skill sets page and on each sheet."
 notified_on_character_removal = "For officers who watch who leaves. Holders get a Tether notice when a pilot in their view scope unregisters a character from Member Audit."
 exports_access = "For leadership and auditors checking ISK and trades. Holders download every registered character's contracts, contract items and wallet journal, whatever their view scope, so keep it to the few who need it."
-manage = "For Member Audit's admins. Holders add and delete skill sets, which Secure Groups' skill set filters follow, and change the app's settings, such as how long history and mail are kept."
+manage = "For Member Audit's admins. Holders add, change, copy and delete skill sets and their groups, which Secure Groups' skill set filters follow, and change the app's settings, such as how long history and mail are kept."
 
 # What 0.2 called them: their grants move on upgrade. view_mail is gone
 # (mail goes with the sheet, as aa-memberaudit's), and its grants with it.

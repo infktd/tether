@@ -846,8 +846,8 @@ async fn member_audit_end_to_end(db: PgPool) {
     let deleted = send(
         &h.app,
         form(
-            &format!("/plugins/{ID}/skill-sets"),
-            &format!("_form=delete_set&set={set}&confirm=on"),
+            &format!("/plugins/{ID}/skill-sets/set/{set}"),
+            &format!("_form=delete_set&set={set}"),
             &owner,
         ),
     )
@@ -1282,6 +1282,133 @@ async fn skill_sets_have_aa_fields_and_groups(db: PgPool) {
     assert_eq!(
         page(&h, &format!("{at}/group/1"), &blue).await.status,
         StatusCode::NOT_FOUND
+    );
+}
+
+/// Skill sets are changed and copied on their own page, as in
+/// aa-memberaudit's admin; they name any of EVE's skills, trained by a
+/// member or not; and there's no cap of 30 sets.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn skill_sets_are_changed_and_copied(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    // Thirty sets already: a thirty-first is no problem.
+    sqlx::raw_sql(
+        r#"INSERT INTO "plugin_tether.member-audit".skill_sets (name)
+             SELECT 'Old ' || n FROM generate_series(1, 30) n;
+           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, required_level)
+             SELECT id, 3300, 1 FROM "plugin_tether.member-audit".skill_sets;"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    // Nobody has trained Caldari Titan; it's still a skill, named in any
+    // case.
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            "_form=add_set&name=Titan&visible=on&skills=caldari+titan+1%0AGunnery+5",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let set_at = res.location().to_owned();
+    assert!(set_at.contains("/skill-sets/set/"), "{set_at}");
+    let set: i64 = set_at.rsplit('/').next().unwrap().parse().unwrap();
+    let page_now = page(&h, &set_at, &owner).await;
+    for text in ["Caldari Titan", "Gunnery 5", "Copy", "Delete skill set"] {
+        assert!(page_now.body.contains(text), "{text}\n{}", page_now.body);
+    }
+    // Changing it: a new name, a recommended level, a ship; its skills are
+    // the form's.
+    let res = send(
+        &h.app,
+        form(
+            &set_at,
+            "_form=save_set&name=Titans&description=Big&ship=Leviathan&visible=on\
+             &skills=Caldari+Titan+1+%5B3%5D",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let skills: Vec<(i64, Option<i32>, Option<i32>)> = sqlx::query_as(
+        r#"SELECT skill_id, required_level, recommended_level
+           FROM "plugin_tether.member-audit".skill_set_skills WHERE set_id = $1"#,
+    )
+    .bind(set)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(skills, vec![(3346, Some(1), Some(3))]);
+    let page_now = page(&h, &set_at, &owner).await;
+    for text in ["Titans", "Big", "Leviathan", "Caldari Titan 1 [3]"] {
+        assert!(page_now.body.contains(text), "{text}\n{}", page_now.body);
+    }
+    // A name another set has is refused.
+    let res = send(
+        &h.app,
+        form(
+            &set_at,
+            "_form=save_set&name=Old+1&visible=on&skills=Gunnery+1",
+            &owner,
+        ),
+    )
+    .await;
+    assert!(res.body.contains("already exists"), "{}", res.body);
+    // Copying it: "Titans 2", the same skills and fields.
+    let res = send(
+        &h.app,
+        form(&set_at, &format!("_form=copy_set&set={set}"), &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (copy, description, ship): (i64, String, Option<i64>) = sqlx::query_as(
+        r#"SELECT id, description, ship_type_id FROM "plugin_tether.member-audit".skill_sets
+           WHERE name = 'Titans 2'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!((description.as_str(), ship.is_some()), ("Big", true));
+    assert!(res.location().ends_with(&format!("/skill-sets/set/{copy}")));
+    let copied: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".skill_set_skills
+           WHERE set_id = $1 AND skill_id = 3346 AND recommended_level = 3"#,
+    )
+    .bind(copy)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(copied, 1);
+    // Pilots with view_skill_sets open a set's page, not a hidden one,
+    // and get no forms.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".skill_sets SET is_visible = false WHERE id = $1"#,
+    )
+    .bind(copy)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "view_skill_sets").await;
+    let seen = page(&h, &set_at, &blue).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert!(!seen.body.contains("Delete skill set"), "{}", seen.body);
+    assert_eq!(
+        page(&h, &format!("{at}/set/{copy}"), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_ne!(
+        send(
+            &h.app,
+            form(&set_at, &format!("_form=copy_set&set={set}"), &blue)
+        )
+        .await
+        .status,
+        StatusCode::SEE_OTHER
     );
 }
 

@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::storage::{self, Value as Db};
 
+/// EVE's category of skills.
+pub(crate) const SKILLS: i64 = 16;
 /// EVE's category of ships.
 pub(crate) const SHIPS: i64 = 6;
 
@@ -119,7 +121,7 @@ mod tests {
             vec![Type {
                 id: 3300,
                 name: "Gunnery".to_owned(),
-                category_id: 16
+                category_id: SKILLS
             }]
         );
         assert!(parse("nope").is_empty());

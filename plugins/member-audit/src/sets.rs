@@ -20,10 +20,9 @@ use crate::access::Access;
 use crate::pages::roman;
 use crate::{boolean, failed, int, name_of, opt_int, query, text, with_rows};
 
-/// Skill sets and the skills in one, so the Skill Sets page stays within
-/// the host's page limits.
-const MAX_SETS: i64 = 30;
-const MAX_SKILLS_PER_SET: usize = 50;
+/// Skills in one set, at most: more than any ship needs (aa-memberaudit
+/// sets none, and no limit on sets either).
+const MAX_SKILLS_PER_SET: usize = 300;
 /// Skill set groups, at most.
 const MAX_GROUPS: i64 = 100;
 /// aa-memberaudit's label for sets in no group.
@@ -405,11 +404,16 @@ pub(crate) fn skill_sets_page(access: &Access, note: Option<&str>) -> Result<Pag
             if !set.visible && !manage {
                 continue;
             }
-            let able = able(set, &mine)?;
-            let mut name = set.value();
-            if !set.visible {
-                name = format!("{} (hidden from pilots)", set.name).into();
+            if rows.len() >= MAX_LISTED {
+                break;
             }
+            let able = able(set, &mine)?;
+            let open = format!("skill-sets/set/{}", set.id);
+            let name: Value = match (&set.ship, set.visible) {
+                (_, false) => link(format!("{} (hidden from pilots)", set.name), open).into(),
+                (Some((ship, _)), true) => item_type(*ship, set.name.clone()).link(open).into(),
+                (None, true) => link(set.name.clone(), open).into(),
+            };
             rows.push(vec![
                 group
                     .map_or_else(|| UNGROUPED.to_owned(), SetGroup::label)
@@ -468,43 +472,7 @@ pub(crate) fn skill_sets_page(access: &Access, note: Option<&str>) -> Result<Pag
             ]
         }),
     ));
-    page = page.form(
-        Form::new("add_set", "Add skill set")
-            .title("New skill set")
-            .description(
-                "One skill per line with the level it requires, as `Caldari Battleship 4`; a \
-                 level it recommends goes in brackets after it (`Caldari Battleship 4 [5]`), or \
-                 alone (`Caldari Battleship [5]`). Only skills some member has trained are known. \
-                 Secure Groups with a skill set filter follow its changes: changing or deleting \
-                 a set changes who is in them.",
-            )
-            .field(Field::text("name", "Name", 100).required())
-            .field(Field::textarea("description", "Description", 2000))
-            .field(
-                Field::text("ship", "Ship", 100)
-                    .help("A ship's name, for its picture beside the set. Optional."),
-            )
-            .field(Field::checkbox(
-                "visible",
-                "Show it on pilots' own sheets",
-                true,
-            ))
-            .field(Field::textarea("skills", "Skills", 5000).required()),
-    );
-    page = page.form(group_form(None, &sets));
-    if !sets.is_empty() {
-        let choices: Vec<(String, String)> = sets
-            .iter()
-            .take(100)
-            .map(|set| (set.id.to_string(), set.name.clone()))
-            .collect();
-        page = page.form(
-            Form::new("delete_set", "Delete skill set")
-                .field(Field::select("set", "Skill set", choices).required())
-                .field(Field::checkbox("confirm", "Yes, delete it", false).required()),
-        );
-    }
-    Ok(page)
+    Ok(page.form(set_form(None)).form(group_form(None, &sets)))
 }
 
 fn yes_no(yes: bool) -> Value {
@@ -639,44 +607,43 @@ pub(crate) fn parse_line(line: &str) -> Result<(String, Option<i64>, Option<i64>
 /// A skill's id with its required and recommended levels.
 pub(crate) type Levels = (i64, Option<i64>, Option<i64>);
 
-/// A set's skills, one per line, matched to known skills.
+/// A set's skills, one per line: each any of EVE's skills (Tether's
+/// static data), as aa-memberaudit picks them from every skill type.
 pub(crate) fn parse_skills(text: &str) -> Result<Vec<Levels>, String> {
-    let lines: Vec<&str> = text
+    let lines = text
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .collect();
+        .map(parse_line)
+        .collect::<Result<Vec<_>, String>>()?;
     if lines.len() > MAX_SKILLS_PER_SET {
         return Err(format!(
             "A skill set has at most {MAX_SKILLS_PER_SET} skills."
         ));
     }
+    let names: Vec<&str> = lines.iter().map(|(name, ..)| name.as_str()).collect();
+    let found = crate::types::by_names(&names)?;
     let mut out: Vec<Levels> = Vec::new();
-    for line in lines {
-        let (name, required, recommended) = parse_line(line)?;
-        let found = storage::query(
-            "SELECT id FROM names WHERE lower(name) = lower($1) \
-             AND id IN (SELECT DISTINCT skill_id FROM skills) LIMIT 1",
-            &[name.as_str().into()],
-        )
-        .map_err(|e| format!("reading skills: {e:?}"))?;
-        let id = found
-            .rows
-            .first()
-            .map(|r| int(r, 0))
-            .ok_or_else(|| format!("\"{name}\" isn't a skill any member has trained"))?;
+    let mut known = Vec::new();
+    for (name, required, recommended) in &lines {
+        let skill = found
+            .get(&name.to_lowercase())
+            .filter(|t| t.category_id == crate::types::SKILLS)
+            .ok_or_else(|| format!("\"{name}\" isn't a skill"))?;
+        known.push(skill);
         // A skill named twice keeps its highest levels.
-        match out.iter_mut().find(|(k, ..)| *k == id) {
+        match out.iter_mut().find(|(k, ..)| *k == skill.id) {
             Some((_, req, rec)) => {
-                *req = (*req).max(required);
-                *rec = (*rec).max(recommended);
+                *req = (*req).max(*required);
+                *rec = (*rec).max(*recommended);
             }
-            None => out.push((id, required, recommended)),
+            None => out.push((skill.id, *required, *recommended)),
         }
     }
     if out.is_empty() {
         return Err("List at least one skill.".to_owned());
     }
+    crate::types::remember(known)?;
     Ok(out)
 }
 
@@ -696,33 +663,205 @@ fn ship(name: &str) -> Result<Option<crate::types::Type>, String> {
     }
 }
 
-pub(crate) fn add_set(access: &Access, submission: &Submission) -> Result<SubmitResult, PageError> {
-    let viewer = access.viewer;
-    let again = |why: &str| -> Result<SubmitResult, PageError> {
-        Ok(SubmitResult::Page(skill_sets_page(access, Some(why))?))
+/// A set's skills as the form takes them back, one per line.
+fn skills_text(set: &SkillSet) -> String {
+    set.skills
+        .iter()
+        .map(|k| {
+            let mut line = k.name.clone();
+            if let Some(r) = k.required {
+                line.push_str(&format!(" {r}"));
+            }
+            if let Some(c) = k.recommended {
+                line.push_str(&format!(" [{c}]"));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The form adding a skill set, or changing one.
+fn set_form(set: Option<&SkillSet>) -> Form {
+    let (id, label, title) = match set {
+        Some(_) => ("save_set", "Save", "Change skill set"),
+        None => ("add_set", "Add skill set", "New skill set"),
     };
-    let name = submission.value("name").trim().to_owned();
-    let skills = match parse_skills(submission.value("skills")) {
-        Ok(skills) => skills,
-        Err(why) => return again(&why),
+    let field = |f: Field, value: Option<String>| match value {
+        Some(v) => f.value(v),
+        None => f,
     };
-    let ship = match ship(submission.value("ship")) {
-        Ok(ship) => ship,
-        Err(why) => return again(&why),
-    };
-    let count = storage::query("SELECT count(*) FROM skill_sets", &[])
-        .map_err(|e| failed("counting skill sets", e))?;
-    if count.rows.first().map_or(0, |r| int(r, 0)) >= MAX_SETS {
-        return again(&format!(
-            "There can be at most {MAX_SETS} skill sets: delete one first."
-        ));
+    Form::new(id, label)
+        .title(title)
+        .description(
+            "One skill per line with the level it requires, as `Caldari Battleship 4`; a level it \
+             recommends goes in brackets after it (`Caldari Battleship 4 [5]`), or alone \
+             (`Caldari Battleship [5]`). Any of EVE's skills. Secure Groups with a skill set \
+             filter follow its changes, and name it: changing or deleting a set changes who is \
+             in them, and renaming it leaves them waiting for the name they give.",
+        )
+        .field(field(
+            Field::text("name", "Name", 100).required(),
+            set.map(|s| s.name.clone()),
+        ))
+        .field(field(
+            Field::textarea("description", "Description", 2000),
+            set.map(|s| s.description.clone()),
+        ))
+        .field(field(
+            Field::text("ship", "Ship", 100)
+                .help("A ship's name, for its picture beside the set. Optional."),
+            set.and_then(|s| s.ship.as_ref().map(|(_, name)| name.clone())),
+        ))
+        .field(Field::checkbox(
+            "visible",
+            "Show it on pilots' own sheets",
+            set.is_none_or(|s| s.visible),
+        ))
+        .field(field(
+            Field::textarea("skills", "Skills", 20_000).required(),
+            set.map(skills_text),
+        ))
+}
+
+/// A skill set's own page: its skills and which of your characters can
+/// use it; for `manage`, change, copy or delete it. A set kept off
+/// pilots' sheets is for `manage` holders only.
+pub(crate) fn set_page(access: &Access, id: &str, note: Option<&str>) -> Result<Page, PageError> {
+    if !access.skill_sets {
+        return Err(PageError::NotFound);
     }
+    let manage = access.viewer.can("manage");
+    let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
+    let sets = skill_sets()?;
+    let set = sets
+        .iter()
+        .find(|s| s.id == id && (s.visible || manage))
+        .ok_or(PageError::NotFound)?;
+    let groups = set_groups()?;
+    let mut card = tether_plugin_sdk::Card::new("Skill set");
+    if !set.description.is_empty() {
+        card = card.field("Description", set.description.clone());
+    }
+    if let Some((ship, name)) = &set.ship {
+        card = card.field("Ship", item_type(*ship, name.clone()));
+    }
+    let in_groups: Vec<String> = groups
+        .iter()
+        .filter(|g| g.sets.contains(&set.id))
+        .map(SetGroup::label)
+        .collect();
+    card = card.field(
+        "Groups",
+        if in_groups.is_empty() {
+            UNGROUPED.to_owned()
+        } else {
+            in_groups.join(", ")
+        },
+    );
+    if manage {
+        card = card.field(
+            "On pilots' sheets",
+            if set.visible { "Shown" } else { "Hidden" },
+        );
+        let changed = query(
+            "SELECT modified_at, coalesce(modified_by, '') FROM skill_sets WHERE id = $1",
+            &[set.id.into()],
+        )?;
+        if let Some(r) = changed.first()
+            && crate::when(r, 0).is_some()
+        {
+            card = card
+                .field("Last changed", crate::time_or_blank(r, 0))
+                .field("By", text(r, 1));
+        }
+    }
+    let able = able(set, &own(access.viewer))?;
+    let mut page = Page::new(set.name.clone())
+        .description("A skill set")
+        .link("Skill sets", "skill-sets");
+    if let Some(note) = note {
+        page = page.text(note);
+    }
+    page = page.card(card).table(with_rows(
+        Table::new(vec![
+            Column::text("Skill"),
+            Column::text("Required"),
+            Column::text("Recommended"),
+        ])
+        .title("Skills"),
+        set.skills.iter().take(MAX_LISTED).map(|k| {
+            vec![
+                item_type(k.id, k.name.clone()).into(),
+                k.required.map_or("", roman).into(),
+                k.recommended.map_or("", roman).into(),
+            ]
+        }),
+    ));
+    page = page.table(with_rows(
+        Table::new(vec![Column::text("Character")])
+            .title("Your characters who can")
+            .empty("None of yours yet."),
+        able.iter()
+            .map(|(id, name)| vec![character(*id, name.clone()).into()]),
+    ));
+    if !manage {
+        return Ok(page);
+    }
+    Ok(page
+        .form(set_form(Some(set)))
+        .table(
+            Table::new(vec![Column::text("")]).row(vec![tether_plugin_sdk::actions(vec![
+                action("Copy", "copy_set").field("set", set.id.to_string()),
+                action("Delete skill set", "delete_set")
+                    .field("set", set.id.to_string())
+                    .tone(Tone::Danger)
+                    .confirm("The set goes, from its groups and from Secure Groups' filters too."),
+            ])]),
+        ))
+}
+
+/// What a skill set form says, checked.
+struct SetFields {
+    name: String,
+    description: String,
+    ship: Option<i64>,
+    visible: bool,
+    skills: String,
+}
+
+fn set_fields(submission: &Submission) -> Result<SetFields, String> {
+    let name = submission.value("name").trim().to_owned();
+    if name.is_empty() {
+        return Err("A skill set needs a name.".to_owned());
+    }
+    let skills = parse_skills(submission.value("skills"))?;
+    let ship = ship(submission.value("ship"))?;
     let rows: Vec<serde_json::Value> = skills
         .iter()
         .map(|(skill, required, recommended)| {
             serde_json::json!({ "skill_id": skill, "required": required, "recommended": recommended })
         })
         .collect();
+    Ok(SetFields {
+        name,
+        description: crate::clip(submission.value("description").trim(), 2000),
+        ship: ship.map(|t| t.id),
+        visible: submission.checked("visible"),
+        skills: serde_json::Value::Array(rows).to_string(),
+    })
+}
+
+/// Adds a skill set (`add_set`, on Skill sets).
+pub(crate) fn add_set(access: &Access, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let viewer = access.viewer;
+    let again = |why: &str| -> Result<SubmitResult, PageError> {
+        Ok(SubmitResult::Page(skill_sets_page(access, Some(why))?))
+    };
+    let fields = match set_fields(submission) {
+        Ok(fields) => fields,
+        Err(why) => return again(&why),
+    };
     // The set and its skills together, or neither.
     let added = storage::query(
         "WITH s AS (INSERT INTO skill_sets (name, description, ship_type_id, is_visible, modified_at, modified_by) \
@@ -733,27 +872,158 @@ pub(crate) fn add_set(access: &Access, submission: &Submission) -> Result<Submit
                     RETURNING set_id) \
          SELECT id FROM s",
         &[
-            name.clone().into(),
-            Db::json(serde_json::Value::Array(rows).to_string()),
-            crate::clip(submission.value("description").trim(), 2000).into(),
-            ship.map_or(Db::Null, |t| t.id.into()),
-            submission.checked("visible").into(),
+            fields.name.clone().into(),
+            Db::json(fields.skills),
+            fields.description.into(),
+            fields.ship.map_or(Db::Null, Db::from),
+            fields.visible.into(),
             viewer.main.name.clone().into(),
         ],
     )
     .map_err(|e| failed("saving the skill set", e))?;
-    if added.rows.is_empty() {
+    let Some(id) = added.rows.first().map(|r| int(r, 0)) else {
         return again("A skill set with that name already exists.");
-    }
+    };
     log::info(format!(
-        "skill set {name:?} added by {} ({})",
-        viewer.main.name, viewer.main.id
+        "skill set {:?} ({id}) added by {} ({})",
+        fields.name, viewer.main.name, viewer.main.id
     ));
-    Ok(SubmitResult::Redirect("skill-sets".into()))
+    Ok(SubmitResult::Redirect(format!("skill-sets/set/{id}")))
 }
 
-pub(crate) fn delete_set(viewer: &Viewer, set: &str) -> Result<SubmitResult, PageError> {
-    let id: i64 = set.parse().map_err(|_| PageError::NotFound)?;
+/// The set a form on a set's page is about: its page's.
+fn set_of(submission: &Submission) -> Result<i64, PageError> {
+    submission
+        .request
+        .path
+        .strip_prefix("skill-sets/set/")
+        .and_then(|id| id.parse().ok())
+        .ok_or(PageError::NotFound)
+}
+
+/// Changes a skill set (`save_set`, on its page): aa-memberaudit's change
+/// form, its skills replaced by the form's.
+pub(crate) fn save_set(
+    access: &Access,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let viewer = access.viewer;
+    let id = set_of(submission)?;
+    let again = |why: &str| -> Result<SubmitResult, PageError> {
+        Ok(SubmitResult::Page(set_page(
+            access,
+            &id.to_string(),
+            Some(why),
+        )?))
+    };
+    let fields = match set_fields(submission) {
+        Ok(fields) => fields,
+        Err(why) => return again(&why),
+    };
+    let taken = query(
+        "SELECT 1 FROM skill_sets WHERE name = $1 AND id <> $2",
+        &[fields.name.clone().into(), id.into()],
+    )?;
+    if !taken.is_empty() {
+        return again("A skill set with that name already exists.");
+    }
+    let changed = storage::transaction(&[
+        Statement::new(
+            "UPDATE skill_sets SET name = $1, description = $2, ship_type_id = $3, is_visible = $4, \
+             modified_at = now(), modified_by = $5 WHERE id = $6",
+            vec![
+                fields.name.clone().into(),
+                fields.description.into(),
+                fields.ship.map_or(Db::Null, Db::from),
+                fields.visible.into(),
+                viewer.main.name.clone().into(),
+                id.into(),
+            ],
+        ),
+        Statement::new(
+            "DELETE FROM skill_set_skills WHERE set_id = $1",
+            vec![id.into()],
+        ),
+        Statement::new(
+            "INSERT INTO skill_set_skills (set_id, skill_id, required_level, recommended_level) \
+             SELECT s.id, x.skill_id, x.required, x.recommended FROM skill_sets s, \
+                    json_to_recordset($2::json) AS x(skill_id bigint, required int, recommended int) \
+             WHERE s.id = $1",
+            vec![id.into(), Db::json(fields.skills)],
+        ),
+    ])
+    .map_err(|e| failed("saving the skill set", e))?;
+    if changed.first().copied().unwrap_or(0) == 0 {
+        return Err(PageError::NotFound);
+    }
+    log::info(format!(
+        "skill set {:?} ({id}) changed by {} ({})",
+        fields.name, viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect(format!("skill-sets/set/{id}")))
+}
+
+/// A copy's name: aa-memberaudit's clone adds " 2"; here, the first of
+/// " 2", " 3"... no set has.
+fn copy_name(name: &str, taken: &[String]) -> Option<String> {
+    let base = crate::clip(name, 95);
+    (2..1000)
+        .map(|n| format!("{base} {n}"))
+        .find(|candidate| !taken.iter().any(|t| t == candidate))
+}
+
+/// Copies a skill set with its skills (aa-memberaudit's "Clone selected
+/// skill sets"), not its groups.
+pub(crate) fn copy_set(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let id = set_of(submission)?;
+    if submission.value("set") != id.to_string() {
+        return Err(PageError::Forbidden);
+    }
+    let names: Vec<String> = query("SELECT name FROM skill_sets", &[])?
+        .iter()
+        .map(|r| text(r, 0))
+        .collect();
+    let original = query("SELECT name FROM skill_sets WHERE id = $1", &[id.into()])?;
+    let name = original
+        .first()
+        .map(|r| text(r, 0))
+        .ok_or(PageError::NotFound)?;
+    let copy = copy_name(&name, &names).ok_or_else(|| failed("naming the copy", &name))?;
+    let added = storage::query(
+        "WITH s AS (INSERT INTO skill_sets (name, description, ship_type_id, is_visible, modified_at, modified_by) \
+                    SELECT $2, description, ship_type_id, is_visible, now(), $3 FROM skill_sets WHERE id = $1 \
+                    RETURNING id), \
+              k AS (INSERT INTO skill_set_skills (set_id, skill_id, required_level, recommended_level) \
+                    SELECT s.id, k.skill_id, k.required_level, k.recommended_level \
+                    FROM s, skill_set_skills k WHERE k.set_id = $1 RETURNING set_id) \
+         SELECT id FROM s",
+        &[id.into(), copy.clone().into(), viewer.main.name.clone().into()],
+    )
+    .map_err(|e| failed("copying the skill set", e))?;
+    let new = added
+        .rows
+        .first()
+        .map(|r| int(r, 0))
+        .ok_or(PageError::NotFound)?;
+    log::info(format!(
+        "skill set {name:?} ({id}) copied as {copy:?} ({new}) by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect(format!("skill-sets/set/{new}")))
+}
+
+/// Deletes a skill set (`delete_set`, on its page).
+pub(crate) fn delete_set(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let id = set_of(submission)?;
+    if submission.value("set") != id.to_string() {
+        return Err(PageError::Forbidden);
+    }
     storage::execute("DELETE FROM skill_sets WHERE id = $1", &[id.into()])
         .map_err(|e| failed("deleting the skill set", e))?;
     log::info(format!(
@@ -905,6 +1175,9 @@ pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
     let mut summary = Vec::new();
     for (group, members) in grouped(&sets, &groups) {
         for set in members {
+            if summary.len() >= MAX_LISTED {
+                break;
+            }
             summary.push(vec![
                 group
                     .map_or_else(|| UNGROUPED.to_owned(), SetGroup::label)
@@ -995,6 +1268,51 @@ mod tests {
         assert!(parse_line("Caldari Battleship 6").is_err());
         assert!(parse_line("Gunnery [7]").is_err());
         assert!(parse_line("4").is_err());
+    }
+
+    #[test]
+    fn a_copy_takes_the_first_free_number() {
+        let taken = vec!["Ferox".to_owned(), "Ferox 2".to_owned()];
+        assert_eq!(copy_name("Ferox", &taken).as_deref(), Some("Ferox 3"));
+        assert_eq!(copy_name("Logi", &taken).as_deref(), Some("Logi 2"));
+        // Within the 100 characters a name may have.
+        let long = "x".repeat(100);
+        assert!(copy_name(&long, &[]).is_some_and(|n| n.chars().count() <= 100));
+    }
+
+    #[test]
+    fn skills_go_back_into_the_form_as_they_came() {
+        let set = SkillSet {
+            id: 1,
+            name: "Ferox".to_owned(),
+            description: String::new(),
+            ship: None,
+            visible: true,
+            skills: vec![
+                SetSkill {
+                    id: 3300,
+                    name: "Gunnery".to_owned(),
+                    required: Some(4),
+                    recommended: Some(5),
+                },
+                SetSkill {
+                    id: 3301,
+                    name: "Small Hybrid Turret".to_owned(),
+                    required: None,
+                    recommended: Some(3),
+                },
+            ],
+        };
+        let text = skills_text(&set);
+        assert_eq!(text, "Gunnery 4 [5]\nSmall Hybrid Turret [3]");
+        let parsed: Vec<_> = text.lines().map(|l| parse_line(l).unwrap()).collect();
+        assert_eq!(
+            parsed,
+            vec![
+                ("Gunnery".to_owned(), Some(4), Some(5)),
+                ("Small Hybrid Turret".to_owned(), None, Some(3)),
+            ]
+        );
     }
 
     #[test]

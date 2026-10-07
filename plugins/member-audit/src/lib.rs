@@ -52,6 +52,7 @@ impl Plugin for MemberAudit {
             [""] => pages::my_characters(&viewer),
             ["finder"] => pages::finder(&access, &request),
             ["skill-sets"] => sets::skill_sets_page(&access, None),
+            ["skill-sets", "set", id] => sets::set_page(&access, id, None),
             ["skill-sets", "group", id] => sets::group_page(&access, id, None),
             ["reports"] => sets::reports(&access),
             ["data-export"] if viewer.can("exports_access") => exports::page(None),
@@ -82,8 +83,14 @@ impl Plugin for MemberAudit {
             ("settings", "settings") if viewer.can("manage") => {
                 settings::save(&viewer, &submission)
             }
-            ("skill-sets", "delete_set") if viewer.can("manage") => {
-                sets::delete_set(&viewer, submission.value("set"))
+            (p, "save_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
+                sets::save_set(&access, &submission)
+            }
+            (p, "copy_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
+                sets::copy_set(&viewer, &submission)
+            }
+            (p, "delete_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
+                sets::delete_set(&viewer, &submission)
             }
             ("skill-sets", "add_group") if viewer.can("manage") => {
                 sets::save_group(&access, &submission)
