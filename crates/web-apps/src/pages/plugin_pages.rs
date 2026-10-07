@@ -13,7 +13,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use askama::Template;
-use axum::Form;
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -2829,8 +2828,9 @@ pub async fn post_main(
     Path(id): Path<String>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
-    Form(posted): Form<Vec<(String, String)>>,
+    body: axum::body::Bytes,
 ) -> Result<Response, PageError> {
+    let posted = form_pairs(&body)?;
     post(state, session, id, String::new(), raw, headers, posted).await
 }
 
@@ -2841,9 +2841,54 @@ pub async fn post_sub(
     Path((id, path)): Path<(String, String)>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
-    Form(posted): Form<Vec<(String, String)>>,
+    body: axum::body::Bytes,
 ) -> Result<Response, PageError> {
+    let posted = form_pairs(&body)?;
     post(state, session, id, path, raw, headers, posted).await
+}
+
+/// A form post's pairs, read only as far as a form may have them: a body
+/// of countless empty pairs is refused before it costs more than itself
+/// (posts may be 512 KiB, for a pasted inventory).
+fn form_pairs(body: &[u8]) -> Result<Vec<(String, String)>, PageError> {
+    let too_many = || PageError::from(AppError::bad_request("That form has too many fields."));
+    let mut pairs = Vec::new();
+    for part in body.split(|b| *b == b'&').filter(|p| !p.is_empty()) {
+        if pairs.len() >= MAX_FORM_PAIRS {
+            return Err(too_many());
+        }
+        let (k, v) = match part.iter().position(|b| *b == b'=') {
+            Some(i) => (&part[..i], &part[i + 1..]),
+            None => (part, &[][..]),
+        };
+        pairs.push((decode_form(k)?, decode_form(v)?));
+    }
+    Ok(pairs)
+}
+
+/// application/x-www-form-urlencoded: `+` is a space, `%XX` a byte.
+fn decode_form(raw: &[u8]) -> Result<String, PageError> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < raw.len() => {
+                let hex = std::str::from_utf8(&raw[i + 1..i + 3]).ok();
+                match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(b) => {
+                        out.push(b);
+                        i += 2;
+                    }
+                    None => out.push(b'%'),
+                }
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8(out)
+        .map_err(|_| PageError::from(AppError::bad_request("That form wasn't sent as text.")))
 }
 
 /// `GET /plugins/{id}/downloads/{name}`: a file the app offers (its
@@ -2928,6 +2973,20 @@ pub async fn download(
 
 #[cfg(test)]
 mod tests {
+
+    /// Form posts decode as the browser encodes them, and a body of too
+    /// many pairs is refused without reading them all.
+    #[test]
+    fn form_posts_are_read_with_a_cap() {
+        let pairs = super::form_pairs(b"_form=calculate&items=Tritanium%091%2C000%0AVeldspar&notes=a+b&x")
+            .ok()
+            .unwrap();
+        assert_eq!(pairs[1], ("items".to_owned(), "Tritanium\t1,000\nVeldspar".to_owned()));
+        assert_eq!(pairs[2].1, "a b");
+        assert_eq!(pairs[3], ("x".to_owned(), String::new()));
+        assert!(super::form_pairs("a&".repeat(super::MAX_FORM_PAIRS + 1).as_bytes()).is_err());
+        assert!(super::form_pairs(b"a=%zz").ok().unwrap()[0].1 == "%zz");
+    }
     use super::*;
 
     #[test]

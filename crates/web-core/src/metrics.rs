@@ -137,7 +137,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 pub async fn endpoint(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if !state.metrics.admits(&headers) {
         if state.metrics.enabled() {
-            tracing::info!("metrics: refused a request without the right token");
+            tracing::debug!("metrics: refused a request without the right token");
         }
         return crate::pages::not_found().await;
     }

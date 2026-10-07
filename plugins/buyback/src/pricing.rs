@@ -43,6 +43,14 @@ impl PriceType {
         }
     }
 
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Buy => "Buy",
+            Self::Sell => "Sell",
+            Self::Split => "Split",
+        }
+    }
+
     /// The unit price a (buy, sell) pair gives.
     pub fn pick(self, buy: f64, sell: f64) -> f64 {
         match self {
