@@ -1379,19 +1379,21 @@ async fn only_bundled_hr_applications_reads_its_submitters_characters(db: PgPool
     );
     assert_eq!(read("acme.bundled", other_ref).await, "None");
     assert_eq!(read(ID, signed_ref).await, "None");
-    // At most 1,000 lookups a call.
-    let out = run_probe(
-        &h,
-        "tether.hr-applications",
-        "submitter-lookups",
-        vec![
-            ("reference".to_owned(), hr_ref.clone()),
-            ("n".to_owned(), "1001".to_owned()),
-        ],
-        false,
-    )
-    .await;
-    assert_eq!(out, "answered=1000");
+    // At most 1,000 lookups a call, a malformed reference's included.
+    for (before, answered) in [("999", true), ("1000", false)] {
+        let out = run_probe(
+            &h,
+            "tether.hr-applications",
+            "submitter-lookups",
+            vec![
+                ("reference".to_owned(), hr_ref.clone()),
+                ("n".to_owned(), before.to_owned()),
+            ],
+            false,
+        )
+        .await;
+        assert_eq!(out, format!("answered={answered}"));
+    }
     sqlx::query(
         "UPDATE core.plugin_submitters SET last_posted_at = now() - interval '366 days' \
          WHERE plugin_id = 'tether.hr-applications'",

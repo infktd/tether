@@ -327,14 +327,15 @@ fn probe(request: Request) -> Result<Page, PageError> {
             "{:?}",
             identity::submitter_characters(&arg("reference").unwrap_or_default())
         ),
-        // submitter-lookups?reference=&n=: how many of n lookups answered.
+        // submitter-lookups?reference=&n=: n lookups of nothing (no
+        // database work), then whether `reference`'s still answers.
         "submitter-lookups" => {
-            let reference = arg("reference").unwrap_or_default();
-            let n: usize = arg("n").and_then(|n| n.parse().ok()).unwrap_or(1);
-            let answered = (0..n)
-                .filter(|_| identity::submitter_characters(&reference).is_some())
-                .count();
-            format!("answered={answered}")
+            let n: usize = arg("n").and_then(|n| n.parse().ok()).unwrap_or(0);
+            for _ in 0..n {
+                let _ = identity::submitter_characters("");
+            }
+            let last = identity::submitter_characters(&arg("reference").unwrap_or_default());
+            format!("answered={}", last.is_some())
         }
         "viewer" => format!("{:?}", identity::viewer()),
         "acting" => format!("{:?}", identity::acting()),
