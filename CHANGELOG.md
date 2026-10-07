@@ -13,7 +13,7 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 - The character sheet shows Last login. Register your characters again to fill it in; everything else keeps updating meanwhile.
 
 ### Structures
-- Notifications can ping groups' Discord roles too, chosen per owner and per channel, as in Alliance Auth.
+- Notifications can ping groups' Discord roles too, as in Alliance Auth: pick them from a list on the owner's page and on each channel's own page, and they keep pinging after a group is renamed.
 
 ### HR Applications
 - Reviewers see and search an applicant's characters as they are now, not only as they were when they applied.
@@ -24,7 +24,7 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 ### Admins
 - When an app asks for a new scope, characters already registered keep working and stay compliant; only what needs the new scope waits until their pilot registers again.
 - An app page can now open for any one of several permissions, and the install review lists them all.
-- Apps can ping several Discord roles in one message, and groups' roles if you approve it: updating Structures asks you to approve "Discord group mentions".
+- Apps can ping several Discord roles in one message, and groups' roles if you approve it: updating Structures asks you to approve "Discord group mentions". Such an app sees only the names of groups that have a Discord role, never who is in them.
 - The included HR Applications can read the current characters of pilots who applied, as Alliance Auth's HR does.
 - Approve the updated Member Audit, Structures, HR Applications and Fleet Activity Tracking on the Apps page.
 
