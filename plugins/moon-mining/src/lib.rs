@@ -296,11 +296,12 @@ const LEDGER_REFUSALS: usize = 4;
 /// corporation's roles can't be read any more).
 const MANAGERS_KEPT: &str = "2 days";
 
-/// A `ledger_more` run's corporations: those whose observers the hourly
-/// run listed.
+/// A `ledger_more` run's corporations: those whose observers this round
+/// listed, and those it has yet to list, in turn.
 #[derive(Deserialize)]
 struct LedgerMore {
     corporations: Vec<i64>,
+    unlisted: Vec<i64>,
 }
 
 /// A `sync_more` run's round: when the scheduled run began. Corporations
@@ -1130,38 +1131,37 @@ fn ledger_tried(observer: i64) -> Result<(), JobError> {
     Ok(())
 }
 
-/// Hourly, as aa-moonmining's run_report_updates: each corporation's
-/// observers, then every listed observer's ledger not tried this hour,
-/// oldest first; a run out of ESI calls carries on a minute later
-/// (`ledger_more`).
-fn ledger(more: Option<&Job>) -> Result<(), JobError> {
-    let mut budget = Budget(ESI_BUDGET - NAME_RESERVE);
-    let sources = sources_by_corporation();
-    let listed: Vec<i64> = match more {
-        // Those the hourly run listed, while they're still read.
-        Some(job) => {
-            let payload: LedgerMore = serde_json::from_str(&job.payload)
-                .map_err(|e| JobError::Permanent(format!("ledger_more payload: {e}")))?;
-            payload
-                .corporations
-                .into_iter()
-                .filter(|corp| sources.iter().any(|(c, _)| c == corp))
-                .collect()
-        }
-        None => {
-            let mut listed = Vec::new();
-            for (corp, subject) in &sources {
-                // A list not read leaves the corporation out of this
-                // run: its observers cost no errors.
-                let Ok(bodies) = get_pages(
-                    &mut budget,
-                    "corporation-mining-observers",
-                    *subject,
-                    &[],
-                    &format!("observers for corporation {corp}"),
-                ) else {
-                    continue;
-                };
+/// How listing corporations' mining observers went.
+struct Lists {
+    /// Those listed.
+    listed: Vec<i64>,
+    /// Those the run's calls didn't reach, in turn.
+    unlisted: Vec<i64>,
+    /// How many were tried, listed or not.
+    tried: usize,
+}
+
+/// Each corporation's mining observers, in turn, while the run's calls
+/// last. Observers ESI no longer lists aren't read any more, as
+/// aa-moonmining reads only the listed ones; what their ledgers held
+/// stays. A list ESI refuses leaves its corporation out of this round:
+/// its observers cost no errors.
+fn list_observers(budget: &mut Budget, todo: &[(i64, Subject)]) -> Result<Lists, JobError> {
+    let mut lists = Lists {
+        listed: Vec::new(),
+        unlisted: Vec::new(),
+        tried: 0,
+    };
+    for (i, (corp, subject)) in todo.iter().enumerate() {
+        let whole = budget.0 == ESI_BUDGET - NAME_RESERVE;
+        match get_pages(
+            budget,
+            "corporation-mining-observers",
+            *subject,
+            &[],
+            &format!("observers for corporation {corp}"),
+        ) {
+            Ok(bodies) => {
                 let list = concat(&bodies);
                 storage::transaction(&[
                     Statement::new(
@@ -1170,9 +1170,6 @@ fn ledger(more: Option<&Job>) -> Result<(), JobError> {
                          ON CONFLICT (observer_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id",
                         vec![Db::json(list.clone()), (*corp).into()],
                     ),
-                    // Observers ESI no longer lists aren't read any more,
-                    // as aa-moonmining reads only the listed ones; what
-                    // their ledgers held stays.
                     Statement::new(
                         "DELETE FROM observers o WHERE o.corporation_id = $2 AND NOT EXISTS \
                          (SELECT 1 FROM json_to_recordset($1::json) AS x(observer_id bigint) \
@@ -1181,12 +1178,79 @@ fn ledger(more: Option<&Job>) -> Result<(), JobError> {
                     ),
                 ])
                 .map_err(|e| retry("storing observers", e))?;
-                listed.push(*corp);
+                lists.listed.push(*corp);
             }
-            listed
+            // Out of calls: this one and the rest wait for the next run,
+            // which lists them first, with all its calls.
+            Err(Missed::Budget) if !whole => {
+                lists.unlisted = todo[i..].iter().map(|(c, _)| *c).collect();
+                break;
+            }
+            // One that had them all waits for the next round.
+            Err(Missed::Budget) => log::warn(format!(
+                "corporation {corp}: its mining observers have more pages than one run may read"
+            )),
+            Err(Missed::Esi(_)) => {}
         }
+        lists.tried += 1;
+        storage::execute(
+            "INSERT INTO corporations (corporation_id, listed_at) VALUES ($1, now()) \
+             ON CONFLICT (corporation_id) DO UPDATE SET listed_at = now()",
+            &[(*corp).into()],
+        )
+        .map_err(|e| retry("marking a corporation listed", e))?;
+    }
+    Ok(lists)
+}
+
+/// The corporations, the longest unlisted first (never listed before
+/// any).
+fn by_listing(sources: &[(i64, Subject)]) -> Result<Vec<(i64, Subject)>, JobError> {
+    let rows = storage::query(
+        "SELECT corporation_id, listed_at FROM corporations WHERE listed_at IS NOT NULL",
+        &[],
+    )
+    .map_err(|e| retry("reading corporations", e))?;
+    let mut order = sources.to_vec();
+    order.sort_by_key(|(corp, _)| {
+        rows.rows
+            .iter()
+            .find(|r| int(r, 0) == *corp)
+            .and_then(|r| when(r, 1))
+    });
+    Ok(order)
+}
+
+/// Hourly, as aa-moonmining's run_report_updates: each corporation's
+/// observers, the longest unlisted first, then every listed observer's
+/// ledger not tried this hour, oldest first. A run out of ESI calls
+/// carries on a minute later (`ledger_more`) with the corporations and
+/// ledgers it didn't reach, so every one is read however many there are.
+fn ledger(more: Option<&Job>) -> Result<(), JobError> {
+    let mut budget = Budget(ESI_BUDGET - NAME_RESERVE);
+    let sources = sources_by_corporation();
+    // Those still read, in turn.
+    let still = |corps: &[i64]| -> Vec<(i64, Subject)> {
+        corps
+            .iter()
+            .filter_map(|corp| sources.iter().find(|(c, _)| c == corp).copied())
+            .collect()
     };
-    if listed.is_empty() {
+    let (mut listed, todo) = match more {
+        Some(job) => {
+            let payload: LedgerMore = serde_json::from_str(&job.payload)
+                .map_err(|e| JobError::Permanent(format!("ledger_more payload: {e}")))?;
+            let listed: Vec<i64> = still(&payload.corporations)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
+            (listed, still(&payload.unlisted))
+        }
+        None => (Vec::new(), by_listing(&sources)?),
+    };
+    let lists = list_observers(&mut budget, &todo)?;
+    listed.extend(&lists.listed);
+    if listed.is_empty() && lists.unlisted.is_empty() {
         return Ok(());
     }
     let corporations: Vec<String> = listed.iter().map(i64::to_string).collect();
@@ -1295,14 +1359,26 @@ fn ledger(more: Option<&Job>) -> Result<(), JobError> {
         }
     }
     // Carry on only while runs get somewhere: the hourly run's follow-up
-    // has all its calls for ledgers; a follow-up must have read or marked
-    // one.
-    if out_of_calls && (more.is_none() || stored + tried > 0) {
-        log::info("ledgers: out of ESI calls; the rest in a minute");
+    // has all its calls; a follow-up must have tried a list, or read or
+    // marked a ledger.
+    let out_of_calls = out_of_calls || !lists.unlisted.is_empty();
+    if out_of_calls && (more.is_none() || lists.tried + stored + tried > 0) {
+        if lists.unlisted.is_empty() {
+            log::info("ledgers: out of ESI calls; the rest in a minute");
+        } else {
+            log::info(format!(
+                "{} corporations' mining observers wait for the next run, a minute on: out of \
+                 ESI calls",
+                lists.unlisted.len()
+            ));
+        }
         jobs::enqueue(
             NewJob::new(LEDGER_MORE)
                 .key(LEDGER_MORE)
-                .payload(serde_json::json!({ "corporations": listed }).to_string())
+                .payload(
+                    serde_json::json!({ "corporations": listed, "unlisted": lists.unlisted })
+                        .to_string(),
+                )
                 .at(rfc3339(Utc::now() + Duration::minutes(1))),
         )
         .map_err(|e| retry("queuing the next ledger run", e))?;

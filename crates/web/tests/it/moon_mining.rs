@@ -1408,6 +1408,203 @@ async fn a_ledger_too_big_to_store_doesnt_stop_the_rest(db: PgPool) {
     );
 }
 
+/// A thousand pilots from `MANY` on, each an owner in a corporation of
+/// its own (`MANY_CORP` on), whose one mining observer is `MANY_OBSERVER`
+/// on.
+const MANY: i64 = 91000000;
+const MANY_CORP: i64 = 98100000;
+const MANY_OBSERVER: i64 = 1030000300000;
+
+/// /characters/affiliation: those pilots in their own corporations, the
+/// rest as the fixture has them.
+struct Affiliations(Vec<serde_json::Value>);
+
+impl wiremock::Respond for Affiliations {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let ids: Vec<i64> = serde_json::from_slice(&request.body).unwrap();
+        let items: Vec<serde_json::Value> = ids
+            .into_iter()
+            .filter_map(|id| {
+                if (MANY..MANY + 1000).contains(&id) {
+                    Some(serde_json::json!({ "character_id": id, "corporation_id": MANY_CORP + id - MANY }))
+                } else {
+                    self.0.iter().find(|v| v["character_id"] == id).cloned()
+                }
+            })
+            .collect();
+        ResponseTemplate::new(200).set_body_json(items)
+    }
+}
+
+/// A corporation's mining observers as ESI lists them: one, its id from
+/// the corporation's.
+struct OneObserverEach;
+
+impl wiremock::Respond for OneObserverEach {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let corp: i64 = request
+            .url
+            .path()
+            .split('/')
+            .nth(2)
+            .unwrap()
+            .parse()
+            .unwrap();
+        ResponseTemplate::new(200)
+            .insert_header("x-pages", "1")
+            .set_body_json(serde_json::json!([
+                { "observer_id": MANY_OBSERVER + corp - MANY_CORP, "observer_type": "structure",
+                  "last_updated": "2026-10-01" },
+            ]))
+    }
+}
+
+/// The corporations whose observers ESI was asked for, a time each.
+async fn observer_lists(h: &Harness) -> Vec<i64> {
+    h.esi_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| {
+            let path = r.url.path().to_owned();
+            let rest = path.strip_prefix("/corporation/")?;
+            rest.strip_suffix("/mining/observers")?.parse().ok()
+        })
+        .collect()
+}
+
+/// Runs the queued `ledger_more` now, until none is left.
+async fn finish_ledgers(h: &Harness) {
+    for _ in 0..5 {
+        if ledger_more_queued(h).await == 0 {
+            return;
+        }
+        sqlx::query(
+            "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'ledger_more'",
+        )
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+        work(h).await;
+    }
+    panic!("ledger_more kept coming");
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_corporations_observers_are_listed_however_many(db: PgPool) {
+    let h = harness(db, true).await;
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/esi/characters_affiliation.json"
+    ))
+    .unwrap();
+    Mock::given(method("POST"))
+        .and(path("/characters/affiliation"))
+        .respond_with(Affiliations(serde_json::from_str(&fixture).unwrap()))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // No refineries, Station Managers or mining anywhere: only the
+    // observer lists matter here.
+    for empty in [
+        r"^/corporation/\d+/mining/extractions$",
+        r"^/corporations/\d+/structures$",
+        r"^/corporations/\d+/roles$",
+        r"^/corporation/\d+/mining/observers/\d+$",
+    ] {
+        Mock::given(method("GET"))
+            .and(path_regex(empty))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "1")
+                    .set_body_json(serde_json::json!([])),
+            )
+            .mount(&h.esi_server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/corporation/\d+/mining/observers$"))
+        .respond_with(OneObserverEach)
+        .mount(&h.esi_server)
+        .await;
+    mount_prices(&h).await;
+    // More corporations than one run's ESI calls: Chribba Corp and 90
+    // more. Their observers were listed in the data sources' order from
+    // one run's calls, so the last few's never were.
+    let mut session = approve_source(&h, &owner).await;
+    for n in 0..90 {
+        session = add_source(&h, &session, &format!("{}:Pilot{n}", MANY + n)).await;
+    }
+    let mut corporations: Vec<i64> = (0..90).map(|n| MANY_CORP + n).collect();
+    corporations.push(CHRIBBA_CORP);
+    corporations.sort_unstable();
+    // Adding the owners ran every schedule: the ledger run is that one.
+    work(&h).await;
+    let first = observer_lists(&h).await;
+    assert!(first.len() < corporations.len(), "{}", first.len());
+    assert_eq!(ledger_more_queued(&h).await, 1);
+    let waiting = format!(
+        "{} corporations' mining observers wait for the next run",
+        corporations.len() - first.len()
+    );
+    let logged: Vec<String> = sqlx::query_scalar(
+        "SELECT message FROM core.plugin_logs WHERE plugin_id = $1 AND level = 'info'",
+    )
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert!(logged.iter().any(|m| m.starts_with(&waiting)), "{logged:?}");
+
+    // The next runs list the rest, then read every ledger.
+    finish_ledgers(&h).await;
+    let mut listed = observer_lists(&h).await;
+    listed.sort_unstable();
+    assert_eq!(listed, corporations);
+    let observers: Vec<i64> = corporations
+        .iter()
+        .map(|c| MANY_OBSERVER + c - MANY_CORP)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(tried_now(&h).await, observers);
+
+    // The next hour starts with the longest unlisted: those the last
+    // round reached last.
+    let late: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT corporation_id FROM "plugin_tether.moon-mining".corporations
+           ORDER BY listed_at DESC, corporation_id LIMIT $1"#,
+    )
+    .bind(i64::try_from(corporations.len() - first.len()).unwrap())
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.moon-mining".corporations SET listed_at = listed_at - interval '1 hour'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.moon-mining".corporations SET listed_at = listed_at - interval '1 hour'
+           WHERE corporation_id = ANY($1)"#,
+    )
+    .bind(&late)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    run_due_now(&h, "ledger").await;
+    let again = observer_lists(&h).await;
+    for corp in &late {
+        assert_eq!(again.iter().filter(|c| *c == corp).count(), 2, "{corp}");
+    }
+    assert!(warnings(&h).await.is_empty(), "{:?}", warnings(&h).await);
+}
+
 /// gigX's corporation, a second owner's.
 const GIGX: i64 = 1887431749;
 const GIGX_CORP: i64 = 98133756;
