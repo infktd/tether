@@ -32,6 +32,8 @@ const OFFICE_JITA: i64 = 1_040_000_000_101;
 const OFFICE_KEEPSTAR: i64 = 1_040_000_000_102;
 const OFFICE_ATHANOR: i64 = 1_040_000_000_103;
 const CONTAINER: i64 = 1_040_000_000_201;
+/// A structure only a pilot's own blueprints are in.
+const FORTIZAR: i64 = 1_046_000_000_001;
 /// The admin notice for Chribba's corporation, added as a corporate owner.
 const OWNER_ADDED: &str = "Blueprints: blueprint owner added: Otherworld Enterprises | \
      Otherworld Enterprises was added as a new corporate blueprint owner by Chribba.";
@@ -147,6 +149,12 @@ async fn sync_reading(h: &Harness, last: u32) {
     for name in ["sync_blueprints", "sync_jobs", "sync_places"] {
         run_schedule(h, name).await;
     }
+    follow_ups(h, last).await;
+}
+
+/// The places follow-ups queued, each released once the corporation's
+/// assets' `last` page was asked for, until none is left.
+async fn follow_ups(h: &Harness, last: u32) {
     for _ in 0..100 {
         let queued: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'places_again' \
@@ -1409,4 +1417,322 @@ async fn a_withdrawn_source_stops_its_assets_read(db: PgPool) {
         })
         .collect();
     assert_eq!(pages, ["1"]);
+}
+
+/// The app's last read's problems, as managers see them on the library.
+async fn sync_error(h: &Harness) -> Option<String> {
+    let schema = schema(h).await;
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT sync_error FROM "{schema}".settings"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// A place's name as stored, and whether it was read from ESI.
+async fn place(h: &Harness, id: i64) -> Option<(String, bool)> {
+    let schema = schema(h).await;
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        r#"SELECT name, named FROM "{schema}".places WHERE id = $1"#
+    )))
+    .bind(id)
+    .fetch_optional(&h.db)
+    .await
+    .unwrap()
+}
+
+/// Queues a places follow-up for `owners` ("kind:id"), as the app does.
+async fn queue_follow_up(h: &Harness, owners: &[String], tries: u64) {
+    let queued = tether_db::plugin_jobs::enqueue(
+        &h.db,
+        ID,
+        "places_again",
+        Some("places_again"),
+        &serde_json::json!({ "owners": owners, "tries": tries }),
+        None,
+        100,
+    )
+    .await
+    .unwrap();
+    assert_eq!(queued, tether_db::plugin_jobs::Queued::Done);
+}
+
+/// The Mittani's own Fortizar, named only to him (and members who may
+/// dock there).
+async fn mount_fortizar(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{FORTIZAR}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Jita - Mittani's Fortizar",
+            "owner_id": 98000002,
+            "solar_system_id": 30000142,
+            "type_id": 35833,
+            "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+        })))
+        .mount(&h.esi_server)
+        .await;
+}
+
+/// The Mittani, a pilot, registered for the app and added as a personal
+/// owner: one Rifter original in a container, none running, his assets
+/// as `assets` answers.
+async fn add_mittani(h: &Harness, container: i64, assets: ResponseTemplate) {
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{MITTANI}/blueprints")))
+        .respond_with(paged(serde_json::json!([blueprint(
+            4002, RIFTER_BP, container, "Unlocked", -1
+        )])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{MITTANI}/industry/jobs")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{MITTANI}/assets")))
+        .respond_with(assets)
+        .mount(&h.esi_server)
+        .await;
+    let pilot = log_in_as(h, "443630591:The Mittani", None).await;
+    grant(
+        h,
+        MITTANI,
+        &["basic_access", "add_personal_blueprint_owner"],
+    )
+    .await;
+    let pilot = register(h, &pilot, "443630591:The Mittani").await;
+    personal(h, &pilot, "add_owner", MITTANI).await;
+}
+
+/// A follow-up reads only the corporation whose assets were still being
+/// read, but a place comes due for its weekly name meanwhile: it's named
+/// through the pilot whose blueprints are there, not given a placeholder.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_follow_up_names_places_through_every_owner(db: PgPool) {
+    let h = harness(db, true).await;
+    mount(&h).await;
+    mount_fortizar(&h).await;
+    set_up(&h).await;
+    let container = 1_040_000_000_302;
+    add_mittani(
+        &h,
+        container,
+        paged(serde_json::json!([asset(
+            container, 17366, "Hangar", FORTIZAR, "item"
+        )])),
+    )
+    .await;
+    sync_reading(&h, 1).await;
+    let named = Some(("Jita - Mittani's Fortizar".to_owned(), true));
+    assert_eq!(place(&h, FORTIZAR).await, named);
+    // The Fortizar's week is up when a follow-up for the corporation runs.
+    let schema = schema(&h).await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"UPDATE "{schema}".places SET read_at = now() - interval '8 days' WHERE id = $1"#
+    )))
+    .bind(FORTIZAR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    queue_follow_up(&h, &[format!("corporation:{CORP}")], 1).await;
+    work(&h).await;
+    assert_eq!(place(&h, FORTIZAR).await, named);
+    let read_again: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT read_at > now() - interval '1 hour' FROM "{schema}".places WHERE id = $1"#
+    )))
+    .bind(FORTIZAR)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(read_again);
+}
+
+/// A run whose ESI calls ran out before it named a place leaves the place
+/// for the next run (here, the follow-up a minute later), instead of
+/// storing a placeholder that would stand for the next hour.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_run_out_of_calls_leaves_names_to_the_next(db: PgPool) {
+    let h = harness(db, true).await;
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Corporation,
+        CORP,
+    )
+    .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_world(&h).await;
+    mount_fortizar(&h).await;
+    // Both pilots' blueprints are in the Fortizar; each has 60 pages of
+    // assets, more than one run's 100 calls together.
+    let sixty = |container: i64| {
+        (
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "60")
+                .set_body_json(serde_json::json!([asset(
+                    container, 17366, "Hangar", FORTIZAR, "item"
+                )])),
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "60")
+                .set_body_json(serde_json::json!([])),
+        )
+    };
+    let chribba_container = 1_040_000_000_301;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/blueprints")))
+        .respond_with(paged(serde_json::json!([blueprint(
+            4001,
+            RIFTER_BP,
+            chribba_container,
+            "Unlocked",
+            -1
+        )])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/industry/jobs")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    for (character, container) in [(CHRIBBA, chribba_container), (MITTANI, 1_040_000_000_302)] {
+        let (last, rest) = sixty(container);
+        Mock::given(method("GET"))
+            .and(path(format!("/characters/{character}/assets")))
+            .and(wiremock::matchers::query_param("page", "60"))
+            .respond_with(last)
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/characters/{character}/assets")))
+            .respond_with(rest)
+            .with_priority(2)
+            .mount(&h.esi_server)
+            .await;
+    }
+    let owner = register(&h, &owner, "196379789:Chribba").await;
+    personal(&h, &owner, "add_owner", CHRIBBA).await;
+    let (_, rest) = sixty(0);
+    add_mittani(&h, 1_040_000_000_302, rest).await;
+    sync_reading(&h, 0).await;
+    assert_eq!(
+        place(&h, FORTIZAR).await,
+        Some(("Jita - Mittani's Fortizar".to_owned(), true))
+    );
+    assert_eq!(sync_error(&h).await, None);
+}
+
+/// A problem the places run found for one owner stays on the library
+/// after the follow-up that read another.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_follow_up_keeps_the_runs_problems(db: PgPool) {
+    let h = harness(db, true).await;
+    mount(&h).await;
+    set_up(&h).await;
+    add_mittani(
+        &h,
+        1_040_000_000_302,
+        ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "Forbidden" })),
+    )
+    .await;
+    // The places run (after the blueprints) and the follow-ups it queued,
+    // nothing else between.
+    run_schedule(&h, "sync_blueprints").await;
+    follow_ups(&h, 1).await;
+    let error = sync_error(&h).await.unwrap_or_default();
+    assert!(error.contains("The Mittani: places not read"), "{error:?}");
+    // The corporation was read by a follow-up.
+    let follow_ups: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'places_again' \
+         AND state = 'succeeded'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(follow_ups > 0);
+}
+
+/// The last follow-up: an owner the run's calls didn't reach is told
+/// about, not dropped without a word until the next 12-hourly read.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_last_follow_up_says_who_it_did_not_reach(db: PgPool) {
+    let h = harness(db, true).await;
+    cover(
+        &h.db,
+        tether_core::states::Builtin::Member,
+        tether_core::states::EntityKind::Corporation,
+        CORP,
+    )
+    .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_world(&h).await;
+    // Chribba's assets alone are more than a run's calls.
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/blueprints")))
+        .respond_with(paged(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/industry/jobs")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/assets")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "120")
+                .set_body_json(serde_json::json!([])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let owner = register(&h, &owner, "196379789:Chribba").await;
+    personal(&h, &owner, "add_owner", CHRIBBA).await;
+    add_mittani(&h, 1_040_000_000_302, paged(serde_json::json!([]))).await;
+    run_schedule(&h, "sync_blueprints").await;
+    // Only the follow-up below runs: its last try, Chribba first.
+    sqlx::query("DELETE FROM core.jobs WHERE plugin_id = $1 AND state = 'queued'")
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let schema = schema(&h).await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"UPDATE "{schema}".owners SET places_at = CASE WHEN id = $1 THEN now() END"#
+    )))
+    .bind(MITTANI)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    queue_follow_up(
+        &h,
+        &[
+            format!("character:{CHRIBBA}"),
+            format!("character:{MITTANI}"),
+        ],
+        30,
+    )
+    .await;
+    work(&h).await;
+    let error = sync_error(&h).await.unwrap_or_default();
+    assert!(error.contains("Chribba: places not read"), "{error:?}");
+    assert!(
+        error.contains("The Mittani: places not read: the run's ESI calls ran out"),
+        "{error:?}"
+    );
+    // Nothing more is queued: it was the last try.
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'places_again' \
+         AND state = 'queued'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(queued, 0);
 }

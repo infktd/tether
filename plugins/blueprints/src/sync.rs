@@ -414,21 +414,41 @@ pub const PLACES_TRIES: u64 = 30;
 
 /// Every owner's places, as aa-blueprints' 12-hourly location update.
 pub fn places() -> Result<(), JobError> {
-    read_places(None, 0)
+    read_places(None, 0, Vec::new())
 }
 
 /// A follow-up run (`places_again`): `{"owners": ["corporation:98000001",
-/// ...], "tries": n}`, only those owners.
+/// ...], "tries": n, "problems": [...]}`, only those owners, with the
+/// problems the runs before it found for the others.
 pub fn places_again(payload: &str) -> Result<(), JobError> {
     let payload: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
-    let only: Vec<String> = payload["owners"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|o| o.as_str().map(str::to_owned))
-        .collect();
+    let strings = |key: &str| -> Vec<String> {
+        payload[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|o| o.as_str().map(str::to_owned))
+            .collect()
+    };
     let tries = payload["tries"].as_u64().unwrap_or(PLACES_TRIES);
-    read_places(Some(&only), tries)
+    read_places(Some(&strings("owners")), tries, strings("problems"))
+}
+
+/// Problems a follow-up carries (a job's payload is at most 64 KiB):
+/// the first ones, then how many more.
+fn carried(problems: &[String]) -> Vec<String> {
+    const MOST: usize = 16_000;
+    let mut out = Vec::new();
+    let mut size = 0;
+    for (i, problem) in problems.iter().enumerate() {
+        size += problem.len();
+        if size > MOST {
+            out.push(format!("and {} more", problems.len() - i));
+            break;
+        }
+        out.push(problem.clone());
+    }
+    out
 }
 
 /// An owner as a follow-up run names it.
@@ -444,12 +464,19 @@ fn out_of_calls(err: &esi::Error) -> bool {
 /// Reads the owners' places (those in `only`, else all), least recently
 /// read first. A corporation whose assets are still being read, and the
 /// owners left when the run's ESI calls run out, are read again a minute
-/// later, up to [`PLACES_TRIES`] times.
-fn read_places(only: Option<&[String]>, tries: u64) -> Result<(), JobError> {
-    let (mut owners, _lapsed) = owners()?;
-    if let Some(only) = only {
-        owners.retain(|o| only.contains(&owner_key(o)));
-    }
+/// later, up to [`PLACES_TRIES`] times. The problems are those of the
+/// whole read: `earlier` (the runs before a follow-up) and this run's.
+fn read_places(only: Option<&[String]>, tries: u64, earlier: Vec<String>) -> Result<(), JobError> {
+    let (all, _lapsed) = owners()?;
+    // Places are named through every owner with blueprints there, not
+    // only those this run reads.
+    let mut owners: Vec<&Owner> = all
+        .iter()
+        .filter(|o| match only {
+            Some(only) => only.contains(&owner_key(o)),
+            None => true,
+        })
+        .collect();
     let read = storage::query("SELECT kind, id, places_at FROM owners", &[])
         .map_err(|e| retry("reading owners", e))?;
     let places_at = |o: &Owner| {
@@ -459,15 +486,24 @@ fn read_places(only: Option<&[String]>, tries: u64) -> Result<(), JobError> {
             .map(|r| text(r, 2))
             .unwrap_or_default()
     };
-    owners.sort_by_cached_key(places_at);
-    let mut problems = Vec::new();
+    owners.sort_by_cached_key(|o| places_at(o));
+    let mut problems = earlier;
     let mut again: Vec<String> = Vec::new();
     let mut spent = false;
     let mut tried = 0;
     let last_try = tries >= PLACES_TRIES;
-    for owner in &owners {
+    for owner in owners {
         if spent {
-            again.push(owner_key(owner));
+            // The last try: nothing reads them after it, so say so.
+            if last_try {
+                problems.push(format!(
+                    "{}: places not read: the run's ESI calls ran out",
+                    who(owner)
+                ));
+                note_places(owner)?;
+            } else {
+                again.push(owner_key(owner));
+            }
             continue;
         }
         let locations = owner_locations(owner)?;
@@ -524,15 +560,20 @@ fn read_places(only: Option<&[String]>, tries: u64) -> Result<(), JobError> {
         }
     } else {
         let at = chrono::Utc::now() + chrono::Duration::minutes(1);
+        let payload = serde_json::json!({
+            "owners": again,
+            "tries": tries + 1,
+            "problems": carried(&problems),
+        });
         jobs::enqueue(
             NewJob::new(PLACES_AGAIN)
                 .key(PLACES_AGAIN)
-                .payload(serde_json::json!({ "owners": again, "tries": tries + 1 }).to_string())
+                .payload(payload.to_string())
                 .at(at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         )
         .map_err(|e| retry("queuing the places follow-up", e))?;
     }
-    name_places(&owners)?;
+    name_places(&all)?;
     learn_names()?;
     set_error("places_at", &problems)
 }
@@ -724,7 +765,8 @@ fn note_places(owner: &Owner) -> Result<(), JobError> {
 /// couldn't be read (within the hour), those never named first: stations
 /// publicly, systems by name, structures through each owner with
 /// blueprints there in turn (ESI names a structure only to a character
-/// that may dock there), with why not in the app's log.
+/// that may dock there), with why not in the app's log. Once the run's
+/// ESI calls are spent, the rest wait for the next run, as they are.
 fn name_places(owners: &[Owner]) -> Result<(), JobError> {
     let due = storage::query(
         "SELECT b.place_id, array_agg(DISTINCT b.owner_kind || ':' || b.owner_id)::text \
@@ -749,65 +791,11 @@ fn name_places(owners: &[Owner]) -> Result<(), JobError> {
                 owners.iter().find(|o| o.kind == kind && o.id == owner)
             })
             .collect();
-        let named = if is_station(id) {
-            match esi::get(
-                "universe-station",
-                PUBLIC,
-                &[("station_id".to_owned(), id.to_string())],
-                None,
-            ) {
-                Ok(answer) => Some(place_named(&answer.body)),
-                Err(err) => {
-                    log::info(format!("station {id} not named: {err:?}"));
-                    continue;
-                }
+        match name_place(id, &holders) {
+            Naming::Named(name, system) if !name.is_empty() => {
+                store_place(id, &name, &system, true)?;
             }
-        } else if is_structure(id) {
-            let mut found = None;
-            let mut why = Vec::new();
-            for owner in &holders {
-                let endpoint = if owner.kind == "corporation" {
-                    "source-structure"
-                } else {
-                    "universe-structure"
-                };
-                match esi::get(
-                    endpoint,
-                    owner.subject,
-                    &[("structure_id".to_owned(), id.to_string())],
-                    None,
-                ) {
-                    Ok(answer) => {
-                        found = Some(place_named(&answer.body));
-                        break;
-                    }
-                    Err(err) => why.push(format!("{}: {}", who(owner), esi::describe(&err))),
-                }
-            }
-            if found.is_none() {
-                log::warn(format!(
-                    "structure {id} not named (ESI names it only to a character that may dock \
-                     there): {}",
-                    if why.is_empty() {
-                        "no owner with blueprints there is in use".to_owned()
-                    } else {
-                        why.join("; ")
-                    }
-                ));
-            }
-            found
-        } else if is_system(id) {
-            esi::names(&[id])
-                .ok()
-                .and_then(|named| named.into_iter().next())
-                .map(|n| (n.name.clone(), n.name))
-        } else {
-            // Somewhere ESI doesn't say (an item in another's hangar).
-            None
-        };
-        match named {
-            Some((name, system)) if !name.is_empty() => store_place(id, &name, &system, true)?,
-            _ => {
+            Naming::Named(..) | Naming::Unnamed => {
                 let placeholder = if is_structure(id) {
                     format!("Structure {id}")
                 } else {
@@ -815,28 +803,105 @@ fn name_places(owners: &[Owner]) -> Result<(), JobError> {
                 };
                 store_place(id, &placeholder, "", false)?;
             }
+            Naming::Skipped => {}
+            Naming::Spent => break,
         }
     }
     Ok(())
 }
 
+/// What looking a place's name up came to.
+enum Naming {
+    /// Its name and its system's.
+    Named(String, String),
+    /// ESI doesn't say: a placeholder, tried again within the hour.
+    Unnamed,
+    /// ESI had trouble: left as it is, tried again next run.
+    Skipped,
+    /// The run's ESI calls are spent: left as it is, with the rest.
+    Spent,
+}
+
+fn name_place(id: i64, holders: &[&Owner]) -> Naming {
+    if is_station(id) {
+        return match esi::get(
+            "universe-station",
+            PUBLIC,
+            &[("station_id".to_owned(), id.to_string())],
+            None,
+        ) {
+            Ok(answer) => place_named(&answer.body),
+            Err(err) if out_of_calls(&err) => Naming::Spent,
+            Err(err) => {
+                log::info(format!("station {id} not named: {err:?}"));
+                Naming::Skipped
+            }
+        };
+    }
+    if is_structure(id) {
+        let mut why = Vec::new();
+        for owner in holders {
+            let endpoint = if owner.kind == "corporation" {
+                "source-structure"
+            } else {
+                "universe-structure"
+            };
+            match esi::get(
+                endpoint,
+                owner.subject,
+                &[("structure_id".to_owned(), id.to_string())],
+                None,
+            ) {
+                Ok(answer) => return place_named(&answer.body),
+                Err(err) if out_of_calls(&err) => return Naming::Spent,
+                Err(err) => why.push(format!("{}: {}", who(owner), esi::describe(&err))),
+            }
+        }
+        log::warn(format!(
+            "structure {id} not named (ESI names it only to a character that may dock there): {}",
+            if why.is_empty() {
+                "no owner with blueprints there is in use".to_owned()
+            } else {
+                why.join("; ")
+            }
+        ));
+        return Naming::Unnamed;
+    }
+    if is_system(id) {
+        return match esi::names(&[id]) {
+            Ok(named) => named
+                .into_iter()
+                .next()
+                .map_or(Naming::Unnamed, |n| Naming::Named(n.name.clone(), n.name)),
+            Err(err) if out_of_calls(&err) => Naming::Spent,
+            Err(_) => Naming::Unnamed,
+        };
+    }
+    // Somewhere ESI doesn't say (an item in another's hangar).
+    Naming::Unnamed
+}
+
 /// A station's or structure's name and its system's, from ESI's answer.
-fn place_named(body: &str) -> (String, String) {
+fn place_named(body: &str) -> Naming {
     let place: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-    let system = place["system_id"]
+    let system = match place["system_id"]
         .as_i64()
         .or_else(|| place["solar_system_id"].as_i64())
-        .and_then(|s| esi::names(&[s]).ok())
-        .and_then(|named| named.into_iter().next())
-        .map(|n| n.name)
-        .unwrap_or_default();
+    {
+        Some(system) => match esi::names(&[system]) {
+            Ok(named) => named.into_iter().next().map(|n| n.name).unwrap_or_default(),
+            Err(err) if out_of_calls(&err) => return Naming::Spent,
+            Err(_) => String::new(),
+        },
+        None => String::new(),
+    };
     let name: String = place["name"]
         .as_str()
         .unwrap_or_default()
         .chars()
         .take(200)
         .collect();
-    (name, system)
+    Naming::Named(name, system)
 }
 
 fn store_place(id: i64, name: &str, system: &str, named: bool) -> Result<(), JobError> {
