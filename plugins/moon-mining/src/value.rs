@@ -7,10 +7,13 @@
 //! - A chunk holds the drill's hourly volume for every hour it was
 //!   extracted, split between the moon's ores by the survey's shares.
 //! - Prices are CCP's average price of the ore itself (ESI's
-//!   `/markets/prices/`; the adjusted price where there's no average).
-//!   aa-moonmining values ore by its refined minerals, but ESI has no
-//!   reprocessing yields (they're only in the static data), so these are
-//!   the unrefined ore's prices.
+//!   `/markets/prices/`), as aa-moonmining's default
+//!   (`MOONMINING_USE_REPROCESS_PRICING` off). Where an ore has no
+//!   average, Tether uses its adjusted price; aa-moonmining counts it as
+//!   0. aa-moonmining's opt-in reprocess pricing (the refined materials ×
+//!   `MOONMINING_REPROCESSING_YIELD`, 0.85) needs each ore's materials
+//!   from CCP's static data, which ESI doesn't serve, so it isn't
+//!   offered.
 
 use chrono::{DateTime, Utc};
 

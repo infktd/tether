@@ -45,8 +45,8 @@ pub fn page(viewer: &Viewer) -> Result<Page, PageError> {
     let (income, total, moons) = income_table()?;
     Ok(Page::new("Reports")
         .description(
-            "Values at CCP's average ore prices (the unrefined ore's), read daily from ESI; \
-             mining from the refineries' mining ledgers.",
+            "Values at CCP's average price of each ore, read daily from ESI; mining from the \
+             refineries' mining ledgers.",
         )
         .stats(vec![
             Stat::new("Owned moons", moons),

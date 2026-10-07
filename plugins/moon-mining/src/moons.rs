@@ -203,7 +203,7 @@ pub fn moons_page(viewer: &Viewer, filter: &Filter) -> Result<Page, PageError> {
     let mut page = Page::new("Moons")
         .description(
             "Moons with their ores from surveys, and what a month of mining them is worth at CCP's \
-             average ore prices (the unrefined ore's, as ESI has no reprocessing yields).",
+             average price of each ore.",
         )
         .toolbar(
             Toolbar::new()
