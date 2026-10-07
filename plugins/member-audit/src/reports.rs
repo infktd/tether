@@ -10,15 +10,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tether_plugin_sdk::identity::Builtin;
+use tether_plugin_sdk::identity::{Builtin, Member};
 use tether_plugin_sdk::storage::Value as Db;
 use tether_plugin_sdk::{
-    Column, Page, PageError, Request, Table, Tone, Toolbar, Value, badge, character, corporation,
+    Column, Page, PageError, Request, Stat, Table, Tone, Toolbar, Value, alliance, badge,
+    character, corporation,
 };
 
 use crate::access::Access;
 use crate::sets::{SetGroup, UNGROUPED, grouped, set_groups, skill_sets};
-use crate::{int, query, text, with_rows};
+use crate::{count, int, query, text, with_rows};
 
 /// Rows in a table, at most (the host's limit).
 const MAX_ROWS: usize = 500;
@@ -103,6 +104,295 @@ pub(crate) fn report_page(title: &str, description: String) -> Page {
     Page::new(title)
         .description(description)
         .link("Skill sets", "reports")
+        .link("User compliance", "reports/users")
+        .link("Corporation compliance", "reports/corporations")
+}
+
+/// A member account as the compliance reports count it.
+struct Counted<'a> {
+    member: &'a Member,
+    total: usize,
+    unregistered: usize,
+}
+
+/// The member accounts in the viewer's scope, without Guests, with their
+/// characters counted (aa-memberaudit's reports).
+fn counted<'a>(access: &'a Access) -> Vec<Counted<'a>> {
+    access
+        .members_in_scope()
+        .filter(|m| m.state.builtin != Some(Builtin::Guest))
+        .map(|member| Counted {
+            member,
+            total: member.characters.len(),
+            unregistered: member.characters.iter().filter(|c| !c.registered).count(),
+        })
+        .collect()
+}
+
+/// A share of characters registered, as a whole percentage (0 for none).
+fn percent(registered: usize, total: usize) -> i64 {
+    if total == 0 {
+        return 0;
+    }
+    ((registered as f64 / total as f64) * 100.0).round() as i64
+}
+
+/// aa-memberaudit's colour code: fully, partly (85% and up) or not
+/// compliant.
+fn compliance(percent: i64) -> Value {
+    let tone = match percent {
+        100 => Tone::Success,
+        85.. => Tone::Warning,
+        _ => Tone::Danger,
+    };
+    badge(format!("{percent}%"), tone).into()
+}
+
+/// User Compliance: a row per pilot in the viewer's scope (their main),
+/// whether any of their characters is registered with Member Audit and
+/// whether all are.
+pub(crate) fn user_compliance(access: &Access, request: &Request) -> Result<Page, PageError> {
+    if !access.reports {
+        return Err(PageError::NotFound);
+    }
+    let users = counted(access);
+    let names = crate::pages::names_of(
+        users
+            .iter()
+            .flat_map(|u| {
+                [
+                    Some(u.member.main.corporation_id),
+                    u.member.main.alliance_id,
+                ]
+            })
+            .flatten()
+            .collect(),
+    )?;
+    let named = |id: i64| names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+    let state = request.param("state");
+    let corp: Option<i64> = request.param("corporation").parse().ok();
+    let ally: Option<i64> = request.param("alliance").parse().ok();
+    let registered = request.param("registered");
+    let compliant = request.param("compliant");
+    let mut shown: Vec<&Counted> = users
+        .iter()
+        .filter(|u| state.is_empty() || u.member.state.name == state)
+        .filter(|u| corp.is_none_or(|c| u.member.main.corporation_id == c))
+        .filter(|u| ally.is_none_or(|a| u.member.main.alliance_id == Some(a)))
+        .filter(|u| registered.is_empty() || (registered == "yes") == (u.unregistered < u.total))
+        .filter(|u| compliant.is_empty() || (compliant == "yes") == (u.unregistered == 0))
+        .collect();
+    shown.sort_by_key(|u| u.member.main.name.to_lowercase());
+    let cut = shown.len() > MAX_ROWS;
+    let rows = shown.iter().take(MAX_ROWS).map(|u| {
+        let main = &u.member.main;
+        vec![
+            if access.may_open(main.id) {
+                character(main.id, main.name.clone())
+                    .link(format!("character/{}", main.id))
+                    .into()
+            } else {
+                character(main.id, main.name.clone()).into()
+            },
+            u.member.state.name.clone().into(),
+            corporation(main.corporation_id, named(main.corporation_id)).into(),
+            yes_no(u.unregistered < u.total),
+            yes_no(u.unregistered == 0),
+            count(u.total),
+            count(u.unregistered),
+        ]
+    });
+    let mut table = Table::new(vec![
+        Column::text("User"),
+        Column::text("State"),
+        Column::text("Organisation"),
+        Column::text("Registered?"),
+        Column::text("Compliant?"),
+        Column::numeric("Characters"),
+        Column::numeric("Unregistered"),
+    ])
+    .empty("No pilots match.");
+    if cut {
+        table = table.title(format!(
+            "The first {MAX_ROWS} of {} pilots, by main. Filters narrow them.",
+            shown.len()
+        ));
+    }
+    let yes_no_choices = || {
+        vec![
+            ("yes".to_owned(), "Yes".to_owned()),
+            ("no".to_owned(), "No".to_owned()),
+        ]
+    };
+    let toolbar = Toolbar::new()
+        .filter(
+            "state",
+            "State",
+            choices(
+                users
+                    .iter()
+                    .map(|u| (u.member.state.name.clone(), u.member.state.name.clone()))
+                    .collect(),
+            ),
+        )
+        .filter(
+            "alliance",
+            "Alliance",
+            choices(
+                users
+                    .iter()
+                    .filter_map(|u| u.member.main.alliance_id)
+                    .map(|a| (a.to_string(), named(a)))
+                    .collect(),
+            ),
+        )
+        .filter(
+            "corporation",
+            "Corporation",
+            choices(
+                users
+                    .iter()
+                    .map(|u| {
+                        let c = u.member.main.corporation_id;
+                        (c.to_string(), named(c))
+                    })
+                    .collect(),
+            ),
+        )
+        .filter("registered", "Registered?", yes_no_choices())
+        .filter("compliant", "Compliant?", yes_no_choices());
+    let fully = users.iter().filter(|u| u.unregistered == 0).count();
+    Ok(report_page(
+        "Reports",
+        format!(
+            "User compliance: whether every character of each pilot is registered with Member \
+             Audit, of {}",
+            access.scope_words()
+        ),
+    )
+    .stats(vec![
+        Stat::new("Pilots", count(users.len())),
+        Stat::new("Compliant", count(fully)),
+        Stat::new("Not compliant", count(users.len() - fully)),
+    ])
+    .toolbar(toolbar)
+    .table(with_rows(table, rows)))
+}
+
+/// Corporation Compliance: a row per corporation of the mains in the
+/// viewer's scope, with its pilots, their characters and the share
+/// registered with Member Audit.
+pub(crate) fn corporation_compliance(
+    access: &Access,
+    request: &Request,
+) -> Result<Page, PageError> {
+    if !access.reports {
+        return Err(PageError::NotFound);
+    }
+    let users = counted(access);
+    // Each corporation: its alliance, mains, characters, unregistered.
+    let mut corporations: BTreeMap<i64, (Option<i64>, usize, usize, usize)> = BTreeMap::new();
+    for u in &users {
+        let row = corporations.entry(u.member.main.corporation_id).or_insert((
+            u.member.main.alliance_id,
+            0,
+            0,
+            0,
+        ));
+        row.1 += 1;
+        row.2 += u.total;
+        row.3 += u.unregistered;
+    }
+    let names = crate::pages::names_of(
+        corporations
+            .iter()
+            .flat_map(|(c, (a, ..))| [Some(*c), *a])
+            .flatten()
+            .collect(),
+    )?;
+    let named = |id: i64| names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+    let corp: Option<i64> = request.param("corporation").parse().ok();
+    let ally: Option<i64> = request.param("alliance").parse().ok();
+    let compliant = request.param("compliant");
+    let mut shown: Vec<(i64, Option<i64>, usize, usize, i64)> = corporations
+        .iter()
+        .map(|(c, (a, mains, total, unregistered))| {
+            (
+                *c,
+                *a,
+                *mains,
+                *total,
+                percent(total - unregistered, *total),
+            )
+        })
+        .filter(|(c, ..)| corp.is_none_or(|x| x == *c))
+        .filter(|(_, a, ..)| ally.is_none_or(|x| Some(x) == *a))
+        .filter(|(.., p)| compliant.is_empty() || (compliant == "yes") == (*p == 100))
+        .collect();
+    shown.sort_by_key(|(c, ..)| named(*c).to_lowercase());
+    let rows = shown.iter().take(MAX_ROWS).map(|(c, a, mains, total, p)| {
+        vec![
+            corporation(*c, named(*c)).into(),
+            a.map_or_else(|| "".into(), |a| alliance(a, named(a)).into()),
+            count(*mains),
+            count(*total),
+            compliance(*p),
+        ]
+    });
+    let toolbar = Toolbar::new()
+        .filter(
+            "alliance",
+            "Alliance",
+            choices(
+                corporations
+                    .values()
+                    .filter_map(|(a, ..)| *a)
+                    .map(|a| (a.to_string(), named(a)))
+                    .collect(),
+            ),
+        )
+        .filter(
+            "corporation",
+            "Corporation",
+            choices(
+                corporations
+                    .keys()
+                    .map(|c| (c.to_string(), named(*c)))
+                    .collect(),
+            ),
+        )
+        .filter(
+            "compliant",
+            "Compliant?",
+            vec![
+                ("yes".to_owned(), "Yes".to_owned()),
+                ("no".to_owned(), "No".to_owned()),
+            ],
+        );
+    Ok(report_page(
+        "Reports",
+        format!(
+            "Corporation compliance: the share of each corporation's characters registered \
+             with Member Audit, by their pilots' mains, of {}",
+            access.scope_words()
+        ),
+    )
+    .toolbar(toolbar)
+    .table(with_rows(
+        Table::new(vec![
+            Column::text("Organisation"),
+            Column::text("Alliance"),
+            Column::numeric("Pilots"),
+            Column::numeric("Characters"),
+            Column::numeric("Compliance"),
+        ])
+        .empty("No corporations match."),
+        rows,
+    ))
+    .text(
+        "Compliance: 100% fully compliant, 85% and up partly compliant, below that not \
+         compliant.",
+    ))
 }
 
 /// The Skill Sets report.
@@ -331,4 +621,23 @@ pub(crate) fn skill_sets_report(access: &Access, request: &Request) -> Result<Pa
         summary,
     ))
     .table(with_rows(table, rows)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compliance_is_aa_s_rounded_share_and_colour() {
+        assert_eq!(percent(2, 3), 67);
+        assert_eq!(percent(0, 0), 0);
+        assert_eq!(percent(5, 5), 100);
+        let tone = |p| match compliance(p) {
+            Value::Badge(b) => b.tone,
+            _ => unreachable!("a badge"),
+        };
+        assert_eq!(tone(100), Tone::Success);
+        assert_eq!(tone(85), Tone::Warning);
+        assert_eq!(tone(84), Tone::Danger);
+    }
 }

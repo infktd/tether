@@ -57,6 +57,8 @@ impl Plugin for MemberAudit {
             ["skill-sets", "set", id] => sets::set_page(&access, id, None),
             ["skill-sets", "group", id] => sets::group_page(&access, id, None),
             ["reports"] => reports::skill_sets_report(&access, &request),
+            ["reports", "users"] => reports::user_compliance(&access, &request),
+            ["reports", "corporations"] => reports::corporation_compliance(&access, &request),
             ["data-export"] if viewer.can("exports_access") => exports::page(None),
             ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {

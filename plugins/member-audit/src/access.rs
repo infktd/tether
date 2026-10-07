@@ -26,7 +26,7 @@
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use tether_plugin_sdk::identity::{self, Owner, Viewer};
+use tether_plugin_sdk::identity::{self, Character, Member, MemberCharacter, Owner, Viewer};
 use tether_plugin_sdk::log;
 use tether_plugin_sdk::storage::Value as Db;
 
@@ -48,6 +48,9 @@ pub(crate) struct Access<'a> {
     owners: OnceCell<BTreeMap<i64, Owner>>,
     /// The characters their pilots share: read the first time it's needed.
     shared_ids: OnceCell<BTreeSet<i64>>,
+    /// Every member account with all its characters: asked of the host
+    /// the first time it's needed.
+    members: OnceCell<Vec<Member>>,
 }
 
 impl<'a> Access<'a> {
@@ -72,6 +75,7 @@ impl<'a> Access<'a> {
             },
             owners: OnceCell::new(),
             shared_ids: OnceCell::new(),
+            members: OnceCell::new(),
         }
     }
 
@@ -136,13 +140,55 @@ impl<'a> Access<'a> {
         self.shared && self.shared_ids().contains(&character)
     }
 
-    /// Whether an owner's main is within a corporation or alliance scope.
-    fn main_in_scope(&self, owner: &Owner) -> bool {
-        self.corporation
-            .is_some_and(|c| c == owner.main.corporation_id)
-            || self
-                .alliance
-                .is_some_and(|a| Some(a) == owner.main.alliance_id)
+    /// Whether a main is within a corporation or alliance scope.
+    fn main_in_scope(&self, main: &Character) -> bool {
+        self.corporation.is_some_and(|c| c == main.corporation_id)
+            || self.alliance.is_some_and(|a| Some(a) == main.alliance_id)
+    }
+
+    /// Every account holding one of Member Audit's permissions, with its
+    /// main, state and all its characters, registered or not (Tether
+    /// tells the bundled Member Audit alone). Without that, only the
+    /// viewer's own account.
+    pub fn members(&self) -> &[Member] {
+        self.members.get_or_init(|| match identity::members() {
+            Some(members) => members,
+            None => {
+                let ids: Vec<i64> = self.viewer.characters.iter().map(|c| c.id).collect();
+                let registered: BTreeSet<i64> = crate::query(
+                    "SELECT character_id FROM characters \
+                     WHERE character_id = ANY(string_to_array($1, ',')::bigint[])",
+                    &[crate::id_list(&ids).into()],
+                )
+                .unwrap_or_default()
+                .iter()
+                .map(|r| crate::int(r, 0))
+                .collect();
+                vec![Member {
+                    main: self.viewer.main.clone(),
+                    state: self.viewer.state.clone(),
+                    characters: self
+                        .viewer
+                        .characters
+                        .iter()
+                        .map(|c| MemberCharacter {
+                            character: c.clone(),
+                            registered: registered.contains(&c.id),
+                        })
+                        .collect(),
+                }]
+            }
+        })
+    }
+
+    /// The member accounts the viewer's scope covers, by their main
+    /// (aa-memberaudit's `accessible_users`): all of them with
+    /// `view_everything`, those whose main is in the viewer's main's
+    /// corporation or alliance with those scopes, and always their own.
+    pub fn members_in_scope(&self) -> impl Iterator<Item = &Member> {
+        self.members().iter().filter(|m| {
+            self.everything || m.main.id == self.viewer.main.id || self.main_in_scope(&m.main)
+        })
     }
 
     /// Within the viewer's scope, going by the character's owner's main
@@ -155,7 +201,7 @@ impl<'a> Access<'a> {
             return false;
         }
         self.owner(character)
-            .is_some_and(|owner| self.main_in_scope(owner))
+            .is_some_and(|owner| self.main_in_scope(&owner.main))
     }
 
     /// May open this character's sheet, and so read its mail.
@@ -194,7 +240,7 @@ impl<'a> Access<'a> {
             ids.extend(
                 self.owners()
                     .values()
-                    .filter(|owner| self.main_in_scope(owner))
+                    .filter(|owner| self.main_in_scope(&owner.main))
                     .map(|owner| owner.character_id),
             );
         }

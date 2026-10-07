@@ -1176,6 +1176,76 @@ async fn skill_sets_are_for_view_skill_sets(db: PgPool) {
     assert_eq!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
 }
 
+/// aa-memberaudit's User Compliance and Corporation Compliance reports:
+/// each pilot in scope (their main), whether any and every one of their
+/// characters is registered with Member Audit; each corporation of the
+/// mains, the share registered. Guests left out; without a scope, only
+/// your own.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_compliance_reports(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    // An alt Corp Mate hasn't registered with Member Audit.
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000022, account_id, 'Hidden Alt', 98000003 FROM core.characters WHERE id = $1",
+    )
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let users = format!("/plugins/{ID}/reports/users");
+    let res = page(&h, &users, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let row = finder_row(&res.body, ">Corp Mate<");
+    // Registered (some are), not compliant (one isn't), 3 characters, 1
+    // unregistered.
+    let cells: Vec<&str> = row.split("<td").skip(1).collect();
+    assert!(
+        cells[3].contains(">Yes<") && cells[4].contains(">No<"),
+        "{row}"
+    );
+    assert!(
+        cells[5].contains(">3<") && cells[6].contains(">1<"),
+        "{row}"
+    );
+    let row = finder_row(&res.body, ">Chribba<");
+    assert!(row.contains(">Member<"), "{row}");
+    let compliant = page(&h, &format!("{users}?compliant=yes"), &owner)
+        .await
+        .body;
+    assert!(
+        compliant.contains(">Chribba<") && !compliant.contains(">Corp Mate<"),
+        "{compliant}"
+    );
+    let corporations = format!("/plugins/{ID}/reports/corporations");
+    let res = page(&h, &corporations, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let row = finder_row(&res.body, "98133756");
+    assert!(row.contains(">67%<"), "{row}");
+    // Another pilot with Reports and no view scope sees only themselves.
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "reports_access").await;
+    let theirs = page(&h, &users, &blue).await.body;
+    assert!(theirs.contains(">gigX<"), "{theirs}");
+    assert!(
+        !theirs.contains("Corp Mate") && !theirs.contains(">Chribba<"),
+        "{theirs}"
+    );
+    // With the corporation scope, the pilots whose main is in theirs.
+    grant(&h, &owner, "view_same_corporation").await;
+    let theirs = page(&h, &users, &blue).await.body;
+    assert!(theirs.contains(">Corp Mate<"), "{theirs}");
+    assert!(!theirs.contains(">Chribba<"), "{theirs}");
+}
+
 /// aa-memberaudit's skill set fields and groups: a required level, a
 /// recommended one or both; a description and a ship; sets kept off
 /// pilots' sheets; and groups, doctrines among them, by which the sheet

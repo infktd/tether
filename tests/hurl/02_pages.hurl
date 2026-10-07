@@ -1236,6 +1236,27 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# Member Audit's skill set and skill set group pages, and its reports.
+GET {{base}}/plugins/tether.member-audit/skill-sets/set/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.member-audit/skill-sets/group/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.member-audit/reports/users
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.member-audit/reports/corporations
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # Buyback's reverse buyback: its programs, a stock picker, a request,
 # the statistics and the managers' editor.
 GET {{base}}/plugins/tether.buyback/reverse
