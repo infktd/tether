@@ -42,6 +42,11 @@ use crate::ratelimit::RateLimiter;
 pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// Discord messages per plugin per minute.
 pub const SENDS_PER_MINUTE: usize = 20;
+/// How long Discord refusing a plugin's bot in a channel is remembered:
+/// the plugin's sends there meanwhile (its retry without the mention, the
+/// rest of its outbox) get the same answer without asking Discord again,
+/// and don't count against [`SENDS_PER_MINUTE`].
+pub const REFUSAL_MEMORY: Duration = Duration::from_secs(60);
 pub const MAX_MESSAGE: usize = 1500;
 /// Plugin ESI calls are kept this long in the access log...
 pub const ACCESS_LOG_DAYS: i32 = 90;
@@ -82,6 +87,7 @@ pub struct PluginServices {
     deps: Deps,
     plugins: Weak<Plugins>,
     sends: RateLimiter<String>,
+    refusals: Arc<Refusals>,
     throttle: Arc<ErrorThrottle>,
     http: Arc<crate::plugin_http::Http>,
     notices: Arc<crate::plugin_notify::Limits>,
@@ -133,6 +139,29 @@ impl ErrorThrottle {
     }
 }
 
+/// Channels Discord refused a plugin's bot in, for [`REFUSAL_MEMORY`]:
+/// (plugin, channel) to until when and why.
+#[derive(Debug, Default)]
+struct Refusals(std::sync::Mutex<std::collections::HashMap<(String, String), (Instant, String)>>);
+
+impl Refusals {
+    fn get(&self, plugin: &str, channel: &str) -> Option<String> {
+        let mut refused = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let now = Instant::now();
+        refused.retain(|_, (until, _)| *until > now);
+        refused
+            .get(&(plugin.to_owned(), channel.to_owned()))
+            .map(|(_, why)| why.clone())
+    }
+
+    fn remember(&self, plugin: &str, channel: &str, why: &str) {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).insert(
+            (plugin.to_owned(), channel.to_owned()),
+            (Instant::now() + REFUSAL_MEMORY, why.to_owned()),
+        );
+    }
+}
+
 impl std::fmt::Debug for PluginServices {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PluginServices").finish_non_exhaustive()
@@ -149,6 +178,7 @@ impl PluginServices {
             deps,
             plugins,
             sends: RateLimiter::new(SENDS_PER_MINUTE, Duration::from_secs(60)),
+            refusals: Arc::default(),
             throttle: Arc::new(ErrorThrottle::new()),
             notices: Arc::default(),
             http,
@@ -653,9 +683,11 @@ fn card(mut embed: Embed) -> Result<DiscordEmbed, DiscordError> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn discord_send(
     deps: &Deps,
     plugins: &Weak<Plugins>,
+    refusals: &Refusals,
     plugin: &str,
     channel: &str,
     text: &str,
@@ -759,11 +791,21 @@ async fn discord_send(
             // deleted, a token revoked) stays until an admin fixes it, so
             // the app hears it as final and moves on to its next message.
             if e.is_transient() || matches!(e, tether_discord::DiscordError::Protocol(_)) {
-                unavailable(e.to_string())
-            } else {
-                tracing::warn!(plugin, error = %e, "plugin Discord send refused");
-                DiscordError::NotAllowed(crate::pings::explain(&e))
+                return unavailable(e.to_string());
             }
+            tracing::warn!(plugin, error = %e, "plugin Discord send refused");
+            let why = crate::pings::explain(&e);
+            // The bot itself refused there (not this one message): its next
+            // sends there would be too.
+            if matches!(
+                e,
+                tether_discord::DiscordError::Forbidden { .. }
+                    | tether_discord::DiscordError::NotFound { .. }
+                    | tether_discord::DiscordError::BadBotToken
+            ) {
+                refusals.remember(plugin, channel, &why);
+            }
+            DiscordError::NotAllowed(why)
         })
 }
 
@@ -1060,13 +1102,25 @@ impl Services for PluginServices {
         embed: Option<Embed>,
         mention: Mention,
     ) -> Fut<Result<(), DiscordError>> {
+        // Refused there a moment ago: the same answer, without asking
+        // Discord again or spending one of the plugin's sends. Like a
+        // rate-limited send, it reaches nothing, so it isn't logged.
+        if let Some(why) = self.refusals.get(&plugin, &channel) {
+            return Box::pin(async { Err(DiscordError::NotAllowed(why)) });
+        }
         if self.sends.check(plugin.clone(), Instant::now()).is_err() {
             return Box::pin(async { Err(DiscordError::RateLimited) });
         }
-        let (deps, plugins) = (self.deps.clone(), self.plugins.clone());
+        let (deps, plugins, refusals) = (
+            self.deps.clone(),
+            self.plugins.clone(),
+            self.refusals.clone(),
+        );
         Box::pin(async move {
-            let result =
-                discord_send(&deps, &plugins, &plugin, &channel, &text, embed, mention).await;
+            let result = discord_send(
+                &deps, &plugins, &refusals, &plugin, &channel, &text, embed, mention,
+            )
+            .await;
             let outcome = if result.is_ok() {
                 "ok"
             } else {

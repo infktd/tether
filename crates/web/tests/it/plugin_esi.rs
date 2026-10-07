@@ -1381,9 +1381,13 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
 /// Discord refusing the bot is final for the app, so it moves on (Moon
 /// Mining finishes its job, the relays mark the one message failed);
 /// only a passing failure says "try later". Before, every refusal came
-/// back Unavailable: pings retried until dead and outboxes jammed.
+/// back Unavailable: pings retried until dead and outboxes jammed. A
+/// refusal in a channel is remembered for a minute: the app's next sends
+/// there (its retry without the mention) aren't sent to Discord again,
+/// nor counted against its sends.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn discord_refusing_the_bot_is_final_for_the_app(db: PgPool) {
+    const OTHER_CHANNEL: &str = "600000000000000002";
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
@@ -1391,51 +1395,98 @@ async fn discord_refusing_the_bot_is_final_for_the_app(db: PgPool) {
     let res = send(
         &h.app,
         form(
-            "/admin/plugins/acme.esi/channels",
-            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            "/admin/discord/channels",
+            &format!("channel_id={OTHER_CHANNEL}"),
             &owner,
         ),
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    async fn answer(h: &Harness, status: u16, body: serde_json::Value) -> String {
+    for channel in [DISCORD_PING_CHANNEL, OTHER_CHANNEL] {
+        let res = send(
+            &h.app,
+            form(
+                "/admin/plugins/acme.esi/channels",
+                &format!("channel_id={channel}"),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    async fn answer(h: &Harness, status: u16, body: serde_json::Value) {
         h.discord_server.reset().await;
         Mock::given(method("POST"))
             .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
             .respond_with(ResponseTemplate::new(status).set_body_json(body))
             .mount(&h.discord_server)
             .await;
-        probe(h, "send", &[("text", "Moon popped")]).await
+    }
+    async fn send_to(h: &Harness, channel: &str, state: Option<&str>) -> String {
+        let mut query = vec![("channel", channel), ("text", "Moon popped")];
+        query.extend(state.map(|s| ("state", s)));
+        probe(h, "send", &query).await
+    }
+    async fn asked(h: &Harness, channel: &str) -> usize {
+        let at = format!("/api/v10/channels/{channel}/messages");
+        h.discord_server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == at)
+            .count()
     }
 
-    // The bot may not post there, or the channel was deleted in Discord.
-    let out = answer(
-        &h,
-        403,
-        serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
-    )
-    .await;
-    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
-    assert!(
-        out.contains("give it View Channel and Send Messages"),
-        "{out}"
-    );
-    let out = answer(
-        &h,
-        404,
-        serde_json::json!({"code": 10003, "message": "Unknown Channel"}),
-    )
-    .await;
-    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
-    assert!(out.contains("That channel no longer exists"), "{out}");
-    // Discord down: try later.
-    let out = answer(
+    // Discord down: try later, and the next send asks again.
+    answer(
         &h,
         500,
         serde_json::json!({"code": 0, "message": "Internal Server Error"}),
     )
     .await;
-    assert_eq!(out, "err Error::Unavailable");
+    assert_eq!(
+        send_to(&h, DISCORD_PING_CHANNEL, None).await,
+        "err Error::Unavailable"
+    );
+    assert_eq!(
+        send_to(&h, DISCORD_PING_CHANNEL, None).await,
+        "err Error::Unavailable"
+    );
+    assert_eq!(asked(&h, DISCORD_PING_CHANNEL).await, 2);
+
+    // The bot may not post there: final, in plain words.
+    answer(
+        &h,
+        403,
+        serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+    )
+    .await;
+    let out = send_to(&h, DISCORD_PING_CHANNEL, Some("member")).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    assert!(
+        out.contains("give it View Channel and Send Messages"),
+        "{out}"
+    );
+    // The app's retry without the mention, and the rest of its messages
+    // there, get the same answer without Discord being asked again, and
+    // without spending the app's sends.
+    for _ in 0..tether_web::plugin_services::SENDS_PER_MINUTE {
+        assert_eq!(send_to(&h, DISCORD_PING_CHANNEL, None).await, out);
+    }
+    assert_eq!(asked(&h, DISCORD_PING_CHANNEL).await, 1);
+
+    // Another channel is asked: deleted in Discord, so final too.
+    answer(
+        &h,
+        404,
+        serde_json::json!({"code": 10003, "message": "Unknown Channel"}),
+    )
+    .await;
+    let out = send_to(&h, OTHER_CHANNEL, None).await;
+    assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    assert!(out.contains("That channel no longer exists"), "{out}");
+    assert_eq!(asked(&h, OTHER_CHANNEL).await, 1);
 }
 
 // ---- the character viewer's endpoints, and syncing right away --------------

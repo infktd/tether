@@ -874,6 +874,154 @@ async fn an_owner_without_the_role_is_left_alone(db: PgPool) {
     assert_eq!(owners, 1);
 }
 
+/// A channel the bot can't post in holds nothing up: Discord refusing it
+/// is final, so the relay marks that message failed and sends the next,
+/// to another channel, and no job dies. Before, the refusal came back as
+/// Discord being down: every run stopped at that message, and nothing
+/// went out to any channel until it expired a day later.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_channel_the_bot_cant_post_in_holds_nothing_up(db: PgPool) {
+    const LOCKED: &str = "600000000000000002";
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    // The attack first, then the drill.
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([
+            notification(1001, "StructureUnderAttack", times.attacked, &attack_text()),
+            notification(
+                1003,
+                "MoonminingExtractionStarted",
+                now - Duration::minutes(2),
+                &moon_text()
+            ),
+        ])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(&h, &owner).await;
+
+    // Attacks go to a channel the bot may not post in, with Member's
+    // role; extractions to one it may.
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            "/admin/discord/channels",
+            &format!("channel_id={LOCKED}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    for channel in [DISCORD_PING_CHANNEL, LOCKED] {
+        let res = send(
+            &h.app,
+            form(
+                &format!("/admin/plugins/{ID}/channels"),
+                &format!("channel_id={channel}"),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let res = save_settings(
+        &h,
+        &owner,
+        &[
+            ("attack_channel", LOCKED),
+            ("fuel_channel", ""),
+            ("state_channel", ""),
+            ("moon_channel", DISCORD_PING_CHANNEL),
+            ("default_pings", "on"),
+            ("danger_ping", "Member"),
+        ],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{LOCKED}/messages")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({ "code": 50013, "message": "Missing Permissions" }),
+            ),
+        )
+        .with_priority(1)
+        .mount(&h.discord_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+
+    let problems = sync(&h).await;
+    assert!(
+        problems.iter().any(|p| p.contains(
+            "a Discord message wasn't sent: The bot can't post in that channel: give it View \
+             Channel and Send Messages there"
+        )),
+        "{problems:?}"
+    );
+    // The attack's message failed, saying why; the drill's, queued after
+    // it, went out.
+    let outbox: Vec<(i64, String, bool, Option<String>)> = sqlx::query_as(
+        r#"SELECT id, channel, sent_at IS NOT NULL, failed FROM "plugin_tether.structures".outbox
+           ORDER BY id"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    let refused = outbox.iter().find(|m| m.1 == LOCKED).unwrap();
+    let posted = outbox.iter().find(|m| m.1 == DISCORD_PING_CHANNEL).unwrap();
+    assert!(refused.0 < posted.0, "{outbox:?}");
+    assert!(
+        !refused.2
+            && refused
+                .3
+                .as_deref()
+                .is_some_and(|f| f.contains("give it View Channel and Send Messages")),
+        "{outbox:?}"
+    );
+    assert!(
+        posted.2 && posted.3.is_none(),
+        "{outbox:?}\n{}",
+        backlog(&h).await
+    );
+    // Discord was asked once for the locked channel: the retry without
+    // the mention got Tether's answer.
+    async fn asked(h: &Harness, channel: &str) -> usize {
+        let at = format!("/api/v10/channels/{channel}/messages");
+        h.discord_server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method.as_str() == "POST" && r.url.path() == at)
+            .count()
+    }
+    assert_eq!(asked(&h, LOCKED).await, 1);
+    assert_eq!(asked(&h, DISCORD_PING_CHANNEL).await, 1);
+    let dead: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND state = 'dead'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(dead, 0, "{}", backlog(&h).await);
+}
+
 // ---- Structure Timers: the timers Structures publishes ---------------------------
 
 #[derive(Debug, sqlx::FromRow)]
