@@ -322,6 +322,20 @@ fn probe(request: Request) -> Result<Page, PageError> {
         }
         // A main page, for the host's parts around it (Add owner).
         "" => "home".to_owned(),
+        // submitter-characters?reference=
+        "submitter-characters" => format!(
+            "{:?}",
+            identity::submitter_characters(&arg("reference").unwrap_or_default())
+        ),
+        // submitter-lookups?reference=&n=: how many of n lookups answered.
+        "submitter-lookups" => {
+            let reference = arg("reference").unwrap_or_default();
+            let n: usize = arg("n").and_then(|n| n.parse().ok()).unwrap_or(1);
+            let answered = (0..n)
+                .filter(|_| identity::submitter_characters(&reference).is_some())
+                .count();
+            format!("answered={answered}")
+        }
         "viewer" => format!("{:?}", identity::viewer()),
         "acting" => format!("{:?}", identity::acting()),
         "superuser" => identity::superuser().to_string(),

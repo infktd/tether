@@ -208,6 +208,20 @@ pub fn may_see_owners(id: &str, origin: tether_db::plugins::Origin) -> bool {
     id == OWNERS_APP && origin == tether_db::plugins::Origin::Bundled
 }
 
+/// The one app told the characters now on its form submitters' accounts
+/// (`identity.submitter-characters`): HR Applications, as bundled with
+/// Tether, since AA core's hrapplications shows and searches an
+/// applicant's characters as they are (Jay, 2026-10-07). Decided as
+/// [`OWNERS_APP`] is.
+pub const SUBMITTERS_APP: &str = "tether.hr-applications";
+
+/// Whether the running plugin `id` may learn its form submitters'
+/// characters: only [`SUBMITTERS_APP`], and only the bundled package, as
+/// [`may_see_owners`].
+pub fn may_see_submitters(id: &str, origin: tether_db::plugins::Origin) -> bool {
+    id == SUBMITTERS_APP && origin == tether_db::plugins::Origin::Bundled
+}
+
 /// Whether the running plugin `id` was approved for `groups` (the
 /// viewer's groups and the groups to offer them).
 fn sees_groups(plugins: &Weak<Plugins>, id: &str) -> bool {
@@ -1200,6 +1214,45 @@ impl Services for PluginServices {
                 }),
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin character owners");
+                    None
+                }
+            }
+        })
+    }
+
+    fn identity_submitter_characters(
+        &self,
+        plugin: String,
+        reference: String,
+    ) -> Fut<Option<Vec<Character>>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            // The host passes this on only for a component loaded as the
+            // allowed app (`LoadedPlugin::seeing_submitters`); what holds
+            // the id now must be the allowed app too.
+            let running = plugins.upgrade().and_then(|p| p.running(&plugin))?;
+            if !may_see_submitters(&plugin, running.origin)
+                || !crate::plugin_notify::well_formed(&reference)
+            {
+                return None;
+            }
+            // Only this app's own reference, while it still reaches them; an
+            // account with no characters left reaches nobody either.
+            match tether_db::submitters::characters(&db, &plugin, &reference).await {
+                Ok(rows) if rows.is_empty() => None,
+                Ok(rows) => Some(
+                    rows.into_iter()
+                        .map(|c| Character {
+                            id: c.id,
+                            name: c.name,
+                            corporation_id: c.corporation_id.unwrap_or(0),
+                            alliance_id: c.alliance_id,
+                        })
+                        .collect(),
+                ),
+                Err(err) => {
+                    tracing::error!(plugin, error = %err, "plugin submitter characters");
                     None
                 }
             }

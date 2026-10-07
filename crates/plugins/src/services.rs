@@ -81,6 +81,9 @@ pub const MAX_HTTP_CALLS: usize = 20;
 pub const MAX_HTTP_CALLS_PAGE: usize = 5;
 /// The largest request body a plugin may send.
 pub const MAX_HTTP_REQUEST_BODY: usize = 64 * 1024;
+/// `identity.submitter-characters` lookups in one plugin call: a review
+/// queue's worth.
+pub const MAX_SUBMITTER_LOOKUPS: usize = 1000;
 
 pub type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -115,6 +118,14 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// characters, registered or not: `None` for every plugin but the
     /// first-party one allowed to know.
     fn identity_members(&self, plugin: String) -> Fut<Option<Vec<Member>>>;
+    /// The characters now on the account behind one of `plugin`'s
+    /// submitter references: `None` for every plugin but the first-party
+    /// one allowed to know, and for a reference that reaches nobody.
+    fn identity_submitter_characters(
+        &self,
+        plugin: String,
+        reference: String,
+    ) -> Fut<Option<Vec<Character>>>;
     /// The groups of `account` (the viewer's, as the host built it), for a
     /// `plugin` approved for `groups`; none otherwise.
     fn identity_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>>;

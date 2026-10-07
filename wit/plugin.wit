@@ -699,6 +699,14 @@ interface identity {
     /// AA shows superusers only; false in a job. (Superusers also hold
     /// every permission, so `permissions` lists all of yours for them.)
     superuser: func() -> bool;
+
+    /// First-party HR Applications only: the characters on the account
+    /// behind one of this app's `notify.submitter-reference`s as they are
+    /// now (as AA core's hrapplications shows and searches an applicant's
+    /// characters), for as long as the reference reaches them. None for
+    /// another app's reference, one gone or past its year, and for every
+    /// other app: apps never learn which characters share an account.
+    submitter-characters: func(reference: string) -> option<list<character>>;
 }
 
 /// ESI, through the host: plugins name an endpoint and whose token to use,

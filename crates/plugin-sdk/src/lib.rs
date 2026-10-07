@@ -183,6 +183,14 @@ pub mod identity {
         crate::bindings::tether::plugin::identity::members()
     }
 
+    /// First-party HR Applications only: the characters now on the
+    /// account behind one of this app's
+    /// [`notify::submitter_reference`](crate::notify::submitter_reference)s,
+    /// while the reference reaches them. Every other app gets `None`.
+    pub fn submitter_characters(reference: &str) -> Option<Vec<Character>> {
+        crate::bindings::tether::plugin::identity::submitter_characters(reference)
+    }
+
     impl Viewer {
         /// Whether they hold one of this plugin's permissions (its name in
         /// `[permissions]`).

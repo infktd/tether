@@ -745,8 +745,8 @@ async fn bundled_review_page(
     ))
 }
 
-/// What trusting a bundled app means; for Member Audit, the one thing it
-/// learns that no other app can.
+/// What trusting a bundled app means; for Member Audit and HR Applications,
+/// the one thing each learns that no other app can.
 fn bundled_trust(id: &str) -> String {
     let mut text = "This app is part of Tether: it ships in the same image as Tether itself and \
                     is exactly as trusted, so it isn't signed and pins no key. Nothing else can \
@@ -760,6 +760,13 @@ fn bundled_trust(id: &str) -> String {
              owner's main and state, for its scopes by the owner's main; and those pilots' \
              other characters, not registered with it, for its Character Finder and \
              compliance reports.",
+        );
+    }
+    if id == crate::plugin_services::SUBMITTERS_APP {
+        text.push_str(
+            " Unlike any other app, it learns the characters on an applicant's account as they \
+             are now (name, corporation and alliance), for as long as its notices reach them, \
+             to show and search them as Alliance Auth's HR applications do.",
         );
     }
     text

@@ -46,3 +46,30 @@ pub async fn account(
     .await?
     .map(AccountId))
 }
+
+/// The characters now on the account behind one of `plugin_id`'s
+/// references (main first), as [`account`] finds it; none for a reference
+/// that reaches nobody. One query: an app may ask for many in one call.
+pub async fn characters(
+    pool: &PgPool,
+    plugin_id: &str,
+    reference: &str,
+) -> Result<Vec<crate::plugin_esi::CharacterRow>, sqlx::Error> {
+    sqlx::query_as!(
+        crate::plugin_esi::CharacterRow,
+        r#"
+        SELECT c.id, c.name, c.corporation_id, c.alliance_id
+        FROM core.plugin_submitters s
+        JOIN core.accounts a ON a.id = s.account_id
+        JOIN core.characters c ON c.account_id = s.account_id
+        WHERE s.plugin_id = $1 AND s.reference = $2
+          AND s.last_posted_at > now() - make_interval(days => $3)
+        ORDER BY c.id = a.main_character_id DESC NULLS LAST, c.name
+        "#,
+        plugin_id,
+        reference,
+        KEPT_DAYS,
+    )
+    .fetch_all(pool)
+    .await
+}

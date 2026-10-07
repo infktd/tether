@@ -1311,6 +1311,97 @@ async fn a_signed_app_under_member_audits_id_learns_no_owners_or_members(db: PgP
     assert_eq!(told, 0);
 }
 
+/// HR Applications, as bundled with Tether, reads the characters now on
+/// the account behind one of its own submitter references (AA core's
+/// hrapplications shows and searches them); nobody else does.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn only_bundled_hr_applications_reads_its_submitters_characters(db: PgPool) {
+    let hr = bundled_probe("tether.hr-applications");
+    let other = bundled_probe("acme.bundled");
+    let h = harness_with_bundled(db, vec![hr.clone(), other.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    approve_bundled(&h, &owner, "tether.hr-applications", &hr).await;
+    approve_bundled(&h, &owner, "acme.bundled", &other).await;
+    install(&h, &owner).await;
+    let account = account_of(&h, CHRIBBA).await;
+    let reference = |plugin: &'static str| {
+        let db = h.db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "INSERT INTO core.plugin_submitters (plugin_id, account_id) VALUES ($1, $2) \
+                 RETURNING reference",
+            )
+            .bind(plugin)
+            .bind(account)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let hr_ref = reference("tether.hr-applications").await;
+    let other_ref = reference("acme.bundled").await;
+    let signed_ref = reference(ID).await;
+    let read = |plugin: &'static str, reference: String| {
+        run_probe(
+            &h,
+            plugin,
+            "submitter-characters",
+            vec![("reference".to_owned(), reference)],
+            true,
+        )
+    };
+    // An alt added since: the account as it is now.
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id, alliance_id) \
+         VALUES (90000078, $1, 'Later Alt', 98000001, 99000001)",
+    )
+    .bind(account)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let out = read("tether.hr-applications", hr_ref.clone()).await;
+    for part in [
+        format!("id: {CHRIBBA}, name: \"Chribba\""),
+        "name: \"Later Alt\", corporation-id: 98000001, alliance-id: Some(99000001)".to_owned(),
+    ] {
+        assert!(out.contains(&part), "{part}\n{out}");
+    }
+    // Not another app's reference, nor a made-up one, nor one past its
+    // year; and never for another app, even its own reference.
+    assert_eq!(
+        read("tether.hr-applications", other_ref.clone()).await,
+        "None"
+    );
+    assert_eq!(read("tether.hr-applications", "0".repeat(32)).await, "None");
+    assert_eq!(
+        read("tether.hr-applications", "not hex".to_owned()).await,
+        "None"
+    );
+    assert_eq!(read("acme.bundled", other_ref).await, "None");
+    assert_eq!(read(ID, signed_ref).await, "None");
+    // At most 1,000 lookups a call.
+    let out = run_probe(
+        &h,
+        "tether.hr-applications",
+        "submitter-lookups",
+        vec![
+            ("reference".to_owned(), hr_ref.clone()),
+            ("n".to_owned(), "1001".to_owned()),
+        ],
+        false,
+    )
+    .await;
+    assert_eq!(out, "answered=1000");
+    sqlx::query(
+        "UPDATE core.plugin_submitters SET last_posted_at = now() - interval '366 days' \
+         WHERE plugin_id = 'tether.hr-applications'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(read("tether.hr-applications", hr_ref).await, "None");
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     let h = harness(db, true).await;
