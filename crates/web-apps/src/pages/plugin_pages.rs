@@ -37,7 +37,7 @@ use crate::plugins::{Running, page_href};
 pub const MAX_QUERY_BYTES: usize = 2 * 1024;
 pub const MAX_QUERY_PAIRS: usize = 20;
 /// A posted form's body, and its fields.
-pub const MAX_FORM_BYTES: usize = 64 * 1024;
+pub const MAX_FORM_BYTES: usize = 512 * 1024;
 /// A settings form's fields with the host's own two (`_form`, `_drawn`).
 const MAX_FORM_PAIRS: usize = page_rules::MAX_SETTINGS_FIELDS + 2;
 /// The host's own query parameter: which tab to show.

@@ -237,7 +237,7 @@ interface page {
 
     record text-input {
         value: option<string>,
-        /// At most 10,000.
+        /// At most 10,000; 200,000 for a textarea (a pasted inventory).
         max-length: u32,
         placeholder: option<string>,
     }

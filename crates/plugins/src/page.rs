@@ -51,8 +51,11 @@ fn problem(text: impl Into<String>) -> PageProblem {
 
 /// Fields per form.
 pub const MAX_FIELDS_PER_FORM: usize = 30;
-/// Longest text a text field or textarea may take.
+/// Longest text a text field may take.
 pub const MAX_FIELD_LENGTH: u32 = 10_000;
+/// Longest text a textarea may take: an inventory pasted whole (a
+/// buyback calculator's), well within a form post's limit once encoded.
+pub const MAX_TEXTAREA_LENGTH: u32 = 200_000;
 /// Options in a select.
 pub const MAX_OPTIONS: usize = 100;
 
@@ -877,9 +880,14 @@ fn check_form(form: &Form, budget: &mut Budget, max_fields: usize) -> Result<(),
         }
         match &field.kind {
             FieldKind::Text(input) | FieldKind::Textarea(input) => {
-                if !(1..=MAX_FIELD_LENGTH).contains(&input.max_length) {
+                let max = if matches!(field.kind, FieldKind::Textarea(_)) {
+                    MAX_TEXTAREA_LENGTH
+                } else {
+                    MAX_FIELD_LENGTH
+                };
+                if !(1..=max).contains(&input.max_length) {
                     return Err(problem(format!(
-                        "field {:?} has a max length outside 1 to {MAX_FIELD_LENGTH}",
+                        "field {:?} has a max length outside 1 to {max}",
                         field.name
                     )));
                 }
