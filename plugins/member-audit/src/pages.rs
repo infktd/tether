@@ -1,11 +1,11 @@
 //! My Characters and the Character Finder, and what the character pages
 //! share: entities, the app's page links, freshness.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{Duration, Utc};
 use tether_plugin_sdk::esi;
-use tether_plugin_sdk::identity::Viewer;
+use tether_plugin_sdk::identity::{Character, Member, MemberCharacter, Viewer};
 use tether_plugin_sdk::storage::Value as Db;
 use tether_plugin_sdk::{
     CardGrid, Column, Page, PageError, Profile, Request, Stat, Table, Tone, Toolbar, Value,
@@ -14,7 +14,7 @@ use tether_plugin_sdk::{
 
 use crate::access::Access;
 use crate::{
-    count, float, int, name_of, opt_int, query, rfc3339, text, time_or_blank, when, with_rows,
+    boolean, count, float, int, name_of, opt_int, query, rfc3339, text, time_or_blank, when,
 };
 
 /// A queue ending sooner than this is flagged.
@@ -245,134 +245,298 @@ pub(crate) fn my_characters(viewer: &Viewer) -> Result<Page, PageError> {
         .cards(grid))
 }
 
-/// The Character Finder: the characters in the viewer's scope, searched by
-/// character, corporation or alliance name.
-/// Character Finder: its search is the toolbar's, in the address, and
-/// finds by what the table doesn't show too (a main's name).
+/// The Character Finder (aa-memberaudit's): every character of the pilots
+/// in the viewer's scope, those not registered with Member Audit flagged,
+/// each with its main (the main marked), the main's organisation and
+/// state; shared characters for `view_shared_characters`. Its search is
+/// the toolbar's, in the address, and finds by what the table doesn't
+/// show too (a main's name); aa-memberaudit's filters beside it.
 pub(crate) fn finder(access: &Access, request: &Request) -> Result<Page, PageError> {
-    finder_page(access, request.search())
-}
-
-fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
     if !access.finder {
         return Err(PageError::NotFound);
     }
-    let q: String = q.trim().to_lowercase().chars().take(100).collect();
-    let (scope, mut params) = access.found(1);
-    let scope_params = params.len();
-    let search = if q.is_empty() {
-        String::new()
-    } else {
-        params.push(q.clone().into());
-        let n = params.len();
-        // Their owner's main's name too, as aa-memberaudit's search.
-        params.push(crate::id_list(&access.mains_named(&q)).into());
-        let mains = params.len();
-        format!(
-            " AND (strpos(lower(c.name), ${n}) > 0 \
-               OR strpos(lower({corp}), ${n}) > 0 \
-               OR strpos(lower({ally}), ${n}) > 0 \
-               OR c.character_id = ANY(string_to_array(${mains}, ',')::bigint[]))",
-            corp = name_of("c.corporation_id"),
-            ally = name_of("c.alliance_id"),
-        )
-    };
-    let rows = query(
-        &character_select(&format!("WHERE {scope}{search} ORDER BY c.name LIMIT 500")),
-        &params,
-    )?;
+    let q: String = request
+        .search()
+        .trim()
+        .to_lowercase()
+        .chars()
+        .take(100)
+        .collect();
+    let filters = FinderFilters::of(request);
+    let (scope, scope_params) = access.found(1);
     let total = query(
         &format!("SELECT count(*) FROM characters c WHERE {scope}"),
-        &params[..scope_params],
-    )?;
-    let owners: Vec<_> = rows.iter().map(|r| access.owner(int(r, 0))).collect();
-    let organisations = corporation_names(
-        owners
+        &scope_params,
+    )?
+    .first()
+    .map_or(0, |r| int(r, 0));
+
+    // Members' characters Member Audit hasn't read: not registered (or
+    // not read yet), from the host, of the pilots in scope.
+    let in_scope: Vec<i64> = access
+        .members_in_scope()
+        .flat_map(|m| m.characters.iter().map(|c| c.character.id))
+        .collect();
+    // A few thousand at a time, within storage's rows per answer.
+    let mut read: BTreeSet<i64> = BTreeSet::new();
+    for chunk in in_scope.chunks(4000) {
+        read.extend(
+            query(
+                "SELECT character_id FROM characters \
+                 WHERE character_id = ANY(string_to_array($1, ',')::bigint[])",
+                &[crate::id_list(chunk).into()],
+            )?
             .iter()
+            .map(|r| int(r, 0)),
+        );
+    }
+    let others: Vec<(&Member, &MemberCharacter)> = access
+        .members_in_scope()
+        .flat_map(|m| m.characters.iter().map(move |c| (m, c)))
+        .filter(|(_, c)| !read.contains(&c.character.id))
+        .collect();
+    let unregistered = others.iter().filter(|(_, c)| !c.registered).count();
+
+    // Names of every organisation a row or a filter may show.
+    let corporations: Vec<(i64, Option<i64>)> = query(
+        &format!("SELECT DISTINCT c.corporation_id, c.alliance_id FROM characters c WHERE {scope}"),
+        &scope_params,
+    )?
+    .iter()
+    .map(|r| (int(r, 0), opt_int(r, 1).filter(|a| *a > 0)))
+    .chain(
+        others
+            .iter()
+            .map(|(_, c)| (c.character.corporation_id, c.character.alliance_id)),
+    )
+    .collect();
+    let mains: Vec<&Character> = access
+        .owners_in_scope(true)
+        .map(|o| &o.main)
+        .chain(access.members_in_scope().map(|m| &m.main))
+        .collect();
+    let names = names_of(
+        corporations
+            .iter()
+            .flat_map(|(c, a)| [Some(*c), *a])
+            .chain(
+                mains
+                    .iter()
+                    .flat_map(|m| [Some(m.corporation_id), m.alliance_id]),
+            )
             .flatten()
-            .map(|o| o.main.corporation_id)
             .collect(),
     )?;
-    let table = with_rows(
-        Table::new(vec![
-            Column::text("Character"),
-            Column::text("Corporation"),
-            Column::text("Alliance"),
-            Column::text("Main"),
-            Column::text("Main organisation"),
-            Column::text("State"),
-            Column::text("Location"),
-            Column::text("Ship"),
-            Column::numeric("Skill points"),
-            Column::numeric("Last update"),
-        ])
-        .title(if q.is_empty() {
-            "Characters".to_owned()
-        } else {
-            format!("Characters matching \"{q}\"")
-        })
-        .empty("No characters match."),
-        rows.iter().zip(&owners).map(|(r, owner)| {
+    let named = |id: i64| names.get(&id).cloned().unwrap_or_default();
+
+    // Registered characters, read by Member Audit: the filters on the
+    // character in SQL, those on its owner by the ids they leave.
+    let mut rows: Vec<(String, Found)> = Vec::new();
+    if filters.unregistered != Some(true) {
+        let mut params = scope_params.clone();
+        let mut condition = scope.clone();
+        if let Some(corp) = filters.corporation {
+            params.push(corp.into());
+            condition.push_str(&format!(" AND c.corporation_id = ${}", params.len()));
+        }
+        if let Some(ally) = filters.alliance {
+            params.push(ally.into());
+            condition.push_str(&format!(" AND c.alliance_id = ${}", params.len()));
+        }
+        if filters.by_owner() {
+            let ids: Vec<i64> = access
+                .owners_in_scope(true)
+                .filter(|o| {
+                    filters.owner_passes(&o.main, &o.state.name, o.main.id == o.character_id)
+                })
+                .map(|o| o.character_id)
+                .collect();
+            params.push(crate::id_list(&ids).into());
+            condition.push_str(&format!(
+                " AND c.character_id = ANY(string_to_array(${}, ',')::bigint[])",
+                params.len()
+            ));
+        }
+        if !q.is_empty() {
+            params.push(q.clone().into());
+            let n = params.len();
+            // Their owner's main's name too, as aa-memberaudit's search.
+            params.push(crate::id_list(&access.mains_named(&q)).into());
+            let by_main = params.len();
+            condition.push_str(&format!(
+                " AND (strpos(lower(c.name), ${n}) > 0 \
+                   OR strpos(lower({corp}), ${n}) > 0 \
+                   OR strpos(lower({ally}), ${n}) > 0 \
+                   OR c.character_id = ANY(string_to_array(${by_main}, ',')::bigint[]))",
+                corp = name_of("c.corporation_id"),
+                ally = name_of("c.alliance_id"),
+            ));
+        }
+        let found = query(
+            &character_select(&format!(
+                "WHERE {condition} ORDER BY c.name LIMIT {MAX_FOUND}"
+            )),
+            &params,
+        )?;
+        for r in &found {
             let id = int(r, 0);
-            let corp = int(r, 2);
-            let ally = opt_int(r, 3).filter(|a| *a > 0);
-            let (main, organisation, state) = match owner {
-                Some(o) => (
-                    character(o.main.id, o.main.name.clone()).into(),
-                    corporation(
-                        o.main.corporation_id,
-                        organisations
-                            .get(&o.main.corporation_id)
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
-                    .into(),
-                    o.state.name.clone().into(),
-                ),
-                // Tether names the main and state only of characters that
-                // serve the app now: one whose registration or a scope
-                // lapsed says so, rather than three blanks.
-                None => (
-                    "".into(),
-                    "".into(),
-                    badge("Not registered now", Tone::Warning).into(),
-                ),
-            };
-            vec![
-                // The name opens the character's sheet, for those who
-                // may open it.
-                if access.may_open(id) {
-                    character(id, text(r, 1))
-                        .link(format!("character/{id}"))
-                        .into()
-                } else {
-                    character(id, text(r, 1)).into()
+            let owner = access.owner(id);
+            let main = owner.map(|o| (&o.main, o.state.name.clone()));
+            rows.push((
+                text(r, 1),
+                Found {
+                    id,
+                    name: text(r, 1),
+                    corporation: (int(r, 2), text(r, 11)),
+                    alliance: opt_int(r, 3).filter(|a| *a > 0).map(|a| (a, text(r, 12))),
+                    owner: main,
+                    status: if boolean(r, 10) {
+                        badge("Shared", Tone::Neutral).into()
+                    } else {
+                        "".into()
+                    },
+                    read: Some(vec![
+                        if opt_int(r, 6).is_some() {
+                            text(r, 13).into()
+                        } else {
+                            "".into()
+                        },
+                        match opt_int(r, 7) {
+                            Some(ship) => item_type(ship, text(r, 14)).into(),
+                            None => "".into(),
+                        },
+                        int(r, 4).into(),
+                        time_or_blank(r, 8),
+                    ]),
                 },
-                corporation(corp, text(r, 11)).into(),
-                match ally {
-                    Some(a) => alliance(a, text(r, 12)).into(),
-                    None => "".into(),
+            ));
+        }
+    }
+    if filters.unregistered != Some(false) {
+        for (member, c) in &others {
+            let ch = &c.character;
+            let is_main = member.main.id == ch.id;
+            if filters.corporation.is_some_and(|x| x != ch.corporation_id)
+                || filters.alliance.is_some_and(|x| Some(x) != ch.alliance_id)
+                || !filters.owner_passes(&member.main, &member.state.name, is_main)
+            {
+                continue;
+            }
+            if !q.is_empty()
+                && !ch.name.to_lowercase().contains(&q)
+                && !named(ch.corporation_id).to_lowercase().contains(&q)
+                && !ch
+                    .alliance_id
+                    .is_some_and(|a| named(a).to_lowercase().contains(&q))
+                && !member.main.name.to_lowercase().contains(&q)
+            {
+                continue;
+            }
+            rows.push((
+                ch.name.clone(),
+                Found {
+                    id: ch.id,
+                    name: ch.name.clone(),
+                    corporation: (ch.corporation_id, named(ch.corporation_id)),
+                    alliance: ch.alliance_id.map(|a| (a, named(a))),
+                    owner: Some((&member.main, member.state.name.clone())),
+                    status: if c.registered {
+                        badge("Not read yet", Tone::Neutral).into()
+                    } else {
+                        badge("Unregistered", Tone::Warning).into()
+                    },
+                    read: None,
                 },
-                main,
-                organisation,
-                state,
-                if opt_int(r, 6).is_some() {
-                    text(r, 13).into()
-                } else {
-                    "".into()
-                },
-                match opt_int(r, 7) {
-                    Some(ship) => item_type(ship, text(r, 14)).into(),
-                    None => "".into(),
-                },
-                int(r, 4).into(),
-                time_or_blank(r, 8),
-            ]
-        }),
-    );
+            ));
+        }
+    }
+    rows.sort_by_key(|(name, _)| name.to_lowercase());
+    let cut = rows.len() > MAX_FOUND;
+    rows.truncate(MAX_FOUND);
+
+    let mut table = Table::new(vec![
+        Column::text("Character"),
+        Column::text(""),
+        Column::text("Corporation"),
+        Column::text("Alliance"),
+        Column::text("Main"),
+        Column::text("Main?"),
+        Column::text("Main organisation"),
+        Column::text("State"),
+        Column::text("Location"),
+        Column::text("Ship"),
+        Column::numeric("Skill points"),
+        Column::numeric("Last update"),
+    ])
+    .title(match (q.is_empty(), cut) {
+        (true, false) => "Characters".to_owned(),
+        (false, false) => format!("Characters matching \"{q}\""),
+        (_, true) => format!("The first {MAX_FOUND} characters by name: search or filter for more"),
+    })
+    .empty("No characters match.");
+    for (_, row) in rows {
+        table = table.row(row.cells(access, &named));
+    }
+
+    // aa-memberaudit's filters.
+    let mut corporation_choices: Vec<(String, String)> = corporations
+        .iter()
+        .map(|(c, _)| (c.to_string(), named(*c)))
+        .collect();
+    let mut alliance_choices: Vec<(String, String)> = corporations
+        .iter()
+        .filter_map(|(_, a)| *a)
+        .map(|a| (a.to_string(), named(a)))
+        .collect();
+    let mut main_corporations: Vec<(String, String)> = mains
+        .iter()
+        .map(|m| (m.corporation_id.to_string(), named(m.corporation_id)))
+        .collect();
+    let mut main_alliances: Vec<(String, String)> = mains
+        .iter()
+        .filter_map(|m| m.alliance_id)
+        .map(|a| (a.to_string(), named(a)))
+        .collect();
+    let mut states: Vec<(String, String)> = access
+        .owners_in_scope(true)
+        .map(|o| &o.state.name)
+        .chain(access.members_in_scope().map(|m| &m.state.name))
+        .map(|s| (s.clone(), s.clone()))
+        .collect();
+    for list in [
+        &mut corporation_choices,
+        &mut alliance_choices,
+        &mut main_corporations,
+        &mut main_alliances,
+        &mut states,
+    ] {
+        list.sort_by_key(|(value, label)| (label.to_lowercase(), value.clone()));
+        list.dedup();
+        list.truncate(100);
+    }
+    let yes_no = || {
+        vec![
+            ("yes".to_owned(), "Yes".to_owned()),
+            ("no".to_owned(), "No".to_owned()),
+        ]
+    };
+    let mut toolbar = Toolbar::new().search("Search characters, corporations, alliances, mains");
+    for (param, label, choices) in [
+        ("state", "State", states),
+        ("corporation", "Corporation", corporation_choices),
+        ("alliance", "Alliance", alliance_choices),
+        ("main_corporation", "Main corporation", main_corporations),
+        ("main_alliance", "Main alliance", main_alliances),
+        ("main", "Main", yes_no()),
+        ("unregistered", "Unregistered", yes_no()),
+    ] {
+        if !choices.is_empty() {
+            toolbar = toolbar.filter(param, label, choices);
+        }
+    }
     Ok(Page::new("Character finder")
         .description(format!(
-            "Characters registered with Member Audit: {}{}",
+            "The characters of {}{}",
             access.scope_words(),
             if access.shared {
                 ", and characters their pilots share"
@@ -381,16 +545,141 @@ fn finder_page(access: &Access, q: &str) -> Result<Page, PageError> {
             }
         ))
         .stats(vec![
-            Stat::new("Characters", total.first().map_or(0, |r| int(r, 0)))
-                .caption("in your scope"),
+            Stat::new("Registered", total).caption("in your scope"),
+            Stat::new("Unregistered", count(unregistered)).caption("of the pilots in your scope"),
         ])
-        .toolbar(Toolbar::new().search("Search characters, corporations, alliances, mains"))
+        .toolbar(toolbar)
         .table(table))
 }
 
-/// Names for corporations (a main's may be no member character's):
+/// Characters the Finder lists, at most (the host's rows per table).
+const MAX_FOUND: usize = 500;
+
+/// aa-memberaudit's Finder filters, from the address.
+struct FinderFilters {
+    state: Option<String>,
+    corporation: Option<i64>,
+    alliance: Option<i64>,
+    main_corporation: Option<i64>,
+    main_alliance: Option<i64>,
+    is_main: Option<bool>,
+    unregistered: Option<bool>,
+}
+
+impl FinderFilters {
+    fn of(request: &Request) -> Self {
+        let id = |name: &str| request.param(name).parse::<i64>().ok();
+        let yes = |name: &str| match request.param(name) {
+            "yes" => Some(true),
+            "no" => Some(false),
+            _ => None,
+        };
+        Self {
+            state: Some(request.param("state").to_owned()).filter(|s| !s.is_empty()),
+            corporation: id("corporation"),
+            alliance: id("alliance"),
+            main_corporation: id("main_corporation"),
+            main_alliance: id("main_alliance"),
+            is_main: yes("main"),
+            unregistered: yes("unregistered"),
+        }
+    }
+
+    /// Whether any filter goes by the character's owner.
+    fn by_owner(&self) -> bool {
+        self.state.is_some()
+            || self.main_corporation.is_some()
+            || self.main_alliance.is_some()
+            || self.is_main.is_some()
+    }
+
+    /// Whether a character with this main and state passes the filters on
+    /// its owner.
+    fn owner_passes(&self, main: &Character, state: &str, is_main: bool) -> bool {
+        self.state.as_deref().is_none_or(|s| s == state)
+            && self
+                .main_corporation
+                .is_none_or(|c| c == main.corporation_id)
+            && self
+                .main_alliance
+                .is_none_or(|a| Some(a) == main.alliance_id)
+            && self.is_main.is_none_or(|m| m == is_main)
+    }
+}
+
+/// A row of the Finder, before it's drawn.
+struct Found<'a> {
+    id: i64,
+    name: String,
+    corporation: (i64, String),
+    alliance: Option<(i64, String)>,
+    /// Its owner's main and state, if Tether says.
+    owner: Option<(&'a Character, String)>,
+    /// Shared, unregistered, not read yet.
+    status: Value,
+    /// Location, ship, skill points and last update, for a character
+    /// Member Audit has read; none for one it hasn't (no sheet to open).
+    read: Option<Vec<Value>>,
+}
+
+impl Found<'_> {
+    fn cells(self, access: &Access, named: &dyn Fn(i64) -> String) -> Vec<Value> {
+        let id = self.id;
+        let (main, is_main, organisation, state) = match self.owner {
+            Some((main, state)) => (
+                character(main.id, main.name.clone()).into(),
+                if main.id == id {
+                    badge("Main", Tone::Neutral).into()
+                } else {
+                    "".into()
+                },
+                corporation(main.corporation_id, named(main.corporation_id)).into(),
+                state.into(),
+            ),
+            // Tether names the main and state only of characters that
+            // serve the app now: one whose registration or a scope lapsed
+            // says so, rather than three blanks.
+            None => (
+                "".into(),
+                "".into(),
+                "".into(),
+                badge("Not registered now", Tone::Warning).into(),
+            ),
+        };
+        let (corp, corp_name) = self.corporation;
+        let mut row = vec![
+            // The name opens the character's sheet, for those who may
+            // open it.
+            if self.read.is_some() && access.may_open(id) {
+                character(id, self.name)
+                    .link(format!("character/{id}"))
+                    .into()
+            } else {
+                character(id, self.name).into()
+            },
+            self.status,
+            corporation(corp, corp_name).into(),
+            match self.alliance {
+                Some((a, n)) => alliance(a, n).into(),
+                None => "".into(),
+            },
+            main,
+            is_main,
+            organisation,
+            state,
+        ];
+        row.extend(
+            self.read
+                .unwrap_or_else(|| vec!["".into(), "".into(), "".into(), "".into()]),
+        );
+        row
+    }
+}
+
+/// Names for corporations and alliances (a main's may be no member
+/// character's):
 /// stored, else asked of ESI (a page can't store them), else none.
-fn corporation_names(mut ids: Vec<i64>) -> Result<BTreeMap<i64, String>, PageError> {
+pub(crate) fn names_of(mut ids: Vec<i64>) -> Result<BTreeMap<i64, String>, PageError> {
     ids.retain(|id| *id > 0);
     ids.sort_unstable();
     ids.dedup();

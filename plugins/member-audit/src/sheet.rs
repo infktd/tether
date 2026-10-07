@@ -1,7 +1,8 @@
 //! The Character Sheet: aa-memberaudit's tabs over a few pages, each with
 //! its own tabs, linked beside the title:
 //!
-//! - Overview (`character/{id}`): the profile; corporation history, roles
+//! - Overview (`character/{id}`): the profile, whose it is and the
+//!   owner's characters; corporation history, roles
 //!   (when the Settings read them) and titles, killmails, bio. Its pilot
 //!   shares it from here (`share_characters`).
 //! - Skills: the queue (live), skills by group, skill sets (for
@@ -18,9 +19,9 @@ use chrono::{Duration, Utc};
 use tether_plugin_sdk::jobs::{self, NewJob};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Page, PageError, Profile, Section, Stat, Submission, SubmitResult, Table, Tone,
-    Value, action, alliance, badge, character, corporation, countdown, faction, isk, item_type,
-    levels, link,
+    Card, Column, Page, PageError, Profile, Request, Section, Stat, Submission, SubmitResult,
+    Table, Tone, Value, action, alliance, badge, character, corporation, countdown, faction, isk,
+    item_type, levels, link,
 };
 
 use crate::access::Access;
@@ -167,11 +168,16 @@ impl Freshness {
     }
 }
 
-pub(crate) fn render(access: &Access, id: i64, rest: &[&str]) -> Result<Page, PageError> {
+pub(crate) fn render(
+    access: &Access,
+    id: i64,
+    rest: &[&str],
+    request: &Request,
+) -> Result<Page, PageError> {
     let who = subject(access, id)?;
     match rest {
         [] => overview(access, &who, None),
-        ["skills"] => skills(&who),
+        ["skills"] => skills(&who, request.param("set")),
         ["assets"] => assets(&who, None),
         ["assets", location] => {
             let location: i64 = location.parse().map_err(|_| PageError::NotFound)?;
@@ -311,7 +317,7 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
                     c.faction_id, {fact}, coalesce(c.bio, ''), c.update_requested_at, \
                     (SELECT count(*) FROM clones WHERE character_id = c.character_id), \
                     (SELECT max(finish) FROM queue WHERE character_id = c.character_id), \
-                    c.update_done_at, c.is_shared \
+                    c.update_done_at, c.is_shared, c.last_login \
              FROM characters c WHERE c.character_id = $1",
             system = name_of("c.system_id"),
             place = name_of("c.location_id"),
@@ -327,9 +333,82 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
     if let Some(a) = who.alliance_id {
         profile = profile.alliance(alliance(a, who.alliance.clone()));
     }
-    if access.viewer.main.id == id {
-        profile = profile.badge(badge("Main", Tone::Neutral));
+    // Whose it is (aa-memberaudit's sidebar): the owner's main and their
+    // other characters, those not registered marked.
+    // Whoever may open the sheet sees them, a recruiter opening a shared
+    // character too, as aa-memberaudit's sidebar (the Share button says
+    // so).
+    let member = access.member_of(id);
+    match member {
+        Some(m) if m.main.id == id => {
+            profile = profile
+                .badge(badge("Main", Tone::Neutral))
+                .subtitle(format!("Main of {} characters", m.characters.len()));
+        }
+        Some(m) => {
+            profile = profile.subtitle(format!(
+                "One of {}'s {} characters",
+                m.main.name,
+                m.characters.len()
+            ));
+        }
+        None if access.viewer.main.id == id => {
+            profile = profile.badge(badge("Main", Tone::Neutral));
+        }
+        None => {}
     }
+    let corp_names = crate::pages::names_of(
+        member
+            .iter()
+            .flat_map(|m| m.characters.iter().map(|c| c.character.corporation_id))
+            .collect(),
+    )?;
+    let corp_names = &corp_names;
+    let owner_characters = with_rows(
+        Table::new(vec![
+            Column::text("Character"),
+            Column::text("Corporation"),
+            Column::text(""),
+        ])
+        .empty("Tether doesn't say whose character this is."),
+        member.into_iter().flat_map(|m| {
+            let mut characters: Vec<_> = m.characters.iter().collect();
+            characters
+                .sort_by_key(|c| (c.character.id != m.main.id, c.character.name.to_lowercase()));
+            characters.into_iter().map(move |c| {
+                let ch = &c.character;
+                let mut status = Vec::new();
+                if ch.id == m.main.id {
+                    status.push("Main");
+                }
+                if !c.registered {
+                    status.push("Unregistered");
+                }
+                vec![
+                    if c.registered && ch.id != id && access.may_open(ch.id) {
+                        character(ch.id, ch.name.clone())
+                            .link(format!("character/{}", ch.id))
+                            .into()
+                    } else {
+                        character(ch.id, ch.name.clone()).into()
+                    },
+                    corporation(
+                        ch.corporation_id,
+                        corp_names
+                            .get(&ch.corporation_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                    .into(),
+                    match (ch.id == m.main.id, c.registered) {
+                        (_, false) => badge(status.join(", "), Tone::Warning).into(),
+                        (true, true) => badge("Main", Tone::Neutral).into(),
+                        (false, true) => Value::from(""),
+                    },
+                ]
+            })
+        }),
+    );
     let is_shared = boolean(c, 23);
     if is_shared {
         profile = profile.badge(badge("Shared", Tone::Neutral));
@@ -360,6 +439,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             fact_or(opt_float(c, 11).map(|s| format!("{s:.1}").into())),
         )
         .fact("Born", time_or_blank(c, 12))
+        // aa-memberaudit's online status.
+        .fact("Last login", time_or_blank(c, 24))
         .fact(
             "Training",
             training.map_or_else(
@@ -418,7 +499,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
                         .field("character", id.to_string())
                         .confirm(
                             "Recruiters will see this character's whole sheet, mail included, \
-                             until you stop sharing it.",
+                             and the names of your main and other characters, until you stop \
+                             sharing it.",
                         ),
                 ),
             );
@@ -583,7 +665,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             "Killmails",
             vec![Section::Table(kills), fresh.line(&["killmails"])],
         )
-        .tab("Bio", bio_sections))
+        .tab("Bio", bio_sections)
+        .tab("Characters", vec![Section::Table(owner_characters)]))
 }
 
 /// `station_manager` as "Station manager".
@@ -598,7 +681,7 @@ fn humanize(code: &str) -> String {
 
 // ---- Skills ----------------------------------------------------------------
 
-fn skills(who: &Subject) -> Result<Page, PageError> {
+fn skills(who: &Subject, set: &str) -> Result<Page, PageError> {
     let id = who.id;
     let fresh = Freshness::of(id)?;
     let head = query(
@@ -716,22 +799,44 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
     } else {
         Vec::new()
     };
+    let yes_no = |yes: bool| -> Value {
+        if yes {
+            badge("Yes", Tone::Success).into()
+        } else {
+            badge("No", Tone::Neutral).into()
+        }
+    };
+    let none_or = |missing: &[String]| -> Value {
+        if missing.is_empty() {
+            "".into()
+        } else {
+            clip(&missing.join(", "), 1500).into()
+        }
+    };
     let sets_table = with_rows(
         Table::new(vec![
+            Column::text("Group"),
             Column::text("Skill set"),
-            Column::text("Can use"),
+            Column::text("Doctrine"),
+            Column::text("Required skills"),
+            Column::text("Missing"),
+            Column::text("Recommended skills"),
             Column::text("Missing"),
         ])
         .empty("No skill sets yet: officers add them under Skill Sets."),
-        sets.into_iter().map(|(name, missing)| {
+        sets.iter().map(|s| {
+            let open = format!("character/{id}/skills?set={}", s.set.id);
             vec![
-                name.into(),
-                if missing.is_empty() {
-                    badge("Yes", Tone::Success).into()
-                } else {
-                    badge("No", Tone::Neutral).into()
+                s.group.clone().into(),
+                match &s.set.ship {
+                    Some((ship, _)) => item_type(*ship, s.set.name.clone()).link(open).into(),
+                    None => link(s.set.name.clone(), open).into(),
                 },
-                clip(&missing.join(", "), 1500).into(),
+                yes_no(s.doctrine),
+                yes_no(s.missing_required.is_empty()),
+                none_or(&s.missing_required),
+                yes_no(s.missing_recommended.is_empty()),
+                none_or(&s.missing_recommended),
             ]
         }),
     );
@@ -785,9 +890,18 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
             vec![Section::Table(queue_table), fresh.line(&["skills"])],
         )
         .tab("Skills", skill_sections);
-    // aa-memberaudit's Skill Sets tab needs view_skill_sets.
+    // aa-memberaudit's Skill Sets tab needs view_skill_sets; a set's
+    // name opens its skills beside it (aa-memberaudit's details).
     let page = if who.skill_sets {
-        page.tab("Skill sets", vec![Section::Table(sets_table)])
+        let page = page.tab("Skill sets", vec![Section::Table(sets_table)]);
+        let chosen = set
+            .parse::<i64>()
+            .ok()
+            .and_then(|n| sets.iter().find(|s| s.set.id == n));
+        match chosen {
+            Some(chosen) => page.panel(crate::sets::sheet_panel(id, chosen)?),
+            None => page,
+        }
     } else {
         page
     };

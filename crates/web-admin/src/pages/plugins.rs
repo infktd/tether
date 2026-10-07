@@ -757,7 +757,9 @@ fn bundled_trust(id: &str) -> String {
         text.push_str(
             " Unlike any other app, it learns which characters share an account: for each \
              character it reads (of pilots holding one of its permissions, in any state), the \
-             owner's main and state, for its scopes by the owner's main.",
+             owner's main and state, for its scopes by the owner's main; and those pilots' \
+             other characters, not registered with it, for its Character Finder and \
+             compliance reports.",
         );
     }
     text

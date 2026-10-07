@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 10] = [
+const MIGRATIONS: [&str; 13] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -56,6 +56,9 @@ const MIGRATIONS: [&str; 10] = [
     "migrations/0008_journal_gap.sql",
     "migrations/0009_mail_gap.sql",
     "migrations/0010_assets_every_page.sql",
+    "migrations/0011_skill_set_fields.sql",
+    "migrations/0012_type_skills.sql",
+    "migrations/0013_online_status.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -153,6 +156,15 @@ async fn mount_esi(h: &Harness) {
             ]),
         ),
         ("wallet", serde_json::json!(1234567.89)),
+        (
+            "online",
+            serde_json::json!({
+                "online": false,
+                "last_login": "2026-09-30T18:05:00Z",
+                "last_logout": "2026-09-30T21:40:00Z",
+                "logins": 4242
+            }),
+        ),
         (
             "location",
             serde_json::json!({ "solar_system_id": JITA, "station_id": JITA_4_4 }),
@@ -445,6 +457,7 @@ async fn register(h: &Harness, token: &str) -> String {
         "esi-skills.read_skillqueue.v1",
         "esi-mail.read_mail.v1",
         "esi-universe.read_structures.v1",
+        "esi-location.read_online.v1",
     ] {
         assert!(asked.contains(&scope.to_owned()), "{asked:?}");
     }
@@ -522,7 +535,7 @@ async fn member_audit_end_to_end(db: PgPool) {
     .unwrap();
     // Roles aren't read: aa-memberaudit's MEMBERAUDIT_FEATURE_ROLES_ENABLED
     // is off by default.
-    assert_eq!(sections, 23, "{:?}", plugin_warnings(&h).await);
+    assert_eq!(sections, 24, "{:?}", plugin_warnings(&h).await);
 
     // My characters, which is the Dashboard: a row per character with its
     // portrait and facts, the totals, and Tether's Register Character last.
@@ -556,7 +569,7 @@ async fn member_audit_end_to_end(db: PgPool) {
 
     // The Character Sheet: every page and tab.
     let sheet_pages = [
-        ("", 4),
+        ("", 5),
         ("/skills", 4),
         ("/assets", 1),
         (&format!("/assets/{JITA_4_4}") as &str, 1),
@@ -587,6 +600,8 @@ async fn member_audit_end_to_end(db: PgPool) {
         "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
         ">5.0<",
         "2006-03-01",
+        // Last login, from character-online.
+        "2026-09-30 18:05",
         "Update now",
         "State War Academy",
         "Quartermaster",
@@ -819,14 +834,14 @@ async fn member_audit_end_to_end(db: PgPool) {
         &h.app,
         form(
             &format!("/plugins/{ID}/skill-sets"),
-            "_form=add_set&name=Guns&skills=Gunnery+4%0ASmall+Hybrid+Turret+3",
+            "_form=add_set&name=Guns&visible=on&skills=Gunnery+4%0ASmall+Hybrid+Turret+3",
             &owner,
         ),
     )
     .await;
     assert_eq!(added.status, StatusCode::SEE_OTHER, "{}", added.body);
     let sets = page(&h, &format!("/plugins/{ID}/skill-sets"), &owner).await;
-    assert!(sets.body.contains("Gunnery 4"), "{}", sets.body);
+    assert!(sets.body.contains("Gunnery IV"), "{}", sets.body);
     let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
     assert!(reports.body.contains("Guns"), "{}", reports.body);
     let tab = page(
@@ -845,8 +860,8 @@ async fn member_audit_end_to_end(db: PgPool) {
     let deleted = send(
         &h.app,
         form(
-            &format!("/plugins/{ID}/skill-sets"),
-            &format!("_form=delete_set&set={set}&confirm=on"),
+            &format!("/plugins/{ID}/skill-sets/set/{set}"),
+            &format!("_form=delete_set&set={set}"),
             &owner,
         ),
     )
@@ -1054,9 +1069,6 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
     );
 }
 
-/// Reports count every skill set's characters, past the 500 a tab lists
-/// (and the tab says so), and show every set, though only the first ten
-/// by name have a tab (the host's most).
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn reports_count_every_set_and_character(db: PgPool) {
     let (h, owner) = synced(db).await;
@@ -1068,7 +1080,7 @@ async fn reports_count_every_set_and_character(db: PgPool) {
              SELECT 2100000000 + n, 3300, 5, 5, 256000 FROM generate_series(1, 600) n;
            INSERT INTO "plugin_tether.member-audit".skill_sets (name)
              SELECT 'Doctrine ' || lpad(n::text, 2, '0') FROM generate_series(1, 11) n;
-           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, level)
+           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, required_level)
              SELECT id, 3300, 1 FROM "plugin_tether.member-audit".skill_sets;"#
     )))
     .execute(&h.db)
@@ -1081,12 +1093,78 @@ async fn reports_count_every_set_and_character(db: PgPool) {
     for set in ["Doctrine 01", "Doctrine 11"] {
         assert!(finder_row(body, set).contains("601"), "{set}\n{body}");
     }
-    for text in [
-        "The first 500 of 601, by name",
-        "The first 10 skill sets by name each list their characters in a tab below.",
+    // The rows past the host's 500 are left to the filters, and it says so.
+    assert!(
+        body.contains("the first 500 rows, by group and name"),
+        "{body}"
+    );
+}
+
+/// aa-memberaudit's Skill Sets report: a row per group and character with
+/// its main, state, organisation, the sets it can use, whether it's the
+/// main and whether the group is a doctrine; its filters; Guests left out.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_skill_sets_report_has_aa_columns(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    for body in [
+        "_form=add_set&name=Guns&visible=on&skills=Gunnery+1",
+        "_form=add_group&name=Fleet&description=&doctrine=on&active=on&sets=Guns",
     ] {
-        assert!(body.contains(text), "{text}\n{body}");
+        let res = send(&h.app, form(&at, body, &owner)).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     }
+    let reports = format!("/plugins/{ID}/reports");
+    let body = page(&h, &reports, &owner).await.body;
+    // Chribba (his own main) can; Mate Alt, Corp Mate's alt, can't.
+    let row = finder_row(&body, ">Mate Alt<");
+    for text in ["Doctrine: Fleet", "Corp Mate", ">Member<", ">None<", ">No<"] {
+        assert!(row.contains(text), "{text}\n{row}");
+    }
+    let row = finder_row(&body, ">Chribba<");
+    assert!(row.contains(">Guns<") && row.contains(">Yes<"), "{row}");
+    // The filters: mains only, who has the skills, a state.
+    let mains = page(&h, &format!("{reports}?main=yes"), &owner).await.body;
+    assert!(
+        mains.contains("Corp Mate") && !mains.contains(">Mate Alt<"),
+        "{mains}"
+    );
+    let able = page(&h, &format!("{reports}?has=yes"), &owner).await.body;
+    assert!(
+        able.contains(">Chribba<") && !able.contains(">Corp Mate<"),
+        "{able}"
+    );
+    let member = page(&h, &format!("{reports}?state=Member"), &owner)
+        .await
+        .body;
+    assert!(member.contains(">Mate Alt<"), "{member}");
+    // A Guest's characters aren't in the report, as aa-memberaudit's (a
+    // Guest who may still use Member Audit).
+    sqlx::query("INSERT INTO core.permission_grants (permission, state_id) VALUES ($1, $2)")
+        .bind(format!("plugin.{ID}.basic_access"))
+        .bind(GUEST_STATE)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE core.accounts SET state_id = $1 \
+         WHERE id = (SELECT account_id FROM core.characters WHERE id = $2)",
+    )
+    .bind(GUEST_STATE)
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let body = page(&h, &reports, &owner).await.body;
+    assert!(!body.contains("Mate Alt"), "{body}");
 }
 
 /// Skill sets has a page rule of its own (view_skill_sets), as the Finder,
@@ -1109,6 +1187,699 @@ async fn skill_sets_are_for_view_skill_sets(db: PgPool) {
     let sets = page(&h, &at, &blue).await;
     assert_eq!(sets.status, StatusCode::OK, "{}", sets.body);
     assert_eq!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
+}
+
+/// As aa-memberaudit keeps them: contracts go by when they expired, not
+/// when they were issued, so an old open one stays; and the mining ledger
+/// is kept whole.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn contracts_are_kept_by_expiry_and_mining_kept(db: PgPool) {
+    let (h, _owner) = synced(db).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"INSERT INTO "plugin_tether.member-audit".contracts
+             (character_id, contract_id, kind, status, availability, issuer_id, assignee_id,
+              acceptor_id, issued, expires)
+           VALUES ({CHRIBBA}, 9001, 'courier', 'outstanding', 'personal', {CHRIBBA}, 0, 0,
+                   now() - interval '400 days', now() + interval '10 days'),
+                  ({CHRIBBA}, 9002, 'courier', 'expired', 'personal', {CHRIBBA}, 0, 0,
+                   now() - interval '420 days', now() - interval '400 days');
+           INSERT INTO "plugin_tether.member-audit".mining
+             (character_id, day, type_id, solar_system_id, quantity)
+           VALUES ({CHRIBBA}, current_date - 200, 1230, {JITA}, 1000);"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let contracts: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT contract_id FROM "plugin_tether.member-audit".contracts
+           WHERE contract_id > 9000 ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    // The default keep is 360 days.
+    assert_eq!(contracts, vec![9001]);
+    let mined: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".mining WHERE day < current_date - 90"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(mined, 1);
+}
+
+/// aa-memberaudit's Character Finder lists every character of the pilots
+/// in scope, those not registered flagged (no sheet to open), the main
+/// marked, with its filters; and only the bundled Member Audit learns of
+/// the unregistered ones (the host's `identity.members`).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_finder_lists_unregistered_characters(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000022, account_id, 'Hidden Alt', 98000003 FROM core.characters WHERE id = $1",
+    )
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let finder = format!("/plugins/{ID}/finder");
+    let res = page(&h, &finder, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let row = finder_row(&res.body, "Hidden Alt");
+    assert!(
+        row.contains(">Unregistered<") && row.contains("Corp Mate"),
+        "{row}"
+    );
+    assert!(!row.contains("/character/90000022"), "{row}");
+    let row = finder_row(&res.body, ">Corp Mate<");
+    assert!(row.contains(">Main<"), "{row}");
+    let row = finder_row(&res.body, ">Mate Alt<");
+    assert!(
+        !row.contains(">Main<") && !row.contains(">Unregistered<"),
+        "{row}"
+    );
+    // The filters: unregistered only; mains only; by the main's
+    // corporation; the search finds an unregistered alt by its main.
+    for (query, shown, hidden) in [
+        ("unregistered=yes", "Hidden Alt", "Mate Alt"),
+        ("unregistered=no", "Mate Alt", "Hidden Alt"),
+        ("main=yes", "Corp Mate", "Hidden Alt"),
+        (
+            "main_corporation=98133756",
+            "Hidden Alt",
+            "character/196379789\"",
+        ),
+        ("q=corp+mate", "Hidden Alt", "character/196379789\""),
+    ] {
+        let body = page(&h, &format!("{finder}?{query}"), &owner).await.body;
+        assert!(
+            body.contains(shown) && !body.contains(hidden),
+            "{query}\n{body}"
+        );
+    }
+    // Without a view scope, a pilot sees only their own account's.
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "finder_access").await;
+    let theirs = page(&h, &finder, &blue).await.body;
+    assert!(!theirs.contains("Hidden Alt"), "{theirs}");
+    // Nor do the filters name organisations of pilots out of scope.
+    member_account(&h, &[(OUTSIDER, "Outsider", 98000099, Some(99000001))]).await;
+    for scoped in [false, true] {
+        if scoped {
+            grant(&h, &owner, "view_same_corporation").await;
+        }
+        let theirs = page(&h, &finder, &blue).await.body;
+        assert!(
+            !theirs.contains("98000099") && !theirs.contains("99000001"),
+            "{theirs}"
+        );
+    }
+    grant(&h, &owner, "view_same_corporation").await;
+    let theirs = page(&h, &finder, &blue).await.body;
+    assert!(theirs.contains("Hidden Alt"), "{theirs}");
+}
+
+/// The Character Sheet says whose character it is, as aa-memberaudit's
+/// sidebar: the owner's main and their other characters, those not
+/// registered marked, those the viewer may open linked.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_sheet_names_the_owner_and_their_characters(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000022, account_id, 'Hidden Alt', 98000003 FROM core.characters WHERE id = $1",
+    )
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let sheet = |id: i64| format!("/plugins/{ID}/character/{id}");
+    let main = page(&h, &sheet(CORP_MATE), &owner).await.body;
+    assert!(main.contains("Main of 3 characters"), "{main}");
+    let alt = page(&h, &sheet(MATE_ALT), &owner).await.body;
+    assert!(alt.contains("One of Corp Mate&#39;s 3 characters"), "{alt}");
+    let tab = page(&h, &format!("{}?_tab=4", sheet(MATE_ALT)), &owner)
+        .await
+        .body;
+    let row = finder_row(&tab, "Hidden Alt");
+    assert!(row.contains(">Unregistered<"), "{row}");
+    assert!(!row.contains("/character/90000022"), "{row}");
+    let row = finder_row(&tab, ">Corp Mate<");
+    assert!(
+        row.contains(&format!("{}\"", sheet(CORP_MATE))) && row.contains(">Main<"),
+        "{row}"
+    );
+}
+
+/// aa-memberaudit's User Compliance and Corporation Compliance reports:
+/// each pilot in scope (their main), whether any and every one of their
+/// characters is registered with Member Audit; each corporation of the
+/// mains, the share registered. Guests left out; without a scope, only
+/// your own.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_compliance_reports(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    // An alt Corp Mate hasn't registered with Member Audit.
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000022, account_id, 'Hidden Alt', 98000003 FROM core.characters WHERE id = $1",
+    )
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let users = format!("/plugins/{ID}/reports/users");
+    let res = page(&h, &users, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let row = finder_row(&res.body, ">Corp Mate<");
+    // Registered (some are), not compliant (one isn't), 3 characters, 1
+    // unregistered.
+    let cells: Vec<&str> = row.split("<td").skip(1).collect();
+    assert!(
+        cells[3].contains(">Yes<") && cells[4].contains(">No<"),
+        "{row}"
+    );
+    assert!(
+        cells[5].contains(">3<") && cells[6].contains(">1<"),
+        "{row}"
+    );
+    let row = finder_row(&res.body, ">Chribba<");
+    assert!(row.contains(">Member<"), "{row}");
+    let compliant = page(&h, &format!("{users}?compliant=yes"), &owner)
+        .await
+        .body;
+    assert!(
+        compliant.contains(">Chribba<") && !compliant.contains(">Corp Mate<"),
+        "{compliant}"
+    );
+    let corporations = format!("/plugins/{ID}/reports/corporations");
+    let res = page(&h, &corporations, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let row = finder_row(&res.body, "98133756");
+    assert!(row.contains(">67%<"), "{row}");
+    // Another pilot with Reports and no view scope sees only themselves.
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "reports_access").await;
+    let theirs = page(&h, &users, &blue).await.body;
+    assert!(theirs.contains(">gigX<"), "{theirs}");
+    assert!(
+        !theirs.contains("Corp Mate") && !theirs.contains(">Chribba<"),
+        "{theirs}"
+    );
+    // With the corporation scope, the pilots whose main is in theirs.
+    grant(&h, &owner, "view_same_corporation").await;
+    let theirs = page(&h, &users, &blue).await.body;
+    assert!(theirs.contains(">Corp Mate<"), "{theirs}");
+    assert!(!theirs.contains(">Chribba<"), "{theirs}");
+}
+
+/// aa-memberaudit's skill set fields and groups: a required level, a
+/// recommended one or both; a description and a ship; sets kept off
+/// pilots' sheets; and groups, doctrines among them, by which the sheet
+/// and the report show sets.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn skill_sets_have_aa_fields_and_groups(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    let post = |body: String| form(&at, &body, &owner);
+    // Chribba has Gunnery V and Small Hybrid Turret III.
+    let res = send(
+        &h.app,
+        post(
+            "_form=add_set&name=Ferox&description=Shield+boats&ship=Ferox&visible=on\
+             &skills=Gunnery+4%0ASmall+Hybrid+Turret+III+%5BV%5D%0AGunnery+%5B5%5D"
+                .to_owned(),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = send(
+        &h.app,
+        post("_form=add_set&name=Audit+only&ship=&skills=Gunnery+1".to_owned()),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Not a ship: said so, nothing added.
+    let res = send(
+        &h.app,
+        post("_form=add_set&name=Bad&ship=Gunnery&skills=Gunnery+1".to_owned()),
+    )
+    .await;
+    assert!(res.body.contains("isn&#39;t a ship"), "{}", res.body);
+    let skills: Vec<(i64, Option<i32>, Option<i32>)> = sqlx::query_as(
+        r#"SELECT k.skill_id, k.required_level, k.recommended_level
+           FROM "plugin_tether.member-audit".skill_set_skills k
+           JOIN "plugin_tether.member-audit".skill_sets s ON s.id = k.set_id
+           WHERE s.name = 'Ferox' ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    // Gunnery named twice keeps its highest levels.
+    assert_eq!(
+        skills,
+        vec![(3300, Some(4), Some(5)), (3301, Some(3), Some(5))]
+    );
+    let (ship, visible, by): (Option<i64>, bool, Option<String>) = sqlx::query_as(
+        r#"SELECT ship_type_id, is_visible, modified_by FROM "plugin_tether.member-audit".skill_sets
+           WHERE name = 'Audit only'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        (ship, visible, by.as_deref()),
+        (None, false, Some("Chribba"))
+    );
+
+    // A doctrine with the Ferox; an unknown set is refused.
+    let res = send(
+        &h.app,
+        post(
+            "_form=add_group&name=Shield+fleet&description=&doctrine=on&active=on&sets=Nope"
+                .to_owned(),
+        ),
+    )
+    .await;
+    assert!(res.body.contains("no skill set named"), "{}", res.body);
+    let res = send(
+        &h.app,
+        post("_form=add_group&name=Shield+fleet&description=Main+doctrine&doctrine=on&active=on&sets=ferox".to_owned()),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let sets = page(&h, &at, &owner).await;
+    for text in [
+        "Doctrine: Shield fleet",
+        "Gunnery IV [V]",
+        "Small Hybrid Turret III [V]",
+        "Audit only (hidden from pilots)",
+        "[Ungrouped]",
+    ] {
+        assert!(sets.body.contains(text), "{text}\n{}", sets.body);
+    }
+
+    // The sheet: visible sets by group, what each still needs, and a set's
+    // details beside it.
+    let sheet = format!("/plugins/{ID}/character/{CHRIBBA}/skills?_tab=2");
+    let tab = page(&h, &sheet, &owner).await;
+    assert!(tab.body.contains("Doctrine: Shield fleet"), "{}", tab.body);
+    assert!(
+        tab.body.contains("Small Hybrid Turret V (has 3)"),
+        "{}",
+        tab.body
+    );
+    assert!(!tab.body.contains("Audit only"), "{}", tab.body);
+    let set: i64 = sqlx::query_scalar(
+        r#"SELECT id FROM "plugin_tether.member-audit".skill_sets WHERE name = 'Ferox'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let panel = page(&h, &format!("{sheet}&set={set}"), &owner).await;
+    for text in [
+        "Shield boats",
+        "III [V], has III",
+        "Has every required skill",
+    ] {
+        assert!(panel.body.contains(text), "{text}\n{}", panel.body);
+    }
+
+    // The report counts each set under its group, the hidden one too.
+    let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
+    let row = finder_row(&reports.body, ">Ferox<");
+    assert!(
+        row.contains("Doctrine: Shield fleet") && row.contains(">1<"),
+        "{row}"
+    );
+    assert!(reports.body.contains("Audit only"), "{}", reports.body);
+
+    // The group's own page changes it: no longer a doctrine, nor in use.
+    let group: i64 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.member-audit".skill_set_groups"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let group_at = format!("{at}/group/{group}");
+    let edit = page(&h, &group_at, &owner).await;
+    assert!(edit.body.contains("Main doctrine"), "{}", edit.body);
+    let res = send(
+        &h.app,
+        form(
+            &group_at,
+            "_form=save_group&name=Shield+fleet&description=&sets=Ferox%0AAudit+only",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let tab = page(&h, &sheet, &owner).await;
+    assert!(
+        tab.body.contains("Shield fleet [Not active]"),
+        "{}",
+        tab.body
+    );
+    let res = send(
+        &h.app,
+        form(
+            &group_at,
+            &format!("_form=delete_group&group={group}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let left: i64 =
+        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.member-audit".skill_sets"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(left, 2, "deleting a group keeps its sets");
+    // Managing groups takes manage: a pilot with view_skill_sets alone
+    // gets nothing there.
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "view_skill_sets").await;
+    assert_eq!(page(&h, &at, &blue).await.status, StatusCode::OK);
+    assert_eq!(
+        page(&h, &format!("{at}/group/1"), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// Skill sets are changed and copied on their own page, as in
+/// aa-memberaudit's admin; they name any of EVE's skills, trained by a
+/// member or not; and there's no cap of 30 sets.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn skill_sets_are_changed_and_copied(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    // Thirty sets already: a thirty-first is no problem.
+    sqlx::raw_sql(
+        r#"INSERT INTO "plugin_tether.member-audit".skill_sets (name)
+             SELECT 'Old ' || n FROM generate_series(1, 30) n;
+           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, required_level)
+             SELECT id, 3300, 1 FROM "plugin_tether.member-audit".skill_sets;"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    // Nobody has trained Caldari Titan; it's still a skill, named in any
+    // case.
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            "_form=add_set&name=Titan&visible=on&skills=caldari+titan+1%0AGunnery+5",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let set_at = res.location().to_owned();
+    assert!(set_at.contains("/skill-sets/set/"), "{set_at}");
+    let set: i64 = set_at.rsplit('/').next().unwrap().parse().unwrap();
+    let page_now = page(&h, &set_at, &owner).await;
+    for text in ["Caldari Titan", "Gunnery 5", "Copy", "Delete skill set"] {
+        assert!(page_now.body.contains(text), "{text}\n{}", page_now.body);
+    }
+    // Changing it: a new name, a recommended level, a ship; its skills are
+    // the form's.
+    let res = send(
+        &h.app,
+        form(
+            &set_at,
+            "_form=save_set&name=Titans&description=Big&ship=Leviathan&visible=on\
+             &skills=Caldari+Titan+1+%5B3%5D",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let skills: Vec<(i64, Option<i32>, Option<i32>)> = sqlx::query_as(
+        r#"SELECT skill_id, required_level, recommended_level
+           FROM "plugin_tether.member-audit".skill_set_skills WHERE set_id = $1"#,
+    )
+    .bind(set)
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(skills, vec![(3346, Some(1), Some(3))]);
+    let page_now = page(&h, &set_at, &owner).await;
+    for text in ["Titans", "Big", "Leviathan", "Caldari Titan 1 [3]"] {
+        assert!(page_now.body.contains(text), "{text}\n{}", page_now.body);
+    }
+    // A name another set has is refused.
+    let res = send(
+        &h.app,
+        form(
+            &set_at,
+            "_form=save_set&name=Old+1&visible=on&skills=Gunnery+1",
+            &owner,
+        ),
+    )
+    .await;
+    assert!(res.body.contains("already exists"), "{}", res.body);
+    // Copying it: "Titans 2", the same skills and fields.
+    let res = send(
+        &h.app,
+        form(&set_at, &format!("_form=copy_set&set={set}"), &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (copy, description, ship): (i64, String, Option<i64>) = sqlx::query_as(
+        r#"SELECT id, description, ship_type_id FROM "plugin_tether.member-audit".skill_sets
+           WHERE name = 'Titans 2'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!((description.as_str(), ship.is_some()), ("Big", true));
+    assert!(res.location().ends_with(&format!("/skill-sets/set/{copy}")));
+    let copied: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".skill_set_skills
+           WHERE set_id = $1 AND skill_id = 3346 AND recommended_level = 3"#,
+    )
+    .bind(copy)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(copied, 1);
+    // Pilots with view_skill_sets open a set's page, not a hidden one,
+    // and get no forms.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".skill_sets SET is_visible = false WHERE id = $1"#,
+    )
+    .bind(copy)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "view_skill_sets").await;
+    let seen = page(&h, &set_at, &blue).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert!(!seen.body.contains("Delete skill set"), "{}", seen.body);
+    assert_eq!(
+        page(&h, &format!("{at}/set/{copy}"), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_ne!(
+        send(
+            &h.app,
+            form(&set_at, &format!("_form=copy_set&set={set}"), &blue)
+        )
+        .await
+        .status,
+        StatusCode::SEE_OTHER
+    );
+}
+
+/// aa-memberaudit's skill set from an EFT fitting: every skill the ship
+/// and its items require, each at the highest level any needs, read once
+/// per type; replacing a set only when asked, and into a group.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_skill_set_from_a_fitting(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    // The Rifter, a Damage Control II and Warrior IIs, as ESI's dogma
+    // gives their required skills (once each: then ESI fails).
+    let dogma = |id: i64, pairs: &[(i64, i64)]| {
+        let attributes: Vec<serde_json::Value> = pairs
+            .iter()
+            .enumerate()
+            .flat_map(|(n, (skill, level))| {
+                let (a, b) = [(182, 277), (183, 278), (184, 279)][n];
+                [
+                    serde_json::json!({ "attribute_id": a, "value": *skill as f64 }),
+                    serde_json::json!({ "attribute_id": b, "value": *level as f64 }),
+                ]
+            })
+            .collect();
+        ResponseTemplate::new(200)
+            .set_body_json(serde_json::json!({ "type_id": id, "name": "An item", "description": "", "group_id": 1, "published": true, "dogma_attributes": attributes }))
+    };
+    for (id, skills) in [
+        (587, vec![(3329, 1), (3394, 1)]),
+        (2048, vec![(3394, 3)]),
+        (2488, vec![(3436, 5), (24241, 4)]),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/universe/types/{id}")))
+            .respond_with(dogma(id, &skills))
+            .up_to_n_times(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/universe/types/\d+$"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&h.esi_server)
+        .await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    let fit = "[Rifter, Fast Tackle]%0ADamage+Control+II%0A%5BEmpty+Low+slot%5D%0A%0A\
+               Not+An+Item%0A%0AWarrior+II+x3";
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            &format!("_form=import_fitting&fitting={fit}&name="),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body
+            .contains("Left out, as EVE has no item by that name: Not An Item."),
+        "{}",
+        res.body
+    );
+    let (set, description, ship): (i64, String, Option<i64>) = sqlx::query_as(
+        r#"SELECT id, description, ship_type_id FROM "plugin_tether.member-audit".skill_sets
+           WHERE name = 'Fast Tackle'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        description.starts_with("Generated from EFT fitting 'Fast Tackle' by Chribba at "),
+        "{description}"
+    );
+    assert_eq!(ship, Some(587));
+    let skills = || async {
+        sqlx::query_as::<_, (i64, Option<i32>, Option<i32>)>(
+            r#"SELECT skill_id, required_level, recommended_level
+               FROM "plugin_tether.member-audit".skill_set_skills WHERE set_id = $1 ORDER BY 1"#,
+        )
+        .bind(set)
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    };
+    // Hull Upgrades at the highest level any item needs.
+    assert_eq!(
+        skills().await,
+        vec![
+            (3329, Some(1), None),
+            (3394, Some(3), None),
+            (3436, Some(5), None),
+            (24241, Some(4), None),
+        ]
+    );
+    // The same name again: refused, unless replacing is ticked. The types'
+    // skills were kept, so ESI isn't asked again.
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            &format!("_form=import_fitting&fitting={fit}&name="),
+            &owner,
+        ),
+    )
+    .await;
+    assert!(res.body.contains("already exists"), "{}", res.body);
+    send(
+        &h.app,
+        form(
+            &at,
+            "_form=add_group&name=Tackle&description=&active=on&sets=",
+            &owner,
+        ),
+    )
+    .await;
+    let group: i64 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.member-audit".skill_set_groups"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            &format!(
+                "_form=import_fitting&fitting=%5BRifter%2C+Fast+Tackle%5D%0ADamage+Control+II\
+                 &name=&overwrite=on&group={group}"
+            ),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(res.location().ends_with(&format!("/skill-sets/set/{set}")));
+    assert_eq!(
+        skills().await,
+        vec![(3329, Some(1), None), (3394, Some(3), None)]
+    );
+    let in_group: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".skill_set_group_sets
+           WHERE group_id = $1 AND set_id = $2"#,
+    )
+    .bind(group)
+    .bind(set)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(in_group, 1);
+    // A fitting of something that isn't a ship, and text that isn't EFT.
+    for (fitting, problem) in [
+        ("%5BWarrior+II%2C+X%5D", "isn&#39;t a ship"),
+        ("Rifter", "doesn&#39;t look like EFT"),
+    ] {
+        let res = send(
+            &h.app,
+            form(
+                &at,
+                &format!("_form=import_fitting&fitting={fitting}&name="),
+                &owner,
+            ),
+        )
+        .await;
+        assert!(res.body.contains(problem), "{problem}\n{}", res.body);
+    }
 }
 
 /// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance

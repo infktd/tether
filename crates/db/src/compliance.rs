@@ -753,6 +753,82 @@ pub async fn serving_owners(
         .collect())
 }
 
+/// An account holding one of an app's permissions, with every character
+/// on it: [`serving_members`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServingMember {
+    pub main: crate::plugin_esi::CharacterRow,
+    pub state: String,
+    /// The state's `builtin` (member, blue, guest, blacklist), if any.
+    pub builtin: Option<String>,
+    /// Every character on the account, main included, each with whether
+    /// it's registered for the app.
+    pub characters: Vec<(crate::plugin_esi::CharacterRow, bool)>,
+}
+
+/// Every account holding one of the app's permissions (with a main), and
+/// all its characters, registered for the app or not: for the one app
+/// that may know (Member Audit: aa-memberaudit's Character Finder and
+/// compliance reports list members' unregistered characters). Characters
+/// sold on (their owner hash changed) are left out, as from
+/// [`serving_owners`].
+pub async fn serving_members(
+    pool: &PgPool,
+    plugin_id: &str,
+) -> Result<Vec<ServingMember>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT a.id AS account_id, m.id AS main_id, m.name AS main_name,
+               m.corporation_id AS main_corporation_id, m.alliance_id AS main_alliance_id,
+               s.name AS state, s.builtin,
+               c.id, c.name, c.corporation_id, c.alliance_id,
+               EXISTS (SELECT 1 FROM core.app_characters r
+                       WHERE r.character_id = c.id AND r.plugin_id = $1) AS "registered!"
+        FROM core.accounts a
+        JOIN core.states s ON s.id = a.state_id
+        JOIN core.characters m ON m.id = a.main_character_id
+        JOIN core.characters c ON c.account_id = a.id
+        LEFT JOIN core.character_tokens t ON t.character_id = c.id
+        WHERE core.holds_app_permission(a.id, $1)
+          AND (t.state IS DISTINCT FROM 'revoked'
+               OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')
+        ORDER BY a.id, c.id
+        "#,
+        plugin_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut members: Vec<(i64, ServingMember)> = Vec::new();
+    for r in rows {
+        let character = crate::plugin_esi::CharacterRow {
+            id: r.id,
+            name: r.name,
+            corporation_id: r.corporation_id,
+            alliance_id: r.alliance_id,
+        };
+        match members.last_mut() {
+            Some((account, member)) if *account == r.account_id => {
+                member.characters.push((character, r.registered));
+            }
+            _ => members.push((
+                r.account_id,
+                ServingMember {
+                    main: crate::plugin_esi::CharacterRow {
+                        id: r.main_id,
+                        name: r.main_name,
+                        corporation_id: r.main_corporation_id,
+                        alliance_id: r.main_alliance_id,
+                    },
+                    state: r.state,
+                    builtin: r.builtin,
+                    characters: vec![(character, r.registered)],
+                },
+            )),
+        }
+    }
+    Ok(members.into_iter().map(|(_, member)| member).collect())
+}
+
 // ---- Corp Stats ----------------------------------------------------------
 
 /// Corporations a state covers: the main of some account in a state other

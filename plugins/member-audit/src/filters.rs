@@ -103,12 +103,13 @@ fn filter_values(name: &str, config: &str) -> Result<Option<Vec<(i64, i64)>>, Jo
                 ));
                 return Ok(None);
             };
-            // As the Skill Sets page: every skill of the set at its level.
+            // As the Skill Sets page: every required level of the set.
             (
                 "EXISTS (SELECT 1 FROM skill_sets ss WHERE ss.id = $2) AND NOT EXISTS ( \
-                   SELECT 1 FROM skill_set_skills k WHERE k.set_id = $2 AND NOT EXISTS ( \
+                   SELECT 1 FROM skill_set_skills k WHERE k.set_id = $2 \
+                   AND k.required_level IS NOT NULL AND NOT EXISTS ( \
                      SELECT 1 FROM skills s WHERE s.character_id = c.character_id \
-                       AND s.skill_id = k.skill_id AND s.active_level >= k.level))",
+                       AND s.skill_id = k.skill_id AND s.active_level >= k.required_level))",
                 vec![id.into()],
                 "c.skills_at IS NOT NULL",
             )

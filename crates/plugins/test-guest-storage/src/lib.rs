@@ -327,6 +327,7 @@ fn probe(request: Request) -> Result<Page, PageError> {
         "superuser" => identity::superuser().to_string(),
         "characters" => format!("{:?}", esi::characters()),
         "owners" => format!("{:?}", identity::owners()),
+        "members" => format!("{:?}", identity::members()),
         "sources" => format!("{:?}", esi::data_sources()),
         // send?channel=&text=&state=Member
         "send" => {

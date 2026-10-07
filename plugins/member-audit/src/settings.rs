@@ -95,7 +95,7 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
                         )
                         .range(retention_min, retention_max, true)
                         .value(settings.retention_days.to_string())
-                        .help("At least 7. Default: 360.")
+                        .help("At least 7. Default: 360. Contracts count from when they expire.")
                         .required(),
                     )
                     .field(

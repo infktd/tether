@@ -12,7 +12,8 @@
 //!   Clones (implants, jump clones), Industry (jobs, blueprints, mining,
 //!   planets), Contacts (contacts, NPC standings), and Mail on its own
 //!   audited pages. Pilots share their own characters from it.
-//! - **Character Finder**: member characters within the viewer's scope,
+//! - **Character Finder**: every character of the pilots within the
+//!   viewer's scope, unregistered ones flagged,
 //!   with each one's main, main organisation and state.
 //! - **Skill Sets** and **Reports**.
 //! - **Settings**: aa-memberaudit's settings (see `settings`).
@@ -26,12 +27,15 @@
 mod access;
 mod exports;
 mod filters;
+mod fitting;
 mod mail;
 mod pages;
+mod reports;
 mod sets;
 mod settings;
 mod sheet;
 mod sync;
+mod types;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use tether_plugin_sdk::identity;
@@ -51,12 +55,16 @@ impl Plugin for MemberAudit {
             [""] => pages::my_characters(&viewer),
             ["finder"] => pages::finder(&access, &request),
             ["skill-sets"] => sets::skill_sets_page(&access, None),
-            ["reports"] => sets::reports(&access),
+            ["skill-sets", "set", id] => sets::set_page(&access, id, None),
+            ["skill-sets", "group", id] => sets::group_page(&access, id, None),
+            ["reports"] => reports::skill_sets_report(&access, &request),
+            ["reports", "users"] => reports::user_compliance(&access, &request),
+            ["reports", "corporations"] => reports::corporation_compliance(&access, &request),
             ["data-export"] if viewer.can("exports_access") => exports::page(None),
             ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
-                sheet::render(&access, id, rest)
+                sheet::render(&access, id, rest, &request)
             }
             ["mail", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
@@ -80,8 +88,26 @@ impl Plugin for MemberAudit {
             ("settings", "settings") if viewer.can("manage") => {
                 settings::save(&viewer, &submission)
             }
-            ("skill-sets", "delete_set") if viewer.can("manage") => {
-                sets::delete_set(&viewer, submission.value("set"))
+            (p, "save_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
+                sets::save_set(&access, &submission)
+            }
+            (p, "copy_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
+                sets::copy_set(&viewer, &submission)
+            }
+            (p, "delete_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
+                sets::delete_set(&viewer, &submission)
+            }
+            ("skill-sets", "import_fitting") if viewer.can("manage") => {
+                fitting::import_fitting(&access, &submission)
+            }
+            ("skill-sets", "add_group") if viewer.can("manage") => {
+                sets::save_group(&access, &submission)
+            }
+            (p, "save_group") if p.starts_with("skill-sets/group/") && viewer.can("manage") => {
+                sets::save_group(&access, &submission)
+            }
+            (p, "delete_group") if p.starts_with("skill-sets/group/") && viewer.can("manage") => {
+                sets::delete_group(&viewer, submission.value("group"))
             }
             (_, "update_character") => sheet::update_now(&access, &submission),
             (_, "share_character") => sheet::share(&access, &submission, true),
