@@ -33,6 +33,9 @@ use tether_plugin_sdk::{
 const SYNC_BLUEPRINTS: &str = "sync_blueprints";
 const SYNC_JOBS: &str = "sync_jobs";
 const SYNC_PLACES: &str = "sync_places";
+/// Places read again a minute later, for owners a places run couldn't
+/// read yet (`sync::places_again`).
+const PLACES_AGAIN: &str = "places_again";
 /// Rows a table lists (Tether pages them 25 at a time).
 const LISTED: i64 = 500;
 /// Open requests one pilot may have.
@@ -79,6 +82,7 @@ impl Plugin for Blueprints {
             SYNC_BLUEPRINTS => sync::blueprints(),
             SYNC_JOBS => sync::jobs(),
             SYNC_PLACES => sync::places(),
+            PLACES_AGAIN => sync::places_again(&job.payload),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -258,8 +262,8 @@ fn kind_badge(original: bool) -> Value {
 /// Where a blueprint is: the place, then the containers and hangars
 /// inside it, outermost first ("Jita IV - Moon 4 › Corp Hangar 2 ›
 /// Station Container").
-fn place_text(place: Option<String>, within: Option<&str>, flag: &str) -> String {
-    let mut parts: Vec<String> = vec![place.unwrap_or_else(|| "Not read yet".to_owned())];
+fn place_text(place: String, within: Option<&str>, flag: &str) -> String {
+    let mut parts: Vec<String> = vec![place];
     let within: Vec<serde_json::Value> = within
         .and_then(|w| serde_json::from_str(w).ok())
         .unwrap_or_default();
@@ -280,6 +284,18 @@ fn place_text(place: Option<String>, within: Option<&str>, flag: &str) -> String
     }
     parts.dedup();
     parts.join(" › ")
+}
+
+/// A place without a name: found but not named yet, looked for and not
+/// found (aa-blueprints shows "Location #<id>"), or not looked for yet.
+fn unnamed(known: bool, looked: bool) -> &'static str {
+    if known {
+        "Not named yet"
+    } else if looked {
+        "Unknown location"
+    } else {
+        "Not read yet"
+    }
 }
 
 /// A hangar's name for a location flag, if it's one.
@@ -330,7 +346,7 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
                     b.material_efficiency, b.time_efficiency, b.runs, sum(b.quantity)::bigint, \
                     pl.name, {WITHIN}, b.location_flag, count(j.job_id), \
                     (array_agg(j.activity ORDER BY j.end_date) FILTER (WHERE j.job_id IS NOT NULL))[1], \
-                    min(j.end_date) \
+                    min(j.end_date), b.place_id IS NOT NULL, b.place_read_at IS NOT NULL \
              FROM blueprints b JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
              LEFT JOIN names n ON n.id = b.type_id \
              LEFT JOIN products p ON p.blueprint_type_id = b.type_id \
@@ -338,7 +354,8 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
              LEFT JOIN jobs j ON j.item_id = b.item_id \
              WHERE {sees} AND (lower(coalesce(n.name, '')) LIKE $4 OR lower(o.name) LIKE $4) \
              GROUP BY b.type_id, n.name, p.product_type_id, o.kind, o.id, o.name, b.runs, \
-                 b.material_efficiency, b.time_efficiency, pl.name, b.within, b.location_flag \
+                 b.material_efficiency, b.time_efficiency, pl.name, b.within, b.location_flag, \
+                 b.place_id IS NOT NULL, b.place_read_at IS NOT NULL \
              ORDER BY n.name, b.material_efficiency DESC, b.time_efficiency DESC \
              LIMIT {}",
             LISTED + 1
@@ -399,8 +416,8 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
             int(r, 11).into(),
         ];
         if access.locations {
-            cells
-                .push(place_text(opt_text(r, 12), opt_text(r, 13).as_deref(), &text(r, 14)).into());
+            let place = opt_text(r, 12).unwrap_or_else(|| unnamed(flag(r, 18), flag(r, 19)).into());
+            cells.push(place_text(place, opt_text(r, 13).as_deref(), &text(r, 14)).into());
         }
         cells.push(in_use(access, int(r, 15), opt_int(r, 16), opt_text(r, 17)));
         if access.request {
@@ -508,7 +525,7 @@ fn status_badge(status: &str) -> Value {
 const REQUEST_COLUMNS: &str = "r.id, coalesce(n.name, 'Blueprint ' || b.type_id), \
      p.product_type_id, o.kind, o.id, o.name, b.material_efficiency, b.time_efficiency, r.runs, \
      r.status, r.requester_id, r.requester_name, pl.name, b.location_flag, r.created_at, \
-     r.fulfiller_name";
+     r.fulfiller_name, b.place_id IS NOT NULL, b.place_read_at IS NOT NULL";
 
 const REQUEST_JOINS: &str = "FROM requests r JOIN blueprints b ON b.item_id = r.item_id \
      JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
@@ -524,7 +541,8 @@ fn request_cells(access: &Access, r: &[Db]) -> Vec<Value> {
         opt_int(r, 8).map_or_else(|| Value::from("Max"), Value::from),
     ];
     if access.locations {
-        cells.push(place_text(opt_text(r, 12), None, &text(r, 13)).into());
+        let place = opt_text(r, 12).unwrap_or_else(|| unnamed(flag(r, 16), flag(r, 17)).into());
+        cells.push(place_text(place, None, &text(r, 13)).into());
     }
     cells
 }
@@ -1061,14 +1079,24 @@ mod tests {
         let within =
             r#"[["17366", "CorpSAG2", "Station Container"], ["27", "OfficeFolder", "Office"]]"#;
         assert_eq!(
-            place_text(Some("Jita IV - Moon 4".into()), Some(within), "Unlocked"),
+            place_text("Jita IV - Moon 4".into(), Some(within), "Unlocked"),
             "Jita IV - Moon 4 › Corp Hangar 2 › Station Container"
         );
         assert_eq!(
-            place_text(Some("Amarr VIII".into()), None, "Hangar"),
+            place_text("Amarr VIII".into(), None, "Hangar"),
             "Amarr VIII › Hangar"
         );
-        assert_eq!(place_text(None, None, "Undefined"), "Not read yet");
+    }
+
+    #[test]
+    fn a_place_without_a_name_says_why() {
+        assert_eq!(unnamed(false, false), "Not read yet");
+        assert_eq!(unnamed(false, true), "Unknown location");
+        assert_eq!(unnamed(true, true), "Not named yet");
+        assert_eq!(
+            place_text(unnamed(false, true).into(), None, "CorpSAG1"),
+            "Unknown location › Corp Hangar 1"
+        );
     }
 
     #[test]

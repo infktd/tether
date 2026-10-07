@@ -14,8 +14,12 @@
 //! feed the error budget, but never its cache: calls with a character's
 //! token go to ESI every time (ESI's own cache still answers repeats
 //! cheaply), so ESI checks that character's scopes and roles on every
-//! request and nothing a token fetched is stored. Public endpoints skip
-//! the cache too (see `uncached`). Responses reach the plugin as JSON.
+//! request and nothing a token fetched is stored. The one exception is
+//! `corporation-asset-places`, whose read of every page of a
+//! corporation's assets is kept in memory for an hour for that
+//! corporation and character only (see [`crate::asset_places`]). Public
+//! endpoints skip the cache too (see `uncached`). Responses reach the
+//! plugin as JSON.
 //!
 //! `fleet-members` checks that the data-source character is the fleet boss
 //! from `/characters/{id}/fleet`, as of ESI's cached answer (a few
@@ -302,9 +306,11 @@ pub const ENDPOINTS: &[Endpoint] = &[
         // `item_ids`: for each one found, the station, structure or system
         // it's in at the top, and the containers and hangars between
         // (type and flag only), as aa-blueprints shows a blueprint's place
-        // (Jay, 2026-10-04). Nothing about any other item. Reads every
-        // page of the assets (at most 50), each counting as a call (two
-        // up front). CCP requires the Director role.
+        // (Jay, 2026-10-04). Nothing about any other item. Every page of
+        // the assets is read in the background (`asset_places`) and kept
+        // an hour for the data source's character; until a read is ready
+        // the call answers unavailable, so the app asks again. A call
+        // costs 2. CCP requires the Director role.
         name: "corporation-asset-places",
         scope: ASSETS,
         about: About::Corporation,
@@ -1023,13 +1029,13 @@ pub const SKYHOOK_TYPES: &[i64] = &[81080];
 
 /// A corporation asset, read loosely (see `corporation-structure-assets`).
 #[derive(serde::Deserialize)]
-struct Asset {
-    item_id: i64,
-    type_id: i64,
-    location_id: i64,
-    location_flag: String,
-    location_type: String,
-    quantity: i64,
+pub(crate) struct Asset {
+    pub(crate) item_id: i64,
+    pub(crate) type_id: i64,
+    pub(crate) location_id: i64,
+    pub(crate) location_flag: String,
+    pub(crate) location_type: String,
+    pub(crate) quantity: i64,
 }
 
 impl Asset {
@@ -1093,13 +1099,10 @@ fn pages(headers: &reqwest::header::HeaderMap) -> u32 {
 
 /// Item ids a plugin names, most at once.
 pub const MAX_ITEM_IDS: usize = 1000;
-/// The most pages of a corporation's assets `corporation-asset-places`
-/// reads.
-pub const MAX_ASSET_PAGES: u32 = 50;
 
 /// `item_ids`: 1 to [`MAX_ITEM_IDS`] positive ids, comma-separated, each
 /// once.
-fn item_ids(params: &[(String, String)]) -> Result<Vec<i64>, EsiError> {
+pub(crate) fn item_ids(params: &[(String, String)]) -> Result<Vec<i64>, EsiError> {
     let bad = || {
         EsiError::InvalidInput(format!(
             "item_ids must be 1 to {MAX_ITEM_IDS} positive ids, comma-separated"
@@ -1324,8 +1327,10 @@ impl Esi {
     /// default header, which eve-esi-client can't see when it keys its
     /// cache, so a cached copy would be keyed by URL alone: another
     /// character's request could be answered with it, and it would land
-    /// in Postgres unmarked. Every token-bearing call asks ESI.
-    fn with_token(&self, token: &Secret<String>) -> Result<Client, EsiError> {
+    /// in Postgres unmarked. Every token-bearing request asks ESI; only
+    /// `corporation-asset-places` keeps what it read, in memory, for the
+    /// same corporation and character (`asset_places`).
+    pub(crate) fn with_token(&self, token: &Secret<String>) -> Result<Client, EsiError> {
         let mut headers = HeaderMap::new();
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", token.expose()))
             .map_err(|_| EsiError::InvalidInput("the token isn't a valid header".into()))?;
@@ -1361,7 +1366,7 @@ impl Esi {
     /// typed read of the whole page, which is then fetched again as it is
     /// (headers included, for the page count) and read loosely. With the
     /// page count and whether it was read again.
-    async fn corporation_assets_page(
+    pub(crate) async fn corporation_assets_page(
         &self,
         client: &Client,
         corporation: i64,
@@ -1407,71 +1412,6 @@ impl Esi {
         let pages = pages(response.headers());
         let again = refetched(response.headers());
         Ok((response.into_inner(), pages, again))
-    }
-
-    /// `corporation-asset-places`: every page of the assets read (at most
-    /// [`MAX_ASSET_PAGES`]), then each asked item found walked up through
-    /// its containers to the place at the top. Only the asked items and
-    /// what holds them are answered. Pages past the first count as calls
-    /// (`refetched`).
-    async fn asset_places(
-        &self,
-        client: &Client,
-        corporation: i64,
-        ids: &[i64],
-        priority: Priority,
-    ) -> Result<Response, EsiError> {
-        let mut assets = std::collections::HashMap::new();
-        let mut page = 1u32;
-        let mut extra = 0u32;
-        loop {
-            let (items, last, again) = self
-                .corporation_assets_page(client, corporation, page, priority)
-                .await?;
-            extra += again;
-            assets.extend(items.into_iter().map(|a| (a.item_id, a)));
-            if page >= last || page >= MAX_ASSET_PAGES {
-                break;
-            }
-            page += 1;
-            extra += 1;
-        }
-        let body: Vec<serde_json::Value> = ids
-            .iter()
-            .filter_map(|id| assets.get(id))
-            .map(|item| {
-                let mut within = Vec::new();
-                let mut at = item;
-                // Containers in containers, a few deep at most; a loop in
-                // the data stops at the limit.
-                while at.location_type == "item" && within.len() < 10 {
-                    match assets.get(&at.location_id) {
-                        Some(holder) => {
-                            within.push(serde_json::json!({
-                                "type_id": holder.type_id,
-                                "location_flag": holder.location_flag,
-                            }));
-                            at = holder;
-                        }
-                        None => break,
-                    }
-                }
-                serde_json::json!({
-                    "item_id": item.item_id,
-                    "type_id": item.type_id,
-                    "location_flag": item.location_flag,
-                    "within": within,
-                    "place_id": at.location_id,
-                    "place_type": at.location_type,
-                })
-            })
-            .collect();
-        Ok(Response {
-            body: serde_json::Value::Array(body),
-            pages: 1,
-            // Two pages are paid for up front (`esi_cost`).
-            refetched: extra.saturating_sub(1),
-        })
     }
 
     async fn upwell_ids(&self, client: &Client, corporation: i64) -> Option<Vec<i64>> {
@@ -2296,9 +2236,15 @@ impl Esi {
                     refetched: again,
                 })
             }
+            // Answered from a background read (`asset_places`); the host
+            // gives that read a fresh token for each page, this one only.
             "corporation-asset-places" => {
-                let ids = item_ids(params)?;
-                self.asset_places(&client, corporation, &ids, priority)
+                let token = token.clone();
+                let tokens: crate::asset_places::TokenSource = std::sync::Arc::new(move || {
+                    let token = token.clone();
+                    Box::pin(async move { Ok(token) })
+                });
+                self.corporation_asset_places(tokens, corporation, character, params)
                     .await
             }
             "corporation-blueprints" => loose_paged!(

@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use tether_plugin_sdk::esi::{self, Character, Subject};
-use tether_plugin_sdk::jobs::JobError;
+use tether_plugin_sdk::jobs::{self, JobError, NewJob};
 use tether_plugin_sdk::log;
 use tether_plugin_sdk::storage::{self, Value as Db};
 
-use crate::{int, retry, text};
+use crate::{PLACES_AGAIN, int, retry, text};
 
 const PUBLIC: Subject = Subject::Character(0);
 /// Places named per run, within a run's 100 ESI calls.
@@ -256,6 +256,8 @@ fn store_blueprints(owner: &Owner, list: &[serde_json::Value]) -> Result<(), Job
                      THEN blueprints.place_id END, \
                  within = CASE WHEN blueprints.location_id = EXCLUDED.location_id \
                      THEN blueprints.within END, \
+                 place_read_at = CASE WHEN blueprints.location_id = EXCLUDED.location_id \
+                     THEN blueprints.place_read_at END, \
                  location_id = EXCLUDED.location_id, location_flag = EXCLUDED.location_flag, \
                  quantity = EXCLUDED.quantity, runs = EXCLUDED.runs, \
                  material_efficiency = EXCLUDED.material_efficiency, \
@@ -366,68 +368,195 @@ pub fn is_system(id: i64) -> bool {
     (30_000_000..33_000_000).contains(&id)
 }
 
+/// Upwell structures' ids. Offices and containers have ids in the same
+/// range, so a corporation's holders are looked for in its assets first.
 pub fn is_structure(id: i64) -> bool {
     id > 1_000_000_000_000
 }
 
-/// A place by itself: a station, structure or system, not an item.
-fn is_place(id: i64) -> bool {
-    is_station(id) || is_system(id) || is_structure(id)
+/// Follow-up runs, a minute apart, for owners whose places weren't read
+/// yet (a corporation's assets still being read, or the run's ESI calls
+/// spent): half an hour.
+pub const PLACES_TRIES: u64 = 30;
+
+/// Every owner's places, as aa-blueprints' 12-hourly location update.
+pub fn places() -> Result<(), JobError> {
+    read_places(None, 0)
 }
 
-pub fn places() -> Result<(), JobError> {
-    let (owners, _lapsed) = owners()?;
+/// A follow-up run (`places_again`): `{"owners": ["corporation:98000001",
+/// ...], "tries": n}`, only those owners.
+pub fn places_again(payload: &str) -> Result<(), JobError> {
+    let payload: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
+    let only: Vec<String> = payload["owners"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| o.as_str().map(str::to_owned))
+        .collect();
+    let tries = payload["tries"].as_u64().unwrap_or(PLACES_TRIES);
+    read_places(Some(&only), tries)
+}
+
+/// An owner as a follow-up run names it.
+fn owner_key(owner: &Owner) -> String {
+    format!("{}:{}", owner.kind, owner.id)
+}
+
+/// Whether the call was refused because the run's ESI calls are spent.
+fn out_of_calls(err: &esi::Error) -> bool {
+    matches!(err, esi::Error::Invalid(why) if why.starts_with("more than") && why.contains("ESI calls"))
+}
+
+/// Reads the owners' places (those in `only`, else all), least recently
+/// read first. A corporation whose assets are still being read, and the
+/// owners left when the run's ESI calls run out, are read again a minute
+/// later, up to [`PLACES_TRIES`] times.
+fn read_places(only: Option<&[String]>, tries: u64) -> Result<(), JobError> {
+    let (mut owners, _lapsed) = owners()?;
+    if let Some(only) = only {
+        owners.retain(|o| only.contains(&owner_key(o)));
+    }
+    let read = storage::query("SELECT kind, id, places_at FROM owners", &[])
+        .map_err(|e| retry("reading owners", e))?;
+    let places_at = |o: &Owner| {
+        read.rows
+            .iter()
+            .find(|r| text(r, 0) == o.kind && int(r, 1) == o.id)
+            .map(|r| text(r, 2))
+            .unwrap_or_default()
+    };
+    owners.sort_by_cached_key(places_at);
     let mut problems = Vec::new();
+    let mut again: Vec<String> = Vec::new();
+    let mut spent = false;
+    let mut tried = 0;
+    let last_try = tries >= PLACES_TRIES;
     for owner in &owners {
+        if spent {
+            again.push(owner_key(owner));
+            continue;
+        }
+        let locations = owner_locations(owner)?;
         let found = if owner.kind == "corporation" {
-            corporate_places(owner)
+            corporate_places(owner, &locations)
         } else {
-            personal_places(owner)
+            personal_places(owner, &locations)
         };
+        tried += 1;
         match found {
             Ok(found) => store_places(owner, &found)?,
-            Err(err) => problems.push(format!(
-                "{}: places not read: {}",
-                who(owner),
-                esi::describe(&err)
-            )),
+            // The run's calls are spent: this owner and the rest are read a
+            // minute later, unless it alone needs more than a run has.
+            Err(err) if out_of_calls(&err) => {
+                spent = true;
+                if tried == 1 || last_try {
+                    problems.push(format!(
+                        "{}: places not read: {}",
+                        who(owner),
+                        esi::describe(&err)
+                    ));
+                    note_places(owner)?;
+                } else {
+                    again.push(owner_key(owner));
+                }
+            }
+            // The corporation's assets are being read in the background
+            // (or ESI had trouble): asked again in a minute.
+            Err(esi::Error::Unavailable | esi::Error::Status(500..=599))
+                if owner.kind == "corporation" && !last_try =>
+            {
+                again.push(owner_key(owner));
+            }
+            Err(esi::Error::Unavailable) if owner.kind == "corporation" => {
+                problems.push(format!(
+                    "{}: places not read: its assets still weren't read after half an hour",
+                    who(owner)
+                ));
+                note_places(owner)?;
+            }
+            Err(err) => {
+                problems.push(format!(
+                    "{}: places not read: {}",
+                    who(owner),
+                    esi::describe(&err)
+                ));
+                note_places(owner)?;
+            }
         }
+    }
+    if again.is_empty() || last_try {
+        if let Err(err) = jobs::cancel(PLACES_AGAIN) {
+            log::warn(format!("the places follow-up wasn't cancelled: {err:?}"));
+        }
+    } else {
+        let at = chrono::Utc::now() + chrono::Duration::minutes(1);
+        jobs::enqueue(
+            NewJob::new(PLACES_AGAIN)
+                .key(PLACES_AGAIN)
+                .payload(serde_json::json!({ "owners": again, "tries": tries + 1 }).to_string())
+                .at(at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+        )
+        .map_err(|e| retry("queuing the places follow-up", e))?;
     }
     name_places(&owners)?;
     learn_names()?;
     set_error("places_at", &problems)
 }
 
-/// For each blueprint: the place at the top, and the containers and
-/// hangars between ([type_id, flag], innermost first).
+/// Each blueprint is where its holder is: for each holder (a blueprint's
+/// `location_id`), the place at the top, and the containers and hangars
+/// between ([type_id, flag], innermost first).
 type Found = HashMap<i64, (i64, serde_json::Value)>;
 
-fn owner_items(owner: &Owner) -> Result<Vec<(i64, i64)>, JobError> {
-    let rows = storage::query(
-        "SELECT item_id, location_id FROM blueprints WHERE owner_kind = $1 AND owner_id = $2",
-        &[owner.kind.into(), owner.id.into()],
-    )
-    .map_err(|e| retry("reading blueprints", e))?;
-    Ok(rows.rows.iter().map(|r| (int(r, 0), int(r, 1))).collect())
+/// Holders read at once (the host answers at most 5,000 rows).
+const LOCATIONS_PER_READ: i64 = 4_000;
+
+/// The owner's blueprints' holders, each once, and whether a blueprint
+/// sits straight in it (the corporation's deliveries, in a station or
+/// structure, not an office or container): a few thousand at a time,
+/// however many blueprints there are.
+fn owner_locations(owner: &Owner) -> Result<Vec<(i64, bool)>, JobError> {
+    let mut out = Vec::new();
+    let mut after = i64::MIN;
+    loop {
+        let rows = storage::query(
+            "SELECT location_id, bool_or(location_flag = 'CorpDeliveries') FROM blueprints \
+             WHERE owner_kind = $1 AND owner_id = $2 AND location_id > $3 \
+             GROUP BY location_id ORDER BY location_id LIMIT $4",
+            &[
+                owner.kind.into(),
+                owner.id.into(),
+                after.into(),
+                LOCATIONS_PER_READ.into(),
+            ],
+        )
+        .map_err(|e| retry("reading blueprints' holders", e))?;
+        let more = i64::try_from(rows.rows.len()).unwrap_or(i64::MAX) >= LOCATIONS_PER_READ;
+        out.extend(rows.rows.iter().map(|r| (int(r, 0), crate::flag(r, 1))));
+        match out.last() {
+            Some((last, _)) if more => after = *last,
+            _ => return Ok(out),
+        }
+    }
 }
 
-/// Blueprints sit in a few containers and hangars: those are asked about
-/// (one call for up to 1,000, each reading the corporation's assets
-/// once), and each blueprint is where its holder is, inside it.
-fn corporate_places(owner: &Owner) -> Result<Found, esi::Error> {
-    let items = owner_items(owner).unwrap_or_default();
+/// A corporation's holders, offices and containers, are looked for in
+/// its assets (`corporation-asset-places`, up to 1,000 a call, all
+/// answered from one background read of every page), as aa-blueprints
+/// builds each location's chain from the assets.
+fn corporate_places(owner: &Owner, locations: &[(i64, bool)]) -> Result<Found, esi::Error> {
     let mut found = Found::new();
-    // Blueprints straight in a station, structure or system need no
-    // asking.
     let mut holders: Vec<i64> = Vec::new();
-    for (item, location) in &items {
-        if is_place(*location) {
-            found.insert(*item, (*location, serde_json::json!([])));
-        } else if !holders.contains(location) {
+    for (location, straight) in locations {
+        // Blueprints straight in a station, system or a structure's
+        // deliveries need no asking.
+        if is_station(*location) || is_system(*location) || *straight {
+            found.insert(*location, (*location, serde_json::json!([])));
+        } else {
             holders.push(*location);
         }
     }
-    let mut placed: HashMap<i64, (i64, serde_json::Value)> = HashMap::new();
     for chunk in holders.chunks(PLACE_IDS_PER_CALL) {
         let ids = chunk
             .iter()
@@ -458,29 +587,33 @@ fn corporate_places(owner: &Owner) -> Result<Found, esi::Error> {
                     .flatten()
                     .map(|w| serde_json::json!([w["type_id"], w["location_flag"]])),
             );
-            placed.insert(holder, (at, serde_json::Value::Array(within)));
+            found.insert(holder, (at, serde_json::Value::Array(within)));
         }
     }
-    for (item, location) in &items {
-        if let Some(place) = placed.get(location) {
-            found.insert(*item, place.clone());
+    // Not among the corporation's assets, in a structure's range: a
+    // structure itself, as aa-blueprints first takes it. Others found
+    // nowhere stay unplaced ("Unknown location").
+    for holder in holders {
+        if is_structure(holder) {
+            found
+                .entry(holder)
+                .or_insert_with(|| (holder, serde_json::json!([])));
         }
     }
     Ok(found)
 }
 
-/// A personal owner's assets are their own: read whole, and each
-/// blueprint walked up through its containers.
-fn personal_places(owner: &Owner) -> Result<Found, esi::Error> {
-    let items = owner_items(owner).unwrap_or_default();
+/// A personal owner's assets are their own: read whole, and each holder
+/// walked up through its containers.
+fn personal_places(owner: &Owner, locations: &[(i64, bool)]) -> Result<Found, esi::Error> {
     let assets = pages(esi::get_all("character-assets", owner.subject, &[])?);
     let by_id: HashMap<i64, &serde_json::Value> = assets
         .iter()
         .filter_map(|a| Some((a["item_id"].as_i64()?, a)))
         .collect();
     let mut found = Found::new();
-    for (item, location) in items {
-        let mut at = location;
+    for (location, _) in locations {
+        let mut at = *location;
         let mut within = Vec::new();
         while let Some(holder) = by_id.get(&at) {
             if within.len() >= 10 {
@@ -492,37 +625,73 @@ fn personal_places(owner: &Owner) -> Result<Found, esi::Error> {
             ]));
             at = holder["location_id"].as_i64().unwrap_or(0);
         }
-        found.insert(item, (at, serde_json::Value::Array(within)));
+        found.insert(*location, (at, serde_json::Value::Array(within)));
     }
     Ok(found)
 }
 
+/// Holders' places stored at once (well within the host's 1 MiB of
+/// parameters a call).
+const PLACES_PER_STORE: usize = 2_000;
+
+/// Stores where the owner's blueprints are, by holder, and that they were
+/// looked for: a blueprint whose holder wasn't found has no place
+/// ("Unknown location").
 fn store_places(owner: &Owner, found: &Found) -> Result<(), JobError> {
+    let started =
+        storage::query("SELECT now()::text", &[]).map_err(|e| retry("reading the time", e))?;
+    let started = started.rows.first().map(|r| text(r, 0)).unwrap_or_default();
     let rows: Vec<serde_json::Value> = found
         .iter()
-        .map(|(item, (place, within))| {
-            serde_json::json!({ "item_id": item, "place_id": place, "within": within })
+        .map(|(holder, (place, within))| {
+            serde_json::json!({ "location_id": holder, "place_id": place, "within": within })
         })
         .collect();
-    storage::execute(
-        "UPDATE blueprints b SET place_id = x.place_id, within = x.within \
-         FROM json_to_recordset($1::json) AS x(item_id bigint, place_id bigint, within jsonb) \
-         WHERE b.item_id = x.item_id AND b.owner_kind = $2 AND b.owner_id = $3",
-        &[
-            Db::json(serde_json::Value::Array(rows).to_string()),
-            owner.kind.into(),
-            owner.id.into(),
-        ],
-    )
+    for chunk in rows.chunks(PLACES_PER_STORE) {
+        storage::execute(
+            "UPDATE blueprints b SET place_id = x.place_id, within = x.within, \
+                 place_read_at = now() \
+             FROM json_to_recordset($1::json) AS x(location_id bigint, place_id bigint, within jsonb) \
+             WHERE b.location_id = x.location_id AND b.owner_kind = $2 AND b.owner_id = $3",
+            &[
+                Db::json(serde_json::Value::Array(chunk.to_vec()).to_string()),
+                owner.kind.into(),
+                owner.id.into(),
+            ],
+        )
+        .map_err(|e| retry("storing places", e))?;
+    }
+    storage::transaction(&[
+        storage::Statement::new(
+            "UPDATE blueprints SET place_id = NULL, within = NULL, place_read_at = now() \
+             WHERE owner_kind = $1 AND owner_id = $2 \
+               AND (place_read_at IS NULL OR place_read_at < $3::timestamptz)",
+            vec![owner.kind.into(), owner.id.into(), started.into()],
+        ),
+        storage::Statement::new(
+            "UPDATE owners SET places_at = now() WHERE kind = $1 AND id = $2",
+            vec![owner.kind.into(), owner.id.into()],
+        ),
+    ])
     .map_err(|e| retry("storing places", e))?;
     Ok(())
 }
 
+/// The owner's places were tried, and failed: it goes last next time.
+fn note_places(owner: &Owner) -> Result<(), JobError> {
+    storage::execute(
+        "UPDATE owners SET places_at = now() WHERE kind = $1 AND id = $2",
+        &[owner.kind.into(), owner.id.into()],
+    )
+    .map_err(|e| retry("noting the places read", e))?;
+    Ok(())
+}
+
 /// Names for places not named yet, named over a week ago, or whose name
-/// couldn't be read (within the hour): stations publicly, systems by
-/// name, structures through each owner with blueprints there in turn
-/// (ESI names a structure only to a character that may dock there),
-/// with why not in the app's log.
+/// couldn't be read (within the hour), those never named first: stations
+/// publicly, systems by name, structures through each owner with
+/// blueprints there in turn (ESI names a structure only to a character
+/// that may dock there), with why not in the app's log.
 fn name_places(owners: &[Owner]) -> Result<(), JobError> {
     let due = storage::query(
         "SELECT b.place_id, array_agg(DISTINCT b.owner_kind || ':' || b.owner_id)::text \
@@ -530,7 +699,8 @@ fn name_places(owners: &[Owner]) -> Result<(), JobError> {
          WHERE b.place_id IS NOT NULL \
            AND (p.id IS NULL OR p.read_at < now() - interval '7 days' \
                 OR (NOT p.named AND p.read_at < now() - interval '1 hour')) \
-         GROUP BY b.place_id LIMIT $1",
+         GROUP BY b.place_id, p.id, p.read_at \
+         ORDER BY p.id IS NOT NULL, p.read_at LIMIT $1",
         &[PLACES_PER_RUN.into()],
     )
     .map_err(|e| retry("finding places", e))?;
@@ -793,6 +963,17 @@ mod tests {
         assert!(is_station(60003760));
         assert!(is_system(30000142));
         assert!(is_structure(1035466617946));
-        assert!(!is_place(1_000_000_123));
+        assert!(!is_structure(1_000_000_123));
+    }
+
+    #[test]
+    fn a_spent_run_is_told_apart() {
+        assert!(out_of_calls(&esi::Error::Invalid(
+            "more than 100 ESI calls in one call".to_owned()
+        )));
+        assert!(!out_of_calls(&esi::Error::Invalid(
+            "item_ids must be 1 to 1000 positive ids".to_owned()
+        )));
+        assert!(!out_of_calls(&esi::Error::Unavailable));
     }
 }

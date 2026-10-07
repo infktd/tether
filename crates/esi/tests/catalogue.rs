@@ -4,8 +4,12 @@
 //! fills in the character, a call reads only what it names, pages come
 //! from `X-Pages`, and an enum value CCP added later doesn't break a read.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde_json::json;
 use tether_core::Secret;
+use tether_esi::asset_places::TokenSource;
 use tether_esi::plugin::{Response, Target, endpoint};
 use tether_esi::{Esi, EsiError};
 use wiremock::matchers::{header, method, path, query_param};
@@ -535,20 +539,55 @@ async fn get_corporate(
         .await
 }
 
+/// Asks for places until the background read has finished (or failed).
+async fn places(
+    esi: &Esi,
+    tokens: TokenSource,
+    character: i64,
+    ids: &str,
+) -> Result<Response, EsiError> {
+    let params = params(&[("item_ids", ids)]);
+    for _ in 0..500 {
+        match esi
+            .corporation_asset_places(tokens.clone(), CORPORATION, character, &params)
+            .await
+        {
+            Err(EsiError::Pending) => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await
+            }
+            other => return other,
+        }
+    }
+    panic!("the assets were never read");
+}
+
+/// A token source handing out `tokens` in turn, the last one after that.
+fn tokens(tokens: &[&str]) -> TokenSource {
+    let tokens: Vec<String> = tokens.iter().map(|t| (*t).to_owned()).collect();
+    let next = Arc::new(AtomicUsize::new(0));
+    Arc::new(move || {
+        let i = next.fetch_add(1, Ordering::SeqCst).min(tokens.len() - 1);
+        let token = Secret::new(tokens[i].clone());
+        Box::pin(async move { Ok(token) })
+    })
+}
+
+fn asset(item: i64, type_id: i64, flag: &str, at: i64, kind: &str) -> serde_json::Value {
+    json!({
+        "is_singleton": true, "item_id": item, "type_id": type_id, "quantity": 1,
+        "location_flag": flag, "location_id": at, "location_type": kind
+    })
+}
+
 #[tokio::test]
 async fn an_items_place_is_its_station_and_the_containers_between_only() {
     let (server, esi) = esi().await;
-    let asset = |item: i64, type_id: i64, flag: &str, at: i64, kind: &str| {
-        json!({
-            "is_singleton": true, "item_id": item, "type_id": type_id, "quantity": 1,
-            "location_flag": flag, "location_id": at, "location_type": kind
-        })
-    };
     // The office in Jita 4-4, a container in its second hangar, a
     // blueprint in that; and something else of the corporation's.
     Mock::given(method("GET"))
         .and(path(format!("/corporations/{CORPORATION}/assets")))
         .and(query_param("page", "1"))
+        .and(header("authorization", "Bearer character-token"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("x-pages", "2")
@@ -574,14 +613,31 @@ async fn an_items_place_is_its_station_and_the_containers_between_only() {
         .expect(1)
         .mount(&server)
         .await;
-    let out = get_corporate(
-        &esi,
-        "corporation-asset-places",
-        &[("item_ids", "3001,1001,9999")],
-        None,
-    )
-    .await
-    .unwrap();
+    // Bad ids are refused before anything is read.
+    let err = get_corporate(&esi, "corporation-asset-places", &[("item_ids", "0")], None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, EsiError::InvalidInput(_)), "{err:?}");
+    assert!(server.received_requests().await.unwrap().is_empty());
+    // The first call starts the read in the background, and says so.
+    let asked = [("item_ids", "3001,1001,9999")];
+    let err = get_corporate(&esi, "corporation-asset-places", &asked, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, EsiError::Pending), "{err:?}");
+    let mut out = None;
+    for _ in 0..500 {
+        match get_corporate(&esi, "corporation-asset-places", &asked, None).await {
+            Err(EsiError::Pending) => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await
+            }
+            other => {
+                out = Some(other.unwrap());
+                break;
+            }
+        }
+    }
+    let out = out.expect("the assets were read");
     assert_eq!(
         out.body,
         // In id order; 9999 isn't the corporation's, and 4001 wasn't asked.
@@ -600,12 +656,144 @@ async fn an_items_place_is_its_station_and_the_containers_between_only() {
             }
         ])
     );
-    // Two pages are paid for up front; a third would count as a call.
+    // The pages were read in the background: the call isn't charged them.
     assert_eq!(out.refetched, 0);
-    let err = get_corporate(&esi, "corporation-asset-places", &[("item_ids", "0")], None)
+    // Within the hour, from the same read (the pages expect one request).
+    let again = get_corporate(
+        &esi,
+        "corporation-asset-places",
+        &[("item_ids", "2001")],
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(again.body[0]["place_id"], 60003760);
+}
+
+/// More than 50 pages, the old limit: the asked container is on the last.
+#[tokio::test]
+async fn every_page_of_a_large_corporations_assets_is_read() {
+    let (server, esi) = esi().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/assets")))
+        .and(query_param("page", "120"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "120")
+                .set_body_json(json!([
+                    asset(1_040_000_000_101, 27, "OfficeFolder", 60003760, "station"),
+                    asset(
+                        1_040_000_000_201,
+                        17366,
+                        "CorpSAG2",
+                        1_040_000_000_101,
+                        "item"
+                    ),
+                ])),
+        )
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/assets")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "120")
+                .set_body_json(json!([])),
+        )
+        .with_priority(2)
+        .expect(119)
+        .mount(&server)
+        .await;
+    let out = places(
+        &esi,
+        tokens(&["character-token"]),
+        CHARACTER,
+        "1040000000201",
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.body[0]["place_id"], 60003760);
+    assert_eq!(out.body[0]["within"][0]["location_flag"], "OfficeFolder");
+}
+
+#[tokio::test]
+async fn a_failed_read_answers_its_error_without_reading_again() {
+    let (server, esi) = esi().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION}/assets")))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "Forbidden"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = tokens(&["character-token"]);
+    let err = places(&esi, source.clone(), CHARACTER, "1001")
         .await
         .unwrap_err();
-    assert!(matches!(err, EsiError::InvalidInput(_)), "{err:?}");
+    assert!(matches!(err, EsiError::Status(403)), "{err:?}");
+    let err = places(&esi, source, CHARACTER, "1001").await.unwrap_err();
+    assert!(matches!(err, EsiError::Status(403)), "{err:?}");
+}
+
+/// A read of many pages outlives one access token: each page asks the
+/// vault (here, a list) for the token to send.
+#[tokio::test]
+async fn each_page_is_read_with_a_fresh_token() {
+    let (server, esi) = esi().await;
+    for (page, token) in [("1", "t1"), ("2", "t2")] {
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORPORATION}/assets")))
+            .and(query_param("page", page))
+            .and(header("authorization", format!("Bearer {token}").as_str()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "2")
+                    .set_body_json(json!([asset(
+                        1001 + page.parse::<i64>().unwrap(),
+                        17366,
+                        "CorpSAG1",
+                        60003760,
+                        "station"
+                    )])),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let out = places(&esi, tokens(&["t1", "t2"]), CHARACTER, "1002,1003")
+        .await
+        .unwrap();
+    assert_eq!(out.body.as_array().unwrap().len(), 2);
+}
+
+/// A read answers only calls with the same character's token, whose
+/// roles ESI checked when it read the pages: another data source of the
+/// same corporation has its own read.
+#[tokio::test]
+async fn another_characters_call_has_its_own_read() {
+    let (server, esi) = esi().await;
+    for (token, flag) in [("director", "CorpSAG1"), ("other", "CorpSAG2")] {
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORPORATION}/assets")))
+            .and(header("authorization", format!("Bearer {token}").as_str()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "1")
+                    .set_body_json(json!([asset(1001, 17366, flag, 60003760, "station")])),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let first = places(&esi, tokens(&["director"]), CHARACTER, "1001")
+        .await
+        .unwrap();
+    assert_eq!(first.body[0]["location_flag"], "CorpSAG1");
+    let second = places(&esi, tokens(&["other"]), CHARACTER + 1, "1001")
+        .await
+        .unwrap();
+    assert_eq!(second.body[0]["location_flag"], "CorpSAG2");
 }
 
 #[tokio::test]

@@ -1,5 +1,6 @@
 //! ESI access for the host: wraps eve-esi-client.
 
+pub mod asset_places;
 pub mod budget;
 pub mod cache;
 mod client;

@@ -19,7 +19,7 @@ const BATCH: usize = 1000;
 /// Bulk requests in flight at once.
 const BULK_CONCURRENCY: usize = 4;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum EsiError {
     #[error("building the ESI client: {0}")]
     Config(String),
@@ -29,6 +29,14 @@ pub enum EsiError {
     Unavailable(String),
     #[error("invalid ESI request: {0}")]
     InvalidInput(String),
+    /// `corporation-asset-places`: the corporation's assets are being read
+    /// in the background; ask again in a minute.
+    #[error("the corporation's assets are still being read")]
+    Pending,
+    /// `corporation-asset-places`: the corporation has more pages of
+    /// assets than Tether reads (`asset_places::MAX_ASSET_PAGES`).
+    #[error("the corporation has {0} pages of assets, more than Tether reads")]
+    TooManyPages(u32),
 }
 
 impl<E: std::fmt::Debug> From<eve_esi_client::Error<E>> for EsiError {
@@ -106,6 +114,9 @@ pub struct Esi {
     /// For clients carrying a character's token (plugin calls).
     user_agent: String,
     allow: tether_net::Allowlist,
+    /// `corporation-asset-places`' background reads, shared by every
+    /// clone (see [`crate::asset_places`]).
+    pub(crate) asset_trees: Arc<crate::asset_places::AssetTrees>,
 }
 
 impl Esi {
@@ -161,6 +172,7 @@ impl Esi {
             bulk: Arc::new(Semaphore::new(BULK_CONCURRENCY)),
             user_agent: user_agent.to_owned(),
             allow,
+            asset_trees: Arc::default(),
         })
     }
 

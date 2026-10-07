@@ -393,11 +393,29 @@ async fn esi_get(
             extra_calls: 0,
         });
     }
-    let response = match deps
-        .esi
-        .plugin_get(endpoint, &token, target, params, page)
-        .await
-    {
+    let result = if endpoint.name == "corporation-asset-places" {
+        // Every page of the corporation's assets is read in the background
+        // (`tether_esi::asset_places`), each with a token the vault hands
+        // out then: a read of hundreds of pages outlives one token.
+        let vault = deps.vault.clone();
+        let (character, scope) = (target.character_id, endpoint.scope);
+        let tokens: tether_esi::asset_places::TokenSource = Arc::new(move || {
+            let vault = vault.clone();
+            Box::pin(async move {
+                vault.access_token(character, &[scope]).await.map_err(|e| {
+                    tether_esi::EsiError::Unavailable(format!("the data source's token: {e}"))
+                })
+            })
+        });
+        deps.esi
+            .corporation_asset_places(tokens, target.corporation_id, character, params)
+            .await
+    } else {
+        deps.esi
+            .plugin_get(endpoint, &token, target, params, page)
+            .await
+    };
+    let response = match result {
         Ok(response) => response,
         // ESI names a structure only to a character that may dock there:
         // refused this one, Tether asks through members who may (the name,
@@ -434,6 +452,13 @@ async fn esi_get(
             return Err(match e {
                 tether_esi::EsiError::Status(status) => EsiError::Status(status),
                 tether_esi::EsiError::InvalidInput(why) => EsiError::Invalid(why),
+                // The assets are being read: the app asks again. Not a
+                // problem, nor an ESI error.
+                tether_esi::EsiError::Pending => EsiError::Unavailable,
+                tether_esi::EsiError::TooManyPages(pages) => EsiError::Invalid(format!(
+                    "the corporation has {pages} pages of assets, more than the {} Tether reads",
+                    tether_esi::asset_places::MAX_ASSET_PAGES
+                )),
                 other => {
                     tracing::warn!(plugin, error = %other, "plugin ESI call");
                     EsiError::Unavailable
