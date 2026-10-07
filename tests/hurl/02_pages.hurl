@@ -1188,6 +1188,38 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# Buyback's reverse buyback: its programs, a stock picker, a request,
+# the statistics and the managers' editor.
+GET {{base}}/plugins/tether.buyback/reverse
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.buyback/reverse/1
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.buyback/reverse/tracking/aa-bbp-R-0-ABCDEF
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.buyback/reverse/stats
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.buyback/reverse/program-stats
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/plugins/tether.buyback/manage/reverse/new
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # Tether's own pages in every app's space, under its Manage.
 GET {{base}}/plugins/tether.moon-mining/data-sources
 HTTP 303

@@ -60,7 +60,7 @@ impl Plugin for Buyback {
             "contracts" => sync::contracts(),
             "prices" => prices::refresh_all(),
             "wallets" => sync::wallets(),
-            "hangars" => reverse::sync_all(),
+            "hangars" => reverse::sync_all(&job),
             sync::RELAY => sync::relay(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
