@@ -4,22 +4,23 @@
 //!   (aa-timezones' ten defaults until an admin sets their own), each with
 //!   its time, day and UTC offset; kept current while it's open.
 //! - **Adjust time**: every panel at another time, for a timer (in up to
-//!   7 days, 59 minutes and 59 seconds, as aa-timezones) or a planned
-//!   fleet (a date and time in one of the zones), on a page with its own
-//!   address to share.
+//!   7 days, 23 hours and 59 minutes, as aa-timezones, and seconds) or a
+//!   planned fleet (a date and time in one of the zones), on a page with
+//!   its own address to share, with the time left until then ticking
+//!   down, or "Already over" once it's passed (aa-timezones' time until).
 //! - **Panels** (`manage`, aa-timezones' admin site): add and delete them.
 //!
 //! Anyone signed in may look, as aa-timezones. Its browser-local time
 //! becomes the pilot's own zone, picked once: Tether can't see the
 //! browser's.
 
-use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, SecondsFormat, TimeZone, Utc};
 use chrono_tz::Tz;
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission, SubmitResult,
-    Table, Tone, Value, action, badge, log, share,
+    Table, Tone, Value, action, badge, countdown, log, share,
 };
 
 /// aa-timezones' default panels, shown until an admin adds their own.
@@ -39,7 +40,8 @@ const DEFAULT_PANELS: [(&str, &str); 10] = [
 /// Panels at most (aa-timezones has no limit; a page shows 500 rows).
 const MAX_PANELS: i64 = 100;
 const MAX_NAME: u32 = 60;
-/// aa-timezones' timer limit: 7 days, 59 minutes and 59 seconds.
+/// aa-timezones' timer limit: 7 days, 23 hours and 59 minutes (and, here,
+/// 59 seconds).
 const MAX_DAYS: i64 = 7;
 /// Adjusted times from 2000 to 2100.
 const EARLIEST: i64 = 946_684_800;
@@ -183,6 +185,10 @@ fn zones_page(viewer: &Viewer, at: Option<DateTime<Utc>>) -> Result<Page, PageEr
     let (panels, _) = panels()?;
     let eve = clock(Tz::UTC, when);
     let mut stats = vec![Stat::new("EVE time", eve.0).caption(eve.1)];
+    // aa-timezones' "Time left" to an adjusted time, or "Already over".
+    if let Some(at) = at {
+        stats.push(Stat::new("Time left", time_left(at, Utc::now())));
+    }
     let own = mine(viewer)?;
     match own.as_deref().and_then(zone) {
         Some(tz) => {
@@ -227,18 +233,36 @@ fn zones_page(viewer: &Viewer, at: Option<DateTime<Utc>>) -> Result<Page, PageEr
         None => Page::new("Time Zones")
             .description("EVE time beside other time zones, now")
             .refresh(REFRESH),
-        Some(at) => Page::new("Time Zones")
-            .description(format!(
-                "Every time zone at {} EVE",
-                at.format("%Y-%m-%d %H:%M:%S")
-            ))
-            .card(
-                Card::new("This time")
-                    .field("Link to share", share(format!("at/{}", at.timestamp()))),
-            ),
+        Some(at) => {
+            let page = Page::new("Time Zones")
+                .description(format!(
+                    "Every time zone at {} EVE",
+                    at.format("%Y-%m-%d %H:%M:%S")
+                ))
+                .card(
+                    Card::new("This time")
+                        .field("Link to share", share(format!("at/{}", at.timestamp()))),
+                );
+            // Until it's over: then the page says so.
+            if at > Utc::now() {
+                page.refresh(REFRESH)
+            } else {
+                page
+            }
+        }
     };
     page = page.stats(stats).table(table);
     Ok(page)
+}
+
+/// The time left until an adjusted time, ticking down, or "Already over"
+/// once it's passed.
+fn time_left(at: DateTime<Utc>, now: DateTime<Utc>) -> Value {
+    if at > now {
+        countdown(at.to_rfc3339_opts(SecondsFormat::Secs, true))
+    } else {
+        badge("Already over", Tone::Neutral).into()
+    }
 }
 
 fn adjust_page(viewer: &Viewer, problem: Option<&str>) -> Result<Page, PageError> {
@@ -251,8 +275,8 @@ fn adjust_page(viewer: &Viewer, problem: Option<&str>) -> Result<Page, PageError
     let timer = Form::new("timer", "Set time")
         .title("In a while")
         .description(
-            "For a timer (reinforced, anchoring): the time it runs out, up to 7 days, 59 minutes \
-             and 59 seconds from now.",
+            "For a timer (reinforced, anchoring): the time it runs out, up to 7 days, 23 hours, \
+             59 minutes and 59 seconds from now.",
         )
         .field(number("days", "Days", MAX_DAYS))
         .field(number("hours", "Hours", 23))
@@ -563,6 +587,18 @@ mod tests {
         );
         assert_eq!(clock(berlin, winter).0, "13:00");
         assert_eq!(clock(Tz::UTC, summer).2, "UTC+00:00");
+    }
+
+    #[test]
+    fn time_left_counts_down_until_its_over() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 1, 12, 0, 0).unwrap();
+        assert!(matches!(
+            time_left(now + Duration::hours(2), now),
+            Value::Countdown(at) if at == "2026-07-01T14:00:00Z"
+        ));
+        for past in [now, now - Duration::days(1)] {
+            assert!(!matches!(time_left(past, now), Value::Countdown(_)));
+        }
     }
 
     #[test]
