@@ -1211,6 +1211,35 @@ async fn a_signed_app_under_member_audits_id_learns_no_owners(db: PgPool) {
         run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
         "None"
     );
+    // Nor does the host send Member Audit's token-error notice for it:
+    // nothing told, nothing marked.
+    sqlx::query(
+        "UPDATE core.character_tokens SET state = 'revoked', revoked_reason = 'invalid_grant' \
+         WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        tether_web::compliance::token_errors(&h.db).await.unwrap(),
+        0
+    );
+    let marked: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.app_characters \
+         WHERE plugin_id = 'tether.member-audit' AND token_error_notified_at IS NOT NULL",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(marked, 0);
+    let told: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.notifications WHERE title LIKE 'Member Audit: Invalid%'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(told, 0);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -2492,7 +2521,8 @@ async fn a_character_dropped_from_member_audit_notifies_holders_in_scope(db: PgP
 /// aa-memberaudit's token-error notices, sent by the host: a character
 /// registered with Member Audit (as bundled) that can't be read tells its
 /// pilot once, until it works again; never a sold one, nor one not
-/// registered with it; not while the setting is off.
+/// registered with it, nor one whose pilot holds none of its permissions;
+/// not while the setting is off.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     use tether_core::states::{Builtin, EntityKind};
@@ -2544,12 +2574,12 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
         .await
         .unwrap()
     }
-    async fn marked(h: &Harness) -> bool {
+    async fn marked(h: &Harness, character: i64) -> bool {
         sqlx::query_scalar(
             "SELECT token_error_notified_at IS NOT NULL FROM core.app_characters \
              WHERE plugin_id = 'tether.member-audit' AND character_id = $1",
         )
-        .bind(CHRIBBA)
+        .bind(character)
         .fetch_one(&h.db)
         .await
         .unwrap()
@@ -2574,7 +2604,7 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
             && message.contains("Its EVE login has stopped working"),
         "{message}"
     );
-    assert!(marked(&h).await);
+    assert!(marked(&h, CHRIBBA).await);
 
     // Registered again: the mark clears, and the next breakage tells
     // them again. A token deleted in Token Management counts (as AA).
@@ -2586,7 +2616,7 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     )
     .await;
     assert_eq!(run(&h).await, 0);
-    assert!(!marked(&h).await);
+    assert!(!marked(&h, CHRIBBA).await);
     token(&h, CHRIBBA, "revoked", Some("deleted")).await;
     assert_eq!(run(&h).await, 1);
     let told = notices(&h).await;
@@ -2628,7 +2658,7 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(run(&h).await, 0);
-    assert!(!marked(&h).await);
+    assert!(!marked(&h, CHRIBBA).await);
 
     // Switched off: nothing marked, nobody told.
     sqlx::query(
@@ -2640,7 +2670,7 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     .unwrap();
     token(&h, CHRIBBA, "revoked", Some("invalid_grant")).await;
     assert_eq!(run(&h).await, 0);
-    assert!(!marked(&h).await);
+    assert!(!marked(&h, CHRIBBA).await);
     sqlx::query("DELETE FROM core.settings WHERE key = 'notifications.member_audit_token_errors'")
         .execute(&h.db)
         .await
@@ -2657,6 +2687,41 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
         .unwrap();
     assert_eq!(run(&h).await, 1);
     assert_eq!(notices(&h).await.len(), 4);
+
+    // Registered by a pilot who holds none of Member Audit's permissions
+    // any more (AA tells only users who may use it): the Mittani's token
+    // is gone, and nobody is told until he holds one again.
+    let mittani: i64 = sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = $1")
+        .bind(MITTANI)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO core.app_characters (plugin_id, character_id, registered_by) \
+         VALUES ('tether.member-audit', $1, $2)",
+    )
+    .bind(MITTANI)
+    .bind(mittani)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(run(&h).await, 0);
+    assert!(!marked(&h, MITTANI).await);
+    sqlx::query("INSERT INTO core.permission_grants (permission, account_id) VALUES ($1, $2)")
+        .bind("plugin.tether.member-audit.basic_access")
+        .bind(mittani)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(run(&h).await, 1);
+    assert!(marked(&h, MITTANI).await);
+    let told = notices(&h).await;
+    assert_eq!(told.len(), 5, "{told:?}");
+    assert_eq!(told[4].0, mittani);
+    assert_eq!(
+        told[4].2,
+        "Member Audit: Invalid or missing token for The Mittani"
+    );
 }
 
 // ---- downloads (aa-memberaudit's data exports) --------------------------------
