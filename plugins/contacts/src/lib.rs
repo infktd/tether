@@ -4,6 +4,9 @@
 //!   added by a holder of `manage_alliance_contacts` or
 //!   `manage_corporation_contacts`, as aa-contacts' tokens) corporation, and
 //!   its alliance, read hourly; a manager of that kind may update one now.
+//!   Each is read once a run (owners share them), the longest untried
+//!   first; what one run's ESI calls don't reach, a follow-up run reads.
+//!   Labels that can't be read for a moment stay as they were.
 //! - **Who sees them**: anyone with a character in that alliance or
 //!   corporation; superusers every one (as aa-contacts).
 //! - **Contacts**: each with its standing and labels; notes for
@@ -14,7 +17,7 @@
 //! Not taken: aa-contacts' Secure Groups standings filter (apps don't learn
 //! every character of an account, so can't judge one).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
@@ -72,10 +75,15 @@ impl Plugin for Contacts {
                 )
                 .map_err(|e| failed("reading tracked", e))?;
                 if fresh.rows.is_empty() {
-                    jobs::enqueue(NewJob::new(UPDATE).key("update-now"))
-                        .map_err(|e| failed("queuing an update", e))?;
+                    // That one now, as aa-contacts' manual update.
+                    jobs::enqueue(
+                        NewJob::new(UPDATE)
+                            .key(format!("update:{kind}:{id}"))
+                            .payload(serde_json::json!({ "kind": kind, "id": id }).to_string()),
+                    )
+                    .map_err(|e| failed("queuing an update", e))?;
                     log::info(format!(
-                        "every alliance and corporation updated on request of {} ({}), from {kind} {id}",
+                        "{kind} {id} updated on request of {} ({})",
                         viewer.main.name, viewer.main.id
                     ));
                 }
@@ -98,7 +106,7 @@ impl Plugin for Contacts {
 
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
-            UPDATE => update(),
+            UPDATE => update(&job),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -232,88 +240,278 @@ fn word(kind: &str) -> &'static str {
 
 // ---- the update ----------------------------------------------------------------
 
-/// Every owner's corporation's and alliance's contacts and labels.
-fn update() -> Result<(), JobError> {
-    let mut ids: Vec<i64> = Vec::new();
-    for source in esi::data_sources() {
-        let subject = Subject::DataSource(source.id);
-        let mut targets = vec![("corporation", source.corporation_id)];
-        if let Some(alliance) = source.alliance_id {
-            targets.push(("alliance", alliance));
+/// ESI calls one job run may make (the host's limit).
+const ESI_CALLS: usize = 100;
+/// Name lookups (a thousand ids each) a run keeps room for.
+const NAME_CALLS: usize = 4;
+/// Kept for a run's end: the second look at the data sources, and names.
+const RESERVE: usize = 1 + NAME_CALLS;
+/// A follow-up run, when one run's ESI calls didn't reach every alliance
+/// and corporation, waits this long.
+const FOLLOW_UP_SECONDS: i64 = 60;
+
+/// What a run has spent of its ESI calls.
+struct Budget {
+    used: usize,
+}
+
+impl Budget {
+    /// Calls left for reading contacts.
+    fn left(&self) -> usize {
+        ESI_CALLS.saturating_sub(RESERVE + self.used)
+    }
+
+    fn spend(&mut self, calls: usize) {
+        self.used += calls;
+    }
+}
+
+/// An alliance or corporation to read, and the data source it's read as.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Target {
+    kind: &'static str,
+    id: i64,
+    source: i64,
+}
+
+/// Each owner's corporation and alliance, once each (owners share an
+/// alliance, or a corporation), read as the first owner in it.
+fn targets(sources: &[esi::Character]) -> Vec<Target> {
+    let mut out: Vec<Target> = Vec::new();
+    for s in sources {
+        let mut theirs = vec![Target {
+            kind: "corporation",
+            id: s.corporation_id,
+            source: s.id,
+        }];
+        if let Some(alliance) = s.alliance_id {
+            theirs.push(Target {
+                kind: "alliance",
+                id: alliance,
+                source: s.id,
+            });
         }
-        for (kind, entity_id) in targets {
-            ids.push(entity_id);
-            storage::execute(
-                "INSERT INTO tracked (kind, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                &[kind.into(), entity_id.into()],
-            )
-            .map_err(|e| JobError::Retry(format!("tracking {kind} {entity_id}: {e:?}")))?;
-            match read(kind, subject) {
-                // The host reads the source's corporation or alliance as it
-                // is now: store only if that's still the one asked for, so
-                // a corporation changing alliance mid-run can't file one
-                // alliance's standings as another's.
-                Ok(_) if !still_reads(source.id, kind, entity_id) => {
-                    log::info(format!(
-                        "{kind} {entity_id}: owner {} moved on while reading; skipped",
-                        source.id
-                    ));
-                }
-                Ok((contacts, labels)) => {
-                    ids.extend(contacts.iter().filter_map(|c| c["contact_id"].as_i64()));
-                    store(kind, entity_id, &contacts, &labels)?;
-                }
-                Err(why) => {
-                    log::warn(format!("{kind} {entity_id}: {why}"));
-                    storage::execute(
-                        "UPDATE tracked SET last_error = $3 WHERE kind = $1 AND entity_id = $2",
-                        &[kind.into(), entity_id.into(), why.into()],
-                    )
-                    .map_err(|e| JobError::Retry(format!("noting an error: {e:?}")))?;
-                }
+        for t in theirs {
+            if !out.iter().any(|o| o.kind == t.kind && o.id == t.id) {
+                out.push(t);
             }
         }
     }
-    learn_names(&ids)
+    out
 }
 
-/// Whether data source `source` still reads `kind` `entity_id`.
-fn still_reads(source: i64, kind: &str, entity_id: i64) -> bool {
-    esi::data_sources().into_iter().any(|s| {
-        s.id == source
-            && match kind {
-                "alliance" => s.alliance_id == Some(entity_id),
-                _ => s.corporation_id == entity_id,
+/// Whether `sources` still read `target` as its data source.
+fn still_reads(sources: &[esi::Character], target: Target) -> bool {
+    sources.iter().any(|s| {
+        s.id == target.source
+            && match target.kind {
+                "alliance" => s.alliance_id == Some(target.id),
+                _ => s.corporation_id == target.id,
             }
     })
 }
 
-/// A kind's contacts (every page) and labels.
-fn read(
-    kind: &str,
-    subject: Subject,
-) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
-    let bodies = esi::get_all(&format!("{kind}-contacts"), subject, &[])
-        .map_err(|e| format!("contacts not read: {e:?}"))?;
-    let mut contacts = Vec::new();
-    for body in bodies {
-        let page: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-        contacts.extend(page.as_array().cloned().unwrap_or_default());
-    }
-    let labels = esi::get(&format!("{kind}-contact-labels"), subject, &[], None)
-        .ok()
-        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.body).ok())
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-    Ok((contacts, labels))
+fn targets_json(targets: &[Target]) -> Db {
+    let rows: Vec<serde_json::Value> = targets
+        .iter()
+        .map(|t| serde_json::json!({ "kind": t.kind, "entity_id": t.id }))
+        .collect();
+    Db::json(serde_json::Value::Array(rows).to_string())
 }
 
+/// The hourly update and its follow-ups: every owner's corporation and
+/// alliance not tried since the hourly run began (`since`), the longest
+/// untried first, as far as the run's ESI calls go; a follow-up run takes
+/// the rest. Update now asks for one (`kind`, `id`), as aa-contacts'
+/// manual update.
+fn update(job: &Job) -> Result<(), JobError> {
+    let asked: serde_json::Value = serde_json::from_str(&job.payload).unwrap_or_default();
+    let sources = esi::data_sources();
+    let mut budget = Budget { used: 1 };
+    let all = targets(&sources);
+    storage::execute(
+        "INSERT INTO tracked (kind, entity_id) \
+         SELECT kind, entity_id FROM json_to_recordset($1::json) AS x(kind text, entity_id bigint) \
+         ON CONFLICT DO NOTHING",
+        &[targets_json(&all)],
+    )
+    .map_err(|e| JobError::Retry(format!("tracking: {e:?}")))?;
+    let (due, since) = match (asked["kind"].as_str(), asked["id"].as_i64()) {
+        (Some(kind), Some(id)) => (
+            all.iter()
+                .filter(|t| t.kind == kind && t.id == id)
+                .copied()
+                .collect(),
+            None,
+        ),
+        _ => {
+            let since = match asked["since"].as_str() {
+                Some(since) => Db::timestamp(since),
+                None => storage::query("SELECT now()", &[])
+                    .ok()
+                    .and_then(|r| r.rows.first().and_then(|r| r.first().cloned()))
+                    .ok_or_else(|| JobError::Retry("reading the time".to_owned()))?,
+            };
+            (due(&all, &since)?, Some(since))
+        }
+    };
+    let mut read_now = Vec::new();
+    let mut unreached = false;
+    for (n, target) in due.iter().enumerate() {
+        match read(*target, &mut budget, n == 0) {
+            Read::NoRoom => {
+                unreached = true;
+                break;
+            }
+            read => read_now.push((*target, read)),
+        }
+    }
+    // The host reads each source's corporation or alliance as it is now:
+    // only what's still the one asked for is kept, so a corporation that
+    // changed alliance mid-run can't file one alliance's standings as
+    // another's.
+    let sources = esi::data_sources();
+    budget.spend(1);
+    for (target, read) in read_now {
+        match read {
+            Read::Done(..) if !still_reads(&sources, target) => {
+                log::info(format!(
+                    "{} {}: owner {} moved on while reading; skipped",
+                    target.kind, target.id, target.source
+                ));
+                tried(target, None)?;
+            }
+            Read::Done(contacts, labels) => store(target, &contacts, labels)?,
+            Read::Failed(why) => {
+                log::warn(format!("{} {}: {why}", target.kind, target.id));
+                tried(target, Some(why))?;
+            }
+            Read::NoRoom => {}
+        }
+    }
+    learn_names()?;
+    if unreached && let Some(since) = since {
+        let since = since.as_text().unwrap_or_default().to_owned();
+        jobs::enqueue(
+            NewJob::new(UPDATE)
+                .key("update-more")
+                .payload(serde_json::json!({ "since": since }).to_string())
+                .at(rfc3339(Utc::now() + Duration::seconds(FOLLOW_UP_SECONDS))),
+        )
+        .map_err(|e| JobError::Retry(format!("queuing the rest: {e:?}")))?;
+    }
+    Ok(())
+}
+
+/// Of `all`, those not tried since `since`, the longest untried first.
+fn due(all: &[Target], since: &Db) -> Result<Vec<Target>, JobError> {
+    let rows = storage::query(
+        "SELECT kind, entity_id FROM tracked \
+         WHERE attempted_at IS NULL OR attempted_at < $1 \
+         ORDER BY attempted_at NULLS FIRST, kind, entity_id",
+        std::slice::from_ref(since),
+    )
+    .map_err(|e| JobError::Retry(format!("reading tracked: {e:?}")))?;
+    Ok(rows
+        .rows
+        .iter()
+        .filter_map(|r| {
+            let (kind, id) = (text(r, 0), int(r, 1));
+            all.iter().find(|t| t.kind == kind && t.id == id).copied()
+        })
+        .collect())
+}
+
+/// Notes that `target` was tried, and why it wasn't read, if it wasn't.
+fn tried(target: Target, why: Option<String>) -> Result<(), JobError> {
+    storage::execute(
+        "UPDATE tracked SET attempted_at = now(), last_error = coalesce($3, last_error) \
+         WHERE kind = $1 AND entity_id = $2",
+        &[target.kind.into(), target.id.into(), why.into()],
+    )
+    .map_err(|e| JobError::Retry(format!("noting {} {}: {e:?}", target.kind, target.id)))?;
+    Ok(())
+}
+
+/// One alliance's or corporation's reading.
+enum Read {
+    /// Its contacts (every page), and its labels or why they weren't read.
+    Done(
+        Vec<serde_json::Value>,
+        Result<Vec<serde_json::Value>, String>,
+    ),
+    Failed(String),
+    /// The run's ESI calls don't reach it: for a follow-up run.
+    NoRoom,
+}
+
+/// A JSON array, or nothing if it isn't one.
+fn array(body: &str) -> Option<Vec<serde_json::Value>> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+}
+
+/// A target's contacts and labels within the run's ESI calls. The run's
+/// first target is read whatever its size, so none waits forever.
+fn read(target: Target, budget: &mut Budget, first: bool) -> Read {
+    // Its first page and its labels, at least.
+    if budget.left() < 2 {
+        return Read::NoRoom;
+    }
+    let endpoint = format!("{}-contacts", target.kind);
+    let subject = Subject::DataSource(target.source);
+    let unread = |e: &esi::Error| format!("contacts not read: {}", esi::describe(e));
+    let unreadable = || "contacts not read: ESI's answer couldn't be read".to_owned();
+    budget.spend(1);
+    let page = match esi::get(&endpoint, subject, &[], Some(1)) {
+        Ok(page) => page,
+        Err(e) => return Read::Failed(unread(&e)),
+    };
+    let more = page.pages.saturating_sub(1) as usize;
+    if more + 1 > budget.left() {
+        return if first {
+            Read::Failed(format!(
+                "its {} pages of contacts are more than one update may read",
+                page.pages
+            ))
+        } else {
+            Read::NoRoom
+        };
+    }
+    let Some(mut contacts) = array(&page.body) else {
+        return Read::Failed(unreadable());
+    };
+    for n in 2..=page.pages {
+        budget.spend(1);
+        match esi::get(&endpoint, subject, &[], Some(n)).map(|p| array(&p.body)) {
+            Ok(Some(more)) => contacts.extend(more),
+            Ok(None) => return Read::Failed(unreadable()),
+            Err(e) => return Read::Failed(unread(&e)),
+        }
+    }
+    budget.spend(1);
+    let labels = esi::get(
+        &format!("{}-contact-labels", target.kind),
+        subject,
+        &[],
+        None,
+    )
+    .map_err(|e| format!("labels not read: {}", esi::describe(&e)))
+    .and_then(|r| {
+        array(&r.body).ok_or_else(|| "labels not read: ESI's answer couldn't be read".to_owned())
+    });
+    Read::Done(contacts, labels)
+}
+
+/// Stores a target's contacts, and its labels if they were read (else the
+/// ones it had stay, and why is noted).
 fn store(
-    kind: &str,
-    entity_id: i64,
+    target: Target,
     contacts: &[serde_json::Value],
-    labels: &[serde_json::Value],
+    labels: Result<Vec<serde_json::Value>, String>,
 ) -> Result<(), JobError> {
+    let (kind, entity_id) = (target.kind, target.id);
     let rows: Vec<serde_json::Value> = contacts
         .iter()
         .filter_map(|c| {
@@ -334,17 +532,8 @@ fn store(
             }))
         })
         .collect();
-    let labels: Vec<serde_json::Value> = labels
-        .iter()
-        .filter_map(|l| {
-            Some(serde_json::json!({
-                "label_id": l["label_id"].as_i64()?,
-                "name": l["label_name"].as_str()?,
-            }))
-        })
-        .collect();
     let rows = Db::json(serde_json::Value::Array(rows).to_string());
-    storage::transaction(&[
+    let mut statements = vec![
         // Gone from EVE: gone here (with their notes and links).
         Statement::new(
             "DELETE FROM contacts WHERE kind = $1 AND entity_id = $2 AND contact_id NOT IN \
@@ -361,43 +550,62 @@ fn store(
                  label_ids = EXCLUDED.label_ids",
             vec![kind.into(), entity_id.into(), rows],
         ),
-        Statement::new(
-            "DELETE FROM labels WHERE kind = $1 AND entity_id = $2",
-            vec![kind.into(), entity_id.into()],
-        ),
-        Statement::new(
-            "INSERT INTO labels (kind, entity_id, label_id, name) \
-             SELECT DISTINCT ON (label_id) $1, $2, label_id, name \
-             FROM json_to_recordset($3::json) AS x(label_id bigint, name text)",
-            vec![
-                kind.into(),
-                entity_id.into(),
-                Db::json(serde_json::Value::Array(labels).to_string()),
-            ],
-        ),
-        Statement::new(
-            "UPDATE tracked SET updated_at = now(), last_error = NULL \
-             WHERE kind = $1 AND entity_id = $2",
-            vec![kind.into(), entity_id.into()],
-        ),
-    ])
-    .map_err(|e| JobError::Retry(format!("storing {kind} {entity_id}: {e:?}")))?;
+    ];
+    let problem = match labels {
+        Ok(labels) => {
+            let labels: Vec<serde_json::Value> = labels
+                .iter()
+                .filter_map(|l| {
+                    Some(serde_json::json!({
+                        "label_id": l["label_id"].as_i64()?,
+                        "name": l["label_name"].as_str()?,
+                    }))
+                })
+                .collect();
+            statements.push(Statement::new(
+                "DELETE FROM labels WHERE kind = $1 AND entity_id = $2",
+                vec![kind.into(), entity_id.into()],
+            ));
+            statements.push(Statement::new(
+                "INSERT INTO labels (kind, entity_id, label_id, name) \
+                 SELECT DISTINCT ON (label_id) $1, $2, label_id, name \
+                 FROM json_to_recordset($3::json) AS x(label_id bigint, name text)",
+                vec![
+                    kind.into(),
+                    entity_id.into(),
+                    Db::json(serde_json::Value::Array(labels).to_string()),
+                ],
+            ));
+            None
+        }
+        // A labels read that failed for a moment mustn't take every
+        // label's name away: they stay as they were.
+        Err(why) => {
+            log::warn(format!("{kind} {entity_id}: {why}"));
+            Some(why)
+        }
+    };
+    statements.push(Statement::new(
+        "UPDATE tracked SET updated_at = now(), attempted_at = now(), last_error = $3 \
+         WHERE kind = $1 AND entity_id = $2",
+        vec![kind.into(), entity_id.into(), problem.into()],
+    ));
+    storage::transaction(&statements)
+        .map_err(|e| JobError::Retry(format!("storing {kind} {entity_id}: {e:?}")))?;
     Ok(())
 }
 
-/// Names for ids not named yet, a thousand at a time.
-fn learn_names(ids: &[i64]) -> Result<(), JobError> {
-    let mut ids: Vec<i64> = ids.iter().copied().filter(|id| *id > 0).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-    let known = storage::query(
-        "SELECT id FROM names WHERE id = ANY(string_to_array($1, ',')::bigint[])",
-        &[list.into()],
+/// Names for the contacts and the alliances and corporations not named
+/// yet, a thousand at a time, as far as the run's calls kept for them go.
+fn learn_names() -> Result<(), JobError> {
+    let missing = storage::query(
+        "SELECT id FROM (SELECT contact_id AS id FROM contacts UNION SELECT entity_id FROM tracked) x \
+         WHERE id > 0 AND NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) \
+         ORDER BY id LIMIT $1",
+        &[((NAME_CALLS * 1000) as i64).into()],
     )
     .map_err(|e| JobError::Retry(format!("reading names: {e:?}")))?;
-    let known: Vec<i64> = known.rows.iter().map(|r| int(r, 0)).collect();
-    let missing: Vec<i64> = ids.into_iter().filter(|id| !known.contains(id)).collect();
+    let missing: Vec<i64> = missing.rows.iter().map(|r| int(r, 0)).collect();
     for chunk in missing.chunks(1000) {
         match esi::names(chunk) {
             Ok(named) => {
@@ -413,7 +621,7 @@ fn learn_names(ids: &[i64]) -> Result<(), JobError> {
                 )
                 .map_err(|e| JobError::Retry(format!("storing names: {e:?}")))?;
             }
-            Err(err) => log::warn(format!("names: {err:?}")),
+            Err(err) => log::warn(format!("names: {}", esi::describe(&err))),
         }
     }
     Ok(())
@@ -834,5 +1042,52 @@ mod tests {
         assert!(kind_of("character").is_err());
         assert!(number("0").is_err());
         assert_eq!(number("99005338").ok(), Some(99005338));
+    }
+
+    fn owner(id: i64, corporation_id: i64, alliance_id: Option<i64>) -> esi::Character {
+        esi::Character {
+            id,
+            name: format!("Owner {id}"),
+            corporation_id,
+            alliance_id,
+        }
+    }
+
+    #[test]
+    fn each_corporation_and_alliance_is_read_once() {
+        // Twenty corporations' owners in one alliance, two in the first.
+        let mut owners: Vec<esi::Character> =
+            (0..20).map(|n| owner(n, 1000 + n, Some(99))).collect();
+        owners.push(owner(50, 1000, Some(99)));
+        owners.push(owner(51, 2000, None));
+        let read = targets(&owners);
+        assert_eq!(read.len(), 22);
+        let alliances: Vec<&Target> = read.iter().filter(|t| t.kind == "alliance").collect();
+        assert_eq!(
+            alliances,
+            vec![&Target {
+                kind: "alliance",
+                id: 99,
+                source: 0
+            }]
+        );
+        assert_eq!(
+            read.iter()
+                .filter(|t| t.kind == "corporation" && t.id == 1000)
+                .count(),
+            1
+        );
+        // A source that moved on no longer reads what it was asked for.
+        let target = alliances[0];
+        assert!(still_reads(&owners, *target));
+        assert!(!still_reads(&[owner(0, 1000, Some(98))], *target));
+    }
+
+    #[test]
+    fn a_run_keeps_calls_for_its_end() {
+        let mut budget = Budget { used: 1 };
+        assert_eq!(budget.left(), ESI_CALLS - RESERVE - 1);
+        budget.spend(ESI_CALLS);
+        assert_eq!(budget.left(), 0);
     }
 }
