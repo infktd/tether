@@ -459,3 +459,49 @@ async fn pages_cant_queue_or_cancel_jobs(db: PgPool) {
     assert!(queued(&h.db).await.is_empty());
     uninstall(&h, &owner).await;
 }
+
+/// The schedule's next run.
+async fn next_run(db: &PgPool) -> chrono::DateTime<chrono::Utc> {
+    sqlx::query_scalar(
+        "SELECT next_run_at FROM core.schedules WHERE name = 'plugin:acme.jobs:sync'",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_shortened_schedule_runs_on_its_new_clock(db: PgPool) {
+    use tether_db::plugin_jobs::sync_schedules;
+    // Every 6 hours, the next run 5 hours off.
+    sync_schedules(&db, ID, &[("sync".into(), 21_600)])
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE core.schedules SET next_run_at = now() + interval '5 hours' \
+         WHERE name = 'plugin:acme.jobs:sync'",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let far = next_run(&db).await;
+    // Loaded again unchanged (a restart): the clock stays.
+    sync_schedules(&db, ID, &[("sync".into(), 21_600)])
+        .await
+        .unwrap();
+    assert_eq!(next_run(&db).await, far);
+    // An update that makes it hourly: due within the hour, not 5 hours on.
+    sync_schedules(&db, ID, &[("sync".into(), 3_600)])
+        .await
+        .unwrap();
+    let near = next_run(&db).await;
+    assert!(
+        near <= chrono::Utc::now() + chrono::Duration::seconds(3_601),
+        "{near}"
+    );
+    // And kept on the next load.
+    sync_schedules(&db, ID, &[("sync".into(), 3_600)])
+        .await
+        .unwrap();
+    assert_eq!(next_run(&db).await, near);
+}

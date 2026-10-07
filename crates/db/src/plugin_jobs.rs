@@ -161,7 +161,10 @@ pub async fn cancel(pool: &PgPool, plugin_id: &str, key: &str) -> Result<bool, s
 }
 
 /// Makes the plugin's schedules exactly `schedules` (name, interval in
-/// seconds), switched on. Existing ones keep their next run.
+/// seconds), switched on. Existing ones keep their next run, so restarts
+/// don't reset the clock, but never further off than one new interval: a
+/// schedule an update shortened runs on its new clock at once, as core's
+/// `schedule::ensure`.
 pub async fn sync_schedules(
     pool: &PgPool,
     plugin_id: &str,
@@ -186,7 +189,11 @@ pub async fn sync_schedules(
             VALUES ($1, $2, $3, $4, true)
             ON CONFLICT (name) DO UPDATE
             SET kind = EXCLUDED.kind, payload = EXCLUDED.payload,
-                every_secs = EXCLUDED.every_secs, enabled = true, updated_at = now()
+                every_secs = EXCLUDED.every_secs, enabled = true, updated_at = now(),
+                next_run_at = LEAST(
+                    core.schedules.next_run_at,
+                    now() + make_interval(secs => EXCLUDED.every_secs)
+                )
             "#,
             row,
             KIND,
