@@ -795,7 +795,7 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
 }
 
 /// `1,234,567`.
-fn grouped(n: i64) -> String {
+pub(crate) fn grouped(n: i64) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {

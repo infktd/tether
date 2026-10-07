@@ -45,23 +45,55 @@ fn skill_sets() -> Result<Vec<SkillSet>, PageError> {
     Ok(out)
 }
 
+/// Characters listed at most (the host's rows per table).
+const MAX_LISTED: usize = 500;
+/// Skill sets with a tab of their own on Reports (the host's tabs per
+/// page).
+const MAX_TABS: usize = 10;
+
+/// SQL over `characters c` for those meeting every skill of set `$1`, of
+/// those `condition` picks.
+fn able_where(condition: &str) -> String {
+    format!(
+        "{condition} AND NOT EXISTS ( \
+           SELECT 1 FROM skill_set_skills k WHERE k.set_id = $1 AND NOT EXISTS ( \
+             SELECT 1 FROM skills s WHERE s.character_id = c.character_id \
+               AND s.skill_id = k.skill_id AND s.active_level >= k.level))"
+    )
+}
+
+fn able_params(set: &SkillSet, scope_params: &[Db]) -> Vec<Db> {
+    let mut params: Vec<Db> = vec![set.id.into()];
+    params.extend(scope_params.iter().cloned());
+    params
+}
+
 /// Characters meeting every skill of the set, of those `scope` (SQL over
-/// `characters c`, with parameters from `$2`) picks.
+/// `characters c`, with parameters from `$2`) picks: the first
+/// [`MAX_LISTED`] by name.
 fn able(set: &SkillSet, scope: &(String, Vec<Db>)) -> Result<Vec<(i64, String)>, PageError> {
     let (condition, scope_params) = scope;
     let sql = format!(
-        "SELECT c.character_id, c.name FROM characters c WHERE {condition} AND NOT EXISTS ( \
-           SELECT 1 FROM skill_set_skills k WHERE k.set_id = $1 AND NOT EXISTS ( \
-             SELECT 1 FROM skills s WHERE s.character_id = c.character_id \
-               AND s.skill_id = k.skill_id AND s.active_level >= k.level)) \
-         ORDER BY c.name LIMIT 500"
+        "SELECT c.character_id, c.name FROM characters c WHERE {} \
+         ORDER BY c.name LIMIT {MAX_LISTED}",
+        able_where(condition)
     );
-    let mut params: Vec<Db> = vec![set.id.into()];
-    params.extend(scope_params.iter().cloned());
-    Ok(query(&sql, &params)?
+    Ok(query(&sql, &able_params(set, scope_params))?
         .iter()
         .map(|r| (int(r, 0), text(r, 1)))
         .collect())
+}
+
+/// How many characters [`able`] would list, all of them.
+fn able_count(set: &SkillSet, scope: &(String, Vec<Db>)) -> Result<i64, PageError> {
+    let (condition, scope_params) = scope;
+    let sql = format!(
+        "SELECT count(*) FROM characters c WHERE {}",
+        able_where(condition)
+    );
+    Ok(query(&sql, &able_params(set, scope_params))?
+        .first()
+        .map_or(0, |r| int(r, 0)))
 }
 
 /// The viewer's own characters, as a scope for [`able`].
@@ -274,7 +306,8 @@ pub(crate) fn delete_set(viewer: &Viewer, set: &str) -> Result<SubmitResult, Pag
 }
 
 /// Reports (aa-memberaudit's `reports_access`): the Skill Sets report,
-/// over the characters in the viewer's scope.
+/// over the characters in the viewer's scope. Every set is counted; the
+/// first [`MAX_TABS`] by name each list their characters in a tab.
 pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
     if !access.reports {
         return Err(PageError::NotFound);
@@ -287,13 +320,25 @@ pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
     ));
     let mut summary = Vec::new();
     let mut tabs = Vec::new();
-    for set in sets.iter().take(10) {
+    for (n, set) in sets.iter().enumerate() {
+        let count = able_count(set, &scope)?;
+        summary.push(vec![set.name.clone().into(), count.into()]);
+        if n >= MAX_TABS {
+            continue;
+        }
         let able = able(set, &scope)?;
-        summary.push(vec![set.name.clone().into(), crate::count(able.len())]);
+        let mut table = Table::new(vec![Column::text("Character")]).empty("Nobody yet.");
+        if usize::try_from(count).unwrap_or(usize::MAX) > able.len() {
+            table = table.title(format!(
+                "The first {} of {}, by name",
+                able.len(),
+                crate::sheet::grouped(count)
+            ));
+        }
         tabs.push((
             set.name.clone(),
             with_rows(
-                Table::new(vec![Column::text("Character")]).empty("Nobody yet."),
+                table,
                 able.iter().map(|(id, n)| {
                     if access.may_open(*id) {
                         vec![
@@ -317,6 +362,12 @@ pub(crate) fn reports(access: &Access) -> Result<Page, PageError> {
         .empty("No skill sets yet."),
         summary,
     ));
+    if sets.len() > MAX_TABS {
+        page = page.text(format!(
+            "The first {MAX_TABS} skill sets by name each list their characters in a tab below. \
+             The others are counted above."
+        ));
+    }
     for (name, table) in tabs {
         page = page.tab(name, vec![Section::Table(table)]);
     }

@@ -1047,6 +1047,41 @@ async fn a_member_audit_not_bundled_scopes_to_your_own(db: PgPool) {
     );
 }
 
+/// Reports count every skill set's characters, past the 500 a tab lists
+/// (and the tab says so), and show every set, though only the first ten
+/// by name have a tab (the host's most).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn reports_count_every_set_and_character(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"INSERT INTO "plugin_tether.member-audit".characters (character_id, name, corporation_id, synced_at)
+             SELECT 2100000000 + n, 'Pilot ' || lpad(n::text, 4, '0'), {CORP}, now()
+             FROM generate_series(1, 600) n;
+           INSERT INTO "plugin_tether.member-audit".skills (character_id, skill_id, active_level, trained_level, sp)
+             SELECT 2100000000 + n, 3300, 5, 5, 256000 FROM generate_series(1, 600) n;
+           INSERT INTO "plugin_tether.member-audit".skill_sets (name)
+             SELECT 'Doctrine ' || lpad(n::text, 2, '0') FROM generate_series(1, 11) n;
+           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, level)
+             SELECT id, 3300, 1 FROM "plugin_tether.member-audit".skill_sets;"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
+    assert_eq!(reports.status, StatusCode::OK, "{}", reports.body);
+    let body = &reports.body;
+    // Chribba and the 600, for every set, the eleventh too.
+    for set in ["Doctrine 01", "Doctrine 11"] {
+        assert!(finder_row(body, set).contains("601"), "{set}\n{body}");
+    }
+    for text in [
+        "The first 500 of 601, by name",
+        "The first 10 skill sets by name each list their characters in a tab below.",
+    ] {
+        assert!(body.contains(text), "{text}\n{body}");
+    }
+}
+
 /// Skill sets has a page rule of its own (view_skill_sets), as the Finder,
 /// Reports and Data export do: it opens with that alone, so the views bar
 /// shows it only to those who may open it, and managing sets takes it
