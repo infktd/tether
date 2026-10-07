@@ -32,6 +32,7 @@ mod sets;
 mod settings;
 mod sheet;
 mod sync;
+mod types;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use tether_plugin_sdk::identity;
@@ -51,12 +52,13 @@ impl Plugin for MemberAudit {
             [""] => pages::my_characters(&viewer),
             ["finder"] => pages::finder(&access, &request),
             ["skill-sets"] => sets::skill_sets_page(&access, None),
+            ["skill-sets", "group", id] => sets::group_page(&access, id, None),
             ["reports"] => sets::reports(&access),
             ["data-export"] if viewer.can("exports_access") => exports::page(None),
             ["settings"] if viewer.can("manage") => settings::page(None),
             ["character", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
-                sheet::render(&access, id, rest)
+                sheet::render(&access, id, rest, &request)
             }
             ["mail", id, rest @ ..] => {
                 let id: i64 = id.parse().map_err(|_| PageError::NotFound)?;
@@ -82,6 +84,15 @@ impl Plugin for MemberAudit {
             }
             ("skill-sets", "delete_set") if viewer.can("manage") => {
                 sets::delete_set(&viewer, submission.value("set"))
+            }
+            ("skill-sets", "add_group") if viewer.can("manage") => {
+                sets::save_group(&access, &submission)
+            }
+            (p, "save_group") if p.starts_with("skill-sets/group/") && viewer.can("manage") => {
+                sets::save_group(&access, &submission)
+            }
+            (p, "delete_group") if p.starts_with("skill-sets/group/") && viewer.can("manage") => {
+                sets::delete_group(&viewer, submission.value("group"))
             }
             (_, "update_character") => sheet::update_now(&access, &submission),
             (_, "share_character") => sheet::share(&access, &submission, true),

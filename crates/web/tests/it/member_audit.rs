@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 10] = [
+const MIGRATIONS: [&str; 11] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -56,6 +56,7 @@ const MIGRATIONS: [&str; 10] = [
     "migrations/0008_journal_gap.sql",
     "migrations/0009_mail_gap.sql",
     "migrations/0010_assets_every_page.sql",
+    "migrations/0011_skill_set_fields.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -819,14 +820,14 @@ async fn member_audit_end_to_end(db: PgPool) {
         &h.app,
         form(
             &format!("/plugins/{ID}/skill-sets"),
-            "_form=add_set&name=Guns&skills=Gunnery+4%0ASmall+Hybrid+Turret+3",
+            "_form=add_set&name=Guns&visible=on&skills=Gunnery+4%0ASmall+Hybrid+Turret+3",
             &owner,
         ),
     )
     .await;
     assert_eq!(added.status, StatusCode::SEE_OTHER, "{}", added.body);
     let sets = page(&h, &format!("/plugins/{ID}/skill-sets"), &owner).await;
-    assert!(sets.body.contains("Gunnery 4"), "{}", sets.body);
+    assert!(sets.body.contains("Gunnery IV"), "{}", sets.body);
     let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
     assert!(reports.body.contains("Guns"), "{}", reports.body);
     let tab = page(
@@ -1068,7 +1069,7 @@ async fn reports_count_every_set_and_character(db: PgPool) {
              SELECT 2100000000 + n, 3300, 5, 5, 256000 FROM generate_series(1, 600) n;
            INSERT INTO "plugin_tether.member-audit".skill_sets (name)
              SELECT 'Doctrine ' || lpad(n::text, 2, '0') FROM generate_series(1, 11) n;
-           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, level)
+           INSERT INTO "plugin_tether.member-audit".skill_set_skills (set_id, skill_id, required_level)
              SELECT id, 3300, 1 FROM "plugin_tether.member-audit".skill_sets;"#
     )))
     .execute(&h.db)
@@ -1109,6 +1110,179 @@ async fn skill_sets_are_for_view_skill_sets(db: PgPool) {
     let sets = page(&h, &at, &blue).await;
     assert_eq!(sets.status, StatusCode::OK, "{}", sets.body);
     assert_eq!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
+}
+
+/// aa-memberaudit's skill set fields and groups: a required level, a
+/// recommended one or both; a description and a ship; sets kept off
+/// pilots' sheets; and groups, doctrines among them, by which the sheet
+/// and the report show sets.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn skill_sets_have_aa_fields_and_groups(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    let post = |body: String| form(&at, &body, &owner);
+    // Chribba has Gunnery V and Small Hybrid Turret III.
+    let res = send(
+        &h.app,
+        post(
+            "_form=add_set&name=Ferox&description=Shield+boats&ship=Ferox&visible=on\
+             &skills=Gunnery+4%0ASmall+Hybrid+Turret+III+%5BV%5D%0AGunnery+%5B5%5D"
+                .to_owned(),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = send(
+        &h.app,
+        post("_form=add_set&name=Audit+only&ship=&skills=Gunnery+1".to_owned()),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Not a ship: said so, nothing added.
+    let res = send(
+        &h.app,
+        post("_form=add_set&name=Bad&ship=Gunnery&skills=Gunnery+1".to_owned()),
+    )
+    .await;
+    assert!(res.body.contains("isn&#39;t a ship"), "{}", res.body);
+    let skills: Vec<(i64, Option<i32>, Option<i32>)> = sqlx::query_as(
+        r#"SELECT k.skill_id, k.required_level, k.recommended_level
+           FROM "plugin_tether.member-audit".skill_set_skills k
+           JOIN "plugin_tether.member-audit".skill_sets s ON s.id = k.set_id
+           WHERE s.name = 'Ferox' ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    // Gunnery named twice keeps its highest levels.
+    assert_eq!(
+        skills,
+        vec![(3300, Some(4), Some(5)), (3301, Some(3), Some(5))]
+    );
+    let (ship, visible, by): (Option<i64>, bool, Option<String>) = sqlx::query_as(
+        r#"SELECT ship_type_id, is_visible, modified_by FROM "plugin_tether.member-audit".skill_sets
+           WHERE name = 'Audit only'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        (ship, visible, by.as_deref()),
+        (None, false, Some("Chribba"))
+    );
+
+    // A doctrine with the Ferox; an unknown set is refused.
+    let res = send(
+        &h.app,
+        post(
+            "_form=add_group&name=Shield+fleet&description=&doctrine=on&active=on&sets=Nope"
+                .to_owned(),
+        ),
+    )
+    .await;
+    assert!(res.body.contains("no skill set named"), "{}", res.body);
+    let res = send(
+        &h.app,
+        post("_form=add_group&name=Shield+fleet&description=Main+doctrine&doctrine=on&active=on&sets=ferox".to_owned()),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let sets = page(&h, &at, &owner).await;
+    for text in [
+        "Doctrine: Shield fleet",
+        "Gunnery IV [V]",
+        "Small Hybrid Turret III [V]",
+        "Audit only (hidden from pilots)",
+        "[Ungrouped]",
+    ] {
+        assert!(sets.body.contains(text), "{text}\n{}", sets.body);
+    }
+
+    // The sheet: visible sets by group, what each still needs, and a set's
+    // details beside it.
+    let sheet = format!("/plugins/{ID}/character/{CHRIBBA}/skills?_tab=2");
+    let tab = page(&h, &sheet, &owner).await;
+    assert!(tab.body.contains("Doctrine: Shield fleet"), "{}", tab.body);
+    assert!(
+        tab.body.contains("Small Hybrid Turret V (has 3)"),
+        "{}",
+        tab.body
+    );
+    assert!(!tab.body.contains("Audit only"), "{}", tab.body);
+    let set: i64 = sqlx::query_scalar(
+        r#"SELECT id FROM "plugin_tether.member-audit".skill_sets WHERE name = 'Ferox'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let panel = page(&h, &format!("{sheet}&set={set}"), &owner).await;
+    for text in [
+        "Shield boats",
+        "III [V], has III",
+        "Has every required skill",
+    ] {
+        assert!(panel.body.contains(text), "{text}\n{}", panel.body);
+    }
+
+    // The report counts each set under its group, the hidden one too.
+    let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
+    let row = finder_row(&reports.body, ">Ferox<");
+    assert!(
+        row.contains("Doctrine: Shield fleet") && row.contains(">1<"),
+        "{row}"
+    );
+    assert!(reports.body.contains("Audit only"), "{}", reports.body);
+
+    // The group's own page changes it: no longer a doctrine, nor in use.
+    let group: i64 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.member-audit".skill_set_groups"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let group_at = format!("{at}/group/{group}");
+    let edit = page(&h, &group_at, &owner).await;
+    assert!(edit.body.contains("Main doctrine"), "{}", edit.body);
+    let res = send(
+        &h.app,
+        form(
+            &group_at,
+            "_form=save_group&name=Shield+fleet&description=&sets=Ferox%0AAudit+only",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let tab = page(&h, &sheet, &owner).await;
+    assert!(
+        tab.body.contains("Shield fleet [Not active]"),
+        "{}",
+        tab.body
+    );
+    let res = send(
+        &h.app,
+        form(
+            &group_at,
+            &format!("_form=delete_group&group={group}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let left: i64 =
+        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.member-audit".skill_sets"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(left, 2, "deleting a group keeps its sets");
+    // Managing groups takes manage: a pilot with view_skill_sets alone
+    // gets nothing there.
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "view_skill_sets").await;
+    assert_eq!(page(&h, &at, &blue).await.status, StatusCode::OK);
+    assert_eq!(
+        page(&h, &format!("{at}/group/1"), &blue).await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 /// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance

@@ -18,9 +18,9 @@ use chrono::{Duration, Utc};
 use tether_plugin_sdk::jobs::{self, NewJob};
 use tether_plugin_sdk::storage::{self, Value as Db};
 use tether_plugin_sdk::{
-    Card, Column, Page, PageError, Profile, Section, Stat, Submission, SubmitResult, Table, Tone,
-    Value, action, alliance, badge, character, corporation, countdown, faction, isk, item_type,
-    levels, link,
+    Card, Column, Page, PageError, Profile, Request, Section, Stat, Submission, SubmitResult,
+    Table, Tone, Value, action, alliance, badge, character, corporation, countdown, faction, isk,
+    item_type, levels, link,
 };
 
 use crate::access::Access;
@@ -167,11 +167,16 @@ impl Freshness {
     }
 }
 
-pub(crate) fn render(access: &Access, id: i64, rest: &[&str]) -> Result<Page, PageError> {
+pub(crate) fn render(
+    access: &Access,
+    id: i64,
+    rest: &[&str],
+    request: &Request,
+) -> Result<Page, PageError> {
     let who = subject(access, id)?;
     match rest {
         [] => overview(access, &who, None),
-        ["skills"] => skills(&who),
+        ["skills"] => skills(&who, request.param("set")),
         ["assets"] => assets(&who, None),
         ["assets", location] => {
             let location: i64 = location.parse().map_err(|_| PageError::NotFound)?;
@@ -598,7 +603,7 @@ fn humanize(code: &str) -> String {
 
 // ---- Skills ----------------------------------------------------------------
 
-fn skills(who: &Subject) -> Result<Page, PageError> {
+fn skills(who: &Subject, set: &str) -> Result<Page, PageError> {
     let id = who.id;
     let fresh = Freshness::of(id)?;
     let head = query(
@@ -716,22 +721,44 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
     } else {
         Vec::new()
     };
+    let yes_no = |yes: bool| -> Value {
+        if yes {
+            badge("Yes", Tone::Success).into()
+        } else {
+            badge("No", Tone::Neutral).into()
+        }
+    };
+    let none_or = |missing: &[String]| -> Value {
+        if missing.is_empty() {
+            "".into()
+        } else {
+            clip(&missing.join(", "), 1500).into()
+        }
+    };
     let sets_table = with_rows(
         Table::new(vec![
+            Column::text("Group"),
             Column::text("Skill set"),
-            Column::text("Can use"),
+            Column::text("Doctrine"),
+            Column::text("Required skills"),
+            Column::text("Missing"),
+            Column::text("Recommended skills"),
             Column::text("Missing"),
         ])
         .empty("No skill sets yet: officers add them under Skill Sets."),
-        sets.into_iter().map(|(name, missing)| {
+        sets.iter().map(|s| {
+            let open = format!("character/{id}/skills?set={}", s.set.id);
             vec![
-                name.into(),
-                if missing.is_empty() {
-                    badge("Yes", Tone::Success).into()
-                } else {
-                    badge("No", Tone::Neutral).into()
+                s.group.clone().into(),
+                match &s.set.ship {
+                    Some((ship, _)) => item_type(*ship, s.set.name.clone()).link(open).into(),
+                    None => link(s.set.name.clone(), open).into(),
                 },
-                clip(&missing.join(", "), 1500).into(),
+                yes_no(s.doctrine),
+                yes_no(s.missing_required.is_empty()),
+                none_or(&s.missing_required),
+                yes_no(s.missing_recommended.is_empty()),
+                none_or(&s.missing_recommended),
             ]
         }),
     );
@@ -785,9 +812,18 @@ fn skills(who: &Subject) -> Result<Page, PageError> {
             vec![Section::Table(queue_table), fresh.line(&["skills"])],
         )
         .tab("Skills", skill_sections);
-    // aa-memberaudit's Skill Sets tab needs view_skill_sets.
+    // aa-memberaudit's Skill Sets tab needs view_skill_sets; a set's
+    // name opens its skills beside it (aa-memberaudit's details).
     let page = if who.skill_sets {
-        page.tab("Skill sets", vec![Section::Table(sets_table)])
+        let page = page.tab("Skill sets", vec![Section::Table(sets_table)]);
+        let chosen = set
+            .parse::<i64>()
+            .ok()
+            .and_then(|n| sets.iter().find(|s| s.set.id == n));
+        match chosen {
+            Some(chosen) => page.panel(crate::sets::sheet_panel(id, chosen)?),
+            None => page,
+        }
     } else {
         page
     };
