@@ -1244,6 +1244,46 @@ async fn the_finder_lists_unregistered_characters(db: PgPool) {
     assert!(theirs.contains("Hidden Alt"), "{theirs}");
 }
 
+/// The Character Sheet says whose character it is, as aa-memberaudit's
+/// sidebar: the owner's main and their other characters, those not
+/// registered marked, those the viewer may open linked.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_sheet_names_the_owner_and_their_characters(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000022, account_id, 'Hidden Alt', 98000003 FROM core.characters WHERE id = $1",
+    )
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let sheet = |id: i64| format!("/plugins/{ID}/character/{id}");
+    let main = page(&h, &sheet(CORP_MATE), &owner).await.body;
+    assert!(main.contains("Main of 3 characters"), "{main}");
+    let alt = page(&h, &sheet(MATE_ALT), &owner).await.body;
+    assert!(alt.contains("One of Corp Mate&#39;s 3 characters"), "{alt}");
+    let tab = page(&h, &format!("{}?_tab=4", sheet(MATE_ALT)), &owner)
+        .await
+        .body;
+    let row = finder_row(&tab, "Hidden Alt");
+    assert!(row.contains(">Unregistered<"), "{row}");
+    assert!(!row.contains("/character/90000022"), "{row}");
+    let row = finder_row(&tab, ">Corp Mate<");
+    assert!(
+        row.contains(&format!("{}\"", sheet(CORP_MATE))) && row.contains(">Main<"),
+        "{row}"
+    );
+}
+
 /// aa-memberaudit's User Compliance and Corporation Compliance reports:
 /// each pilot in scope (their main), whether any and every one of their
 /// characters is registered with Member Audit; each corporation of the

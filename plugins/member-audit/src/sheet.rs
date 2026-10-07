@@ -1,7 +1,8 @@
 //! The Character Sheet: aa-memberaudit's tabs over a few pages, each with
 //! its own tabs, linked beside the title:
 //!
-//! - Overview (`character/{id}`): the profile; corporation history, roles
+//! - Overview (`character/{id}`): the profile, whose it is and the
+//!   owner's characters; corporation history, roles
 //!   (when the Settings read them) and titles, killmails, bio. Its pilot
 //!   shares it from here (`share_characters`).
 //! - Skills: the queue (live), skills by group, skill sets (for
@@ -332,9 +333,79 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
     if let Some(a) = who.alliance_id {
         profile = profile.alliance(alliance(a, who.alliance.clone()));
     }
-    if access.viewer.main.id == id {
-        profile = profile.badge(badge("Main", Tone::Neutral));
+    // Whose it is (aa-memberaudit's sidebar): the owner's main and their
+    // other characters, those not registered marked.
+    let member = access.member_of(id);
+    match member {
+        Some(m) if m.main.id == id => {
+            profile = profile
+                .badge(badge("Main", Tone::Neutral))
+                .subtitle(format!("Main of {} characters", m.characters.len()));
+        }
+        Some(m) => {
+            profile = profile.subtitle(format!(
+                "One of {}'s {} characters",
+                m.main.name,
+                m.characters.len()
+            ));
+        }
+        None if access.viewer.main.id == id => {
+            profile = profile.badge(badge("Main", Tone::Neutral));
+        }
+        None => {}
     }
+    let corp_names = crate::pages::names_of(
+        member
+            .iter()
+            .flat_map(|m| m.characters.iter().map(|c| c.character.corporation_id))
+            .collect(),
+    )?;
+    let corp_names = &corp_names;
+    let owner_characters = with_rows(
+        Table::new(vec![
+            Column::text("Character"),
+            Column::text("Corporation"),
+            Column::text(""),
+        ])
+        .empty("Tether doesn't say whose character this is."),
+        member.into_iter().flat_map(|m| {
+            let mut characters: Vec<_> = m.characters.iter().collect();
+            characters
+                .sort_by_key(|c| (c.character.id != m.main.id, c.character.name.to_lowercase()));
+            characters.into_iter().map(move |c| {
+                let ch = &c.character;
+                let mut status = Vec::new();
+                if ch.id == m.main.id {
+                    status.push("Main");
+                }
+                if !c.registered {
+                    status.push("Unregistered");
+                }
+                vec![
+                    if c.registered && ch.id != id && access.may_open(ch.id) {
+                        character(ch.id, ch.name.clone())
+                            .link(format!("character/{}", ch.id))
+                            .into()
+                    } else {
+                        character(ch.id, ch.name.clone()).into()
+                    },
+                    corporation(
+                        ch.corporation_id,
+                        corp_names
+                            .get(&ch.corporation_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                    .into(),
+                    match (ch.id == m.main.id, c.registered) {
+                        (_, false) => badge(status.join(", "), Tone::Warning).into(),
+                        (true, true) => badge("Main", Tone::Neutral).into(),
+                        (false, true) => Value::from(""),
+                    },
+                ]
+            })
+        }),
+    );
     let is_shared = boolean(c, 23);
     if is_shared {
         profile = profile.badge(badge("Shared", Tone::Neutral));
@@ -588,7 +659,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             "Killmails",
             vec![Section::Table(kills), fresh.line(&["killmails"])],
         )
-        .tab("Bio", bio_sections))
+        .tab("Bio", bio_sections)
+        .tab("Characters", vec![Section::Table(owner_characters)]))
 }
 
 /// `station_manager` as "Station manager".

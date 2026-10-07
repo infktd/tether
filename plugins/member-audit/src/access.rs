@@ -181,6 +181,13 @@ impl<'a> Access<'a> {
         })
     }
 
+    /// The member account a character is on, if Tether says.
+    pub fn member_of(&self, character: i64) -> Option<&Member> {
+        self.members()
+            .iter()
+            .find(|m| m.characters.iter().any(|c| c.character.id == character))
+    }
+
     /// The member accounts the viewer's scope covers, by their main
     /// (aa-memberaudit's `accessible_users`): all of them with
     /// `view_everything`, those whose main is in the viewer's main's
