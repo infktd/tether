@@ -5,7 +5,7 @@
 id = "tether.bulletin-board"
 name = "Bulletin Board"
 icon = "pin"
-version = "0.1.3"
+version = "0.1.4"
 host_api = "1"
 description = "Bulletins for everyone, or only for members of some groups, newest first."
 

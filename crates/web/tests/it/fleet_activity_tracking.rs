@@ -61,25 +61,25 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let first = plugin_file("migrations/0001_fleet_activity_tracking.sql");
-    let second = plugin_file("migrations/0002_esi_fleet_tracking.sql");
-    let third = plugin_file("migrations/0003_settings.sql");
-    let fourth = plugin_file("migrations/0004_doctrines_from_fittings.sql");
+    // Every migration the app ships, in order.
+    let mut migrations: Vec<String> = std::fs::read_dir(format!(
+        "{}/../../plugins/fleet-activity-tracking/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+    .map(|e| format!("migrations/{}", e.unwrap().file_name().to_string_lossy()))
+    .collect();
+    migrations.sort();
+    let contents: Vec<String> = migrations.iter().map(|m| plugin_file(m)).collect();
     let component = component();
-    let bytes = testing::zip(&[
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        (
-            "migrations/0001_fleet_activity_tracking.sql",
-            first.as_bytes(),
-        ),
-        ("migrations/0002_esi_fleet_tracking.sql", second.as_bytes()),
-        ("migrations/0003_settings.sql", third.as_bytes()),
-        (
-            "migrations/0004_doctrines_from_fittings.sql",
-            fourth.as_bytes(),
-        ),
-    ]);
+    ];
+    for (name, sql) in migrations.iter().zip(&contents) {
+        files.push((name, sql.as_bytes()));
+    }
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -691,6 +691,35 @@ async fn permissions_follow_aa_afat(db: PgPool) {
         closed.body
     );
 
+    no_problems(&plugin_problems(&h).await);
+}
+
+/// As aa-afat, manage_afat opens every corporation's, alliance's and
+/// pilot's statistics, as stats_corporation_other does.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn managers_see_every_corporations_statistics(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let alliance = format!("stats/alliance/{CHRIBBA_ALLIANCE}");
+    let corporation = format!("stats/corporation/{CHRIBBA_CORP}");
+    let pilot = format!("stats/character/{CHRIBBA}");
+    for at in [&alliance, &corporation, &pilot] {
+        assert_eq!(
+            open(&h, at, &line).await.status,
+            StatusCode::FORBIDDEN,
+            "{at}"
+        );
+    }
+    let stats = open(&h, "stats", &line).await;
+    assert!(!stats.body.contains("Alliances"), "{}", stats.body);
+
+    grant(&h, &owner, "manage_afat", MEMBER_STATE).await;
+    for at in [&alliance, &corporation, &pilot] {
+        let res = open(&h, at, &line).await;
+        assert_eq!(res.status, StatusCode::OK, "{at}: {}", res.body);
+    }
+    let stats = open(&h, "stats", &line).await;
+    assert!(stats.body.contains("Alliances"), "{}", stats.body);
+    assert!(stats.body.contains("Corporations"), "{}", stats.body);
     no_problems(&plugin_problems(&h).await);
 }
 
@@ -1310,13 +1339,254 @@ async fn esi_tracking_stops_when_not_in_a_fleet(db: PgPool) {
         .mount(&h.esi_server)
         .await;
     let hash = tracked_link(&h, &owner).await;
+    // As aa-afat, three reads in a row are ridden out: the fourth stops it.
     work(&h).await;
+    for _ in 0..2 {
+        poll_now(&h).await;
+    }
+    assert_eq!(tracking(&h, &hash).await, (Some("tracking".into()), None));
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        details
+            .body
+            .contains("The last 3 reads of the fleet failed"),
+        "{}",
+        details.body
+    );
+    assert!(
+        details.body.contains("1 more time in a row"),
+        "{}",
+        details.body
+    );
+    poll_now(&h).await;
     assert_eq!(
         tracking(&h, &hash).await,
         (Some("stopped".into()), Some("fleet_ended".into()))
     );
     assert_eq!(queued_polls(&h).await, 0);
     assert!(esi_fats(&h, &hash).await.is_empty());
+}
+
+async fn errors(h: &Harness, hash: &str) -> (Option<String>, i32) {
+    let schema = schema(h).await;
+    sqlx::query_as(sql!(
+        "SELECT esi_error, esi_errors FROM \"{schema}\".links WHERE hash = $1"
+    ))
+    .bind(hash)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// aa-afat's rule exactly: only the same error, each within 75 seconds of
+/// the last, after three in a row, stops tracking. Another error, a later
+/// one, or a good read in between starts the count again.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn esi_tracking_rides_out_passing_errors(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let owner = add_fc(&h, &owner).await;
+    mount_fleet(&h, CHRIBBA).await;
+    // ESI refuses the members twice, then answers.
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "forbidden" })),
+        )
+        .up_to_n_times(2)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_members(&h).await;
+    let hash = tracked_link(&h, &owner).await;
+    work(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("refused".into()), 1));
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("refused".into()), 2));
+    // A good read clears them.
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (None, 0));
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+
+    // Not in a fleet: three times, but the third over 75 seconds after the
+    // second, so it counts from one again.
+    mount_not_in_fleet(&h).await;
+    poll_now(&h).await;
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("fleet_ended".into()), 2));
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET esi_error_at = now() - interval '76 seconds' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("fleet_ended".into()), 1));
+    // Another error starts it again too.
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET esi_error = 'not_boss' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("fleet_ended".into()), 1));
+    poll_now(&h).await;
+    poll_now(&h).await;
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    poll_now(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("fleet_ended".into()))
+    );
+    // Resuming starts with no errors.
+    age_poll(&h, &hash).await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(errors(&h, &hash).await, (None, 0));
+}
+
+async fn expires_at(h: &Harness, hash: &str) -> Option<chrono::DateTime<Utc>> {
+    let schema = schema(h).await;
+    sqlx::query_scalar(sql!(
+        "SELECT expires_at FROM \"{schema}\".links WHERE hash = $1"
+    ))
+    .bind(hash)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// ESI's answer for Chribba's fleet from now on: he isn't in one.
+async fn mount_not_in_fleet(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/fleet")))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_json(serde_json::json!({ "error": "Character is not in a fleet" })),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+}
+
+/// aa-afat's ESI FAT links have no expiry: open while the fleet is
+/// tracked, however long past a clickable link's expiry, and closed when
+/// tracking stops.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_esi_tracked_link_has_no_expiry(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let owner = add_fc(&h, &owner).await;
+    mount_fleet(&h, CHRIBBA).await;
+    mount_members(&h).await;
+    let hash = tracked_link(&h, &owner).await;
+    assert_eq!(expires_at(&h, &hash).await, None);
+    work(&h).await;
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        details.body.contains("When the fleet ends"),
+        "{}",
+        details.body
+    );
+    assert!(details.body.contains("Open"), "{}", details.body);
+    let overview = open(&h, "", &owner).await;
+    assert!(overview.body.contains("Tracked fleet"), "{}", overview.body);
+
+    // Five hours in (any expiry long gone, within the six-hour cap), it
+    // still tracks, and members may still register.
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET created_at = now() - interval '5 hours', \
+         esi_started_at = now() - interval '5 hours' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    assert_eq!(esi_fats(&h, &hash).await.len(), 3);
+    let register = open(&h, &format!("links/{hash}/add"), &line).await;
+    assert!(
+        register.body.contains("When the fleet ends"),
+        "{}",
+        register.body
+    );
+
+    // Past the six-hour cap it's closed, even before the job stops it.
+    for (started, open_now) in [("7 hours", false), ("5 hours", true)] {
+        sqlx::query(sql!(
+            "UPDATE \"{schema}\".links SET esi_started_at = now() - $2::interval WHERE hash = $1"
+        ))
+        .bind(&hash)
+        .bind(started)
+        .execute(&h.db)
+        .await
+        .unwrap();
+        let register = open(&h, &format!("links/{hash}/add"), &line).await;
+        assert_eq!(
+            register.body.contains("This FAT link is closed"),
+            !open_now,
+            "{}",
+            register.body
+        );
+    }
+
+    // The fleet ends: tracking stops and the link closes then.
+    mount_not_in_fleet(&h).await;
+    for _ in 0..4 {
+        poll_now(&h).await;
+    }
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("fleet_ended".into()))
+    );
+    let closed = expires_at(&h, &hash).await.unwrap();
+    assert!(closed <= Utc::now() && closed > Utc::now() - chrono::Duration::minutes(1));
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(details.body.contains("Closed"), "{}", details.body);
+    let res = post(
+        &h,
+        &format!("links/{hash}/add"),
+        &format!("_form=register&c_{LINE}=on"),
+        &line,
+    )
+    .await;
+    assert!(res.status != StatusCode::SEE_OTHER, "{}", res.body);
+
+    // Its FC resumes it (a new fleet, say): open again, without expiry.
+    age_poll(&h, &hash).await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await, (Some("tracking".into()), None));
+    assert_eq!(expires_at(&h, &hash).await, None);
+
+    // Closed by hand, it resumes only once reopened.
+    let res = post(&h, &format!("links/{hash}"), "_form=close", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("closed".into()))
+    );
+    age_poll(&h, &hash).await;
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        !details.body.contains(">Resume tracking</button>"),
+        "{}",
+        details.body
+    );
+    assert!(
+        details.body.contains(">Reopen</button>"),
+        "{}",
+        details.body
+    );
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("stopped"));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -1328,6 +1598,9 @@ async fn esi_tracking_stops_when_boss_passes_and_resumes(db: PgPool) {
     mount_members(&h).await;
     let hash = tracked_link(&h, &owner).await;
     work(&h).await;
+    for _ in 0..3 {
+        poll_now(&h).await;
+    }
     assert_eq!(
         tracking(&h, &hash).await,
         (Some("stopped".into()), Some("not_boss".into()))
@@ -1379,6 +1652,11 @@ async fn esi_tracking_stops_on_403(db: PgPool) {
         .await;
     let hash = tracked_link(&h, &owner).await;
     work(&h).await;
+    for _ in 0..2 {
+        poll_now(&h).await;
+    }
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    poll_now(&h).await;
     assert_eq!(
         tracking(&h, &hash).await,
         (Some("stopped".into()), Some("refused".into()))
@@ -2043,5 +2321,144 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
     let logs = open(&h, "logs", &owner).await;
     assert!(logs.body.contains("Kept for 90 days"), "{}", logs.body);
     assert!(logs.body.contains("Settings Changed"), "{}", logs.body);
+    no_problems(&plugin_problems(&h).await);
+}
+
+// ---- the fleet snapshot ------------------------------------------------------
+
+fn encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// A line of EVE's fleet window, copied.
+fn fleet_line(name: &str, ship: &str) -> String {
+    format!("{name}\tJita\t{ship}\tBattleship\tSquad Member\t0 - 0 - 5\tWing 1 / Squad 1\n")
+}
+
+/// aa-afat's fleet snapshot: an FC pastes the fleet composition and every
+/// pilot EVE knows gets a FAT with ship and system, under the manual FAT
+/// rules, logged.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_fleet_snapshot_adds_fats(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    Mock::given(method("POST"))
+        .and(path("/universe/ids"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "characters": [
+                { "id": LINE, "name": "Line Member" },
+                { "id": ALT, "name": "Line Alt" },
+                { "id": GIGX, "name": "gigX" },
+            ],
+            "systems": [{ "id": JITA, "name": "Jita" }],
+            "inventory_types": [{ "id": ROKH, "name": "Rokh" }],
+        })))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let hash = create_link(&h, &owner, "Snapshot fleet", "").await;
+    // The link's page: its own, Edit, Add FAT, Fleet snapshot.
+    let details = open(&h, &format!("links/{hash}?_tab=3"), &owner).await;
+    assert!(
+        details.body.contains("Add fleet snapshot"),
+        "{}",
+        details.body
+    );
+
+    // Something else pasted is refused, saying where.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode("Hello fleet")),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("Line 1 "), "{}", res.body);
+    assert!(fats(&h, &hash).await.is_empty());
+
+    let paste = format!(
+        "{}{}{}",
+        fleet_line("Line Member", "Rokh"),
+        fleet_line("line alt", "Rokh"),
+        fleet_line("Nobody Here", "Rokh"),
+    );
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode(&paste)),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body.contains("Fleet snapshot: 2 FATs added."),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("Nobody Here"), "{}", res.body);
+    assert_eq!(
+        fats(&h, &hash).await,
+        vec![
+            (ALT, Some("Chribba".to_owned())),
+            (LINE, Some("Chribba".to_owned()))
+        ]
+    );
+    let rokh = (Some(ROKH), Some(JITA), false);
+    assert_eq!(
+        esi_fats(&h, &hash).await,
+        vec![(ALT, rokh.0, rokh.1, false), (LINE, rokh.0, rokh.1, false)]
+    );
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(details.body.contains("Rokh"), "{}", details.body);
+    assert!(details.body.contains("Line Alt"), "{}", details.body);
+
+    // Again with gigX: only he's new.
+    let paste = format!("{paste}{}", fleet_line("gigX", "Rokh"));
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode(&paste)),
+        &owner,
+    )
+    .await;
+    assert!(
+        res.body
+            .contains("Fleet snapshot: 1 FAT added. 2 already had one."),
+        "{}",
+        res.body
+    );
+    assert_eq!(fats(&h, &hash).await.len(), 3);
+    let logs = open(&h, "logs", &owner).await;
+    assert!(logs.body.contains("Fleet Snapshot"), "{}", logs.body);
+    assert!(
+        logs.body.contains("Fleet snapshot added 2 FATs"),
+        "{}",
+        logs.body
+    );
+
+    // Not once the link's been reopened (aa-afat's manual FAT rule).
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET reopened = 1 WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(!details.body.contains("Fleet snapshot"), "{}", details.body);
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode(&paste)),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     no_problems(&plugin_problems(&h).await);
 }

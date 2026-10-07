@@ -5,7 +5,9 @@
 //!   limited to groups is seen only by their members; one limited to none
 //!   by everyone with access.
 //! - **Managing** (`manage_bulletins`, as aa-bulletin-board, who see every
-//!   bulletin): write, edit and remove them, and limit them to groups.
+//!   bulletin): write, edit and remove them, and limit them to groups,
+//!   picked as a bulletin is written (as aa-bulletin-board's form) or on
+//!   its edit page after.
 //!
 //! aa-bulletin-board's text is rich text; apps show text, not HTML, so a
 //! bulletin is plain text in paragraphs (a blank line between them).
@@ -352,17 +354,71 @@ fn bulletin_form(title: &str, content: &str, submit: &str) -> Form {
         )
 }
 
-fn new_page(problem: Option<(&str, &str, &str)>) -> Result<Page, PageError> {
-    let mut page = Page::new("New bulletin")
-        .description("Everyone with access sees it, until you limit it to groups");
-    let (title, content) = match problem {
-        Some((note, title, content)) => {
-            page = page.text(note);
-            (title, content)
+/// What the new bulletin form held when it's shown again with a problem:
+/// the problem, the title, the text and the groups picked.
+type Draft<'a> = (&'a str, &'a str, &'a str, &'a [i64]);
+
+/// The groups picked on the new bulletin form: a box per group while
+/// they fit on it, else one group (more on the edit page). Only groups
+/// the manager may be offered; `None` for one that isn't.
+fn picked_groups(submission: &Submission) -> Option<Vec<i64>> {
+    let offered = identity::all_groups();
+    let mut picked: Vec<i64> = offered
+        .iter()
+        .filter(|g| submission.checked(&format!("g_{}", g.id)))
+        .map(|g| g.id)
+        .collect();
+    match submission.value("group") {
+        "" => {}
+        id => {
+            let id: i64 = id.parse().ok()?;
+            if !offered.iter().any(|g| g.id == id) {
+                return None;
+            }
+            if !picked.contains(&id) {
+                picked.push(id);
+            }
         }
-        None => ("", ""),
+    }
+    Some(picked)
+}
+
+fn new_page(problem: Option<Draft>) -> Result<Page, PageError> {
+    let mut page = Page::new("New bulletin")
+        .description("Everyone with access sees it, unless you limit it to groups here");
+    let (title, content, picked) = match problem {
+        Some((note, title, content, picked)) => {
+            page = page.text(note);
+            (title, content, picked)
+        }
+        None => ("", "", &[][..]),
     };
-    Ok(page.form(bulletin_form(title, content, "Create bulletin")))
+    // aa-bulletin-board's groups field: who may read it, from the start.
+    let offered = identity::all_groups();
+    let mut form = bulletin_form(title, content, "Create bulletin");
+    if offered.len() <= MAX_GROUPS {
+        for group in &offered {
+            form = form.field(Field::checkbox(
+                format!("g_{}", group.id),
+                format!("Only for {}", group.name),
+                picked.contains(&group.id),
+            ));
+        }
+    } else {
+        let mut options = vec![(String::new(), "Everyone with access".to_owned())];
+        options.extend(
+            offered
+                .iter()
+                .take(MAX_OFFERED)
+                .map(|g| (g.id.to_string(), g.name.clone())),
+        );
+        form = form.field(
+            Field::select("group", "Who reads it", options)
+                .value(picked.first().map(i64::to_string).unwrap_or_default())
+                .help("Limit it to more groups on its edit page once it's created."),
+        );
+    }
+    Ok(page.form(form))
 }
 
 fn edit_page(id: i64, problem: Option<(&str, &str, &str)>) -> Result<Page, PageError> {
@@ -429,6 +485,12 @@ fn save(
 ) -> Result<SubmitResult, PageError> {
     let title = submission.value("title").trim();
     let content = submission.value("content").trim();
+    // A new bulletin's groups, set as it's created (aa-bulletin-board's
+    // form): it's never open to everyone first.
+    let groups = match id {
+        None => picked_groups(submission).ok_or(PageError::NotFound)?,
+        Some(_) => Vec::new(),
+    };
     let problem = if title.is_empty() || title.chars().count() > MAX_TITLE as usize {
         Some("A title is 1 to 255 characters.")
     } else if title.chars().any(char::is_control) {
@@ -443,7 +505,7 @@ fn save(
     if let Some(note) = problem {
         return Ok(SubmitResult::Page(match id {
             Some(id) => edit_page(id, Some((note, title, content)))?,
-            None => new_page(Some((note, title, content)))?,
+            None => new_page(Some((note, title, content, &groups)))?,
         }));
     }
     let saved = match id {
@@ -459,14 +521,27 @@ fn save(
             id
         }
         None => {
+            // The bulletin and its groups in one statement.
             let rows = storage::query(
-                "INSERT INTO bulletins (title, content, author_id, author_name) \
-                 VALUES ($1, $2, $3, $4) RETURNING id",
+                "WITH b AS ( \
+                     INSERT INTO bulletins (title, content, author_id, author_name) \
+                     VALUES ($1, $2, $3, $4) RETURNING id), \
+                 g AS ( \
+                     INSERT INTO bulletin_groups (bulletin_id, group_id) \
+                     SELECT b.id, x FROM b, \
+                         unnest(string_to_array(nullif($5, ''), ',')::bigint[]) AS x) \
+                 SELECT id FROM b",
                 &[
                     title.into(),
                     content.into(),
                     viewer.main.id.into(),
                     viewer.main.name.clone().into(),
+                    groups
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                        .into(),
                 ],
             )
             .map_err(|e| failed("creating the bulletin", e))?;
@@ -477,8 +552,14 @@ fn save(
         }
     };
     log::info(format!(
-        "bulletin {saved} ({title}) saved by {} ({})",
-        viewer.main.name, viewer.main.id
+        "bulletin {saved} ({title}) saved by {} ({}){}",
+        viewer.main.name,
+        viewer.main.id,
+        if groups.is_empty() {
+            String::new()
+        } else {
+            format!(", limited to groups {groups:?}")
+        }
     ));
     Ok(SubmitResult::Redirect(format!("bulletin/{saved}")))
 }

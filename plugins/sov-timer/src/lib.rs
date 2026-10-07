@@ -4,7 +4,9 @@
 //! its constellation and region, the defending alliance, the system's
 //! activity defense multiplier (ADM), when the campaign starts and how
 //! long until then, and, once active, the defender's progress: the score
-//! the last sync saw, the trend, and the score now. Filtered as
+//! before it last changed, the trend, and the score now (as
+//! aa-sov-timer, the previous score is kept until the score changes, so
+//! the trend doesn't forget after one quiet sync). Filtered as
 //! aa-sov-timer's: every campaign, those starting within four hours, and
 //! the active ones.
 //!
@@ -230,7 +232,9 @@ fn read_and_store() -> Result<(), JobError> {
                  start_time timestamptz, defender_score double precision) \
              ON CONFLICT (campaign_id) DO UPDATE SET event_type = EXCLUDED.event_type, \
                  defender_id = EXCLUDED.defender_id, start_time = EXCLUDED.start_time, \
-                 previous_score = campaigns.defender_score, \
+                 previous_score = CASE \
+                     WHEN campaigns.defender_score IS NOT DISTINCT FROM EXCLUDED.defender_score \
+                     THEN campaigns.previous_score ELSE campaigns.defender_score END, \
                  defender_score = EXCLUDED.defender_score",
             vec![Db::json(serde_json::Value::Array(rows).to_string())],
         ),
@@ -425,8 +429,8 @@ fn campaigns_page(_viewer: &Viewer) -> Result<Page, PageError> {
         )
         .tab("Active", vec![Section::Table(table(&active, now, empty))])
         .text(
-            "Progress is the defenders' score once a campaign is active, and which side gained \
-             since 30 seconds before.",
+            "Progress is the defenders' score once a campaign is active: the score before it \
+             last changed, the score now, and which side gained.",
         )
         .refresh(REFRESH))
 }
@@ -461,21 +465,30 @@ fn table(rows: &[&Row], now: DateTime<Utc>, empty: &str) -> Table {
             None => "".into(),
         };
         let active = status(c.start, now) == Status::Active;
-        // The defenders' score and which way it's going, once the campaign
-        // is on; before, there's no score to show.
+        // The defenders' score before it last changed, now, and which way
+        // it's going, once the campaign is on (aa-sov-timer's progress);
+        // before, there's no score to show.
         let progress: Value = match (active, c.score) {
             (true, Some(score)) => match row.previous {
                 Some(before) if score > before => badge(
-                    format!("{} · defenders gaining", percent(score)),
+                    format!(
+                        "{} → {} · defenders gaining",
+                        percent(before),
+                        percent(score)
+                    ),
                     Tone::Success,
                 )
                 .into(),
                 Some(before) if score < before => badge(
-                    format!("{} · attackers gaining", percent(score)),
+                    format!(
+                        "{} → {} · attackers gaining",
+                        percent(before),
+                        percent(score)
+                    ),
                     Tone::Danger,
                 )
                 .into(),
-                _ => format!("{} · no change", percent(score)).into(),
+                _ => format!("{} · no change yet", percent(score)).into(),
             },
             _ => "".into(),
         };

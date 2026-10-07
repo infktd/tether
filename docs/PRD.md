@@ -345,19 +345,19 @@ Phase 5, release 1.0:
 - [ ] Freight: My contracts for `use_calculator`, with aa-freight's statuses (aa-freight `freight/views.py:70-71`, `freight/managers.py:262-272`)
 - [ ] Freight: the All contracts tab (aa-freight `freight/templates/freight/contracts_all.html`, `freight/managers.py:258-261`)
 - [ ] Freight: Discord cards linking to the app's contracts (aa-freight `freight/models/contracts.py:335-341`)
-- [ ] Fleet Activity Tracking: ESI-tracked links that don't expire, tracked until the fleet ends (aa-afat `afat/views/fatlinks.py:366-377`, `afat/tasks.py:335-346`)
-- [ ] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`)
-- [ ] Fleet Activity Tracking: `manage_afat` opens every corporation's and alliance's statistics and Logs (aa-afat `afat/views/statistics.py:66-69`, `afat/views/logs.py:23`)
-- [ ] Fleet Activity Tracking: tracking stops only after 3 identical ESI errors within 75 seconds (aa-afat `afat/tasks.py:33-34`, `:169-201`)
+- [x] Fleet Activity Tracking: ESI-tracked links that don't expire, tracked until the fleet ends (aa-afat `afat/views/fatlinks.py:366-377`, `afat/tasks.py:335-346`). Built: a tracked link has no expiry ("Closes: When the fleet ends"), stays open while it tracks, and closes when tracking stops; its FC resumes it unless it was closed by hand. The six-hour cap stays
+- [x] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`). Built: a Fleet snapshot tab on the link's page under the manual FAT rules; every pasted pilot EVE knows gets a FAT with ship and system, one look-up for the names, logged; bad lines and unknown pilots named
+- [ ] Fleet Activity Tracking: `manage_afat` opens every corporation's and alliance's statistics and Logs (aa-afat `afat/views/statistics.py:66-69`, `afat/views/logs.py:23`). Statistics built: `manage_afat` opens every corporation's, alliance's and pilot's, as `stats_corporation_other`. Logs not yet: a page rule takes one permission, so Logs for `log_view` or `manage_afat` needs a host change (Jay to decide)
+- [x] Fleet Activity Tracking: tracking stops only after 3 identical ESI errors within 75 seconds (aa-afat `afat/tasks.py:33-34`, `:169-201`). Built: not in a fleet, not boss, a refusal or another ESI error is counted; the same error again after 3 in a row, each within 75 seconds of the last, stops it, and a good read clears the count; the link's page says how many. A lost data source or login still stops it at once
 - [ ] HR Applications: the applicant told when their application is taken, approved, rejected or deleted (AA core `hrapplications/views.py:152`, `:166`, `:182`, `:241`; needs the host's notify to reach the applicant)
 - [ ] HR Applications: search by every character, corporation and alliance of the applicant (AA core `hrapplications/views.py:208-216`)
 - [ ] Contacts: a contact gone from EVE's list kept while it has notes or server links (aa-contacts `aa_contacts/tasks.py:186-200`)
 - [ ] Contacts: edit a server link, and AA's eight colours (aa-contacts `aa_contacts/api/common.py:166-184`, `aa_contacts/models.py:166-174`)
 - [ ] Contacts: every contact listed, not the first 500 (aa-contacts `aa_contacts/api/common.py:81-85`)
-- [ ] Sovereignty Timer: the previous score kept until the score changes, and shown (aa-sov-timer `sovtimer/tasks.py:124-134`, `sovtimer/views.py:173-178`)
-- [ ] ESI Status: the count and share of routes per status (aa-esi-status `esistatus/tasks.py:356-396`)
-- [ ] Time Zones: the adjusted time's countdown and "Already over" (aa-timezones `templates/timezones/partials/timezones/time-until.html:4-7`)
-- [ ] Bulletin Board: groups picked when a bulletin is made (aa-bulletin-board `aa_bulletin_board/forms.py:61-69`, `views.py:92-94`)
+- [x] Sovereignty Timer: the previous score kept until the score changes, and shown (aa-sov-timer `sovtimer/tasks.py:124-134`, `sovtimer/views.py:173-178`). Built: a sync with an unchanged score keeps the previous one, and Progress reads "60% → 55% · attackers gaining"
+- [x] ESI Status: the count and share of routes per status (aa-esi-status `esistatus/tasks.py:356-396`). Built: a By status table, worst first, with each status' routes, share (two places, as aa-esi-status) and meaning; the meanings text above Needs attention went with it
+- [x] Time Zones: the adjusted time's countdown and "Already over" (aa-timezones `templates/timezones/partials/timezones/time-until.html:4-7`). Built: Time left on the adjusted time's page, ticking down, and "Already over" once passed (the page reloads every 30 seconds until then); the timer limit's text now says AA's 7 days, 23 hours and 59 minutes
+- [x] Bulletin Board: groups picked when a bulletin is made (aa-bulletin-board `aa_bulletin_board/forms.py:61-69`, `views.py:92-94`). Built: New bulletin offers a box per group ("Only for Scouts") while there are at most 20, else one from a list; the bulletin and its groups are saved in one statement
 - [ ] Contracts: Discord cards linking to the app's page, as aa-freight's (`freight/models/contracts.py:337-347`); and before Buyback, decide how the two apps share buyback contracts (AA_PARITY.md, Contracts)
 
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
