@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 7] = [
+const MIGRATIONS: [&str; 8] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -53,6 +53,7 @@ const MIGRATIONS: [&str; 7] = [
     "migrations/0005_data_exports.sql",
     "migrations/0006_passing_failures.sql",
     "migrations/0007_older_mail.sql",
+    "migrations/0008_journal_gap.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -1845,18 +1846,23 @@ fn recent(seconds: i64) -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-/// Journal entries `ids`, newest first.
-fn journal_page(ids: impl Iterator<Item = i64>) -> ResponseTemplate {
+/// Journal entries `ids`, newest first, as ESI writes them, on a page of
+/// `pages`.
+fn journal_page(ids: impl Iterator<Item = i64>, pages: u32) -> ResponseTemplate {
     let entries: Vec<serde_json::Value> = ids
         .map(|id| {
             serde_json::json!({
-                "id": id, "date": recent(id), "ref_type": "player_donation",
-                "amount": 1.0, "balance": 2.0, "description": "Gift",
+                "id": id, "date": recent(id), "ref_type": "market_transaction",
+                "amount": -1234.56, "balance": 123_456_789.12,
+                "description": format!("Market: Chribba bought stuff from Friendly Pilot (order {id})"),
+                "first_party_id": CHRIBBA, "second_party_id": 90000010,
+                "context_id": 1_000_000 + id, "context_id_type": "market_transaction_id",
+                "tax": 12.34, "tax_receiver_id": 1000035, "reason": "",
             })
         })
         .collect();
     ResponseTemplate::new(200)
-        .insert_header("x-pages", "3")
+        .insert_header("x-pages", pages.to_string())
         .set_body_json(entries)
 }
 
@@ -1878,7 +1884,7 @@ async fn the_whole_journal_is_read(db: PgPool) {
         Mock::given(method("GET"))
             .and(path(&route))
             .and(wiremock::matchers::query_param("page", page.to_string()))
-            .respond_with(journal_page(ids.rev()))
+            .respond_with(journal_page(ids.rev(), 3))
             .up_to_n_times(1)
             .with_priority(1)
             .mount(&h.esi_server)
@@ -1905,7 +1911,7 @@ async fn the_whole_journal_is_read(db: PgPool) {
         Mock::given(method("GET"))
             .and(path(&route))
             .and(wiremock::matchers::query_param("page", page.to_string()))
-            .respond_with(journal_page(ids.rev()))
+            .respond_with(journal_page(ids.rev(), 3))
             .with_priority(2)
             .mount(&h.esi_server)
             .await;
@@ -1920,6 +1926,145 @@ async fn the_whole_journal_is_read(db: PgPool) {
     .await
     .unwrap();
     assert!(ok);
+}
+
+/// A busy trader's journal: ESI's most a read takes (20 pages of 2,500
+/// entries) is read and stored a page at a time, inside a job's memory
+/// (64 MiB), where holding every page at once ran out of it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_busy_traders_journal_fits_a_run(db: PgPool) {
+    let (h, _) = synced(db).await;
+    let route = format!("/characters/{CHRIBBA}/wallet/journal");
+    for page in 1..=20_i64 {
+        let newest = 50_000 - (page - 1) * 2_500;
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(journal_page((newest - 2_499..=newest).rev(), 20))
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    sqlx::query(
+        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let (stored, ok): (i64, Option<bool>) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".journal),
+                  (SELECT ok FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal')"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let failures: Vec<String> = sqlx::query_scalar(
+        "SELECT coalesce(last_error, '') FROM core.jobs WHERE last_error IS NOT NULL",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        50_000,
+        "{failures:?} {:?}",
+        plugin_warnings(&h).await
+    );
+    assert_eq!(ok, Some(true));
+    assert!(!journal_gap(&h).await);
+}
+
+async fn journal_gap(h: &Harness) -> bool {
+    sqlx::query_scalar(r#"SELECT journal_gap FROM "plugin_tether.member-audit".characters"#)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+/// The journal section: whether it was read whole, and why not.
+async fn journal_read(h: &Harness) -> (bool, Option<String>) {
+    sqlx::query_as(
+        r#"SELECT ok, error FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// A journal read cut short (ESI failing on its second page) keeps the
+/// pages it stored, and the next read, though its first page has nothing
+/// new, goes on down every page and fills the gap. One with more pages
+/// than a read takes says the journal is partial, and goes on saying so
+/// on later reads.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_journal_read_in_part_says_so_until_read_whole(db: PgPool) {
+    let (h, _) = synced(db).await;
+    let route = format!("/characters/{CHRIBBA}/wallet/journal");
+    let journal_due = || {
+        sqlx::query(
+            r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal'"#,
+        )
+        .execute(&h.db)
+    };
+    // ESI fails on the second page, once.
+    Mock::given(method("GET"))
+        .and(path(&route))
+        .and(wiremock::matchers::query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .set_body_json(serde_json::json!({ "error": "temporarily unavailable" })),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    for (page, ids) in [(1, 201..=300), (2, 101..=200), (3, 2..=100)] {
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(journal_page(ids.rev(), 3))
+            .with_priority(2)
+            .mount(&h.esi_server)
+            .await;
+    }
+    journal_due().await.unwrap();
+    sync(&h).await;
+    assert!(!journal_read(&h).await.0);
+    assert!(journal_gap(&h).await);
+    assert_eq!(journal_entries(&h).await.len(), 101);
+    // Nothing new on the first page, but the gap below it is read.
+    journal_due().await.unwrap();
+    sync(&h).await;
+    assert_eq!(journal_entries(&h).await, (1..=300).collect::<Vec<_>>());
+    assert_eq!(journal_read(&h).await, (true, None));
+    assert!(!journal_gap(&h).await);
+
+    // More pages than a read takes (21 of 2 entries): partial, and still
+    // partial when read again with nothing new.
+    for page in 1..=20_i64 {
+        let newest = 1040 - (page - 1) * 2;
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(journal_page((newest - 1..=newest).rev(), 21))
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    for _ in 0..2 {
+        journal_due().await.unwrap();
+        sync(&h).await;
+        let (ok, error) = journal_read(&h).await;
+        assert!(
+            !ok && error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("only part of the journal"),
+            "{error:?}"
+        );
+        assert_eq!(journal_entries(&h).await.len(), 340);
+    }
 }
 
 /// A character's mail, ids `oldest` to `newest`, answered as ESI does:
@@ -1953,9 +2098,9 @@ impl wiremock::Respond for MailHistory {
 }
 
 /// Mail is paged back 50 headers a call (aa-memberaudit's `last_mail_id`):
-/// all that came since the last read, however many, and on a first read
-/// older mail too, until the Settings' mails kept per character are
-/// stored or ESI has no more.
+/// all that came since the last read, and on a first read older mail too,
+/// until the Settings' mails kept per character are stored or ESI has no
+/// more.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn mail_is_paged_back(db: PgPool) {
     let (h, _) = synced(db).await;
