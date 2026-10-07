@@ -187,7 +187,7 @@ Audited against AA v5.4.0's source (and aa-memberaudit 5.2.0, aa-fleetpings 4.1.
 - Discord only for v1; other services on request, as plugins.
 - One token per character, holding every scope granted (AA keeps one per scope set); a failed token is kept as revoked and audited, not deleted, while its effect on the account matches AA's.
 - Discord: explicit role mapping (above); OAuth state checked; the bot has only the permissions it needs, never Administrator; the member's Discord token is revoked after linking.
-- Corporation Stats reads every covered corporation by itself (AA reads the corporations someone added with their token), and only covered corporations.
+- Corporation Stats reads every covered corporation by itself (AA reads the corporations someone added with their token), and only covered corporations, through any registered Member character in each: a corporation with none (a Blue or other state's, unless a Member's alt is in it) has no member list.
 - Guards on top of AA's rules, never instead of them: sensitive permissions need a fresh login and never go to Guest, a public state or an Open group; nobody grants (to a state, a group or a user) or revokes a permission they don't hold, grants themselves one, or puts people in a group or state whose grants they don't hold; superusers and the last superuser can't be deactivated or removed.
 - Evaluations run on the job queue, not inline, so a burst of changes can't stall requests.
 

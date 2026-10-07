@@ -239,7 +239,7 @@ pub const CORE_NOTES: &[(&str, &str)] = &[
     ),
     (
         CORPSTATS_STATE,
-        "For officers over the whole state: every corporation it covers, allies included for Blue.",
+        "For officers over the whole state: every corporation it covers. Member lists are read only through registered Member characters, so a corporation in another state (Blue's allies) shows once a Member has a registered character in it.",
     ),
     (
         COMPLIANCE_VIEW,
