@@ -24,7 +24,8 @@
 //!   Discord role of the state Settings names (aa-freight's
 //!   FREIGHT_DISCORD_MENTIONS, none by default; without a role mapped to
 //!   that state they go unmentioned, and Settings says so), and each
-//!   contract's status changes to the customers' channel, naming only the
+//!   contract's status changes to the customers' channel (both for priced
+//!   contracts only, unless every contract is announced), naming only the
 //!   issuer and route and mentioning nobody (apps can't message people, as
 //!   aa-freight's direct messages do).
 
@@ -960,6 +961,13 @@ fn notify(settings: &Settings) -> Result<(), JobError> {
         .map_err(|e| retry("reading status changes", e))?;
         for c in news.iter().filter(|c| !c.expired(now)) {
             let check = c.check(&pricings, settings.modifier);
+            // Priced contracts only, unless every contract is announced
+            // (aa-freight's FREIGHT_NOTIFY_ALL_CONTRACTS,
+            // `freight/managers.py:428-429`). Not noted: a pricing added
+            // while it's news still tells its customer.
+            if check.is_none() && !settings.notify_all {
+                continue;
+            }
             let added = storage::execute(
                 "WITH noticed AS (INSERT INTO customer_notices (contract_id, status) \
                      VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1) \
@@ -2123,7 +2131,7 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
                     )
                     .field(
                         Field::checkbox("notify_all", "Announce every contract", settings.notify_all)
-                            .help("Also contracts on routes without a pricing."),
+                            .help("Pilots and customers hear about contracts on routes without a pricing too."),
                     ),
             ),
     ))

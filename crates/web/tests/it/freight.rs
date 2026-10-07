@@ -556,9 +556,10 @@ async fn freight_end_to_end(db: PgPool) {
         .await;
     sync(&h).await;
     let sent = discord_messages(&h).await;
-    // 101 to pilots (priced) and its customer; 105 to its customer only
-    // (no pricing, not every contract announced); 104's delivery is old.
-    assert_eq!(sent.len(), 3, "{sent:#?}");
+    // 101 to pilots (priced) and its customer; 105 to nobody (no pricing,
+    // not every contract announced, as aa-freight's customer notices too);
+    // 104's delivery is old.
+    assert_eq!(sent.len(), 2, "{sent:#?}");
     let pilots: Vec<&String> = sent
         .iter()
         .filter(|m| m.contains("New courier contract"))
@@ -578,11 +579,7 @@ async fn freight_end_to_end(db: PgPool) {
             .all(|m| m.starts_with("content: \n")),
         "{sent:#?}"
     );
-    assert!(
-        sent.iter()
-            .any(|m| m.contains("waiting to be picked up") && m.contains("No pricing")),
-        "{sent:#?}"
-    );
+    assert!(!sent.iter().any(|m| m.contains("No pricing")), "{sent:#?}");
     // The customers' channel is shared: no collateral or cargo there.
     assert!(
         sent.iter()
@@ -592,11 +589,11 @@ async fn freight_end_to_end(db: PgPool) {
     );
     // Each once.
     sync(&h).await;
-    assert_eq!(discord_messages(&h).await.len(), 3);
+    assert_eq!(discord_messages(&h).await.len(), 2);
 
     // A state without a Discord role (Blue here): the notice goes out
     // unmentioned, not lost, and Pricing says why, with the fix. Every
-    // contract announced now: 105, unpriced, to pilots.
+    // contract announced now: 105, unpriced, to pilots and its customer.
     let res = post(
         &h,
         &owner,
@@ -612,11 +609,16 @@ async fn freight_end_to_end(db: PgPool) {
     let sent = discord_messages(&h).await;
     assert_eq!(sent.len(), 4, "{sent:#?}");
     assert!(
-        sent[3].starts_with("content: \nNew courier contract"),
+        sent[2].starts_with("content: \nNew courier contract"),
+        "{}",
+        sent[2]
+    );
+    assert!(sent[2].contains("No pricing for this route"), "{}", sent[2]);
+    assert!(
+        sent[3].contains("waiting to be picked up") && sent[3].contains("No pricing"),
         "{}",
         sent[3]
     );
-    assert!(sent[3].contains("No pricing for this route"), "{}", sent[3]);
     let failed: i64 = sqlx::query_scalar(
         r#"SELECT count(*) FROM "plugin_tether.freight".outbox WHERE failed IS NOT NULL"#,
     )

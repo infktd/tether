@@ -341,7 +341,7 @@ Phase 5, release 1.0:
 - [ ] Ship Replacement: edit a fleet's AAR (AA core `srp/views.py:340-358`)
 - [ ] Ship Replacement: disable and enable a fleet (AA core `srp/views.py:108-129`; aa-srp `aasrp/models.py:109-116`)
 - [x] Freight: My Alliance keeps only contracts issued by the alliance's members (aa-freight `freight/models/contract_handlers.py:343-344`). Done 2026-10-07: both alliance modes keep contracts whose issuer ESI's affiliation puts in the handler's alliance; one kept is followed to its end
-- [ ] Freight: customer notices only for priced contracts unless notify-all is on (aa-freight `freight/managers.py:428-429`)
+- [x] Freight: customer notices only for priced contracts unless notify-all is on (aa-freight `freight/managers.py:428-429`). Done 2026-10-07: an unpriced contract's customer hears nothing unless "Announce every contract" is on, and does once a pricing is added while it's news
 - [ ] Freight: My contracts for `use_calculator`, with aa-freight's statuses (aa-freight `freight/views.py:70-71`, `freight/managers.py:262-272`)
 - [ ] Freight: the All contracts tab (aa-freight `freight/templates/freight/contracts_all.html`, `freight/managers.py:258-261`)
 - [ ] Freight: Discord cards linking to the app's contracts (aa-freight `freight/models/contracts.py:335-341`)
