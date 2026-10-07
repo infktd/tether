@@ -86,12 +86,19 @@ pub async fn remove_channel(
         .await?
         .ok_or_else(|| AppError::not_found("No such ping channel."))?;
     let limits = ping_options::clear(&mut *tx, &channel_item(channel_id)).await?;
+    // Secure Groups that posted their run summaries there stop: the bot
+    // posts only to ping channels.
+    let groups = tether_db::smart_groups::clear_update_channel(&mut *tx, channel_id).await?;
     audit::record(
         &mut *tx,
         Actor::Account(actor),
         "ping.channel.remove",
         Some(&format!("channel:{channel_id}")),
-        json!({ "name": channel.name, "limits_removed": limits_json(&limits) }),
+        json!({
+            "name": channel.name,
+            "limits_removed": limits_json(&limits),
+            "group_updates_stopped": groups.iter().map(|g| g.0).collect::<Vec<_>>(),
+        }),
     )
     .await?;
     tx.commit().await?;

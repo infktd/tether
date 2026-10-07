@@ -2490,6 +2490,134 @@ async fn secure_groups_post_run_summaries_through_the_bot(db: PgPool) {
     assert_eq!(posted, 1);
 }
 
+/// Runs every queued Secure Groups job.
+async fn run_group_jobs(h: &Harness) {
+    let mut registry = tether_jobs::Registry::new();
+    tether_web::smart_groups::register_jobs(
+        &mut registry,
+        h.db.clone(),
+        h.esi.clone(),
+        h.key.clone(),
+        h.discord.clone(),
+    );
+    let config = tether_jobs::WorkerConfig::default();
+    while tether_jobs::run_once(&h.db, &registry, &config)
+        .await
+        .unwrap()
+        != tether_jobs::Outcome::Idle
+    {}
+}
+
+/// A summary that can't go out until an admin fixes something is logged
+/// and done, not one dead job an hour; removing the channel stops them.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn secure_groups_updates_nobody_can_post_are_not_dead_jobs(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    let res = send(
+        &h.app,
+        post_json(
+            "/api/admin/groups",
+            &owner,
+            r#"{"name":"Miners","internal":false,"hidden":false}"#,
+        ),
+    )
+    .await;
+    let miners = serde_json::from_str::<serde_json::Value>(&res.body).unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/groups/{miners}/smart"),
+            &format!(
+                "smart=on&configured=on&enabled=on&include_in_updates=on&auto_join=on\
+                 &update_channel={PING_CHANNEL}"
+            ),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // The bot may not post in the channel.
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({"code": 50013, "message": "Missing Permissions"}),
+            ),
+        )
+        .mount(&h.discord_server)
+        .await;
+    async fn sweep_again(h: &Harness) {
+        sqlx::query("UPDATE core.smart_groups SET swept_at = NULL")
+            .execute(&h.db)
+            .await
+            .unwrap();
+        tether_web::smart_groups::sweep(&h.db, &h.esi)
+            .await
+            .unwrap();
+        run_group_jobs(h).await;
+    }
+    async fn jobs(h: &Harness, state: &str) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM core.jobs WHERE kind = 'smart_groups.post_update' AND state = $1",
+        )
+        .bind(state)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    }
+    sweep_again(&h).await;
+    let posted = jobs(&h, "succeeded").await;
+    assert!(posted > 0);
+    assert_eq!(jobs(&h, "dead").await, 0);
+    // Discord moved to another server: the channel isn't a ping channel
+    // there.
+    sqlx::query("UPDATE core.discord_ping_channels SET guild_id = 1")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sweep_again(&h).await;
+    assert_eq!(jobs(&h, "succeeded").await, posted + 1);
+    assert_eq!(jobs(&h, "dead").await, 0);
+    sqlx::query("UPDATE core.discord_ping_channels SET guild_id = $1")
+        .bind(GUILD.parse::<i64>().unwrap())
+        .execute(&h.db)
+        .await
+        .unwrap();
+
+    // Removing the ping channel stops the group's posts, audited.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/discord/channels/{PING_CHANNEL}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let channel: Option<i64> =
+        sqlx::query_scalar("SELECT update_channel_id FROM core.smart_groups WHERE group_id = $1")
+            .bind(miners)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(channel, None);
+    let stopped: serde_json::Value = sqlx::query_scalar(
+        "SELECT details->'group_updates_stopped' FROM core.audit_log \
+         WHERE action = 'ping.channel.remove'",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(stopped, serde_json::json!([miners]));
+    sweep_again(&h).await;
+    assert_eq!(jobs(&h, "succeeded").await, posted + 1);
+    assert_eq!(jobs(&h, "dead").await, 0);
+}
+
 // ---- doctrines apps share (aa-fleetpings' use_doctrines_from_fittings_module) ----
 
 const PUBLISHER: &str = "acme.doctrines";

@@ -706,27 +706,37 @@ async fn sweep_one(
 }
 
 /// Posts a run's summary: only to a channel that's still a ping channel on
-/// the configured server, never mentioning anyone.
+/// the configured server, never mentioning anyone. A post that can't go
+/// out until an admin changes something (Discord not set up, the channel
+/// no longer a ping channel, the bot refused) is logged and done, not a
+/// dead job: the sweep queues one every hour (AA's webhook just logs).
 async fn post_update(
     db: &PgPool,
     key: &EncryptionKey,
     discord: &Discord,
     job: &PostJob,
 ) -> Result<(), JobError> {
+    let not_posted = |reason: &str| {
+        tracing::warn!(
+            group = job.group_id,
+            channel = job.channel_id,
+            reason,
+            "Secure Groups update not posted"
+        );
+        Ok(())
+    };
     let Some(config) = tether_discord::store::load(db, key)
         .await
         .map_err(JobError::retry)?
     else {
-        return Err(JobError::permanent("Discord isn't set up"));
+        return not_posted("Discord isn't set up");
     };
     let guild = i64::try_from(config.guild_id).map_err(JobError::permanent)?;
     if !tether_db::pings::is_channel(db, job.channel_id, guild)
         .await
         .map_err(JobError::retry)?
     {
-        return Err(JobError::permanent(
-            "that channel is no longer a ping channel; not posted",
-        ));
+        return not_posted("that channel is no longer a ping channel");
     }
     let channel = u64::try_from(job.channel_id).map_err(JobError::permanent)?;
     match discord
@@ -745,7 +755,7 @@ async fn post_update(
             Ok(())
         }
         Err(err) if err.is_transient() => Err(JobError::retry(err)),
-        Err(err) => Err(JobError::permanent(err)),
+        Err(err) => not_posted(&crate::pings::explain(&err)),
     }
 }
 

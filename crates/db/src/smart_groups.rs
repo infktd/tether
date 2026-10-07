@@ -160,6 +160,25 @@ pub async fn set_settings<'e>(
     Ok(())
 }
 
+/// Stops posting run summaries to a channel that's no longer a ping
+/// channel; returns the groups that posted there.
+pub async fn clear_update_channel<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    channel_id: i64,
+) -> Result<Vec<GroupId>, sqlx::Error> {
+    let groups = sqlx::query_scalar!(
+        r#"
+        UPDATE core.smart_groups SET update_channel_id = NULL
+        WHERE update_channel_id = $1
+        RETURNING group_id
+        "#,
+        channel_id
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(groups.into_iter().map(GroupId).collect())
+}
+
 /// Every smart group.
 pub async fn all<'e>(
     executor: impl sqlx::PgExecutor<'e>,
