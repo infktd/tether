@@ -1848,9 +1848,11 @@ fn publish_timers() -> Result<(), JobError> {
                  LEFT JOIN names o ON o.id = s.corporation_id LEFT JOIN names m ON m.id = t.moon_id \
                  WHERE t.at > now() - interval '1 day' AND t.kind <> 'Unanchoring' \
                  ORDER BY t.structure_id, t.kind, t.at DESC) latest \
-             ORDER BY 3, 1, 2 LIMIT {MAX_PUBLISHED}"
+             ORDER BY latest.kind = $1, 3, 1, 2 LIMIT {MAX_PUBLISHED}"
         ),
-        &[],
+        // Moon chunks after every other timer, so routine extractions
+        // never crowd a reinforcement out of the host's 500.
+        &[notification::EXTRACTION.into()],
     )
     .map_err(|e| retry("publishing timers: reading them", e))?;
     let timers: Vec<tether_plugin_sdk::timers::Timer> = rows
@@ -1928,8 +1930,11 @@ fn publish_timers() -> Result<(), JobError> {
             corporation_id: settings.timers_corporation_only.then(|| int(r, 5)),
         })
     }));
-    timers.sort_by(|a, b| a.at.cmp(&b.at));
+    // Extractions last for the cut, as above; then by time.
+    let extraction = |t: &tether_plugin_sdk::timers::Timer| t.key.ends_with(":extraction");
+    timers.sort_by(|a, b| (extraction(a), &a.at).cmp(&(extraction(b), &b.at)));
     timers.truncate(usize::try_from(MAX_PUBLISHED).unwrap_or(500));
+    timers.sort_by(|a, b| a.at.cmp(&b.at));
     tether_plugin_sdk::timers::publish(&timers).map_err(|e| retry("publishing timers", e))
 }
 

@@ -1072,6 +1072,8 @@ async fn a_channel_the_bot_cant_post_in_holds_nothing_up(db: PgPool) {
             ("moon_channel", DISCORD_PING_CHANNEL),
             ("default_pings", "on"),
             ("danger_ping", "Member"),
+            // Not among aa-structures' default types: ticked here.
+            ("t_moonminingextractionstarted", "on"),
         ],
     )
     .await;
