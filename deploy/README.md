@@ -61,11 +61,11 @@ following edge. Re-running install.sh never changes the pin: only
 
 ## Upgrading
 
-From the console: Administration, System, Upgrade. Tether's updater (the
-`updater` container, which install.sh adds) pulls the new version and
-restarts the app, and the same card rolls back one step, restoring the
-snapshot the upgrade took. It needs a recent EVE login, like other
-sensitive actions. On `edge` it offers the newest build of main; on a
+From the console: Administration › Health, the Version card's Upgrade
+button. Tether's updater (the `updater` container, which install.sh adds)
+pulls the new version and restarts the app, and the same card rolls back
+one step, restoring the snapshot the upgrade took. It needs a recent EVE
+login, like other sensitive actions. On `edge` it offers the newest build of main; on a
 release, the newest release once the daily check has seen it. The updater
 holds the Docker socket, so the app never does: it has no network or
 ports, and it only acts on a published tag of your image or one step back.

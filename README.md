@@ -44,6 +44,12 @@ Tether runs the day-to-day of an EVE Online alliance or corporation: who's in, w
 
 More apps install straight from a GitHub repository. Tether reviews what each one asks for and shows it to you before anything runs.
 
+## Guides
+
+- [Admin guide](docs/guide/admins.md): first-run setup, states, groups, permissions, Discord, apps, Health, backups and upgrades.
+- [Member guide](docs/guide/members.md): logging in, characters, registering for apps, groups, Discord and notifications.
+- [App developer guide](docs/guide/app-developers.md): building, signing and publishing an app.
+
 ## Install
 
 You need a server with Docker (with the compose plugin) and a domain pointing at it. Tether runs from a published image (`ghcr.io/infktd/tether`), so the server downloads it and compiles nothing. You don't need to clone the repository: this fetches just the deploy files and runs the installer.
@@ -72,7 +78,7 @@ To upgrade, run `deploy/install.sh --version X.Y.Z`. It pins the new image, pull
 
 ## Building apps
 
-Apps are Rust crates compiled to WebAssembly components against the Tether SDK. They get their own database schema, background jobs, pages built from Tether's components (so every app looks native), Discord messages, and ESI through the host. The SDK guide, [crates/plugin-sdk/AGENTS.md](crates/plugin-sdk/AGENTS.md), covers everything from the manifest to publishing a release on GitHub. The SDK is MIT or Apache-2.0, so your app can use any license you like.
+Apps are Rust crates compiled to WebAssembly components against the Tether SDK. They get their own database schema, background jobs, pages built from Tether's components (so every app looks native), Discord messages, and ESI through the host. The [app developer guide](docs/guide/app-developers.md) walks through building, signing and publishing one, and the SDK reference, [crates/plugin-sdk/AGENTS.md](crates/plugin-sdk/AGENTS.md), covers everything from the manifest to every host call. The SDK is MIT or Apache-2.0, so your app can use any license you like.
 
 ## Developing Tether
 
