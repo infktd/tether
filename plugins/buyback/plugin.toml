@@ -27,6 +27,9 @@ groups = true
 # Approved by Jay (2026-10-07): item prices from Fuzzwork's market API
 # (aa-buybackprogram's default) or Janice, with the admin's API key.
 http = ["market.fuzzwork.co.uk", "janice.e-351.com"]
+# Each program's performance as CSV (aa-buybackprogram's Export CSV), for
+# holders of see_performance.
+downloads = true
 
 [capabilities.secrets.janice_api_key]
 host = "janice.e-351.com"
