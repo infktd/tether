@@ -556,28 +556,64 @@ pub async fn character_may_serve(
 
 /// The app's characters: registered for it, on accounts holding one of its
 /// permissions, with tokens carrying every one of `scopes` (its user
-/// scopes).
+/// scopes). With `keep_broken` (the bundled Member Audit, as
+/// aa-memberaudit keeps a character whose token stopped working and only
+/// pauses its updates), also those whose token is revoked, deleted or short
+/// of a scope, though not one sold (its owner hash changed).
 pub async fn serving_characters(
     pool: &PgPool,
     plugin_id: &str,
     scopes: &[String],
+    keep_broken: bool,
 ) -> Result<Vec<crate::plugin_esi::CharacterRow>, sqlx::Error> {
     sqlx::query_as!(
         crate::plugin_esi::CharacterRow,
         r#"
         SELECT c.id, c.name, c.corporation_id, c.alliance_id
         FROM core.characters c
-        JOIN core.character_tokens t ON t.character_id = c.id
         JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1
+        LEFT JOIN core.character_tokens t ON t.character_id = c.id
         WHERE core.holds_app_permission(c.account_id, $1)
-          AND t.state = 'valid' AND t.scopes @> $2
+          AND ((t.state = 'valid' AND t.scopes @> $2)
+               OR ($3 AND (t.state IS DISTINCT FROM 'revoked'
+                           OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')))
         ORDER BY c.name
         "#,
         plugin_id,
         scopes,
+        keep_broken,
     )
     .fetch_all(pool)
     .await
+}
+
+/// Whether the character is one [`serving_characters`] lists only with
+/// `keep_broken`: registered for the app, on an account holding one of its
+/// permissions, not sold, and its token not usable for `scopes`.
+pub async fn character_kept_broken(
+    pool: &PgPool,
+    plugin_id: &str,
+    character_id: i64,
+    scopes: &[String],
+) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        r#"
+        SELECT true AS "ok!"
+        FROM core.characters c
+        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $2
+        LEFT JOIN core.character_tokens t ON t.character_id = c.id
+        WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)
+          AND (t.state = 'valid' AND t.scopes @> $3) IS NOT TRUE
+          AND (t.state IS DISTINCT FROM 'revoked'
+               OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')
+        "#,
+        character_id,
+        plugin_id,
+        scopes,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
 }
 
 /// Whether the account holds one of the app's permissions: whether it
@@ -673,13 +709,13 @@ pub struct ServingOwner {
     pub builtin: Option<String>,
 }
 
-/// The owners of [`serving_characters`] (the same characters), for the
-/// one app that may know them (Member Audit, as aa-memberaudit's scopes
-/// go by the owner's main). Accounts without a main are left out.
+/// The owners of [`serving_characters`] (the same characters, those kept
+/// with a broken token included), for the one app that may know them
+/// (Member Audit, as aa-memberaudit's scopes go by the owner's main).
+/// Accounts without a main are left out.
 pub async fn serving_owners(
     pool: &PgPool,
     plugin_id: &str,
-    scopes: &[String],
 ) -> Result<Vec<ServingOwner>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
@@ -689,15 +725,15 @@ pub async fn serving_owners(
         FROM core.characters c
         JOIN core.accounts a ON a.id = c.account_id
         JOIN core.states s ON s.id = a.state_id
-        JOIN core.character_tokens t ON t.character_id = c.id
+        LEFT JOIN core.character_tokens t ON t.character_id = c.id
         JOIN core.characters m ON m.id = a.main_character_id
         JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1
         WHERE core.holds_app_permission(a.id, $1)
-          AND t.state = 'valid' AND t.scopes @> $2
+          AND (t.state IS DISTINCT FROM 'revoked'
+               OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')
         ORDER BY c.id
         "#,
         plugin_id,
-        scopes,
     )
     .fetch_all(pool)
     .await?;

@@ -335,8 +335,10 @@ pub(crate) fn run(only: Option<i64>) -> Result<(), JobError> {
 }
 
 /// The host's list of characters (registered with the app's scopes, by
-/// pilots holding one of its permissions): new ones added, those gone
-/// forgotten with all their data. History older than the Settings keep
+/// pilots holding one of its permissions, and those whose token stopped
+/// working, kept as aa-memberaudit keeps them: their reads answer
+/// `token`, so their updates pause): new ones added, those gone forgotten
+/// with all their data. History older than the Settings keep
 /// goes, and shares past the sharing timeout end.
 fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobError> {
     let characters = esi::characters();
@@ -719,9 +721,111 @@ fn clones(run: &mut Run, id: i64) -> Result<(), Stop> {
     ])
 }
 
+/// Every page of the character's assets, as aa-memberaudit reads them:
+/// MAX_PAGES a run, the rest in the next (a hoarder's hundred pages don't
+/// fit one), each page kept aside as it's read. The stored assets, and
+/// `assets_at` the Secure Groups asset filter answers from, are replaced
+/// only once the last page is in, so a read under way never shows part.
+/// A read whose page count changes starts over (the list moved under it).
 fn assets(run: &mut Run, id: i64) -> Result<(), Stop> {
-    let (items, whole) = run.pages("character-assets", id)?;
-    for a in &items {
+    let reading = |e| Stop::Section(format!("reading the assets: {e:?}"));
+    let progress = storage::query(
+        "SELECT assets_page, assets_pages FROM characters WHERE character_id = $1",
+        &[id.into()],
+    )
+    .map_err(reading)?;
+    let held = |n: usize| {
+        progress
+            .rows
+            .first()
+            .and_then(|r| r.get(n))
+            .and_then(Db::as_integer)
+            .and_then(|v| u32::try_from(v).ok())
+    };
+    let (mut page, mut pages) = match (held(0), held(1)) {
+        (Some(page), Some(pages)) if page > 1 && page <= pages => (page, pages),
+        _ => (1, 0),
+    };
+    let mut response = run.get("character-assets", id, &[], Some(page))?;
+    if page > 1 && response.pages != pages {
+        page = 1;
+        response = run.get("character-assets", id, &[], Some(1))?;
+    }
+    if page == 1 {
+        pages = response.pages.max(1);
+        store(&[
+            stmt(
+                "DELETE FROM assets_reading WHERE character_id = $1",
+                vec![id.into()],
+            ),
+            stmt(
+                "UPDATE characters SET assets_page = 1, assets_pages = $2 WHERE character_id = $1",
+                vec![id.into(), i64::from(pages).into()],
+            ),
+        ])?;
+    }
+    let last = pages.min(page.saturating_add(MAX_PAGES - 1));
+    loop {
+        let mut readable = true;
+        let items = array(&response.body, &mut readable);
+        if !readable {
+            // Garbled: the next read starts over; what's stored stays.
+            store(&[
+                stmt(
+                    "DELETE FROM assets_reading WHERE character_id = $1",
+                    vec![id.into()],
+                ),
+                stmt(
+                    "UPDATE characters SET assets_page = NULL, assets_pages = NULL \
+                     WHERE character_id = $1",
+                    vec![id.into()],
+                ),
+            ])?;
+            return Err(Stop::Section(format!(
+                "page {page} of the assets came back garbled; the list shown is the last \
+                 complete one"
+            )));
+        }
+        stage_assets(run, id, &items, page)?;
+        if page >= last {
+            break;
+        }
+        page += 1;
+        response = run.get("character-assets", id, &[], Some(page))?;
+    }
+    if page < pages {
+        // The rest in the next run (queued a minute on).
+        return Err(Stop::Run);
+    }
+    // The last page is in: the new list replaces the old at once.
+    store(&[
+        stmt(
+            "DELETE FROM assets WHERE character_id = $1",
+            vec![id.into()],
+        ),
+        stmt(
+            "INSERT INTO assets (character_id, item_id, type_id, quantity, location_id, \
+             location_flag, location_type) \
+             SELECT character_id, item_id, type_id, quantity, location_id, location_flag, \
+             location_type FROM assets_reading WHERE character_id = $1",
+            vec![id.into()],
+        ),
+        stmt(
+            "DELETE FROM assets_reading WHERE character_id = $1",
+            vec![id.into()],
+        ),
+        // The Secure Groups asset filter answers only for complete assets.
+        stmt(
+            "UPDATE characters SET assets_at = now(), assets_page = NULL, assets_pages = NULL \
+             WHERE character_id = $1",
+            vec![id.into()],
+        ),
+    ])
+}
+
+/// Keeps one page of assets aside and notes the next page to read.
+fn stage_assets(run: &mut Run, id: i64, items: &[Json], page: u32) -> Result<(), Stop> {
+    for a in items {
         run.ids.extend(i(&a["type_id"]));
         match a["location_type"].as_str() {
             Some("station") | Some("solar_system") => run.ids.extend(i(&a["location_id"])),
@@ -729,7 +833,7 @@ fn assets(run: &mut Run, id: i64) -> Result<(), Stop> {
             _ => {}
         }
     }
-    let items: Vec<Json> = items
+    let rows_of: Vec<Json> = items
         .iter()
         .map(|a| {
             json!({
@@ -739,38 +843,23 @@ fn assets(run: &mut Run, id: i64) -> Result<(), Stop> {
             })
         })
         .collect();
-    insert_all(
-        vec![
-            stmt(
-                "UPDATE characters SET assets_at = NULL WHERE character_id = $1",
-                vec![id.into()],
-            ),
-            stmt(
-                "DELETE FROM assets WHERE character_id = $1",
-                vec![id.into()],
-            ),
-        ],
-        "INSERT INTO assets (character_id, item_id, type_id, quantity, location_id, location_flag, location_type) \
+    if !rows_of.is_empty() {
+        insert_all(
+        Vec::new(),
+        "INSERT INTO assets_reading (character_id, item_id, type_id, quantity, location_id, \
+         location_flag, location_type) \
          SELECT $2, item_id, type_id, quantity, location_id, location_flag, location_type \
          FROM json_to_recordset($1::json) AS x(item_id bigint, type_id bigint, quantity bigint, \
               location_id bigint, location_flag text, location_type text) \
          ON CONFLICT DO NOTHING",
-        &items,
+        &rows_of,
         id,
     )?;
-    // The Secure Groups asset filter answers only for complete assets.
-    if whole {
-        store(&[stmt(
-            "UPDATE characters SET assets_at = now() WHERE character_id = $1",
-            vec![id.into()],
-        )])
-    } else {
-        // What was read stays, and the sheet says it's only part.
-        Err(Stop::Section(format!(
-            "only part of the assets was read, so this list is incomplete (more than \
-             {MAX_PAGES} pages of them, or a page ESI sent garbled)"
-        )))
     }
+    store(&[stmt(
+        "UPDATE characters SET assets_page = $2 WHERE character_id = $1",
+        vec![id.into(), i64::from(page + 1).into()],
+    )])
 }
 
 /// The wallet journal: ESI's last 30 days, newest first, in pages, read
@@ -1472,8 +1561,15 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
                 &plain_text(mail["body"].as_str().unwrap_or_default()),
                 MAX_BODY,
             ),
-            // Deleted since: kept as a header without a body.
-            Err(stop) if stop.gone() => String::new(),
+            // Deleted in EVE since: the header goes too, as
+            // aa-memberaudit deletes a mail ESI no longer has.
+            Err(stop) if stop.gone() => {
+                store(&[stmt(
+                    "DELETE FROM mails WHERE character_id = $1 AND mail_id = $2",
+                    vec![id.into(), mail_id.into()],
+                )])?;
+                continue;
+            }
             // A passing failure: asked again on a later read.
             Err(Stop::Section(why) | Stop::Esi(_, why)) => {
                 log::warn(format!("character {id}, mail {mail_id}'s body: {why}"));

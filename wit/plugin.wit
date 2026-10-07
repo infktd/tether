@@ -743,7 +743,9 @@ interface esi {
     post: func(endpoint: string, subject: subject, body: string) -> result<response, error>;
     /// The plugin's characters: registered for it, on accounts holding
     /// one of its permissions (any state, as Alliance Auth's apps), with
-    /// tokens carrying every one of its user scopes.
+    /// tokens carrying every one of its user scopes. The bundled Member
+    /// Audit also gets those whose token stopped working (not sold ones),
+    /// as aa-memberaudit keeps them; reading one answers `token`.
     characters: func() -> list<character>;
     /// This plugin's data-source characters in use.
     data-sources: func() -> list<character>;

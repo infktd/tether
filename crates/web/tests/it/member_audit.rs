@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 9] = [
+const MIGRATIONS: [&str; 10] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -55,6 +55,7 @@ const MIGRATIONS: [&str; 9] = [
     "migrations/0007_older_mail.sql",
     "migrations/0008_journal_gap.sql",
     "migrations/0009_mail_gap.sql",
+    "migrations/0010_assets_every_page.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -1754,25 +1755,34 @@ async fn a_big_hangar_is_stored_whole(db: PgPool) {
     assert!(whole);
 }
 
-/// More pages of assets than a read takes: what was read is kept, and the
-/// sheet says the list is incomplete (the section shows as failed), rather
-/// than showing it as whole.
+/// More pages of assets than a run reads (aa-memberaudit reads them all):
+/// the rest in the next run, and the list replaced only once the last page
+/// is in, so the sheet never shows part of it.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn assets_read_in_part_say_so(db: PgPool) {
+async fn every_page_of_assets_is_read_over_runs(db: PgPool) {
     let (h, owner) = synced(db).await;
-    Mock::given(method("GET"))
-        .and(path(format!("/characters/{CHRIBBA}/assets")))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("x-pages", "21")
-                .set_body_json(serde_json::json!([
-                    { "item_id": 1_000_000_000_010_i64, "type_id": 34, "quantity": 5, "location_id": JITA_4_4,
-                      "location_flag": "Hangar", "location_type": "station", "is_singleton": false },
-                ])),
-        )
-        .with_priority(1)
-        .mount(&h.esi_server)
-        .await;
+    let before: i64 =
+        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.member-audit".assets"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    for page in 1..=25_i64 {
+        Mock::given(method("GET"))
+            .and(path(format!("/characters/{CHRIBBA}/assets")))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "25")
+                    .set_body_json(serde_json::json!([
+                        { "item_id": 1_000_000_200_000_i64 + page, "type_id": 34, "quantity": 5,
+                          "location_id": JITA_4_4, "location_flag": "Hangar",
+                          "location_type": "station", "is_singleton": false },
+                    ])),
+            )
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
     sqlx::query(
         r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'assets'"#,
     )
@@ -1780,16 +1790,34 @@ async fn assets_read_in_part_say_so(db: PgPool) {
     .await
     .unwrap();
     sync(&h).await;
-    let (stored, filtered, ok): (i64, bool, bool) = sqlx::query_as(
+    // Twenty pages read: kept aside, the old list still shown and whole.
+    let (stored, aside, filtered): (i64, i64, bool) = sqlx::query_as(
         r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".assets),
-                  (SELECT assets_at IS NOT NULL FROM "plugin_tether.member-audit".characters),
+                  (SELECT count(*) FROM "plugin_tether.member-audit".assets_reading),
+                  (SELECT assets_at IS NOT NULL FROM "plugin_tether.member-audit".characters)"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!((stored, aside), (before, 20), "{:?}", plugin_warnings(&h).await);
+    assert!(filtered);
+    // The next run, a minute on, reads the rest and swaps the list in.
+    sqlx::query("UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND state = 'queued'")
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    work(&h).await;
+    let (stored, aside, ok): (i64, i64, bool) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".assets),
+                  (SELECT count(*) FROM "plugin_tether.member-audit".assets_reading),
                   (SELECT ok FROM "plugin_tether.member-audit".section_syncs WHERE section = 'assets')"#,
     )
     .fetch_one(&h.db)
     .await
     .unwrap();
-    assert_eq!(stored, 1);
-    assert!(!filtered && !ok);
+    assert_eq!((stored, aside), (25, 0), "{:?}", plugin_warnings(&h).await);
+    assert!(ok);
     let tab = page(
         &h,
         &format!("/plugins/{ID}/character/{CHRIBBA}/assets"),
@@ -1798,9 +1826,7 @@ async fn assets_read_in_part_say_so(db: PgPool) {
     .await
     .body;
     assert!(tab.contains("Tritanium"), "{tab}");
-    assert!(tab.contains("this list is incomplete"), "{tab}");
-    let mine = page(&h, "/dashboard", &owner).await.body;
-    assert!(mine.contains("Update issues"), "{mine}");
+    assert!(!tab.contains("incomplete"), "{tab}");
 }
 
 /// Two characters colonising one planet that isn't named yet: it's named
@@ -2372,6 +2398,92 @@ async fn a_passing_esi_failure_loses_nothing(db: PgPool) {
             false
         )
     );
+}
+
+/// A mail deleted in EVE since its header was read (ESI answers 404 for
+/// its body): the header goes too, as aa-memberaudit deletes it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_mail_deleted_in_eve_goes(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = bundling(db).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/mail/{MAIL}")))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(serde_json::json!({ "error": "Mail not found" })),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    work(&h).await;
+    register(&h, &owner).await;
+    sync(&h).await;
+    let kept: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".mails WHERE mail_id = {MAIL}"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, 0, "{:?}", plugin_warnings(&h).await);
+}
+
+/// A character whose token stopped working stays, with what was read, as
+/// aa-memberaudit keeps it: its updates pause and the sheet says why. A
+/// character sold on goes.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_character_whose_token_broke_is_kept(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    sqlx::query(
+        "UPDATE core.character_tokens SET state = 'revoked', revoked_reason = 'refresh refused' \
+         WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(r#"DELETE FROM "plugin_tether.member-audit".section_syncs"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sync(&h).await;
+    let (kept, skills, failed): (i64, i64, i64) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".characters),
+                  (SELECT count(*) FROM "plugin_tether.member-audit".skills),
+                  (SELECT count(*) FROM "plugin_tether.member-audit".section_syncs WHERE NOT ok)"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, 1);
+    assert!(skills > 0);
+    assert!(failed > 0);
+    let mine = page(&h, "/dashboard", &owner).await.body;
+    assert!(mine.contains("Update issues"), "{mine}");
+    // Sold on: no longer the pilot's, so forgotten (the list then empty,
+    // a day after it was last seen).
+    sqlx::query(
+        "UPDATE core.character_tokens SET revoked_reason = 'owner hash changed' \
+         WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".characters SET seen_at = now() - interval '2 days'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let kept: i64 =
+        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.member-audit".characters"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(kept, 0);
 }
 
 /// A large alliance: more registered characters than the parameters one

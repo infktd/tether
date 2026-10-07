@@ -310,7 +310,19 @@ async fn esi_get(
                     .await
                     .map_err(unavailable)?;
             if !registered {
-                return Err(EsiError::NotRegistered);
+                // A character the bundled Member Audit keeps (its token
+                // stopped working): a token problem, so the app pauses it.
+                let kept = may_see_owners(plugin, running.origin)
+                    && tether_db::compliance::character_kept_broken(
+                        &deps.db, plugin, id, &scopes,
+                    )
+                    .await
+                    .map_err(unavailable)?;
+                return Err(if kept {
+                    EsiError::Token
+                } else {
+                    EsiError::NotRegistered
+                });
             }
             Target {
                 character_id: id,
@@ -967,7 +979,12 @@ impl Services for PluginServices {
             if scopes.is_empty() {
                 return Vec::new();
             }
-            match tether_db::compliance::serving_characters(&db, &plugin, &scopes).await {
+            // The bundled Member Audit keeps a character whose token stopped
+            // working, as aa-memberaudit does: its reads answer `token`.
+            let keep_broken = may_see_owners(&plugin, running.origin);
+            match tether_db::compliance::serving_characters(&db, &plugin, &scopes, keep_broken)
+                .await
+            {
                 Ok(rows) => rows.into_iter().map(character).collect(),
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin characters");
@@ -995,7 +1012,7 @@ impl Services for PluginServices {
             if scopes.is_empty() {
                 return Some(Vec::new());
             }
-            match tether_db::compliance::serving_owners(&db, &plugin, &scopes).await {
+            match tether_db::compliance::serving_owners(&db, &plugin).await {
                 Ok(rows) => Some({
                     tracing::info!(plugin, owners = rows.len(), "plugin read character owners");
                     rows.into_iter()
