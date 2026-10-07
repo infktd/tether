@@ -7,7 +7,7 @@ name = "Structures"
 icon = "citadel"
 version = "0.5.10"
 host_api = "1"
-description = "Owners' Upwell structures, starbases, customs offices and skyhooks with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner by type with pings by severity, and fuel alerts."
+description = "Owners' Upwell structures, starbases, customs offices, skyhooks and jump gates with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner by type with pings by severity, fuel alerts, and notices to admins."
 
 [publisher]
 key = "PUBLISHER_KEY"
@@ -18,6 +18,10 @@ discord = ["send_message"]
 # Structures' timers go to Structure Timers, as aa-structures feeds the
 # timerboard.
 timers = "publish"
+# Admins (superusers and holders of manage) hear of owners added and of an
+# owner's services down, restored or enabled, as aa-structures'
+# notify_admins (STRUCTURES_ADMIN_NOTIFICATIONS_ENABLED).
+notify = true
 
 [capabilities.esi]
 # Through each owner (data-source character, AA's structure owner): its

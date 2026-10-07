@@ -24,10 +24,16 @@
 //!   published for Structure Timers after every sync (friendly, and
 //!   corporation-only if a manager says so, as aa-structures'
 //!   STRUCTURES_TIMERS_ARE_CORP_RESTRICTED).
+//! - A Jump gates tab: Ansiblex gates with their liquid ozone
+//!   (aa-structures' STRUCTURES_SHOW_JUMP_GATES).
+//! - Admin notices (aa-structures' STRUCTURES_ADMIN_NOTIFICATIONS_ENABLED):
+//!   holders of `manage` and superusers hear of owners added, and of an
+//!   owner's reads stopping, coming back or first working (`admin`).
 //! - ESI is read gently: notifications at most every 10 minutes and
 //!   structures every hour (their cache times), and an owner ESI answers
 //!   403 for (a lost role) is left alone for an hour, doubling to a day.
 
+mod admin;
 mod card;
 mod detail;
 mod notification;
@@ -64,12 +70,13 @@ const ESI_BUDGET: usize = 90;
 const SENDS_PER_RUN: usize = 5;
 const RELAY_GAP: Duration = Duration::seconds(15);
 /// Rows per table on a page (the host caps values per page at 10,000:
-/// 13 columns of Upwell structures, 11 of starbases, 10 of orbitals, and
-/// the short tables).
+/// 14 columns of Upwell structures, 12 of starbases, 10 of orbitals, and
+/// the short tables, jump gates' 11 among them).
 const LIST_ROWS: i64 = 250;
 const STARBASE_ROWS: i64 = 120;
 const ORBITAL_ROWS: i64 = 150;
 const SHORT_ROWS: i64 = 60;
+const GATE_ROWS: i64 = 50;
 const TIMER_ROWS: i64 = 80;
 const OWNER_ROWS: i64 = 60;
 /// Fuel alert configs' hours: a year at most.
@@ -353,6 +360,11 @@ struct Settings {
     /// A moon extraction started gives a timer for its chunk
     /// (aa-structures' STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED).
     moon_extraction_timers: bool,
+    /// The list's Jump gates tab (aa-structures' STRUCTURES_SHOW_JUMP_GATES).
+    show_jump_gates: bool,
+    /// Admins hear of owners added and services down or back
+    /// (aa-structures' STRUCTURES_ADMIN_NOTIFICATIONS_ENABLED).
+    admin_notifications: bool,
 }
 
 impl Settings {
@@ -375,7 +387,8 @@ fn settings() -> Result<Settings, storage::Error> {
                 timers_corporation_only, default_tags_filter, warning_ping, \
                 array_to_string(notification_types, ','), \
                 coalesce((SELECT max(start_hours) FROM fuel_alert_configs WHERE enabled), 72)::bigint, \
-                sov_channel, war_channel, corp_channel, moon_extraction_timers \
+                sov_channel, war_channel, corp_channel, moon_extraction_timers, show_jump_gates, \
+                admin_notifications \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -414,6 +427,14 @@ fn settings() -> Result<Settings, storage::Error> {
             .and_then(|r| r.get(14))
             .and_then(Db::as_bool)
             .unwrap_or(true),
+        show_jump_gates: row
+            .and_then(|r| r.get(15))
+            .and_then(Db::as_bool)
+            .unwrap_or(true),
+        admin_notifications: row
+            .and_then(|r| r.get(16))
+            .and_then(Db::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -722,10 +743,15 @@ fn record(owner: i64, read: Read, outcome: &Outcome) -> Result<(), JobError> {
 /// Every 10 minutes: owners, then each corporation's notifications and
 /// (hourly) structures, names, messages, timers and low-fuel alerts. The
 /// timers are published for Structure Timers whatever happened before (a
-/// step failing, or owners gone), so what it shows follows at once.
+/// step failing, or owners gone), so what it shows follows at once; and
+/// admins hear of owners' services however the steps went (a step that
+/// failed is when they most need to).
 fn sync() -> Result<(), JobError> {
     let synced = sync_steps();
     let published = publish_timers();
+    if let Err(err) = admin::notices() {
+        log::warn(format!("admin notices weren't sent: {err:?}"));
+    }
     synced?;
     published?;
     queue_relay(None)?;
@@ -909,6 +935,11 @@ fn sync_owners() -> Result<Vec<i64>, JobError> {
         ),
         Statement::new(
             "DELETE FROM structures WHERE corporation_id NOT IN (SELECT corporation_id FROM owners)",
+            vec![],
+        ),
+        // An owner gone and added again is new again to its admins.
+        Statement::new(
+            "DELETE FROM owner_status WHERE corporation_id NOT IN (SELECT corporation_id FROM owners)",
             vec![],
         ),
         Statement::new(
@@ -2325,6 +2356,82 @@ fn orbital_table(rows: Vec<Vec<Value>>) -> Table {
     )
 }
 
+/// aa-structures' Jump gates tab: the Ansiblex gates the viewer may see
+/// (`gates`, of `total`), each with the liquid ozone in its fuel bay as the
+/// corporation's assets last said: none read yet shows nothing, an empty
+/// bay 0.
+fn jump_gate_tab(
+    gates: &storage::Rows,
+    total: i64,
+    now: DateTime<Utc>,
+    alert: i64,
+    unanchoring: bool,
+) -> Result<Vec<Section>, PageError> {
+    let ids: Vec<i64> = gates.rows.iter().map(|r| int(r, 0)).collect();
+    let ozone = storage::query(
+        &format!(
+            "SELECT s.structure_id, s.fuel_read_at IS NOT NULL, \
+                 coalesce((SELECT sum(i.quantity) FROM structure_items i \
+                     WHERE i.structure_id = s.structure_id AND i.type_id = {LIQUID_OZONE} \
+                       AND i.flag = 'StructureFuel'), 0)::bigint \
+             FROM structures s WHERE s.structure_id = ANY(string_to_array($1, ',')::bigint[])"
+        ),
+        &[id_list(&ids).into()],
+    )
+    .map_err(|e| failed("reading liquid ozone", e))?;
+    let rows = gates.rows.iter().map(|r| {
+        let id = int(r, 0);
+        let units: Value = ozone
+            .rows
+            .iter()
+            .find(|o| int(o, 0) == id)
+            .filter(|o| o.get(1).and_then(Db::as_bool).unwrap_or(false))
+            .map_or_else(|| "".into(), |o| int(o, 2).into());
+        // A structure's row (its state and timer seen as for any other),
+        // but the type (every one an Ansiblex), services, reinforce hour
+        // and core; the ozone after its fuel.
+        let mut cells: Vec<Value> = structure_row(r, now, alert, unanchoring)
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| ![3, 8, 11, 12].contains(i))
+            .map(|(_, cell)| cell)
+            .collect();
+        cells.insert(7, units);
+        cells
+    });
+    let table = with_rows(
+        Table::new(vec![
+            Column::text(""),
+            Column::text("Owner"),
+            Column::text("Name"),
+            Column::text("System"),
+            Column::text("Region"),
+            Column::numeric("Fuel expires"),
+            Column::text("Fuel left"),
+            Column::numeric("Liquid ozone"),
+            Column::text("State"),
+            Column::numeric("State timer"),
+            Column::text("Tags"),
+        ])
+        .title("Jump gates")
+        .empty("No jump gates."),
+        rows,
+    );
+    let mut sections = vec![Section::Table(table)];
+    if total > GATE_ROWS {
+        sections.push(Section::Text(format!(
+            "Showing the first {GATE_ROWS} of {total}: pick an owner on the Owners tab, or tags, \
+             to see theirs."
+        )));
+    }
+    sections.push(Section::Text(
+        "Liquid ozone in each gate's fuel bay, as its corporation's assets last said. They're \
+         read with a data source's Director role: until then the figure is empty."
+            .to_owned(),
+    ));
+    Ok(sections)
+}
+
 /// What the list shows: an owner's, or those with any of some tags.
 #[derive(Default)]
 struct Filter {
@@ -2335,6 +2442,8 @@ struct Filter {
 const LOW_FUEL: &str = "((s.kind = 'upwell' AND (s.fuel_expires IS NULL OR s.fuel_expires <= now() + make_interval(hours => $6::integer))) \
      OR (s.kind = 'starbase' AND s.fuel_expires <= now() + make_interval(hours => $6::integer)))";
 const REINFORCED: &str = "s.state IN ('armor_reinforce', 'armor_vulnerable', 'hull_reinforce', 'hull_vulnerable', 'reinforced')";
+/// Ansiblex jump gates ([`JUMP_GATE`]).
+const JUMP_GATES: &str = "(s.kind = 'upwell' AND s.type_id = 35841)";
 
 fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
     let Some(visible) = visibility(viewer) else {
@@ -2404,12 +2513,18 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
     )?;
     let low = query(LOW_FUEL, "s.fuel_expires NULLS FIRST", SHORT_ROWS)?;
     let reinforced = query(REINFORCED, "s.state_timer_end NULLS LAST", SHORT_ROWS)?;
+    let gates = if settings.show_jump_gates {
+        Some(query(JUMP_GATES, "o.name, s.name", GATE_ROWS)?)
+    } else {
+        None
+    };
     let counts = storage::query(
         &format!(
             "SELECT count(*) FILTER (WHERE s.kind = 'upwell'), \
                  count(*) FILTER (WHERE s.kind = 'starbase'), \
                  count(*) FILTER (WHERE s.kind IN ('customs_office', 'skyhook')), \
-                 count(*) FILTER (WHERE {LOW_FUEL}), count(*) FILTER (WHERE {REINFORCED}) \
+                 count(*) FILTER (WHERE {LOW_FUEL}), count(*) FILTER (WHERE {REINFORCED}), \
+                 count(*) FILTER (WHERE {JUMP_GATES}) \
              FROM structures s {scope}"
         ),
         &params,
@@ -2617,8 +2732,14 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             vec![Section::Table(orbital_table(
                 orbitals.rows.iter().map(|r| orbital_row(r)).collect(),
             ))],
-        )
-        .tab("Tags", vec![Section::Table(tags::tag_table(&all_tags))]);
+        );
+    if let Some(gates) = &gates {
+        page = page.tab(
+            "Jump gates",
+            jump_gate_tab(gates, count_of(5), now, alert, unanchoring)?,
+        );
+    }
+    page = page.tab("Tags", vec![Section::Table(tags::tag_table(&all_tags))]);
     // The tag filter (aa-structures' "Filter by tag"): any of those
     // chosen, on the whole list (an owner's page has its own owner).
     if filter.owner.is_none() && !all_tags.is_empty() {
@@ -2915,7 +3036,32 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                 settings.default_tags_filter,
             )
             .help("The list shows only structures with a default tag until tags are picked."),
+        )
+        .field(
+            Field::checkbox(
+                "show_jump_gates",
+                "Show the Jump gates tab",
+                settings.show_jump_gates,
+            )
+            .help(
+                "aa-structures' STRUCTURES_SHOW_JUMP_GATES: Ansiblex jump gates with their \
+                 liquid ozone, on their own tab.",
+            ),
         );
+    let admin = SettingsGroup::new("Admin notifications").field(
+        Field::checkbox(
+            "admin_notifications",
+            "Notify admins",
+            settings.admin_notifications,
+        )
+        .help(
+            "aa-structures' STRUCTURES_ADMIN_NOTIFICATIONS_ENABLED: superusers and holders of \
+             manage get a notice in Tether's notifications when a data source is added, and when \
+             an owner's reads stop (structures for 2 hours, notifications for 40 minutes, assets \
+             once read for 2 hours), come back, or first work. An owner can be left out on its \
+             own page.",
+        ),
+    );
     let owner_rows = owners.rows.iter().map(|r| {
         let backing_off = when(r, 6).filter(|t| *t > now);
         let status = match (&backing_off, r.get(5).and_then(Db::as_text)) {
@@ -3043,7 +3189,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     let mut form = SettingsForm::new("settings")
         .group(discord)
         .group(pings)
-        .group(shown);
+        .group(shown)
+        .group(admin);
     for (i, category) in Category::ALL.into_iter().enumerate() {
         let mut types = type_group(category, settings.notification_types.as_ref());
         if i == 0 {
@@ -3096,8 +3243,8 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
          moon_channel = $4, default_pings = $5, danger_ping = $6, warning_ping = $9, \
          timers_corporation_only = $7, default_tags_filter = $8, sov_channel = $10, \
          war_channel = $11, corp_channel = $12, \
-         notification_types = string_to_array($13, ','), moon_extraction_timers = $14 \
-         WHERE id = 1",
+         notification_types = string_to_array($13, ','), moon_extraction_timers = $14, \
+         show_jump_gates = $15, admin_notifications = $16 WHERE id = 1",
         vec![
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
@@ -3113,6 +3260,8 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             channel("corp_channel").into(),
             types.clone().into(),
             moon_timers.into(),
+            submission.checked("show_jump_gates").into(),
+            submission.checked("admin_notifications").into(),
         ],
     )];
     if !moon_timers {
@@ -3131,7 +3280,7 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, \
          sovereignty {:?}, wars {:?}, members {:?}, \
          default pings {} (danger {:?}, warning {:?}), timers corporation-only {}, \
-         moon extraction timers {moon_timers}, types {}",
+         moon extraction timers {moon_timers}, jump gates tab {}, admin notices {}, types {}",
         viewer.main.name,
         viewer.main.id,
         channel("attack_channel"),
@@ -3145,6 +3294,8 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         channel("danger_ping"),
         channel("warning_ping"),
         submission.checked("timers_corporation_only"),
+        submission.checked("show_jump_gates"),
+        submission.checked("admin_notifications"),
         types.as_deref().unwrap_or("every type"),
     ));
     Ok(SubmitResult::Redirect("settings".into()))
@@ -3569,12 +3720,19 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
     let own = storage::query(
         "SELECT mention, pocos_public, array_to_string(notification_types, ','), \
              alliance_main IS NOT NULL AND alliance_main = (SELECT o.alliance_id FROM owners o \
-                 WHERE o.corporation_id = $1 AND o.alliance_id IS NOT NULL LIMIT 1) \
+                 WHERE o.corporation_id = $1 AND o.alliance_id IS NOT NULL LIMIT 1), \
+             in_service_status \
          FROM owner_settings WHERE corporation_id = $1",
         &[corp.into()],
     )
     .map_err(|e| failed("reading owner settings", e))?;
     let own_types = own.rows.first().and_then(|r| routing::type_list(r.get(2)));
+    let in_service_status = own
+        .rows
+        .first()
+        .and_then(|r| r.get(4))
+        .and_then(Db::as_bool)
+        .unwrap_or(true);
     let mention = own
         .rows
         .first()
@@ -3647,6 +3805,22 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
                  alliance's others.",
             ),
         );
+    let mut status_help = "aa-structures' is included in service status: admins are told when \
+        this owner's reads stop, come back or first work."
+        .to_owned();
+    if !settings.admin_notifications {
+        status_help.push_str(
+            " Nothing is sent while Notify admins is unticked in the settings: tick it there.",
+        );
+    }
+    let notices = SettingsGroup::new("Admin notices").field(
+        Field::checkbox(
+            "in_service_status",
+            "Included in service status",
+            in_service_status,
+        )
+        .help(status_help),
+    );
     let types = SettingsGroup::new("Notification types")
         .description(
             "Which types this owner sends: the settings' defaults, or its own, ticked below.",
@@ -3672,12 +3846,13 @@ fn owner_settings_page(corp: i64) -> Result<Page, PageError> {
     let mut form = SettingsForm::new("owner_routes")
         .group(discord)
         .group(owner)
+        .group(notices)
         .group(types);
     for category in Category::ALL {
         form = form.group(type_group(category, shown.as_ref()));
     }
     Ok(Page::new(format!("Structures owner: {name}"))
-        .description("Discord routing for one owner")
+        .description("One owner's Discord routing, pings, customs offices and admin notices")
         .settings(form))
 }
 
@@ -3737,11 +3912,12 @@ fn save_owner_settings(
     statements.push(Statement::new(
         format!(
             "INSERT INTO owner_settings (corporation_id, mention, pocos_public, alliance_main, \
-                 notification_types) \
-             VALUES ($1, $2, $3, CASE WHEN $4 THEN {alliance} END, string_to_array($5, ',')) \
+                 notification_types, in_service_status) \
+             VALUES ($1, $2, $3, CASE WHEN $4 THEN {alliance} END, string_to_array($5, ','), $6) \
              ON CONFLICT (corporation_id) DO UPDATE SET mention = EXCLUDED.mention, \
                  pocos_public = EXCLUDED.pocos_public, alliance_main = EXCLUDED.alliance_main, \
-                 notification_types = EXCLUDED.notification_types"
+                 notification_types = EXCLUDED.notification_types, \
+                 in_service_status = EXCLUDED.in_service_status"
         ),
         vec![
             corp.into(),
@@ -3749,16 +3925,18 @@ fn save_owner_settings(
             submission.checked("pocos_public").into(),
             alliance_main.into(),
             types.clone().into(),
+            submission.checked("in_service_status").into(),
         ],
     ));
     storage::transaction(&statements).map_err(|e| failed("saving the owner", e))?;
     log::info(format!(
         "owner {corp} routing set by {} ({}): {}, mention {mention}, customs offices public {}, \
-         alliance main {alliance_main}, types {}",
+         alliance main {alliance_main}, in service status {}, types {}",
         viewer.main.name,
         viewer.main.id,
         summary.join(", "),
         submission.checked("pocos_public"),
+        submission.checked("in_service_status"),
         types.as_deref().unwrap_or("the defaults"),
     ));
     Ok(SubmitResult::Redirect("settings".into()))
@@ -3811,6 +3989,11 @@ mod tests {
             "allow_access_with_standings": false, "standing_level": "neutral",
             "neutral_standing_tax_rate": 0.1,
         })));
+    }
+
+    #[test]
+    fn the_jump_gates_tab_lists_ansiblexes() {
+        assert!(JUMP_GATES.contains(&format!("s.type_id = {JUMP_GATE})")));
     }
 
     #[test]

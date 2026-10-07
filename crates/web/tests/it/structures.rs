@@ -432,6 +432,20 @@ fn fuel_text() -> String {
     )
 }
 
+/// Structures' notices in an account's notifications: "title | message".
+async fn notices(h: &Harness, character: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT n.title || ' | ' || n.message FROM core.notifications n \
+         JOIN core.characters c ON c.account_id = n.account_id \
+         WHERE c.id = $1 AND n.plugin_id = $2 ORDER BY n.id",
+    )
+    .bind(character)
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
 /// The role mention a pinged message starts with.
 fn member_ping() -> String {
     format!("<@&{DISCORD_MEMBER_ROLE}>")
@@ -572,6 +586,8 @@ async fn structures_end_to_end(db: PgPool) {
         "t_structurefuelalert=on",
         "t_structureunderattack=on",
         "moon_extraction_timers=on",
+        "show_jump_gates=on",
+        "admin_notifications=on",
     ] {
         assert!(fresh.split('&').any(|p| p == on), "{on}: {fresh}");
     }
@@ -1722,7 +1738,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     assert!(pocos.body.contains("5.0%"), "{}", pocos.body);
 
     // Tags: generated ones (space type, sov) on every structure.
-    let tags = page(&h, &format!("/plugins/{ID}?_tab=6"), &owner).await;
+    let tags = page(&h, &format!("/plugins/{ID}?_tab=7"), &owner).await;
     assert!(tags.body.contains("highsec"), "{}", tags.body);
     let tagged: Vec<String> = sqlx::query_scalar(
         r#"SELECT t.name FROM "plugin_tether.structures".structure_tags s
@@ -1823,7 +1839,7 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     );
     let res = send(&h.app, form(&url, &body, &member)).await;
     assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    let tags = page(&h, &format!("/plugins/{ID}?_tab=6"), &member).await;
+    let tags = page(&h, &format!("/plugins/{ID}?_tab=7"), &member).await;
     assert!(
         !tags.body.contains(r#"<td class="num text-right">1</td>"#),
         "{}",
@@ -2250,6 +2266,16 @@ async fn aa_structures_rules(db: PgPool) {
     assert_eq!(discord_messages(&h).await.len(), before + 1);
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(settings.body.contains("Chribba Alt"), "{}", settings.body);
+    // Admins heard of it (aa-structures' "Character added to").
+    let heard = notices(&h, CHRIBBA).await;
+    assert!(
+        heard.contains(
+            &"Structures: Character added to: Otherworld Enterprises | Chribba Alt was added \
+              as a data source for Otherworld Enterprises. It now has 2 data sources."
+                .to_owned()
+        ),
+        "{heard:?}"
+    );
 }
 
 const JUMP_GATE: i64 = 1_035_466_617_949;
@@ -2469,6 +2495,20 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
         ozone[0].contains("Jita » Perimeter") && ozone[0].contains("50000 units left"),
         "{ozone:?}"
     );
+    // aa-structures' Jump gates tab, with its liquid ozone; gone when
+    // unticked.
+    let gates = page(&h, &format!("/plugins/{ID}?_tab=6"), &owner).await;
+    for seen in ["Jump gates", "Jita » Perimeter", "50,000"] {
+        assert!(gates.body.contains(seen), "{seen}: {}", gates.body);
+    }
+    let res = save_settings(&h, &owner, &[("show_jump_gates", "")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let list = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(!list.body.contains("Jump gates"), "{}", list.body);
+    let res = save_settings(&h, &owner, &[("show_jump_gates", "on")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let list = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(list.body.contains("Jump gates"), "{}", list.body);
 
     let url = format!("settings/owner/{CHRIBBA_CORP}");
     let routing = page(&h, &format!("/plugins/{ID}/{url}"), &owner).await;
@@ -2545,8 +2585,17 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
 // ---- aa-structures' fresh-install defaults ------------------------------------
 
 /// What 0007 leaves in the settings: default pings, the warning ping, the
-/// default types, how many fuel alert configs and moon extraction timers.
-type Defaults = (bool, Option<String>, Option<Vec<String>>, i64, bool);
+/// default types, how many fuel alert configs, moon extraction timers,
+/// admin notices and the Jump gates tab.
+type Defaults = (
+    bool,
+    Option<String>,
+    Option<Vec<String>>,
+    i64,
+    bool,
+    bool,
+    bool,
+);
 
 /// Runs 0001-0006 in a scratch schema, then `setup` (an install in some
 /// state), then 0007; what the settings then say.
@@ -2573,7 +2622,8 @@ async fn migrated(conn: &mut sqlx::PgConnection, schema: &str, setup: &str) -> D
         .unwrap();
     sqlx::query_as(
         "SELECT default_pings, warning_ping, notification_types, \
-             (SELECT count(*) FROM fuel_alert_configs), moon_extraction_timers \
+             (SELECT count(*) FROM fuel_alert_configs), moon_extraction_timers, \
+             admin_notifications, show_jump_gates \
          FROM settings",
     )
     .fetch_one(&mut *conn)
@@ -2586,14 +2636,15 @@ async fn migrated(conn: &mut sqlx::PgConnection, schema: &str, setup: &str) -> D
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn aa_defaults_only_for_a_fresh_install(db: PgPool) {
     let mut conn = db.acquire().await.unwrap();
-    let (pings, warning, types, configs, moons) = migrated(&mut conn, "fresh", "SELECT 1").await;
-    assert!(pings && moons);
+    let (pings, warning, types, configs, moons, admins, gates) =
+        migrated(&mut conn, "fresh", "SELECT 1").await;
+    assert!(pings && moons && admins && gates);
     assert_eq!(warning.as_deref(), Some("Member"));
     assert_eq!(types.map(|t| t.len()), Some(22));
     assert_eq!(configs, 0);
 
     let untouched = |pings: bool, types: Option<Vec<String>>, configs: i64| -> Defaults {
-        (pings, None, types, configs, false)
+        (pings, None, types, configs, false, false, true)
     };
     for (schema, setup, kept) in [
         (
@@ -2641,6 +2692,24 @@ async fn aa_defaults_only_for_a_fresh_install(db: PgPool) {
     ] {
         assert_eq!(migrated(&mut conn, schema, setup).await, kept, "{schema}");
     }
+    // Owners known before count as announced to admins; ones added after
+    // wait for their notice.
+    sqlx::raw_sql("SET search_path TO scratch_owner")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO owners (character_id, character_name, corporation_id) VALUES (3, 'B', 2)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let announced: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT character_id, announced FROM owners ORDER BY 1")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(announced, vec![(1, true), (3, false)]);
 }
 
 /// The Keep's armor timer and a moon chunk: Structures' own `timers`.
@@ -2815,6 +2884,140 @@ async fn moon_extractions_become_structure_timers(db: PgPool) {
         reads(&h, &format!("/characters/{CHRIBBA}/notifications")).await,
         5
     );
+}
+
+// ---- admin notices ----------------------------------------------------------
+
+/// aa-structures' admin notifications: superusers (and holders of manage)
+/// hear of an owner added and of its services going down, coming back or
+/// first working; an owner left out of the service status, or the setting
+/// off, sends nothing.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn admins_hear_of_owners_and_services(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    cover(&db, Builtin::Member, EntityKind::Corporation, GIGX_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    // A Member who may open Structures, but isn't an admin.
+    const GIGX: i64 = 1887431749;
+    let _gigx = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "basic_access").await;
+    let owner = approve_owner(&h, &owner).await;
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        notices(&h, CHRIBBA).await,
+        vec![
+            "Structures: Structure owner added: Otherworld Enterprises | Otherworld \
+             Enterprises was added as a new structure owner, with Chribba as its data source."
+                .to_owned(),
+            "Structures: Services enabled for Otherworld Enterprises | Structure services for \
+             Otherworld Enterprises have been enabled."
+                .to_owned(),
+        ]
+    );
+    assert!(notices(&h, GIGX).await.is_empty());
+
+    // Notifications stop (backing off, last read an hour ago): down.
+    let stop = || async {
+        sqlx::query(
+            r#"UPDATE "plugin_tether.structures".owners
+               SET notifications_at = now() - interval '1 hour',
+                   notifications_retry_at = now() + interval '1 hour'"#,
+        )
+        .execute(&h.db)
+        .await
+        .unwrap();
+        let problems = sync(&h).await;
+        assert!(problems.is_empty(), "{problems:?}");
+    };
+    let restart = || async {
+        sqlx::query(
+            r#"UPDATE "plugin_tether.structures".owners
+               SET notifications_at = NULL, notifications_retry_at = NULL"#,
+        )
+        .execute(&h.db)
+        .await
+        .unwrap();
+        let problems = sync(&h).await;
+        assert!(problems.is_empty(), "{problems:?}");
+    };
+    stop().await;
+    let heard = notices(&h, CHRIBBA).await;
+    assert_eq!(heard.len(), 3, "{heard:?}");
+    assert!(
+        heard[2].starts_with(
+            "Structures: Services are down for Otherworld Enterprises | Structure services for \
+             Otherworld Enterprises are down. Admin action is likely required to restore \
+             services. Structures: up; notifications: down; assets: up."
+        ),
+        "{heard:?}"
+    );
+    restart().await;
+    let heard = notices(&h, CHRIBBA).await;
+    assert_eq!(
+        heard.last().map(String::as_str),
+        Some(
+            "Structures: Services restored for Otherworld Enterprises | Structure services for \
+             Otherworld Enterprises have been restored."
+        ),
+        "{heard:?}"
+    );
+
+    // Left out of the service status: judged, never told.
+    let res = save_owner(&h, &owner, CHRIBBA_CORP, &[("in_service_status", "")], None).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    stop().await;
+    assert_eq!(notices(&h, CHRIBBA).await.len(), 4);
+    let up: bool = sqlx::query_scalar(
+        r#"SELECT up FROM "plugin_tether.structures".owner_status WHERE corporation_id = $1"#,
+    )
+    .bind(CHRIBBA_CORP)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(!up);
+
+    // Notify admins off: nothing, though the owner counts again.
+    let res = save_settings(&h, &owner, &[("admin_notifications", "")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let routing = page(
+        &h,
+        &format!("/plugins/{ID}/settings/owner/{CHRIBBA_CORP}"),
+        &owner,
+    )
+    .await;
+    assert!(
+        routing
+            .body
+            .contains("Nothing is sent while Notify admins is unticked in the settings"),
+        "{}",
+        routing.body
+    );
+    let res = save_owner(
+        &h,
+        &owner,
+        CHRIBBA_CORP,
+        &[("in_service_status", "on")],
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    restart().await;
+    assert_eq!(notices(&h, CHRIBBA).await.len(), 4);
+    assert!(notices(&h, GIGX).await.is_empty());
 }
 
 // ---- the sync's ESI calls ----------------------------------------------------

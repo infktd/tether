@@ -11,6 +11,29 @@ ALTER TABLE settings ADD COLUMN moon_extraction_timers boolean NOT NULL DEFAULT 
 -- The moon an extraction's timer is for (none for other timers).
 ALTER TABLE timers ADD COLUMN moon_id bigint;
 
+-- aa-structures' STRUCTURES_SHOW_JUMP_GATES (on there, and here for
+-- everyone): a Jump gates tab with each Ansiblex's liquid ozone.
+ALTER TABLE settings ADD COLUMN show_jump_gates boolean NOT NULL DEFAULT true;
+
+-- aa-structures' STRUCTURES_ADMIN_NOTIFICATIONS_ENABLED (on there): admins
+-- hear of owners added, and of an owner's reads stopping, coming back or
+-- first working. On for a fresh install (below); an instance in use stays
+-- quiet until a manager ticks it.
+ALTER TABLE settings ADD COLUMN admin_notifications boolean NOT NULL DEFAULT false;
+-- Owners known now count as announced; those the sync adds later wait for
+-- their notice.
+ALTER TABLE owners ADD COLUMN announced boolean NOT NULL DEFAULT true;
+ALTER TABLE owners ALTER COLUMN announced SET DEFAULT false;
+-- aa-structures' Owner.is_up, per corporation: whether its reads were all
+-- fresh at the last look. No row: not known yet.
+CREATE TABLE owner_status (
+    corporation_id bigint PRIMARY KEY,
+    up boolean NOT NULL,
+    checked_at timestamptz NOT NULL DEFAULT now()
+);
+-- aa-structures' is_included_in_service_status, per owner.
+ALTER TABLE owner_settings ADD COLUMN in_service_status boolean NOT NULL DEFAULT true;
+
 -- A fresh install: no owner, nothing read, queued or alerted, no channel
 -- picked, and every setting as 0001-0006 left it. Plugin migrations run at
 -- install, before any job, so a new install always is one; an instance
@@ -21,7 +44,7 @@ ALTER TABLE timers ADD COLUMN moon_id bigint;
 -- - its 22 default notification types for new webhooks (webhook_defaults());
 -- - no fuel alert configs (it seeds none, so EVE's own fuel alerts report
 --   low fuel; 0004's three reported every low-fuel structure twice);
--- - moon extraction timers on.
+-- - moon extraction timers and admin notices on.
 -- One statement, so each part sees the install as it was.
 WITH fresh AS (
     SELECT NOT EXISTS (SELECT 1 FROM owners)
@@ -58,5 +81,6 @@ UPDATE settings SET
         'StructureOnline', 'StructureServicesOffline', 'StructureUnderAttack',
         'StructureWentHighPower', 'StructureWentLowPower', 'TowerAlertMsg', 'TowerResourceAlertMsg'
     ],
-    moon_extraction_timers = true
+    moon_extraction_timers = true,
+    admin_notifications = true
 WHERE id = 1 AND (SELECT yes FROM fresh);
