@@ -4,8 +4,8 @@
 //!   `setup_contract_handler` holder; chosen with the mode when there are
 //!   several) whose corporation's courier contracts
 //!   are read every ten minutes, kept as the operation mode says (aa-freight's
-//!   four: contracts to the alliance; to the corporation from its members,
-//!   from the alliance's, or from anyone).
+//!   four: contracts to the alliance from its members; to the corporation
+//!   from its members, from the alliance's, or from anyone).
 //! - **Pricing** (`manage`, aa-freight's admin site): routes between
 //!   locations, one way or both, with a base price, a minimum, a price per
 //!   m3 (with the handler's global modifier when a route uses it), a price
@@ -67,7 +67,7 @@ const MODES: [(&str, &str, &str); 4] = [
     (
         "my_alliance",
         "My Alliance",
-        "Contracts assigned to the handler's alliance.",
+        "Contracts assigned to the handler's alliance by its members.",
     ),
     (
         "my_corporation",
@@ -505,7 +505,10 @@ fn sync_failed(why: &str) -> Result<(), JobError> {
 }
 
 /// The contracts the operation mode keeps (all are courier contracts
-/// assigned to its organization already).
+/// assigned to its organization already). In both alliance modes, as
+/// aa-freight's: those whose issuer is in the handler's alliance
+/// (`freight/models/contract_handlers.py:343-350`); a contract kept once is
+/// followed to its end, though its issuer leaves the alliance meanwhile.
 fn keep(
     mode: &str,
     handler: &Character,
@@ -516,7 +519,7 @@ fn keep(
             .into_iter()
             .filter(|c| c["issuer_corporation_id"].as_i64() == Some(handler.corporation_id))
             .collect()),
-        "corp_in_alliance" => {
+        "my_alliance" | "corp_in_alliance" => {
             let Some(alliance) = handler.alliance_id else {
                 return Ok(Vec::new());
             };
@@ -524,23 +527,48 @@ fn keep(
                 .iter()
                 .filter_map(|c| c["issuer_id"].as_i64())
                 .collect();
-            let in_alliance: Vec<i64> = affiliations(&issuers)?
+            let members: Vec<i64> = affiliations(&issuers)?
                 .into_iter()
                 .filter(|(_, _, a)| *a == Some(alliance))
                 .map(|(character, _, _)| character)
                 .collect();
+            let kept = stored(&couriers)?;
             Ok(couriers
                 .into_iter()
-                .filter(|c| {
-                    c["issuer_id"]
-                        .as_i64()
-                        .is_some_and(|id| in_alliance.contains(&id))
-                })
+                .filter(|c| from_member(c, &members, &kept))
                 .collect())
         }
-        // my_alliance and corp_public: everything assigned.
+        // corp_public: everything assigned.
         _ => Ok(couriers),
     }
+}
+
+/// Whether a contract's issuer is one of the alliance's `members`, or the
+/// contract is one already kept.
+fn from_member(c: &serde_json::Value, members: &[i64], kept: &[i64]) -> bool {
+    c["issuer_id"]
+        .as_i64()
+        .is_some_and(|id| members.contains(&id))
+        || c["contract_id"]
+            .as_i64()
+            .is_some_and(|id| kept.contains(&id))
+}
+
+/// Which of these contracts are stored already.
+fn stored(contracts: &[serde_json::Value]) -> Result<Vec<i64>, JobError> {
+    let list = contracts
+        .iter()
+        .filter_map(|c| c["contract_id"].as_i64())
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows = storage::query(
+        "SELECT contract_id FROM contracts \
+         WHERE contract_id = ANY(string_to_array($1, ',')::bigint[])",
+        &[list.into()],
+    )
+    .map_err(|e| retry("reading stored contracts", e))?;
+    Ok(rows.rows.iter().map(|r| int(r, 0)).collect())
 }
 
 /// Characters' corporations and alliances now, from ESI's public
@@ -2349,6 +2377,11 @@ mod tests {
         let kept = keep("corp_public", &handler, vec![contract(100), contract(200)]);
         assert_eq!(kept.map(|k| k.len()).unwrap_or_default(), 2);
         assert_eq!(organization(&handler, "my_alliance"), Some(1_000));
+        // The alliance modes: a member's contract, or one kept already.
+        let c = serde_json::json!({ "contract_id": 7, "issuer_id": 5 });
+        assert!(from_member(&c, &[5], &[]));
+        assert!(from_member(&c, &[], &[7]));
+        assert!(!from_member(&c, &[6], &[8]));
         assert_eq!(organization(&handler, "corp_public"), Some(100));
     }
 }

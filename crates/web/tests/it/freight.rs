@@ -764,3 +764,85 @@ async fn freight_end_to_end(db: PgPool) {
         .unwrap();
     assert_eq!(left, 99);
 }
+
+/// My Alliance keeps the contracts assigned to the alliance by its
+/// members only, as aa-freight (`freight/models/contract_handlers.py:343`);
+/// one kept already is followed to its end though its issuer has left.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn my_alliance_keeps_its_members_contracts(db: PgPool) {
+    const ALLIANCE: i64 = 159826257;
+    let h = harness(db, true).await;
+    Mock::given(method("POST"))
+        .and(path("/characters/affiliation"))
+        .respond_with(AffiliationFixture::load())
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let owner = add_handler(&h, &owner).await;
+    sqlx::query("UPDATE core.characters SET alliance_id = $1 WHERE id = $2")
+        .bind(ALLIANCE)
+        .bind(CHRIBBA)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let res = post(
+        &h,
+        &owner,
+        "handler",
+        &format!("_form=mode&handler={CHRIBBA}&mode=my_alliance"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let assigned = |id, issuer| {
+        contract(
+            id,
+            "courier",
+            ALLIANCE,
+            issuer,
+            (JITA, AMARR),
+            "outstanding",
+            1.0,
+            Duration::hours(-1),
+        )
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/contracts")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                // Chribba is in the alliance; Pilot A isn't.
+                .set_body_json(serde_json::json!([
+                    assigned(201, CHRIBBA),
+                    assigned(202, PILOT_A)
+                ])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    sync(&h).await;
+    let kept = || async {
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT contract_id FROM "plugin_tether.freight".contracts ORDER BY 1"#,
+        )
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(kept().await, vec![201]);
+    // One kept already stays, though its issuer has left the alliance.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.freight".contracts (contract_id, issuer_id,
+               issuer_corporation_id, start_location, end_location, status, date_issued)
+           VALUES (202, $1, $2, $3, $4, 'outstanding', now())"#,
+    )
+    .bind(PILOT_A)
+    .bind(OTHER_CORP)
+    .bind(JITA)
+    .bind(AMARR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    assert_eq!(kept().await, vec![201, 202]);
+}
