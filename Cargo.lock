@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "fleet-activity-tracking"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "chrono",
  "serde_json",

@@ -842,6 +842,75 @@ async fn statistics_by_alliance_corporation_pilot_and_month(db: PgPool) {
     no_problems(&plugin_problems(&h).await);
 }
 
+/// A big corporation's year: more pilot-months than one query may return.
+/// Every pilot's months are counted whole, the busiest 300 are shown, and
+/// the table says so.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_big_corporations_statistics_are_exact(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let schema = schema(&h).await;
+    let year = Utc::now().year() - 1;
+    // A fleet each month of last year.
+    sqlx::query(sql!(
+        "INSERT INTO \"{schema}\".links (hash, fleet, creator_account, creator_id, creator_name, \
+             created_at, expires_at) \
+         SELECT 'big' || m, 'Op ' || m, 1, 1, 'FC', make_timestamptz($1, m, 15, 12, 0, 0, 'UTC'), \
+             make_timestamptz($1, m, 15, 13, 0, 0, 'UTC') \
+         FROM generate_series(1, 12) m"
+    ))
+    .bind(year)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    // 5,000 pilots in January's; Ace in every one.
+    sqlx::query(sql!(
+        "INSERT INTO \"{schema}\".fats (link_id, character_id, character_name, corporation_id) \
+         SELECT l.id, 2100000000 + n, 'Pilot ' || lpad(n::text, 5, '0'), $1 \
+         FROM \"{schema}\".links l, generate_series(1, 5000) n WHERE l.hash = 'big1'"
+    ))
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(sql!(
+        "INSERT INTO \"{schema}\".fats (link_id, character_id, character_name, corporation_id) \
+         SELECT id, 2099999999, 'Ace', $1 FROM \"{schema}\".links WHERE hash LIKE 'big%'"
+    ))
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let stats = open(
+        &h,
+        &format!("stats/corporation/{CHRIBBA_CORP}/{year}"),
+        &owner,
+    )
+    .await;
+    assert_eq!(stats.status, StatusCode::OK, "{}", stats.body);
+    assert!(
+        stats.body.contains("By pilot: the busiest 300 of 5001"),
+        "{}",
+        stats.body
+    );
+    // Ace first with all twelve, then the rest by name, each whole.
+    let ace = stats.body.find(">Ace</a>").expect("Ace is listed");
+    let first = stats
+        .body
+        .find(">Pilot 00001</a>")
+        .expect("the first pilot");
+    assert!(ace < first);
+    // The table's last rows (Tether shows 25 at a time; it's the page's
+    // second table).
+    let last = open(
+        &h,
+        &format!("stats/corporation/{CHRIBBA_CORP}/{year}?_p1=12"),
+        &owner,
+    )
+    .await;
+    assert!(last.body.contains(">Pilot 00299</a>"), "{}", last.body);
+    assert!(!last.body.contains(">Pilot 00300</a>"), "{}", last.body);
+}
+
 fn registry(h: &Harness) -> Registry {
     let mut registry = Registry::new();
     tether_web::plugin_jobs::register_jobs(&mut registry, h.db.clone(), h.plugins.clone());

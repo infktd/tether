@@ -1929,45 +1929,36 @@ fn register(
 
 // ---- statistics ------------------------------------------------------------
 
-/// Rows of (key, label, month 1-12, count) pivoted into one row per key
-/// with a count per month, busiest first.
-fn pivot(rows: &[Vec<Db>]) -> Vec<(i64, String, [i64; 12])> {
-    let mut out: Vec<(i64, String, [i64; 12])> = Vec::new();
-    for row in rows {
-        let (key, label, month, n) = (int(row, 0), text(row, 1), int(row, 2), int(row, 3));
-        let Some(slot) = usize::try_from(month - 1).ok().filter(|m| *m < 12) else {
-            continue;
-        };
-        match out.iter_mut().find(|(k, _, _)| *k == key) {
-            Some((_, _, months)) => months[slot] += n,
-            None => {
-                let mut months = [0; 12];
-                months[slot] = n;
-                out.push((key, label, months));
-            }
-        }
-    }
-    out.sort_by(|a, b| {
-        let (ta, tb): (i64, i64) = (a.2.iter().sum(), b.2.iter().sum());
-        tb.cmp(&ta)
-            .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
-    });
-    out
+/// FATs by month, a row per key (a pilot, a corporation): the busiest
+/// `MAX_STAT_ROWS`, and how many keys there are in all.
+struct Grouped {
+    rows: Vec<(i64, String, [i64; 12])>,
+    keys: i64,
 }
 
-/// A table with a column per month and a total.
+/// A table with a column per month and a total; past `MAX_STAT_ROWS`
+/// keys, its title says it shows the busiest.
 fn month_table(
     first: &str,
     title: &str,
     empty: &str,
-    rows: &[(i64, String, [i64; 12])],
+    grouped: &Grouped,
     cell: impl Fn(i64, &str) -> Value,
 ) -> Table {
     let mut columns = vec![Column::text(first)];
     columns.extend(MONTHS.iter().map(|m| Column::numeric(*m)));
     columns.push(Column::numeric("Total"));
+    let title = if grouped.keys > grouped.rows.len() as i64 {
+        format!(
+            "{title}: the busiest {} of {}",
+            grouped.rows.len(),
+            grouped.keys
+        )
+    } else {
+        title.to_owned()
+    };
     let mut table = Table::new(columns).title(title).empty(empty);
-    for (key, label, months) in rows.iter().take(MAX_STAT_ROWS) {
+    for (key, label, months) in &grouped.rows {
         let mut row = vec![cell(*key, label)];
         row.extend(months.iter().map(|n| Value::from(*n)));
         row.push(months.iter().sum::<i64>().into());
@@ -1978,9 +1969,11 @@ fn month_table(
 
 const MONTH: &str = "extract(month FROM l.created_at AT TIME ZONE 'UTC')::bigint";
 
-/// FATs in `year` grouped by `key` (with `label`) and month, filtered by
-/// `filter` on `$3` onwards. The SQL fragments are this file's own
-/// constants, never input.
+/// FATs in `year` by `key` (with `label`), a count per month, filtered by
+/// `filter` on `$3` onwards: Postgres counts and ranks every key, busiest
+/// first, and returns the top `MAX_STAT_ROWS`, exact however many FATs
+/// there are. The SQL fragments are this file's own constants, never
+/// input.
 fn grouped(
     key: &str,
     label: &str,
@@ -1988,20 +1981,35 @@ fn grouped(
     filter: &str,
     year: i32,
     params: &[Db],
-) -> Result<Vec<(i64, String, [i64; 12])>, PageError> {
+) -> Result<Grouped, PageError> {
     let (start, end) = year_bounds(year);
     let mut all = vec![start, end];
     all.extend(params.iter().cloned());
+    let months: String = (1..=12)
+        .map(|m| format!(", count(*) FILTER (WHERE {MONTH} = {m})::bigint"))
+        .collect();
     let rows = query(
         &format!(
-            "SELECT {key}, max({label}), {MONTH}, count(*)::bigint \
+            "SELECT {key}, max({label}), count(*) OVER ()::bigint{months} \
              FROM fats f JOIN links l ON l.id = f.link_id {joins} \
              WHERE l.created_at >= $1 AND l.created_at < $2 AND {filter} \
-             GROUP BY 1, 3 LIMIT 4800"
+             GROUP BY 1 ORDER BY count(*) DESC, lower(max({label})), 1 LIMIT {MAX_STAT_ROWS}"
         ),
         &all,
     )?;
-    Ok(pivot(&rows))
+    Ok(Grouped {
+        keys: rows.first().map_or(0, |r| int(r, 2)),
+        rows: rows
+            .iter()
+            .map(|r| {
+                let mut months = [0; 12];
+                for (i, n) in months.iter_mut().enumerate() {
+                    *n = int(r, i + 3);
+                }
+                (int(r, 0), text(r, 1), months)
+            })
+            .collect(),
+    })
 }
 
 const CORPORATION_LABEL: &str = "coalesce(n.name, 'Unknown corporation')";
