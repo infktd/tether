@@ -539,12 +539,15 @@ pub fn learn_planets(budget: &mut Budget) -> Result<(), JobError> {
     Ok(())
 }
 
-/// Names of starbases' moons and of moons in notifications (once each).
+/// Names of starbases' moons, of moons in notifications and of moon
+/// extractions' timers (once each: an extraction handled between syncs is
+/// named for its timer here).
 pub fn learn_moons(budget: &mut Budget) -> Result<(), JobError> {
     let missing = storage::query(
         "SELECT DISTINCT moon_id FROM ( \
              SELECT moon_id FROM structures WHERE kind = 'starbase' \
-             UNION SELECT moon_id FROM notifications WHERE NOT handled) s \
+             UNION SELECT moon_id FROM notifications WHERE NOT handled \
+             UNION SELECT moon_id FROM timers) s \
          WHERE moon_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM names n WHERE n.id = s.moon_id) \
          LIMIT 30",
         &[],

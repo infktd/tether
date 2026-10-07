@@ -18,7 +18,9 @@
 //!   aa-structures.
 //! - Up to 10 sync characters per owner, rotated, cut the notification
 //!   delay from ten minutes to about one (aa-structures').
-//! - Timers from notifications and structures' states are listed here and
+//! - Timers from notifications and structures' states, and moon
+//!   extractions' chunks ready (aa-structures'
+//!   STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED), are listed here and
 //!   published for Structure Timers after every sync (friendly, and
 //!   corporation-only if a manager says so, as aa-structures'
 //!   STRUCTURES_TIMERS_ARE_CORP_RESTRICTED).
@@ -348,6 +350,9 @@ struct Settings {
     default_tags_filter: bool,
     /// The largest enabled fuel alert's start: the Low fuel tab's hours.
     low_fuel_hours: i64,
+    /// A moon extraction started gives a timer for its chunk
+    /// (aa-structures' STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED).
+    moon_extraction_timers: bool,
 }
 
 impl Settings {
@@ -370,7 +375,7 @@ fn settings() -> Result<Settings, storage::Error> {
                 timers_corporation_only, default_tags_filter, warning_ping, \
                 array_to_string(notification_types, ','), \
                 coalesce((SELECT max(start_hours) FROM fuel_alert_configs WHERE enabled), 72)::bigint, \
-                sov_channel, war_channel, corp_channel \
+                sov_channel, war_channel, corp_channel, moon_extraction_timers \
          FROM settings WHERE id = 1",
         &[],
     )?;
@@ -405,6 +410,10 @@ fn settings() -> Result<Settings, storage::Error> {
             .and_then(|r| r.get(7))
             .and_then(Db::as_bool)
             .unwrap_or(false),
+        moon_extraction_timers: row
+            .and_then(|r| r.get(14))
+            .and_then(Db::as_bool)
+            .unwrap_or(true),
     })
 }
 
@@ -1324,14 +1333,19 @@ fn handle_notifications() -> Result<(), JobError> {
             "UPDATE notifications SET handled = true WHERE notification_id = $1",
             vec![id.into()],
         )];
-        if let (Some(timer), Some(structure)) =
-            (notification::timer(&kind, fields, at), opt_int(row, 4))
+        // A moon extraction's timer only while the setting is on.
+        let timer = notification::timer(&kind, fields, at)
+            .filter(|t| t.kind != notification::EXTRACTION || settings.moon_extraction_timers);
+        if let (Some(timer), Some(structure)) = (timer, opt_int(row, 4))
             && ours
             && timer.at > now
         {
+            let moon = fields
+                .moon_id()
+                .filter(|_| timer.kind == notification::EXTRACTION);
             statements.push(Statement::new(
-                "INSERT INTO timers (structure_id, kind, at, corporation_id) \
-                 SELECT $1, $2, $3, $4 WHERE NOT EXISTS (SELECT 1 FROM timers t \
+                "INSERT INTO timers (structure_id, kind, at, corporation_id, moon_id) \
+                 SELECT $1, $2, $3, $4, $5::bigint WHERE NOT EXISTS (SELECT 1 FROM timers t \
                      WHERE t.structure_id = $1 AND t.kind = $2 AND abs(extract(epoch FROM t.at - $3::timestamptz)) < 300) \
                  ON CONFLICT DO NOTHING",
                 vec![
@@ -1339,6 +1353,22 @@ fn handle_notifications() -> Result<(), JobError> {
                     timer.kind.into(),
                     Db::timestamp(rfc3339(timer.at)),
                     corp.into(),
+                    moon.into(),
+                ],
+            ));
+        }
+        // An extraction cancelled: its chunk won't come (aa-structures
+        // removes the started extraction's timer).
+        if kind == "MoonminingExtractionCancelled"
+            && ours
+            && let Some(structure) = opt_int(row, 4)
+        {
+            statements.push(Statement::new(
+                "DELETE FROM timers WHERE structure_id = $1 AND kind = $2 AND at > $3",
+                vec![
+                    structure.into(),
+                    notification::EXTRACTION.into(),
+                    Db::timestamp(rfc3339(at)),
                 ],
             ));
         }
@@ -1759,11 +1789,11 @@ fn publish_timers() -> Result<(), JobError> {
             "SELECT * FROM ( \
                  SELECT DISTINCT ON (t.structure_id, t.kind) t.structure_id, t.kind, t.at, s.name, \
                      coalesce(tn.name, '') AS type_name, coalesce(y.name, sn.name, '') AS system, \
-                     coalesce(o.name, '') AS owner, s.corporation_id \
+                     coalesce(o.name, '') AS owner, s.corporation_id, coalesce(m.name, '') AS moon \
                  FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
                  LEFT JOIN names tn ON tn.id = s.type_id \
                  LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
-                 LEFT JOIN names o ON o.id = s.corporation_id \
+                 LEFT JOIN names o ON o.id = s.corporation_id LEFT JOIN names m ON m.id = t.moon_id \
                  WHERE t.at > now() - interval '1 day' AND t.kind <> 'Unanchoring' \
                  ORDER BY t.structure_id, t.kind, t.at DESC) latest \
              ORDER BY 3, 1, 2 LIMIT {MAX_PUBLISHED}"
@@ -1776,6 +1806,7 @@ fn publish_timers() -> Result<(), JobError> {
         .iter()
         .filter_map(|r| {
             let (structure, kind, at) = (int(r, 0), text(r, 1).to_lowercase(), when(r, 2)?);
+            let extraction = text(r, 1) == notification::EXTRACTION;
             let name = one_line(&text(r, 3), 150);
             let (type_name, owner) = (one_line(&text(r, 4), 100), one_line(&text(r, 6), 100));
             let mut details = match (type_name.is_empty(), owner.is_empty()) {
@@ -1787,10 +1818,25 @@ fn publish_timers() -> Result<(), JobError> {
             if !details.is_empty() {
                 details.push_str(". ");
             }
-            details.push_str("From the structure's state or its notifications.");
+            let title = if extraction {
+                // aa-structures' "Moon Mining Cycle" timer, "Extraction
+                // ready" at its moon.
+                let moon = one_line(&text(r, 8), 100);
+                let cycle = if moon.is_empty() {
+                    "Moon Mining Cycle: extraction ready. ".to_owned()
+                } else {
+                    format!("Moon Mining Cycle at {moon}: extraction ready. ")
+                };
+                details.insert_str(0, &cycle);
+                details.push_str("From its notification.");
+                format!("{name}: extraction ready")
+            } else {
+                details.push_str("From the structure's state or its notifications.");
+                format!("{name}: {kind} timer")
+            };
             Some(tether_plugin_sdk::timers::Timer {
                 key: format!("{structure}:{kind}"),
-                title: format!("{name}: {kind} timer"),
+                title,
                 at: rfc3339(at),
                 system: one_line(&text(r, 5), 100),
                 details,
@@ -2369,19 +2415,32 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         &params,
     )
     .map_err(|e| failed("counting structures", e))?;
-    let timers = storage::query(
-        &format!(
-            "SELECT t.kind, t.at, s.name, coalesce(y.name, sn.name, ''), coalesce(o.name, ''), \
-                 s.corporation_id \
-             FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
-             LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
-             LEFT JOIN names o ON o.id = s.corporation_id \
-             {scope} AND t.at > now() AND ($8 OR t.kind <> 'Unanchoring') \
-             ORDER BY t.at LIMIT {TIMER_ROWS}"
-        ),
-        &[params.clone(), vec![unanchoring.into()]].concat(),
-    )
-    .map_err(|e| failed("reading timers", e))?;
+    // Structures' timers first, then moon extractions in what room is left,
+    // so routine chunks never crowd out a reinforcement.
+    let timers_of = |extractions: bool, limit: i64| {
+        storage::query(
+            &format!(
+                "SELECT t.kind, t.at, s.name, coalesce(y.name, sn.name, ''), coalesce(o.name, ''), \
+                     s.corporation_id \
+                 FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
+                 LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
+                 LEFT JOIN names o ON o.id = s.corporation_id \
+                 {scope} AND t.at > now() AND ($8 OR t.kind <> 'Unanchoring') \
+                   AND (t.kind = 'Extraction') = $9 \
+                 ORDER BY t.at LIMIT {limit}"
+            ),
+            &[params.clone(), vec![unanchoring.into(), extractions.into()]].concat(),
+        )
+        .map_err(|e| failed("reading timers", e))
+    };
+    let structure_timers = timers_of(false, TIMER_ROWS)?;
+    let extractions = timers_of(true, TIMER_ROWS - count(structure_timers.rows.len()))?;
+    let mut timers: Vec<&Vec<Db>> = structure_timers
+        .rows
+        .iter()
+        .chain(&extractions.rows)
+        .collect();
+    timers.sort_by_key(|r| when(r, 1));
     let owners = storage::query(
         &format!(
             "SELECT o.corporation_id, coalesce(n.name, 'Corporation ' || o.corporation_id::text), \
@@ -2402,7 +2461,8 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
     let count_of = |i: usize| row.map_or(0, |r| int(r, i));
     let (total, starbase_count, orbital_count) = (count_of(0), count_of(1), count_of(2));
     let (low_count, reinforced_count) = (count_of(3), count_of(4));
-    let next = timers.rows.first().and_then(|r| when(r, 1));
+    // A structure's next timer: a moon chunk isn't one.
+    let next = structure_timers.rows.first().and_then(|r| when(r, 1));
     let rows_of = |rows: &storage::Rows| -> Vec<Vec<Value>> {
         rows.rows
             .iter()
@@ -2437,11 +2497,16 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         ])
         .title("Upcoming timers")
         .empty("No upcoming timers."),
-        timers.rows.iter().map(|r| {
+        timers.iter().map(|r| {
+            let kind = text(r, 0);
             vec![
                 when(r, 1).map_or_else(|| "".into(), |t| time(rfc3339(t))),
                 when(r, 1).map_or_else(|| "".into(), |t| countdown(rfc3339(t))),
-                text(r, 0).into(),
+                if kind == notification::EXTRACTION {
+                    "Extraction (chunk ready)".into()
+                } else {
+                    kind.into()
+                },
                 text(r, 2).into(),
                 text(r, 3).into(),
                 owner_value(int(r, 5), text(r, 4)),
@@ -2530,8 +2595,9 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
             vec![
                 Section::Table(timer_table),
                 Section::Text(
-                    "From structures' states and their notifications. Structure Timers shows \
-                     them too, as automatic timers (corporation-only if the settings say so)."
+                    "From structures' states and their notifications, and moon extractions' \
+                     chunks if the settings say so. Structure Timers shows them too, as \
+                     automatic timers (corporation-only if the settings say so)."
                         .to_owned(),
                 ),
             ],
@@ -2832,6 +2898,18 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         )
         .field(
             Field::checkbox(
+                "moon_extraction_timers",
+                "Moon extraction timers",
+                settings.moon_extraction_timers,
+            )
+            .help(
+                "aa-structures' STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED: a moon extraction \
+                 started gives Structure Timers a timer for when its chunk is ready, and \
+                 cancelling it removes the timer. Off: none, and those made are removed.",
+            ),
+        )
+        .field(
+            Field::checkbox(
                 "default_tags_filter",
                 "Show structures with a default tag",
                 settings.default_tags_filter,
@@ -3012,13 +3090,15 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     // Every type ticked is stored as none: every type, new ones included.
     let types = ticked_types(submission);
     let types = (types.len() < notification::TYPES.len()).then(|| types.join(","));
-    storage::execute(
+    let moon_timers = submission.checked("moon_extraction_timers");
+    let mut statements = vec![Statement::new(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
          moon_channel = $4, default_pings = $5, danger_ping = $6, warning_ping = $9, \
          timers_corporation_only = $7, default_tags_filter = $8, sov_channel = $10, \
          war_channel = $11, corp_channel = $12, \
-         notification_types = string_to_array($13, ',') WHERE id = 1",
-        &[
+         notification_types = string_to_array($13, ','), moon_extraction_timers = $14 \
+         WHERE id = 1",
+        vec![
             channel("attack_channel").into(),
             channel("fuel_channel").into(),
             channel("state_channel").into(),
@@ -3032,16 +3112,26 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             channel("war_channel").into(),
             channel("corp_channel").into(),
             types.clone().into(),
+            moon_timers.into(),
         ],
-    )
-    .map_err(|e| failed("saving settings", e))?;
-    // Published again at once, so corporation-only takes effect now.
+    )];
+    if !moon_timers {
+        // Off: the extraction timers made go too.
+        statements.push(Statement::new(
+            "DELETE FROM timers WHERE kind = $1",
+            vec![notification::EXTRACTION.into()],
+        ));
+    }
+    storage::transaction(&statements).map_err(|e| failed("saving settings", e))?;
+    // Published again at once, so corporation-only (and extraction timers
+    // turned off) take effect now.
     jobs::enqueue(NewJob::new(PUBLISH_JOB).key(PUBLISH_JOB))
         .map_err(|e| failed("queuing the timers", e))?;
     log::info(format!(
         "settings changed by {} ({}): attacks {:?}, fuel {:?}, state {:?}, moons {:?}, \
          sovereignty {:?}, wars {:?}, members {:?}, \
-         default pings {} (danger {:?}, warning {:?}), timers corporation-only {}, types {}",
+         default pings {} (danger {:?}, warning {:?}), timers corporation-only {}, \
+         moon extraction timers {moon_timers}, types {}",
         viewer.main.name,
         viewer.main.id,
         channel("attack_channel"),

@@ -571,6 +571,7 @@ async fn structures_end_to_end(db: PgPool) {
         "warning_ping=Member",
         "t_structurefuelalert=on",
         "t_structureunderattack=on",
+        "moon_extraction_timers=on",
     ] {
         assert!(fresh.split('&').any(|p| p == on), "{on}: {fresh}");
     }
@@ -2544,8 +2545,8 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
 // ---- aa-structures' fresh-install defaults ------------------------------------
 
 /// What 0007 leaves in the settings: default pings, the warning ping, the
-/// default types and how many fuel alert configs.
-type Defaults = (bool, Option<String>, Option<Vec<String>>, i64);
+/// default types, how many fuel alert configs and moon extraction timers.
+type Defaults = (bool, Option<String>, Option<Vec<String>>, i64, bool);
 
 /// Runs 0001-0006 in a scratch schema, then `setup` (an install in some
 /// state), then 0007; what the settings then say.
@@ -2572,7 +2573,7 @@ async fn migrated(conn: &mut sqlx::PgConnection, schema: &str, setup: &str) -> D
         .unwrap();
     sqlx::query_as(
         "SELECT default_pings, warning_ping, notification_types, \
-             (SELECT count(*) FROM fuel_alert_configs) \
+             (SELECT count(*) FROM fuel_alert_configs), moon_extraction_timers \
          FROM settings",
     )
     .fetch_one(&mut *conn)
@@ -2585,14 +2586,14 @@ async fn migrated(conn: &mut sqlx::PgConnection, schema: &str, setup: &str) -> D
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn aa_defaults_only_for_a_fresh_install(db: PgPool) {
     let mut conn = db.acquire().await.unwrap();
-    let (pings, warning, types, configs) = migrated(&mut conn, "fresh", "SELECT 1").await;
-    assert!(pings);
+    let (pings, warning, types, configs, moons) = migrated(&mut conn, "fresh", "SELECT 1").await;
+    assert!(pings && moons);
     assert_eq!(warning.as_deref(), Some("Member"));
     assert_eq!(types.map(|t| t.len()), Some(22));
     assert_eq!(configs, 0);
 
     let untouched = |pings: bool, types: Option<Vec<String>>, configs: i64| -> Defaults {
-        (pings, None, types, configs)
+        (pings, None, types, configs, false)
     };
     for (schema, setup, kept) in [
         (
@@ -2640,6 +2641,180 @@ async fn aa_defaults_only_for_a_fresh_install(db: PgPool) {
     ] {
         assert_eq!(migrated(&mut conn, schema, setup).await, kept, "{schema}");
     }
+}
+
+/// The Keep's armor timer and a moon chunk: Structures' own `timers`.
+async fn kinds(h: &Harness) -> Vec<String> {
+    sqlx::query_scalar(r#"SELECT kind FROM "plugin_tether.structures".timers ORDER BY at, kind"#)
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+}
+
+/// A moon extraction started, its chunk ready at `ready`.
+fn started_text(ready: DateTime<Utc>) -> String {
+    moon_text()
+        .replace(
+            "autoTime: 133090956000000000",
+            &format!("autoTime: {}", filetime(ready + Duration::hours(3))),
+        )
+        .replace(
+            "readyTime: 133090848000000000",
+            &format!("readyTime: {}", filetime(ready)),
+        )
+}
+
+fn cancelled_text() -> String {
+    format!(
+        "cancelledBy: {CHRIBBA}\nmoonID: {MOON}\n\
+         moonLink: <a href=\"showinfo:14//{MOON}\">Jita IV - Moon 4</a>\n\
+         solarSystemID: {SYSTEM}\nstructureID: {DRILL}\nstructureName: Jita - Drill\n\
+         structureTypeID: 35835\n"
+    )
+}
+
+/// aa-structures' STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED: a moon
+/// extraction started becomes Structure Timers' timer for its chunk, and
+/// goes when it's cancelled or the setting is turned off.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn moon_extractions_become_structure_timers(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    crate::structure_timers::install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    // The chunk comes before the Keep's armor timer.
+    let ready = now + Duration::hours(2);
+    let started = |id: i64, ago: i64, ready: DateTime<Utc>| {
+        notification(
+            id,
+            "MoonminingExtractionStarted",
+            now - Duration::minutes(ago),
+            &started_text(ready),
+        )
+    };
+    // Each read answers what's mounted for it, in turn.
+    let reads_ = [
+        serde_json::json!([started(4001, 10, ready)]),
+        serde_json::json!([
+            started(4001, 10, ready),
+            notification(
+                4002,
+                "MoonminingExtractionCancelled",
+                now - Duration::minutes(1),
+                &cancelled_text()
+            ),
+        ]),
+        serde_json::json!([started(4003, 5, now + Duration::days(5))]),
+        serde_json::json!([started(4004, 3, now + Duration::days(6))]),
+        serde_json::json!([started(4005, 2, now + Duration::days(7))]),
+    ];
+    for answer in reads_ {
+        Mock::given(method("GET"))
+            .and(path(format!("/characters/{CHRIBBA}/notifications")))
+            .respond_with(json(answer))
+            .up_to_n_times(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    let read_again = || async {
+        sqlx::query(r#"UPDATE "plugin_tether.structures".owners SET notifications_at = NULL"#)
+            .execute(&h.db)
+            .await
+            .unwrap();
+        let problems = sync(&h).await;
+        assert!(problems.is_empty(), "{problems:?}");
+    };
+    let extraction = |shared: &[Shared]| {
+        shared
+            .iter()
+            .find(|t| t.key == format!("{DRILL}:extraction"))
+            .map(|t| (t.title.clone(), t.details.clone()))
+    };
+    let owner = approve_owner(&h, &owner).await;
+    // On for a fresh install.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        form_body(&settings.body, "settings", &[]).contains("moon_extraction_timers=on"),
+        "{}",
+        settings.body
+    );
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+
+    // Published: friendly, for everyone, the moon named.
+    let shared = shared_timers(&h).await;
+    let timer = shared
+        .iter()
+        .find(|t| t.key == format!("{DRILL}:extraction"))
+        .unwrap_or_else(|| panic!("{shared:?}"));
+    assert_eq!(timer.title, "Jita - Drill: extraction ready");
+    assert!(
+        timer.details.starts_with(
+            "Moon Mining Cycle at Jita IV - Moon 4: extraction ready. Athanor of Otherworld \
+             Enterprises."
+        ),
+        "{shared:?}"
+    );
+    assert_eq!(timer.objective, "friendly");
+    assert_eq!(timer.corporation_id, None);
+    // Structure Timers lists it; Structures' Timers tab too, labelled, while
+    // its Next timer stays the Keep's armor timer.
+    let board = page(&h, "/plugins/tether.structure-timers", &owner).await;
+    assert!(
+        board
+            .body
+            .contains("<td>Jita - Drill: extraction ready</td>"),
+        "{}",
+        board.body
+    );
+    let list = page(&h, &format!("/plugins/{ID}?_tab=3"), &owner).await;
+    assert!(
+        list.body.contains("Extraction (chunk ready)"),
+        "{}",
+        list.body
+    );
+    let caption = |t: DateTime<Utc>| {
+        format!(
+            "<div class=\"stat-caption\">{} EVE</div>",
+            t.format("%Y-%m-%d %H:%M")
+        )
+    };
+    let armor = times.shields + Duration::days(1) + Duration::seconds(30);
+    assert!(list.body.contains(&caption(armor)), "{}", list.body);
+    assert!(!list.body.contains(&caption(ready)), "{}", list.body);
+
+    // Cancelled: the timer goes.
+    read_again().await;
+    assert_eq!(extraction(&shared_timers(&h).await), None);
+    assert!(!kinds(&h).await.contains(&"Extraction".to_owned()));
+
+    // Started again: a timer again. Turned off: it goes at once, and the
+    // next extraction makes none.
+    read_again().await;
+    assert!(extraction(&shared_timers(&h).await).is_some());
+    let res = save_settings(&h, &owner, &[("moon_extraction_timers", "")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    assert_eq!(extraction(&shared_timers(&h).await), None);
+    assert!(!kinds(&h).await.contains(&"Extraction".to_owned()));
+    read_again().await;
+    assert!(!kinds(&h).await.contains(&"Extraction".to_owned()));
+    // On again: the next one makes its timer.
+    let res = save_settings(&h, &owner, &[("moon_extraction_timers", "on")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    read_again().await;
+    assert!(extraction(&shared_timers(&h).await).is_some());
+    assert_eq!(
+        reads(&h, &format!("/characters/{CHRIBBA}/notifications")).await,
+        5
+    );
 }
 
 // ---- the sync's ESI calls ----------------------------------------------------

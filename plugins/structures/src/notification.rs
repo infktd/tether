@@ -860,19 +860,29 @@ pub fn category(kind: &str) -> Option<Category> {
         .map(|(_, _, _, c)| *c)
 }
 
+/// A moon extraction's timer: its chunk ready (aa-structures' "Moon Mining
+/// Cycle" timer).
+pub const EXTRACTION: &str = "Extraction";
+
 /// A timer a notification announces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Timer {
     /// Structure Timers' names: Armor, Hull, Final, Anchoring,
-    /// Unanchoring.
+    /// Unanchoring; and Extraction (a moon chunk ready).
     pub kind: &'static str,
     pub at: DateTime<Utc>,
 }
 
 pub fn timer(kind: &str, fields: &Fields, at: DateTime<Utc>) -> Option<Timer> {
-    // A customs office out of reinforcement, and a skyhook's (as
-    // aa-structures reads them): absolute file times.
+    // A customs office out of reinforcement, a skyhook's, and a moon chunk
+    // ready (as aa-structures reads them): absolute file times.
     match kind {
+        "MoonminingExtractionStarted" => {
+            return Some(Timer {
+                kind: EXTRACTION,
+                at: fields.filetime("readyTime")?,
+            });
+        }
         "OrbitalReinforced" => {
             return Some(Timer {
                 kind: "Final",
@@ -1744,6 +1754,20 @@ mod tests {
         let named = |id: i64| (id == 40009081).then(|| "Jita IV - Moon 4".to_owned());
         assert_eq!(unlinked.moon(&named), "Jita IV - Moon 4");
         assert_eq!(unlinked.moon(&names), "moon 40009081");
+    }
+
+    #[test]
+    fn extraction_started_gives_the_extraction_ready_timer() {
+        let f = Fields::parse(STARTED);
+        assert_eq!(
+            timer("MoonminingExtractionStarted", &f, Utc::now()),
+            Some(Timer {
+                kind: EXTRACTION,
+                at: at("2022-10-01T08:00:00Z"),
+            })
+        );
+        assert_eq!(timer("MoonminingExtractionCancelled", &f, Utc::now()), None);
+        assert_eq!(f.moon_id(), Some(40009081));
     }
 
     #[test]

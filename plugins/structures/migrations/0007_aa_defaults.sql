@@ -1,7 +1,15 @@
--- aa-structures' fresh-install defaults (Jay, 2026-10-06: parity across the
--- board). An instance already in use keeps everything it stored: they
--- apply only where Structures hasn't been used yet, judged once, before any
--- of them changes anything.
+-- aa-structures' settings and fresh-install defaults (Jay, 2026-10-06:
+-- parity across the board). An instance already in use keeps everything it
+-- stored: the defaults at the end apply only where Structures hasn't been
+-- used yet, judged once, before any of them changes anything.
+
+-- aa-structures' STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED (on there): a
+-- moon extraction started gives Structure Timers a timer for when its chunk
+-- is ready, and cancelling it removes the timer. On for a fresh install
+-- (below); an instance in use makes none until a manager ticks it.
+ALTER TABLE settings ADD COLUMN moon_extraction_timers boolean NOT NULL DEFAULT false;
+-- The moon an extraction's timer is for (none for other timers).
+ALTER TABLE timers ADD COLUMN moon_id bigint;
 
 -- A fresh install: no owner, nothing read, queued or alerted, no channel
 -- picked, and every setting as 0001-0006 left it. Plugin migrations run at
@@ -12,7 +20,8 @@
 --   @everyone and @here: a role mention has no online-only form);
 -- - its 22 default notification types for new webhooks (webhook_defaults());
 -- - no fuel alert configs (it seeds none, so EVE's own fuel alerts report
---   low fuel; 0004's three reported every low-fuel structure twice).
+--   low fuel; 0004's three reported every low-fuel structure twice);
+-- - moon extraction timers on.
 -- One statement, so each part sees the install as it was.
 WITH fresh AS (
     SELECT NOT EXISTS (SELECT 1 FROM owners)
@@ -48,5 +57,6 @@ UPDATE settings SET
         'StructureLostShields', 'StructureLowReagentsAlert', 'StructureNoReagentsAlert',
         'StructureOnline', 'StructureServicesOffline', 'StructureUnderAttack',
         'StructureWentHighPower', 'StructureWentLowPower', 'TowerAlertMsg', 'TowerResourceAlertMsg'
-    ]
+    ],
+    moon_extraction_timers = true
 WHERE id = 1 AND (SELECT yes FROM fresh);
