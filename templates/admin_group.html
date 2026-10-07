@@ -23,6 +23,7 @@
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
   {% if let Some(n) = notice %}<div class="alert" role="status"><section>{{ n }}</section></div>{% endif %}
+  {% if let Some(states) = unrequestable %}<div class="alert" role="status"><section>No pilot may ask to join it: {% if states.is_empty() %}nobody holds Can request non-public groups{% else %}none of its states ({{ states }}) holds Can request non-public groups, and no group or user does{% endif %}. Make it Public, or grant that permission to {% if states.is_empty() %}the states it's for{% else %}them{% endif %} on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>. You can still add members below.</section></div>{% endif %}
 
   <form class="card" method="post" action="/admin/groups/{{ group.id }}/settings">
     <header><h2>Settings</h2><p>Members whose state you untick leave the group when you save.</p></header>

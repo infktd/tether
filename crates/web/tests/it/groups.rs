@@ -413,6 +413,67 @@ async fn requesting_needs_request_groups_unless_public(db: PgPool) {
     assert_eq!(res.status, StatusCode::ACCEPTED);
 }
 
+/// A group that isn't Public, for states none of which may request
+/// groups (only Member may, by default), can't be asked for by anyone:
+/// its page says so, with the fix.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_group_nobody_may_ask_for_says_so(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    let id = create_group(&h, &owner, "Blue fleet comms", "requestable").await;
+    let warning = "No pilot may ask to join it";
+    async fn admin_page(h: &Harness, owner: &str, id: i64) -> String {
+        page(h, &format!("/admin/groups/{id}"), owner).await.body
+    }
+    // Every state: Member may request it.
+    assert!(!admin_page(&h, &owner, id).await.contains(warning));
+    let flags = r#""internal":false,"hidden":false,"open":false,"restricted":false"#;
+    let res = settings(
+        &h,
+        &owner,
+        id,
+        &format!(r#"{{{flags},"public":false,"states":[{BLUE_STATE}]}}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let admin = admin_page(&h, &owner, id).await;
+    assert!(
+        admin.contains(
+            "No pilot may ask to join it: none of its states (Blue) holds Can request non-public groups"
+        ),
+        "{admin}"
+    );
+    // Public, or Blue granted it: fine.
+    let res = settings(
+        &h,
+        &owner,
+        id,
+        &format!(r#"{{{flags},"public":true,"states":[{BLUE_STATE}]}}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(!admin_page(&h, &owner, id).await.contains(warning));
+    let res = settings(
+        &h,
+        &owner,
+        id,
+        &format!(r#"{{{flags},"public":false,"states":[{BLUE_STATE}]}}"#),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = send(
+        &h.app,
+        form(
+            "/admin/permissions/set",
+            &format!("permission=request_groups&grantee=state:{BLUE_STATE}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(!admin_page(&h, &owner, id).await.contains(warning));
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn internal_groups_are_admin_only(db: PgPool) {
     members(&db, &[PILOT]).await;

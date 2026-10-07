@@ -387,6 +387,10 @@ struct GroupPage {
     leader_groups: Vec<GroupOption>,
     other_groups: Vec<GroupOption>,
     members: Vec<MemberRow>,
+    /// No pilot may ask to join it: it isn't Public and nobody who may be
+    /// in it holds `request_groups` (`Some`, with its states' names, or
+    /// empty for every state).
+    unrequestable: Option<String>,
     /// Secure Groups: its settings and filters, if it's a smart group.
     smart: Option<SmartView>,
     /// Filters running apps offer.
@@ -477,7 +481,7 @@ async fn group_page(
         .cloned()
         .ok_or_else(|| AppError::not_found("No such group."))?;
     let allowed = groups::allowed_states(&state.db, GroupId(id)).await?;
-    let states = tether_db::states::all(&state.db)
+    let states: Vec<StateChoice> = tether_db::states::all(&state.db)
         .await?
         .into_iter()
         .map(|s| StateChoice {
@@ -570,6 +574,14 @@ async fn group_page(
         }
         None => None,
     };
+    let unrequestable = unrequestable(
+        state,
+        &found.group,
+        &allowed,
+        &states,
+        smart.as_ref().map(|s| &s.settings),
+    )
+    .await?;
     let app_filters = state
         .plugins
         .all_running()
@@ -611,12 +623,60 @@ async fn group_page(
         leader_groups,
         other_groups,
         members,
+        unrequestable,
         error: error.map(|e| e.message().to_owned()),
         notice,
         check,
         check_query,
     };
     Ok(super::with_problem(problem, render(status, &page)))
+}
+
+/// AA's rule: pilots ask to join a group that isn't Public only with
+/// `request_groups`, which only Member holds by default. `Some` (its
+/// states' names, empty for every state) when nobody who may be in the
+/// group holds it: no state it allows, no group, no single user, and,
+/// for a smart group pilots join on Secure Groups, nobody holding that
+/// either. Admins can still add members; the page says so with the fix.
+async fn unrequestable(
+    state: &AppState,
+    group: &groups::Group,
+    allowed: &[tether_core::states::StateId],
+    states: &[StateChoice],
+    smart: Option<&tether_db::smart_groups::Settings>,
+) -> Result<Option<String>, AppError> {
+    if group.flags.internal || group.flags.public || group.compliance {
+        return Ok(None);
+    }
+    // Tether keeps those groups' members itself.
+    if smart.is_some_and(|s| s.enabled && s.auto_join)
+        || tether_db::autogroups::is_auto(&state.db, group.id).await?
+    {
+        return Ok(None);
+    }
+    let grants = permissions::list(&state.db).await?;
+    let reaches = |grantee: &Grantee| match grantee {
+        Grantee::State(id) => tether_core::groups::state_allowed(allowed, *id),
+        Grantee::Group(_) | Grantee::Account(_) => true,
+    };
+    let held = |permission: &str| {
+        grants
+            .iter()
+            .any(|g| g.permission == permission && reaches(&g.grantee))
+    };
+    if held(tether_core::permissions::REQUEST_GROUPS)
+        || (smart.is_some_and(|s| s.enabled) && held(tether_core::permissions::SECUREGROUPS_ACCESS))
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        states
+            .iter()
+            .filter(|s| s.checked)
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    ))
 }
 
 /// `GET /admin/groups/{id}`. With `?check=<character>` (a name or id) or
