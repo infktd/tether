@@ -69,6 +69,13 @@ async fn mount_campaigns(h: &Harness, campaigns: serde_json::Value, priority: u8
         .await;
 }
 
+async fn work(h: &Harness) {
+    let mut registry = Registry::new();
+    tether_web::plugin_jobs::register_jobs(&mut registry, h.db.clone(), h.plugins.clone());
+    let config = WorkerConfig::default();
+    while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
+}
+
 async fn sync(h: &Harness) {
     sqlx::query(
         "UPDATE core.schedules SET next_run_at = now() - interval '1 minute' WHERE name = $1",
@@ -78,10 +85,15 @@ async fn sync(h: &Harness) {
     .await
     .unwrap();
     tether_jobs::schedule::run_due(&h.db).await.unwrap();
-    let mut registry = Registry::new();
-    tether_web::plugin_jobs::register_jobs(&mut registry, h.db.clone(), h.plugins.clone());
-    let config = WorkerConfig::default();
-    while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
+    work(h).await;
+}
+
+async fn count(h: &Harness, sql: &'static str) -> i64 {
+    sqlx::query_scalar(sql)
+        .bind(ID)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -183,4 +195,54 @@ async fn sovereignty_timer_end_to_end(db: PgPool) {
     // Only for basic_access.
     let pilot = log_in(&h, None).await;
     assert_eq!(page(&h, &at, &pilot).await.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_failed_sync_waits_for_the_next(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // ESI down (its daily downtime, say).
+    Mock::given(method("GET"))
+        .and(path("/sovereignty/campaigns"))
+        .respond_with(
+            ResponseTemplate::new(503).set_body_raw(r#"{"error":"downtime"}"#, "application/json"),
+        )
+        .mount(&h.esi_server)
+        .await;
+    sync(&h).await;
+    // The chain's own runs, failing too.
+    for _ in 0..2 {
+        sqlx::query(
+            "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'sync-next' \
+             AND state = 'queued'",
+        )
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+        work(&h).await;
+    }
+    // Each failure is a line in the app's log and waits for the next sync,
+    // queued once: no job dies of it.
+    let dead = count(
+        &h,
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND state = 'dead'",
+    )
+    .await;
+    assert_eq!(dead, 0);
+    let next = count(
+        &h,
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'sync-next' \
+         AND state = 'queued'",
+    )
+    .await;
+    assert_eq!(next, 1);
+    let logged = count(
+        &h,
+        "SELECT count(*) FROM core.plugin_logs WHERE plugin_id = $1 AND level = 'warn' \
+         AND message LIKE 'reading campaigns: %the next sync is in 30 seconds'",
+    )
+    .await;
+    assert_eq!(logged, 3);
 }

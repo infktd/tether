@@ -172,20 +172,32 @@ fn status(start: DateTime<Utc>, now: DateTime<Utc>) -> Status {
 
 // ---- the sync ----------------------------------------------------------------
 
-/// Stores the campaigns (keeping each one's last score as the previous),
-/// and learns their constellations' regions, their systems' ADM and the
-/// names.
+/// Queues the next sync, then reads and stores this one's.
 fn sync() -> Result<(), JobError> {
-    // The next one first: a failure below retries this one, and the
-    // chain goes on.
+    // The next one first, so the chain goes on whatever happens below.
     jobs::enqueue(
         NewJob::new(SYNC)
             .key("sync-next")
             .at(rfc3339(Utc::now() + Duration::seconds(EVERY))),
     )
     .map_err(|e| retry("queuing the next sync", e))?;
+    // A failure (ESI down at downtime, say) waits for that next sync, as
+    // aa-sov-timer's task logs it and tries again at its next beat. A
+    // retry couldn't happen anyway: with the next sync queued under the
+    // same key, the queue ends a failed one at once ("replaced by a newer
+    // job") and drops its error.
+    if let Err(JobError::Retry(why) | JobError::Permanent(why)) = read_and_store() {
+        log::warn(format!("{why}; the next sync is in {EVERY} seconds"));
+    }
+    Ok(())
+}
+
+/// Stores the campaigns (keeping each one's last score as the previous),
+/// and learns their constellations' regions, their systems' ADM and the
+/// names.
+fn read_and_store() -> Result<(), JobError> {
     let body = esi::get("sovereignty-campaigns", PUBLIC, &[], None)
-        .map_err(|e| retry("reading campaigns", e))?
+        .map_err(|e| JobError::Retry(format!("reading campaigns: {}", esi::describe(&e))))?
         .body;
     let campaigns = parse_campaigns(&body);
     let rows: Vec<serde_json::Value> = campaigns
