@@ -282,10 +282,10 @@ own native runner and the two are joined into one multi-arch image. A
 tag also gets its GitHub release, made by CI once the image is published.
 
 1. With main green, preview the notes:
-   `scripts/release-notes.sh HEAD`. They are the `CHANGELOG.md` entries
-   added since the previous release tag, grouped under Everyone, each app
-   and Admins. Fix any entry before tagging; the notes come from the
-   tagged commit.
+   `git fetch --tags && scripts/release-notes.sh HEAD`. They are the
+   `CHANGELOG.md` entries added since the previous release tag, grouped
+   under Everyone, each app and Admins. Fix any entry before tagging; the
+   notes come from the tagged commit.
 2. Tag and push the tag: `git tag v1.2.0 && git push origin v1.2.0`.
 3. Watch the build on GitHub under Actions → CI → the run for `v1.2.0`.
    The `publish-image` jobs (amd64, arm64), `publish-manifest` and
