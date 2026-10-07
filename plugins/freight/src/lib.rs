@@ -2105,9 +2105,10 @@ fn pricing_page(problem: Option<(&str, &Submission)>) -> Result<Page, PageError>
 /// out without it, that it can't take effect as things stand, with the
 /// fix (DESIGN.md, Works from defaults).
 fn pilot_ping_help(settings: &Settings) -> String {
-    let what = "aa-freight's FREIGHT_DISCORD_MENTIONS (such as @here). Tether's bot never pings \
-                @everyone or @here: it mentions the Discord role given to this state under \
-                Discord, Roles, e.g. Member. Empty: no mention.";
+    // aa-freight's FREIGHT_DISCORD_MENTIONS: Tether's bot never pings
+    // @everyone or @here, so a state's role stands in for them.
+    let what = "New-contract notices mention the Discord role given to this state under Discord, \
+                Roles (e.g. Member), in place of aa-freight's @here. Empty: no mention.";
     match (&settings.pilot_ping, settings.pilot_ping_refused) {
         (Some(_), Some(at)) => format!(
             "{what} The last pilot notice ({} EVE) went out without its mention: no Discord role \

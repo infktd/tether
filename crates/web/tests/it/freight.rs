@@ -517,6 +517,19 @@ async fn freight_end_to_end(db: PgPool) {
         "{}",
         pricing.body
     );
+    // Its help says what it does in pilots' terms, not AA's setting name.
+    assert!(
+        pricing
+            .body
+            .contains("New-contract notices mention the Discord role given to this state"),
+        "{}",
+        pricing.body
+    );
+    assert!(
+        !pricing.body.contains("FREIGHT_DISCORD_MENTIONS"),
+        "{}",
+        pricing.body
+    );
     // Pilot notices mention Member's role (Tether's stand-in for @here).
     let res = post(
         &h,
