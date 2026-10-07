@@ -1,17 +1,19 @@
 //! ESI Status (aa-esi-status), as a status page.
 //!
 //! ESI's own status, route by route, as ESI reports it (OK, degraded,
-//! down, recovering or unknown), read every five minutes. The page leads
-//! with the verdict and how much of the last day ESI was fully OK, then
-//! what needs attention and since when, the last day's incidents, every
-//! area of routes, each change newest first, and every route (as
-//! aa-esi-status lists them). Anyone signed in may look, as there.
+//! down, recovering or unknown), read every minute, as aa-esi-status'
+//! task: each check queues the next, and the five-minute schedule restarts
+//! the chain if it stops. The page leads with the verdict and how much of
+//! the last day ESI was fully OK, then what needs attention and since
+//! when, the last day's incidents, every area of routes, each change
+//! newest first, and every route (as aa-esi-status lists them). Anyone
+//! signed in may look, as there.
 
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};
 use tether_plugin_sdk::esi::{self, Subject};
-use tether_plugin_sdk::jobs::{Job, JobError};
+use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Column, Page, PageError, Plugin, Request, Stat, Table, Tone, Value, badge, log, time,
@@ -21,10 +23,16 @@ use tether_plugin_sdk::{
 const PUBLIC: Subject = Subject::Character(0);
 /// The job's (and schedule's) name.
 const CHECK: &str = "check";
+/// Seconds between checks, as aa-esi-status' task (60).
+const EVERY: i64 = 60;
+/// The chain's queued check.
+const NEXT: &str = "check-next";
 /// How far back incidents and the share of checks fully OK reach.
 const DAY: i64 = 24;
-/// Three checks missed: the page says it's out of date.
-const STALE_MINUTES: i64 = 15;
+/// Ten minutes without a check: past a stopped chain's restart (the
+/// five-minute schedule), so only a real stop, or ESI not answering,
+/// shows.
+const STALE_MINUTES: i64 = 10;
 /// The most rows a table may have (the host's limit).
 const MAX_ROWS: usize = 500;
 
@@ -68,7 +76,10 @@ impl Plugin for EsiStatus {
 
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
-            CHECK => check(),
+            // The chain's checks carry its key; the schedule's run (and
+            // an admin's Run now) has none.
+            CHECK if job.key.is_some() => check(),
+            CHECK => restart(),
             other => Err(JobError::Permanent(format!("no job {other}"))),
         }
     }
@@ -173,12 +184,46 @@ fn parse(body: &str) -> (String, Vec<(String, String, &'static str)>) {
 /// The routes as `json_to_recordset` reads them.
 const RECORDS: &str = "json_to_recordset($1::json) AS x(method text, path text, status text)";
 
+fn rfc3339_from_now(seconds: i64) -> String {
+    rfc3339(Utc::now() + Duration::seconds(seconds))
+}
+
+/// The five-minute schedule: starts the chain again, now, if nothing has
+/// been stored for two minutes; otherwise leaves the running chain alone.
+/// It never reads ESI itself, so during an outage the chain's own checks
+/// are the only calls.
+fn restart() -> Result<(), JobError> {
+    let recent = storage::query(
+        "SELECT 1 FROM checks WHERE checked_at > now() - interval '2 minutes' LIMIT 1",
+        &[],
+    )
+    .map_err(|e| JobError::Retry(format!("reading checks: {e:?}")))?;
+    if recent.rows.is_empty() {
+        jobs::enqueue(NewJob::new(CHECK).key(NEXT))
+            .map_err(|e| JobError::Retry(format!("starting the checks: {e:?}")))?;
+    }
+    Ok(())
+}
+
+/// One of the chain's checks: the next queued first, so the chain goes on
+/// whatever happens, then ESI read. A check ESI fails is logged and waits
+/// for the next, a minute on, as aa-esi-status' task logs it and waits
+/// for its next run.
+fn check() -> Result<(), JobError> {
+    jobs::enqueue(NewJob::new(CHECK).key(NEXT).at(rfc3339_from_now(EVERY)))
+        .map_err(|e| JobError::Retry(format!("queuing the next check: {e:?}")))?;
+    if let Err(JobError::Retry(why) | JobError::Permanent(why)) = read_and_store() {
+        log::error(why);
+    }
+    Ok(())
+}
+
 /// Reads ESI's status: each route's change recorded, the routes replaced
 /// (keeping since when each has had its status), the counts kept for 24
 /// hours and the changes for a week.
-fn check() -> Result<(), JobError> {
+fn read_and_store() -> Result<(), JobError> {
     let body = esi::get("esi-status", PUBLIC, &[], None)
-        .map_err(|e| JobError::Retry(format!("reading ESI's status: {e:?}")))?
+        .map_err(|e| JobError::Retry(format!("reading ESI's status: {}", esi::describe(&e))))?
         .body;
     let (compatibility, routes) = parse(&body);
     if routes.is_empty() {
@@ -219,8 +264,7 @@ fn check() -> Result<(), JobError> {
                 "INSERT INTO routes (method, path, status, since) \
                  SELECT DISTINCT ON (method, path) method, path, status, now() FROM {RECORDS} \
                  ON CONFLICT (method, path) DO UPDATE SET status = EXCLUDED.status, \
-                 since = CASE WHEN routes.status = EXCLUDED.status THEN routes.since \
-                 ELSE EXCLUDED.since END"
+                 since = EXCLUDED.since WHERE routes.status <> EXCLUDED.status"
             ),
             vec![records()],
         ),
@@ -262,6 +306,21 @@ struct Change {
     path: String,
     status: &'static str,
     was: &'static str,
+}
+
+/// `changes` rows (at, method, path, status, was) as changes.
+fn changes(rows: &[Vec<Db>]) -> Vec<Change> {
+    rows.iter()
+        .filter_map(|r| {
+            Some(Change {
+                at: when(r, 0)?,
+                method: text(r, 1),
+                path: text(r, 2),
+                status: known(&text(r, 3)),
+                was: known(&text(r, 4)),
+            })
+        })
+        .collect()
 }
 
 /// A stretch of time a route (or an area) wasn't OK, and the worst it was.
@@ -343,12 +402,13 @@ fn check_worst(row: &[Db]) -> &'static str {
     }
 }
 
-/// Stretches merged, leaving out any shorter than a minute: that can't be
-/// told from a check's own timing.
+/// Stretches merged, leaving out any shorter than half a check's interval:
+/// that can't be told from the checks' timing. A one-check blip, a minute
+/// give or take the checks' drift, stays.
 fn lasting(all: Vec<Outage>) -> Vec<Outage> {
     merged(all)
         .into_iter()
-        .filter(|o| (o.to - o.from).num_seconds() >= 60)
+        .filter(|o| (o.to - o.from).num_seconds() >= EVERY / 2)
         .collect()
 }
 
@@ -383,42 +443,52 @@ fn status_page() -> Result<Page, PageError> {
         &[],
     )
     .map_err(|e| failed("reading routes", e))?;
+    // A day of checks at one a minute is 1,440. No time limit: the first
+    // must be the latest even when checks stopped a day ago, so the page
+    // says it's out of date.
     let checks = storage::query(
         "SELECT checked_at, compatibility_date, degraded, down, recovering, unknown \
-         FROM checks ORDER BY checked_at DESC LIMIT 300",
+         FROM checks ORDER BY checked_at DESC LIMIT 2000",
         &[],
     )
     .map_err(|e| failed("reading checks", e))?;
     let tracking = storage::query("SELECT min(started) FROM tracking", &[])
         .map_err(|e| failed("reading tracking", e))?;
-    let changes = storage::query(
-        "SELECT at, method, path, status, was FROM changes ORDER BY at DESC LIMIT 1000",
+    // The history's newest, and the last day's for the incidents.
+    let newest = storage::query(
+        "SELECT at, method, path, status, was FROM changes ORDER BY at DESC LIMIT 50",
+        &[],
+    )
+    .map_err(|e| failed("reading changes", e))?;
+    let today = storage::query(
+        "SELECT at, method, path, status, was FROM changes \
+         WHERE at > now() - interval '24 hours' ORDER BY at DESC LIMIT 4000",
         &[],
     )
     .map_err(|e| failed("reading changes", e))?;
     let page = Page::new("ESI Status");
     let Some(latest) = checks.rows.first() else {
         return Ok(page
-            .description("ESI's own status, route by route, read every five minutes.")
-            .text("No ESI status data yet: the first check runs within five minutes."));
+            .description("ESI's own status, route by route, read every minute.")
+            .text("No ESI status data yet: the first check runs within a minute."));
     };
     let now = Utc::now();
     let start = now - Duration::hours(DAY);
     let mut page = page.description(match when(latest, 0) {
         Some(at) => format!(
-            "ESI's own status, route by route, read every five minutes; last at {} EVE \
+            "ESI's own status, route by route, read every minute; last at {} EVE \
              (compatibility date {}).",
             at.format("%H:%M"),
             text(latest, 1)
         ),
-        None => "ESI's own status, route by route, read every five minutes.".to_owned(),
+        None => "ESI's own status, route by route, read every minute.".to_owned(),
     });
     // Checks that stopped: say so before anything that may be out of date.
     if let Some(at) = when(latest, 0)
         && now - at > Duration::minutes(STALE_MINUTES)
     {
         page = page.text(format!(
-            "Out of date: the last check was {} ago, and they run every five minutes. \
+            "Out of date: the last check was {} ago, and they run every minute. \
              What's below is as ESI was then.",
             lasted(now - at)
         ));
@@ -434,18 +504,10 @@ fn status_page() -> Result<Page, PageError> {
             since: when(r, 3),
         })
         .collect();
-    let changes: Vec<Change> = changes
-        .rows
-        .iter()
-        .filter_map(|r| {
-            Some(Change {
-                at: when(r, 0)?,
-                method: text(r, 1),
-                path: text(r, 2),
-                status: known(&text(r, 3)),
-                was: known(&text(r, 4)),
-            })
-        })
+    let newest = changes(&newest.rows);
+    let today: Vec<Change> = changes(&today.rows)
+        .into_iter()
+        .filter(|c| c.at > start)
         .collect();
 
     // The verdict, how much of the day was fully OK, and how often it
@@ -474,7 +536,6 @@ fn status_page() -> Result<Page, PageError> {
         n if fully == n => "100%".to_owned(),
         n => format!("{:.1}%", fully as f64 * 100.0 / n as f64),
     };
-    let today: Vec<&Change> = changes.iter().filter(|c| c.at > start).collect();
     page = page.stats(vec![
         Stat::new("ESI", badge(worst, tone(worst))).caption(if not_ok.is_empty() {
             format!("All {total} routes OK")
@@ -545,13 +606,20 @@ fn status_page() -> Result<Page, PageError> {
         .chain([start])
         .max()
         .unwrap_or(start);
+    // The day's changes by route, oldest first.
+    let mut by_route: BTreeMap<(&str, &str), Vec<&Change>> = BTreeMap::new();
+    for c in today.iter().rev() {
+        by_route
+            .entry((c.method.as_str(), c.path.as_str()))
+            .or_default()
+            .push(c);
+    }
     let mut by_area: BTreeMap<String, Vec<Outage>> = BTreeMap::new();
     for route in &routes {
-        let mut mine: Vec<&Change> = today
-            .iter()
-            .filter(|c| c.method == route.method && c.path == route.path)
-            .copied()
-            .collect();
+        let mut mine = by_route
+            .get(&(route.method.as_str(), route.path.as_str()))
+            .cloned()
+            .unwrap_or_default();
         mine.sort_by_key(|c| c.at);
         // Since when it's had its status matters only when it hasn't
         // changed in the window (since is then its last change).
@@ -657,7 +725,7 @@ fn status_page() -> Result<Page, PageError> {
     ])
     .title("Changes, newest first")
     .empty("No route has changed status in the last week.");
-    for c in changes.iter().take(50) {
+    for c in &newest {
         history = history.row(vec![
             time(rfc3339(c.at)),
             c.path.clone().into(),
@@ -803,5 +871,18 @@ mod tests {
         counts.insert("Down", 1);
         counts.insert("OK", 9);
         assert_eq!(summary(&counts), "1 down · 2 degraded");
+    }
+
+    #[test]
+    fn a_one_check_blip_is_an_incident() {
+        let lasting_for = |seconds| Outage {
+            from: at(1),
+            to: at(1) + Duration::seconds(seconds),
+            status: "Degraded",
+        };
+        // One check a minute, drifting a little: still an incident.
+        assert_eq!(lasting(vec![lasting_for(59)]), vec![lasting_for(59)]);
+        // Shorter than half a check's interval can't be told apart.
+        assert!(lasting(vec![lasting_for(20)]).is_empty());
     }
 }

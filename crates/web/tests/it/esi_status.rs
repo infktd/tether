@@ -61,6 +61,15 @@ async fn mount_status(h: &Harness, markets: &str, priority: u8) {
         .await;
 }
 
+async fn work(h: &Harness) {
+    let mut registry = Registry::new();
+    tether_web::plugin_jobs::register_jobs(&mut registry, h.db.clone(), h.plugins.clone());
+    let config = WorkerConfig::default();
+    while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
+}
+
+/// The five-minute schedule, due now: it starts the chain of checks if
+/// none is stored for two minutes, and the chain's first runs at once.
 async fn check(h: &Harness) {
     sqlx::query(
         "UPDATE core.schedules SET next_run_at = now() - interval '1 minute' WHERE name = $1",
@@ -70,10 +79,63 @@ async fn check(h: &Harness) {
     .await
     .unwrap();
     tether_jobs::schedule::run_due(&h.db).await.unwrap();
-    let mut registry = Registry::new();
-    tether_web::plugin_jobs::register_jobs(&mut registry, h.db.clone(), h.plugins.clone());
-    let config = WorkerConfig::default();
-    while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
+    work(h).await;
+}
+
+/// The chain's queued check, run now.
+async fn next_check(h: &Harness) {
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'check-next' \
+         AND state = 'queued'",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(h).await;
+}
+
+async fn count(h: &Harness, sql: &'static str) -> i64 {
+    sqlx::query_scalar(sql)
+        .bind(ID)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+/// The chain's queued checks.
+async fn queued_next(h: &Harness) -> i64 {
+    count(
+        h,
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'check-next' \
+         AND state = 'queued'",
+    )
+    .await
+}
+
+async fn dead(h: &Harness) -> i64 {
+    count(
+        h,
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND state = 'dead'",
+    )
+    .await
+}
+
+async fn status_reads(h: &Harness) -> usize {
+    h.esi_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().starts_with("/meta/status"))
+        .count()
+}
+
+async fn checks(h: &Harness) -> i64 {
+    sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.esi-status".checks"#)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -91,6 +153,22 @@ async fn esi_status_end_to_end(db: PgPool) {
 
     mount_status(&h, "Degraded", 5).await;
     check(&h).await;
+    // A minute on, the next check, queued once.
+    assert_eq!(queued_next(&h).await, 1);
+    let soon = count(
+        &h,
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'check-next' \
+         AND state = 'queued' AND run_at BETWEEN now() + interval '50 seconds' \
+         AND now() + interval '70 seconds'",
+    )
+    .await;
+    assert_eq!(soon, 1);
+    // The schedule leaves a running chain alone: no extra read of ESI.
+    let reads = status_reads(&h).await;
+    check(&h).await;
+    assert_eq!(status_reads(&h).await, reads);
+    assert_eq!(checks(&h).await, 1);
+    assert_eq!(queued_next(&h).await, 1);
     let res = page(&h, &at, &pilot).await;
     assert!(res.body.contains("compatibility date 20"), "{}", res.body);
     // The verdict, in words, and what it means.
@@ -150,12 +228,7 @@ async fn esi_status_end_to_end(db: PgPool) {
         res.body
     );
     assert!(!res.body.contains(">Ongoing<"), "{}", res.body);
-    let checks: i64 =
-        sqlx::query_scalar(r#"SELECT count(*) FROM "plugin_tether.esi-status".checks"#)
-            .fetch_one(&h.db)
-            .await
-            .unwrap();
-    assert_eq!(checks, 2);
+    assert_eq!(checks(&h).await, 2);
     let changed: (String, String) = sqlx::query_as(
         r#"SELECT was, status FROM "plugin_tether.esi-status".changes WHERE path = '/markets/{region_id}/orders'"#,
     )
@@ -163,6 +236,18 @@ async fn esi_status_end_to_end(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(changed, ("Degraded".to_owned(), "OK".to_owned()));
+
+    // The chain's next check: one more row, the next queued, nothing
+    // dead, and a route whose status held keeps its since.
+    let since =
+        r#"SELECT since::text FROM "plugin_tether.esi-status".routes WHERE path = '/alliances'"#;
+    let before: String = sqlx::query_scalar(since).fetch_one(&h.db).await.unwrap();
+    next_check(&h).await;
+    assert_eq!(checks(&h).await, 3);
+    assert_eq!(queued_next(&h).await, 1);
+    assert_eq!(dead(&h).await, 0);
+    let after: String = sqlx::query_scalar(since).fetch_one(&h.db).await.unwrap();
+    assert_eq!(before, after);
 
     // Checks that stopped: the page says it's out of date.
     sqlx::query(
@@ -177,4 +262,72 @@ async fn esi_status_end_to_end(db: PgPool) {
         "{}",
         res.body
     );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_full_day_of_minute_checks_counts(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_status(&h, "OK", 5).await;
+    check(&h).await;
+    // A day of checks a minute apart before it, three of them degraded.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.esi-status".checks
+               (checked_at, compatibility_date, ok, degraded, down, recovering, unknown)
+           SELECT now() - make_interval(mins => n), '2026-08-18',
+                  CASE WHEN n BETWEEN 1200 AND 1202 THEN 2 ELSE 3 END,
+                  CASE WHEN n BETWEEN 1200 AND 1202 THEN 1 ELSE 0 END, 0, 0, 0
+           FROM generate_series(1, 1439) AS n"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let pilot = log_in(&h, None).await;
+    let res = page(&h, &format!("/plugins/{ID}"), &pilot).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("of 1440 checks"), "{}", res.body);
+    assert!(res.body.contains("99.8%"), "{}", res.body);
+    let incidents = res.body.find("Incidents, last 24 hours").unwrap();
+    let areas = res.body.find("By area").unwrap();
+    assert!(
+        res.body[incidents..areas].contains(">Degraded<"),
+        "{}",
+        res.body
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_check_that_fails_waits_for_the_next(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // ESI down (its daily downtime, say).
+    Mock::given(method("GET"))
+        .and(path("/meta/status"))
+        .respond_with(
+            ResponseTemplate::new(503).set_body_raw(r#"{"error":"downtime"}"#, "application/json"),
+        )
+        .mount(&h.esi_server)
+        .await;
+    // The schedule starts the chain; its check fails, and so does the
+    // next.
+    check(&h).await;
+    next_check(&h).await;
+    // Nothing stored for two minutes: the schedule restarts the chain,
+    // without reading ESI itself.
+    check(&h).await;
+    assert_eq!(status_reads(&h).await, 3);
+    assert_eq!(checks(&h).await, 0);
+    // Each failure is a line in the app's log, as aa-esi-status logs it,
+    // and waits for the next check, a minute on: no job dies of it.
+    let logged = count(
+        &h,
+        "SELECT count(*) FROM core.plugin_logs WHERE plugin_id = $1 AND level = 'error' \
+         AND message LIKE 'reading ESI''s status: %'",
+    )
+    .await;
+    assert_eq!(logged, 3);
+    assert_eq!(dead(&h).await, 0);
+    assert_eq!(queued_next(&h).await, 1);
 }

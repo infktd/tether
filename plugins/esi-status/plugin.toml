@@ -5,7 +5,7 @@
 id = "tether.esi-status"
 name = "ESI Status"
 icon = "radio"
-version = "0.1.3"
+version = "0.1.4"
 host_api = "1"
 description = "ESI's status route by route (OK, degraded, down, recovering), as ESI reports it, and how it went over the last 24 hours."
 
@@ -15,7 +15,11 @@ key = "PUBLISHER_KEY"
 [capabilities]
 storage = true
 
-# Every five minutes: ESI's status, kept for 24 hours.
+# ESI's status every minute, as aa-esi-status' task: a chain of jobs,
+# each queuing the next. A manifest can't schedule under five minutes, so
+# this schedule (and Run now) only restarts the chain when nothing has
+# been stored for two minutes. Checks are kept for 24 hours; each is a
+# line in the app's access log.
 [[capabilities.schedules]]
 name = "check"
 every = "5m"
