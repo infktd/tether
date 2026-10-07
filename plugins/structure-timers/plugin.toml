@@ -27,7 +27,7 @@ timer_management = "Create, edit and delete structure timers"
 # Who each is usually for, and what holding it means (Permissions shows
 # these under the descriptions).
 [permission_notes]
-timer_view = "Usually Member, and Blue if allies join your fights: everyone who should see upcoming timers. A corporation-only timer still shows only to its corporation."
+timer_view = "Usually Member, and Blue if allies join your fights: everyone who should see upcoming timers. Holders also see Structures' timers, moon extractions among them (drill, moon, system, owner and when the chunk is ready), unless Structures makes them corporation-only. A corporation-only timer shows only to its corporation."
 timer_management = "For FCs and directors who keep the board: holders add timers, and edit or delete anyone's (a corporation-only one only from its corporation; those from Structures change only there)."
 
 [[pages]]

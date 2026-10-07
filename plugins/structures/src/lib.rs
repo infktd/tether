@@ -2380,7 +2380,8 @@ fn orbital_table(rows: Vec<Vec<Value>>) -> Table {
 /// aa-structures' Jump gates tab: the Ansiblex gates the viewer may see
 /// (`gates`, of `total`), each with the liquid ozone in its fuel bay as the
 /// corporation's assets last said: none read yet shows nothing, an empty
-/// bay 0.
+/// bay 0. The ozone needs no `view_structure_fit`, as in aa-structures'
+/// list (its note says so).
 fn jump_gate_tab(
     gates: &storage::Rows,
     total: i64,
@@ -3045,9 +3046,10 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                 settings.moon_extraction_timers,
             )
             .help(
-                "aa-structures' STRUCTURES_MOON_EXTRACTION_TIMERS_ENABLED: a moon extraction \
-                 started gives Structure Timers a timer for when its chunk is ready, and \
-                 cancelling it removes the timer. Off: none, and those made are removed.",
+                "A moon extraction started gives Structure Timers a timer for when its chunk is \
+                 ready, and cancelling it removes the timer. The timer names the drill, moon, \
+                 system and owner, and everyone who may see Structure Timers sees it unless \
+                 timers are corporation-only (above). Off: none, and those made are removed.",
             ),
         )
         .field(
@@ -3065,8 +3067,8 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                 settings.show_jump_gates,
             )
             .help(
-                "aa-structures' STRUCTURES_SHOW_JUMP_GATES: Ansiblex jump gates with their \
-                 liquid ozone, on their own tab.",
+                "Ansiblex jump gates with their liquid ozone, on their own tab. Everyone who \
+                 may see a gate sees its ozone, without the fitting permission.",
             ),
         );
     let admin = SettingsGroup::new("Admin notifications").field(
@@ -3076,11 +3078,10 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
             settings.admin_notifications,
         )
         .help(
-            "aa-structures' STRUCTURES_ADMIN_NOTIFICATIONS_ENABLED: superusers and holders of \
-             manage get a notice in Tether's notifications when a data source is added, and when \
-             an owner's reads stop (structures for 2 hours, notifications for 40 minutes, assets \
-             once read for 2 hours), come back, or first work. An owner can be left out on its \
-             own page.",
+            "Superusers and holders of manage get a notice in Tether's notifications when a \
+             data source is added, and when an owner's reads stop (structures for 2 hours, \
+             notifications for 40 minutes, assets once read for 2 hours), come back, or first \
+             work. An owner can be left out on its own page.",
         ),
     );
     let owner_rows = owners.rows.iter().map(|r| {
