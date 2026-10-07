@@ -173,6 +173,9 @@ path = "mail"          # mail/... needs view too,
 permission = "view"
 audit = true           # and every view of it is in Tether's audit log
 [[pages]]
+path = "reports"       # reports/... opens for view or manage,
+permission = ["view", "manage"]   # any one of them
+[[pages]]
 path = "apply"         # apply/... is for anyone signed in with a main,
 signed_in = true       # no permission (AA's login_required views)
 
@@ -200,7 +203,7 @@ path = "ores"
 - Permissions are granted like Tether's own, to states and groups, as `plugin.<id>.<name>`.
 - A `[[navigation]]` link goes in its `section` of the sidebar: `account`, `fleet`, `industry`, `corporation`, `apps` or `admin`. Leave it out for `apps`; any other name gets the package refused. It's only where the link starts out: admins can move, rename or hide it on the Menu page, and a section with nothing in it isn't shown.
 - A page no `[[pages]]` rule covers is for admins only (`admin.plugins`), never for everyone. Declare a rule for every page people should see.
-- A rule names a `permission` or says `signed_in = true`, never both. `signed_in` pages open to every account signed in with a main, Guests included and the Blacklist not (it holds only what an admin grants it): use it only where AA asks no more than a login (applying to a corporation), and gate what they show and do with `viewer.can(...)` as usual. Admins see such rules at install as "any signed-in pilot", and an upgrade that opens a page asks them again.
+- A rule names a `permission`, or a list of 1 to 5 of them any one of which opens its pages (as aa-afat's Logs open for `log_view` or `manage_afat`), or says `signed_in = true`, never both. Every link Tether draws to those pages (sidebar, views, Manage, the action, the ⌘K palette) follows the rule; admins see each rule's permissions at install, and an upgrade that adds one to a rule asks them again. `signed_in` pages open to every account signed in with a main, Guests included and the Blacklist not (it holds only what an admin grants it): use it only where AA asks no more than a login (applying to a corporation), and gate what they show and do with `viewer.can(...)` as usual. Admins see such rules at install as "any signed-in pilot", and an upgrade that opens a page asks them again.
 - `audit = true` on a rule writes every view of a page under it (opened, reloaded, or drawn for a form post) to Tether's audit log as `plugin.page_view`, with who, the path and the query, before your plugin is called. Use it for pages showing someone else's private data, such as their mail. A view that can't be recorded isn't shown.
 - Someone who may not open a page gets the same "nothing here" as for a page that doesn't exist; your plugin isn't called.
 - Paths are link paths (see below). The query string is capped at 2 KiB and 20 pairs; `_tab` is the host's (which tab is showing) and never reaches you. Each person can open 120 of a plugin's pages a minute.
@@ -213,7 +216,7 @@ Tether draws every app's frame, the same for all of them: the page header (your 
 - `[[views]]`: your views bar, in order: at most 8, labels up to 30 characters, in sentence case. The first is your main page (`path = ""`), usually "Overview". Required of every app with pages to open (any `[[pages]]` rule or `[[navigation]]` entry): Tether refuses the package without it. One view alone draws no bar. A page's own `.link()`s are its record's sub-pages (chips under the bar), never your views.
 - `[action]`: your one primary action ("New ledger"), a button in the header on every page but its own. A page's own `.button(...)` (a record's Edit) takes its place on that page. Name actions that create something "New ...".
 - `[[manage]]`: pages for those who run the app, after Settings (which Tether adds when a `[[pages]]` rule covers `settings`): the header's Manage button opens the first, and the bar on those pages lists them all. Not your main page, and nothing under `settings`. On a Manage page the bar shows the Manage pages and the eyebrow reads "<App> · Manage". Tether adds two of its own after yours: Data sources (an app with data-source scopes: each source, how it's doing, Add data source, and for app admins which member corporations you can read) and Activity (for app admins: your ESI and HTTPS calls, schedules with Run now, jobs and log). Their paths, `data-sources` and `activity` and everything under them (in any case), are Tether's in every app: a package with a page rule, sidebar entry, view, Manage page or action there, or any of those labelled "Data sources" or "Activity", is refused, and your main page rule never reaches them.
-- Each entry shows only to whoever may open its page under your `[[pages]]` rules, so nobody sees a link they can't follow: give a view or action meant for fewer people its own rule. An action open to holders of either of two permissions can't be said with one rule; draw it as each page's `.button(...)` for those who hold one (Fleet Activity Tracking's New FAT link does).
+- Each entry shows only to whoever may open its page under your `[[pages]]` rules, so nobody sees a link they can't follow: give a view or action meant for fewer people its own rule, naming every permission that opens it (`permission = ["add_fatlink", "manage_afat"]`).
 
 ## Pages
 

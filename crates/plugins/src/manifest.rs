@@ -106,15 +106,17 @@ pub struct Manifest {
 }
 
 /// `[[pages]]`: pages under `path` (a page path; `""` for all) need
-/// `permission`, one of `[permissions]`, or, with `signed_in = true`,
-/// only a signed-in account with a main (as AA's `login_required` views,
-/// such as applying to a corporation). The longest matching path wins.
+/// `permission`, one of `[permissions]` or a list of them any one of which
+/// opens them (as aa-afat's Logs, for `log_view` or `manage_afat`), or,
+/// with `signed_in = true`, only a signed-in account with a main (as AA's
+/// `login_required` views, such as applying to a corporation). The
+/// longest matching path wins.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PageRule {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission: Option<String>,
+    pub permission: Option<RulePermission>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub signed_in: bool,
     /// Every view of a page under this rule is written to Tether's audit
@@ -122,6 +124,30 @@ pub struct PageRule {
     /// private data such as mail.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub audit: bool,
+}
+
+/// A `[[pages]]` rule's `permission`: one name (`permission = "view"`), or
+/// several, any one of which opens its pages (`permission = ["log_view",
+/// "manage_afat"]`). Written back as it was given.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum RulePermission {
+    One(String),
+    AnyOf(Vec<String>),
+}
+
+/// Permissions one `[[pages]]` rule may name.
+pub const MAX_RULE_PERMISSIONS: usize = 5;
+
+impl RulePermission {
+    /// The permissions it names (short names), any one of which opens its
+    /// pages.
+    pub fn names(&self) -> &[String] {
+        match self {
+            Self::One(name) => std::slice::from_ref(name),
+            Self::AnyOf(names) => names,
+        }
+    }
 }
 
 /// `[[navigation]]`: a sidebar link to one of the plugin's pages.
@@ -236,6 +262,8 @@ pub enum PageAccess {
     SignedIn,
     /// Holders of this permission (its full name, `plugin.<id>.<name>`).
     Permission(String),
+    /// Holders of any one of these (full names): a rule naming several.
+    AnyOf(Vec<String>),
 }
 
 impl Manifest {
@@ -266,10 +294,14 @@ impl Manifest {
     pub fn page_access(&self, path: &str) -> PageAccess {
         match self.page_rule(path) {
             None => PageAccess::Admins,
-            Some(rule) => match &rule.permission {
-                Some(permission) => {
-                    PageAccess::Permission(format!("plugin.{}.{permission}", self.plugin.id))
-                }
+            Some(rule) => match rule.permission.as_ref().map(RulePermission::names) {
+                Some([one]) => PageAccess::Permission(format!("plugin.{}.{one}", self.plugin.id)),
+                Some(names) => PageAccess::AnyOf(
+                    names
+                        .iter()
+                        .map(|name| format!("plugin.{}.{name}", self.plugin.id))
+                        .collect(),
+                ),
                 None => PageAccess::SignedIn,
             },
         }
@@ -686,11 +718,26 @@ impl Manifest {
             check_page_path("[[pages]] path", &rule.path)?;
             match (&rule.permission, rule.signed_in) {
                 (Some(permission), false) => {
-                    if !self.permissions.contains_key(permission) {
+                    let names = permission.names();
+                    if names.is_empty() || names.len() > MAX_RULE_PERMISSIONS {
                         return Err(bad(format!(
-                            "[[pages]] {:?} needs permission {permission:?}, which [permissions] doesn't declare",
+                            "[[pages]] {:?} names 1 to {MAX_RULE_PERMISSIONS} permissions",
                             rule.path
                         )));
+                    }
+                    for (i, permission) in names.iter().enumerate() {
+                        if !self.permissions.contains_key(permission) {
+                            return Err(bad(format!(
+                                "[[pages]] {:?} needs permission {permission:?}, which [permissions] doesn't declare",
+                                rule.path
+                            )));
+                        }
+                        if names[..i].contains(permission) {
+                            return Err(bad(format!(
+                                "[[pages]] {:?} names {permission:?} twice",
+                                rule.path
+                            )));
+                        }
                     }
                 }
                 (None, true) => {}
@@ -1591,6 +1638,52 @@ manage = "Manage the mining ledger"
             ))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_page_rule_may_name_several_permissions() {
+        // aa-afat's Logs: log_view or manage_afat.
+        let m = Manifest::parse(&manifest(
+            "[permissions]\nview = \"See\"\nlog_view = \"Logs\"\nmanage = \"Manage\"\n\n\
+             [[pages]]\npath = \"\"\npermission = \"view\"\n\n\
+             [[pages]]\npath = \"logs\"\npermission = [\"log_view\", \"manage\"]\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            m.page_access("logs/2"),
+            PageAccess::AnyOf(vec![
+                "plugin.acme.mining-ledger.log_view".to_owned(),
+                "plugin.acme.mining-ledger.manage".to_owned(),
+            ])
+        );
+        // A list of one is that one permission.
+        let one = Manifest::parse(&manifest(
+            "[permissions]\nview = \"See\"\n[[pages]]\npath = \"\"\npermission = [\"view\"]\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            one.page_access(""),
+            PageAccess::Permission("plugin.acme.mining-ledger.view".to_owned())
+        );
+        // Written back as given: a single name stays a string.
+        let written = serde_json::to_string(&m).unwrap();
+        assert!(
+            written.contains(r#""permission":"view""#)
+                && written.contains(r#""permission":["log_view","manage"]"#),
+            "{written}"
+        );
+        let back: Manifest = serde_json::from_str(&written).unwrap();
+        assert_eq!(back, m);
+        for bad in [
+            "[permissions]\nview = \"x\"\n[[pages]]\npath = \"\"\npermission = []\n",
+            "[permissions]\nview = \"x\"\n[[pages]]\npath = \"\"\npermission = [\"view\", \"nope\"]\n",
+            "[permissions]\nview = \"x\"\n[[pages]]\npath = \"\"\npermission = [\"view\", \"view\"]\n",
+            "[permissions]\na = \"x\"\nb = \"x\"\nc = \"x\"\nd = \"x\"\ne = \"x\"\nf = \"x\"\n\
+             [[pages]]\npath = \"\"\npermission = [\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]\n",
+            "[permissions]\nview = \"x\"\n[[pages]]\npath = \"\"\npermission = 3\n",
+        ] {
+            assert!(Manifest::parse(&manifest(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]

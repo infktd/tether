@@ -22,7 +22,7 @@
     {% for r in c.pages_added %}
     <div class="grid gap-1">
       <dt class="font-medium flex items-center gap-2"><span class="badge">New</span> Page access</dt>
-      <dd class="text-muted-foreground break-words">{{ r.pages }}: {% if let Some(permission) = r.permission %}whoever holds <span class="num">{{ permission }}</span>{% else %}any signed-in pilot{% endif %} may open them{% if r.audited %}, and every view is audited{% endif %}.</dd>
+      <dd class="text-muted-foreground break-words">{{ r.pages }}: {% if r.permissions.is_empty() %}any signed-in pilot{% else %}whoever holds {% for p in r.permissions %}{% if !loop.first %} or {% endif %}<span class="num">{{ p }}</span>{% endfor %}{% endif %} may open them{% if r.audited %}, and every view is audited{% endif %}.</dd>
     </div>
     {% endfor %}
   </dl>
@@ -64,7 +64,7 @@
     {% for r in c.pages_removed %}
     <div class="grid gap-1">
       <dt class="font-medium flex items-center gap-2"><span class="badge" data-variant="outline">No longer</span> Page access</dt>
-      <dd class="text-muted-foreground break-words">{{ r.pages }}: {% if let Some(permission) = r.permission %}whoever holds <span class="num">{{ permission }}</span>{% else %}any signed-in pilot{% endif %} may open them{% if r.audited %}, every view audited{% endif %}.</dd>
+      <dd class="text-muted-foreground break-words">{{ r.pages }}: {% if r.permissions.is_empty() %}any signed-in pilot{% else %}whoever holds {% for p in r.permissions %}{% if !loop.first %} or {% endif %}<span class="num">{{ p }}</span>{% endfor %}{% endif %} may open them{% if r.audited %}, every view audited{% endif %}.</dd>
     </div>
     {% endfor %}
   </dl>

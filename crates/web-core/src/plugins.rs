@@ -204,7 +204,8 @@ pub struct Running {
 }
 
 /// Whether an account holding what `holds` says may open an app page
-/// with this access: its permission, anyone signed in (with a main, which
+/// with this access: its permission (any one of them, for a rule naming
+/// several), anyone signed in (with a main, which
 /// app pages ask for anyway) but the Blacklist, or app admins when no rule
 /// covers it. The Blacklist holds nothing unless an admin grants it, and
 /// `signed_in` mustn't be the one door that grants can't close.
@@ -217,6 +218,7 @@ pub fn may_open(
         manifest::PageAccess::Admins => holds(tether_core::permissions::ADMIN_PLUGINS),
         manifest::PageAccess::SignedIn => !blacklisted,
         manifest::PageAccess::Permission(permission) => holds(permission),
+        manifest::PageAccess::AnyOf(permissions) => permissions.iter().any(|p| holds(p)),
     }
 }
 
