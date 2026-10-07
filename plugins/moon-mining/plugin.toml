@@ -28,8 +28,8 @@ data_source = [
 
 # aa-moonmining's periodic tasks: refineries and extractions every 10
 # minutes (run_regular_updates), every listed observer's mining ledger
-# hourly (run_report_updates), values daily. A ledger run out of ESI
-# calls carries on a minute later (`ledger_more`).
+# hourly (run_report_updates), values daily. A run out of ESI calls
+# carries on a minute later (`sync_more`, `ledger_more`).
 [[capabilities.schedules]]
 name = "sync"
 every = "10m"

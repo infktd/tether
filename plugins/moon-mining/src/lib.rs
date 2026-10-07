@@ -93,7 +93,8 @@ impl Plugin for MoonMining {
 
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
-            "sync" => sync(),
+            "sync" => sync(None),
+            SYNC_MORE => sync(Some(&job)),
             "ledger" => ledger(None),
             LEDGER_MORE => ledger(Some(&job)),
             "roles" => roles(),
@@ -259,6 +260,10 @@ const ESI_BUDGET: usize = 90;
 const QUEUE_BUDGET: usize = 90;
 /// Calls a run keeps back for names.
 const NAME_RESERVE: usize = 8;
+/// Calls a sync keeps back for moons, systems and names.
+const PLACES_RESERVE: usize = 10;
+/// The sync run that carries on where one out of ESI calls stopped.
+const SYNC_MORE: &str = "sync_more";
 /// The ledger run that carries on where one out of ESI calls stopped.
 const LEDGER_MORE: &str = "ledger_more";
 /// A ledger tried this recently isn't read again (an SQL interval): ESI
@@ -277,6 +282,13 @@ const MANAGERS_KEPT: &str = "2 days";
 #[derive(Deserialize)]
 struct LedgerMore {
     corporations: Vec<i64>,
+}
+
+/// A `sync_more` run's round: when the scheduled run began. Corporations
+/// read since are done.
+#[derive(Deserialize)]
+struct SyncMore {
+    since: String,
 }
 
 /// Calls left this run.
@@ -369,72 +381,86 @@ fn sources_by_corporation() -> Vec<(i64, Subject)> {
     seen
 }
 
-/// Every 10 minutes, as aa-moonmining's run_regular_updates: extractions
-/// and refineries from each corporation, a ping queued for each new or
-/// moved pop, then names, all within one budget.
-fn sync() -> Result<(), JobError> {
+/// Every 10 minutes, as aa-moonmining's run_regular_updates: each
+/// corporation's extractions and refineries, the longest unread first, a
+/// ping queued for each new or moved pop, then names. A run out of ESI
+/// calls carries on a minute later (`sync_more`) with the corporations it
+/// didn't reach, so every one is read however many there are.
+fn sync(more: Option<&Job>) -> Result<(), JobError> {
     let now = Utc::now();
     let sources = sources_by_corporation();
     if sources.is_empty() {
         log::info("no data sources added yet");
         return Ok(());
     }
-    let mut budget = Budget(ESI_BUDGET);
+    // This round began when the scheduled run did (the database's clock):
+    // a follow-up skips corporations read since.
+    let since = match more {
+        Some(job) => {
+            serde_json::from_str::<SyncMore>(&job.payload)
+                .map_err(|e| JobError::Permanent(format!("sync_more payload: {e}")))?
+                .since
+        }
+        None => {
+            let rows =
+                storage::query("SELECT now()", &[]).map_err(|e| retry("reading the time", e))?;
+            rows.rows.first().map(|r| text(r, 0)).unwrap_or_default()
+        }
+    };
+    let read = storage::query(
+        "SELECT corporation_id, synced_at, synced_at >= $1 FROM corporations",
+        &[Db::timestamp(&since)],
+    )
+    .map_err(|e| retry("reading corporations", e))?;
+    let mut due: Vec<(Option<DateTime<Utc>>, i64, Subject)> = sources
+        .iter()
+        .filter_map(|(corp, subject)| {
+            let row = read.rows.iter().find(|r| int(r, 0) == *corp);
+            let this_round = row.and_then(|r| r.get(2)).and_then(Db::as_bool) == Some(true);
+            (!this_round).then(|| (row.and_then(|r| when(r, 1)), *corp, *subject))
+        })
+        .collect();
+    // Never read first, then the longest unread.
+    due.sort_by_key(|(at, _, _)| *at);
+    let mut budget = Budget(ESI_BUDGET - PLACES_RESERVE);
     let mut queue = QUEUE_BUDGET;
-    // Extractions and pings first: they matter most.
-    for (corp, subject) in &sources {
-        let Ok(bodies) = get_pages(
-            &mut budget,
-            "corporation-mining-extractions",
-            *subject,
-            &[],
-            &format!("extractions for corporation {corp}"),
-        ) else {
-            continue;
-        };
-        storage::transaction(&[
-            Statement::new(
-                "INSERT INTO extractions (structure_id, chunk_arrival, moon_id, corporation_id, extraction_start, natural_decay, seen_at) \
-                 SELECT structure_id, chunk_arrival_time, moon_id, $2, extraction_start_time, natural_decay_time, now() \
-                 FROM json_to_recordset($1::json) AS x(structure_id bigint, moon_id bigint, \
-                      extraction_start_time timestamptz, chunk_arrival_time timestamptz, natural_decay_time timestamptz) \
-                 ON CONFLICT (structure_id, chunk_arrival) DO UPDATE SET moon_id = EXCLUDED.moon_id, \
-                 natural_decay = EXCLUDED.natural_decay, seen_at = now(), cancelled_at = NULL",
-                vec![Db::json(concat(&bodies)), (*corp).into()],
-            ),
-            Statement::new(
-                "INSERT INTO moons (moon_id) SELECT DISTINCT moon_id FROM extractions ON CONFLICT DO NOTHING",
-                vec![],
-            ),
-        ])
-        .map_err(|e| retry("storing extractions", e))?;
-        // Ones that were coming but the corporation no longer has:
-        // cancelled (a restart shows as a new one). Kept for the Past tab;
-        // their pings go.
-        let gone = storage::query(
-            "UPDATE extractions SET cancelled_at = now() WHERE corporation_id = $1 AND chunk_arrival > $2 \
-             AND cancelled_at IS NULL AND seen_at < now() - interval '1 minute' \
-             RETURNING structure_id, chunk_arrival",
-            &[(*corp).into(), Db::timestamp(rfc3339(now))],
-        )
-        .map_err(|e| retry("marking cancelled extractions", e))?;
-        for row in &gone.rows {
-            if queue == 0 {
+    let (mut done, mut left) = (0, 0);
+    for (i, (_, corp, subject)) in due.iter().enumerate() {
+        // Two calls at least: extractions, then refineries.
+        if budget.0 < 2 {
+            left = due.len() - i;
+            break;
+        }
+        let whole = budget.0 == ESI_BUDGET - PLACES_RESERVE;
+        if read_corporation(&mut budget, &mut queue, *corp, *subject, now)? {
+            // Its pages ran past the run's calls: the next run reads it
+            // first, with all of them. One that had them all waits for
+            // the next round.
+            if !whole {
+                left = due.len() - i;
                 break;
             }
-            queue -= 1;
-            let _ = jobs::cancel(&pop_key(int(row, 0), &text(row, 1)));
+            log::warn(format!(
+                "corporation {corp}: its structures have more pages than one run may read"
+            ));
         }
+        storage::execute(
+            "INSERT INTO corporations (corporation_id, synced_at) VALUES ($1, now()) \
+             ON CONFLICT (corporation_id) DO UPDATE SET synced_at = now()",
+            &[(*corp).into()],
+        )
+        .map_err(|e| retry("marking a corporation read", e))?;
+        done += 1;
     }
     // A ping at each coming pop not queued for its time yet.
-    let due = storage::query(
+    let pops = storage::query(
         "SELECT structure_id, chunk_arrival, natural_decay FROM extractions \
          WHERE natural_decay > $1 AND cancelled_at IS NULL AND queued_for IS DISTINCT FROM natural_decay \
          ORDER BY natural_decay LIMIT $2",
         &[Db::timestamp(rfc3339(now)), (queue as i64).into()],
     )
     .map_err(|e| retry("finding pops to queue", e))?;
-    for row in &due.rows {
+    for row in &pops.rows {
         let (structure, arrival) = (int(row, 0), text(row, 1));
         let Some(decay) = when(row, 2) else {
             continue;
@@ -459,39 +485,110 @@ fn sync() -> Result<(), JobError> {
             }
         }
     }
-    // Refineries' names (a source without the role still has extractions).
-    for (corp, subject) in &sources {
-        let Ok(bodies) = get_pages(
-            &mut budget,
-            "corporation-structures",
-            *subject,
-            &[],
-            &format!("structures for corporation {corp}"),
-        ) else {
-            continue;
-        };
-        storage::transaction(&[Statement::new(
-            // A refinery without a Moon Drill (one for reprocessing, say)
-            // isn't a drill: the planner leaves it out.
-            "INSERT INTO structures (structure_id, corporation_id, name, system_id, type_id, drill, updated_at) \
-             SELECT structure_id, $2, coalesce(name, 'Structure ' || structure_id::text), system_id, type_id, \
-                    EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(services, '[]')) s \
-                            WHERE s ->> 'name' = 'Moon Drilling'), now() \
-             FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, system_id bigint, \
-                  type_id bigint, services jsonb) \
-             WHERE type_id = ANY($3::bigint[]) \
-             ON CONFLICT (structure_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, \
-             name = EXCLUDED.name, system_id = EXCLUDED.system_id, type_id = EXCLUDED.type_id, \
-             drill = EXCLUDED.drill, updated_at = now()",
-            vec![
-                Db::json(concat(&bodies)),
-                (*corp).into(),
-                format!("{{{},{}}}", REFINERIES[0], REFINERIES[1]).into(),
-            ],
-        )])
-        .map_err(|e| retry("storing structures", e))?;
+    // Carry on while runs get somewhere.
+    if left > 0 && done > 0 {
+        log::info(format!(
+            "{left} corporations wait for the next run, a minute on: out of ESI calls"
+        ));
+        jobs::enqueue(
+            NewJob::new(SYNC_MORE)
+                .key(SYNC_MORE)
+                .payload(serde_json::json!({ "since": since }).to_string())
+                .at(rfc3339(now + Duration::minutes(1))),
+        )
+        .map_err(|e| retry("queuing the next sync", e))?;
     }
+    budget.0 += PLACES_RESERVE;
     places(&mut budget, &sources)
+}
+
+/// One corporation's extractions (with the pings of those it no longer
+/// has taken back) and refineries; whether the run's calls ran out on its
+/// pages. ESI's refusals are logged and leave what's stored as it was.
+fn read_corporation(
+    budget: &mut Budget,
+    queue: &mut usize,
+    corp: i64,
+    subject: Subject,
+    now: DateTime<Utc>,
+) -> Result<bool, JobError> {
+    match get_pages(
+        budget,
+        "corporation-mining-extractions",
+        subject,
+        &[],
+        &format!("extractions for corporation {corp}"),
+    ) {
+        Ok(bodies) => {
+            storage::transaction(&[
+                Statement::new(
+                    "INSERT INTO extractions (structure_id, chunk_arrival, moon_id, corporation_id, extraction_start, natural_decay, seen_at) \
+                     SELECT structure_id, chunk_arrival_time, moon_id, $2, extraction_start_time, natural_decay_time, now() \
+                     FROM json_to_recordset($1::json) AS x(structure_id bigint, moon_id bigint, \
+                          extraction_start_time timestamptz, chunk_arrival_time timestamptz, natural_decay_time timestamptz) \
+                     ON CONFLICT (structure_id, chunk_arrival) DO UPDATE SET moon_id = EXCLUDED.moon_id, \
+                     natural_decay = EXCLUDED.natural_decay, seen_at = now(), cancelled_at = NULL",
+                    vec![Db::json(concat(&bodies)), corp.into()],
+                ),
+                Statement::new(
+                    "INSERT INTO moons (moon_id) SELECT DISTINCT moon_id FROM extractions ON CONFLICT DO NOTHING",
+                    vec![],
+                ),
+            ])
+            .map_err(|e| retry("storing extractions", e))?;
+            // Ones that were coming but the corporation no longer has:
+            // cancelled (a restart shows as a new one). Kept for the Past
+            // tab; their pings go.
+            let gone = storage::query(
+                "UPDATE extractions SET cancelled_at = now() WHERE corporation_id = $1 AND chunk_arrival > $2 \
+                 AND cancelled_at IS NULL AND seen_at < now() - interval '1 minute' \
+                 RETURNING structure_id, chunk_arrival",
+                &[corp.into(), Db::timestamp(rfc3339(now))],
+            )
+            .map_err(|e| retry("marking cancelled extractions", e))?;
+            for row in &gone.rows {
+                if *queue == 0 {
+                    break;
+                }
+                *queue -= 1;
+                let _ = jobs::cancel(&pop_key(int(row, 0), &text(row, 1)));
+            }
+        }
+        Err(Missed::Budget) => return Ok(true),
+        Err(Missed::Esi) => {}
+    }
+    // Refineries' names (a source without the role still has extractions).
+    let bodies = match get_pages(
+        budget,
+        "corporation-structures",
+        subject,
+        &[],
+        &format!("structures for corporation {corp}"),
+    ) {
+        Ok(bodies) => bodies,
+        Err(missed) => return Ok(matches!(missed, Missed::Budget)),
+    };
+    storage::transaction(&[Statement::new(
+        // A refinery without a Moon Drill (one for reprocessing, say)
+        // isn't a drill: the planner leaves it out.
+        "INSERT INTO structures (structure_id, corporation_id, name, system_id, type_id, drill, updated_at) \
+         SELECT structure_id, $2, coalesce(name, 'Structure ' || structure_id::text), system_id, type_id, \
+                EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(services, '[]')) s \
+                        WHERE s ->> 'name' = 'Moon Drilling'), now() \
+         FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, system_id bigint, \
+              type_id bigint, services jsonb) \
+         WHERE type_id = ANY($3::bigint[]) \
+         ON CONFLICT (structure_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, \
+         name = EXCLUDED.name, system_id = EXCLUDED.system_id, type_id = EXCLUDED.type_id, \
+         drill = EXCLUDED.drill, updated_at = now()",
+        vec![
+            Db::json(concat(&bodies)),
+            corp.into(),
+            format!("{{{},{}}}", REFINERIES[0], REFINERIES[1]).into(),
+        ],
+    )])
+    .map_err(|e| retry("storing structures", e))?;
+    Ok(false)
 }
 
 /// Moons checked with ESI at most per run (one call each), well under the

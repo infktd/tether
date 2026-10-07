@@ -50,6 +50,7 @@ async fn install(h: &Harness, owner: &str) {
     let third = plugin_file("migrations/0003_tether_rules_optional.sql");
     let fourth = plugin_file("migrations/0004_old_moons_shown.sql");
     let fifth = plugin_file("migrations/0005_refinery_drills.sql");
+    let sixth = plugin_file("migrations/0006_corporation_reads.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -62,6 +63,7 @@ async fn install(h: &Harness, owner: &str) {
         ),
         ("migrations/0004_old_moons_shown.sql", fourth.as_bytes()),
         ("migrations/0005_refinery_drills.sql", fifth.as_bytes()),
+        ("migrations/0006_corporation_reads.sql", sixth.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -244,6 +246,11 @@ async fn mount_prices(h: &Harness) {
 
 /// Adds Chribba as the data source (the SSO round trip).
 async fn approve_source(h: &Harness, owner: &str) -> String {
+    add_source(h, owner, &format!("{CHRIBBA}:Chribba")).await
+}
+
+/// Adds `character` ("id:name") as a data source.
+async fn add_source(h: &Harness, owner: &str, character: &str) -> String {
     let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", owner)).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let login = res.cookie_value(LOGIN);
@@ -251,7 +258,7 @@ async fn approve_source(h: &Harness, owner: &str) -> String {
     let res = send(
         &h.app,
         get(
-            &format!("/auth/callback?code=ok:{CHRIBBA}:Chribba&state={state}"),
+            &format!("/auth/callback?code=ok:{character}&state={state}"),
             &[(LOGIN, &login), (SESSION, owner)],
         ),
     )
@@ -1364,4 +1371,102 @@ async fn a_ledger_too_big_to_store_doesnt_stop_the_rest(db: PgPool) {
             .any(|w| w.contains(&format!("observer {big}: its ledger couldn't be stored"))),
         "{warned:?}"
     );
+}
+
+/// gigX's corporation, a second owner's.
+const GIGX: i64 = 1887431749;
+const GIGX_CORP: i64 = 98133756;
+const GIGX_DRILL: i64 = 1030000000020;
+
+async fn sync_more_queued(h: &Harness) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'sync_more' \
+         AND state = 'queued'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+async fn has_structure(h: &Harness, structure: i64) -> bool {
+    sqlx::query_scalar(
+        r#"SELECT EXISTS (SELECT 1 FROM "plugin_tether.moon-mining".structures WHERE structure_id = $1)"#,
+    )
+    .bind(structure)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_corporation_is_read_however_many(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // Chribba Corp's structures need more ESI calls than a sync has, so
+    // a corporation after it in the list was never read.
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "100")
+                .set_body_json(serde_json::json!([])),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let json = |value: serde_json::Value| {
+        ResponseTemplate::new(200)
+            .insert_header("x-pages", "1")
+            .set_body_json(value)
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("/corporation/{GIGX_CORP}/mining/extractions")))
+        .respond_with(json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{GIGX_CORP}/structures")))
+        .respond_with(json(serde_json::json!([
+            { "structure_id": GIGX_DRILL, "name": "Jita - Drill Three", "system_id": SYSTEM,
+              "type_id": 35835, "corporation_id": GIGX_CORP, "profile_id": 1,
+              "state": "shield_vulnerable", "services": [{ "name": "Moon Drilling", "state": "online" }] },
+        ])))
+        .mount(&h.esi_server)
+        .await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    add_source(&h, &owner, &format!("{GIGX}:gigX")).await;
+    // The sync adding the owner ran: it read Chribba Corp, ran out of
+    // calls on its pages, and carries on a minute later.
+    work(&h).await;
+    assert!(!has_structure(&h, GIGX_DRILL).await);
+    assert_eq!(sync_more_queued(&h).await, 1);
+    let warned = warnings(&h).await;
+    assert!(
+        warned.iter().any(|w| w.contains(&format!(
+            "corporation {CHRIBBA_CORP}: its structures have more pages than one run may read"
+        ))),
+        "{warned:?}"
+    );
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'sync_more'",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(&h).await;
+    assert!(has_structure(&h, GIGX_DRILL).await);
+    assert_eq!(sync_more_queued(&h).await, 0);
+    // The next round starts with the longest unread.
+    let read: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT corporation_id FROM "plugin_tether.moon-mining".corporations ORDER BY synced_at"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(read, [CHRIBBA_CORP, GIGX_CORP]);
 }
