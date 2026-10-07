@@ -324,7 +324,7 @@ async fn forms_are_checked_before_the_plugin_sees_them(db: PgPool) {
         res.body
     );
     // Too big a post is refused before anything reads it.
-    let huge = format!("_form=note&body={}", "x".repeat(70 * 1024));
+    let huge = format!("_form=note&body={}", "x".repeat(600 * 1024));
     let res = send(&h.app, post(uri, &huge, &owner)).await;
     assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE);
 
