@@ -195,6 +195,17 @@ async fn buyback_end_to_end(db: PgPool) {
     let fuzzwork = MockServer::start().await;
     h.plugins.route_http_to(&fuzzwork.address().to_string());
     mount_fuzzwork(&fuzzwork).await;
+    // Before any data source: the pages say so, as every app does, rather
+    // than drawing a form with nothing to pick.
+    for at in ["manage", "manage/locations", "manage/program/new"] {
+        let res = page(&h, &format!("/plugins/{ID}/{at}"), &owner).await;
+        assert_eq!(res.status, StatusCode::OK, "{at}: {}", res.body);
+        assert!(
+            res.body.contains("No data source yet"),
+            "{at}: {}",
+            res.body
+        );
+    }
     let owner = add_manager(&h, &owner).await;
 
     // A location, then a program there: 10% tax, refined ore at 90%.

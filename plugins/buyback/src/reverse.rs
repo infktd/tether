@@ -37,7 +37,7 @@ use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, CodeBlock, Column, Field, Form, Page, PageError, Request, Section, SettingsForm,
     SettingsGroup, Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, actions,
-    add_owner, badge, discord, identity, item_type, link, log, time,
+    badge, discord, identity, item_type, link, log, time,
 };
 
 use crate::pages::id_of;
@@ -1773,11 +1773,7 @@ fn manage_list(access: &Access, settings: &Settings) -> Result<Page, PageError> 
         ));
     }
     if owners(access).is_empty() {
-        page = page.card(
-            Card::new("Add yourself as a manager")
-                .description("A program's manager is a character of yours added as a data source.")
-                .field("", add_owner("Add a manager")),
-        );
+        page = page.text(crate::manage::NO_DATA_SOURCE);
     }
     Ok(page
         .table(
@@ -2038,11 +2034,7 @@ fn editor(
     );
     let managers = editor_owners(access, program.as_ref());
     if managers.is_empty() {
-        return Ok(Page::new(title).card(
-            Card::new("Add yourself as a manager first")
-                .description("A program's manager is a character of yours added as a data source.")
-                .field("", add_owner("Add a manager")),
-        ));
+        return Ok(Page::new(title).text(crate::manage::NO_DATA_SOURCE));
     }
     let draft = match (draft, &program) {
         (Some(d), _) => d,
@@ -2089,7 +2081,7 @@ fn editor(
         .field(
             Field::select(
                 "owner",
-                "Manager",
+                "Data source",
                 managers
                     .iter()
                     .map(|c| (c.id.to_string(), c.name.clone()))

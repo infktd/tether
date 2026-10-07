@@ -9,8 +9,7 @@ use tether_plugin_sdk::jobs::{self, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Request, SettingsForm, SettingsGroup, Submission,
-    SubmitResult, Table, Tone, Value, action, actions, add_owner, discord, identity, item_type,
-    link, log,
+    SubmitResult, Table, Tone, Value, action, actions, discord, identity, item_type, link, log,
 };
 
 use crate::pages::id_of;
@@ -55,6 +54,11 @@ fn owners(access: &Access) -> Vec<Character> {
         .collect()
 }
 
+/// While the viewer has no data source, as every app says it: data
+/// sources are added on Tether's own Data sources page.
+pub(crate) const NO_DATA_SOURCE: &str =
+    "No data source yet. A program buys through one of your characters added under Data sources.";
+
 fn list(access: &Access) -> Result<Page, PageError> {
     let programs: Vec<Program> = programs::all()
         .map_err(|e| failed("reading programs", e))?
@@ -90,24 +94,18 @@ fn list(access: &Access) -> Result<Page, PageError> {
             crate::pages::program_actions(p),
         ]);
     }
-    let mut page = Page::new("Manage programs").description(
-        "Each program's manager is a character of yours added as a data source (aa-buybackprogram's Setup Manager). Then add the locations contracts are accepted at, and create programs.",
-    );
-    if owners(access).is_empty() {
-        page = page.card(
-            Card::new("1. Add yourself as a manager")
-                .description("Log in with the character whose contracts (or whose corporation's) the programs take. It needs the in-game roles for what you use: Accountant for wallets, Director for hangars and stock.")
-                .field("", add_owner("Add a manager")),
-        );
-    }
-    Ok(page
-        .table(
-            table
-                .title("Your programs")
-                .empty("No programs yet: create one."),
+    let empty = if owners(access).is_empty() {
+        NO_DATA_SOURCE
+    } else {
+        "No programs yet: create one."
+    };
+    Ok(Page::new("Manage programs")
+        .description(
+            "Programs buy through a data source, at the locations contracts are accepted at.",
         )
+        .table(table.title("Your programs").empty(empty))
         .card(Card::new("Background updates").field(
-            "",
+            "Contracts every 30 minutes, prices daily",
             actions(vec![
                 action("Refresh contracts", "refresh_contracts"),
                 action("Force price update", "update_prices"),
@@ -185,11 +183,7 @@ fn editor(access: &Access, id: Option<i64>, request: &Request) -> Result<Page, P
         |p| format!("Edit {}", p.display_name()),
     );
     if owners.is_empty() {
-        return Ok(Page::new(title).card(
-            Card::new("Add yourself as a manager first")
-                .description("A program's manager is a character of yours added as a data source.")
-                .field("", add_owner("Add a manager")),
-        ));
+        return Ok(Page::new(title).text(NO_DATA_SOURCE));
     }
     let chosen_owner = program
         .as_ref()
@@ -236,7 +230,7 @@ fn editor(access: &Access, id: Option<i64>, request: &Request) -> Result<Page, P
         .field(
             Field::select(
                 "owner",
-                "Manager",
+                "Data source",
                 owners
                     .iter()
                     .map(|c| (c.id.to_string(), c.name.clone()))
@@ -716,16 +710,20 @@ fn locations_page(access: &Access) -> Result<Page, PageError> {
         ]);
     }
     let owners = owners(access);
-    Ok(Page::new("Locations")
+    let page = Page::new("Locations")
         .description("Where contracts are accepted. The station or structure id lets Tether check a contract was made there.")
-        .table(table.empty("No locations yet."))
+        .table(table.empty("No locations yet."));
+    if owners.is_empty() {
+        return Ok(page.text(NO_DATA_SOURCE));
+    }
+    Ok(page
         .form(
             Form::new("location", "Add location")
                 .title("Add a location")
                 .field(
                     Field::select(
                         "owner",
-                        "Manager",
+                        "Data source",
                         owners.iter().map(|c| (c.id.to_string(), c.name.clone())).collect(),
                     )
                     .required(),

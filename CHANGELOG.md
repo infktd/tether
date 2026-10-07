@@ -6,6 +6,11 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ## 2026-10-07
 
+### Buyback
+- Locations and New program no longer fail before a data source is added: they say to add one under Data sources, as every app does, and the Programs page has no separate "Add a manager" box any more.
+
+## 2026-10-07
+
 ### Contracts
 - Buyback contracts, the ones with a Buyback tracking number in their description, are left to the Buyback app, so each gets one Discord card instead of two.
 
