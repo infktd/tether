@@ -57,7 +57,7 @@
   {% else if c.host == "activity" %}{% if let Some(a) = c.activity %}{% include "app_activity.html" %}{% endif %}
   {% else %}
   {% call plugin::sections(c.before) %}{% endcall %}
-  {% if let Some(t) = c.toolbar %}{% include "plugin_toolbar.html" %}{% endif %}
+  {% if let Some(t) = c.toolbar %}{% include "toolbar.html" %}{% endif %}
   {% if let Some(p) = c.panel %}
   {#- The selected row's record panel beside the list (DESIGN.md, Record
       panel); under it on a narrow screen. -#}

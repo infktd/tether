@@ -16,44 +16,8 @@ use super::plugin_visuals::CompositionView;
 /// Rows a table shows from which a page without a search of its own gets
 /// Tether's search box (where the browser's row filter appeared).
 pub const SEARCH_FROM: usize = 8;
-/// Tether's search reads at most this much of the box, and this many
-/// different words: a long search costs no more than a short one.
-const SEARCH_BYTES: usize = 200;
-const SEARCH_WORDS: usize = 8;
 
-/// The toolbar above a page's list.
-pub struct ToolbarView {
-    /// The search box's id, the page's own: htmx keeps the box (and what's
-    /// typed in it) across this page's answers, and no other page's.
-    pub id: String,
-    /// The page's address: the search box's form goes there, keeping
-    /// `keep` (the filters, the tab and the app's other parameters).
-    pub action: String,
-    pub keep: Vec<(String, String)>,
-    /// The search box's words; `None` draws none.
-    pub placeholder: Option<String>,
-    pub q: String,
-    /// Tether's own search among the rows shown: the browser hides the
-    /// rows not matching as you type, before the server answers.
-    pub instant: bool,
-    /// Filters applied: a chip each, with a × taking it off.
-    pub chips: Vec<ChipView>,
-    /// "+ Filter": every filter with its values.
-    pub filters: Vec<FilterView>,
-    /// The page's tabs, as view chips.
-    pub views: Vec<TabLink>,
-}
-
-pub struct ChipView {
-    pub label: String,
-    pub value: String,
-    pub remove: String,
-}
-
-pub struct FilterView {
-    pub label: String,
-    pub choices: Vec<TabLink>,
-}
+pub use tether_web_core::pages::toolbar::{ChipView, FilterView, ToolbarView};
 
 /// The selected row's details beside the list.
 pub struct PanelView {
@@ -219,6 +183,7 @@ pub fn toolbar(
         }
         menus.push(FilterView {
             label: f.label.clone(),
+            range: None,
             choices: f
                 .choices
                 .iter()
@@ -249,6 +214,8 @@ pub fn toolbar(
         });
     }
     Some(ToolbarView {
+        target: Some("#plugin-content"),
+        csv: None,
         id: format!(
             "q-{}",
             here.href
@@ -282,31 +249,14 @@ pub fn longest(views: &[SectionView]) -> usize {
 }
 
 /// Tether's search among the rows a page shows: a row stays if its words
-/// (every cell's) hold each of the search's, whatever their case: its
-/// first [`SEARCH_WORDS`] different ones, from its first
-/// [`SEARCH_BYTES`].
+/// (every cell's) hold each of the search's, whatever their case
+/// ([`tether_web_core::pages::toolbar::words`]).
 pub fn find_rows(views: &mut [SectionView], q: &str) {
-    let mut cut = q.trim();
-    if cut.len() > SEARCH_BYTES {
-        let mut end = SEARCH_BYTES;
-        while !cut.is_char_boundary(end) {
-            end -= 1;
-        }
-        cut = &cut[..end];
-    }
-    let mut words: Vec<String> = Vec::new();
-    for word in cut.split_whitespace().map(str::to_lowercase) {
-        if words.len() == SEARCH_WORDS {
-            break;
-        }
-        if !words.contains(&word) {
-            words.push(word);
-        }
-    }
+    let words = tether_web_core::pages::toolbar::words(q);
     if words.is_empty() {
         return;
     }
-    find(views, &words, cut);
+    find(views, &words, q.trim());
 }
 
 fn find(views: &mut [SectionView], words: &[String], q: &str) {
@@ -337,7 +287,7 @@ fn keep_matching(table: &mut TableView, words: &[String], q: &str) {
         words.iter().all(|w| text.contains(w.as_str()))
     });
     if table.rows.is_empty() {
-        table.empty = Some(format!("Nothing matches \u{201c}{q}\u{201d}."));
+        table.empty = Some(tether_web_core::pages::toolbar::nothing_matches(q));
     }
 }
 

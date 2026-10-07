@@ -689,6 +689,29 @@
     color: var(--foreground);
     font-weight: 500;
   }
+  /* A range typed in under "+ Filter": two dates and Apply. */
+  .filter-menu-range {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .filter-menu-range .label {
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+  .filter-menu-range .input {
+    height: 30px;
+    width: 150px;
+  }
+  /* The CSV button, pushed right. */
+  .toolbar-csv {
+    margin-left: auto;
+    height: 34px;
+  }
   /* Keys (DESIGN.md, Keys). */
   .kbd {
     font-family: var(--font-mono);

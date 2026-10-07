@@ -6,6 +6,7 @@ pub mod headers;
 pub mod plugin_access;
 pub mod plugin_activity;
 pub mod stay;
+pub mod toolbar;
 
 use askama::Template;
 use axum::http::{HeaderMap, StatusCode};

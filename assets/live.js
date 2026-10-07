@@ -670,8 +670,10 @@
         if (sortable(heading)) heading.tabIndex = 0;
       }
       const rows = [...table.tBodies].reduce((n, b) => n + [...b.rows].filter(dataRow).length, 0);
-      // An app page's toolbar search is the filter box (DESIGN.md, Toolbar).
-      if (rows < FILTER_FROM || table.closest("#plugin-content")?.querySelector("form.toolbar-search")) continue;
+      // A page's toolbar search is the filter box (DESIGN.md, Toolbar):
+      // an app page's over its content, a core page's over the page.
+      const page = table.closest("#plugin-content") || table.closest("main");
+      if (rows < FILTER_FROM || page?.querySelector("form.toolbar-search")) continue;
       const box = document.createElement("div");
       box.className = "table-filter";
       const input = document.createElement("input");

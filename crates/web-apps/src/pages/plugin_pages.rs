@@ -568,12 +568,7 @@ pub struct CodeView {
     pub copy_label: String,
 }
 
-#[derive(Clone)]
-pub struct TabLink {
-    pub label: String,
-    pub href: String,
-    pub current: bool,
-}
+pub use tether_web_core::pages::toolbar::TabLink;
 
 /// `1.24b`, `350.2m`, `12.5k`: ISK in tables.
 fn short_isk(amount: f64) -> String {
