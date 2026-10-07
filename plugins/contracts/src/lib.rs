@@ -1008,7 +1008,7 @@ fn settings_page() -> Result<Page, PageError> {
                         .field(
                             Field::select("channel", "Post contracts to", channels)
                                 .value(current)
-                                .help("A channel an admin assigned this app on the Discord page."),
+                                .help("A channel an admin assigned this app (Administration › Apps › Contracts)."),
                         )
                         .field(Field::checkbox(
                             "notify_new",

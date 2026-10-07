@@ -1027,7 +1027,7 @@ fn settings_page() -> Result<Page, PageError> {
             SettingsGroup::new("Discord").field(
                 Field::select("channel", "Post new requests to", channels)
                     .value(current)
-                    .help("A channel an admin assigned this app on the Discord page. Builders also hear in Tether's notifications."),
+                    .help("A channel an admin assigned this app (Administration › Apps › Blueprints). Builders also hear in Tether's notifications."),
             ),
         ),
     ))

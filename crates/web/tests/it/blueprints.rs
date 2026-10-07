@@ -322,6 +322,16 @@ async fn blueprints_end_to_end(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Its help says where channels are given to the app: its own admin
+    // page, not the Discord page.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings
+            .body
+            .contains("A channel an admin assigned this app (Administration › Apps › Blueprints)."),
+        "{}",
+        settings.body
+    );
     let res = post(
         &h,
         &owner,
