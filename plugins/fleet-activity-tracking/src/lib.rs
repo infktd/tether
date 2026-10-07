@@ -29,8 +29,9 @@
 //!   no expiry, as aa-afat's: it stays open while it tracks, and closes when
 //!   tracking stops. One keyed job polls every tracked fleet each minute
 //!   while any is tracked; tracking stops when the fleet ends, the character
-//!   isn't boss, ESI refuses, the data source goes, the link closes, or
-//!   after six hours.
+//!   isn't boss or ESI refuses (as aa-afat, once the same error comes back
+//!   after 3 in a row, each within 75 seconds of the last), the data source
+//!   goes, the link closes, or after six hours.
 
 use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
 use tether_plugin_sdk::doctrines;
@@ -75,6 +76,12 @@ const TRACK_CAP: Duration = Duration::hours(6);
 const TRACKED_PER_RUN: i64 = 40;
 /// Who the log says stopped tracking when the job did.
 const TRACKER: &str = "ESI fleet tracking";
+/// aa-afat's ESI_MAX_ERROR_COUNT: errors in a row a tracked fleet rides
+/// out; the same error once more stops tracking.
+const MAX_ESI_ERRORS: i64 = 3;
+/// aa-afat's ESI_ERROR_GRACE_TIME: an error counts towards the last one
+/// only within this long of it.
+const ESI_ERROR_GRACE_SECONDS: i64 = 75;
 
 /// Names one `universe-ids` call takes (ESI's limit).
 const MAX_NAMES: usize = 500;
@@ -532,6 +539,9 @@ struct Tracking {
     polled_at: Option<String>,
     /// Still within the six-hour cap.
     within_cap: bool,
+    /// The last failed read's reason, and how many in a row.
+    error: Option<String>,
+    errors: i64,
 }
 
 const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.creator_account, \
@@ -542,7 +552,8 @@ const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.c
      l.esi_started_at > now() - interval '6 hours', l.esi_character_id, l.creator_id, \
      l.reopened = 0 AND l.expires_at <= now() AND l.expires_at > now() - make_interval(mins => \
          coalesce((SELECT reopen_grace_minutes FROM settings WHERE id = 1), 60)), \
-     l.reopened = 0 AND l.created_at > now() - interval '24 hours'"; // TRACK_CAP, MANUAL_FAT_HOURS
+     l.reopened = 0 AND l.created_at > now() - interval '24 hours', \
+     l.esi_error, l.esi_errors::bigint"; // TRACK_CAP, MANUAL_FAT_HOURS
 
 fn link_info(row: &[Db]) -> LinkInfo {
     LinkInfo {
@@ -567,6 +578,8 @@ fn link_info(row: &[Db]) -> LinkInfo {
             stop_reason: maybe_text(row, 14),
             polled_at: maybe_text(row, 15),
             within_cap: flag(row, 16),
+            error: maybe_text(row, 21),
+            errors: int(row, 22),
         }),
     }
 }
@@ -579,6 +592,7 @@ fn stop_text(reason: &str, character: &str) -> String {
             "{character} isn't the fleet boss. Pass boss back to them, then resume tracking."
         ),
         "refused" => "ESI refused to show the fleet (403).".to_owned(),
+        "esi_error" => "ESI answered the fleet read with an error.".to_owned(),
         "data_source" => format!(
             "{character} is no longer a data source of this app (withdrawn, removed, or moved corporation). Log in with the fleet boss again on New FAT link."
         ),
@@ -1131,6 +1145,30 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
             )
         ));
     }
+    // aa-afat's error count: a failed read is ridden out until the same
+    // error comes back after MAX_ESI_ERRORS in a row.
+    if let Some(esi) = &link.esi
+        && esi.tracking
+        && esi.errors > 0
+        && let Some(error) = &esi.error
+    {
+        page = page.text(format!(
+            "The last {} of the fleet failed: {} Tracking stops if the same error comes back {} \
+             more {} in a row.",
+            if esi.errors == 1 {
+                "read".to_owned()
+            } else {
+                format!("{} reads", esi.errors)
+            },
+            stop_text(error, &esi.character_name),
+            MAX_ESI_ERRORS + 1 - esi.errors,
+            if MAX_ESI_ERRORS + 1 - esi.errors == 1 {
+                "time"
+            } else {
+                "times"
+            },
+        ));
+    }
     let manage = viewer.can("manage_afat");
     let settings = settings()?;
     let register = format!("links/{}/add", link.hash);
@@ -1482,6 +1520,7 @@ fn change_link(
             let resumed = storage::execute(
                 "WITH resumed AS ( \
                      UPDATE links SET esi_state = 'tracking', esi_stop_reason = NULL, \
+                            esi_error = NULL, esi_errors = 0, \
                             expires_at = CASE WHEN expires_at > now() THEN expires_at END \
                      WHERE id = $1 AND esi_state = 'stopped' \
                        AND (expires_at > now() OR esi_stop_reason <> 'closed') \
@@ -3224,24 +3263,32 @@ fn poll(link: &Tracked) -> Result<(), JobError> {
         None,
     ) {
         Ok(response) => response.body,
-        Err(esi::Error::Status(403)) => return stop(link, "refused"),
-        Err(esi::Error::Status(404)) => return stop(link, "fleet_ended"),
+        // ESI's answers count as aa-afat's errors: tracking rides them out
+        // until the same one comes back after three in a row.
+        Err(esi::Error::Status(403)) => return failed_read(link, "refused"),
+        Err(esi::Error::Status(404)) => return failed_read(link, "fleet_ended"),
+        Err(esi::Error::Status(_) | esi::Error::Invalid(_) | esi::Error::TooLarge) => {
+            return failed_read(link, "esi_error");
+        }
+        // Tether's own refusals stop it at once: the character is no
+        // longer the app's to read.
         Err(esi::Error::NotADataSource | esi::Error::NotAllowed(_)) => {
             return stop(link, "data_source");
         }
         Err(esi::Error::Token | esi::Error::NotRegistered) => return stop(link, "token"),
-        Err(err) => {
-            // ESI or Tether trouble that may pass: try again next minute.
+        Err(err @ esi::Error::Unavailable) => {
+            // ESI out of reach, or the app's ESI errors paused by Tether:
+            // not ESI's answer, so not counted. Again next minute.
             log::warn(format!("reading the fleet of link {}: {err:?}", link.id));
             return touch(link);
         }
     };
     let answer: serde_json::Value = serde_json::from_str(&answer).unwrap_or_default();
     if answer["in_fleet"].as_bool() != Some(true) {
-        return stop(link, "fleet_ended");
+        return failed_read(link, "fleet_ended");
     }
     if answer["boss"].as_bool() != Some(true) {
-        return stop(link, "not_boss");
+        return failed_read(link, "not_boss");
     }
     let members: Vec<(i64, Option<i64>, Option<i64>)> = answer["members"]
         .as_array()
@@ -3314,12 +3361,56 @@ fn poll(link: &Tracked) -> Result<(), JobError> {
                 link.id.into(),
             ],
         ),
+        // A good read clears the errors.
         Statement::new(
-            "UPDATE links SET esi_polled_at = now() WHERE id = $1",
+            "UPDATE links SET esi_polled_at = now(), esi_error = NULL, esi_errors = 0 \
+             WHERE id = $1",
             vec![link.id.into()],
         ),
     ])
     .map_err(|e| JobError::Retry(format!("storing fleet members: {e:?}")))?;
+    Ok(())
+}
+
+/// aa-afat's ESI error handling: the same error as the last, within the
+/// grace time of it, after MAX_ESI_ERRORS in a row, stops tracking;
+/// otherwise it's counted (from one again when it's another error, or
+/// came later) and the fleet is read again next minute.
+fn failed_read(link: &Tracked, reason: &str) -> Result<(), JobError> {
+    let rows = storage::query(
+        "SELECT esi_error = $2 AND esi_error_at >= now() - make_interval(secs => $3::int) \
+                AND esi_errors >= $4 \
+         FROM links WHERE id = $1",
+        &[
+            link.id.into(),
+            reason.into(),
+            ESI_ERROR_GRACE_SECONDS.into(),
+            MAX_ESI_ERRORS.into(),
+        ],
+    )
+    .map_err(|e| retry("reading the fleet's errors", e))?;
+    if rows.rows.first().is_some_and(|r| flag(r, 0)) {
+        return stop(link, reason);
+    }
+    let counted = storage::query(
+        "UPDATE links SET \
+             esi_errors = CASE WHEN esi_error = $2 \
+                 AND esi_error_at >= now() - make_interval(secs => $3::int) \
+                 THEN esi_errors + 1 ELSE 1 END, \
+             esi_error = $2, esi_error_at = now(), esi_polled_at = now() \
+         WHERE id = $1 RETURNING esi_errors::bigint",
+        &[
+            link.id.into(),
+            reason.into(),
+            ESI_ERROR_GRACE_SECONDS.into(),
+        ],
+    )
+    .map_err(|e| retry("counting the fleet's errors", e))?;
+    log::info(format!(
+        "reading the fleet of link {}: {reason} ({} of {MAX_ESI_ERRORS})",
+        link.id,
+        counted.rows.first().map_or(0, |r| int(r, 0))
+    ));
     Ok(())
 }
 

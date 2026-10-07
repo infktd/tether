@@ -1339,13 +1339,113 @@ async fn esi_tracking_stops_when_not_in_a_fleet(db: PgPool) {
         .mount(&h.esi_server)
         .await;
     let hash = tracked_link(&h, &owner).await;
+    // As aa-afat, three reads in a row are ridden out: the fourth stops it.
     work(&h).await;
+    for _ in 0..2 {
+        poll_now(&h).await;
+    }
+    assert_eq!(tracking(&h, &hash).await, (Some("tracking".into()), None));
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        details
+            .body
+            .contains("The last 3 reads of the fleet failed"),
+        "{}",
+        details.body
+    );
+    assert!(
+        details.body.contains("1 more time in a row"),
+        "{}",
+        details.body
+    );
+    poll_now(&h).await;
     assert_eq!(
         tracking(&h, &hash).await,
         (Some("stopped".into()), Some("fleet_ended".into()))
     );
     assert_eq!(queued_polls(&h).await, 0);
     assert!(esi_fats(&h, &hash).await.is_empty());
+}
+
+async fn errors(h: &Harness, hash: &str) -> (Option<String>, i32) {
+    let schema = schema(h).await;
+    sqlx::query_as(sql!(
+        "SELECT esi_error, esi_errors FROM \"{schema}\".links WHERE hash = $1"
+    ))
+    .bind(hash)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// aa-afat's rule exactly: only the same error, each within 75 seconds of
+/// the last, after three in a row, stops tracking. Another error, a later
+/// one, or a good read in between starts the count again.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn esi_tracking_rides_out_passing_errors(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    let owner = add_fc(&h, &owner).await;
+    mount_fleet(&h, CHRIBBA).await;
+    // ESI refuses the members twice, then answers.
+    Mock::given(method("GET"))
+        .and(path(format!("/fleets/{FLEET}/members")))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(serde_json::json!({ "error": "forbidden" })),
+        )
+        .up_to_n_times(2)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_members(&h).await;
+    let hash = tracked_link(&h, &owner).await;
+    work(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("refused".into()), 1));
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("refused".into()), 2));
+    // A good read clears them.
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (None, 0));
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+
+    // Not in a fleet: three times, but the third over 75 seconds after the
+    // second, so it counts from one again.
+    mount_not_in_fleet(&h).await;
+    poll_now(&h).await;
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("fleet_ended".into()), 2));
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET esi_error_at = now() - interval '76 seconds' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("fleet_ended".into()), 1));
+    // Another error starts it again too.
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET esi_error = 'not_boss' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(errors(&h, &hash).await, (Some("fleet_ended".into()), 1));
+    poll_now(&h).await;
+    poll_now(&h).await;
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    poll_now(&h).await;
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("fleet_ended".into()))
+    );
+    // Resuming starts with no errors.
+    age_poll(&h, &hash).await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(errors(&h, &hash).await, (None, 0));
 }
 
 async fn expires_at(h: &Harness, hash: &str) -> Option<chrono::DateTime<Utc>> {
@@ -1479,6 +1579,9 @@ async fn esi_tracking_stops_when_boss_passes_and_resumes(db: PgPool) {
     mount_members(&h).await;
     let hash = tracked_link(&h, &owner).await;
     work(&h).await;
+    for _ in 0..3 {
+        poll_now(&h).await;
+    }
     assert_eq!(
         tracking(&h, &hash).await,
         (Some("stopped".into()), Some("not_boss".into()))
@@ -1530,6 +1633,11 @@ async fn esi_tracking_stops_on_403(db: PgPool) {
         .await;
     let hash = tracked_link(&h, &owner).await;
     work(&h).await;
+    for _ in 0..2 {
+        poll_now(&h).await;
+    }
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    poll_now(&h).await;
     assert_eq!(
         tracking(&h, &hash).await,
         (Some("stopped".into()), Some("refused".into()))
