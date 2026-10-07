@@ -185,6 +185,176 @@ pub const CORE_PERMISSIONS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Where a core permission is listed on Permissions: the area of Tether
+/// it opens.
+pub fn area(permission: &str) -> &'static str {
+    match permission {
+        ADMIN_GROUPS | GROUP_MANAGEMENT | REQUEST_GROUPS => "Groups",
+        SECUREGROUPS_ACCESS | SECUREGROUPS_AUDIT => "Secure Groups",
+        DISCORD_ACCESS | ADMIN_DISCORD => "Discord",
+        FLEETPINGS_ACCESS => "Fleet Pings",
+        CORPSTATS_CORP | CORPSTATS_ALLIANCE | CORPSTATS_STATE | COMPLIANCE_VIEW => {
+            "Corporation Stats and compliance"
+        }
+        p if p.starts_with("blacklist.") => "Blacklist and Pilot Log",
+        _ => "Administration",
+    }
+}
+
+/// Who a core permission is usually for, and what holding it means, for
+/// admins choosing whom to grant it (Permissions, under each one's
+/// description): Alliance Auth's conventions where it has them.
+pub const CORE_NOTES: &[(&str, &str)] = &[
+    (
+        ADMIN_GROUPS,
+        "For admins. Holders shape every group, Internal ones included, and can add anyone to them, so give it only to those who run the alliance's access.",
+    ),
+    (
+        GROUP_MANAGEMENT,
+        "For officers who handle requests for all groups. A group's own leaders don't need it: make them Group Leaders on that group instead, and they handle only theirs.",
+    ),
+    (
+        REQUEST_GROUPS,
+        "Usually Member (a fresh Tether gives it to Member, as Alliance Auth's docs advise). Without it pilots only see Public groups; Secure Groups still take their applications.",
+    ),
+    (
+        SECUREGROUPS_ACCESS,
+        "Usually Member, and any state whose pilots should apply for smart groups. Without it nobody sees the Secure Groups page, so no one can apply.",
+    ),
+    (
+        SECUREGROUPS_AUDIT,
+        "For officers who keep smart groups clean. It shows only the smart groups they manage: they also need Group Management, or to lead the group.",
+    ),
+    (
+        DISCORD_ACCESS,
+        "Whoever belongs on your Discord server: usually Member, and Blue if allies share it. Losing it removes the pilot from the server at the next sync.",
+    ),
+    (
+        CORPSTATS_CORP,
+        "For a corporation's CEO and directors: their own corporation only.",
+    ),
+    (
+        CORPSTATS_ALLIANCE,
+        "For alliance leadership: every corporation in their main's alliance.",
+    ),
+    (
+        CORPSTATS_STATE,
+        "For officers over the whole state: every corporation it covers, allies included for Blue.",
+    ),
+    (
+        COMPLIANCE_VIEW,
+        "For officers who chase registration. Holders see every account's characters, alts included, so keep it to trusted staff.",
+    ),
+    (
+        ADMIN_PERMISSIONS,
+        "For admins. Holders can pass on only what they hold themselves, so it can't be used to climb.",
+    ),
+    (
+        ADMIN_STATES,
+        "For admins. States decide who is Member, so holders decide who gets everything granted to Member.",
+    ),
+    (
+        ADMIN_AUDIT,
+        "For admins, and anyone who reviews what admins changed.",
+    ),
+    (
+        ADMIN_USERS,
+        "For officers who help pilots with their accounts. Holders see every pilot's alts and can lock an account out.",
+    ),
+    (
+        ADMIN_SYSTEM,
+        "For whoever runs the server: health, settings, the job queue, upgrades and roll backs.",
+    ),
+    (
+        ADMIN_PLUGINS,
+        "For admins. Installing an app decides what it may read and where it may post, and holders see every app's data sources.",
+    ),
+    (
+        ADMIN_DISCORD,
+        "For admins. Holders decide which Discord roles every state and group gets.",
+    ),
+    (
+        FLEETPINGS_ACCESS,
+        "For FCs and fleet staff. Holders can ping whole states on Discord, so keep it to those who run fleets.",
+    ),
+    (
+        PERMISSIONS_AUDIT,
+        "For admins and leadership checking who holds what. It maps out who the admins are.",
+    ),
+    (
+        BLACKLIST_VIEW_BASIC_NOTES,
+        "For corporation leaders: notes on their own corporation's pilots only.",
+    ),
+    (
+        BLACKLIST_VIEW_BLACKLIST,
+        "For officers who vet recruits. Restricted reasons stay hidden unless they also hold that tier.",
+    ),
+    (
+        BLACKLIST_VIEW_NOTES,
+        "For alliance-wide recruiters and security staff: every note.",
+    ),
+    (
+        BLACKLIST_ADD_BASIC_NOTES,
+        "For corporation leaders: notes on their own corporation's pilots.",
+    ),
+    (
+        BLACKLIST_ADD_NOTES,
+        "For recruiters and security staff: notes on anyone, and editing notes.",
+    ),
+    (
+        BLACKLIST_ADD_TO_BLACKLIST,
+        "For alliance security leadership. A blacklisted pilot's account drops to the Blacklist state and loses everything granted to its old state.",
+    ),
+    (
+        BLACKLIST_VIEW_RESTRICTED,
+        "For senior security staff: notes marked restricted.",
+    ),
+    (
+        BLACKLIST_VIEW_ULTRA,
+        "For the few who handle the most sensitive notes.",
+    ),
+    (
+        BLACKLIST_ADD_RESTRICTED,
+        "For senior security staff, alongside seeing restricted notes.",
+    ),
+    (
+        BLACKLIST_ADD_ULTRA,
+        "For the few who handle the most sensitive notes.",
+    ),
+    (
+        BLACKLIST_VIEW_COMMENTS,
+        "For those who read notes and should see the discussion on them.",
+    ),
+    (
+        BLACKLIST_VIEW_RESTRICTED_COMMENTS,
+        "For senior security staff, alongside restricted notes.",
+    ),
+    (
+        BLACKLIST_VIEW_ULTRA_COMMENTS,
+        "For the few who handle the most sensitive notes.",
+    ),
+    (
+        BLACKLIST_ADD_COMMENTS,
+        "For those who discuss notes: recruiters and security staff.",
+    ),
+    (
+        BLACKLIST_ADD_RESTRICTED_COMMENTS,
+        "For senior security staff, alongside restricted notes.",
+    ),
+    (
+        BLACKLIST_ADD_ULTRA_COMMENTS,
+        "For the few who handle the most sensitive notes.",
+    ),
+];
+
+/// [`CORE_NOTES`] for one permission.
+pub fn note(permission: &str) -> Option<&'static str> {
+    CORE_NOTES
+        .iter()
+        .find(|(name, _)| *name == permission)
+        .map(|(_, note)| *note)
+}
+
 pub fn is_known(permission: &str) -> bool {
     CORE_PERMISSIONS.iter().any(|(name, _)| *name == permission)
 }
@@ -212,5 +382,18 @@ mod tests {
     fn known_permissions() {
         assert!(is_known(ADMIN_GROUPS));
         assert!(!is_known("admin.everything"));
+    }
+
+    #[test]
+    fn every_core_permission_says_who_it_is_for() {
+        for (name, _) in CORE_PERMISSIONS {
+            assert!(note(name).is_some(), "{name} has no note");
+        }
+        for (name, _) in CORE_NOTES {
+            assert!(is_known(name), "{name} isn't a permission");
+        }
+        assert_eq!(area(REQUEST_GROUPS), "Groups");
+        assert_eq!(area(BLACKLIST_ADD_ULTRA), "Blacklist and Pilot Log");
+        assert_eq!(area(ADMIN_SYSTEM), "Administration");
     }
 }

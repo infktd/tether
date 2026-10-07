@@ -1340,6 +1340,9 @@ pub struct GrantBadge {
 pub struct PermissionRow {
     pub name: String,
     pub description: String,
+    /// What holding it means and who it's usually for: core's, or the
+    /// app's `[permission_notes]`.
+    pub note: Option<String>,
     pub grants: Vec<GrantBadge>,
     /// Its states and groups, as picker values (`state:<id>`,
     /// `group:<id>`).
@@ -1390,7 +1393,8 @@ pub struct GrantChoice {
 #[template(path = "admin_permissions.html")]
 struct PermissionsPage {
     shell: Shell,
-    rows: Vec<PermissionRow>,
+    /// The rows by area of Tether, then by app.
+    sections: Vec<PermissionSection>,
     choices: Vec<GrantChoice>,
     /// The filter, as typed.
     q: String,
@@ -1399,7 +1403,28 @@ struct PermissionsPage {
     error: Option<String>,
 }
 
+/// The permissions of one area of Tether, or of one app.
+pub struct PermissionSection {
+    pub title: String,
+    pub rows: Vec<PermissionRow>,
+}
+
+/// Core's areas, in the order Permissions lists them; apps follow by name.
+const CORE_AREAS: &[&str] = &[
+    "Groups",
+    "Secure Groups",
+    "Discord",
+    "Fleet Pings",
+    "Corporation Stats and compliance",
+    "Blacklist and Pilot Log",
+    "Administration",
+];
+
 impl PermissionsPage {
+    fn shown(&self) -> usize {
+        self.sections.iter().map(|s| s.rows.len()).sum()
+    }
+
     fn has_groups(&self) -> bool {
         self.choices.iter().any(|c| c.is_group)
     }
@@ -1443,17 +1468,47 @@ async fn permissions_page(
     let available = permissions::available(&state.db).await?;
     let total = available.len();
     let needle = q.trim().to_lowercase();
-    let rows = available
+    let apps: std::collections::HashMap<String, String> = tether_db::plugins::list(&state.db)
+        .await?
         .into_iter()
-        .filter(|(name, description)| {
+        .map(|p| (p.id, p.name))
+        .collect();
+    // An app's permission is `plugin.<app id>.<name>`; the id has dots.
+    let app_of = |name: &str| -> Option<(String, String)> {
+        let (id, short) = name.strip_prefix("plugin.")?.rsplit_once('.')?;
+        Some((id.to_owned(), short.to_owned()))
+    };
+    let area_of = |name: &str| -> String {
+        match app_of(name) {
+            Some((id, _)) => apps.get(&id).cloned().unwrap_or(id),
+            None => tether_core::permissions::area(name).to_owned(),
+        }
+    };
+    let note_of = |name: &str| -> Option<String> {
+        match app_of(name) {
+            Some((id, short)) => state
+                .plugins
+                .running(&id)
+                .and_then(|r| r.manifest.permission_notes.get(&short).cloned()),
+            None => tether_core::permissions::note(name).map(str::to_owned),
+        }
+    };
+    let rows: Vec<(String, PermissionRow)> = available
+        .into_iter()
+        .map(|(name, description)| (area_of(&name), note_of(&name), name, description))
+        .filter(|(area, note, name, description)| {
             needle.is_empty()
                 || name.to_lowercase().contains(&needle)
                 || description.to_lowercase().contains(&needle)
+                || area.to_lowercase().contains(&needle)
+                || note
+                    .as_ref()
+                    .is_some_and(|n| n.to_lowercase().contains(&needle))
         })
-        .map(|(name, description)| {
+        .map(|(area, note, name, description)| {
             let mine: Vec<&permissions::Grant> =
                 grants.iter().filter(|g| g.permission == name).collect();
-            PermissionRow {
+            let row = PermissionRow {
                 grants: mine
                     .iter()
                     .map(|g| match g.grantee {
@@ -1484,9 +1539,31 @@ async fn permissions_page(
                 sensitive: tether_core::permissions::is_sensitive(&name),
                 name,
                 description,
-            }
+                note,
+            };
+            (area, row)
         })
         .collect();
+    let mut sections: Vec<PermissionSection> = Vec::new();
+    for (area, row) in rows {
+        match sections.iter_mut().find(|s| s.title == area) {
+            Some(section) => section.rows.push(row),
+            None => sections.push(PermissionSection {
+                title: area,
+                rows: vec![row],
+            }),
+        }
+    }
+    // Core's areas first, in their order, then apps by name.
+    sections.sort_by_key(|s| {
+        (
+            CORE_AREAS
+                .iter()
+                .position(|a| *a == s.title)
+                .unwrap_or(CORE_AREAS.len()),
+            s.title.to_lowercase(),
+        )
+    });
     let choices = all_states
         .iter()
         .map(|s| GrantChoice {
@@ -1506,7 +1583,7 @@ async fn permissions_page(
     let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = PermissionsPage {
         shell,
-        rows,
+        sections,
         choices,
         q: q.to_owned(),
         total,
@@ -1639,7 +1716,13 @@ async fn apply_grants(
             Err(err) => return Err(stopped(err, &granted, &revoked)),
         }
     }
-    Ok(summary(permission, &granted, &revoked))
+    // Said as admins read it on the page: what it allows.
+    let described = permissions::available(&state.db)
+        .await?
+        .into_iter()
+        .find(|(name, _)| name == permission)
+        .map_or_else(|| permission.to_owned(), |(_, d)| format!("“{d}”"));
+    Ok(summary(&described, &granted, &revoked))
 }
 
 fn summary(permission: &str, granted: &[String], revoked: &[String]) -> String {

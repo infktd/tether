@@ -20,31 +20,34 @@
   <form method="get" action="/admin/permissions" class="flex flex-wrap gap-2 items-end" role="search">
     <div class="grid gap-1.5 min-w-64 flex-1 max-w-md">
       <label class="label" for="q">Permission</label>
-      <input class="input" type="search" id="q" name="q" value="{{ q }}" placeholder="Name or what it allows, e.g. blacklist" maxlength="100">
+      <input class="input" type="search" id="q" name="q" value="{{ q }}" placeholder="What it allows, an app or a name, e.g. blacklist" maxlength="100">
     </div>
     <button type="submit" class="btn" data-variant="outline">Filter</button>
   </form>
 
   <section class="card data-card">
-    <header><h2>Grants <span class="num text-muted-foreground font-normal">{% if q.is_empty() %}{{ total }}{% else %}{{ rows.len() }} of {{ total }}{% endif %}</span></h2><p>Edit on a row ticks the states and groups that hold it; Save changes only what you changed.</p></header>
-    {% if rows.is_empty() %}
+    <header><h2>Grants <span class="num text-muted-foreground font-normal">{% if q.is_empty() %}{{ total }}{% else %}{{ shown() }} of {{ total }}{% endif %}</span></h2><p>By area of Tether, then by app. Each says what it allows and who it's usually for; Edit ticks the states and groups that hold it, and Save changes only what you changed.</p></header>
+    {% if sections.is_empty() %}
     <p class="px-5 pb-5 text-sm text-muted-foreground">No permission matches “{{ q }}”.</p>
     {% else %}
-    <table class="table permissions-table">
+    <table class="table table-set permissions-table">
       <thead><tr><th scope="col">Permission</th><th scope="col">Granted to</th></tr></thead>
+      {% for section in sections %}
       <tbody>
-        {% for row in rows %}
+        <tr class="table-group"><th scope="colgroup" colspan="2">{{ section.title }}</th></tr>
+        {% for row in section.rows %}
         {%- let dom_id = row.dom_id() %}
         <tr id="{{ dom_id }}" data-in-place>
           <td class="whitespace-normal">
-            <div class="font-medium num">{{ row.name }}</div>
-            <div class="text-xs text-muted-foreground">{{ row.description }}</div>
+            <div class="font-medium">{{ row.description }}</div>
+            {% if let Some(note) = row.note %}<p class="mt-1 text-sm text-foreground-soft max-w-2xl">{{ note }}</p>{% endif %}
+            <div class="mt-1 text-xs num text-muted-foreground">{{ row.name }}</div>
           </td>
           <td class="grants-cell">
             <div class="flex flex-wrap items-center gap-2">
               {% if row.grants.is_empty() %}<span class="text-sm text-muted-foreground">Superusers only</span>{% endif %}
               {% for g in row.grants %}
-              <form method="post" action="/admin/permissions/{{ g.id }}/revoke" class="grant-chip" hx-confirm="Revoke {{ row.name }} from {{ g.label }}?">
+              <form method="post" action="/admin/permissions/{{ g.id }}/revoke" class="grant-chip" hx-confirm="Revoke “{{ row.description }}” from {{ g.label }}?">
                 <span>{% if g.kind == "state" %}State: {% else if g.kind == "group" %}Group: {% else %}User: <a class="underline underline-offset-4" href="/admin/users/{{ g.account_id }}">{% endif %}{{ g.label }}{% if g.kind == "user" %}</a>{% endif %}</span>
                 <button type="submit" aria-label="Revoke {{ row.name }} from {{ g.label }}" title="Revoke">×</button>
               </form>
@@ -79,6 +82,7 @@
         </tr>
         {% endfor %}
       </tbody>
+      {% endfor %}
     </table>
     {% endif %}
   </section>

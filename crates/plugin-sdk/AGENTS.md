@@ -104,6 +104,10 @@ header = "X-ApiKey"        # the header it's sent in
 view = "View the mining ledger"
 manage = "Manage the mining ledger"
 
+[permission_notes]         # optional: who each is usually for, under it on Permissions (at most 400 characters)
+view = "Usually Member: everyone who mines for the corporation."
+manage = "For directors who run the ledger: holders change its settings."
+
 [renamed_permissions]      # optional: what an earlier version called them (see Packaging)
 # see = "view"             # old name = new name; the old one's grants move on upgrade
 ```

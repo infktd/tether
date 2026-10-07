@@ -65,6 +65,11 @@ pub struct Manifest {
     /// ledger"`. Granted like core ones, as `plugin.<id>.<name>`.
     #[serde(default)]
     pub permissions: BTreeMap<String, String>,
+    /// What holding a permission means and who it's usually for, by name,
+    /// for admins deciding whom to grant it (Permissions shows it under
+    /// the description), e.g. `characters_access = "For recruiters: ..."`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub permission_notes: BTreeMap<String, String>,
     /// Permissions an earlier version called something else, old name to
     /// new, e.g. `view = "extractions_access"`: on an upgrade the old
     /// one's grants move to the new one instead of going with it.
@@ -624,6 +629,14 @@ impl Manifest {
         for (name, description) in &self.permissions {
             check_name("a permission name", name)?;
             check_text("a permission description", description, 120, true)?;
+        }
+        for (name, note) in &self.permission_notes {
+            if !self.permissions.contains_key(name) {
+                return Err(bad(format!(
+                    "[permission_notes] {name:?} isn't one of [permissions]"
+                )));
+            }
+            check_text("a permission note", note, 400, true)?;
         }
         if self.renamed_permissions.len() > 20 {
             return Err(bad("more than 20 [renamed_permissions]"));
@@ -1428,6 +1441,14 @@ manage = "Manage the mining ledger"
             (
                 "[permissions]\nadd_owner = \"x\"\n[renamed_permissions]\nview = \"add_owner\"",
                 "starts with nobody holding it",
+            ),
+            (
+                "[permissions]\nview = \"x\"\n[permission_notes]\nmanage = \"For officers\"",
+                "isn't one of [permissions]",
+            ),
+            (
+                "[permissions]\nview = \"x\"\n[permission_notes]\nview = \"\"",
+                "a permission note is empty",
             ),
             ("[capabilities]\n\"a\\nb\\u001b[31m\" = 1", "unknown field"),
         ] {

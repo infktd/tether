@@ -491,6 +491,15 @@ async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     let listed = page(&h, "/admin/permissions", &owner).await;
     assert!(listed.body.contains("State: Member"));
     assert!(listed.body.contains("Group: Officers"));
+    // By area, what it allows first, who it's for under it, the name last.
+    for part in [
+        r#"<tr class="table-group"><th scope="colgroup" colspan="2">Groups</th></tr>"#,
+        r#"<div class="font-medium">Create, change and delete groups"#,
+        "For admins. Holders shape every group",
+        r#"<div class="mt-1 text-xs num text-muted-foreground">admin.groups</div>"#,
+    ] {
+        assert!(listed.body.contains(part), "{part}: {}", listed.body);
+    }
     assert_eq!(
         me(&h, &pilot).await["permissions"],
         serde_json::json!(["admin.groups"])
@@ -559,7 +568,7 @@ async fn a_rows_picker_saves_only_what_changed(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     let (message, _) = toast(&res).expect("a toast");
-    assert_eq!(message, "admin.audit granted to Member, Officers.");
+    assert_eq!(message, "“Read the audit log” granted to Member, Officers.");
     assert_eq!(
         holders(&h, "admin.audit").await,
         [format!("group:{g}"), format!("state:{MEMBER_STATE}")]
@@ -575,7 +584,7 @@ async fn a_rows_picker_saves_only_what_changed(db: PgPool) {
     .await;
     assert_eq!(
         toast(&res).expect("a toast").0,
-        "admin.audit revoked from Member."
+        "“Read the audit log” revoked from Member."
     );
     assert_eq!(
         holders(&h, "admin.audit").await,
