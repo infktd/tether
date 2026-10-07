@@ -22,10 +22,12 @@
 //!   character is boss of, adding a FAT (with ship and system) for everyone
 //!   in it. As in aa-afat, the FC logs in with the fleet boss from Create
 //!   FAT Link (Tether's Add data source: the character becomes the app's data
-//!   source, no approval), and it's offered there at once. One keyed job
-//!   polls every tracked fleet each minute while any is tracked; tracking
-//!   stops when the fleet ends, the character isn't boss, ESI refuses, the
-//!   data source goes, the link closes, or after six hours.
+//!   source, no approval), and it's offered there at once. Such a link has
+//!   no expiry, as aa-afat's: it stays open while it tracks, and closes when
+//!   tracking stops. One keyed job polls every tracked fleet each minute
+//!   while any is tracked; tracking stops when the fleet ends, the character
+//!   isn't boss, ESI refuses, the data source goes, the link closes, or
+//!   after six hours.
 
 use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
 use tether_plugin_sdk::doctrines;
@@ -500,7 +502,8 @@ struct LinkInfo {
     /// The FC's main when they created it.
     creator_id: i64,
     created_at: String,
-    expires_at: String,
+    /// None for an ESI-tracked link while it tracks: it has no expiry.
+    expires_at: Option<String>,
     reopened: i64,
     fats: i64,
     open: bool,
@@ -525,7 +528,8 @@ struct Tracking {
 
 const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.creator_account, \
      l.creator_name, l.created_at, l.expires_at, l.reopened, \
-     (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, l.expires_at > now(), \
+     (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, \
+     coalesce(l.expires_at > now(), l.esi_state = 'tracking'), \
      l.esi_state, l.esi_character_name, l.esi_stop_reason, l.esi_polled_at, \
      l.esi_started_at > now() - interval '6 hours', l.esi_character_id, l.creator_id, \
      l.reopened = 0 AND l.expires_at <= now() AND l.expires_at > now() - make_interval(mins => \
@@ -542,7 +546,7 @@ fn link_info(row: &[Db]) -> LinkInfo {
         creator_name: text(row, 6),
         creator_id: int(row, 18),
         created_at: text(row, 7),
-        expires_at: text(row, 8),
+        expires_at: maybe_text(row, 8),
         reopened: int(row, 9),
         fats: int(row, 10),
         open: flag(row, 11),
@@ -596,6 +600,18 @@ fn status(link: &LinkInfo) -> Value {
         badge("Open", Tone::Success).into()
     } else {
         badge("Closed", Tone::Neutral).into()
+    }
+}
+
+/// When a link closes or closed: a time, or "when the fleet ends" for an
+/// ESI-tracked link, which has no expiry.
+fn closes(link: &LinkInfo) -> (&'static str, Value) {
+    match &link.expires_at {
+        Some(at) => (
+            if link.open { "Closes" } else { "Closed" },
+            time(at.clone()),
+        ),
+        None => ("Closes", "When the fleet ends".into()),
     }
 }
 
@@ -702,7 +718,8 @@ fn dashboard(viewer: &Viewer) -> Result<Page, PageError> {
     let open: Vec<LinkInfo> = if can_create(viewer) {
         query(
             &format!(
-                "SELECT {LINK_COLUMNS} FROM links l WHERE l.expires_at > now() \
+                "SELECT {LINK_COLUMNS} FROM links l \
+                 WHERE coalesce(l.expires_at > now(), l.esi_state = 'tracking') \
                  ORDER BY l.created_at DESC LIMIT 50"
             ),
             &[],
@@ -886,7 +903,7 @@ fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Resul
             Field::number("expiry", "Open for (minutes)")
                 .range(Some(1.0), Some(MAX_EXPIRY_MINUTES as f64), true)
                 .value(expiry.to_string())
-                .help("After this, nobody can register and ESI tracking stops; it can be closed sooner, or reopened once soon after.")
+                .help("For a link members click: after this, nobody can register. It can be closed sooner, or reopened once soon after. A link tracking your ESI fleet has no expiry.")
                 .required(),
         );
     let trackable = trackable_characters(viewer);
@@ -925,8 +942,9 @@ fn create_page(viewer: &Viewer, note: Option<&str>, added: Option<i64>) -> Resul
                 .map(|(id, name)| (id.to_string(), format!("Track {name}'s fleet"))),
         );
         let mut track = Field::select("track", "ESI fleet", options).help(
-            "Every minute while the link is open (up to six hours), everyone in the fleet that \
-             character is boss of gets a FAT, with ship and system.",
+            "Every minute (up to six hours), everyone in the fleet that character is boss of gets \
+             a FAT, with ship and system. The link has no expiry: it stays open until the fleet \
+             ends, and closes when tracking stops.",
         );
         if let Some(id) = added {
             track = track.value(id.to_string());
@@ -975,8 +993,6 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
             None,
         )?));
     }
-    let expiry = minutes(submission, "expiry")?;
-    let expires = Utc::now() + Duration::minutes(expiry);
     // Only the viewer's own characters that are data sources.
     let track = match submission.value("track") {
         "" => None,
@@ -988,13 +1004,24 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
         ),
     };
     let tracking = track.is_some();
+    // As aa-afat's ESI FAT link, a tracked one has no expiry: open until
+    // the fleet ends.
+    let (expires, open_for) = match &track {
+        Some((_, name)) => (
+            Db::Null,
+            format!("open until the fleet ends, tracking {name}'s ESI fleet"),
+        ),
+        None => {
+            let expiry = minutes(submission, "expiry")?;
+            (
+                Db::timestamp(rfc3339(Utc::now() + Duration::minutes(expiry))),
+                format!("open for {expiry} minutes"),
+            )
+        }
+    };
     let description = format!(
-        "FAT link for \"{fleet}\" ({}), open for {expiry} minutes{}",
+        "FAT link for \"{fleet}\" ({}), {open_for}",
         fleet_type.as_deref().unwrap_or("no fleet type"),
-        track
-            .as_ref()
-            .map(|(_, name)| format!(", tracking {name}'s ESI fleet"))
-            .unwrap_or_default()
     );
     // The link and its log entry in one statement.
     let track_id = track.as_ref().map(|(id, _)| *id);
@@ -1014,7 +1041,7 @@ fn create_link(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult,
             viewer.account_id.into(),
             viewer.main.id.into(),
             viewer.main.name.clone().into(),
-            Db::timestamp(rfc3339(expires)),
+            expires,
             description.into(),
             track_id.into(),
             track.map(|(_, name)| name).into(),
@@ -1068,13 +1095,11 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
     } else {
         badge("Closed", Tone::Neutral)
     };
+    let (closes_label, closes_at) = closes(&link);
     let mut stats = vec![
         Stat::new("Status", status_stat),
         Stat::new("FATs", link.fats),
-        Stat::new(
-            if link.open { "Closes" } else { "Closed" },
-            time(link.expires_at.clone()),
-        ),
+        Stat::new(closes_label, closes_at),
     ];
     if let Some(esi) = &link.esi {
         stats.push(Stat::new(
@@ -1282,16 +1307,20 @@ fn link_actions(viewer: &Viewer, link: &LinkInfo, settings: &Settings) -> Vec<Ac
     if let Some(esi) = &link.esi
         && esi.tracking
     {
+        let link_then = if link.expires_at.is_some() {
+            "the link stays open for members to click"
+        } else {
+            "the link closes with it"
+        };
         buttons.push(action("Stop tracking", "stop_tracking").confirm(format!(
-            "Tether stops reading {}'s fleet; the link stays open for members to click. Only {} \
-             can resume it.",
+            "Tether stops reading {}'s fleet; {link_then}. Only {} can resume it.",
             esi.character_name, esi.character_name
         )));
     }
     // Only the owner of the tracked character resumes it.
     if let Some(esi) = &link.esi
         && !esi.tracking
-        && link.open
+        && (link.open || esi.stop_reason.as_deref() != Some("closed"))
         && esi.within_cap
         && owns(viewer, esi.character_id)
     {
@@ -1386,7 +1415,15 @@ fn change_link(
             run(
                 &[
                     Statement::new(
-                        "UPDATE links SET expires_at = now() WHERE id = $1 AND expires_at > now()",
+                        "UPDATE links SET expires_at = now() \
+                         WHERE id = $1 AND (expires_at IS NULL OR expires_at > now())",
+                        vec![link.id.into()],
+                    ),
+                    // Closed by hand: tracking that had stopped resumes
+                    // only once the link is reopened.
+                    Statement::new(
+                        "UPDATE links SET esi_stop_reason = 'closed' \
+                         WHERE id = $1 AND esi_state = 'stopped'",
                         vec![link.id.into()],
                     ),
                     log_entry(
@@ -1414,12 +1451,16 @@ fn change_link(
             let Some(esi) = link.esi.as_ref().filter(|e| owns(viewer, e.character_id)) else {
                 return Err(PageError::Forbidden);
             };
-            // Only a stopped, open link, within six hours of first
-            // tracking, and not read in the last minute.
+            // Only a stopped link that's open, or that stopping closed (not
+            // closed by hand), within six hours of first tracking, and not
+            // read in the last minute. A closed one opens again without
+            // expiry, as a new tracked link.
             let resumed = storage::execute(
                 "WITH resumed AS ( \
-                     UPDATE links SET esi_state = 'tracking', esi_stop_reason = NULL \
-                     WHERE id = $1 AND esi_state = 'stopped' AND expires_at > now() \
+                     UPDATE links SET esi_state = 'tracking', esi_stop_reason = NULL, \
+                            expires_at = CASE WHEN expires_at > now() THEN expires_at END \
+                     WHERE id = $1 AND esi_state = 'stopped' \
+                       AND (expires_at > now() OR esi_stop_reason <> 'closed') \
                        AND esi_started_at > $5 AND (esi_polled_at IS NULL OR esi_polled_at < $6) \
                      RETURNING hash) \
                  INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
@@ -1446,8 +1487,9 @@ fn change_link(
                     viewer,
                     hash,
                     Some(
-                        "Tracking can't be resumed now: it's running, the link is closed, six hours \
-                         have passed, or the fleet was read less than a minute ago (try again shortly).",
+                        "Tracking can't be resumed now: it's running, the link was closed (reopen it \
+                         first), six hours have passed, or the fleet was read less than a minute ago \
+                         (try again shortly).",
                     ),
                 )?));
             }
@@ -1703,10 +1745,7 @@ fn register_page(
                 link.doctrine.clone().unwrap_or_else(|| "None".to_owned()),
             )
             .field("FC", link.creator_name.clone())
-            .field(
-                if link.open { "Closes" } else { "Closed" },
-                time(link.expires_at.clone()),
-            ),
+            .field(closes(&link).0, closes(&link).1),
     );
     if !registered.is_empty() {
         page = page.table(with_rows(
@@ -1894,7 +1933,8 @@ fn register(
                     NULLIF(x.alliance_id, 0), x.system_id, x.ship_type_id \
              FROM json_to_recordset($1::json) AS x(character_id bigint, character_name text, \
                   corporation_id bigint, alliance_id bigint, system_id bigint, ship_type_id bigint) \
-             JOIN links l ON l.id = $2 AND l.expires_at > now() \
+             JOIN links l ON l.id = $2 \
+                  AND coalesce(l.expires_at > now(), l.esi_state = 'tracking') \
              ON CONFLICT (link_id, character_id) DO NOTHING \
              RETURNING corporation_id, alliance_id, system_id, ship_type_id",
             &[
@@ -2836,7 +2876,8 @@ fn poll_now() -> Result<(), PageError> {
     queue_poll(None).map_err(|e| failed("queuing fleet tracking", e))
 }
 
-/// Stops a link's tracking and logs why, if it was still tracking.
+/// Stops a link's tracking and logs why, if it was still tracking. A link
+/// without expiry closes with it.
 fn stop_statement(
     link_id: i64,
     reason: &str,
@@ -2846,7 +2887,8 @@ fn stop_statement(
 ) -> Statement {
     Statement::new(
         "WITH stopped AS ( \
-             UPDATE links SET esi_state = 'stopped', esi_stop_reason = $2 \
+             UPDATE links SET esi_state = 'stopped', esi_stop_reason = $2, \
+                    expires_at = coalesce(expires_at, now()) \
              WHERE id = $1 AND esi_state = 'tracking' RETURNING hash) \
          INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
          SELECT 'ESI Fleet Tracking Stopped', $3, $4, hash, $5 FROM stopped",
@@ -2895,7 +2937,8 @@ fn stop(link: &Tracked, reason: &str) -> Result<(), JobError> {
 fn track_fleets() -> Result<(), JobError> {
     let retry = |what: &str, e: storage::Error| JobError::Retry(format!("{what}: {e:?}"));
     let rows = storage::query(
-        "SELECT id, fleet, esi_character_id, esi_character_name, expires_at > now(), \
+        "SELECT id, fleet, esi_character_id, esi_character_name, \
+                coalesce(expires_at > now(), true), \
                 esi_started_at > $2 \
          FROM links WHERE esi_state = 'tracking' \
          ORDER BY esi_polled_at NULLS FIRST, id LIMIT $1",
@@ -3027,7 +3070,8 @@ fn poll(link: &Tracked) -> Result<(), JobError> {
                     x.ship_type_id, x.solar_system_id, true \
              FROM json_to_recordset($1::json) AS x(character_id bigint, ship_type_id bigint, \
                   solar_system_id bigint, corporation_id bigint, alliance_id bigint) \
-             JOIN links l ON l.id = $2 AND l.esi_state = 'tracking' AND l.expires_at > now() \
+             JOIN links l ON l.id = $2 AND l.esi_state = 'tracking' \
+                  AND coalesce(l.expires_at > now(), true) \
              LEFT JOIN characters c ON c.character_id = x.character_id \
              LEFT JOIN names n ON n.id = x.character_id \
              ON CONFLICT (link_id, character_id) DO UPDATE SET \

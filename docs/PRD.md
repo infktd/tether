@@ -345,7 +345,7 @@ Phase 5, release 1.0:
 - [ ] Freight: My contracts for `use_calculator`, with aa-freight's statuses (aa-freight `freight/views.py:70-71`, `freight/managers.py:262-272`)
 - [ ] Freight: the All contracts tab (aa-freight `freight/templates/freight/contracts_all.html`, `freight/managers.py:258-261`)
 - [ ] Freight: Discord cards linking to the app's contracts (aa-freight `freight/models/contracts.py:335-341`)
-- [ ] Fleet Activity Tracking: ESI-tracked links that don't expire, tracked until the fleet ends (aa-afat `afat/views/fatlinks.py:366-377`, `afat/tasks.py:335-346`)
+- [x] Fleet Activity Tracking: ESI-tracked links that don't expire, tracked until the fleet ends (aa-afat `afat/views/fatlinks.py:366-377`, `afat/tasks.py:335-346`). Built: a tracked link has no expiry ("Closes: When the fleet ends"), stays open while it tracks, and closes when tracking stops; its FC resumes it unless it was closed by hand. The six-hour cap stays
 - [ ] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`)
 - [ ] Fleet Activity Tracking: `manage_afat` opens every corporation's and alliance's statistics and Logs (aa-afat `afat/views/statistics.py:66-69`, `afat/views/logs.py:23`)
 - [ ] Fleet Activity Tracking: tracking stops only after 3 identical ESI errors within 75 seconds (aa-afat `afat/tasks.py:33-34`, `:169-201`)

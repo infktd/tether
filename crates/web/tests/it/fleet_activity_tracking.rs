@@ -61,25 +61,25 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let first = plugin_file("migrations/0001_fleet_activity_tracking.sql");
-    let second = plugin_file("migrations/0002_esi_fleet_tracking.sql");
-    let third = plugin_file("migrations/0003_settings.sql");
-    let fourth = plugin_file("migrations/0004_doctrines_from_fittings.sql");
+    // Every migration the app ships, in order.
+    let mut migrations: Vec<String> = std::fs::read_dir(format!(
+        "{}/../../plugins/fleet-activity-tracking/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+    .map(|e| format!("migrations/{}", e.unwrap().file_name().to_string_lossy()))
+    .collect();
+    migrations.sort();
+    let contents: Vec<String> = migrations.iter().map(|m| plugin_file(m)).collect();
     let component = component();
-    let bytes = testing::zip(&[
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        (
-            "migrations/0001_fleet_activity_tracking.sql",
-            first.as_bytes(),
-        ),
-        ("migrations/0002_esi_fleet_tracking.sql", second.as_bytes()),
-        ("migrations/0003_settings.sql", third.as_bytes()),
-        (
-            "migrations/0004_doctrines_from_fittings.sql",
-            fourth.as_bytes(),
-        ),
-    ]);
+    ];
+    for (name, sql) in migrations.iter().zip(&contents) {
+        files.push((name, sql.as_bytes()));
+    }
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -1317,6 +1317,128 @@ async fn esi_tracking_stops_when_not_in_a_fleet(db: PgPool) {
     );
     assert_eq!(queued_polls(&h).await, 0);
     assert!(esi_fats(&h, &hash).await.is_empty());
+}
+
+async fn expires_at(h: &Harness, hash: &str) -> Option<chrono::DateTime<Utc>> {
+    let schema = schema(h).await;
+    sqlx::query_scalar(sql!(
+        "SELECT expires_at FROM \"{schema}\".links WHERE hash = $1"
+    ))
+    .bind(hash)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// ESI's answer for Chribba's fleet from now on: he isn't in one.
+async fn mount_not_in_fleet(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/fleet")))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_json(serde_json::json!({ "error": "Character is not in a fleet" })),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+}
+
+/// aa-afat's ESI FAT links have no expiry: open while the fleet is
+/// tracked, however long past a clickable link's expiry, and closed when
+/// tracking stops.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_esi_tracked_link_has_no_expiry(db: PgPool) {
+    let (h, owner, line) = setup(db).await;
+    let owner = add_fc(&h, &owner).await;
+    mount_fleet(&h, CHRIBBA).await;
+    mount_members(&h).await;
+    let hash = tracked_link(&h, &owner).await;
+    assert_eq!(expires_at(&h, &hash).await, None);
+    work(&h).await;
+    assert_eq!(esi_fats(&h, &hash).await.len(), 2);
+
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        details.body.contains("When the fleet ends"),
+        "{}",
+        details.body
+    );
+    assert!(details.body.contains("Open"), "{}", details.body);
+    let overview = open(&h, "", &owner).await;
+    assert!(overview.body.contains("Tracked fleet"), "{}", overview.body);
+
+    // Five hours in (any expiry long gone, within the six-hour cap), it
+    // still tracks, and members may still register.
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET created_at = now() - interval '5 hours', \
+         esi_started_at = now() - interval '5 hours' WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    poll_now(&h).await;
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("tracking"));
+    assert_eq!(esi_fats(&h, &hash).await.len(), 3);
+    let register = open(&h, &format!("links/{hash}/add"), &line).await;
+    assert!(
+        register.body.contains("When the fleet ends"),
+        "{}",
+        register.body
+    );
+
+    // The fleet ends: tracking stops and the link closes then.
+    mount_not_in_fleet(&h).await;
+    for _ in 0..4 {
+        poll_now(&h).await;
+    }
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("fleet_ended".into()))
+    );
+    let closed = expires_at(&h, &hash).await.unwrap();
+    assert!(closed <= Utc::now() && closed > Utc::now() - chrono::Duration::minutes(1));
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(details.body.contains("Closed"), "{}", details.body);
+    let res = post(
+        &h,
+        &format!("links/{hash}/add"),
+        &format!("_form=register&c_{LINE}=on"),
+        &line,
+    )
+    .await;
+    assert!(res.status != StatusCode::SEE_OTHER, "{}", res.body);
+
+    // Its FC resumes it (a new fleet, say): open again, without expiry.
+    age_poll(&h, &hash).await;
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await, (Some("tracking".into()), None));
+    assert_eq!(expires_at(&h, &hash).await, None);
+
+    // Closed by hand, it resumes only once reopened.
+    let res = post(&h, &format!("links/{hash}"), "_form=close", &owner).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        tracking(&h, &hash).await,
+        (Some("stopped".into()), Some("closed".into()))
+    );
+    age_poll(&h, &hash).await;
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(
+        !details.body.contains(">Resume tracking</button>"),
+        "{}",
+        details.body
+    );
+    assert!(
+        details.body.contains(">Reopen</button>"),
+        "{}",
+        details.body
+    );
+    let res = post(&h, &format!("links/{hash}"), "_form=resume", &owner).await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(tracking(&h, &hash).await.0.as_deref(), Some("stopped"));
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
