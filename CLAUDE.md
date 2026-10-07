@@ -142,7 +142,8 @@ deploy/install.sh --version 1.2.0   # move the pin to another published image (X
 deploy/install.sh --proxy none localhost   # or nginx/traefik: the admin's own proxy, no Caddy; app on 127.0.0.1:8080 (deploy/README.md)
 docker run --rm -v "$PWD/deploy:/src:ro" docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d sh /src/updater-test.sh   # the console updater's script, with a fake docker
 (cd deploy && docker compose pull && docker compose up -d)   # honours COMPOSE_FILE in deploy/.env (proxy and build overrides; a --build install rebuilds on up); `up -f deploy/docker-compose.yml` would not
-git tag v1.2.0 && git push origin v1.2.0   # release: CI publishes ghcr.io/<owner>/tether:1.2.0, :1.2, :latest after its checks; then a GitHub release (deploy/README.md, Releasing)
+scripts/release-notes.sh HEAD   # preview a release's notes: the CHANGELOG.md entries since the previous vX.Y.Z tag
+git tag v1.2.0 && git push origin v1.2.0   # release: CI publishes ghcr.io/<owner>/tether:1.2.0, :1.2, :latest after its checks, then the GitHub release with those notes (deploy/README.md, Releasing)
 docker compose -f deploy/docker-compose.yml exec app tether doctor   # also: users, states, jobs, sync; `tether jobs run plugin:<app id>:*` runs an app's schedules now
 docker compose -f deploy/docker-compose.yml exec app tether rollback --list   # snapshots and nightly backups
 docker compose -f deploy/docker-compose.yml stop app && docker compose -f deploy/docker-compose.yml run --rm app rollback   # restore core's pre-migration snapshot (asks first; --plugin <id>, --snapshot <name>, --yes)

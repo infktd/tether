@@ -3,11 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
-    # Releases: the publish jobs at the bottom push these as images.
+    # Releases: the publish jobs at the bottom push these as images and make
+    # their GitHub releases.
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
 
-# Read-only by default; only the publish jobs may write packages.
+# Read-only by default; only the publish jobs may write (packages, releases).
 permissions:
   contents: read
 
@@ -616,3 +617,51 @@ jobs:
             echo "== $tag"
             docker buildx imagetools inspect "$tag"
           done
+
+  # A release tag's GitHub release, made once its image is published (new
+  # installs pin the newest release, so never before), with the CHANGELOG.md
+  # entries since the previous release as its notes
+  # (scripts/release-notes.sh). A patch to an older line isn't marked
+  # latest, so GitHub's latest release stays the same as :latest. A release
+  # someone already made by hand is left as it is.
+  publish-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: publish-manifest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Every tag and the history between them, to find the previous
+          # release and the entries since.
+          fetch-depth: 0
+      - name: Release notes
+        run: |
+          scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "The release for $GITHUB_REF_NAME already exists; leaving it as it is."
+            exit 0
+          fi
+          remote=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          newest=$(git ls-remote --tags --refs "$remote" 'v*' | sed 's#.*refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          test -n "$newest"
+          latest=false
+          if [ "$newest" = "$GITHUB_REF_NAME" ]; then
+            latest=true
+          else
+            echo "$newest is newer, so it stays the latest release."
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "Tether ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest="$latest"

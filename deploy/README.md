@@ -278,20 +278,28 @@ For maintainers. CI (`.github/workflows/ci.yml`) publishes the image
 once every check has passed on the commit: each push to main as `:edge`
 and `:sha-<commit>`, and each `vX.Y.Z` tag as `:X.Y.Z`, `:X.Y` and
 `:latest`. Pull requests never publish. Each architecture builds on its
-own native runner and the two are joined into one multi-arch image.
+own native runner and the two are joined into one multi-arch image. A
+tag also gets its GitHub release, made by CI once the image is published.
 
-1. With main green, tag and push the tag:
-   `git tag v1.2.0 && git push origin v1.2.0`.
-2. Watch the build on GitHub under Actions → CI → the run for `v1.2.0`.
-   The `publish-image` jobs (amd64, arm64) and `publish-manifest` run last.
-   The published tags are under the repository's Packages → tether
-   (`https://github.com/infktd/tether/pkgs/container/tether`).
-3. Once the image is published, create a GitHub release from the tag
-   (Releases → Draft a new release, or
-   `gh release create v1.2.0 --generate-notes`). New installs pin the
-   newest release, so create it only after the image exists. For a patch
-   to an older line (say 1.1.5 after 1.2.0), add `--latest=false`, so
-   GitHub's latest release stays the same as `:latest`.
+1. With main green, preview the notes:
+   `scripts/release-notes.sh HEAD`. They are the `CHANGELOG.md` entries
+   added since the previous release tag, grouped under Everyone, each app
+   and Admins. Fix any entry before tagging; the notes come from the
+   tagged commit.
+2. Tag and push the tag: `git tag v1.2.0 && git push origin v1.2.0`.
+3. Watch the build on GitHub under Actions → CI → the run for `v1.2.0`.
+   The `publish-image` jobs (amd64, arm64), `publish-manifest` and
+   `publish-release` run last. The published tags are under the
+   repository's Packages → tether
+   (`https://github.com/infktd/tether/pkgs/container/tether`), and the
+   release under Releases.
+
+`publish-release` makes the release only after the image exists, because
+new installs pin the newest release. Its notes are
+`scripts/release-notes.sh v1.2.0`, and the Version card on Health links
+to them. A patch to an older line (say 1.1.5 after 1.2.0) isn't marked
+latest, so GitHub's latest release stays the same as `:latest`. If the
+release already exists (made by hand), CI leaves it alone.
 
 Only a tag on main publishes, and a published `X.Y.Z` is never replaced:
 to fix a bad release, tag the next patch. `:X.Y` and `:latest` never move

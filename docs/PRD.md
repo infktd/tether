@@ -305,7 +305,7 @@ Phase 4, core, Administration and phone:
 Phase 5, release 1.0:
 
 - [x] A "What's new" note after each update (Jay, 2026-10-06, pulled forward): CHANGELOG.md, an entry every push that changes what Tether does (`scripts/check-changelog.sh`, CI's changelog job), each note for everyone, an app's users or admins; a popup once per pilot after an update, the apps updated since for app admins, and every update on the account menu's What's new page
-- [ ] Tagged releases with their CHANGELOG.md entries as release notes
+- [x] Tagged releases with their CHANGELOG.md entries as release notes: a pushed `vX.Y.Z` tag gets its GitHub release from CI once its image is published (`publish-release`), with the entries added since the previous release tag, grouped under Everyone, each app and Admins (`scripts/release-notes.sh`, which also previews them), marked latest only when it is the highest version
 - [ ] Documentation for admins, members and app developers
 - [ ] A sessions page with Sign out everywhere
 - [ ] An optional metrics endpoint, off by default
