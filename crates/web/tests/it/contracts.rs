@@ -378,6 +378,8 @@ async fn contracts_end_to_end(db: PgPool) {
                 1_000_000_000.0,
                 "Buyback https://janice.e-351.com/a/OtherX"
             ),
+            // Buyback's: its tracking number in the title.
+            contract(206, CORP, JITA, "outstanding", 1.0, "aa-bbp-12-1a2b3c"),
         ]),
         None,
     )
@@ -385,6 +387,17 @@ async fn contracts_end_to_end(db: PgPool) {
     sync(&h).await;
     let sent = cards(&h).await;
     assert_eq!(sent.len(), 5, "{sent:#?}");
+    assert!(
+        !sent.iter().any(|c| c.to_string().contains("aa-bbp-12")),
+        "{sent:#?}"
+    );
+    let kept: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.contracts".contracts WHERE contract_id = 206"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, 0, "Buyback's contract isn't kept");
     // Every card's title opens the app's page, as aa-freight's.
     assert!(
         sent.iter()

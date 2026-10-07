@@ -6,6 +6,14 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ## 2026-10-07
 
+### Contracts
+- Buyback contracts, the ones with a Buyback tracking number in their description, are left to the Buyback app, so each gets one Discord card instead of two.
+
+### Buyback
+- Leaderboards open to everyone who can use the program, and performance to holders of "see performance" and program managers, as in Alliance Auth.
+
+## 2026-10-07
+
 ### Member Audit
 - Skill sets now have a required level, a recommended level or both for each skill, plus a description, a ship and an option to hide them from pilots' sheets.
 - Skill set groups, doctrines among them, sort the sets on the sheet and in Reports.

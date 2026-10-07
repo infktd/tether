@@ -229,6 +229,12 @@ fn sync() -> Result<(), JobError> {
                             .into_iter()
                             .flatten()
                             .filter(|c| c["assignee_id"].as_i64() == Some(*corp))
+                            .filter(|c| {
+                                !buyback_contract(
+                                    c["type"].as_str().unwrap_or_default(),
+                                    c["title"].as_str().unwrap_or_default(),
+                                )
+                            })
                             .cloned(),
                     );
                 }
@@ -373,6 +379,31 @@ fn store_part(corp: i64, json: &str, backlog: bool) -> Result<u64, storage::Erro
                  THEN now() ELSE contracts.updated_at END",
         &[Db::json(json), corp.into(), backlog.into()],
     )
+}
+
+/// An item exchange whose title carries a Buyback tracking number
+/// (`<prefix>-<n>-<6 hex>`, reverse `<prefix>-R-<n>-<6 hex>`): Buyback
+/// announces and checks it, so Contracts leaves it alone (Jay, 2026-10-07:
+/// one card a contract, as an Alliance Auth install gets from
+/// aa-buybackprogram). Apps can't read each other's settings, so it goes
+/// by the number's shape.
+fn buyback_contract(kind: &str, title: &str) -> bool {
+    kind == "item_exchange" && title.split_whitespace().any(tracking_number)
+}
+
+fn tracking_number(word: &str) -> bool {
+    let mut parts = word.rsplitn(3, '-');
+    let (Some(hex), Some(number), Some(prefix)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    let prefix = prefix.strip_suffix("-R").unwrap_or(prefix);
+    hex.len() == 6
+        && hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && !number.is_empty()
+        && number.bytes().all(|b| b.is_ascii_digit())
+        && !prefix.is_empty()
 }
 
 /// An ESI refusal that won't change (not a rate limit, which does).
@@ -1120,6 +1151,30 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buyback_contracts_are_left_to_buyback() {
+        for title in [
+            "aa-bbp-0-1a2b3c",
+            "aa-bbp-R-12-ffffff",
+            "Ore 4-123-abc123 thanks",
+            "ORE-7-000000",
+        ] {
+            assert!(buyback_contract("item_exchange", title), "{title}");
+        }
+        for title in [
+            "",
+            "janice.e-351.com/a/AbCdEf",
+            "-12-1a2b3c",
+            "aa-bbp-x-1a2b3c",
+            "aa-bbp-1-1A2B3C",
+            "aa-bbp-1-1a2b3",
+            "fuel 2026-10-07",
+        ] {
+            assert!(!buyback_contract("item_exchange", title), "{title}");
+        }
+        assert!(!buyback_contract("courier", "aa-bbp-0-1a2b3c"));
+    }
 
     #[test]
     fn names_cannot_ping_or_link() {
