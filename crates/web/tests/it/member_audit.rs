@@ -1802,6 +1802,90 @@ async fn a_planet_two_characters_colonise_is_named(db: PgPool) {
     );
 }
 
+/// Two days ago and `seconds`, as ESI writes times: a higher id, a later
+/// time.
+fn recent(seconds: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::days(2) + chrono::Duration::seconds(seconds))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// Journal entries `ids`, newest first.
+fn journal_page(ids: impl Iterator<Item = i64>) -> ResponseTemplate {
+    let entries: Vec<serde_json::Value> = ids
+        .map(|id| {
+            serde_json::json!({
+                "id": id, "date": recent(id), "ref_type": "player_donation",
+                "amount": 1.0, "balance": 2.0, "description": "Gift",
+            })
+        })
+        .collect();
+    ResponseTemplate::new(200)
+        .insert_header("x-pages", "3")
+        .set_body_json(entries)
+}
+
+async fn journal_entries(h: &Harness) -> Vec<i64> {
+    sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.member-audit".journal ORDER BY id"#)
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+}
+
+/// The wallet journal's every page, as aa-memberaudit reads it; later
+/// reads stop at the first page with nothing new.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_whole_journal_is_read(db: PgPool) {
+    let (h, _) = synced(db).await;
+    let route = format!("/characters/{CHRIBBA}/wallet/journal");
+    // Each page once (then the next read's, below).
+    for (page, ids) in [(1, 201..=300), (2, 101..=200), (3, 2..=100)] {
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(journal_page(ids.rev()))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    let journal_due = || {
+        sqlx::query(
+            r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal'"#,
+        )
+        .execute(&h.db)
+    };
+    journal_due().await.unwrap();
+    sync(&h).await;
+    assert_eq!(
+        journal_entries(&h).await,
+        (1..=300).collect::<Vec<_>>(),
+        "{:?}",
+        plugin_warnings(&h).await
+    );
+
+    // Ten new entries: the first page has them, the second only entries
+    // stored already, so the third isn't read.
+    for (page, ids) in [(1, 211..=310), (2, 111..=210), (3, 5000..=5000)] {
+        Mock::given(method("GET"))
+            .and(path(&route))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(journal_page(ids.rev()))
+            .with_priority(2)
+            .mount(&h.esi_server)
+            .await;
+    }
+    journal_due().await.unwrap();
+    sync(&h).await;
+    assert_eq!(journal_entries(&h).await, (1..=310).collect::<Vec<_>>());
+    let ok: bool = sqlx::query_scalar(
+        r#"SELECT ok FROM "plugin_tether.member-audit".section_syncs WHERE section = 'journal'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(ok);
+}
+
 /// ESI having trouble (a 503, as around downtime) while a mail's body, a
 /// contract's items and a planet's name are read: none is settled empty
 /// or put off for a week, and each is read once ESI answers again.

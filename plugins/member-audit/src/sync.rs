@@ -773,10 +773,61 @@ fn assets(run: &mut Run, id: i64) -> Result<(), Stop> {
     }
 }
 
+/// The wallet journal: ESI's last 30 days, newest first, in pages, read
+/// down to the first page with nothing new (as aa-memberaudit reads every
+/// page). A read that runs out of calls part way keeps nothing, so the
+/// next one reads it whole and what's stored has no gaps.
 fn journal(run: &mut Run, id: i64) -> Result<(), Stop> {
-    let body = run.get("character-wallet-journal", id, &[], Some(1))?.body;
-    let mut whole = true;
-    let entries: Vec<Json> = array(&body, &mut whole)
+    // Older than the Settings keep (aa-memberaudit's
+    // MEMBERAUDIT_DATA_RETENTION_LIMIT) is never new: it goes at the next
+    // clean-up.
+    let cutoff = Utc::now() - chrono::Duration::days(run.settings.retention_days);
+    let first = run.get("character-wallet-journal", id, &[], Some(1))?;
+    let pages = first.pages.clamp(1, MAX_PAGES);
+    let mut body = first.body;
+    let mut readable = true;
+    // Down to entries stored already (or past what's kept): older pages
+    // hold nothing new.
+    let mut reached = false;
+    let mut entries: Vec<Json> = Vec::new();
+    let mut page = 1;
+    loop {
+        let items = array(&body, &mut readable);
+        if !readable {
+            break;
+        }
+        let ids: Vec<i64> = items
+            .iter()
+            .filter(|j| {
+                j["date"]
+                    .as_str()
+                    .and_then(crate::parse_time)
+                    .is_some_and(|at| at >= cutoff)
+            })
+            .filter_map(|j| i(&j["id"]))
+            .collect();
+        let stored = storage::query(
+            "SELECT count(*) FROM journal WHERE character_id = $1 \
+             AND id = ANY(string_to_array($2, ',')::bigint[])",
+            &[id.into(), crate::id_list(&ids).into()],
+        )
+        .map_err(|e| Stop::Section(format!("reading the journal: {e:?}")))?;
+        let known = stored.rows.first().map_or(0, |r| int(r, 0));
+        entries.extend(items);
+        if usize::try_from(known).unwrap_or(0) >= ids.len() {
+            reached = true;
+            break;
+        }
+        if page >= pages {
+            break;
+        }
+        page += 1;
+        body = run
+            .get("character-wallet-journal", id, &[], Some(page))?
+            .body;
+    }
+    let whole = readable && (reached || first.pages <= MAX_PAGES);
+    let entries: Vec<Json> = entries
         .into_iter()
         .map(|j| {
             run.ids.extend(i(&j["first_party_id"]));
@@ -808,7 +859,15 @@ fn journal(run: &mut Run, id: i64) -> Result<(), Stop> {
          ON CONFLICT (character_id, id) DO NOTHING",
         &entries,
         id,
-    )
+    )?;
+    if whole {
+        Ok(())
+    } else {
+        Err(Stop::Section(format!(
+            "only part of the journal was read, so older entries may be missing (more than \
+             {MAX_PAGES} pages of them, or a page ESI sent garbled)"
+        )))
+    }
 }
 
 fn transactions(run: &mut Run, id: i64) -> Result<(), Stop> {
