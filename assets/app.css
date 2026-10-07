@@ -507,12 +507,16 @@
     box-shadow: inset 0 -2px 0 var(--accent);
   }
   /* On a phone the bar runs to the screen's edges and fades out at the
-     right, so a cut view says the bar scrolls. */
-  @media (max-width: 639px) {
+     right, so a cut view says the bar scrolls; once scrolled to its end
+     (live.js says so), it doesn't. */
+  @media (max-width: 767px) {
     .views-bar {
       margin-inline: -16px;
       padding-inline: 16px;
       mask-image: linear-gradient(90deg, #000 calc(100% - 40px), transparent);
+    }
+    .views-bar[data-fades]:not([data-more]) {
+      mask-image: none;
     }
   }
 
@@ -589,6 +593,16 @@
   .toolbar-search .input:focus ~ .kbd,
   .toolbar-search .input:not(:placeholder-shown) ~ .kbd {
     display: none;
+  }
+  /* The filters a phone folds behind its Filters button: in the row on
+     wider screens, as if the sheet weren't there (the browser's popover
+     box undone). */
+  .toolbar-filters,
+  .toolbar-rest-head {
+    display: none;
+  }
+  .toolbar-rest[popover] {
+    display: contents;
   }
   /* An applied filter: its name, its value in bone, and a × taking it
      off. */
@@ -1382,11 +1396,15 @@
     font-size: 13px;
   }
 
-  /* Badges: square, bordered, small. */
+  /* Badges: square, bordered, small. A long one (an ESI scope's name)
+     breaks rather than run off a phone's screen. */
   .badge {
     border-radius: 0;
     font-size: 11px;
     padding: 1px 6px;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .badge[data-variant="outline"],
   .badge[data-variant="secondary"] {
@@ -2356,6 +2374,27 @@
     text-overflow: ellipsis;
   }
 
+  /* Skip to content: off screen until it has focus, then over the
+     command bar's corner. */
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 60;
+    padding: 8px 14px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 13px;
+    font-weight: 600;
+    transform: translateY(-200%);
+  }
+  .skip-link:focus {
+    transform: none;
+  }
+  main:focus {
+    outline: none;
+  }
+
   /* The command palette (DESIGN.md): a bracketed panel 96px from the top
      over the scrim, the search, its scopes, the results and the keys. */
   .palette {
@@ -2561,6 +2600,9 @@
     font-size: 11px;
     text-transform: uppercase;
     color: var(--muted-foreground);
+    /* Room for a link's focus ring, which the cut-off would clip. */
+    padding: 5px;
+    margin: -5px;
   }
   .trail a {
     color: var(--foreground-soft);
@@ -3248,6 +3290,97 @@
     .palette-keys {
       display: none;
     }
+
+    /* The toolbar folds into one line: the search across it and Filters,
+       which opens the filters as a sheet from the bottom of the screen.
+       View chips stay in sight under it: they say what the list shows. */
+    .toolbar-search {
+      flex: 1 1 0;
+      max-width: none;
+    }
+    .toolbar-search .kbd {
+      display: none;
+    }
+    .toolbar-filters {
+      display: inline-flex;
+      gap: 6px;
+      height: 34px;
+    }
+    .toolbar-search + .toolbar-filters + .toolbar-rest + .view-chips,
+    .toolbar-search + .view-chips {
+      flex-basis: 100%;
+    }
+    .toolbar-rest[popover]:not(:popover-open) {
+      display: none;
+    }
+    .toolbar-rest[popover]:popover-open {
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
+      gap: 8px;
+      position: fixed;
+      inset: auto 0 0 0;
+      width: 100%;
+      max-width: none;
+      max-height: 75dvh;
+      margin: 0;
+      overflow-y: auto;
+      padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+      border: 0;
+      border-top: 1px solid var(--border);
+      background: var(--card);
+      color: var(--foreground);
+    }
+    .toolbar-rest::backdrop {
+      background: var(--scrim);
+    }
+    .toolbar-rest-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-basis: 100%;
+    }
+    /* In the sheet "+ Filter" opens its values in place, not as a menu. */
+    .toolbar-rest .toolbar-menu {
+      flex-basis: 100%;
+    }
+    .toolbar-rest .filter-menu {
+      position: static;
+      max-width: none;
+      max-height: none;
+      margin-top: 8px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .toolbar-rest .filter-menu-choices > a {
+      height: 32px;
+    }
+
+    /* The page's primary action waits at the bottom of the screen, under
+       the thumb, across its width; the content and the toasts make room. */
+    .page-head-actions .btn[data-variant="primary"] {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: calc(12px + env(safe-area-inset-bottom));
+      z-index: 15;
+      height: 44px;
+    }
+    main:has(.page-head-actions .btn[data-variant="primary"]) {
+      padding-bottom: 76px;
+    }
+    body:has(.page-head-actions .btn[data-variant="primary"]) .toaster {
+      bottom: 64px;
+    }
+    /* A settings page's bottom is its save bar: the action stays put. */
+    main:has(.save-bar) .page-head-actions .btn[data-variant="primary"] {
+      position: static;
+      height: auto;
+    }
+    main:has(.save-bar) {
+      padding-bottom: 20px;
+    }
     .readouts {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -3565,3 +3698,28 @@
   }
 }
 
+/* Visible focus (DESIGN.md, Interaction and accessibility): a 2px ring
+   with a 2px gap on everything that takes focus. Outside the layers, so
+   no component's outline-none (Basecoat's buttons and fields) hides it. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+/* A field's border is the bracket colour, not the seam: its edge is what
+   shows it's a field, so it reaches 3:1 against the hull (WCAG 2.2,
+   non-text contrast). Outside the layers, over Basecoat's per-type
+   rules; focus and a refused value keep their own. */
+:is(.input, .textarea, .select select):not(:focus-visible, [aria-invalid="true"]) {
+  border-color: var(--bracket);
+}
+/* Rows of links that scroll or sit edge to edge would clip a ring
+   outside them: theirs is drawn inside. */
+:is(.views-bar > a, .nav-item, .nav-section > summary, .user-menu-item, .palette-item, .view-chips > a, .settings-index > a, .table > thead th):focus-visible {
+  outline-offset: -2px;
+}
+/* The skip link's target and the palette's box show focus otherwise: the
+   content needs no ring, and the box has its caret and an underline. */
+main:focus-visible,
+.palette-field input:focus-visible {
+  outline: none;
+}

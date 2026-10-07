@@ -653,14 +653,31 @@
       menu.querySelector("summary")?.focus();
     }
   });
+  // (A page shown again from the tab's memory is new markup: its bars
+  // need their listener again, whatever their attributes say.)
+  const fading = new WeakSet();
+  const fadeBar = (bar) => bar.toggleAttribute("data-more", bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1);
+  window.addEventListener("resize", () => {
+    for (const bar of document.querySelectorAll(".views-bar[data-fades]")) fadeBar(bar);
+  });
   const enhance = (root) => {
     // A views bar wider than a phone's screen: the current view brought
     // into sight, without moving the page.
     for (const bar of root.querySelectorAll ? root.querySelectorAll(".views-bar") : []) {
+      // It fades at its right edge only while there's more to scroll to.
+      if (!fading.has(bar)) {
+        fading.add(bar);
+        bar.dataset.fades = "";
+        bar.addEventListener("scroll", () => fadeBar(bar), { passive: true });
+      }
       const current = bar.querySelector('[aria-current="page"]');
-      if (!current || bar.scrollWidth <= bar.clientWidth) continue;
-      const offset = current.getBoundingClientRect().left - bar.getBoundingClientRect().left;
-      bar.scrollLeft += offset - (bar.clientWidth - current.offsetWidth) / 2;
+      if (current && bar.scrollWidth > bar.clientWidth) {
+        const offset = current.getBoundingClientRect().left - bar.getBoundingClientRect().left;
+        bar.scrollLeft += offset - (bar.clientWidth - current.offsetWidth) / 2;
+      }
+      fadeBar(bar);
+      // Again once the fonts have their widths.
+      document.fonts?.ready.then(() => fadeBar(bar));
     }
     const tables = root.querySelectorAll ? root.querySelectorAll("table.table") : [];
     for (const table of tables) {

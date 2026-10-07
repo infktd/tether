@@ -16,6 +16,9 @@
     it in, so the shell (sky, toasts) stays and nothing reloads. Off-site
     redirects and downloads navigate fully (pages::stay::leave). -#}
 <body hx-boost="true" hx-indicator="#page-progress">
+{#- Skip to content (DESIGN.md, Interaction and accessibility): the first
+    stop for the keyboard, shown only once it has focus. -#}
+<a href="#content" class="skip-link">Skip to content</a>
 {#- The sky (DESIGN.md, Motion): one fixed layer behind the page. -#}
 <div class="sky" aria-hidden="true" hx-preserve id="sky"><div class="grid"></div><div class="far"></div><div class="near"></div><div class="glint"></div><div class="sweep"></div></div>
 {#- The command bar (DESIGN.md): wordmark, the site's name, EVE time,
@@ -118,7 +121,7 @@
   </aside>
   <div class="flex flex-col min-w-0 relative">
     <div id="page-progress" class="page-progress htmx-indicator" aria-hidden="true"></div>
-    <main class="px-4 py-5 md:px-7 md:py-[22px] flex flex-col gap-5 w-full max-w-[1440px]">
+    <main id="content" tabindex="-1" class="px-4 py-5 md:px-7 md:py-[22px] flex flex-col gap-5 w-full max-w-[1440px]">
       {#- The trail (DESIGN.md): where this page is, at the head of the
           content. -#}
       <nav class="trail" aria-label="Breadcrumb">{% block breadcrumb %}{% endblock %}</nav>

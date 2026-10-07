@@ -1313,6 +1313,21 @@ async fn an_apps_own_search_and_filters_are_its_own(db: PgPool) {
         res.contains(r#"<input type="hidden" name="kind" value="ore">"#),
         "{res}"
     );
+    // On a phone the chips and "+ Filter" fold behind Filters, which
+    // counts the filters applied and opens them as a sheet.
+    let button = res
+        .find(r#"class="btn toolbar-filters""#)
+        .unwrap_or_else(|| panic!("{res}"));
+    let sheet = res.find(r#"class="toolbar-rest""#).unwrap();
+    let chip = res.find(r#"aria-label="Take off Kind: Ore""#).unwrap();
+    assert!(button < sheet && sheet < chip, "{res}");
+    assert!(
+        res[button..sheet].contains(r#"<span class="num text-highlight">1</span>"#),
+        "{res}"
+    );
+    // A list with nothing to filter has no Filters.
+    let list = page(&h, "/plugins/acme.pages/list", &owner).await.body;
+    assert!(!list.contains("toolbar-filters"), "{list}");
 }
 
 /// A row's name opens its record panel beside the list (DESIGN.md, Record

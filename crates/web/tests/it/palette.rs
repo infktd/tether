@@ -163,6 +163,15 @@ async fn the_palette_is_a_page_without_script(db: PgPool) {
     let home = page(&h, "/groups", &pilot).await.body;
     assert!(home.contains(r#"href="/palette""#), "{home}");
     assert!(home.contains(r#"id="palette""#), "{home}");
+    // The skip link first, to the content.
+    let skip = home
+        .find(r##"<a href="#content" class="skip-link">"##)
+        .unwrap();
+    assert!(skip < home.find("command-bar").unwrap(), "{home}");
+    assert!(
+        home.contains(r#"<main id="content" tabindex="-1""#),
+        "{home}"
+    );
     // Signed out: to the login, never results.
     let anon = send(&h.app, get("/palette?q=admin", &[])).await;
     assert_eq!(anon.status, StatusCode::SEE_OTHER);

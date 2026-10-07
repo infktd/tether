@@ -15,29 +15,41 @@
     <kbd class="kbd" aria-hidden="true">/</kbd>
   </form>
   {% endif %}
-  {% for chip in t.chips %}
-  <span class="filter-chip">{{ chip.label }} <span class="filter-chip-value">{{ chip.value }}</span><a href="{{ chip.remove }}" aria-label="Take off {{ chip.label }}: {{ chip.value }}">{% call icons::icon("x") %}{% endcall %}</a></span>
-  {% endfor %}
-  {% if !t.filters.is_empty() %}
-  <details class="toolbar-menu">
-    <summary>{% call icons::icon("plus") %}{% endcall %} Filter</summary>
-    <div class="filter-menu">
-      {% for f in t.filters %}
-      <section aria-label="{{ f.label }}">
-        <h3>{{ f.label }}</h3>
-        {% if !f.choices.is_empty() %}<div class="filter-menu-choices">{% for ch in f.choices %}<a href="{{ ch.href }}"{% if ch.current %} aria-current="true"{% endif %}>{{ ch.label }}</a>{% endfor %}</div>{% endif %}
-        {% if let Some(r) = f.range %}
-        <form class="filter-menu-range" method="get" action="{{ r.action }}">
-          {% for (k, v) in r.keep %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
-          <label class="label">From <input class="input" type="date" name="{{ r.from.0 }}" value="{{ r.from.1 }}"></label>
-          <label class="label">To <input class="input" type="date" name="{{ r.to.0 }}" value="{{ r.to.1 }}"></label>
-          <button type="submit" class="btn" data-variant="outline" data-size="sm">Apply</button>
-        </form>
-        {% endif %}
-      </section>
-      {% endfor %}
+  {#- On a phone the filters fold behind one Filters button (DESIGN.md,
+      Toolbar): the browser's popover, a sheet from the bottom of the
+      screen. Wider screens show them in the row, the button hidden. -#}
+  {% if !t.chips.is_empty() || !t.filters.is_empty() %}
+  <button type="button" class="btn toolbar-filters" data-variant="outline" popovertarget="{{ t.id }}-filters">{% call icons::icon("sliders") %}{% endcall %} Filters{% if !t.chips.is_empty() %} <span class="num text-highlight">{{ t.chips.len() }}</span>{% endif %}</button>
+  <div class="toolbar-rest" id="{{ t.id }}-filters" popover role="group" aria-label="Filters">
+    <div class="toolbar-rest-head">
+      <span class="ov">Filters</span>
+      <button type="button" class="btn" data-variant="outline" data-size="sm" popovertarget="{{ t.id }}-filters" popovertargetaction="hide">Done</button>
     </div>
-  </details>
+    {% for chip in t.chips %}
+    <span class="filter-chip">{{ chip.label }} <span class="filter-chip-value">{{ chip.value }}</span><a href="{{ chip.remove }}" aria-label="Take off {{ chip.label }}: {{ chip.value }}">{% call icons::icon("x") %}{% endcall %}</a></span>
+    {% endfor %}
+    {% if !t.filters.is_empty() %}
+    <details class="toolbar-menu">
+      <summary>{% call icons::icon("plus") %}{% endcall %} Filter</summary>
+      <div class="filter-menu">
+        {% for f in t.filters %}
+        <section aria-label="{{ f.label }}">
+          <h3>{{ f.label }}</h3>
+          {% if !f.choices.is_empty() %}<div class="filter-menu-choices">{% for ch in f.choices %}<a href="{{ ch.href }}"{% if ch.current %} aria-current="true"{% endif %}>{{ ch.label }}</a>{% endfor %}</div>{% endif %}
+          {% if let Some(r) = f.range %}
+          <form class="filter-menu-range" method="get" action="{{ r.action }}">
+            {% for (k, v) in r.keep %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+            <label class="label">From <input class="input" type="date" name="{{ r.from.0 }}" value="{{ r.from.1 }}"></label>
+            <label class="label">To <input class="input" type="date" name="{{ r.to.0 }}" value="{{ r.to.1 }}"></label>
+            <button type="submit" class="btn" data-variant="outline" data-size="sm">Apply</button>
+          </form>
+          {% endif %}
+        </section>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
   {% endif %}
   {% if !t.views.is_empty() %}
   <nav class="view-chips" aria-label="Tabs">
