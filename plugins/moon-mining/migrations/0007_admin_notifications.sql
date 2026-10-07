@@ -24,11 +24,12 @@ WHERE NOT EXISTS (SELECT 1 FROM structures)
 -- The owners (data sources) seen, so each one added is announced once. A
 -- row stays when its source goes: the host's list can come back empty on
 -- a fault, and dropping rows would announce everyone again. A character
--- added for another corporation is a new owner.
+-- added for another corporation is a new owner. The notices name the
+-- corporation, never the character: only app admins see who the data
+-- sources are.
 CREATE TABLE sources (
     character_id bigint NOT NULL,
     corporation_id bigint NOT NULL,
-    character_name text NOT NULL,
     seen_at timestamptz NOT NULL DEFAULT now(),
     announced boolean NOT NULL DEFAULT false,
     -- Since when ESI refuses its refineries (403): told once, cleared by

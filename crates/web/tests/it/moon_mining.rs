@@ -373,7 +373,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
     // aa-moonmining's admin notice, once: the superuser hears of the new
     // owner.
     let added = [
-        "Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as new owner by Chribba."
+        "Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as a new owner."
             .to_owned(),
     ];
     assert_eq!(notices(&h, account_of(&h, CHRIBBA).await).await, added);
@@ -1556,8 +1556,9 @@ async fn admin_notices_follow_aa_moonmining(db: PgPool) {
     let owner = approve_source(&h, &owner).await;
     work(&h).await;
     let superuser = account_of(&h, CHRIBBA).await;
-    let added =
-        "Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as new owner by Chribba.";
+    // The corporation, never the character: holders of `manage` don't see
+    // who the data sources are.
+    let added = "Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as a new owner.";
     assert_eq!(notices(&h, superuser).await, [added]);
     assert_eq!(notices(&h, manager).await, [added]);
     assert!(notices(&h, miner).await.is_empty());
@@ -1565,10 +1566,10 @@ async fn admin_notices_follow_aa_moonmining(db: PgPool) {
     // ESI refuses the owner's refineries: told once, as danger.
     refuse_structures(&h, 2).await;
     run_due_now(&h, "sync").await;
-    let refused = "Moon Mining: Owner can't be read: Chribba Corp | Chribba can no longer read \
-                   Chribba Corp's refineries: ESI refused (403): the character lacks an in-game \
-                   role or a scope. Moon Mining keeps trying at each sync; its Data sources page \
-                   shows how it's doing.";
+    let refused = "Moon Mining: Owner can't be read: Chribba Corp | Moon Mining can no longer \
+                   read Chribba Corp's refineries: ESI refused (403): the character lacks an \
+                   in-game role or a scope. It keeps trying at each sync; an app admin can check \
+                   the owner on its Data sources page.";
     assert_eq!(notices(&h, manager).await, [added, refused]);
     let level: String = sqlx::query_scalar(
         "SELECT level FROM core.notifications WHERE account_id = $1 AND plugin_id = $2 \

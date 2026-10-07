@@ -23,7 +23,9 @@
 //!   prices.
 //! - Admin notices (aa-moonmining's MOONMINING_ADMIN_NOTIFICATIONS_ENABLED,
 //!   on for a new install): holders of `manage`, superusers included, hear
-//!   when an owner is added and when ESI refuses one's refineries.
+//!   when an owner is added and when ESI refuses one's refineries. They
+//!   name the corporation, never the character: only app admins see who
+//!   the data sources are.
 
 mod extraction;
 mod moons;
@@ -433,18 +435,14 @@ fn note_sources(s: &Settings, all: &[esi::Character]) -> Result<(), JobError> {
     }
     let rows: Vec<serde_json::Value> = all
         .iter()
-        .map(|c| {
-            serde_json::json!({
-                "character_id": c.id, "corporation_id": c.corporation_id, "name": c.name,
-            })
-        })
+        .map(|c| serde_json::json!({ "character_id": c.id, "corporation_id": c.corporation_id }))
         .collect();
     storage::transaction(&[
         Statement::new(
-            "INSERT INTO sources (character_id, corporation_id, character_name, announced) \
-             SELECT character_id, corporation_id, name, $2 \
-             FROM json_to_recordset($1::json) AS x(character_id bigint, corporation_id bigint, name text) \
-             ON CONFLICT (character_id, corporation_id) DO UPDATE SET character_name = EXCLUDED.character_name",
+            "INSERT INTO sources (character_id, corporation_id, announced) \
+             SELECT character_id, corporation_id, $2 \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, corporation_id bigint) \
+             ON CONFLICT (character_id, corporation_id) DO NOTHING",
             vec![
                 Db::json(serde_json::Value::Array(rows).to_string()),
                 (!s.sources_known).into(),
@@ -460,8 +458,10 @@ fn note_sources(s: &Settings, all: &[esi::Character]) -> Result<(), JobError> {
 }
 
 /// aa-moonmining's "Owner added" notice for each owner not told yet, a
-/// few a run. With the notices off they're marked told, so turning them
-/// on announces only owners added after.
+/// few a run. aa-moonmining names who added it; here it names the
+/// corporation alone, as holders of `manage` don't see data sources. With
+/// the notices off they're marked told, so turning them on announces only
+/// owners added after.
 fn announce_sources(
     s: &Settings,
     budget: &mut Budget,
@@ -476,7 +476,7 @@ fn announce_sources(
         return Ok(());
     }
     let rows = storage::query(
-        "SELECT s.character_id, s.corporation_id, s.character_name, n.name \
+        "SELECT s.character_id, s.corporation_id, n.name \
          FROM sources s LEFT JOIN names n ON n.id = s.corporation_id \
          WHERE NOT s.announced ORDER BY s.seen_at LIMIT $1",
         &[OWNERS_PER_RUN.into()],
@@ -486,7 +486,7 @@ fn announce_sources(
     let unnamed: Vec<i64> = rows
         .rows
         .iter()
-        .filter(|r| r.get(3).and_then(Db::as_text).is_none())
+        .filter(|r| r.get(2).and_then(Db::as_text).is_none())
         .map(|r| int(r, 1))
         .collect();
     let mut named: Vec<esi::Named> = Vec::new();
@@ -502,7 +502,7 @@ fn announce_sources(
         }
         let corp = int(row, 1);
         let corporation = row
-            .get(3)
+            .get(2)
             .and_then(Db::as_text)
             .map(str::to_owned)
             .or_else(|| named.iter().find(|n| n.id == corp).map(|n| n.name.clone()))
@@ -510,7 +510,7 @@ fn announce_sources(
         tell_admins(
             notices,
             &format!("Owner added: {corporation}"),
-            &format!("{corporation} was added as new owner by {}.", text(row, 2)),
+            &format!("{corporation} was added as a new owner."),
             Level::Info,
         );
         storage::execute(
@@ -525,7 +525,8 @@ fn announce_sources(
 /// aa-moonmining's "Owner disabled" notice, once a failing streak: ESI
 /// refused (403) the owner's refineries. aa-moonmining disables the owner
 /// there; Moon Mining keeps reading through it, and tells again only
-/// after a read has worked.
+/// after a read has worked. aa-moonmining names the sync character; here
+/// an app admin finds it on the Data sources page.
 fn owner_refused(
     s: &Settings,
     notices: &mut usize,
@@ -540,7 +541,7 @@ fn owner_refused(
     let rows = storage::query(
         "UPDATE sources s SET failing_since = now() \
          WHERE character_id = $1 AND corporation_id = $2 AND failing_since IS NULL \
-         RETURNING character_name, (SELECT n.name FROM names n WHERE n.id = s.corporation_id)",
+         RETURNING (SELECT n.name FROM names n WHERE n.id = s.corporation_id)",
         &[character.into(), corp.into()],
     )
     .map_err(|e| retry("marking an owner failing", e))?;
@@ -549,16 +550,15 @@ fn owner_refused(
     };
     if s.admin_notices {
         let corporation = row
-            .get(1)
+            .first()
             .and_then(Db::as_text)
             .map_or_else(|| format!("corporation {corp}"), str::to_owned);
         tell_admins(
             notices,
             &format!("Owner can't be read: {corporation}"),
             &format!(
-                "{} can no longer read {corporation}'s refineries: {}. Moon Mining keeps trying \
-                 at each sync; its Data sources page shows how it's doing.",
-                text(row, 0),
+                "Moon Mining can no longer read {corporation}'s refineries: {}. It keeps trying \
+                 at each sync; an app admin can check the owner on its Data sources page.",
                 esi::describe(err)
             ),
             Level::Danger,
