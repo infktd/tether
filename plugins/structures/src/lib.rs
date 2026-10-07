@@ -49,9 +49,9 @@ use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm, SettingsGroup,
-    Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, alliance, badge,
-    character, corporation, countdown, defenses, item_type, link, log, time,
+    Action, Column, Field, Form, Page, PageError, Plugin, Request, Section, SettingsForm,
+    SettingsGroup, Stat, Submission, SubmitResult, Table, Tone, Toolbar, Value, action, actions,
+    alliance, badge, character, corporation, countdown, defenses, item_type, link, log, time,
 };
 
 use crate::notification::{Category, Context, Fields};
@@ -235,6 +235,10 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         ("settings", "settings") => save_settings(viewer, submission),
         ("settings", "add_fuel_alert") => add_fuel_alert(viewer, submission),
         ("settings", "delete_fuel_alert") => delete_fuel_alert(viewer, submission),
+        ("settings", "edit_fuel_alert") => edit_fuel_alert(viewer, submission),
+        ("settings", "toggle_fuel_alert") => toggle_fuel_alert(viewer, submission),
+        ("settings", "edit_jump_fuel_alert") => edit_jump_fuel_alert(viewer, submission),
+        ("settings", "toggle_jump_fuel_alert") => toggle_jump_fuel_alert(viewer, submission),
         ("settings", "add_jump_fuel_alert") => add_jump_fuel_alert(viewer, submission),
         ("settings", "delete_jump_fuel_alert") => delete_jump_fuel_alert(viewer, submission),
         // A row's Retry now, in the settings' owner table.
@@ -3454,8 +3458,10 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     Ok(page
         .table(fuel_alert_table()?)
         .form(fuel_alert_form(types))
+        .form(edit_fuel_alert_form())
         .table(jump_fuel_alert_table()?)
         .form(jump_fuel_alert_form(types))
+        .form(edit_jump_fuel_alert_form())
         .table(routing_table)
         .table(owner_table)
         .text(
@@ -3610,6 +3616,7 @@ fn fuel_alert_table() -> Result<Table, PageError> {
             Column::numeric("End (hours left)"),
             Column::numeric("Repeat (hours)"),
             Column::text("Ping"),
+            Column::text("Status"),
             Column::text(""),
         ])
         .title("Fuel alerts")
@@ -3618,30 +3625,68 @@ fn fuel_alert_table() -> Result<Table, PageError> {
              their types are ticked. Add one below for more.",
         ),
         rows.rows.iter().map(|r| {
-            let (start, end) = (int(r, 1), int(r, 2));
+            let (id, start, end, repeat) = (int(r, 0), int(r, 1), int(r, 2), int(r, 3));
+            let enabled = r.get(5).and_then(Db::as_bool).unwrap_or(true);
+            let ping = ping_label(&text(r, 4));
             vec![
                 start.into(),
                 end.into(),
-                match int(r, 3) {
+                match repeat {
                     0 => "Once".into(),
                     h => h.into(),
                 },
-                match text(r, 4).as_str() {
-                    "danger" => "Danger role",
-                    "warning" => "Warning role",
-                    _ => "None",
-                }
-                .into(),
-                action("Delete", "delete_fuel_alert")
-                    .field("config", int(r, 0).to_string())
-                    .tone(Tone::Danger)
-                    .confirm(format!(
-                        "The alert between {start} and {end} hours of fuel left is deleted."
-                    ))
-                    .into(),
+                ping.into(),
+                enabled_badge(enabled),
+                actions(vec![
+                    // Opens the change form in a popup, for this one.
+                    action("Edit", "edit_fuel_alert")
+                        .field("config", id.to_string())
+                        .confirm(format!(
+                            "Change the alert between {start} and {end} hours of fuel left \
+                             (repeat {}, ping {ping}).",
+                            if repeat == 0 {
+                                "once".to_owned()
+                            } else {
+                                format!("every {repeat}h")
+                            }
+                        )),
+                    toggle_action("toggle_fuel_alert", id, enabled),
+                    action("Delete", "delete_fuel_alert")
+                        .field("config", id.to_string())
+                        .tone(Tone::Danger)
+                        .confirm(format!(
+                            "The alert between {start} and {end} hours of fuel left is deleted."
+                        )),
+                ]),
             ]
         }),
     ))
+}
+
+/// A fuel or jump fuel alert's ping, in words.
+fn ping_label(ping: &str) -> &'static str {
+    match ping {
+        "danger" => "Danger role",
+        "warning" => "Warning role",
+        _ => "None",
+    }
+}
+
+/// aa-structures' is_enabled: a disabled config sends no new alerts.
+fn enabled_badge(enabled: bool) -> Value {
+    if enabled {
+        badge("Enabled", Tone::Success)
+    } else {
+        badge("Disabled", Tone::Neutral)
+    }
+    .into()
+}
+
+/// A row's Disable or Enable.
+fn toggle_action(form: &str, id: i64, enabled: bool) -> Action {
+    action(if enabled { "Disable" } else { "Enable" }, form)
+        .field("config", id.to_string())
+        .field("enabled", if enabled { "off" } else { "on" })
 }
 
 /// A fuel or jump fuel alert's ping: aa-structures' @here unless picked.
@@ -3711,7 +3756,12 @@ fn fuel_alert_form(types: Option<&Vec<String>>) -> Form {
         .field(alert_ping_field())
 }
 
-fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+/// A fuel alert config's start, end and repeat hours, and its ping.
+type FuelAlert = (i64, i64, i64, String);
+
+/// A fuel alert form's values: start, end, repeat and ping, or what's
+/// wrong with them (for the settings page).
+fn fuel_alert_values(submission: &Submission) -> Result<Result<FuelAlert, String>, PageError> {
     let number = |name: &str| -> Result<i64, PageError> {
         submission
             .value(name)
@@ -3731,15 +3781,24 @@ fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResu
         || !(0..=MAX_ALERT_HOURS).contains(&end)
         || !(0..=MAX_ALERT_HOURS).contains(&repeat)
     {
-        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+        return Ok(Err(format!(
             "A fuel alert's hours are whole numbers up to {MAX_ALERT_HOURS} (a year)."
-        )))?));
+        )));
     }
     if end >= start {
-        return Ok(SubmitResult::Page(settings_page(Some(
-            "A fuel alert's End must be less than its Start: it alerts between them.",
-        ))?));
+        return Ok(Err(
+            "A fuel alert's End must be less than its Start: it alerts between them.".to_owned(),
+        ));
     }
+    Ok(Ok((start, end, repeat, ping.to_owned())))
+}
+
+fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let (start, end, repeat, ping) = match fuel_alert_values(submission)? {
+        Ok(values) => values,
+        Err(problem) => return Ok(SubmitResult::Page(settings_page(Some(&problem))?)),
+    };
+    let ping = ping.as_str();
     let added = storage::execute(
         &format!(
             "INSERT INTO fuel_alert_configs (start_hours, end_hours, repeat_hours, ping) \
@@ -3756,6 +3815,98 @@ fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResu
     log::info(format!(
         "fuel alert {start}h to {end}h (repeat {repeat}h, ping {ping}) added by {} ({})",
         viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// The popup a fuel alert's Edit opens: its new values (aa-structures'
+/// admin edits a config in place).
+fn edit_fuel_alert_form() -> Form {
+    let hours = |name: &str, label: &str, min: f64| {
+        Field::number(name, label)
+            .range(Some(min), Some(MAX_ALERT_HOURS as f64), true)
+            .required()
+    };
+    Form::new("edit_fuel_alert", "Save fuel alert")
+        .title("Change fuel alert")
+        .field(hours("start_hours", "Start (hours left)", 1.0))
+        .field(hours("end_hours", "End (hours left)", 0.0))
+        .field(
+            Field::number("repeat_hours", "Repeat (hours)")
+                .range(Some(0.0), Some(MAX_ALERT_HOURS as f64), true)
+                .value("0")
+                .help("0: once in the range.")
+                .required(),
+        )
+        .field(alert_ping_field())
+}
+
+/// A config's id from a row's hidden field.
+fn config_id(submission: &Submission) -> Result<i64, PageError> {
+    submission
+        .value("config")
+        .parse()
+        .map_err(|_| PageError::NotFound)
+}
+
+/// Changes a fuel alert config. As aa-structures, a new range or repeat
+/// forgets what it sent, so structures in the new range are told again.
+fn edit_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let (start, end, repeat, ping) = match fuel_alert_values(submission)? {
+        Ok(values) => values,
+        Err(problem) => return Ok(SubmitResult::Page(settings_page(Some(&problem))?)),
+    };
+    let params: Vec<Db> = vec![
+        config.into(),
+        start.into(),
+        end.into(),
+        repeat.into(),
+        ping.as_str().into(),
+    ];
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM fuel_alerts_sent WHERE config_id = $1 AND EXISTS (SELECT 1 FROM fuel_alert_configs c \
+             WHERE c.id = $1 AND (c.start_hours, c.end_hours, c.repeat_hours) \
+                 IS DISTINCT FROM ($2::integer, $3::integer, $4::integer))",
+            params[..4].to_vec(),
+        ),
+        Statement::new(
+            "UPDATE fuel_alert_configs SET start_hours = $2, end_hours = $3, repeat_hours = $4, ping = $5 \
+             WHERE id = $1",
+            params,
+        ),
+    ])
+    .map_err(|e| failed("changing the fuel alert", e))?;
+    log::info(format!(
+        "fuel alert {config} changed to {start}h to {end}h (repeat {repeat}h, ping {ping}) by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// The posted enabled state of a row's Enable or Disable.
+fn enabled_value(submission: &Submission) -> Result<bool, PageError> {
+    match submission.value("enabled") {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(PageError::NotFound),
+    }
+}
+
+fn toggle_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let enabled = enabled_value(submission)?;
+    storage::execute(
+        "UPDATE fuel_alert_configs SET enabled = $2 WHERE id = $1",
+        &[config.into(), enabled.into()],
+    )
+    .map_err(|e| failed("changing the fuel alert", e))?;
+    log::info(format!(
+        "fuel alert {config} {} by {} ({})",
+        if enabled { "enabled" } else { "disabled" },
+        viewer.main.name,
+        viewer.main.id
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }
@@ -3783,7 +3934,7 @@ const MAX_OZONE: i64 = 1_000_000;
 fn jump_fuel_alert_table() -> Result<Table, PageError> {
     let rows = storage::query(
         &format!(
-            "SELECT id, threshold, ping FROM jump_fuel_alert_configs ORDER BY threshold DESC, id LIMIT {}",
+            "SELECT id, threshold, ping, enabled FROM jump_fuel_alert_configs ORDER BY threshold DESC, id LIMIT {}",
             MAX_FUEL_CONFIGS * 2
         ),
         &[],
@@ -3793,27 +3944,33 @@ fn jump_fuel_alert_table() -> Result<Table, PageError> {
         Table::new(vec![
             Column::numeric("Below (units of liquid ozone)"),
             Column::text("Ping"),
+            Column::text("Status"),
             Column::text(""),
         ])
         .title("Jump fuel alerts")
         .empty("No jump fuel alerts: add one below."),
         rows.rows.iter().map(|r| {
-            let threshold = int(r, 1);
+            let (id, threshold) = (int(r, 0), int(r, 1));
+            let enabled = r.get(3).and_then(Db::as_bool).unwrap_or(true);
+            let ping = ping_label(&text(r, 2));
             vec![
                 threshold.into(),
-                match text(r, 2).as_str() {
-                    "danger" => "Danger role",
-                    "warning" => "Warning role",
-                    _ => "None",
-                }
-                .into(),
-                action("Delete", "delete_jump_fuel_alert")
-                    .field("config", int(r, 0).to_string())
-                    .tone(Tone::Danger)
-                    .confirm(format!(
-                        "The alert below {threshold} units of liquid ozone is deleted."
-                    ))
-                    .into(),
+                ping.into(),
+                enabled_badge(enabled),
+                actions(vec![
+                    action("Edit", "edit_jump_fuel_alert")
+                        .field("config", id.to_string())
+                        .confirm(format!(
+                            "Change the alert below {threshold} units of liquid ozone (ping {ping})."
+                        )),
+                    toggle_action("toggle_jump_fuel_alert", id, enabled),
+                    action("Delete", "delete_jump_fuel_alert")
+                        .field("config", id.to_string())
+                        .tone(Tone::Danger)
+                        .confirm(format!(
+                            "The alert below {threshold} units of liquid ozone is deleted."
+                        )),
+                ]),
             ]
         }),
     ))
@@ -3875,6 +4032,78 @@ fn add_jump_fuel_alert(
     log::info(format!(
         "jump fuel alert below {threshold} (ping {ping}) added by {} ({})",
         viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+/// The popup a jump fuel alert's Edit opens.
+fn edit_jump_fuel_alert_form() -> Form {
+    Form::new("edit_jump_fuel_alert", "Save jump fuel alert")
+        .title("Change jump fuel alert")
+        .field(
+            Field::number("threshold", "Below (units of liquid ozone)")
+                .range(Some(1.0), Some(MAX_OZONE as f64), true)
+                .required(),
+        )
+        .field(alert_ping_field())
+}
+
+/// Changes a jump fuel alert config. As aa-structures, a new threshold
+/// forgets what it sent.
+fn edit_jump_fuel_alert(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let threshold: i64 = submission
+        .value("threshold")
+        .parse()
+        .map_err(|_| PageError::Failed("threshold wasn't a whole number".to_owned()))?;
+    let ping = submission.value("ping");
+    if !matches!(ping, "none" | "warning" | "danger") {
+        return Err(PageError::NotFound);
+    }
+    if !(1..=MAX_OZONE).contains(&threshold) {
+        return Ok(SubmitResult::Page(settings_page(Some(&format!(
+            "A jump fuel alert's threshold is a whole number from 1 to {MAX_OZONE}."
+        )))?));
+    }
+    let params: Vec<Db> = vec![config.into(), threshold.into(), ping.into()];
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM jump_fuel_alerts_sent WHERE config_id = $1 AND EXISTS (SELECT 1 \
+             FROM jump_fuel_alert_configs c WHERE c.id = $1 AND c.threshold <> $2::integer)",
+            params[..2].to_vec(),
+        ),
+        Statement::new(
+            "UPDATE jump_fuel_alert_configs SET threshold = $2, ping = $3 WHERE id = $1",
+            params,
+        ),
+    ])
+    .map_err(|e| failed("changing the jump fuel alert", e))?;
+    log::info(format!(
+        "jump fuel alert {config} changed to below {threshold} (ping {ping}) by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
+}
+
+fn toggle_jump_fuel_alert(
+    viewer: &Viewer,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let config = config_id(submission)?;
+    let enabled = enabled_value(submission)?;
+    storage::execute(
+        "UPDATE jump_fuel_alert_configs SET enabled = $2 WHERE id = $1",
+        &[config.into(), enabled.into()],
+    )
+    .map_err(|e| failed("changing the jump fuel alert", e))?;
+    log::info(format!(
+        "jump fuel alert {config} {} by {} ({})",
+        if enabled { "enabled" } else { "disabled" },
+        viewer.main.name,
+        viewer.main.id
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }

@@ -3576,3 +3576,147 @@ async fn every_tab_says_when_its_cut(db: PgPool) {
         pocos.body
     );
 }
+
+/// A fuel alert config's (start, end, repeat, ping, enabled).
+async fn fuel_config(h: &Harness, id: i32) -> (i32, i32, i32, String, bool) {
+    sqlx::query_as(
+        r#"SELECT start_hours, end_hours, repeat_hours, ping, enabled
+           FROM "plugin_tether.structures".fuel_alert_configs WHERE id = $1"#,
+    )
+    .bind(id)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+async fn fuel_sent(h: &Harness, table: &str) -> i64 {
+    // `table` comes from this file.
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT count(*) FROM "plugin_tether.structures".{table}"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn fuel_alert_configs_edited_enabled_and_disabled(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    add_fuel_alert(&h, &owner, 48, 24).await;
+    let id: i32 = sqlx::query_scalar(
+        r#"SELECT id FROM "plugin_tether.structures".fuel_alert_configs WHERE start_hours = 48"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    for part in [">Enabled<", ">Edit<", ">Disable<", "Change fuel alert"] {
+        assert!(settings.body.contains(part), "{part}: {}", settings.body);
+    }
+    // What it sent is kept through a change of ping alone, and forgotten
+    // with a new range or repeat (aa-structures'), so structures in the
+    // new range are told again.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".fuel_alerts_sent (structure_id, config_id)
+           VALUES ($1, $2)"#,
+    )
+    .bind(KEEP)
+    .bind(id)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let edit = |body: String| {
+        let (h, owner) = (&h, &owner);
+        async move { post(h, owner, "settings", &body).await }
+    };
+    let res = edit(format!(
+        "_form=edit_fuel_alert&config={id}&start_hours=48&end_hours=24&repeat_hours=0&ping=danger"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        fuel_config(&h, id).await,
+        (48, 24, 0, "danger".to_owned(), true)
+    );
+    assert_eq!(fuel_sent(&h, "fuel_alerts_sent").await, 1);
+    let res = edit(format!(
+        "_form=edit_fuel_alert&config={id}&start_hours=72&end_hours=12&repeat_hours=6&ping=none"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        fuel_config(&h, id).await,
+        (72, 12, 6, "none".to_owned(), true)
+    );
+    assert_eq!(fuel_sent(&h, "fuel_alerts_sent").await, 0);
+    // Its rules hold as when adding.
+    let res = edit(format!(
+        "_form=edit_fuel_alert&config={id}&start_hours=12&end_hours=24&repeat_hours=0&ping=none"
+    ))
+    .await;
+    assert!(
+        res.body.contains("End must be less than its Start"),
+        "{}",
+        res.body
+    );
+    assert_eq!(fuel_config(&h, id).await.0, 72);
+    // Disabled: no new alerts (the job reads enabled ones only); enabled
+    // again.
+    let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=off")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(!fuel_config(&h, id).await.4);
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(settings.body.contains(">Disabled<"), "{}", settings.body);
+    assert!(settings.body.contains(">Enable<"), "{}", settings.body);
+    let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=on")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(fuel_config(&h, id).await.4);
+
+    // Jump fuel alerts the same.
+    let res = edit("_form=add_jump_fuel_alert&threshold=100000&ping=none".to_owned()).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let jump: i32 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.structures".jump_fuel_alert_configs"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".jump_fuel_alerts_sent (structure_id, config_id)
+           VALUES ($1, $2)"#,
+    )
+    .bind(KEEP)
+    .bind(jump)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let res = edit(format!(
+        "_form=edit_jump_fuel_alert&config={jump}&threshold=50000&ping=warning"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (threshold, ping): (i32, String) = sqlx::query_as(
+        r#"SELECT threshold, ping FROM "plugin_tether.structures".jump_fuel_alert_configs"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!((threshold, ping.as_str()), (50000, "warning"));
+    assert_eq!(fuel_sent(&h, "jump_fuel_alerts_sent").await, 0);
+    let res = edit(format!(
+        "_form=toggle_jump_fuel_alert&config={jump}&enabled=off"
+    ))
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let enabled: bool = sqlx::query_scalar(
+        r#"SELECT enabled FROM "plugin_tether.structures".jump_fuel_alert_configs"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(!enabled);
+    // A button the page doesn't offer (an enable for an enabled one) is
+    // refused.
+    let res = edit(format!("_form=toggle_fuel_alert&config={id}&enabled=on")).await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
