@@ -262,6 +262,18 @@ impl<'a> Access<'a> {
         )
     }
 
+    /// The owners of the characters the viewer's scope lists (as
+    /// [`Self::found`] with shared ones, else [`Self::listed`]): what a
+    /// page may name in its filters, never the whole instance's.
+    pub fn owners_in_scope(&self, with_shared: bool) -> impl Iterator<Item = &Owner> {
+        self.owners().values().filter(move |o| {
+            self.everything
+                || self.owns(o.character_id)
+                || self.main_in_scope(&o.main)
+                || (with_shared && self.shared_ids().contains(&o.character_id))
+        })
+    }
+
     /// Characters whose owner's main is named like `q` (lowercase), for
     /// the Finder's search.
     pub fn mains_named(&self, q: &str) -> Vec<i64> {

@@ -1292,6 +1292,18 @@ async fn the_finder_lists_unregistered_characters(db: PgPool) {
     grant(&h, &owner, "finder_access").await;
     let theirs = page(&h, &finder, &blue).await.body;
     assert!(!theirs.contains("Hidden Alt"), "{theirs}");
+    // Nor do the filters name organisations of pilots out of scope.
+    member_account(&h, &[(OUTSIDER, "Outsider", 98000099, Some(99000001))]).await;
+    for scoped in [false, true] {
+        if scoped {
+            grant(&h, &owner, "view_same_corporation").await;
+        }
+        let theirs = page(&h, &finder, &blue).await.body;
+        assert!(
+            !theirs.contains("98000099") && !theirs.contains("99000001"),
+            "{theirs}"
+        );
+    }
     grant(&h, &owner, "view_same_corporation").await;
     let theirs = page(&h, &finder, &blue).await.body;
     assert!(theirs.contains("Hidden Alt"), "{theirs}");

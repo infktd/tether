@@ -273,13 +273,23 @@ pub(crate) fn finder(access: &Access, request: &Request) -> Result<Page, PageErr
 
     // Members' characters Member Audit hasn't read: not registered (or
     // not read yet), from the host, of the pilots in scope.
-    let read: BTreeSet<i64> = query(
-        &format!("SELECT c.character_id FROM characters c WHERE {scope}"),
-        &scope_params,
-    )?
-    .iter()
-    .map(|r| int(r, 0))
-    .collect();
+    let in_scope: Vec<i64> = access
+        .members_in_scope()
+        .flat_map(|m| m.characters.iter().map(|c| c.character.id))
+        .collect();
+    // A few thousand at a time, within storage's rows per answer.
+    let mut read: BTreeSet<i64> = BTreeSet::new();
+    for chunk in in_scope.chunks(4000) {
+        read.extend(
+            query(
+                "SELECT character_id FROM characters \
+                 WHERE character_id = ANY(string_to_array($1, ',')::bigint[])",
+                &[crate::id_list(chunk).into()],
+            )?
+            .iter()
+            .map(|r| int(r, 0)),
+        );
+    }
     let others: Vec<(&Member, &MemberCharacter)> = access
         .members_in_scope()
         .flat_map(|m| m.characters.iter().map(move |c| (m, c)))
@@ -301,7 +311,7 @@ pub(crate) fn finder(access: &Access, request: &Request) -> Result<Page, PageErr
     )
     .collect();
     let mains: Vec<&Character> = access
-        .all_owners()
+        .owners_in_scope(true)
         .map(|o| &o.main)
         .chain(access.members_in_scope().map(|m| &m.main))
         .collect();
@@ -335,7 +345,7 @@ pub(crate) fn finder(access: &Access, request: &Request) -> Result<Page, PageErr
         }
         if filters.by_owner() {
             let ids: Vec<i64> = access
-                .all_owners()
+                .owners_in_scope(true)
                 .filter(|o| {
                     filters.owner_passes(&o.main, &o.state.name, o.main.id == o.character_id)
                 })
@@ -488,7 +498,7 @@ pub(crate) fn finder(access: &Access, request: &Request) -> Result<Page, PageErr
         .map(|a| (a.to_string(), named(a)))
         .collect();
     let mut states: Vec<(String, String)> = access
-        .all_owners()
+        .owners_in_scope(true)
         .map(|o| &o.state.name)
         .chain(access.members_in_scope().map(|m| &m.state.name))
         .map(|s| (s.clone(), s.clone()))

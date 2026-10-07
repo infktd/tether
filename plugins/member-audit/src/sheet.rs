@@ -335,6 +335,9 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
     }
     // Whose it is (aa-memberaudit's sidebar): the owner's main and their
     // other characters, those not registered marked.
+    // Whoever may open the sheet sees them, a recruiter opening a shared
+    // character too, as aa-memberaudit's sidebar (the Share button says
+    // so).
     let member = access.member_of(id);
     match member {
         Some(m) if m.main.id == id => {
@@ -496,7 +499,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
                         .field("character", id.to_string())
                         .confirm(
                             "Recruiters will see this character's whole sheet, mail included, \
-                             until you stop sharing it.",
+                             and the names of your main and other characters, until you stop \
+                             sharing it.",
                         ),
                 ),
             );

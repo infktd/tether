@@ -431,7 +431,7 @@ pub(crate) fn skill_sets_report(access: &Access, request: &Request) -> Result<Pa
     let mut params = scope_params.clone();
     if !state.is_empty() || corp.is_some() || ally.is_some() {
         let picked: Vec<i64> = access
-            .all_owners()
+            .owners_in_scope(false)
             .filter(|o| state.is_empty() || o.state.name == state)
             .filter(|o| corp.is_none_or(|c| o.main.corporation_id == c))
             .filter(|o| ally.is_none_or(|a| o.main.alliance_id == Some(a)))
@@ -446,7 +446,7 @@ pub(crate) fn skill_sets_report(access: &Access, request: &Request) -> Result<Pa
     let characters = usable(&condition, &params)?;
     let orgs = crate::pages::names_of(
         access
-            .all_owners()
+            .owners_in_scope(false)
             .flat_map(|o| [Some(o.main.corporation_id), o.main.alliance_id])
             .flatten()
             .collect(),
@@ -527,7 +527,7 @@ pub(crate) fn skill_sets_report(access: &Access, request: &Request) -> Result<Pa
     }
 
     let owners: Vec<_> = access
-        .all_owners()
+        .owners_in_scope(false)
         .filter(|o| o.state.builtin != Some(Builtin::Guest))
         .collect();
     let named = |id: i64| orgs.get(&id).cloned().unwrap_or_else(|| id.to_string());
