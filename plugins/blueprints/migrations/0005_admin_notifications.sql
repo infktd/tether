@@ -10,16 +10,16 @@ UPDATE settings SET admin_notifications = true, sources_known = true
    AND NOT EXISTS (SELECT 1 FROM personal_owners)
    AND NOT EXISTS (SELECT 1 FROM blueprints);
 
--- The data sources seen, so each corporate owner added is announced once.
--- A row stays when its source goes: the list comes back empty when Tether
--- can't read it, and forgetting would announce every owner again. A
--- character added for another corporation is a new owner. Until
--- sources_known, the sources seen are taken as announced: an install in
--- use announces only owners added after its first run.
+-- The data sources seen (ids only), so each corporate owner added is
+-- announced once. A row not seen for a week goes, with the week's grace
+-- owners get, so a blip doesn't announce an owner again; an empty list,
+-- which may be Tether not saying, forgets nothing while the app has
+-- corporate owners. A character added for another corporation is a new
+-- owner. Until sources_known, the sources seen are taken as announced:
+-- an install in use announces only owners added after its first run.
 CREATE TABLE sources (
     character_id bigint NOT NULL,
     corporation_id bigint NOT NULL,
-    character_name text NOT NULL,
     seen_at timestamptz NOT NULL DEFAULT now(),
     announced boolean NOT NULL DEFAULT false,
     PRIMARY KEY (character_id, corporation_id)

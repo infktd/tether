@@ -73,7 +73,7 @@ add_corporate_blueprint_owner = "For directors or the CEO only: holders add a Di
 view_alliance_blueprints = "For alliance industry staff. Holders see the blueprints of every owner in their alliance, not only their own corporations'."
 view_blueprint_locations = "For trusted builders and officers. Holders see where each blueprint they can see is kept: the station or structure, office hangar and container."
 view_industry_jobs = "For industry officers. Holders see which job runs on each blueprint and until when; others see only that it's in use."
-manage = "For those who run the app. Holders pick the Discord channel for new requests, see the last read's problems and turn admin notices on or off. They get those notices too (superusers always do): one each time a blueprint owner is added."
+manage = "For those who run the app. Holders pick the Discord channel for new requests, see the last read's problems and turn admin notices on or off. They get those notices too (superusers always do) each time a blueprint owner is added, in any corporation: the corporation's name, or the pilot's character for a personal owner."
 
 [[pages]]
 path = ""

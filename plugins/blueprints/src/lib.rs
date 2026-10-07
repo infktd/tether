@@ -18,8 +18,8 @@
 //!   every approver, as AA sends, would reach other corporations').
 //! - **Admin notices** (aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED,
 //!   on Settings): `manage` holders, superusers included, hear when an
-//!   owner is added: a personal one at once, a corporate one at the app's
-//!   next read.
+//!   owner is added: a personal one at once, by its character, a
+//!   corporate one at the app's next read, by its corporation only.
 
 mod sync;
 

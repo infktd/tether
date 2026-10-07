@@ -202,6 +202,8 @@ fn set_error(column: &str, problems: &[String]) -> Result<(), JobError> {
 pub fn blueprints() -> Result<(), JobError> {
     let (owners, lapsed) = owners()?;
     forget_gone(&owners, &lapsed)?;
+    // First, before the reads spend the run's ESI calls.
+    announce_sources()?;
     let mut problems = Vec::new();
     for owner in &owners {
         let endpoint = if owner.kind == "corporation" {
@@ -233,7 +235,6 @@ pub fn blueprints() -> Result<(), JobError> {
     learn_names()?;
     learn_products()?;
     name_places(&owners)?;
-    announce_sources()?;
     set_error("blueprints_at", &problems)
 }
 
@@ -312,6 +313,10 @@ fn running(status: &str) -> bool {
 
 pub fn jobs() -> Result<(), JobError> {
     let (owners, _lapsed) = owners()?;
+    // A corporate owner added since is announced within the hour, even if
+    // its first read was put off; first, before the reads spend the run's
+    // ESI calls.
+    announce_sources()?;
     let mut problems = Vec::new();
     for owner in &owners {
         let read = if owner.kind == "corporation" {
@@ -336,9 +341,6 @@ pub fn jobs() -> Result<(), JobError> {
     learn_names()?;
     // Places that couldn't be named are tried again every hour.
     name_places(&owners)?;
-    // A corporate owner added since is announced within the hour, even if
-    // its first read was put off.
-    announce_sources()?;
     set_error("jobs_at", &problems)
 }
 
@@ -923,27 +925,40 @@ const ANNOUNCED_PER_RUN: i64 = 5;
 
 /// Tells admins about corporate owners (data sources) added since the
 /// last run, as aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED does
-/// when one is added: each once. Apps never learn who added a source, so
-/// the notice names its character. With the setting off, owners added
-/// are taken as announced, so turning it on later tells only of new ones.
-pub fn announce_sources() -> Result<(), JobError> {
-    let sources: Vec<serde_json::Value> = esi::data_sources()
+/// when one is added: each once, by its corporation only (apps never
+/// learn who added a source, and naming its character would tell every
+/// `manage` holder who holds Director roles there). With the setting
+/// off, owners added are taken as announced, so turning it on later
+/// tells only of new ones.
+fn announce_sources() -> Result<(), JobError> {
+    let listed = esi::data_sources();
+    // An empty list may be Tether not saying (the run's ESI calls spent):
+    // taken as the app's sources only when it has no corporate owner
+    // either. Until then nothing is marked known, nor forgotten.
+    let given = !listed.is_empty();
+    let sources: Vec<serde_json::Value> = listed
         .iter()
-        .map(|c| serde_json::json!({ "id": c.id, "corporation": c.corporation_id, "name": c.name }))
+        .map(|c| serde_json::json!({ "id": c.id, "corporation": c.corporation_id }))
         .collect();
+    let known = "($1 OR NOT EXISTS (SELECT 1 FROM owners WHERE kind = 'corporation'))";
     storage::transaction(&[
         storage::Statement::new(
-            "INSERT INTO sources (character_id, corporation_id, character_name, announced) \
-             SELECT x.id, x.corporation, x.name, NOT s.sources_known \
-             FROM json_to_recordset($1::json) AS x(id bigint, corporation bigint, name text), \
+            "INSERT INTO sources (character_id, corporation_id, announced) \
+             SELECT x.id, x.corporation, NOT s.sources_known \
+             FROM json_to_recordset($1::json) AS x(id bigint, corporation bigint), \
                   settings s WHERE s.id = 1 \
-             ON CONFLICT (character_id, corporation_id) \
-                 DO UPDATE SET character_name = EXCLUDED.character_name",
+             ON CONFLICT (character_id, corporation_id) DO UPDATE SET seen_at = now()",
             vec![Db::json(serde_json::Value::Array(sources).to_string())],
         ),
         storage::Statement::new(
-            "UPDATE settings SET sources_known = true WHERE id = 1",
-            vec![],
+            format!("UPDATE settings SET sources_known = true WHERE id = 1 AND {known}"),
+            vec![given.into()],
+        ),
+        // A source gone for a week is forgotten, with the week's grace
+        // owners get (`forget_gone`): added again later, it's new.
+        storage::Statement::new(
+            format!("DELETE FROM sources WHERE seen_at < now() - interval '7 days' AND {known}"),
+            vec![given.into()],
         ),
     ])
     .map_err(|e| retry("noting data sources", e))?;
@@ -961,7 +976,7 @@ pub fn announce_sources() -> Result<(), JobError> {
         return Ok(());
     }
     let due = storage::query(
-        "SELECT s.character_id, s.corporation_id, s.character_name, n.name \
+        "SELECT s.character_id, s.corporation_id, n.name \
          FROM sources s LEFT JOIN names n ON n.id = s.corporation_id \
          WHERE NOT s.announced ORDER BY s.seen_at, s.character_id LIMIT $1",
         &[ANNOUNCED_PER_RUN.into()],
@@ -975,7 +990,7 @@ pub fn announce_sources() -> Result<(), JobError> {
     let unnamed: Vec<i64> = due
         .rows
         .iter()
-        .filter(|r| crate::opt_text(r, 3).is_none())
+        .filter(|r| crate::opt_text(r, 2).is_none())
         .map(|r| int(r, 1))
         .collect();
     let mut named: HashMap<i64, String> = HashMap::new();
@@ -990,15 +1005,12 @@ pub fn announce_sources() -> Result<(), JobError> {
     }
     for row in &due.rows {
         let (character, corporation) = (int(row, 0), int(row, 1));
-        let corp = crate::opt_text(row, 3)
+        let corp = crate::opt_text(row, 2)
             .or_else(|| named.get(&corporation).cloned())
             .unwrap_or_else(|| format!("Corporation {corporation}"));
         crate::tell_admins(
             &format!("blueprint owner added: {corp}"),
-            &format!(
-                "{corp} was added as a new corporate blueprint owner by {}.",
-                text(row, 2)
-            ),
+            &format!("{corp} was added as a new corporate blueprint owner."),
             tether_plugin_sdk::notify::Level::Info,
         );
         storage::execute(

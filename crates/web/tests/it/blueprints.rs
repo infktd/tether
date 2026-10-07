@@ -34,9 +34,10 @@ const OFFICE_ATHANOR: i64 = 1_040_000_000_103;
 const CONTAINER: i64 = 1_040_000_000_201;
 /// A structure only a pilot's own blueprints are in.
 const FORTIZAR: i64 = 1_046_000_000_001;
-/// The admin notice for Chribba's corporation, added as a corporate owner.
+/// The admin notice for Chribba's corporation, added as a corporate owner:
+/// by its name only, never the Director's character.
 const OWNER_ADDED: &str = "Blueprints: blueprint owner added: Otherworld Enterprises | \
-     Otherworld Enterprises was added as a new corporate blueprint owner by Chribba.";
+     Otherworld Enterprises was added as a new corporate blueprint owner.";
 
 fn component() -> Vec<u8> {
     static COMPONENT: OnceLock<Vec<u8>> = OnceLock::new();
@@ -1278,6 +1279,25 @@ async fn a_corporate_owner_is_announced_by_name_from_any_read(db: PgPool) {
     // Once.
     sync(&h).await;
     assert_eq!(notices(&h, owner_account).await.len(), 1);
+    // Only ids are kept, and a source gone for a week is forgotten; the
+    // one in use is seen again at each read.
+    let schema = schema(&h).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"INSERT INTO "{schema}".sources (character_id, corporation_id, seen_at, announced)
+           VALUES (1, 1, now() - interval '8 days', true);
+           UPDATE "{schema}".sources SET seen_at = now() - interval '6 days' WHERE character_id = {CHRIBBA}"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    run_schedule(&h, "sync_jobs").await;
+    let kept: Vec<(i64, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        r#"SELECT character_id, seen_at > now() - interval '1 hour' FROM "{schema}".sources"#
+    )))
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, [(CHRIBBA, true)]);
 }
 
 /// An install already in use keeps what it did: no admin notices, nor a
@@ -1735,4 +1755,44 @@ async fn the_last_follow_up_says_who_it_did_not_reach(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(queued, 0);
+}
+
+/// A data source not in use for a while (its character seen in another
+/// corporation) lists no sources: that isn't taken as the app having
+/// none, so an install in use doesn't announce its existing owner when it
+/// comes back.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_empty_source_list_is_not_taken_as_none(db: PgPool) {
+    let h = harness(db, true).await;
+    mount(&h).await;
+    set_up(&h).await;
+    let schema = schema(&h).await;
+    // In use before the upgrade: its owner read, admin notices turned on
+    // by a manager before the first run since.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"UPDATE "{schema}".settings SET admin_notifications = true, sources_known = false;
+           INSERT INTO "{schema}".owners (kind, id, corporation_id) VALUES ('corporation', {CORP}, {CORP})"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let account = grant(&h, CHRIBBA, &[]).await;
+    let moved = |corporation: i64| {
+        sqlx::query("UPDATE core.characters SET corporation_id = $2 WHERE id = $1")
+            .bind(CHRIBBA)
+            .bind(corporation)
+            .execute(&h.db)
+    };
+    moved(98000999).await.unwrap();
+    run_schedule(&h, "sync_jobs").await;
+    let known: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT sources_known FROM "{schema}".settings"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(!known);
+    moved(CORP).await.unwrap();
+    run_schedule(&h, "sync_jobs").await;
+    assert!(notices(&h, account).await.is_empty());
 }
