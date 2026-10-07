@@ -177,7 +177,8 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         add(
             "Notifications",
             "Sends notices to Tether's notifications (the bell), under its own name, only to \
-             accounts holding one of its permissions, and a limited number an hour"
+             accounts holding one of its permissions or that submitted one of its forms, and a \
+             limited number an hour"
                 .to_owned(),
         );
     }

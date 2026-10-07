@@ -33,6 +33,7 @@ pub mod setup;
 pub mod smart_groups;
 pub mod states;
 pub mod structure_names;
+pub mod submitters;
 pub mod tokens;
 pub mod users;
 pub mod whats_new;

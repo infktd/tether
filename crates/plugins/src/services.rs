@@ -198,6 +198,23 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         level: NotifyLevel,
         except: Option<i64>,
     ) -> Fut<Result<u32, NotifyError>>;
+    /// `account`'s submitter reference for `plugin`: only for the viewer
+    /// of a form post, which the caller checks.
+    fn notify_submitter_reference(
+        &self,
+        plugin: String,
+        account: i64,
+    ) -> Fut<Result<String, NotifyError>>;
+    /// A notice to the account behind one of `plugin`'s submitter
+    /// references: whether it was sent.
+    fn notify_submitter(
+        &self,
+        plugin: String,
+        reference: String,
+        title: String,
+        message: String,
+        level: NotifyLevel,
+    ) -> Fut<Result<bool, NotifyError>>;
     /// Shared doctrines `account` may see, for `plugin` to offer; none
     /// without an account (a job).
     fn doctrines_published(
