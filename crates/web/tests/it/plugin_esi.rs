@@ -2489,6 +2489,176 @@ async fn a_character_dropped_from_member_audit_notifies_holders_in_scope(db: PgP
     assert_eq!(told, 1);
 }
 
+/// aa-memberaudit's token-error notices, sent by the host: a character
+/// registered with Member Audit (as bundled) that can't be read tells its
+/// pilot once, until it works again; never a sold one, nor one not
+/// registered with it; not while the setting is off.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
+    use tether_core::states::{Builtin, EntityKind};
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let manifest = format!(
+        "[plugin]\nid = \"tether.member-audit\"\nname = \"Member Audit\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[capabilities.esi]\nuser = [\"{SKILLS}\"]\n\n[permissions]\n\
+         basic_access = \"Use it\"\n"
+    );
+    let package = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &probe_component()),
+    ]);
+    let h = harness_with_bundled(db, vec![package.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    approve_bundled(&h, &owner, "tether.member-audit", &package).await;
+    run_jobs(&h).await;
+    // The Mittani, with a token that's gone, but not registered with it.
+    log_in_as(&h, "443630591:The Mittani", None).await;
+    let (_, mut owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
+    let owner_account = me(&h, &owner).await["account_id"].as_i64().unwrap();
+    async fn run(h: &Harness) -> usize {
+        tether_web::compliance::token_errors(&h.db).await.unwrap()
+    }
+    async fn token(h: &Harness, character: i64, state: &str, reason: Option<&str>) {
+        sqlx::query(
+            "UPDATE core.character_tokens SET state = $2, revoked_reason = $3 \
+             WHERE character_id = $1",
+        )
+        .bind(character)
+        .bind(state)
+        .bind(reason)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    }
+    async fn notices(h: &Harness) -> Vec<(i64, String, String, String)> {
+        sqlx::query_as(
+            "SELECT account_id, level, title, message FROM core.notifications \
+             WHERE title LIKE 'Member Audit: Invalid%' ORDER BY id",
+        )
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    }
+    async fn marked(h: &Harness) -> bool {
+        sqlx::query_scalar(
+            "SELECT token_error_notified_at IS NOT NULL FROM core.app_characters \
+             WHERE plugin_id = 'tether.member-audit' AND character_id = $1",
+        )
+        .bind(CHRIBBA)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    }
+    token(&h, MITTANI, "revoked", Some("invalid_grant")).await;
+    assert_eq!(run(&h).await, 0);
+
+    // EVE refused its login: one danger notice, in AA's words, then
+    // nothing more while it stays broken.
+    token(&h, CHRIBBA, "revoked", Some("invalid_grant")).await;
+    assert_eq!(run(&h).await, 1);
+    assert_eq!(run(&h).await, 0);
+    let told = notices(&h).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    let (account, level, title, message) = &told[0];
+    assert_eq!(*account, owner_account);
+    assert_eq!(level, "danger");
+    assert_eq!(title, "Member Audit: Invalid or missing token for Chribba");
+    assert!(
+        message
+            .starts_with("Member Audit could not find a valid token for your character Chribba.")
+            && message.contains("Its EVE login has stopped working"),
+        "{message}"
+    );
+    assert!(marked(&h).await);
+
+    // Registered again: the mark clears, and the next breakage tells
+    // them again. A token deleted in Token Management counts (as AA).
+    (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
+    assert_eq!(run(&h).await, 0);
+    assert!(!marked(&h).await);
+    token(&h, CHRIBBA, "revoked", Some("deleted")).await;
+    assert_eq!(run(&h).await, 1);
+    let told = notices(&h).await;
+    assert!(
+        !told[1].3.contains("Its EVE login has stopped working"),
+        "{told:?}"
+    );
+
+    // Sold: it leaves the account anyway, and nobody is told (AA's
+    // orphans aren't).
+    grant(
+        &h,
+        &owner,
+        "/register/start?app=tether.member-audit",
+        "196379789:Chribba",
+    )
+    .await;
+    assert_eq!(run(&h).await, 0);
+    token(&h, CHRIBBA, "revoked", Some("owner hash changed")).await;
+    assert_eq!(run(&h).await, 0);
+
+    // Short of a scope Member Audit needs now.
+    token(&h, CHRIBBA, "valid", None).await;
+    assert_eq!(run(&h).await, 0);
+    sqlx::query(
+        "UPDATE core.plugins SET user_scopes = user_scopes || '{esi-wallet.read_character_wallet.v1}' \
+         WHERE id = 'tether.member-audit'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(run(&h).await, 1);
+    // Its token has every scope again: the mark clears.
+    sqlx::query(
+        "UPDATE core.plugins SET user_scopes = array_remove(user_scopes, \
+         'esi-wallet.read_character_wallet.v1') WHERE id = 'tether.member-audit'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(run(&h).await, 0);
+    assert!(!marked(&h).await);
+
+    // Switched off: nothing marked, nobody told.
+    sqlx::query(
+        "INSERT INTO core.settings (key, value) \
+         VALUES ('notifications.member_audit_token_errors', 'false')",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    token(&h, CHRIBBA, "revoked", Some("invalid_grant")).await;
+    assert_eq!(run(&h).await, 0);
+    assert!(!marked(&h).await);
+    sqlx::query("DELETE FROM core.settings WHERE key = 'notifications.member_audit_token_errors'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    // Only while Member Audit is on.
+    sqlx::query("UPDATE core.plugins SET enabled = false WHERE id = 'tether.member-audit'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(run(&h).await, 0);
+    sqlx::query("UPDATE core.plugins SET enabled = true WHERE id = 'tether.member-audit'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert_eq!(run(&h).await, 1);
+    assert_eq!(notices(&h).await.len(), 4);
+}
+
 // ---- downloads (aa-memberaudit's data exports) --------------------------------
 
 async fn install_files(h: &Harness, owner: &str) {

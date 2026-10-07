@@ -523,6 +523,54 @@ async fn the_notification_cap_is_a_setting(db: PgPool) {
     );
 }
 
+/// aa-memberaudit's MEMBERAUDIT_NOTIFY_TOKEN_ERRORS: on unless set, and
+/// saved with the rest of Settings, audited.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn member_audit_token_error_notices_are_a_setting(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    let stored = || async {
+        tether_db::settings::get_bool_or(
+            &h.db,
+            tether_db::settings::MEMBER_AUDIT_TOKEN_ERRORS,
+            true,
+        )
+        .await
+        .unwrap()
+    };
+    let shown = page(&h, "/admin/settings", &owner).await.body;
+    assert!(
+        shown.contains(r#"name="token_errors" value="on" checked"#),
+        "AA's default: {shown}"
+    );
+    // Without Member Audit, there's nobody to tell: the page says so.
+    assert!(
+        shown.contains("Member Audit isn't installed, so there's nobody to tell"),
+        "{shown}"
+    );
+    // Another field saved leaves it alone.
+    let res = save_instance_settings(&h, &owner, &[("max_per_user", "9")]).await;
+    assert_eq!(res.location(), "/admin/settings");
+    assert!(stored().await);
+    let res = save_instance_settings(&h, &owner, &[("token_errors", "")]).await;
+    assert_eq!(res.location(), "/admin/settings");
+    assert!(!stored().await);
+    let details: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'notifications.settings' \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        details,
+        serde_json::json!({ "member_audit_token_errors": false })
+    );
+    let res = save_instance_settings(&h, &owner, &[("token_errors", "on")]).await;
+    assert_eq!(res.location(), "/admin/settings");
+    assert!(stored().await);
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn settings_save_what_changed_at_once(db: PgPool) {
     let h = harness(db, true).await;

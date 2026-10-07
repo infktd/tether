@@ -721,6 +721,11 @@ struct SettingsPage {
     custom: bool,
     /// AA's `NOTIFICATIONS_MAX_PER_USER`.
     notifications_max: i64,
+    /// aa-memberaudit's `MEMBERAUDIT_NOTIFY_TOKEN_ERRORS`.
+    token_errors: bool,
+    /// Member Audit, as bundled with Tether, is installed and enabled:
+    /// there's someone to tell.
+    member_audit: bool,
     updates: updates::Status,
     error: Option<String>,
 }
@@ -733,6 +738,12 @@ async fn settings_page(
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     let accent = crate::theme::accent(&state.db).await?;
+    let owners_app = tether_web_core::plugin_services::OWNERS_APP;
+    let member_audit = tether_db::plugins::get(&state.db, owners_app)
+        .await?
+        .is_some_and(|p| {
+            p.enabled && tether_web_core::plugin_services::may_see_owners(owners_app, p.origin)
+        });
     Ok(super::with_problem(
         problem,
         render(
@@ -750,6 +761,13 @@ async fn settings_page(
                     .collect(),
                 accent,
                 notifications_max: tether_db::settings::notifications_max(&state.db).await?,
+                token_errors: tether_db::settings::get_bool_or(
+                    &state.db,
+                    tether_db::settings::MEMBER_AUDIT_TOKEN_ERRORS,
+                    true,
+                )
+                .await?,
+                member_audit,
                 updates: updates::status(&state.db).await?,
                 error: error.map(|e| e.message().to_owned()),
             },
@@ -924,12 +942,15 @@ pub struct SettingsForm {
     max_per_user: String,
     /// A checkbox: present when ticked.
     updates: Option<String>,
+    /// A checkbox: Member Audit's token-error notices.
+    token_errors: Option<String>,
     /// What the page showed (absent from an older page: then everything
     /// posted counts as changed).
     was_site_name: Option<String>,
     was_accent: Option<String>,
     was_max_per_user: Option<String>,
     was_updates: Option<String>,
+    was_token_errors: Option<String>,
 }
 
 /// Whether `now` differs from what the page showed.
@@ -986,6 +1007,12 @@ async fn save_instance(
         .as_ref()
         .is_none_or(|was| (was == "on") != updates_on)
         .then_some(updates_on);
+    let token_errors_on = form.token_errors.is_some();
+    let token_errors = form
+        .was_token_errors
+        .as_ref()
+        .is_none_or(|was| (was == "on") != token_errors_on)
+        .then_some(token_errors_on);
 
     let mut tx = state.db.begin().await?;
     let mut saved = Saved::default();
@@ -1012,6 +1039,18 @@ async fn save_instance(
         && updates::enabled(&mut *tx).await? != on
     {
         updates::set_enabled(&mut tx, actor, on).await?;
+        saved.any = true;
+    }
+    if let Some(on) = token_errors
+        && tether_db::settings::get_bool_or(
+            &mut *tx,
+            tether_db::settings::MEMBER_AUDIT_TOKEN_ERRORS,
+            true,
+        )
+        .await?
+            != on
+    {
+        crate::notifications::set_member_audit_token_errors(&mut tx, actor, on).await?;
         saved.any = true;
     }
     tx.commit().await?;

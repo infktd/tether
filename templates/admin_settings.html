@@ -11,7 +11,7 @@
       <div class="min-w-0">
         <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Settings</h1>
-        <p class="page-desc">This instance's name and colour, how many notifications each user keeps, and whether Tether looks for new releases.</p>
+        <p class="page-desc">This instance's name and colour, how many notifications each user keeps and which Tether sends, and whether Tether looks for new releases.</p>
       </div>
     </div>
   </div>
@@ -26,6 +26,7 @@
     <input type="hidden" name="was_accent" value="{{ accent }}">
     <input type="hidden" name="was_max_per_user" value="{{ notifications_max }}">
     <input type="hidden" name="was_updates" value="{% if updates.enabled %}on{% endif %}">
+    <input type="hidden" name="was_token_errors" value="{% if token_errors %}on{% endif %}">
     <nav class="settings-index" aria-label="Settings sections">
       <a href="#settings-site" hx-boost="false" data-index="settings-site">Site name<span class="settings-index-count num" data-count></span></a>
       <a href="#settings-appearance" hx-boost="false" data-index="settings-appearance">Appearance<span class="settings-index-count num" data-count></span></a>
@@ -65,11 +66,16 @@
         </section>
       </section>
       <section class="card" id="settings-notifications" data-group="Notifications" aria-labelledby="settings-notifications-title">
-        <header><h2 id="settings-notifications-title">Notifications</h2><p>How many notifications each user keeps: when one more arrives, the oldest goes, read or not.</p></header>
+        <header><h2 id="settings-notifications-title">Notifications</h2><p>How many notifications each user keeps (when one more arrives, the oldest goes, read or not), and whether Member Audit's pilots hear when it can't read a character.</p></header>
         <section class="form-grid">
           <div class="grid gap-2" data-setting>
             <label class="label" for="max_per_user">Per user</label>
             <input class="input num w-24" id="max_per_user" name="max_per_user" type="number" min="1" max="1000" value="{{ notifications_max }}" required>
+          </div>
+          <div class="grid gap-2" data-setting>
+            <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="token_errors" value="on"{% if token_errors %} checked{% endif %}> Tell pilots when Member Audit can't read a character</label>
+            <p class="text-sm text-muted-foreground">Once per character, when its EVE login stops working or lacks a scope Member Audit needs, until it works again (aa-memberaudit's token-error notice).</p>
+            {% if !member_audit %}<p class="text-sm">Member Audit isn't installed, so there's nobody to tell: install it on <a class="underline underline-offset-4" href="/admin/plugins">Apps</a>.</p>{% endif %}
           </div>
         </section>
       </section>

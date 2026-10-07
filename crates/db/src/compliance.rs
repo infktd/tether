@@ -948,3 +948,79 @@ pub async fn corporations_without_lists(
         .map(|r| (r.corporation_id, r.name))
         .collect())
 }
+
+/// A character registered with an app whose token can't be used for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenError {
+    pub account: AccountId,
+    pub character_id: i64,
+    pub name: String,
+    /// EVE refused its login (not deleted by its pilot, nor short of a
+    /// scope): logging in again keeps it on the account.
+    pub refused: bool,
+}
+
+/// aa-memberaudit's token-error check (`Character.fetch_token`): marks
+/// and returns the characters registered with `plugin_id` that have no
+/// token it can use (revoked or deleted, or short of one of its scopes)
+/// and whose pilot hasn't been told since it last worked. Only pilots
+/// who still hold one of the app's permissions; never a sold character
+/// (AA's orphans aren't told either: it leaves the account at once).
+pub async fn take_token_errors(
+    conn: &mut sqlx::PgConnection,
+    plugin_id: &str,
+) -> Result<Vec<TokenError>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        UPDATE core.app_characters r SET token_error_notified_at = now()
+        FROM core.characters c
+        JOIN core.plugins p ON p.id = $1
+        LEFT JOIN core.character_tokens t ON t.character_id = c.id
+        WHERE r.plugin_id = $1 AND r.character_id = c.id
+          AND r.token_error_notified_at IS NULL
+          AND c.account_id IS NOT NULL
+          AND core.holds_app_permission(c.account_id, $1)
+          AND (t.character_id IS NULL
+               OR (t.state = 'revoked' AND t.revoked_reason IS DISTINCT FROM 'owner hash changed')
+               OR (t.state = 'valid' AND NOT t.scopes @> p.user_scopes))
+        RETURNING c.account_id AS "account_id!", c.id AS "character_id!", c.name AS "name!",
+                  COALESCE(t.state = 'revoked' AND t.revoked_reason IS DISTINCT FROM 'deleted',
+                           false) AS "refused!"
+        "#,
+        plugin_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| TokenError {
+            account: AccountId(r.account_id),
+            character_id: r.character_id,
+            name: r.name,
+            refused: r.refused,
+        })
+        .collect())
+}
+
+/// Clears the mark of every character registered with `plugin_id` whose
+/// token works for it again (aa-memberaudit's
+/// `reset_token_error_notified_if_status_ok`): the next breakage tells
+/// its pilot again. Returns how many.
+pub async fn clear_token_errors(
+    conn: &mut sqlx::PgConnection,
+    plugin_id: &str,
+) -> Result<u64, sqlx::Error> {
+    let done = sqlx::query!(
+        r#"
+        UPDATE core.app_characters r SET token_error_notified_at = NULL
+        FROM core.character_tokens t, core.plugins p
+        WHERE r.plugin_id = $1 AND p.id = $1 AND t.character_id = r.character_id
+          AND r.token_error_notified_at IS NOT NULL
+          AND t.state = 'valid' AND t.scopes @> p.user_scopes
+        "#,
+        plugin_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(done.rows_affected())
+}

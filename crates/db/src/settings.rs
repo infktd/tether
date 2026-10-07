@@ -55,6 +55,11 @@ pub const GROUPS_NOTIFY_REQUESTS: &str = "groups.notify_requests";
 pub const NOTIFICATIONS_MAX_PER_USER: &str = "notifications.max_per_user";
 /// AA's default.
 pub const NOTIFICATIONS_MAX_DEFAULT: i64 = 50;
+/// aa-memberaudit's `MEMBERAUDIT_NOTIFY_TOKEN_ERRORS`: a pilot is told
+/// once when a character registered with Member Audit can't be read (its
+/// EVE login stopped working, or lacks a scope Member Audit needs). On
+/// unless set; instances from before migration 0060 have it saved off.
+pub const MEMBER_AUDIT_TOKEN_ERRORS: &str = "notifications.member_audit_token_errors";
 /// The range admins may set: at least one, and a bound on the table.
 pub const NOTIFICATIONS_MAX_RANGE: std::ops::RangeInclusive<i64> = 1..=1000;
 

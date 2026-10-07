@@ -38,12 +38,23 @@ use crate::error::AppError;
 /// registered Member character in it.
 pub const CORP_STATS_JOB: &str = "compliance.corp_stats";
 
+/// Job kind: aa-memberaudit's token-error notices ([`token_errors`]).
+pub const TOKEN_ERRORS_JOB: &str = "compliance.token_errors";
+
 pub fn schedules() -> Vec<ScheduleSpec> {
-    vec![ScheduleSpec::new(
-        CORP_STATS_JOB,
-        CORP_STATS_JOB,
-        Duration::from_secs(24 * 60 * 60),
-    )]
+    vec![
+        ScheduleSpec::new(
+            CORP_STATS_JOB,
+            CORP_STATS_JOB,
+            Duration::from_secs(24 * 60 * 60),
+        ),
+        // Member Audit syncs every 5 minutes: its notice comes as soon.
+        ScheduleSpec::new(
+            TOKEN_ERRORS_JOB,
+            TOKEN_ERRORS_JOB,
+            Duration::from_secs(5 * 60),
+        ),
+    ]
 }
 
 // ---- requirements ----------------------------------------------------------
@@ -738,6 +749,52 @@ async fn notify_removal(
     Ok(())
 }
 
+/// aa-memberaudit's token-error notice (`MEMBERAUDIT_NOTIFY_TOKEN_ERRORS`),
+/// sent by the host, which holds the tokens: a pilot whose character
+/// registered with Member Audit, as bundled with Tether, can't be read
+/// (its token revoked or deleted, or short of one of Member Audit's
+/// scopes) is told once, until it works again. AA tells them at the next
+/// update that needs the token, and clears the mark once the character's
+/// update works (`reset_token_error_notified_if_status_ok`). With the
+/// setting off, nothing is marked, as in AA. Returns how many were told.
+pub async fn token_errors(db: &PgPool) -> Result<usize, sqlx::Error> {
+    use crate::plugin_services::OWNERS_APP;
+    let bundled = tether_db::plugins::get(db, OWNERS_APP)
+        .await?
+        .is_some_and(|p| p.enabled && crate::plugin_services::may_see_owners(OWNERS_APP, p.origin));
+    if !bundled {
+        return Ok(0);
+    }
+    let mut tx = db.begin().await?;
+    db::clear_token_errors(&mut tx, OWNERS_APP).await?;
+    let mut told = 0;
+    if tether_db::settings::get_bool_or(
+        &mut *tx,
+        tether_db::settings::MEMBER_AUDIT_TOKEN_ERRORS,
+        true,
+    )
+    .await?
+    {
+        for broken in db::take_token_errors(&mut tx, OWNERS_APP).await? {
+            crate::notifications::member_audit_token_error(
+                &mut tx,
+                broken.account,
+                &broken.name,
+                broken.refused,
+            )
+            .await?;
+            tracing::info!(
+                character_id = broken.character_id,
+                refused = broken.refused,
+                "Member Audit token-error notice sent"
+            );
+            told += 1;
+        }
+    }
+    tx.commit().await?;
+    Ok(told)
+}
+
 // ---- jobs ------------------------------------------------------------------
 
 /// Fetches every covered corporation's member list (or just `only`'s, for
@@ -880,11 +937,19 @@ pub fn register_jobs(
     esi: Esi,
     vault: std::sync::Arc<TokenVault>,
 ) {
+    let token_db = db.clone();
     registry.register(CORP_STATS_JOB, move |job| {
         let (db, esi, vault) = (db.clone(), esi.clone(), vault.clone());
         async move {
             let only = job.payload["corporation_id"].as_i64();
             corp_stats_for(&db, &esi, &vault, only).await?;
+            Ok(())
+        }
+    });
+    registry.register(TOKEN_ERRORS_JOB, move |_job| {
+        let db = token_db.clone();
+        async move {
+            token_errors(&db).await.map_err(JobError::retry)?;
             Ok(())
         }
     });

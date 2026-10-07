@@ -47,6 +47,59 @@ pub async fn set_max(
     Ok(())
 }
 
+/// Sets aa-memberaudit's `MEMBERAUDIT_NOTIFY_TOKEN_ERRORS`, audited.
+pub async fn set_member_audit_token_errors(
+    conn: &mut sqlx::PgConnection,
+    actor: AccountId,
+    on: bool,
+) -> Result<(), sqlx::Error> {
+    settings::set(
+        &mut *conn,
+        settings::MEMBER_AUDIT_TOKEN_ERRORS,
+        serde_json::json!(on),
+    )
+    .await?;
+    tether_db::audit::record(
+        &mut *conn,
+        tether_db::audit::Actor::Account(actor),
+        "notifications.settings",
+        None,
+        serde_json::json!({ "member_audit_token_errors": on }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// aa-memberaudit's token-error notice, in its words, with Tether's way
+/// back: registering the character again. `refused`: EVE refused its
+/// login, so it also leaves the account unless its pilot logs in again.
+pub async fn member_audit_token_error(
+    conn: &mut sqlx::PgConnection,
+    account: AccountId,
+    name: &str,
+    refused: bool,
+) -> Result<(), sqlx::Error> {
+    let mut message = format!(
+        "Member Audit could not find a valid token for your character {name}. Please \
+         register it with Member Audit again (Register Character) at your earliest \
+         convenience to update your token."
+    );
+    if refused {
+        message.push_str(
+            " Its EVE login has stopped working: log in with it again, or it will leave your \
+             account.",
+        );
+    }
+    notify(
+        conn,
+        account,
+        Level::Danger,
+        &format!("Member Audit: Invalid or missing token for {name}"),
+        Some(&message),
+    )
+    .await
+}
+
 /// "State changed to: {state}" (AA's).
 pub async fn state_changed(
     tx: &mut sqlx::PgConnection,

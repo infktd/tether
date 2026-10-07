@@ -271,6 +271,37 @@ mod tests {
         assert_eq!(queued, 0);
     }
 
+    /// Migration 0060: Member Audit's token-error notices are on for a new
+    /// instance (AA's default), and stay off on one already running.
+    #[sqlx::test(migrations = false)]
+    async fn token_error_notices_stay_off_on_existing_instances(pool: PgPool) {
+        running_before(&pool, 60).await;
+        migrate(&pool).await.unwrap();
+        assert!(
+            !settings::get_bool_or(&pool, settings::MEMBER_AUDIT_TOKEN_ERRORS, true)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[sqlx::test(migrations = false)]
+    async fn token_error_notices_are_on_for_a_new_instance(pool: PgPool) {
+        migrate(&pool).await.unwrap();
+        assert!(
+            settings::get_bool_or(&pool, settings::MEMBER_AUDIT_TOKEN_ERRORS, true)
+                .await
+                .unwrap()
+        );
+        let column: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'core' \
+             AND table_name = 'app_characters' AND column_name = 'token_error_notified_at')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(column);
+    }
+
     /// Migration 0049 (AA's rules for the Blacklist, Secure Groups and
     /// Fleet Pings) carries what was there over: renamed grants and token
     /// scopes, accounts blacklisted through an alt, and grace periods.
