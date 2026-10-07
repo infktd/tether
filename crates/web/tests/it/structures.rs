@@ -51,7 +51,7 @@ fn plugin_file(name: &str) -> String {
 }
 
 /// The plugin's migrations, in order.
-const MIGRATIONS: [&str; 8] = [
+const MIGRATIONS: [&str; 9] = [
     "migrations/0001_structures.sql",
     "migrations/0002_timers_corporation_only.sql",
     "migrations/0003_starbases_orbitals_tags.sql",
@@ -60,6 +60,7 @@ const MIGRATIONS: [&str; 8] = [
     "migrations/0006_outbox_cards.sql",
     "migrations/0007_aa_defaults.sql",
     "migrations/0008_last_online.sql",
+    "migrations/0009_ping_groups.sql",
 ];
 
 /// The real package, signed with a test key.
@@ -3399,6 +3400,151 @@ async fn a_mention_without_a_role_is_sent_plain_never_failed(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(failed, 0, "{}", backlog(&h).await);
+}
+
+/// aa-structures' ping groups: every message pings the Discord roles of
+/// the owner's groups and the channel's (its webhook's), whatever the
+/// default pings; a group without a role is left out, never failing the
+/// message.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn ping_groups_per_owner_and_channel(db: PgPool) {
+    const FC_ROLE: &str = "500000000000000004";
+    const SCOUT_ROLE: &str = "500000000000000005";
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // Group mentions are on the install review.
+    let review = page(&h, &format!("/admin/plugins/{ID}"), &owner).await.body;
+    assert!(review.contains("Discord group mentions"), "{review}");
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([notification(
+            1001,
+            "StructureUnderAttack",
+            times.attacked,
+            &attack_text()
+        )])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(&h, &owner).await;
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    for (name, role) in [("Capital FCs", FC_ROLE), ("Scouts", SCOUT_ROLE)] {
+        sqlx::query(
+            "WITH g AS (INSERT INTO core.groups (name) VALUES ($1) RETURNING id) \
+             INSERT INTO core.discord_role_mappings (role_id, role_name, group_id) \
+             SELECT $2, $1, id FROM g",
+        )
+        .bind(name)
+        .bind(role.parse::<i64>().unwrap())
+        .execute(&h.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO core.groups (name) VALUES ('No Role')")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let field = format!("ping_groups_{DISCORD_PING_CHANNEL}");
+    // Default pings off: the groups ping all the same.
+    let res = save_settings(
+        &h,
+        &owner,
+        &[
+            ("attack_channel", DISCORD_PING_CHANNEL),
+            ("default_pings", ""),
+            (&field, "Scouts\nNo Role\ncapital fcs"),
+        ],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // At most 9, and names as long as groups' at most.
+    let ten = (1..=10)
+        .map(|i| format!("G{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let res = save_settings(&h, &owner, &[(&field, &ten)]).await;
+    assert!(res.body.contains("At most 9 ping groups"), "{}", res.body);
+    let res = save_owner(
+        &h,
+        &owner,
+        CHRIBBA_CORP,
+        &[("ping_groups", &"x".repeat(101))],
+        None,
+    )
+    .await;
+    assert!(res.body.contains("at most 100 characters"), "{}", res.body);
+    let res = save_owner(
+        &h,
+        &owner,
+        CHRIBBA_CORP,
+        &[("ping_groups", "Capital FCs\nNobody")],
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Kept as typed, shown again.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner)
+        .await
+        .body;
+    assert!(
+        settings.contains("Scouts\nNo Role\ncapital fcs"),
+        "{settings}"
+    );
+    let own = page(
+        &h,
+        &format!("/plugins/{ID}/settings/owner/{CHRIBBA_CORP}"),
+        &owner,
+    )
+    .await
+    .body;
+    assert!(own.contains("Capital FCs\nNobody"), "{own}");
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let posted: Vec<serde_json::Value> = h
+        .discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    assert_eq!(posted.len(), 1, "{posted:?}\n{}", backlog(&h).await);
+    // The owner's first, then the channel's, each once: no @everyone
+    // stand-in with default pings off, nothing for groups without roles.
+    assert_eq!(
+        posted[0]["content"],
+        format!("<@&{FC_ROLE}> <@&{SCOUT_ROLE}>")
+    );
+    assert_eq!(
+        posted[0]["allowed_mentions"],
+        serde_json::json!({ "parse": [], "roles": [FC_ROLE, SCOUT_ROLE] })
+    );
 }
 
 /// An owner whose two structures are out of fuel: the Keep with a service
