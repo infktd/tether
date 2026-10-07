@@ -1517,6 +1517,25 @@ async fn an_esi_tracked_link_has_no_expiry(db: PgPool) {
         register.body
     );
 
+    // Past the six-hour cap it's closed, even before the job stops it.
+    for (started, open_now) in [("7 hours", false), ("5 hours", true)] {
+        sqlx::query(sql!(
+            "UPDATE \"{schema}\".links SET esi_started_at = now() - $2::interval WHERE hash = $1"
+        ))
+        .bind(&hash)
+        .bind(started)
+        .execute(&h.db)
+        .await
+        .unwrap();
+        let register = open(&h, &format!("links/{hash}/add"), &line).await;
+        assert_eq!(
+            register.body.contains("This FAT link is closed"),
+            !open_now,
+            "{}",
+            register.body
+        );
+    }
+
     // The fleet ends: tracking stops and the link closes then.
     mount_not_in_fleet(&h).await;
     for _ in 0..4 {

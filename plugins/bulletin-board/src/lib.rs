@@ -552,8 +552,14 @@ fn save(
         }
     };
     log::info(format!(
-        "bulletin {saved} ({title}) saved by {} ({})",
-        viewer.main.name, viewer.main.id
+        "bulletin {saved} ({title}) saved by {} ({}){}",
+        viewer.main.name,
+        viewer.main.id,
+        if groups.is_empty() {
+            String::new()
+        } else {
+            format!(", limited to groups {groups:?}")
+        }
     ));
     Ok(SubmitResult::Redirect(format!("bulletin/{saved}")))
 }

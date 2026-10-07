@@ -547,7 +547,8 @@ struct Tracking {
 const LINK_COLUMNS: &str = "l.id, l.hash, l.fleet, l.fleet_type, l.doctrine, l.creator_account, \
      l.creator_name, l.created_at, l.expires_at, l.reopened, \
      (SELECT count(*) FROM fats f WHERE f.link_id = l.id)::bigint, \
-     coalesce(l.expires_at > now(), l.esi_state = 'tracking'), \
+     coalesce(l.expires_at > now(), l.esi_state = 'tracking' \
+         AND l.esi_started_at > now() - interval '6 hours'), \
      l.esi_state, l.esi_character_name, l.esi_stop_reason, l.esi_polled_at, \
      l.esi_started_at > now() - interval '6 hours', l.esi_character_id, l.creator_id, \
      l.reopened = 0 AND l.expires_at <= now() AND l.expires_at > now() - make_interval(mins => \
@@ -633,7 +634,9 @@ fn closes(link: &LinkInfo) -> (&'static str, Value) {
             if link.open { "Closes" } else { "Closed" },
             time(at.clone()),
         ),
-        None => ("Closes", "When the fleet ends".into()),
+        None if link.open => ("Closes", "When the fleet ends".into()),
+        // Past the six-hour cap, before the job has stopped it.
+        None => ("Closed", "After six hours".into()),
     }
 }
 
@@ -741,7 +744,8 @@ fn dashboard(viewer: &Viewer) -> Result<Page, PageError> {
         query(
             &format!(
                 "SELECT {LINK_COLUMNS} FROM links l \
-                 WHERE coalesce(l.expires_at > now(), l.esi_state = 'tracking') \
+                 WHERE coalesce(l.expires_at > now(), l.esi_state = 'tracking' \
+         AND l.esi_started_at > now() - interval '6 hours') \
                  ORDER BY l.created_at DESC LIMIT 50"
             ),
             &[],
@@ -1773,6 +1777,10 @@ fn add_fat(viewer: &Viewer, link: &LinkInfo, who: &str) -> Result<SubmitResult, 
     Ok(SubmitResult::Redirect(format!("links/{}", link.hash)))
 }
 
+/// Unknown pilots a fleet snapshot's note names (37 characters each at
+/// most: well within a page's text).
+const UNKNOWN_NAMED: usize = 20;
+
 /// The longest fleet composition taken: a full fleet's lines, generously.
 const SNAPSHOT_LENGTH: u32 = 100_000;
 
@@ -1962,11 +1970,14 @@ fn fleet_snapshot(
     if already > 0 {
         note.push_str(&format!(" {already} already had one."));
     }
+    // A few names, then how many more: the note stays within a page's text.
     if !unknown.is_empty() {
-        note.push_str(&format!(
-            " EVE knows no pilot called {}.",
-            unknown.join(", ")
-        ));
+        let shown = unknown.len().min(UNKNOWN_NAMED);
+        let mut names = unknown[..shown].join(", ");
+        if unknown.len() > shown {
+            names.push_str(&format!(" and {} more", unknown.len() - shown));
+        }
+        note.push_str(&format!(" EVE knows no pilot called {names}."));
     }
     back(&note)
 }
@@ -2196,7 +2207,8 @@ fn register(
              FROM json_to_recordset($1::json) AS x(character_id bigint, character_name text, \
                   corporation_id bigint, alliance_id bigint, system_id bigint, ship_type_id bigint) \
              JOIN links l ON l.id = $2 \
-                  AND coalesce(l.expires_at > now(), l.esi_state = 'tracking') \
+                  AND coalesce(l.expires_at > now(), l.esi_state = 'tracking' \
+         AND l.esi_started_at > now() - interval '6 hours') \
              ON CONFLICT (link_id, character_id) DO NOTHING \
              RETURNING corporation_id, alliance_id, system_id, ship_type_id",
             &[
