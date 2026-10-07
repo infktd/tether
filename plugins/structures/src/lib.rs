@@ -425,6 +425,11 @@ impl Budget {
         self.0 -= n;
         true
     }
+
+    /// Whether `n` calls are left.
+    fn has(&self, n: usize) -> bool {
+        self.0 >= n
+    }
 }
 
 /// What a call costs of the host's per-run limit: the structure assets
@@ -474,6 +479,27 @@ fn call(
         Ok(first) => first,
         Err(err) => return describe(err),
     };
+    // Every page or none (a part isn't kept): pages that can't all be read
+    // aren't started, so they don't use up the run's calls for nothing.
+    let pages = usize::try_from(first.pages).unwrap_or(usize::MAX);
+    let what = match endpoint {
+        "corporation-structure-assets" => "the corporation's assets",
+        "corporation-structures" => "the corporation's structures",
+        _ => "ESI's answer",
+    };
+    if paged && pages.saturating_mul(cost) > ESI_BUDGET {
+        return Outcome::BackOff(format!(
+            "{what}: {pages} pages at ESI, more than one sync can read ({}); what was read \
+             before stays",
+            ESI_BUDGET / cost
+        ));
+    }
+    if paged && !budget.has(pages.saturating_sub(1) * cost) {
+        return Outcome::Later(format!(
+            "{what}: {pages} pages, more than this run had ESI calls left for; tried again \
+             next sync"
+        ));
+    }
     let mut bodies = vec![first.body];
     if paged {
         for page in 2..=first.pages {
@@ -709,8 +735,15 @@ fn sync_steps() -> Result<(), JobError> {
         return Ok(());
     }
     let mut budget = Budget(ESI_BUDGET);
+    // Every corporation's notifications first: an hourly read below can be
+    // long (a large corporation's assets), and must never keep another's
+    // attacks from being read.
     for &corp in &corporations {
         read_notifications(&mut budget, corp)?;
+    }
+    // Then the hourly reads, the corporation read longest ago first, so
+    // one this run's calls didn't reach goes first next time.
+    for corp in stalest_first(&corporations)? {
         if let Some(owner) = pick_owner(corp, Read::Structures)? {
             let outcome = call(
                 &mut budget,
@@ -789,6 +822,24 @@ fn sync_steps() -> Result<(), JobError> {
     ])
     .map_err(|e| retry("expiring tags and items", e))?;
     Ok(())
+}
+
+/// The corporations, the one whose oldest hourly read (structures,
+/// starbases, customs offices or assets; never read counts as oldest) is
+/// furthest back first, then by id.
+fn stalest_first(corporations: &[i64]) -> Result<Vec<i64>, JobError> {
+    let rows = storage::query(
+        "SELECT corporation_id FROM owners \
+         WHERE corporation_id = ANY(string_to_array($1, ',')::bigint[]) \
+         GROUP BY corporation_id \
+         ORDER BY least(coalesce(max(structures_at), '-infinity'), \
+                        coalesce(max(starbases_at), '-infinity'), \
+                        coalesce(max(offices_at), '-infinity'), \
+                        coalesce(max(assets_at), '-infinity')), corporation_id",
+        &[id_list(corporations).into()],
+    )
+    .map_err(|e| retry("ordering owners", e))?;
+    Ok(rows.rows.iter().map(|r| int(r, 0)).collect())
 }
 
 /// The owners table follows the host's data sources in use; a

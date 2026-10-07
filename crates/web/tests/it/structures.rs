@@ -2377,6 +2377,110 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
     );
 }
 
+// ---- the sync's ESI calls ----------------------------------------------------
+
+/// One corporation's assets too long for a sync (more pages than its ESI
+/// calls) don't use the run up: every corporation's notifications are read
+/// first, and the long read stops after its first page, backing off with
+/// why.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(&h, now, &times).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([notification(
+            1001,
+            "StructureUnderAttack",
+            times.attacked,
+            &attack_text()
+        )])))
+        .mount(&h.esi_server)
+        .await;
+    // gigX's corporation (a lower id, so first by id) holds 60 pages of
+    // assets: more than a sync's calls.
+    const GIGX: i64 = 1887431749;
+    for at in [
+        format!("/characters/{GIGX}/notifications"),
+        format!("/corporations/{GIGX_CORP}/structures"),
+        format!("/corporations/{GIGX_CORP}/starbases"),
+        format!("/corporations/{GIGX_CORP}/customs_offices"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(json(serde_json::json!([])))
+            .mount(&h.esi_server)
+            .await;
+    }
+    let gigx_assets = format!("/corporations/{GIGX_CORP}/assets");
+    Mock::given(method("GET"))
+        .and(path(gigx_assets.clone()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "60")
+                .set_body_json(serde_json::json!([])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    let mut owner = approve_owner(&h, &owner).await;
+    // As the second sync character is added: the first login brings it,
+    // the second adds it for its corporation.
+    for _ in 0..2 {
+        let res = send(&h.app, form(&format!("/apps/{ID}/owners/add"), "", &owner)).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+        let login = res.cookie_value(LOGIN);
+        let state = query_param(res.location(), "state").to_owned();
+        let res = send(
+            &h.app,
+            get(
+                &format!("/auth/callback?code=ok:{GIGX}:gigX&state={state}"),
+                &[(LOGIN, &login), (SESSION, &owner)],
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+        owner = res.cookie_value(SESSION);
+    }
+
+    let problems = sync(&h).await;
+    // Chribba's corporation's notifications were read, though gigX's comes
+    // first.
+    assert_eq!(
+        reads(&h, &format!("/characters/{CHRIBBA}/notifications")).await,
+        1,
+        "{problems:?}"
+    );
+    assert_eq!(count(&h, "notifications").await, 1, "{problems:?}");
+    // The long read stopped at its first page, and says why.
+    assert_eq!(reads(&h, &gigx_assets).await, 1, "{problems:?}");
+    assert!(
+        problems.iter().all(|p| !p.contains("out of ESI calls")),
+        "{problems:?}"
+    );
+    let why: Option<String> = sqlx::query_scalar(
+        r#"SELECT last_error FROM "plugin_tether.structures".owners WHERE character_id = $1"#,
+    )
+    .bind(GIGX)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        why.as_deref()
+            .is_some_and(|w| w.contains("assets: 60 pages at ESI, more than one sync can read")),
+        "{why:?}"
+    );
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(settings.body.contains("60 pages at ESI"), "{}", settings.body);
+}
+
 // ---- the relay ------------------------------------------------------------------
 
 /// A mention of a state with no Discord role mapped is sent without it,
