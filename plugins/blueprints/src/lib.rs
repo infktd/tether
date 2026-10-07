@@ -40,6 +40,10 @@ const SYNC_PLACES: &str = "sync_places";
 /// Places read again a minute later, for owners a places run couldn't
 /// read yet (`sync::places_again`).
 const PLACES_AGAIN: &str = "places_again";
+/// Whether copies may be requested of blueprint `b` (named `n`): as
+/// aa-blueprints offers Create Request, an original that isn't a reaction
+/// formula (by its name, as AA tells them; one not named yet waits).
+const COPYABLE: &str = "(b.runs IS NULL AND n.name IS NOT NULL AND n.name NOT LIKE '% Formula')";
 /// Rows a table lists (Tether pages them 25 at a time).
 const LISTED: i64 = 500;
 /// Open requests one pilot may have.
@@ -350,7 +354,8 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
                     b.material_efficiency, b.time_efficiency, b.runs, sum(b.quantity)::bigint, \
                     pl.name, {WITHIN}, b.location_flag, count(j.job_id), \
                     (array_agg(j.activity ORDER BY j.end_date) FILTER (WHERE j.job_id IS NOT NULL))[1], \
-                    min(j.end_date), b.place_id IS NOT NULL, b.place_read_at IS NOT NULL \
+                    min(j.end_date), b.place_id IS NOT NULL, b.place_read_at IS NOT NULL, \
+                    {COPYABLE} \
              FROM blueprints b JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
              LEFT JOIN names n ON n.id = b.type_id \
              LEFT JOIN products p ON p.blueprint_type_id = b.type_id \
@@ -424,7 +429,7 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
             cells.push(place_text(place, opt_text(r, 13).as_deref(), &text(r, 14)).into());
         }
         cells.push(in_use(access, int(r, 15), opt_int(r, 16), opt_text(r, 17)));
-        if access.request {
+        if access.request && flag(r, 20) {
             cells.push(
                 // Opens the request form below in a popup, for this one.
                 action("Request", "request")
@@ -433,12 +438,14 @@ fn library(access: &Access, q: &str) -> Result<Page, PageError> {
                     .confirm(format!("Copies of {name}, from {owner}."))
                     .into(),
             );
+        } else if access.request {
+            cells.push("".into());
         }
         table = table.row(cells);
     }
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let mut page = Page::new("Blueprints").description(
-            "Your corporations' and pilots' blueprints, read every 3 hours. Request copies of any of them.",
+            "Your corporations' and pilots' blueprints, read every 3 hours. Request copies of the originals.",
         )
     .stats(vec![
         Stat::new("Blueprints", count(0)),
@@ -715,14 +722,23 @@ fn request_copy(access: &Access, item: i64, runs: &str) -> Result<SubmitResult, 
     params.push(item.into());
     let visible = storage::query(
         &format!(
-            "SELECT 1 FROM blueprints b JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
+            "SELECT {COPYABLE} FROM blueprints b \
+             JOIN owners o ON o.kind = b.owner_kind AND o.id = b.owner_id \
+             LEFT JOIN names n ON n.id = b.type_id \
              WHERE {sees} AND b.item_id = $4"
         ),
         &params,
     )
     .map_err(|e| failed("reading the blueprint", e))?;
-    if visible.rows.is_empty() {
+    let Some(row) = visible.rows.first() else {
         return Err(PageError::NotFound);
+    };
+    // Copies only of originals, never of reaction formulas (AA's Create
+    // Request shows on nothing else).
+    if !flag(row, 0) {
+        return Err(PageError::Failed(
+            "copies are made only of originals, and never of reaction formulas".into(),
+        ));
     }
     // Runs per copy; none for as many as the blueprint allows (AA's).
     let runs = match runs.trim() {
