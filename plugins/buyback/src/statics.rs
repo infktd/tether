@@ -23,7 +23,6 @@ pub struct TypeInfo {
     pub group_name: String,
     pub category_id: i64,
     pub category_name: String,
-    pub market_group_id: Option<i64>,
     pub market_group_chain: Vec<i64>,
     pub volume: f64,
     pub packaged_volume: f64,
@@ -41,7 +40,6 @@ fn type_info(v: &Value) -> Option<TypeInfo> {
         group_name: v["group_name"].as_str().unwrap_or_default().to_owned(),
         category_id: v["category_id"].as_i64().unwrap_or_default(),
         category_name: v["category_name"].as_str().unwrap_or_default().to_owned(),
-        market_group_id: v["market_group_id"].as_i64(),
         market_group_chain: v["market_group_chain"]
             .as_array()
             .map(|a| a.iter().filter_map(Value::as_i64).collect())

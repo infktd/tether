@@ -767,10 +767,10 @@ fn embed(card: &Value) -> Option<Embed> {
         e = e.color(c);
     }
     for f in card["fields"].as_array().into_iter().flatten() {
-        if let (Some(k), Some(v)) = (f[0].as_str(), f[1].as_str()) {
-            if !v.is_empty() {
-                e = e.field(k.to_owned(), v.to_owned());
-            }
+        if let (Some(k), Some(v)) = (f[0].as_str(), f[1].as_str())
+            && !v.is_empty()
+        {
+            e = e.field(k.to_owned(), v.to_owned());
         }
     }
     if let Some(n) = card["notes"].as_str().filter(|n| !n.trim().is_empty()) {
