@@ -15,7 +15,7 @@ use sqlx::PgPool;
 use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
 use tether_plugins::testing::{self, Key};
 use wiremock::matchers::{method, path, path_regex};
-use wiremock::{Mock, ResponseTemplate};
+use wiremock::{Mock, Respond, ResponseTemplate};
 
 const ID: &str = "tether.freight";
 const CHRIBBA: i64 = 196379789;
@@ -130,6 +130,22 @@ fn contract(
     })
 }
 
+/// Delivered days ago by a corporation, which ESI names as its acceptor.
+fn delivered_by_a_corporation() -> serde_json::Value {
+    let mut c = contract(
+        106,
+        "courier",
+        CORP,
+        PILOT_A,
+        (TOWER, JITA),
+        "finished",
+        50_000_000.0,
+        Duration::days(-2),
+    );
+    c["acceptor_id"] = serde_json::json!(CORP);
+    c
+}
+
 async fn mount(h: &Harness) {
     Mock::given(method("GET"))
         .and(path(format!("/corporations/{CORP}/contracts")))
@@ -191,6 +207,7 @@ async fn mount(h: &Harness) {
                         5_000_000.0,
                         Duration::hours(-2)
                     ),
+                    delivered_by_a_corporation(),
                 ])),
         )
         .mount(&h.esi_server)
@@ -240,6 +257,21 @@ async fn mount(h: &Harness) {
         .with_priority(1)
         .mount(&h.esi_server)
         .await;
+}
+
+/// ESI's affiliation as it is: a batch with an id that isn't a
+/// character's (a corporation that accepted a contract) is refused whole.
+struct StrictAffiliation(AffiliationFixture);
+
+impl Respond for StrictAffiliation {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let ids: Vec<i64> = serde_json::from_slice(&request.body).unwrap();
+        if ids.contains(&CORP) {
+            return ResponseTemplate::new(400)
+                .set_body_json(serde_json::json!({ "error": "Invalid character ID" }));
+        }
+        self.0.respond(request)
+    }
 }
 
 async fn post(h: &Harness, token: &str, at: &str, body: &str) -> Res {
@@ -302,6 +334,12 @@ async fn grant(h: &Harness, account: i64, permission: &str) {
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn freight_end_to_end(db: PgPool) {
     let h = harness(db, true).await;
+    Mock::given(method("POST"))
+        .and(path("/characters/affiliation"))
+        .respond_with(StrictAffiliation(AffiliationFixture::load()))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
     mount(&h).await;
@@ -345,7 +383,18 @@ async fn freight_end_to_end(db: PgPool) {
     .fetch_all(&h.db)
     .await
     .unwrap();
-    assert_eq!(kept, vec![101, 104, 105]);
+    assert_eq!(kept, vec![101, 104, 105, 106]);
+    // Pilots' corporations: Chribba's from ESI's affiliation, though a
+    // corporation delivered another; the corporation's is itself, as
+    // aa-freight's.
+    let pilots: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        r#"SELECT contract_id, acceptor_corporation_id FROM "plugin_tether.freight".contracts
+           WHERE acceptor_id IS NOT NULL ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(pilots, vec![(104, Some(CORP)), (106, Some(CORP))]);
 
     // Stations in contracts are named (through /universe/names); route
     // ends are added on Locations: a station by id, a structure by name.

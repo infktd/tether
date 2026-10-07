@@ -562,28 +562,88 @@ fn affiliations(ids: &[i64]) -> Result<Vec<(i64, i64, Option<i64>)>, JobError> {
     Ok(out)
 }
 
-fn store(contracts: &[serde_json::Value]) -> Result<(), JobError> {
-    // Pilots' corporations, for the statistics (aa-freight's pilot
-    // corporations): who accepted a contract isn't told with its corporation.
-    let acceptors: Vec<i64> = contracts
+/// Pilots' corporations, for the statistics (aa-freight's pilot
+/// corporations), of the acceptors of contracts whose isn't stored yet:
+/// who accepted a contract isn't told with its corporation. A contract
+/// accepted by a corporation names the corporation, which is its own (as
+/// aa-freight); only characters go to ESI's affiliation, which refuses a
+/// whole batch for one id that isn't a character's.
+fn acceptor_corporations(contracts: &[serde_json::Value]) -> Vec<(i64, i64)> {
+    let accepted: Vec<(i64, i64)> = contracts
         .iter()
-        .filter_map(|c| c["acceptor_id"].as_i64())
-        .collect();
-    // A contract accepted for a corporation may name the corporation, which
-    // affiliation refuses: then no pilot corporations this time, not no sync.
-    let corporations = if acceptors.iter().any(|id| *id > 0) {
-        affiliations(&acceptors).unwrap_or_else(|why| {
-            log::info(format!("pilot corporations not read: {why:?}"));
-            Vec::new()
+        .filter_map(|c| {
+            Some((
+                c["contract_id"].as_i64()?,
+                c["acceptor_id"].as_i64().filter(|id| *id > 0)?,
+            ))
         })
-    } else {
-        Vec::new()
+        .collect();
+    if accepted.is_empty() {
+        return Vec::new();
+    }
+    let list = accepted
+        .iter()
+        .map(|(contract, _)| contract.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let done: Vec<i64> = match storage::query(
+        "SELECT contract_id FROM contracts WHERE acceptor_corporation_id IS NOT NULL \
+         AND contract_id = ANY(string_to_array($1, ',')::bigint[])",
+        &[list.into()],
+    ) {
+        Ok(found) => found.rows.iter().map(|r| int(r, 0)).collect(),
+        Err(err) => {
+            log::info(format!("pilot corporations not read: {err:?}"));
+            return Vec::new();
+        }
     };
+    let mut wanted: Vec<i64> = accepted
+        .into_iter()
+        .filter(|(contract, _)| !done.contains(contract))
+        .map(|(_, acceptor)| acceptor)
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut out = Vec::new();
+    let mut characters = Vec::new();
+    for chunk in wanted.chunks(1000) {
+        match esi::names(chunk) {
+            Ok(named) => {
+                for n in named.into_iter().filter(|n| chunk.contains(&n.id)) {
+                    match n.category.as_str() {
+                        "corporation" => out.push((n.id, n.id)),
+                        "character" => characters.push(n.id),
+                        _ => {}
+                    }
+                }
+            }
+            // Not told which is which: asked as characters, as before.
+            Err(err) => {
+                log::info(format!("acceptors not named: {}", esi::describe(&err)));
+                characters.extend_from_slice(chunk);
+            }
+        }
+    }
+    if !characters.is_empty() {
+        match affiliations(&characters) {
+            Ok(found) => out.extend(
+                found
+                    .into_iter()
+                    .map(|(c, corporation, _)| (c, corporation)),
+            ),
+            Err(why) => log::info(format!("pilot corporations not read: {why:?}")),
+        }
+    }
+    out
+}
+
+fn store(contracts: &[serde_json::Value]) -> Result<(), JobError> {
+    let corporations = acceptor_corporations(contracts);
     let corporation_of = |id: Option<i64>| {
         corporations
             .iter()
-            .find(|(character, _, _)| Some(*character) == id)
-            .map(|(_, corporation, _)| *corporation)
+            .find(|(acceptor, _)| Some(*acceptor) == id)
+            .map(|(_, corporation)| *corporation)
     };
     let rows: Vec<serde_json::Value> = contracts
         .iter()
