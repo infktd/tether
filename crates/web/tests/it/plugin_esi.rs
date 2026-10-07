@@ -3296,11 +3296,16 @@ async fn apps_notify_who_submitted_their_forms_by_reference(db: PgPool) {
         0
     );
 
-    // One per account and app, the same every time, telling nothing.
+    // One per account and app, the same every time: random hex.
     let out = reference(Some(applicant.clone()), false).await;
     let token = out.strip_prefix("ok ").expect(&out).to_owned();
     assert_eq!(token.len(), 32, "{token}");
-    assert!(!token.contains(&pilot.to_string()));
+    assert!(
+        token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{token}"
+    );
     assert_eq!(
         reference(Some(applicant.clone()), false).await,
         format!("ok {token}")
