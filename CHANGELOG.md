@@ -6,6 +6,85 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ## 2026-10-07
 
+### Member Audit
+- Skill sets now have a required level, a recommended level or both for each skill, plus a description, a ship and an option to hide them from pilots' sheets.
+- Skill set groups, doctrines among them, sort the sets on the sheet and in Reports.
+- Skill sets can be changed and copied on their own page, can name any skill, and there's no limit of 30.
+- Make a skill set from a fitting: paste it in EFT format and it requires every skill the ship and its items need.
+- The Skill Sets report shows each character's main, state, organisation, whether it's their main, and whether the group is a doctrine, with filters.
+- New reports: User compliance and Corporation compliance.
+- The Character finder lists every character of the pilots you can see, including ones not registered, with the main marked and more filters.
+- A character's sheet shows whose character it is and their other characters.
+- Contracts are kept until they've been expired for the keep period, and the mining ledger is no longer cut at 90 days.
+
+### Moon Mining
+- An extraction stays on Upcoming until 12 hours after it pops, then moves to Past, so a moon that just popped no longer vanishes from both tabs.
+- Refineries your corporation no longer has stop counting as owning their moons.
+- New setting: price ores by what they refine into, at a reprocessing yield you choose (85% by default).
+- Moons can have labels, and the Moons list filters by owner, region, ore type and label.
+
+### Structures
+- Structures out of fuel show Low power, Abandoned (after 7 days with no service online) or Abandoned? (never seen online).
+- Every tab says when it shows only part of a long list, and how many there are.
+- Fuel and jump fuel alerts can be edited, disabled and enabled again.
+- Send a test notification to a channel from Settings, and hear in your notifications whether it arrived.
+
+### Ship Replacement
+- You're told when your SRP request is approved or rejected, with the reviewer's comment.
+- Open your request from My SRP requests to see where it stands, why it was rejected and its history.
+- SRP managers can remove a single request; its loss can then be requested again.
+- SRP managers can edit a fleet's after action report.
+- SRP managers can disable a fleet to stop new requests for now, and enable it again.
+
+### HR Applications
+- You're told when your application is taken for review, approved, rejected or deleted.
+- Review's search also finds applicants by their characters' corporations and alliances.
+
+### Blueprints
+- Copies can be requested only of originals, and never of reaction formulas.
+- When a pilot cancels their request, the builders hear about it on Discord, and the builder who took it also gets a notification.
+
+### Freight
+- My Alliance now keeps only contracts from the alliance's own members, as in Alliance Auth.
+- Customers hear about contracts on priced routes only, unless "Announce every contract" is on.
+- My contracts now needs "Can use the calculator", as in Alliance Auth, and shows outstanding, in-progress, finished and failed contracts.
+- Contracts has an All tab beside Active, with every contract.
+- Discord cards open Tether: new contracts open Contracts, customer cards open My contracts.
+
+### Contacts
+- A contact removed in EVE stays while it has notes or server links, at standing 0, marked "Not in EVE's list".
+- Server links can be edited on their own page, in any of Alliance Auth's eight colours.
+- Every contact is listed, 500 a page, and the search finds any of them by name or label.
+
+### Contracts
+- Discord cards open the Contracts page in Tether.
+
+### Fleet Activity Tracking
+- A link that tracks your ESI fleet no longer expires: it stays open until the fleet ends, and closes when tracking stops.
+- Paste the fleet composition from EVE's fleet window on a link's Fleet snapshot tab, and everyone in it gets a FAT with ship and system.
+- A passing ESI error no longer ends tracking: it stops only when the same error comes back several times in a row, and the link's page shows how many.
+
+### Sovereignty Timer
+- Progress shows the score before its last change beside the score now, and the trend no longer resets after a quiet minute.
+
+### ESI Status
+- See how many routes have each status, and their share of all routes.
+
+### Time Zones
+- An adjusted time counts down to itself, and says "Already over" once it has passed.
+
+### Bulletin Board
+- Pick who may read a bulletin as you write it.
+
+### Admins
+- Apps can now send a notice to someone who submitted one of their forms, such as an applicant or a requester, even if that person holds none of the app's permissions. Nobody else is reachable this way.
+- Member Audit can now see your members' characters that aren't registered, and their mains, for its Character finder. Only the included Member Audit can; other apps never do.
+- Fleet Activity Tracking: `manage_afat` now opens every corporation's and alliance's statistics, as in Alliance Auth. Check who holds it.
+- Freight: My contracts now needs "Can use the calculator". Give it to customers who should see their contracts.
+- Approve the updated apps on the Apps page to get these changes.
+
+## 2026-10-07
+
 ### Everyone
 - Press ⌘K (Ctrl K on Windows and Linux), or use the search in the top bar, to jump to any page or action you can use.
 - Under your account menu, Sessions lists the browsers you're signed in on, so you can sign out of one or of all the others.
