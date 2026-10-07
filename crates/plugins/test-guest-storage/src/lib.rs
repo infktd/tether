@@ -328,6 +328,34 @@ fn probe(request: Request) -> Result<Page, PageError> {
         "characters" => format!("{:?}", esi::characters()),
         "owners" => format!("{:?}", identity::owners()),
         "members" => format!("{:?}", identity::members()),
+        // send-message?text=&states=a,b&groups=c,d&title=: pings by name,
+        // a card when titled.
+        "send-message" => {
+            let channel = arg("channel")
+                .or_else(|| discord::channels().first().map(|c| c.id.clone()))
+                .unwrap_or_default();
+            let mut message = discord::Message::new(arg("text").unwrap_or_default());
+            let names = |list: Option<String>| -> Vec<String> {
+                list.unwrap_or_default()
+                    .split(',')
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            };
+            for state in names(arg("states")) {
+                message = message.ping(discord::Ping::State(state));
+            }
+            for group in names(arg("groups")) {
+                message = message.ping(discord::Ping::Group(group));
+            }
+            if let Some(title) = arg("title") {
+                message = message.embed(discord::Embed::new(title));
+            }
+            match discord::send_message(&channel, &message) {
+                Ok(()) => "ok".to_owned(),
+                Err(e) => format!("err {e:?}"),
+            }
+        }
         "sources" => format!("{:?}", esi::data_sources()),
         // send?channel=&text=&state=Member
         "send" => {

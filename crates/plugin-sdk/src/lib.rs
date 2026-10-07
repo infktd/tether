@@ -300,7 +300,7 @@ pub mod esi {
 /// Discord messages to channels an admin assigned this plugin.
 pub mod discord {
     pub use crate::bindings::tether::plugin::discord::{
-        Channel, Embed, EmbedAuthor, EmbedField, Error, Image, Mention,
+        Channel, Embed, EmbedAuthor, EmbedField, Error, Image, Mention, Message, Ping,
     };
 
     pub fn channels() -> Vec<Channel> {
@@ -332,6 +332,45 @@ pub mod discord {
         mention: Mention,
     ) -> Result<(), Error> {
         crate::bindings::tether::plugin::discord::send_linked_embed(channel, embed, page, &mention)
+    }
+
+    /// Posts a [`Message`] (text, a card, or both) to an assigned channel,
+    /// pinging up to 10 roles at once: states' (`Ping::State("Member".into())`)
+    /// and, with `mention_groups` approved, groups' (`Ping::Group(name)`).
+    /// A ping without a mapped role is left out and logged; the message
+    /// still goes. Not from pages.
+    pub fn send_message(channel: &str, message: &Message) -> Result<(), Error> {
+        crate::bindings::tether::plugin::discord::send_message(channel, message)
+    }
+
+    impl Message {
+        /// A message of `text` (may be empty with a card), pinging nobody.
+        pub fn new(text: impl Into<String>) -> Self {
+            Self {
+                text: text.into(),
+                embed: None,
+                page: None,
+                pings: Vec::new(),
+            }
+        }
+
+        /// A card under the text.
+        pub fn embed(mut self, embed: Embed) -> Self {
+            self.embed = Some(embed);
+            self
+        }
+
+        /// The card's title a link to one of this app's own pages.
+        pub fn page(mut self, page: impl Into<String>) -> Self {
+            self.page = Some(page.into());
+            self
+        }
+
+        /// Pings `ping`'s role too.
+        pub fn ping(mut self, ping: Ping) -> Self {
+            self.pings.push(ping);
+            self
+        }
     }
 
     impl Embed {

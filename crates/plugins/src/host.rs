@@ -333,7 +333,8 @@ impl tether::plugin::discord::Host for CallState {
         text: String,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, text, None, None, mention).await
+        self.discord(channel, text, None, None, services::Mentions::One(mention))
+            .await
     }
 
     async fn send_embed(
@@ -342,8 +343,14 @@ impl tether::plugin::discord::Host for CallState {
         embed: services::Embed,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, String::new(), Some(embed), None, mention)
-            .await
+        self.discord(
+            channel,
+            String::new(),
+            Some(embed),
+            None,
+            services::Mentions::One(mention),
+        )
+        .await
     }
 
     async fn send_linked_embed(
@@ -353,8 +360,40 @@ impl tether::plugin::discord::Host for CallState {
         page: String,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, String::new(), Some(embed), Some(page), mention)
-            .await
+        self.discord(
+            channel,
+            String::new(),
+            Some(embed),
+            Some(page),
+            services::Mentions::One(mention),
+        )
+        .await
+    }
+
+    async fn send_message(
+        &mut self,
+        channel: String,
+        message: services::Message,
+    ) -> Result<(), services::DiscordError> {
+        if message.pings.len() > services::MAX_PINGS {
+            return Err(services::DiscordError::Invalid(format!(
+                "at most {} pings a message",
+                services::MAX_PINGS
+            )));
+        }
+        if message.page.is_some() && message.embed.is_none() {
+            return Err(services::DiscordError::Invalid(
+                "a page link needs a card".to_owned(),
+            ));
+        }
+        self.discord(
+            channel,
+            message.text,
+            message.embed,
+            message.page,
+            services::Mentions::Pings(message.pings),
+        )
+        .await
     }
 }
 
@@ -365,7 +404,7 @@ impl CallState {
         text: String,
         embed: Option<services::Embed>,
         page: Option<String>,
-        mention: services::Mention,
+        mention: services::Mentions,
     ) -> Result<(), services::DiscordError> {
         if self.jobs_refused {
             return Err(services::DiscordError::NotAllowed(

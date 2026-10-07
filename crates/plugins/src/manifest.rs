@@ -497,7 +497,9 @@ impl Schedule {
     }
 }
 
-pub const DISCORD_ACTIONS: &[&str] = &["send_message"];
+/// `send_message` posts to assigned channels; `mention_groups` (with it)
+/// lets those messages ping the Discord roles Tether gives groups.
+pub const DISCORD_ACTIONS: &[&str] = &["send_message", "mention_groups"];
 
 impl Manifest {
     /// Parses and checks `plugin.toml`. Error text is bounded and has no
@@ -584,6 +586,13 @@ impl Manifest {
                 )))
             }
         })?;
+        if c.discord.iter().any(|a| a == "mention_groups")
+            && !c.discord.iter().any(|a| a == "send_message")
+        {
+            return Err(bad(
+                "capabilities.discord: mention_groups needs send_message",
+            ));
+        }
         if c.schedules.len() > 20 {
             return Err(bad("more than 20 schedules"));
         }
@@ -1372,6 +1381,10 @@ manage = "Manage the mining ledger"
             (
                 "[capabilities]\ndiscord = [\"ban_members\"]",
                 "isn't one of",
+            ),
+            (
+                "[capabilities]\ndiscord = [\"mention_groups\"]",
+                "mention_groups needs send_message",
             ),
             (
                 "[capabilities]\nhttp = [\"127.0.0.0x1\"]",

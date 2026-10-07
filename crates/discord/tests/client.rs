@@ -485,6 +485,43 @@ async fn messages_ping_only_the_chosen_target_and_carry_a_nonce() {
 }
 
 #[tokio::test]
+async fn messages_to_roles_ping_only_those_roles() {
+    let (server, discord) = mock_discord().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v10/channels/600000000000000001/messages"))
+        .and(body_json(serde_json::json!({
+            "content": "<@&500000000000000003> <@&500000000000000004> Timer @here",
+            "allowed_mentions": {
+                "parse": [],
+                "roles": ["500000000000000003", "500000000000000004"],
+            },
+            "nonce": "tether-ping-9",
+            "enforce_nonce": true,
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "900000000000000003", "channel_id": "600000000000000001"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let roles = [MEMBER_ROLE, 500_000_000_000_000_004];
+    let content = format!("{} Timer @here", tether_discord::roles_prefix(&roles));
+    let id = discord
+        .send_message_to_roles(
+            &config(),
+            600_000_000_000_000_001,
+            &content,
+            None,
+            &roles,
+            "tether-ping-9",
+        )
+        .await
+        .unwrap();
+    assert_eq!(id, 900_000_000_000_000_003);
+    assert_eq!(tether_discord::roles_prefix(&[]), "");
+}
+
+#[tokio::test]
 async fn messages_can_carry_an_embed() {
     use tether_discord::{Embed, EmbedField, Mention};
     let (server, discord) = mock_discord().await;

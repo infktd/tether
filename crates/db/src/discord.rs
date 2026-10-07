@@ -300,6 +300,55 @@ pub async fn mapped_role_ids<'e>(
     .await
 }
 
+/// The role mapped to a state or group an app named, for a ping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PingRole {
+    /// A group's, else a state's.
+    pub group: bool,
+    /// The name as the app gave it.
+    pub name: String,
+    pub role_id: i64,
+}
+
+/// The roles mapped to the states and groups named (any case): one per
+/// name that has any, the first by role name as [`mappings`] lists them.
+pub async fn ping_roles<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    states: &[String],
+    groups: &[String],
+) -> Result<Vec<PingRole>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT ON (x.is_group, x.name)
+               x.is_group AS "is_group!", x.name AS "name!", x.role_id AS "role_id!"
+        FROM (
+            SELECT false AS is_group, n.name, m.role_id, m.role_name, m.id
+            FROM unnest($1::text[]) AS n(name)
+            JOIN core.states s ON lower(s.name) = lower(n.name)
+            JOIN core.discord_role_mappings m ON m.state_id = s.id
+            UNION ALL
+            SELECT true, n.name, m.role_id, m.role_name, m.id
+            FROM unnest($2::text[]) AS n(name)
+            JOIN core.groups g ON lower(g.name) = lower(n.name)
+            JOIN core.discord_role_mappings m ON m.group_id = g.id
+        ) x
+        ORDER BY x.is_group, x.name, x.role_name, x.id
+        "#,
+        states,
+        groups,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PingRole {
+            group: r.is_group,
+            name: r.name,
+            role_id: r.role_id,
+        })
+        .collect())
+}
+
 /// Every account with Discord linked.
 pub async fn linked_accounts<'e>(
     executor: impl sqlx::PgExecutor<'e>,

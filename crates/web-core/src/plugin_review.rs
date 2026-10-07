@@ -97,8 +97,25 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
             ),
         );
     }
-    if !c.discord.is_empty() {
-        add("Discord", c.discord.join(", ").replace('_', " "));
+    // Group mentions on a line of their own: an app adding them changes
+    // nothing else it was approved for.
+    let discord: Vec<&str> = c
+        .discord
+        .iter()
+        .map(String::as_str)
+        .filter(|a| *a != "mention_groups")
+        .collect();
+    if !discord.is_empty() {
+        add("Discord", discord.join(", ").replace('_', " "));
+    }
+    if c.discord.iter().any(|a| a == "mention_groups") {
+        add(
+            "Discord group mentions",
+            "Its messages can ping the Discord roles Tether gives groups (as well as states'): \
+             any group, Hidden and Internal ones included, that whoever manages the app names; \
+             never @everyone, @here or people"
+                .to_owned(),
+        );
     }
     for schedule in &c.schedules {
         add(
@@ -426,6 +443,28 @@ mod tests {
              [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\n{main_page}\n"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn group_mentions_are_their_own_line_to_approve() {
+        let with = |discord: &str| {
+            Manifest::parse(&format!(
+                "[plugin]\nid = \"acme.pings\"\nname = \"Pings\"\nversion = \"1.0.0\"\n\
+                 host_api = \"1\"\n\n[capabilities]\ndiscord = [{discord}]\n"
+            ))
+            .unwrap()
+        };
+        let before = with("\"send_message\"");
+        let after = with("\"send_message\", \"mention_groups\"");
+        let changes = Changes::new(&before, &after);
+        assert!(changes.removed.is_empty());
+        assert_eq!(changes.added.len(), 1);
+        assert_eq!(changes.added[0].title, "Discord group mentions");
+        assert!(
+            capabilities(&after)
+                .iter()
+                .any(|c| c.title == "Discord" && c.detail == "send message")
+        );
     }
 
     #[test]

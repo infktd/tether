@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 pub use crate::host::tether::plugin::discord::{
-    Channel, Embed, EmbedAuthor, EmbedField, Error as DiscordError, Image, Mention,
+    Channel, Embed, EmbedAuthor, EmbedField, Error as DiscordError, Image, Mention, Message, Ping,
 };
 pub use crate::host::tether::plugin::doctrines::{
     Doctrine, Error as DoctrineError, Shared as SharedDoctrine,
@@ -71,6 +71,8 @@ pub struct EsiReply {
 pub const MAX_FILTER_REPORTS: usize = 50;
 /// Discord messages in one plugin call.
 pub const MAX_DISCORD_SENDS: usize = 5;
+/// Pings in one `discord.send-message`.
+pub const MAX_PINGS: usize = 10;
 /// `notify` calls in one plugin call.
 pub const MAX_NOTIFY_CALLS: usize = 10;
 /// HTTP requests in one job run or form submission.
@@ -132,7 +134,7 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         text: String,
         embed: Option<Embed>,
         page: Option<String>,
-        mention: Mention,
+        mention: Mentions,
     ) -> Fut<Result<(), DiscordError>>;
     /// One outbound HTTPS request, to a host approved for `plugin`;
     /// `from_page` while rendering a page.
@@ -238,6 +240,15 @@ pub trait Services: Send + Sync + std::fmt::Debug {
 }
 
 pub type Shared = Arc<dyn Services>;
+
+/// Whom a Discord message pings.
+#[derive(Debug, Clone)]
+pub enum Mentions {
+    /// `send`'s one mention: refused when no role is mapped to its state.
+    One(Mention),
+    /// `send-message`'s pings: each without a role is left out and logged.
+    Pings(Vec<Ping>),
+}
 
 #[cfg(test)]
 mod tests {
