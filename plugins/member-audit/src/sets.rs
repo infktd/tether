@@ -472,7 +472,35 @@ pub(crate) fn skill_sets_page(access: &Access, note: Option<&str>) -> Result<Pag
             ]
         }),
     ));
-    Ok(page.form(set_form(None)).form(group_form(None, &sets)))
+    let mut import = Form::new("import_fitting", "Make skill set")
+        .title("Skill set from a fitting")
+        .description(
+            "Paste a fitting in EFT format, as EVE's Copy to Clipboard writes it: the set \
+             requires every skill its ship and items need, each at the highest level any of \
+             them needs.",
+        )
+        .field(Field::textarea("fitting", "Fitting", 20_000).required())
+        .field(Field::text("name", "Name", 100).help("Leave it empty to use the fitting's name."))
+        .field(Field::checkbox(
+            "overwrite",
+            "Replace a skill set with the same name",
+            false,
+        ));
+    if !groups.is_empty() {
+        import = import.field(Field::select(
+            "group",
+            "Add it to a group",
+            groups
+                .iter()
+                .take(100)
+                .map(|g| (g.id.to_string(), g.name.clone()))
+                .collect(),
+        ));
+    }
+    Ok(page
+        .form(set_form(None))
+        .form(import)
+        .form(group_form(None, &sets)))
 }
 
 fn yes_no(yes: bool) -> Value {

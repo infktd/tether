@@ -89,6 +89,20 @@ pub(crate) fn by_names(names: &[&str]) -> Result<BTreeMap<String, Type>, String>
     Ok(found)
 }
 
+/// The types of `ids`, by id.
+pub(crate) fn by_ids(ids: &[i64]) -> Result<BTreeMap<i64, Type>, String> {
+    let mut ids: Vec<i64> = ids.iter().copied().filter(|id| *id > 0).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut found = BTreeMap::new();
+    for chunk in ids.chunks(CHUNK) {
+        for t in ask("sde-types", &[("ids".to_owned(), crate::id_list(chunk))])? {
+            found.insert(t.id, t);
+        }
+    }
+    Ok(found)
+}
+
 /// Keeps the types' names, so pages name them like the rest.
 pub(crate) fn remember<'a>(types: impl IntoIterator<Item = &'a Type>) -> Result<(), String> {
     let rows: Vec<serde_json::Value> = types

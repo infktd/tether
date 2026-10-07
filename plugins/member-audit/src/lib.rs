@@ -26,6 +26,7 @@
 mod access;
 mod exports;
 mod filters;
+mod fitting;
 mod mail;
 mod pages;
 mod sets;
@@ -91,6 +92,9 @@ impl Plugin for MemberAudit {
             }
             (p, "delete_set") if p.starts_with("skill-sets/set/") && viewer.can("manage") => {
                 sets::delete_set(&viewer, &submission)
+            }
+            ("skill-sets", "import_fitting") if viewer.can("manage") => {
+                fitting::import_fitting(&access, &submission)
             }
             ("skill-sets", "add_group") if viewer.can("manage") => {
                 sets::save_group(&access, &submission)

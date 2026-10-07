@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 11] = [
+const MIGRATIONS: [&str; 12] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -57,6 +57,7 @@ const MIGRATIONS: [&str; 11] = [
     "migrations/0009_mail_gap.sql",
     "migrations/0010_assets_every_page.sql",
     "migrations/0011_skill_set_fields.sql",
+    "migrations/0012_type_skills.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -1410,6 +1411,169 @@ async fn skill_sets_are_changed_and_copied(db: PgPool) {
         .status,
         StatusCode::SEE_OTHER
     );
+}
+
+/// aa-memberaudit's skill set from an EFT fitting: every skill the ship
+/// and its items require, each at the highest level any needs, read once
+/// per type; replacing a set only when asked, and into a group.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_skill_set_from_a_fitting(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    // The Rifter, a Damage Control II and Warrior IIs, as ESI's dogma
+    // gives their required skills (once each: then ESI fails).
+    let dogma = |id: i64, pairs: &[(i64, i64)]| {
+        let attributes: Vec<serde_json::Value> = pairs
+            .iter()
+            .enumerate()
+            .flat_map(|(n, (skill, level))| {
+                let (a, b) = [(182, 277), (183, 278), (184, 279)][n];
+                [
+                    serde_json::json!({ "attribute_id": a, "value": *skill as f64 }),
+                    serde_json::json!({ "attribute_id": b, "value": *level as f64 }),
+                ]
+            })
+            .collect();
+        ResponseTemplate::new(200)
+            .set_body_json(serde_json::json!({ "type_id": id, "name": "An item", "description": "", "group_id": 1, "published": true, "dogma_attributes": attributes }))
+    };
+    for (id, skills) in [
+        (587, vec![(3329, 1), (3394, 1)]),
+        (2048, vec![(3394, 3)]),
+        (2488, vec![(3436, 5), (24241, 4)]),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/universe/types/{id}")))
+            .respond_with(dogma(id, &skills))
+            .up_to_n_times(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/universe/types/\d+$"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&h.esi_server)
+        .await;
+    let at = format!("/plugins/{ID}/skill-sets");
+    let fit = "[Rifter, Fast Tackle]%0ADamage+Control+II%0A%5BEmpty+Low+slot%5D%0A%0A\
+               Not+An+Item%0A%0AWarrior+II+x3";
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            &format!("_form=import_fitting&fitting={fit}&name="),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body
+            .contains("Left out, as EVE has no item by that name: Not An Item."),
+        "{}",
+        res.body
+    );
+    let (set, description, ship): (i64, String, Option<i64>) = sqlx::query_as(
+        r#"SELECT id, description, ship_type_id FROM "plugin_tether.member-audit".skill_sets
+           WHERE name = 'Fast Tackle'"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        description.starts_with("Generated from EFT fitting 'Fast Tackle' by Chribba at "),
+        "{description}"
+    );
+    assert_eq!(ship, Some(587));
+    let skills = || async {
+        sqlx::query_as::<_, (i64, Option<i32>, Option<i32>)>(
+            r#"SELECT skill_id, required_level, recommended_level
+               FROM "plugin_tether.member-audit".skill_set_skills WHERE set_id = $1 ORDER BY 1"#,
+        )
+        .bind(set)
+        .fetch_all(&h.db)
+        .await
+        .unwrap()
+    };
+    // Hull Upgrades at the highest level any item needs.
+    assert_eq!(
+        skills().await,
+        vec![
+            (3329, Some(1), None),
+            (3394, Some(3), None),
+            (3436, Some(5), None),
+            (24241, Some(4), None),
+        ]
+    );
+    // The same name again: refused, unless replacing is ticked. The types'
+    // skills were kept, so ESI isn't asked again.
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            &format!("_form=import_fitting&fitting={fit}&name="),
+            &owner,
+        ),
+    )
+    .await;
+    assert!(res.body.contains("already exists"), "{}", res.body);
+    send(
+        &h.app,
+        form(
+            &at,
+            "_form=add_group&name=Tackle&description=&active=on&sets=",
+            &owner,
+        ),
+    )
+    .await;
+    let group: i64 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.member-audit".skill_set_groups"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let res = send(
+        &h.app,
+        form(
+            &at,
+            &format!(
+                "_form=import_fitting&fitting=%5BRifter%2C+Fast+Tackle%5D%0ADamage+Control+II\
+                 &name=&overwrite=on&group={group}"
+            ),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert!(res.location().ends_with(&format!("/skill-sets/set/{set}")));
+    assert_eq!(
+        skills().await,
+        vec![(3329, Some(1), None), (3394, Some(3), None)]
+    );
+    let in_group: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.member-audit".skill_set_group_sets
+           WHERE group_id = $1 AND set_id = $2"#,
+    )
+    .bind(group)
+    .bind(set)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(in_group, 1);
+    // A fitting of something that isn't a ship, and text that isn't EFT.
+    for (fitting, problem) in [
+        ("%5BWarrior+II%2C+X%5D", "isn&#39;t a ship"),
+        ("Rifter", "doesn&#39;t look like EFT"),
+    ] {
+        let res = send(
+            &h.app,
+            form(
+                &at,
+                &format!("_form=import_fitting&fitting={fitting}&name="),
+                &owner,
+            ),
+        )
+        .await;
+        assert!(res.body.contains(problem), "{problem}\n{}", res.body);
+    }
 }
 
 /// aa-memberaudit's scopes: the Finder and sheets by corporation, alliance
