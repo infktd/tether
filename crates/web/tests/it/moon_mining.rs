@@ -41,35 +41,43 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
+/// The app's migrations, in order, as its package has them.
+fn migrations() -> Vec<(String, String)> {
+    let dir = format!(
+        "{}/../../plugins/moon-mining/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|n| {
+            let sql = plugin_file(&format!("migrations/{n}"));
+            (format!("migrations/{n}"), sql)
+        })
+        .collect()
+}
+
 /// The real package, signed with a test key.
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(7);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let first = plugin_file("migrations/0001_moon_mining.sql");
-    let second = plugin_file("migrations/0002_surveys_and_prices.sql");
-    let third = plugin_file("migrations/0003_tether_rules_optional.sql");
-    let fourth = plugin_file("migrations/0004_old_moons_shown.sql");
-    let fifth = plugin_file("migrations/0005_refinery_drills.sql");
-    let sixth = plugin_file("migrations/0006_corporation_reads.sql");
-    let seventh = plugin_file("migrations/0007_admin_notifications.sql");
     let component = component();
-    let bytes = testing::zip(&[
+    let migrations = migrations();
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_moon_mining.sql", first.as_bytes()),
-        ("migrations/0002_surveys_and_prices.sql", second.as_bytes()),
-        (
-            "migrations/0003_tether_rules_optional.sql",
-            third.as_bytes(),
-        ),
-        ("migrations/0004_old_moons_shown.sql", fourth.as_bytes()),
-        ("migrations/0005_refinery_drills.sql", fifth.as_bytes()),
-        ("migrations/0006_corporation_reads.sql", sixth.as_bytes()),
-        (
-            "migrations/0007_admin_notifications.sql",
-            seventh.as_bytes(),
-        ),
-    ]);
+    ];
+    files.extend(
+        migrations
+            .iter()
+            .map(|(n, sql)| (n.as_str(), sql.as_bytes())),
+    );
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -551,7 +559,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
             &format!("/plugins/{ID}/settings"),
             &format!(
                 "_form=settings&fresh_hours=4&ping_channel={DISCORD_PING_CHANNEL}&pings=on\
-                 &volume_per_day=960400&days_per_month=30.4&stale_hours=12&old_moons_shown=5"
+                 &volume_per_day=960400&days_per_month=30.4&stale_hours=12&old_moons_shown=5&reprocessing_yield=85"
             ),
             &owner,
         ),
@@ -729,7 +737,7 @@ async fn moon_mining_end_to_end(db: PgPool) {
         form(
             &format!("/plugins/{ID}/settings"),
             "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
-             &days_per_month=30.4&stale_hours=12&old_moons_shown=5",
+             &days_per_month=30.4&stale_hours=12&old_moons_shown=5&reprocessing_yield=85",
             &owner,
         ),
     )
@@ -1989,7 +1997,7 @@ async fn admin_notices_follow_aa_moonmining(db: PgPool) {
         form(
             &format!("/plugins/{ID}/settings"),
             "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
-             &days_per_month=30.4&stale_hours=12&old_moons_shown=5",
+             &days_per_month=30.4&stale_hours=12&old_moons_shown=5&reprocessing_yield=85",
             &owner,
         ),
     )
@@ -2106,4 +2114,366 @@ async fn existing_installs_keep_no_admin_notices(db: PgPool) {
             .await
             .unwrap();
     assert!(told);
+}
+
+/// Seeds an extraction at `structure` whose chunk arrived `arrived_ago`
+/// (three hours before its auto-fracture): its details link.
+async fn seed_extraction(h: &Harness, structure: i64, arrived_ago: Duration) -> String {
+    let arrival = Utc::now() - arrived_ago;
+    let arrival = chrono::DateTime::from_timestamp(arrival.timestamp(), 0).unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.moon-mining".extractions
+           (structure_id, chunk_arrival, moon_id, corporation_id, extraction_start, natural_decay)
+           VALUES ($1, $2, 40009082, $3, $2 - interval '7 days', $2 + interval '3 hours')"#,
+    )
+    .bind(structure)
+    .bind(arrival)
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    format!(
+        "href=\"/plugins/{ID}/extraction/{structure}/{}\"",
+        arrival.timestamp()
+    )
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn upcoming_until_twelve_hours_after_auto_fracture(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    // aa-moonmining's rule: Upcoming until 12 hours after the automatic
+    // fracture, then Past. Fractured 5 hours ago (arrived 8 hours ago):
+    // still Upcoming, its chunk in space. Fractured 13 hours ago: Past.
+    let recent = seed_extraction(&h, TATARA, Duration::hours(8)).await;
+    let stale = seed_extraction(&h, TATARA, Duration::hours(16)).await;
+    let upcoming = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(upcoming.body.contains(&recent), "{}", upcoming.body);
+    assert!(!upcoming.body.contains(&stale), "{}", upcoming.body);
+    assert!(upcoming.body.contains("Completed"), "{}", upcoming.body);
+    let past = page(&h, &format!("/plugins/{ID}?_tab=1"), &owner).await;
+    assert!(past.body.contains(&stale), "{}", past.body);
+    assert!(!past.body.contains(&recent), "{}", past.body);
+    // The setting's label says where its hours start.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings
+            .body
+            .contains("Hours after auto-fracture until an extraction is Past"),
+        "{}",
+        settings.body
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn refineries_gone_own_no_moons(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
+    assert!(moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
+    assert!(moons.body.contains("Jita IV - Moon 5"), "{}", moons.body);
+    // The Athanor is gone from the corporation's structures (lost or
+    // unanchored): as aa-moonmining, it owns its moon no more, and the
+    // planner leaves it out. Its past extractions keep its name.
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(serde_json::json!([
+                    { "structure_id": TATARA, "name": "Jita - Drill Two", "system_id": SYSTEM,
+                      "type_id": 35836, "corporation_id": CHRIBBA_CORP, "profile_id": 1,
+                      "state": "shield_vulnerable",
+                      "services": [{ "name": "Moon Drilling", "state": "online" }] },
+                ])),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    run_schedule(&h, "sync").await;
+    let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
+    assert!(!moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
+    assert!(moons.body.contains("Jita IV - Moon 5"), "{}", moons.body);
+    let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
+    assert!(
+        !reports.body.contains("Jita IV - Moon 4"),
+        "{}",
+        reports.body
+    );
+    let planner = page(&h, &format!("/plugins/{ID}/planner"), &owner).await;
+    assert!(
+        !planner.body.contains("Jita - Drill One"),
+        "{}",
+        planner.body
+    );
+    assert!(
+        planner.body.contains("Jita - Drill Two"),
+        "{}",
+        planner.body
+    );
+    let past = page(&h, &format!("/plugins/{ID}?_tab=1"), &owner).await;
+    assert!(past.body.contains("Jita - Drill One"), "{}", past.body);
+    // Listed again (a refinery handed back): it owns its moon again.
+    sqlx::query(r#"UPDATE "plugin_tether.moon-mining".structures SET gone_at = NULL"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
+    assert!(moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
+}
+
+/// Saves Settings with reprocess pricing on or off at `yield_percent`.
+async fn save_pricing(h: &Harness, owner: &str, on: bool, yield_percent: u32) {
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            &format!(
+                "_form=settings&fresh_hours=0&ping_channel=&volume_per_day=960400\
+                 &days_per_month=30.4&stale_hours=12&old_moons_shown=5\
+                 &reprocessing_yield={yield_percent}{}",
+                if on { "&reprocess_pricing=on" } else { "" }
+            ),
+            owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn reprocess_pricing_values_ores_by_their_materials(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    // Zeolites refine (per 100 units, the bundled static data) into 8,000
+    // Pyerite, 400 Mexallon and 65 Atmospheric Gases.
+    Mock::given(method("GET"))
+        .and(path("/markets/prices"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "type_id": ZEOLITES, "average_price": 10000.0, "adjusted_price": 9000.0 },
+            { "type_id": 35, "average_price": 10.0, "adjusted_price": 9.0 },
+            { "type_id": 36, "average_price": 100.0, "adjusted_price": 90.0 },
+            { "type_id": 16634, "average_price": 2000.0, "adjusted_price": 1900.0 },
+        ])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    run_schedule(&h, "prices").await;
+    let prices = format!("/plugins/{ID}/reports?_tab=3");
+    // Off, as aa-moonmining's default: the ore's own average price.
+    let off = page(&h, &prices, &owner).await;
+    assert!(has_isk(&off.body, "10,000"), "{}", off.body);
+    assert!(!has_isk(&off.body, "2,125"), "{}", off.body);
+    assert!(
+        off.body.contains("CCP&#39;s average price of each ore"),
+        "{}",
+        off.body
+    );
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    for part in [
+        "Price ores by what they refine into",
+        "Reprocessing yield (%)",
+    ] {
+        assert!(settings.body.contains(part), "{part}: {}", settings.body);
+    }
+    // On at 85%: (8,000 × 10 + 400 × 100 + 65 × 2,000) × 0.85 ÷ 100 =
+    // 2,125 a unit, at once (no new read).
+    save_pricing(&h, &owner, true, 85).await;
+    let on = page(&h, &prices, &owner).await;
+    assert!(has_isk(&on.body, "2,125"), "{}", on.body);
+    assert!(on.body.contains("at 85.0% yield"), "{}", on.body);
+    // The yield counts: at 50%, 1,250.
+    save_pricing(&h, &owner, true, 50).await;
+    let half = page(&h, &prices, &owner).await;
+    assert!(has_isk(&half.body, "1,250"), "{}", half.body);
+    // And the next price read keeps to the setting.
+    run_schedule(&h, "prices").await;
+    let read = page(&h, &prices, &owner).await;
+    assert!(has_isk(&read.body, "1,250"), "{}", read.body);
+    // Off again: back to the ore's own price.
+    save_pricing(&h, &owner, false, 85).await;
+    let off = page(&h, &prices, &owner).await;
+    assert!(!has_isk(&off.body, "2,125"), "{}", off.body);
+    let used: f64 = sqlx::query_scalar(
+        r#"SELECT unit_price FROM "plugin_tether.moon-mining".prices WHERE type_id = $1"#,
+    )
+    .bind(ZEOLITES)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(used, 10000.0);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn moon_labels_and_the_moons_filters(db: PgPool) {
+    cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    run_schedule(&h, "prices").await;
+    let res = upload_surveys(
+        &h,
+        &owner,
+        &format!(
+            "Jita IV - Moon 4\n\
+             \tZeolites\t0.3\t{ZEOLITES}\t{SYSTEM}\t40009077\t40009081\n\
+             \tXenotime\t0.1\t{XENOTIME}\t{SYSTEM}\t40009077\t40009081\n\
+             Jita IV - Moon 6\n\
+             \tSylvite\t0.5\t{SYLVITE}\t{SYSTEM}\t40009077\t40009083\n"
+        ),
+    )
+    .await;
+    assert!(res.body.contains("2 of 2 moons stored"), "{}", res.body);
+    work(&h).await;
+
+    // aa-moonmining's filters beyond rarity: owner, region and ore type,
+    // offered from the moons the viewer may see.
+    let all = format!("/plugins/{ID}/moons?_tab=1");
+    let moons = page(&h, &all, &owner).await;
+    for part in [
+        r#"<section aria-label="Owner">"#,
+        r#"<section aria-label="Region">"#,
+        r#"<section aria-label="Ore type">"#,
+        "Chribba Corp",
+        "The Forge",
+        "Xenotime",
+    ] {
+        assert!(moons.body.contains(part), "{part}: {}", moons.body);
+    }
+    // No labels yet: no label filter.
+    assert!(
+        !moons.body.contains(r#"<section aria-label="Label">"#),
+        "{}",
+        moons.body
+    );
+    let shown = |body: &str| {
+        (
+            body.contains("Jita IV - Moon 4"),
+            body.contains("Jita IV - Moon 6"),
+        )
+    };
+    let by = |q: String| {
+        let all = all.clone();
+        let owner = owner.clone();
+        let h = &h;
+        async move { page(h, &format!("{all}&{q}"), &owner).await.body }
+    };
+    assert_eq!(shown(&by(format!("ore={XENOTIME}")).await), (true, false));
+    assert_eq!(shown(&by(format!("ore={SYLVITE}")).await), (false, true));
+    assert_eq!(
+        shown(&by(format!("owner={CHRIBBA_CORP}")).await),
+        (true, false)
+    );
+    assert_eq!(shown(&by("region=10000002".into()).await), (true, true));
+    assert_eq!(shown(&by("region=10000001".into()).await), (false, false));
+
+    // Labels: made on Settings → Labels by holders of manage.
+    let labels = page(&h, &format!("/plugins/{ID}/settings/labels"), &owner).await;
+    assert_eq!(labels.status, StatusCode::OK, "{}", labels.body);
+    assert!(labels.body.contains("No labels yet."), "{}", labels.body);
+    assert!(
+        labels
+            .body
+            .contains(&format!(r#"href="/plugins/{ID}/settings/labels""#)),
+        "{}",
+        labels.body
+    );
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings/labels"),
+            "_form=save_label&name=Jackpot+zone&description=Big+ones&style=danger",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let label: i32 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.moon-mining".labels WHERE name = $1"#)
+            .bind("Jackpot zone")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    // Put on a moon from its page.
+    let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
+    assert!(moon.body.contains("Save label"), "{}", moon.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/moon/40009081"),
+            &format!("_form=moon_label&label={label}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
+    assert!(moon.body.contains("Jackpot zone"), "{}", moon.body);
+    // On Moons, and as a filter.
+    let moons = page(&h, &all, &owner).await;
+    assert!(moons.body.contains("Jackpot zone"), "{}", moons.body);
+    assert!(
+        moons.body.contains(r#"<section aria-label="Label">"#),
+        "{}",
+        moons.body
+    );
+    assert_eq!(shown(&by(format!("label={label}")).await), (true, false));
+
+    // Someone without manage can't label a moon, nor make labels.
+    grant(&h, &owner, "basic_access", BLUE_STATE).await;
+    grant(&h, &owner, "view_all_moons", BLUE_STATE).await;
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    let theirs = page(&h, &format!("/plugins/{ID}/moon/40009081"), &blue).await;
+    assert_eq!(theirs.status, StatusCode::OK, "{}", theirs.body);
+    assert!(theirs.body.contains("Jackpot zone"), "{}", theirs.body);
+    assert!(!theirs.body.contains("Save label"), "{}", theirs.body);
+    let refused = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/moon/40009083"),
+            &format!("_form=moon_label&label={label}"),
+            &blue,
+        ),
+    )
+    .await;
+    assert_ne!(refused.status, StatusCode::SEE_OTHER, "{}", refused.body);
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/settings/labels"), &blue)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+
+    // Deleted: off its moons.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings/labels"),
+            &format!("_form=delete_label&label={label}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
+    assert!(!moon.body.contains("Jackpot zone"), "{}", moon.body);
 }

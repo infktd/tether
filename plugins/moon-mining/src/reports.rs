@@ -13,6 +13,7 @@ use tether_plugin_sdk::{
     link, time,
 };
 
+use crate::moons::OWNED;
 use crate::{
     PRICE, count, failed, float, int, isk_or_blank, rfc3339, text, value, when, with_rows,
 };
@@ -44,10 +45,10 @@ pub fn page(viewer: &Viewer) -> Result<Page, PageError> {
     }
     let (income, total, moons) = income_table()?;
     Ok(Page::new("Reports")
-        .description(
-            "Values at CCP's average price of each ore, read daily from ESI; mining from the \
-             refineries' mining ledgers.",
-        )
+        .description(format!(
+            "Values at {}, read daily from ESI; mining from the refineries' mining ledgers.",
+            crate::pricing()?
+        ))
         .stats(vec![
             Stat::new("Owned moons", moons),
             Stat::new("Potential income / month", isk(value::finite(total)))
@@ -64,8 +65,7 @@ fn income_table() -> Result<(Table, f64, i64), PageError> {
     let rates = crate::rates()?;
     let rows = storage::query(
         &format!(
-            "WITH owned AS (SELECT DISTINCT ON (e.moon_id) e.moon_id, e.corporation_id \
-                 FROM extractions e ORDER BY e.moon_id, e.chunk_arrival DESC) \
+            "{OWNED} \
              SELECT o.moon_id, coalesce(mn.name, 'Moon ' || o.moon_id::text), o.corporation_id, \
                     coalesce(co.name, 'Corporation ' || o.corporation_id::text), coalesce(rn.name, ''), \
                     coalesce(v.rarity, 0), v.worth \
@@ -222,7 +222,7 @@ fn uploads_table() -> Result<Table, PageError> {
 fn prices_table() -> Result<Table, PageError> {
     let rows = storage::query(
         "SELECT t.type_id, coalesce(n.name, 'Type ' || t.type_id::text), t.rarity, \
-                p.average_price, p.adjusted_price, p.updated_at \
+                p.average_price, p.adjusted_price, p.updated_at, p.unit_price \
          FROM ore_types t LEFT JOIN prices p ON p.type_id = t.type_id \
          LEFT JOIN names n ON n.id = t.type_id \
          WHERE p.type_id IS NOT NULL \
@@ -236,6 +236,7 @@ fn prices_table() -> Result<Table, PageError> {
             Column::text("Rarity"),
             Column::numeric("Average price"),
             Column::numeric("Adjusted price"),
+            Column::numeric("Price used"),
             Column::numeric("Updated"),
         ])
         .title("Ore prices")
@@ -246,6 +247,7 @@ fn prices_table() -> Result<Table, PageError> {
                 value::rarity(int(r, 2)).into(),
                 isk_or_blank(float(r, 3)),
                 isk_or_blank(float(r, 4)),
+                isk_or_blank(float(r, 6)),
                 when(r, 5).map_or_else(|| "".into(), |t| time(rfc3339(t))),
             ]
         }),

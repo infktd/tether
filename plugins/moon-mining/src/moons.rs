@@ -17,25 +17,31 @@ use tether_plugin_sdk::{
     corporation, item_type, link, log, part, time,
 };
 
+use crate::labels;
 use crate::survey::{self, Survey};
 use crate::{
     Which, extractions, failed, float, int, isk_or_blank, refinery, rfc3339, system_label, text,
     value, when, with_rows,
 };
 
-/// The latest extraction at each moon: its refinery and corporation.
-const OWNED: &str = "WITH owned AS (SELECT DISTINCT ON (e.moon_id) e.moon_id, e.structure_id, e.corporation_id \
-     FROM extractions e ORDER BY e.moon_id, e.chunk_arrival DESC)";
+/// Owned moons: the latest extraction at each moon, with its refinery and
+/// corporation, while that refinery is still the corporation's and has a
+/// Moon Drill (aa-moonmining's refineries; it deletes the rest,
+/// `models/owners.py:210-211`, `:226-232`).
+pub(crate) const OWNED: &str = "WITH owned AS (SELECT * FROM (SELECT DISTINCT ON (e.moon_id) e.moon_id, e.structure_id, e.corporation_id \
+     FROM extractions e ORDER BY e.moon_id, e.chunk_arrival DESC) l \
+     WHERE EXISTS (SELECT 1 FROM structures r WHERE r.structure_id = l.structure_id \
+                   AND r.gone_at IS NULL AND r.drill IS NOT FALSE))";
 
 /// Σ share × unit price and the rarest class, per surveyed moon.
 const WORTH: &str = "(SELECT p.moon_id, \
-         sum(p.amount * coalesce(pr.average_price, pr.adjusted_price, 0))::float8 AS worth, \
+         sum(p.amount * coalesce(pr.unit_price, 0))::float8 AS worth, \
          max(t.rarity) AS rarity \
      FROM survey_products p LEFT JOIN prices pr ON pr.type_id = p.type_id \
      LEFT JOIN ore_types t ON t.type_id = p.type_id GROUP BY p.moon_id)";
 
-/// The Moons page's search and rarity filter, from its address (Tether's
-/// toolbar).
+/// The Moons page's search and filters, from its address (Tether's
+/// toolbar): aa-moonmining's rarity, owner, region, ore type and label.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Filter {
     /// Words in the moon's, system's, constellation's, region's, refinery's
@@ -43,8 +49,24 @@ pub struct Filter {
     pub q: String,
     /// R4 to R64 (4 to 64), or 0 for any.
     pub rarity: i64,
+    /// The owning corporation, the region, an ore type in the survey and
+    /// the label (each 0 for any).
+    pub owner: i64,
+    pub region: i64,
+    pub ore: i64,
+    pub label: i64,
     /// The moon whose record panel is open (a row's name selects it).
     pub moon: Option<i64>,
+}
+
+/// A filter's id from the address: a positive number, else 0 (any).
+fn id_param(request: &Request, name: &str) -> i64 {
+    request
+        .param(name)
+        .parse()
+        .ok()
+        .filter(|id: &i64| *id > 0)
+        .unwrap_or(0)
 }
 
 impl From<&Request> for Filter {
@@ -57,9 +79,68 @@ impl From<&Request> for Filter {
                 .ok()
                 .filter(|r| [4, 8, 16, 32, 64].contains(r))
                 .unwrap_or(0),
+            owner: id_param(request, "owner"),
+            region: id_param(request, "region"),
+            ore: id_param(request, "ore"),
+            label: id_param(request, "label"),
             moon: request.param("moon").parse().ok(),
         }
     }
+}
+
+/// The moons the viewer may see, as SQL over `m` (moons), `o` (owned) and
+/// `sv` (surveys) with `may_see`'s rules; `$n` is the viewer's account.
+fn visible_moons(n: usize) -> String {
+    format!(
+        "($1::boolean OR ($2::boolean AND o.moon_id IS NOT NULL) OR ($3::boolean AND sv.account_id = ${n}))"
+    )
+}
+
+/// The toolbar's choices: owners (for those who see them), regions, ore
+/// types and labels of the moons the viewer may see, each at most the
+/// host's 100.
+fn choices(viewer: &Viewer) -> Result<[Vec<(String, String)>; 4], PageError> {
+    let rows = storage::query(
+        &format!(
+            "{OWNED}, seen AS (SELECT m.moon_id, m.system_id, m.label_id, o.corporation_id FROM moons m \
+                 LEFT JOIN owned o ON o.moon_id = m.moon_id \
+                 LEFT JOIN surveys sv ON sv.moon_id = m.moon_id \
+                 WHERE (o.moon_id IS NOT NULL OR sv.moon_id IS NOT NULL) AND {}) \
+             SELECT * FROM ( \
+                 SELECT DISTINCT 'owner' AS kind, s.corporation_id AS id, \
+                        coalesce(n.name, 'Corporation ' || s.corporation_id::text) AS name \
+                 FROM seen s LEFT JOIN names n ON n.id = s.corporation_id \
+                 WHERE $5::boolean AND s.corporation_id IS NOT NULL \
+                 UNION SELECT DISTINCT 'region', y.region_id, coalesce(n.name, 'Region ' || y.region_id::text) \
+                 FROM seen s JOIN systems y ON y.system_id = s.system_id LEFT JOIN names n ON n.id = y.region_id \
+                 UNION SELECT DISTINCT 'ore', p.type_id, coalesce(n.name, 'Type ' || p.type_id::text) \
+                 FROM seen s JOIN survey_products p ON p.moon_id = s.moon_id LEFT JOIN names n ON n.id = p.type_id \
+                 UNION SELECT DISTINCT 'label', l.id, l.name FROM seen s JOIN labels l ON l.id = s.label_id) c \
+             ORDER BY kind, name",
+            visible_moons(4)
+        ),
+        &[
+            viewer.can("view_all_moons").into(),
+            viewer.can("extractions_access").into(),
+            viewer.can("upload_moon_scan").into(),
+            viewer.account_id.into(),
+            sees_owners(viewer).into(),
+        ],
+    )
+    .map_err(|e| failed("reading the filters", e))?;
+    let mut out: [Vec<(String, String)>; 4] = Default::default();
+    for r in &rows.rows {
+        let slot = match text(r, 0).as_str() {
+            "owner" => 0,
+            "region" => 1,
+            "ore" => 2,
+            _ => 3,
+        };
+        if out[slot].len() < 100 {
+            out[slot].push((int(r, 1).to_string(), text(r, 2)));
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,13 +179,22 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
         ),
         Tab::All => ("true", "No moons match."),
         Tab::Mine => (
-            "sv.account_id = $4",
+            "sv.account_id = $8",
             "You haven't uploaded surveys of moons that match.",
         ),
     };
     // The search finds refineries and owners only for those who see them:
     // else it would tell an uploader which moons are ours.
-    let mut params: Vec<Db> = vec![filter.q.clone().into(), filter.rarity.into(), owners.into()];
+    let mut params: Vec<Db> = vec![
+        filter.q.clone().into(),
+        filter.rarity.into(),
+        owners.into(),
+        // The owner filter only for those who see owners.
+        if owners { filter.owner } else { 0 }.into(),
+        filter.region.into(),
+        filter.ore.into(),
+        filter.label.into(),
+    ];
     if tab == Tab::Mine {
         params.push(viewer.account_id.into());
     }
@@ -116,7 +206,8 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
                     v.worth, coalesce(v.rarity, 0), o.structure_id, \
                     (SELECT string_agg(coalesce(t.rarity, 0)::text || ':' || p.amount::text, ',' ORDER BY p.amount DESC) \
                      FROM survey_products p LEFT JOIN ore_types t ON t.type_id = p.type_id \
-                     WHERE p.moon_id = m.moon_id) \
+                     WHERE p.moon_id = m.moon_id), \
+                    coalesce(lb.name, ''), coalesce(lb.style, '') \
              FROM moons m \
              LEFT JOIN owned o ON o.moon_id = m.moon_id \
              LEFT JOIN surveys sv ON sv.moon_id = m.moon_id \
@@ -128,11 +219,17 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
              LEFT JOIN names rn ON rn.id = y.region_id \
              LEFT JOIN structures st ON st.structure_id = o.structure_id \
              LEFT JOIN names co ON co.id = o.corporation_id \
+             LEFT JOIN labels lb ON lb.id = m.label_id \
              WHERE (o.moon_id IS NOT NULL OR sv.moon_id IS NOT NULL) AND {which} \
                AND ($1::text = '' OR strpos(lower(concat_ws(' ', mn.name, yn.name, cn.name, rn.name, \
                         CASE WHEN $3::boolean THEN st.name END, CASE WHEN $3::boolean THEN co.name END)), \
                                             lower($1::text)) > 0) \
                AND ($2::bigint = 0 OR v.rarity = $2::bigint) \
+               AND ($4::bigint = 0 OR o.corporation_id = $4::bigint) \
+               AND ($5::bigint = 0 OR y.region_id = $5::bigint) \
+               AND ($6::bigint = 0 OR EXISTS (SELECT 1 FROM survey_products f \
+                        WHERE f.moon_id = m.moon_id AND f.type_id = $6::bigint)) \
+               AND ($7::bigint = 0 OR m.label_id = $7::bigint) \
              ORDER BY v.worth DESC NULLS LAST, 2 LIMIT 500"
         ),
         &params,
@@ -146,6 +243,7 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
             Column::text("Location"),
             Column::text("Refinery"),
             Column::text("Rarity"),
+            Column::text("Label"),
             Column::numeric("Value / month (est.)"),
         ])
         .empty(empty),
@@ -182,6 +280,7 @@ fn moons_table(viewer: &Viewer, tab: Tab, filter: &Filter) -> Result<Table, Page
                 place.into(),
                 drill,
                 value::rarity(int(r, 9)).into(),
+                labels::badge_of(&text(r, 12), &text(r, 13)),
                 isk_or_blank(float(r, 8).map(|w| rates.monthly(w))),
             ]
         }),
@@ -200,20 +299,30 @@ pub fn moons_page(viewer: &Viewer, filter: &Filter) -> Result<Page, PageError> {
              View all moons, and uploading surveys needs Upload moon scan.",
         ));
     }
+    let [owner_choices, region_choices, ore_choices, label_choices] = choices(viewer)?;
+    let mut toolbar = Toolbar::new()
+        .search(if sees_owners(viewer) {
+            "Search moons, systems, regions, refineries, owners"
+        } else {
+            "Search moons, systems, regions"
+        })
+        .filter("rarity", "Rarity", rarity_choices());
+    for (param, label, choices) in [
+        ("owner", "Owner", owner_choices),
+        ("region", "Region", region_choices),
+        ("ore", "Ore type", ore_choices),
+        ("label", "Label", label_choices),
+    ] {
+        if !choices.is_empty() {
+            toolbar = toolbar.filter(param, label, choices);
+        }
+    }
     let mut page = Page::new("Moons")
-        .description(
-            "Moons with their ores from surveys, and what a month of mining them is worth at CCP's \
-             average price of each ore.",
-        )
-        .toolbar(
-            Toolbar::new()
-                .search(if sees_owners(viewer) {
-                    "Search moons, systems, regions, refineries, owners"
-                } else {
-                    "Search moons, systems, regions"
-                })
-                .filter("rarity", "Rarity", rarity_choices()),
-        );
+        .description(format!(
+            "Moons with their ores from surveys, and what a month of mining them is worth at {}.",
+            crate::pricing()?
+        ))
+        .toolbar(toolbar);
     if viewer.can("extractions_access") || viewer.can("view_all_moons") {
         page = page.tab(
             "Owned Moons",
@@ -257,6 +366,8 @@ struct Moon {
     total: f64,
     /// When it was last surveyed, and by whom.
     survey: Option<(String, i64, String)>,
+    /// Its label: id, name and style.
+    label: Option<(i64, String, String)>,
 }
 
 /// One of a moon's ores: its type, name, rarity, share, unit price and a
@@ -279,7 +390,8 @@ impl Moon {
                  SELECT coalesce(mn.name, 'Moon ' || m.moon_id::text), coalesce(yn.name, ''), y.security, \
                         coalesce(cn.name, ''), coalesce(rn.name, ''), o.structure_id, coalesce(st.name, ''), \
                         coalesce(st.type_id, 0), o.corporation_id, coalesce(co.name, ''), \
-                        sv.account_id, sv.character_id, sv.character_name, sv.uploaded_at \
+                        sv.account_id, sv.character_id, sv.character_name, sv.uploaded_at, \
+                        lb.id, lb.name, lb.style \
                  FROM moons m \
                  LEFT JOIN owned o ON o.moon_id = m.moon_id \
                  LEFT JOIN surveys sv ON sv.moon_id = m.moon_id \
@@ -290,6 +402,7 @@ impl Moon {
                  LEFT JOIN names rn ON rn.id = y.region_id \
                  LEFT JOIN structures st ON st.structure_id = o.structure_id \
                  LEFT JOIN names co ON co.id = o.corporation_id \
+                 LEFT JOIN labels lb ON lb.id = m.label_id \
                  WHERE m.moon_id = $1"
             ),
             &[moon_id.into()],
@@ -305,7 +418,7 @@ impl Moon {
         }
         let products: Vec<Ore> = storage::query(
             "SELECT p.type_id, coalesce(n.name, 'Type ' || p.type_id::text), coalesce(t.rarity, 0), p.amount, \
-                    coalesce(pr.average_price, pr.adjusted_price)::float8 \
+                    pr.unit_price::float8 \
              FROM survey_products p LEFT JOIN names n ON n.id = p.type_id \
              LEFT JOIN ore_types t ON t.type_id = p.type_id \
              LEFT JOIN prices pr ON pr.type_id = p.type_id \
@@ -343,6 +456,10 @@ impl Moon {
             total: products.iter().filter_map(|p| p.month).sum(),
             products,
             survey: when(r, 13).map(|at| (rfc3339(at), int(r, 11), text(r, 12))),
+            label: r
+                .get(14)
+                .and_then(Db::as_integer)
+                .map(|id| (id, text(r, 15), text(r, 16))),
         })
     }
 
@@ -380,6 +497,9 @@ fn moon_panel(viewer: &Viewer, moon_id: i64) -> Result<RecordPanel, PageError> {
     if let Some((parts, center)) = moon.ring() {
         panel = panel.figure(parts, center);
     }
+    if let Some((_, name, style)) = &moon.label {
+        panel = panel.fact("Label", labels::badge_of(name, style));
+    }
     panel = panel.fact(
         "Value / month (est.)",
         isk_or_blank((!moon.products.is_empty()).then_some(moon.total)),
@@ -408,6 +528,9 @@ pub fn moon_page(viewer: &Viewer, moon_id: i64) -> Result<Page, PageError> {
         .field("System", moon.system.clone())
         .field("Location", moon.place.clone())
         .field("Rarity", value::rarity(moon.rarest));
+    if let Some((_, name, style)) = &moon.label {
+        card = card.field("Label", labels::badge_of(name, style));
+    }
     if let Some((refinery_name, type_id, corp, corp_name)) = &moon.refinery {
         card = card
             .field("Refinery", refinery(refinery_name, *type_id))
@@ -452,8 +575,9 @@ pub fn moon_page(viewer: &Viewer, moon_id: i64) -> Result<Page, PageError> {
     let mut page = Page::new(name)
         .description(format!(
             "A month of mining: price × share × the {:.1} million m³ a drill pulls in a month ÷ \
-             10 m³ a unit of ore, at CCP's average price of the ore itself.",
-            rates.per_month() / 1e6
+             10 m³ a unit of ore, at {}.",
+            rates.per_month() / 1e6,
+            crate::pricing()?
         ))
         .card(card);
     if let Some(ring) = ring {
@@ -484,7 +608,26 @@ pub fn moon_page(viewer: &Viewer, moon_id: i64) -> Result<Page, PageError> {
             }),
         ));
     }
+    // aa-moonmining's label, set by whoever runs the app (AA's admin).
+    if viewer.can("manage")
+        && let Some(form) = labels::moon_form(&labels::all()?, moon.label.as_ref().map(|l| l.0))
+    {
+        page = page.form(form);
+    }
     Ok(page)
+}
+
+/// A manager's label for a moon they may see.
+pub fn save_label(
+    viewer: &Viewer,
+    moon_id: i64,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    if submission.form != "moon_label" || !viewer.can("manage") {
+        return Err(PageError::NotFound);
+    }
+    Moon::load(viewer, moon_id)?;
+    labels::save_moon_label(viewer, moon_id, submission)
 }
 
 /// How one moon of an upload went.

@@ -1,6 +1,6 @@
 [package]
 name = "moon-mining"
-version = "0.2.16"
+version = "0.2.17"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
