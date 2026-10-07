@@ -1752,6 +1752,42 @@ async fn a_planet_two_characters_colonise_is_named(db: PgPool) {
     );
 }
 
+/// A large alliance: more registered characters than the parameters one
+/// storage call takes (about 10,000) are stored in pieces, so the run
+/// goes on to read them.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_large_alliance_is_stored_whole(db: PgPool) {
+    let (h, _) = synced(db).await;
+    // 12,000 more characters on Chribba's account, registered for the
+    // app with his token's scopes.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id, alliance_id)
+           SELECT 2100000000 + n, (SELECT account_id FROM core.characters WHERE id = {CHRIBBA}),
+                  'Registered Pilot ' || n || ' Of A Rather Large Alliance', {CORP}, {ALLIANCE}
+           FROM generate_series(1, 12000) n;
+         INSERT INTO core.character_tokens (character_id, refresh_token, scopes)
+           SELECT 2100000000 + n, t.refresh_token, t.scopes
+           FROM generate_series(1, 12000) n, core.character_tokens t WHERE t.character_id = {CHRIBBA};
+         INSERT INTO core.app_characters (plugin_id, character_id)
+           SELECT '{ID}', 2100000000 + n FROM generate_series(1, 12000) n;"
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let (stored, read): (i64, i64) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".characters),
+                  (SELECT count(DISTINCT character_id) FROM "plugin_tether.member-audit".section_syncs
+                   WHERE character_id > 2100000000)"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, 12_001, "{:?}", plugin_warnings(&h).await);
+    // New characters come first.
+    assert!(read > 0);
+}
+
 /// aa-memberaudit's sharing: a pilot with `share_characters` shares their
 /// own character from its sheet, and holders of `view_shared_characters`
 /// (recruiters) find it and open it, mail included and audited, until it

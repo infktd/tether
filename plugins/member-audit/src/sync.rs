@@ -328,15 +328,29 @@ fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobErr
             })
         })
         .collect();
-    storage::transaction(&[
+    // When this list was taken: whoever it doesn't hold is forgotten below.
+    let began = storage::query("SELECT now()", &[])
+        .map_err(|e| retry("reading the time", e))?
+        .rows
+        .into_iter()
+        .next()
+        .and_then(|row| row.into_iter().next())
+        .ok_or_else(|| JobError::Retry("reading the time: no answer".to_owned()))?;
+    // In pieces the host takes (a large alliance's list runs past the
+    // parameters one call may carry), the first with the clean-up below.
+    let upsert = |chunk: &[Json]| {
         stmt(
             "INSERT INTO characters (character_id, name, corporation_id, alliance_id, seen_at) \
              SELECT character_id, name, corporation_id, alliance_id, now() \
              FROM json_to_recordset($1::json) AS x(character_id bigint, name text, corporation_id bigint, alliance_id bigint) \
              ON CONFLICT (character_id) DO UPDATE SET name = EXCLUDED.name, \
              corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, seen_at = now()",
-            vec![rows(list)],
-        ),
+            vec![rows(chunk.to_vec())],
+        )
+    };
+    let mut chunks = list.chunks(CHUNK);
+    let mut first: Vec<Statement> = chunks.next().map(upsert).into_iter().collect();
+    first.extend([
         // aa-memberaudit's MEMBERAUDIT_DATA_RETENTION_LIMIT: mail,
         // contracts and wallet history.
         stmt(
@@ -371,21 +385,30 @@ fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobErr
             "DELETE FROM mining WHERE day < current_date - 90",
             vec![],
         ),
-    ])
-    .map_err(|e| retry("storing characters", e))?;
+    ]);
+    storage::transaction(&first).map_err(|e| retry("storing characters", e))?;
+    for chunk in chunks {
+        storage::transaction(&[upsert(chunk)]).map_err(|e| retry("storing characters", e))?;
+    }
     // Not in the list any more (left, sold, the account holds none of the
     // app's permissions any more, consent withdrawn): forgotten at once,
-    // with all its data. An empty list may
+    // with all its data, once the whole list is stored. An empty list may
     // be the host having trouble, so on that alone nothing is forgotten
     // for a day; empty for longer, it's real (the last registered pilot
     // left, or the app's scopes went), and everything goes.
     let forget = if characters.is_empty() {
-        "DELETE FROM characters WHERE seen_at < now() - interval '1 day'"
+        stmt(
+            "DELETE FROM characters WHERE seen_at < now() - interval '1 day'",
+            vec![],
+        )
     } else {
-        "DELETE FROM characters WHERE seen_at < now() - interval '1 minute'"
+        stmt(
+            "DELETE FROM characters WHERE seen_at < $1::timestamptz",
+            vec![began],
+        )
     };
     storage::transaction(&[
-        stmt(forget, vec![]),
+        forget,
         stmt(
             "DELETE FROM update_asks WHERE at < now() - interval '1 hour'",
             vec![],
