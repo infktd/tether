@@ -2442,6 +2442,31 @@ async fn fleet_pings_follow_aa_fleetpings_settings(db: PgPool) {
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.body);
 }
 
+/// Nobody holds Fleet Pings until an admin grants it (as AA): its
+/// settings say so, since every limit there holds nobody back.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn fleet_pings_settings_say_when_nobody_may_ping(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = pings_ready(&h).await;
+    let settings = page(&h, "/admin/pings", &owner).await.body;
+    assert!(settings.contains("Nobody may send pings yet"), "{settings}");
+    let res = send(
+        &h.app,
+        form(
+            "/admin/permissions/set",
+            "permission=fleetpings.basic_access&grantee=state:1",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = page(&h, "/admin/pings", &owner).await.body;
+    assert!(
+        !settings.contains("Nobody may send pings yet"),
+        "{settings}"
+    );
+}
+
 // ---- Secure Groups: run summaries (AA's group update webhook) -------------
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

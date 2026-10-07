@@ -224,6 +224,9 @@ struct SettingsPage {
     /// "Use doctrines from Fittings" is on, but no running app shares
     /// doctrines: the form uses the configured ones.
     no_doctrine_apps: bool,
+    /// Nobody holds Fleet Pings (`fleetpings.basic_access`): only
+    /// superusers can ping, so nothing here limits anyone.
+    nobody_pings: bool,
     default_fleet_types: &'static [(&'static str, &'static str)],
     channels: Vec<Limitable>,
     targets: Vec<Limitable>,
@@ -307,6 +310,10 @@ async fn settings_page(
             name: g.group.name,
         })
         .collect();
+    let nobody_pings = !tether_db::permissions::list(&state.db)
+        .await?
+        .iter()
+        .any(|g| g.permission == FLEETPINGS_ACCESS);
     let settings = pings::ping_settings(&state.db).await?;
     let no_doctrine_apps = settings.doctrines_from_apps
         && tether_web_core::plugin_shared::doctrine_publishers(&std::sync::Arc::downgrade(
@@ -323,6 +330,7 @@ async fn settings_page(
                 shell,
                 settings,
                 no_doctrine_apps,
+                nobody_pings,
                 default_fleet_types: pings::DEFAULT_FLEET_TYPES,
                 channels,
                 targets,

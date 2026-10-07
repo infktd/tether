@@ -81,6 +81,7 @@
   </div>
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
+  {% if nobody_pings %}<div class="alert" role="status"><section>Nobody may send pings yet: only superusers hold Fleet Pings, so the limits below hold nobody back. Grant it to your FCs (a group or state) on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>.</section></div>{% endif %}
 
   <form class="card" method="post" action="/admin/pings/settings">
     <header><h2>Settings</h2></header>
