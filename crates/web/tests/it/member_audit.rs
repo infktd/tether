@@ -859,13 +859,17 @@ async fn member_audit_end_to_end(db: PgPool) {
             .contains("Guns")
     );
 
-    // With nobody qualifying the host's list is empty, which may be the
-    // host having trouble: nothing is forgotten on that alone.
-    sqlx::query("UPDATE core.character_tokens SET state = 'revoked' WHERE character_id = $1")
-        .bind(CHRIBBA)
-        .execute(&h.db)
-        .await
-        .unwrap();
+    // With nobody qualifying (sold on: a revoked token alone keeps the
+    // character, as aa-memberaudit) the host's list is empty, which may be
+    // the host having trouble: nothing is forgotten on that alone.
+    sqlx::query(
+        "UPDATE core.character_tokens SET state = 'revoked', revoked_reason = 'owner hash changed' \
+         WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
     sync(&h).await;
     let characters: i64 =
         sqlx::query_scalar("SELECT count(*) FROM \"plugin_tether.member-audit\".characters")
@@ -1799,7 +1803,12 @@ async fn every_page_of_assets_is_read_over_runs(db: PgPool) {
     .fetch_one(&h.db)
     .await
     .unwrap();
-    assert_eq!((stored, aside), (before, 20), "{:?}", plugin_warnings(&h).await);
+    assert_eq!(
+        (stored, aside),
+        (before, 20),
+        "{:?}",
+        plugin_warnings(&h).await
+    );
     assert!(filtered);
     // The next run, a minute on, reads the rest and swaps the list in.
     sqlx::query("UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND state = 'queued'")
@@ -2341,7 +2350,8 @@ async fn a_mail_backlog_comes_in_over_several_reads(db: PgPool) {
 
 /// ESI having trouble (a 503, as around downtime) while a mail's body, a
 /// contract's items and a planet's name are read: none is settled empty
-/// or put off for a week, and each is read once ESI answers again.
+/// or put off for a week, and each is read an hour on, once ESI answers
+/// again (not every run meanwhile).
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn a_passing_esi_failure_loses_nothing(db: PgPool) {
     cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
@@ -2380,10 +2390,22 @@ async fn a_passing_esi_failure_loses_nothing(db: PgPool) {
         .await
         .unwrap()
     }
-    assert_eq!(read(&h).await, (None, false, None, false));
-    // ESI is back; the mail and contracts come round again.
-    sqlx::query(
-        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section IN ('mail', 'contracts')"#,
+    // Not settled: the planet's name waits an hour, not a week.
+    assert_eq!(read(&h).await, (None, false, None, true));
+    let wait: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT tried_at < now() - interval '6 days' FROM "plugin_tether.member-audit".unnamed WHERE id = {PLANET}"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(wait);
+    // ESI is back, and an hour has gone: the mail and contracts come
+    // round again.
+    sqlx::raw_sql(
+        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section IN ('mail', 'contracts');
+           UPDATE "plugin_tether.member-audit".mails SET body_tried_at = body_tried_at - interval '2 hours';
+           UPDATE "plugin_tether.member-audit".contracts SET items_tried_at = items_tried_at - interval '2 hours';
+           UPDATE "plugin_tether.member-audit".unnamed SET tried_at = tried_at - interval '2 hours';"#,
     )
     .execute(&h.db)
     .await
@@ -2412,7 +2434,8 @@ async fn a_mail_deleted_in_eve_goes(db: PgPool) {
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/mail/{MAIL}")))
         .respond_with(
-            ResponseTemplate::new(404).set_body_json(serde_json::json!({ "error": "Mail not found" })),
+            ResponseTemplate::new(404)
+                .set_body_json(serde_json::json!({ "error": "Mail not found" })),
         )
         .with_priority(1)
         .mount(&h.esi_server)

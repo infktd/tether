@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c\n        JOIN core.character_tokens t ON t.character_id = c.id\n        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1\n        WHERE core.holds_app_permission(c.account_id, $1)\n          AND t.state = 'valid' AND t.scopes @> $2\n        ORDER BY c.name\n        ",
+  "query": "\n        SELECT c.id, c.name, c.corporation_id, c.alliance_id\n        FROM core.characters c\n        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $1\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE core.holds_app_permission(c.account_id, $1)\n          AND ((t.state = 'valid' AND t.scopes @> $2)\n               OR ($3 AND (t.state IS DISTINCT FROM 'revoked'\n                           OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')))\n        ORDER BY c.name\n        ",
   "describe": {
     "columns": [
       {
@@ -51,7 +51,8 @@
     "parameters": {
       "Left": [
         "Text",
-        "TextArray"
+        "TextArray",
+        "Bool"
       ]
     },
     "nullable": [
@@ -61,5 +62,5 @@
       true
     ]
   },
-  "hash": "966118826fa436dbcab1cf9be115136c10789fee12c0b2e8d22cc8e2aa7c24de"
+  "hash": "cea475fd7e075ef39bf3581bfdea811f5096a8da4c6ff46a3383120b54063d99"
 }

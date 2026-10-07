@@ -313,11 +313,9 @@ async fn esi_get(
                 // A character the bundled Member Audit keeps (its token
                 // stopped working): a token problem, so the app pauses it.
                 let kept = may_see_owners(plugin, running.origin)
-                    && tether_db::compliance::character_kept_broken(
-                        &deps.db, plugin, id, &scopes,
-                    )
-                    .await
-                    .map_err(unavailable)?;
+                    && tether_db::compliance::character_kept_broken(&deps.db, plugin, id, &scopes)
+                        .await
+                        .map_err(unavailable)?;
                 return Err(if kept {
                     EsiError::Token
                 } else {

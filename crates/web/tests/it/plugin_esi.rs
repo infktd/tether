@@ -1128,9 +1128,10 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
             assert!(owners.contains(&part), "{part}\n{owners}");
         }
     }
-    // Only the characters `esi.characters` lists: not one whose token lacks
-    // the app's scope, or was revoked, or whose account holds none of the
-    // app's permissions (here: deactivated).
+    // Only the characters `esi.characters` lists: for the bundled Member
+    // Audit, those whose token lacks the app's scope or was revoked too
+    // (kept, as aa-memberaudit keeps them), but not one sold on, nor one
+    // whose account holds none of the app's permissions (below).
     let only = |sql: &'static str| {
         let db = h.db.clone();
         async move {
@@ -1138,16 +1139,23 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
         }
     };
     only("UPDATE core.character_tokens SET scopes = '{}'").await;
-    assert_eq!(
-        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
-        "Some([])"
+    assert!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false)
+            .await
+            .contains("Chribba")
     );
     only("UPDATE core.character_tokens SET scopes = ARRAY['esi-skills.read_skills.v1'], state = 'revoked'").await;
+    assert!(
+        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false)
+            .await
+            .contains("Chribba")
+    );
+    only("UPDATE core.character_tokens SET revoked_reason = 'owner hash changed'").await;
     assert_eq!(
         run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
         "Some([])"
     );
-    only("UPDATE core.character_tokens SET state = 'valid'").await;
+    only("UPDATE core.character_tokens SET state = 'valid', revoked_reason = NULL").await;
     assert!(
         run_probe(&h, "tether.member-audit", "owners", Vec::new(), false)
             .await

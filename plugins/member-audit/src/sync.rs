@@ -361,14 +361,18 @@ fn refresh_characters(settings: &crate::settings::Settings) -> Result<(), JobErr
         .ok_or_else(|| JobError::Retry("reading the time: no answer".to_owned()))?;
     // In pieces the host takes (a large alliance's list runs past the
     // parameters one call may carry), the first with the clean-up below.
+    // Each seen as of `began`, not the clock at its own write: forgetting
+    // what the list didn't hold then can't catch these, whatever the
+    // clock does meanwhile.
     let upsert = |chunk: &[Json]| {
         stmt(
             "INSERT INTO characters (character_id, name, corporation_id, alliance_id, seen_at) \
-             SELECT character_id, name, corporation_id, alliance_id, now() \
+             SELECT character_id, name, corporation_id, alliance_id, $2::timestamptz \
              FROM json_to_recordset($1::json) AS x(character_id bigint, name text, corporation_id bigint, alliance_id bigint) \
              ON CONFLICT (character_id) DO UPDATE SET name = EXCLUDED.name, \
-             corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, seen_at = now()",
-            vec![rows(chunk.to_vec())],
+             corporation_id = EXCLUDED.corporation_id, alliance_id = EXCLUDED.alliance_id, \
+             seen_at = EXCLUDED.seen_at",
+            vec![rows(chunk.to_vec()), began.clone()],
         )
     };
     let mut chunks = list.chunks(CHUNK);
@@ -845,16 +849,16 @@ fn stage_assets(run: &mut Run, id: i64, items: &[Json], page: u32) -> Result<(),
         .collect();
     if !rows_of.is_empty() {
         insert_all(
-        Vec::new(),
-        "INSERT INTO assets_reading (character_id, item_id, type_id, quantity, location_id, \
+            Vec::new(),
+            "INSERT INTO assets_reading (character_id, item_id, type_id, quantity, location_id, \
          location_flag, location_type) \
          SELECT $2, item_id, type_id, quantity, location_id, location_flag, location_type \
          FROM json_to_recordset($1::json) AS x(item_id bigint, type_id bigint, quantity bigint, \
               location_id bigint, location_flag text, location_type text) \
          ON CONFLICT DO NOTHING",
-        &rows_of,
-        id,
-    )?;
+            &rows_of,
+            id,
+        )?;
     }
     store(&[stmt(
         "UPDATE characters SET assets_page = $2 WHERE character_id = $1",
@@ -1072,7 +1076,9 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
     // ESI failed to give last time after the others).
     let pending = storage::query(
         "SELECT contract_id FROM contracts WHERE character_id = $1 AND NOT items_read \
-         AND kind IN ('item_exchange', 'auction') ORDER BY items_tried_at NULLS FIRST, issued DESC LIMIT $2",
+         AND kind IN ('item_exchange', 'auction') \
+         AND (items_tried_at IS NULL OR items_tried_at < now() - interval '1 hour') \
+         ORDER BY items_tried_at NULLS FIRST, issued DESC LIMIT $2",
         &[id.into(), (DETAILS_PER_RUN as i64).into()],
     )
     .map_err(|e| Stop::Section(format!("reading contracts: {e:?}")))?;
@@ -1084,9 +1090,10 @@ fn contracts(run: &mut Run, id: i64) -> Result<(), Stop> {
             &[("contract_id", contract.to_string())],
         ) {
             Ok(items) => items,
-            // ESI keeps items only a while: gone is gone.
-            Err(stop) if stop.gone() => Vec::new(),
-            // A passing failure: asked again on a later read.
+            // ESI keeps items only a while: gone is gone, and a refusal
+            // (not this character's to see) is final too.
+            Err(stop) if stop.gone() || stop.refused() => Vec::new(),
+            // A passing failure: asked again on a read an hour on.
             Err(Stop::Section(why) | Stop::Esi(_, why)) => {
                 log::warn(format!(
                     "character {id}, contract {contract}'s items: {why}"
@@ -1543,6 +1550,7 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
     // to give last time after the others).
     let pending = storage::query(
         "SELECT mail_id FROM mails WHERE character_id = $1 AND body IS NULL \
+         AND (body_tried_at IS NULL OR body_tried_at < now() - interval '1 hour') \
          ORDER BY body_tried_at NULLS FIRST, at DESC LIMIT $2",
         &[id.into(), (BODIES_PER_RUN as i64).into()],
     )
@@ -1570,7 +1578,10 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
                 )])?;
                 continue;
             }
-            // A passing failure: asked again on a later read.
+            // Refused (not this character's to read): kept as a header
+            // without a body.
+            Err(stop) if stop.refused() => String::new(),
+            // A passing failure: asked again on a read an hour on.
             Err(Stop::Section(why) | Stop::Esi(_, why)) => {
                 log::warn(format!("character {id}, mail {mail_id}'s body: {why}"));
                 store(&[stmt(
@@ -1815,8 +1826,10 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         &[],
     )
     .map_err(|e| retry("finding unnamed planets", e))?;
-    // Asked, and named or not to be asked again for a week.
+    // Asked, and named or not to be asked again for a week; or met with a
+    // passing failure (ESI's trouble), asked again an hour on.
     let mut tried = Vec::new();
+    let mut passing = Vec::new();
     let mut named = Vec::new();
     for (structure, character) in structures.into_iter().take(10) {
         if run.calls <= NAME_RESERVE / 2 {
@@ -1835,7 +1848,10 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
                 named.push(json!({ "id": structure, "name": s["name"], "category": "structure" }));
             }
             Err(Stop::Run | Stop::Unavailable) => break,
-            Err(stop @ Stop::Esi(..)) if !stop.refused() => continue,
+            Err(stop @ Stop::Esi(..)) if !stop.refused() => {
+                passing.push(structure);
+                continue;
+            }
             Err(_) => {}
         }
         tried.push(structure);
@@ -1855,18 +1871,28 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         ) {
             Ok(p) => named.push(json!({ "id": planet, "name": p["name"], "category": "planet" })),
             Err(Stop::Run | Stop::Unavailable) => break,
-            Err(stop @ Stop::Esi(..)) if !stop.refused() => continue,
+            Err(stop @ Stop::Esi(..)) if !stop.refused() => {
+                passing.push(planet);
+                continue;
+            }
             Err(_) => {}
         }
         tried.push(planet);
     }
     let tried: Vec<Json> = tried.iter().map(|id| json!({ "id": id })).collect();
+    let passing: Vec<Json> = passing.iter().map(|id| json!({ "id": id })).collect();
     // Each id once: an upsert can't touch a row twice.
     storage::transaction(&[
         stmt(
             "INSERT INTO names (id, name, category) \
              SELECT DISTINCT ON (id) id, name, category FROM json_to_recordset($1::json) AS x(id bigint, name text, category text) \
              WHERE name IS NOT NULL ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+            vec![rows(named.clone())],
+        ),
+        // Named now: no longer waiting to be asked again.
+        stmt(
+            "DELETE FROM unnamed u USING json_to_recordset($1::json) AS x(id bigint) \
+             WHERE u.id = x.id",
             vec![rows(named)],
         ),
         stmt(
@@ -1874,6 +1900,15 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
              WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) \
              ON CONFLICT (id) DO UPDATE SET tried_at = now()",
             vec![rows(tried)],
+        ),
+        // Due again an hour on: a week's wait less an hour.
+        stmt(
+            "INSERT INTO unnamed (id, tried_at) \
+             SELECT DISTINCT id, now() - interval '7 days' + interval '1 hour' \
+             FROM json_to_recordset($1::json) AS x(id bigint) \
+             WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) \
+             ON CONFLICT (id) DO UPDATE SET tried_at = EXCLUDED.tried_at",
+            vec![rows(passing)],
         ),
     ])
     .map_err(|e| retry("storing place names", e))?;
