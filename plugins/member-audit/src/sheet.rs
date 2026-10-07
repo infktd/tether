@@ -150,6 +150,16 @@ impl Freshness {
         if found.len() < sections.len() {
             return Section::Text("Not read yet: it's on its way.".to_owned());
         }
+        // Skipped, not read: its login lacks a scope asked for since
+        // (`sync::WAITS_FOR_REGISTERING`).
+        let (waiting, found): (Vec<_>, Vec<_>) = found
+            .into_iter()
+            .partition(|(_, _, ok, why)| *ok && !why.is_empty());
+        if found.is_empty() && !waiting.is_empty() {
+            return Section::Text(
+                "Not read yet: its pilot needs to register it with Member Audit again.".to_owned(),
+            );
+        }
         let oldest = found.iter().filter_map(|(_, at, ..)| *at).min();
         let failed: Vec<&str> = found
             .iter()
@@ -317,7 +327,7 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
                     c.faction_id, {fact}, coalesce(c.bio, ''), c.update_requested_at, \
                     (SELECT count(*) FROM clones WHERE character_id = c.character_id), \
                     (SELECT max(finish) FROM queue WHERE character_id = c.character_id), \
-                    c.update_done_at, c.is_shared \
+                    c.update_done_at, c.is_shared, c.last_login \
              FROM characters c WHERE c.character_id = $1",
             system = name_of("c.system_id"),
             place = name_of("c.location_id"),
@@ -439,6 +449,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             fact_or(opt_float(c, 11).map(|s| format!("{s:.1}").into())),
         )
         .fact("Born", time_or_blank(c, 12))
+        // aa-memberaudit's online status.
+        .fact("Last login", time_or_blank(c, 24))
         .fact(
             "Training",
             training.map_or_else(

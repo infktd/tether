@@ -4,7 +4,7 @@
 id = "tether.member-audit"
 name = "Member Audit"
 icon = "scan-user"
-version = "0.4.9"
+version = "0.4.10"
 host_api = "1"
 description = "A full character viewer (aa-memberaudit's): skills and queue, assets, wallet, contracts, clones and implants, mail, industry, planets, contacts, killmails and more; Character Finder, Skill Sets and reports."
 
@@ -32,6 +32,9 @@ user = [
     "esi-clones.read_implants.v1",
     "esi-location.read_location.v1",
     "esi-location.read_ship_type.v1",
+    # Last login (aa-memberaudit's online status; Jay, 2026-10-07: members
+    # register again once to grant it).
+    "esi-location.read_online.v1",
     "esi-contracts.read_character_contracts.v1",
     "esi-characters.read_contacts.v1",
     "esi-characters.read_standings.v1",
