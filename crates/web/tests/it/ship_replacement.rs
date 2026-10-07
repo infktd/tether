@@ -13,8 +13,9 @@ use crate::common::*;
 use axum::http::StatusCode;
 use sqlx::PgPool;
 use tether_core::states::{Builtin, EntityKind};
+use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
 use tether_plugins::testing::{self, Key};
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{header, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ID: &str = "tether.ship-replacement";
@@ -48,6 +49,7 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_ship_replacement.sql");
     let second = plugin_file("migrations/0002_claims_follow_requests.sql");
+    let third = plugin_file("migrations/0003_srp_team_channel.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
@@ -57,6 +59,7 @@ async fn install(h: &Harness, owner: &str) {
             "migrations/0002_claims_follow_requests.sql",
             second.as_bytes(),
         ),
+        ("migrations/0003_srp_team_channel.sql", third.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -684,6 +687,229 @@ async fn ship_replacement_end_to_end(db: PgPool) {
             "/api/killID/1004/".to_owned(),
             "/api/killID/1005/".to_owned(),
         ]
+    );
+}
+
+/// Runs the app's queued jobs that are due (the relay).
+async fn work(h: &Harness) {
+    let mut registry = Registry::new();
+    tether_web::plugin_jobs::register_jobs(&mut registry, h.db.clone(), h.plugins.clone());
+    let config = WorkerConfig::default();
+    while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
+}
+
+/// What was posted to Discord's channels, in order.
+async fn posts(h: &Harness) -> Vec<serde_json::Value> {
+    h.discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect()
+}
+
+async fn team_channel(h: &Harness) -> Option<String> {
+    sqlx::query_scalar("SELECT channel FROM \"plugin_tether.ship-replacement\".settings")
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+}
+
+/// aa-srp's SRP team channel: none by default (nothing posted, Discord
+/// ready or not); Settings, for `manage` alone, picks one of the app's
+/// channels; then each new request is posted there as a card pinging
+/// nobody, queued with the request so the pilot's request never waits on
+/// Discord, and posted later if Discord is down.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn srp_team_channel_gets_new_requests(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
+    cover(&db, Builtin::Blue, EntityKind::Corporation, BLUE_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let zkill = MockServer::start().await;
+    h.plugins.route_http_to(&zkill.address().to_string());
+    mount_esi(&h).await;
+    mount_zkill(&zkill).await;
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+    for state in [MEMBER_STATE, BLUE_STATE] {
+        grant(&h, &owner, "access_srp", state).await;
+    }
+    grant(&h, &owner, "srp_management", BLUE_STATE).await;
+    let pilot = log_in_as(&h, "443630591:Pilot A", None).await;
+    let manager = log_in_as(&h, "1887431749:gigX", None).await;
+
+    // Settings is manage's (aa-srp's Django admin): not the SRP managers'
+    // or the pilots'.
+    for who in [&manager, &pilot] {
+        assert_ne!(open(&h, who, "settings").await.status, StatusCode::OK);
+        let res = post(
+            &h,
+            who,
+            "settings",
+            &format!("_form=settings&channel={DISCORD_PING_CHANNEL}"),
+        )
+        .await;
+        assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let settings = open(&h, &owner, "settings").await;
+    assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
+    assert!(settings.body.contains("Not posted"), "{}", settings.body);
+    assert!(settings.body.contains("#fleet-pings"), "{}", settings.body);
+    assert!(
+        !settings.body.contains("New SRP fleet"),
+        "{}",
+        settings.body
+    );
+    assert_eq!(team_channel(&h).await, None);
+
+    // None by default, as aa-srp's: a request posts nothing.
+    let res = post(&h, &manager, "add", &add_fleet("Op+Rock")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (_, code) = newest_fleet(&h).await;
+    let uri = format!("request/{code}");
+    let res = post(
+        &h,
+        &pilot,
+        &uri,
+        &request("https://zkillboard.com/kill/1001/"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    work(&h).await;
+    assert!(posts(&h).await.is_empty());
+
+    // Only one of the app's channels is kept.
+    post(&h, &owner, "settings", "_form=settings&channel=999").await;
+    assert_eq!(team_channel(&h).await, None);
+    let res = post(
+        &h,
+        &owner,
+        "settings",
+        &format!("_form=settings&channel={DISCORD_PING_CHANNEL}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        team_channel(&h).await.as_deref(),
+        Some(DISCORD_PING_CHANNEL)
+    );
+
+    // A new request: saved at once, posted by the relay, pinging nobody.
+    let res = post(
+        &h,
+        &pilot,
+        &uri,
+        "_form=request&killboard_link=https%3A%2F%2Fzkillboard.com%2Fkill%2F1004%2F\
+         &additional_info=%40everyone+**look**",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    request_of(&h, 1004).await;
+    assert!(posts(&h).await.is_empty());
+    work(&h).await;
+    let sent = posts(&h).await;
+    assert_eq!(sent.len(), 1, "{sent:#?}");
+    let card = &sent[0]["embeds"][0];
+    assert_eq!(card["title"], "New SRP request: Rifter");
+    assert_eq!(card["author"]["name"], "Pilot A");
+    let fields = card["fields"].to_string();
+    for text in [
+        "Op Rock",
+        &code,
+        "[zKillboard](https://zkillboard.com/kill/1004/)",
+    ] {
+        assert!(fields.contains(text), "{text}: {fields}");
+    }
+    // Escaped by the app, and @everyone defused by Tether besides.
+    assert_eq!(card["description"], "\\@\u{200B}everyone \\*\\*look\\*\\*");
+    assert_eq!(sent[0]["allowed_mentions"]["parse"], serde_json::json!([]));
+    assert!(
+        !sent[0]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("<@"),
+        "{}",
+        sent[0]
+    );
+    // A request refused (a loss requested before) posts nothing more.
+    let res = post(
+        &h,
+        &pilot,
+        &uri,
+        &request("https://zkillboard.com/kill/1004/"),
+    )
+    .await;
+    assert!(res.body.contains("already been requested"), "{}", res.body);
+    work(&h).await;
+    assert_eq!(posts(&h).await.len(), 1);
+
+    // Discord down: the request stands, and its card goes once it's back.
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&h.discord_server)
+        .await;
+    let res = post(
+        &h,
+        &owner,
+        &uri,
+        &request("https://zkillboard.com/kill/1002/"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    request_of(&h, 1002).await;
+    work(&h).await;
+    assert_eq!(posts(&h).await.len(), 2, "the refused try");
+    sqlx::query("UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND state = 'queued'")
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    work(&h).await;
+    let sent = posts(&h).await;
+    assert_eq!(sent.len(), 3, "{sent:#?}");
+    assert_eq!(sent[2]["embeds"][0]["author"]["name"], "Chribba");
+
+    // A channel no longer the app's: Settings says so, with the fix.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels/{DISCORD_PING_CHANNEL}/remove"),
+            "",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = open(&h, &owner, "settings").await;
+    assert!(
+        settings
+            .body
+            .contains("No Discord channel is assigned to this app yet"),
+        "{}",
+        settings.body
     );
 }
 

@@ -21,21 +21,30 @@
 //!   update the payout at any time, mark approved ones paid (aa-srp's),
 //!   complete and remove fleets. As AA, nothing stops a manager deciding
 //!   their own request.
+//! - **SRP team channel** (aa-srp's `srp_team_discord_channel_id`, none by
+//!   default): Settings, for `manage` (aa-srp's setting is changed in
+//!   Django's admin), picks one of the Discord channels an admin assigned
+//!   the app. Each new request is posted there as a card, pinging nobody:
+//!   queued with the request and sent by a relay job, so a burst of
+//!   requests or a slow Discord loses none and never fails the pilot's
+//!   request (aa-srp queues its message too).
 //!
 //! zKillboard asks for gentle use: a kill's value is fetched once and
 //! kept, and only when a pilot requests SRP for it.
 
 mod killmail;
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use tether_plugin_sdk::discord::{self, Embed, Image, Mention};
 use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::http;
 use tether_plugin_sdk::identity::{self, Viewer};
+use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
-    Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Stat, Submission,
-    SubmitResult, Table, Tone, Value, action, actions, badge, character, isk, item_type, link, log,
-    share, time,
+    Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, SettingsForm,
+    SettingsGroup, Stat, Submission, SubmitResult, Table, Tone, Value, action, actions, badge,
+    character, isk, item_type, link, log, share, time,
 };
 
 const MAX_NAME: u32 = 150;
@@ -56,6 +65,17 @@ const MY_ROWS: i64 = 100;
 const MAX_PAYOUT: f64 = killmail::MAX_VALUE;
 /// Links that don't check out, per pilot, before they wait a while.
 const MAX_FAILED_LOOKUPS: i64 = 5;
+/// The job posting new requests to the SRP team's channel.
+const RELAY: &str = "relay";
+/// Discord messages per relay run (the host's limit), and the gaps.
+const SENDS_PER_RUN: i64 = 5;
+const RELAY_GAP_SECONDS: i64 = 15;
+const RELAY_BACKOFF_SECONDS: i64 = 60;
+/// A card not sent by then isn't news any more.
+const STALE_HOURS: i64 = 6;
+/// Additional info on a card, cut before escaping so it stays within the
+/// host's 2,000 characters.
+const CARD_INFO: usize = 900;
 
 struct ShipReplacement;
 
@@ -63,6 +83,11 @@ impl Plugin for ShipReplacement {
     fn render(request: Request) -> Result<Page, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let parts: Vec<&str> = request.path.split('/').collect();
+        // The app's settings, for `manage` (the manifest's rule): no New
+        // SRP fleet button there.
+        if parts.as_slice() == ["settings"] {
+            return settings_page();
+        }
         let page = match parts.as_slice() {
             [""] => srp_fleets(&viewer, false),
             ["all"] => srp_fleets(&viewer, true),
@@ -80,6 +105,9 @@ impl Plugin for ShipReplacement {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
         let path = submission.request.path.clone();
         let parts: Vec<&str> = path.split('/').collect();
+        if let (["settings"], "settings") = (parts.as_slice(), submission.form.as_str()) {
+            return save_settings(&viewer, &submission);
+        }
         let result = match (parts.as_slice(), submission.form.as_str()) {
             (["add"], "add_fleet") => add_fleet(&viewer, &submission),
             (["fleet", fleet], _) => fleet_action(&viewer, id(fleet)?, 1, &submission),
@@ -94,6 +122,13 @@ impl Plugin for ShipReplacement {
             SubmitResult::Page(page) => SubmitResult::Page(with_add(page, &viewer)),
             other => other,
         })
+    }
+
+    fn run_job(job: Job) -> Result<(), JobError> {
+        match job.name.as_str() {
+            RELAY => relay(),
+            other => Err(JobError::Permanent(format!("no job {other}"))),
+        }
     }
 }
 
@@ -783,15 +818,20 @@ fn request_srp(
         .and_then(|names| names.into_iter().find(|n| n.id == km.ship_type_id))
         .map_or_else(|| format!("Type {}", km.ship_type_id), |n| n.name);
     // Once per loss while its request exists (killmail_id is unique), and
-    // only on a fleet still open.
+    // only on a fleet still open. Its card for the SRP team's channel, if
+    // Settings picked one, is queued with it.
     let added = storage::query(
-        "INSERT INTO requests (fleet_id, account_id, character_id, character_name, killmail_id, \
-             killmail_hash, killboard_link, ship_type_id, ship_name, solar_system_id, \
-             killmail_time, kb_total_loss, additional_info) \
+        "WITH added AS (INSERT INTO requests (fleet_id, account_id, character_id, \
+             character_name, killmail_id, killmail_hash, killboard_link, ship_type_id, ship_name, \
+             solar_system_id, killmail_time, kb_total_loss, additional_info) \
          SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13 \
          WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed) \
            AND NOT EXISTS (SELECT 1 FROM legacy_claims WHERE killmail_id = $5) \
-         ON CONFLICT (killmail_id) DO NOTHING RETURNING id",
+         ON CONFLICT (killmail_id) DO NOTHING RETURNING id), \
+         queued AS (INSERT INTO outbox (request_id, channel) \
+             SELECT a.id, s.channel FROM added a, settings s \
+             WHERE s.id = 1 AND s.channel IS NOT NULL RETURNING 1) \
+         SELECT id, (SELECT count(*) FROM queued)::bigint FROM added",
         &[
             f.id.into(),
             viewer.account_id.into(),
@@ -809,14 +849,271 @@ fn request_srp(
         ],
     )
     .map_err(|e| failed("saving the request", e))?;
-    if added.rows.is_empty() {
+    let Some(row) = added.rows.first() else {
         return again("SRP has already been requested for this loss.");
-    }
+    };
     log::info(format!(
         "SRP requested on fleet {} for {} lost by {} ({}), kill {}",
         f.id, ship_name, character.name, character.id, link.id
     ));
+    // The relay posts it; the request stands whatever becomes of that.
+    if int(row, 1) > 0
+        && let Err(err) = jobs::enqueue(NewJob::new(RELAY).key(RELAY))
+    {
+        log::warn(format!(
+            "the SRP team's card for request {} waits for the next relay: {err:?}",
+            int(row, 0)
+        ));
+    }
     Ok(SubmitResult::Redirect(String::new()))
+}
+
+// ---- the SRP team's channel ------------------------------------------------------
+
+/// The channel Settings picked (aa-srp's `srp_team_discord_channel_id`),
+/// if any.
+fn team_channel() -> Result<Option<String>, PageError> {
+    Ok(query("SELECT channel FROM settings WHERE id = 1", &[])?
+        .first()
+        .and_then(|r| r.first())
+        .and_then(Db::as_text)
+        .map(str::to_owned))
+}
+
+/// Discord markdown out of what players write, and no bare links.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let text = text.replace("://", ":\u{200B}//");
+    for c in text.chars() {
+        if matches!(
+            c,
+            '\\' | '*' | '_' | '~' | '`' | '|' | '>' | '#' | '[' | ']' | '(' | ')' | '@' | '<'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A new request, as its card tells it.
+struct TeamRequest {
+    fleet_name: String,
+    srp_code: String,
+    character_id: i64,
+    character_name: String,
+    ship_type_id: i64,
+    ship_name: String,
+    killmail_id: i64,
+    info: String,
+    requested: Option<DateTime<Utc>>,
+}
+
+/// aa-srp's "New SRP Request" message to the SRP team, as a card: the
+/// pilot, the ship, the fleet and its SRP code, the loss on zKillboard
+/// (built from the killmail's id, never the pasted link) and the
+/// additional info only when there is some. Names and info are escaped,
+/// so nothing pings or links.
+fn team_card(r: &TeamRequest) -> Embed {
+    let mut card = Embed::new(format!("New SRP request: {}", r.ship_name))
+        .author(
+            r.character_name.clone(),
+            Some(Image::Character(r.character_id)),
+        )
+        .thumbnail(Image::TypeRender(r.ship_type_id))
+        // aa-srp's info colour.
+        .color(0x5b_c0de)
+        .field("SRP fleet", escape(&r.fleet_name))
+        .field("SRP code", r.srp_code.clone())
+        .field(
+            "Killmail",
+            format!(
+                "[zKillboard](https://zkillboard.com/kill/{}/)",
+                r.killmail_id
+            ),
+        )
+        .footer("Ship Replacement");
+    let info = r.info.trim();
+    if !info.is_empty() {
+        let mut cut: String = info.chars().take(CARD_INFO).collect();
+        if info.chars().count() > CARD_INFO {
+            cut.push('…');
+        }
+        card = card.description(escape(&cut));
+    }
+    if let Some(at) = r.requested {
+        card = card.timestamp(rfc3339(at));
+    }
+    card
+}
+
+/// Posts the queued cards, up to the host's limit a run, then comes back
+/// for the rest (as Contracts' and Freight's relays).
+fn relay() -> Result<(), JobError> {
+    let retry = |what: &str, err: storage::Error| JobError::Retry(format!("{what}: {err:?}"));
+    storage::execute(
+        "UPDATE outbox SET failed = 'too old to send' WHERE sent_at IS NULL AND failed IS NULL \
+         AND queued_at < now() - make_interval(hours => $1::int)",
+        &[STALE_HOURS.into()],
+    )
+    .map_err(|e| retry("expiring cards", e))?;
+    let mut gap = RELAY_GAP_SECONDS;
+    // A request removed with its fleet takes its card along.
+    let waiting = storage::query(
+        "SELECT o.id, o.channel, f.name, f.srp_code, r.character_id, r.character_name, \
+             r.ship_type_id, r.ship_name, r.killmail_id, r.additional_info, r.created_at \
+         FROM outbox o JOIN requests r ON r.id = o.request_id JOIN fleets f ON f.id = r.fleet_id \
+         WHERE o.sent_at IS NULL AND o.failed IS NULL ORDER BY o.id LIMIT $1",
+        &[SENDS_PER_RUN.into()],
+    )
+    .map_err(|e| retry("reading the outbox", e))?;
+    for row in &waiting.rows {
+        let id = int(row, 0);
+        let claimed = storage::execute(
+            "UPDATE outbox SET sent_at = now() WHERE id = $1 AND sent_at IS NULL AND failed IS NULL",
+            &[id.into()],
+        )
+        .map_err(|e| retry("claiming a card", e))?;
+        if claimed == 0 {
+            continue;
+        }
+        let card = team_card(&TeamRequest {
+            fleet_name: text(row, 2),
+            srp_code: text(row, 3),
+            character_id: int(row, 4),
+            character_name: text(row, 5),
+            ship_type_id: int(row, 6),
+            ship_name: text(row, 7),
+            killmail_id: int(row, 8),
+            info: text(row, 9),
+            requested: when(row, 10),
+        });
+        match discord::send_embed(&text(row, 1), &card, Mention::None) {
+            Ok(()) => {}
+            // Not a channel of the app's any more, Discord not set up, or
+            // a card the host refuses: it won't go later either.
+            Err(discord::Error::NotAllowed(why) | discord::Error::Invalid(why)) => {
+                log::warn(format!(
+                    "a new request wasn't posted to the SRP team's channel: {why}"
+                ));
+                storage::execute(
+                    "UPDATE outbox SET sent_at = NULL, failed = $2 WHERE id = $1",
+                    &[id.into(), why.into()],
+                )
+                .map_err(|e| retry("marking a card", e))?;
+            }
+            // Rate limited or Discord down: released for later.
+            Err(err) => {
+                log::info(format!("Discord: {err:?}; trying again in a minute"));
+                gap = RELAY_BACKOFF_SECONDS;
+                storage::execute(
+                    "UPDATE outbox SET sent_at = NULL WHERE id = $1",
+                    &[id.into()],
+                )
+                .map_err(|e| retry("releasing a card", e))?;
+                break;
+            }
+        }
+    }
+    // Sent cards are kept a week, for the record.
+    storage::execute(
+        "DELETE FROM outbox WHERE queued_at < now() - interval '7 days'",
+        &[],
+    )
+    .map_err(|e| retry("clearing the outbox", e))?;
+    let left = storage::query(
+        "SELECT 1 FROM outbox WHERE sent_at IS NULL AND failed IS NULL LIMIT 1",
+        &[],
+    )
+    .map_err(|e| retry("reading the outbox", e))?;
+    if !left.rows.is_empty() {
+        jobs::enqueue(
+            NewJob::new(RELAY)
+                .key(RELAY)
+                .at(rfc3339(Utc::now() + Duration::seconds(gap))),
+        )
+        .map_err(|e| JobError::Retry(format!("queuing the relay: {e:?}")))?;
+    }
+    Ok(())
+}
+
+/// Ship Replacement's settings, for `manage`: aa-srp's Setting, changed in
+/// Django's admin there.
+fn settings_page() -> Result<Page, PageError> {
+    let assigned = discord::channels();
+    let stored = team_channel()?;
+    let mut channels: Vec<(String, String)> = vec![(String::new(), "Not posted".to_owned())];
+    channels.extend(
+        assigned
+            .iter()
+            .map(|c| (c.id.clone(), format!("#{}", c.name))),
+    );
+    // The stored channel, while it's still the app's.
+    let current = stored
+        .clone()
+        .filter(|c| assigned.iter().any(|a| a.id == *c))
+        .unwrap_or_default();
+    let how = "an admin adds a channel on the Discord page, then assigns it to Ship Replacement \
+               under Administration, Apps.";
+    let mut group = SettingsGroup::new("Discord");
+    if assigned.is_empty() {
+        group = group.description(format!(
+            "No Discord channel is assigned to this app yet, so new requests aren't posted: {how}"
+        ));
+    } else if stored.is_some() && current.is_empty() {
+        group = group.description(
+            "The channel picked before is no longer assigned to this app, so new requests aren't \
+             posted: pick another, or ask an admin to assign it again.",
+        );
+    } else if let Some(why) = last_failure()? {
+        group = group.description(format!("The last new request wasn't posted: {why}."));
+    }
+    group = group.field(
+        Field::select("channel", "Post new SRP requests to", channels)
+            .value(current)
+            .help(format!(
+                "Each new request is posted there as a card, pinging nobody. To offer a channel \
+                 here, {how}"
+            )),
+    );
+    Ok(Page::new("Ship Replacement settings")
+        .description("aa-srp's settings: where the SRP team hears of new requests.")
+        .settings(SettingsForm::new("settings").group(group)))
+}
+
+/// Why the newest card that wasn't posted wasn't, if none was posted
+/// since.
+fn last_failure() -> Result<Option<String>, PageError> {
+    Ok(query(
+        "SELECT failed FROM outbox WHERE failed IS NOT NULL AND id > coalesce( \
+             (SELECT max(id) FROM outbox WHERE sent_at IS NOT NULL AND failed IS NULL), 0) \
+         ORDER BY id DESC LIMIT 1",
+        &[],
+    )?
+    .first()
+    .map(|r| text(r, 0)))
+}
+
+fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
+    if !viewer.can("manage") {
+        return Err(PageError::Forbidden);
+    }
+    // Only one of the app's own channels.
+    let value = submission.value("channel");
+    let channel = discord::channels()
+        .into_iter()
+        .map(|c| c.id)
+        .find(|id| id.as_str() == value);
+    storage::execute(
+        "UPDATE settings SET channel = $1 WHERE id = 1",
+        &[channel.clone().into()],
+    )
+    .map_err(|e| failed("saving settings", e))?;
+    log::info(format!(
+        "settings changed by {} ({}): SRP team channel {channel:?}",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect("settings".to_owned()))
 }
 
 // ---- fleet view ----------------------------------------------------------------
@@ -1381,5 +1678,81 @@ fn review_action(
             back()
         }
         _ => Err(PageError::NotFound),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn rifter(info: &str) -> TeamRequest {
+        TeamRequest {
+            fleet_name: "Op Rock".to_owned(),
+            srp_code: "ABCDEF0123456789".to_owned(),
+            character_id: 443630591,
+            character_name: "Pilot A".to_owned(),
+            ship_type_id: 587,
+            ship_name: "Rifter".to_owned(),
+            killmail_id: 1001,
+            info: info.to_owned(),
+            requested: DateTime::parse_from_rfc3339("2026-09-20T19:30:00Z")
+                .ok()
+                .map(|t| t.with_timezone(&Utc)),
+        }
+    }
+
+    #[test]
+    fn a_new_request_is_posted_as_aa_srp_tells_it() {
+        let card = team_card(&rifter(""));
+        assert_eq!(card.title, "New SRP request: Rifter");
+        let author = card.author.as_ref().unwrap();
+        assert_eq!(author.name, "Pilot A");
+        assert!(matches!(author.icon, Some(Image::Character(443630591))));
+        assert!(matches!(card.thumbnail, Some(Image::TypeRender(587))));
+        assert_eq!(card.color, Some(0x5b_c0de));
+        let fields: Vec<(&str, &str)> = card
+            .fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.value.as_str()))
+            .collect();
+        assert_eq!(
+            fields,
+            vec![
+                ("SRP fleet", "Op Rock"),
+                ("SRP code", "ABCDEF0123456789"),
+                (
+                    "Killmail",
+                    "[zKillboard](https://zkillboard.com/kill/1001/)"
+                ),
+            ]
+        );
+        assert_eq!(card.footer.as_deref(), Some("Ship Replacement"));
+        assert_eq!(card.timestamp.as_deref(), Some("2026-09-20T19:30:00Z"));
+        // No additional info, no description (as aa-srp's).
+        assert!(card.description.is_none());
+        assert!(team_card(&rifter("  \n ")).description.is_none());
+    }
+
+    #[test]
+    fn additional_info_cannot_ping_link_or_overflow() {
+        let card = team_card(&rifter("**x** @everyone https://evil"));
+        let text = card.description.unwrap();
+        assert!(
+            text.starts_with("\\*\\*x\\*\\* \\@everyone https:"),
+            "{text}"
+        );
+        assert!(!text.contains("://"), "{text}");
+        // Escaping doubles markdown: still within the host's 2,000.
+        let long = team_card(&rifter(&"*".repeat(1000))).description.unwrap();
+        assert!(long.chars().count() <= 2000, "{}", long.chars().count());
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn names_cannot_ping_or_link() {
+        assert_eq!(escape("@here [x](y)"), "\\@here \\[x\\]\\(y\\)");
+        assert!(!escape("https://evil.example").contains("://"));
     }
 }

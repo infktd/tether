@@ -17,6 +17,9 @@ key = "PUBLISHER_KEY"
 [capabilities]
 storage = true
 http = ["zkillboard.com"]
+# aa-srp's SRP team channel: new requests are posted, pinging nobody, to
+# the channel Settings picks, none by default.
+discord = ["send_message"]
 
 # AA's srp permissions: access_srp for pilots (grant it to Member; they
 # see every fleet's requests and totals, as in AA), add_srpfleetmain for
@@ -25,6 +28,12 @@ http = ["zkillboard.com"]
 access_srp = "Can access the SRP module: see SRP fleets and their requests, and request SRP for your losses"
 add_srpfleetmain = "Can add SRP fleets"
 srp_management = "Can manage SRP: approve, reject, update amounts and mark paid; add, complete and remove fleets"
+# Not in AA (aa-srp's settings live in Django's admin): nobody holds it
+# until an admin grants it (superusers do).
+manage = "Change the Discord channel new SRP requests are posted to"
+
+[permission_notes]
+manage = "For whoever runs SRP. Holders pick the Discord channel new requests are posted to. Not in AA: aa-srp's setting is changed by superusers in Django's admin, so nobody holds it until granted."
 
 # 0.2 called it manage_srp; its grants move. 0.2's change_srpuserrequest
 # is gone (AA has no such permission): srp_management updates amounts.
@@ -36,6 +45,10 @@ manage_srp = "srp_management"
 [[pages]]
 path = ""
 permission = "access_srp"
+
+[[pages]]
+path = "settings"
+permission = "manage"
 
 [[navigation]]
 label = "Ship Replacement"
