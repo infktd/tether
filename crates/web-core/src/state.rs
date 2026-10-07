@@ -54,6 +54,8 @@ pub struct Limits {
     pub plugin_pages: RateLimiter<(i64, String)>,
     /// Token Management refreshes, per account: each calls EVE SSO.
     pub token_refresh: RateLimiter<i64>,
+    /// Audit log CSV exports, per account: each reads the whole log.
+    pub audit_exports: RateLimiter<i64>,
     /// Signed-out page visits remembered for after the login, per client
     /// IP: each writes a row. Over it, the visit still goes to log in.
     pub login_destinations: RateLimiter,
@@ -66,6 +68,7 @@ impl Default for Limits {
             plugin_submits: RateLimiter::new(30, std::time::Duration::from_secs(60)),
             plugin_pages: RateLimiter::new(120, std::time::Duration::from_secs(60)),
             token_refresh: RateLimiter::new(10, std::time::Duration::from_secs(60)),
+            audit_exports: RateLimiter::new(10, std::time::Duration::from_secs(60)),
             login_destinations: RateLimiter::new(60, std::time::Duration::from_secs(60)),
         }
     }

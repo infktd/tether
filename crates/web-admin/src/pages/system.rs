@@ -2,20 +2,19 @@
 //! Discord, the job queue, backups, apps' data sources and updates are
 //! working, then ESI's requests, the queue, schedules and the version.
 //! Settings (`/admin/settings`): the site's name, the accent colour, the
-//! notification limit and update checks. And the audit log
-//! (`/admin/audit`).
+//! notification limit and update checks.
 
 use std::collections::HashMap;
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
-use tether_core::permissions::{ADMIN_AUDIT, ADMIN_SYSTEM};
+use tether_core::permissions::ADMIN_SYSTEM;
 use tether_db::audit::{self, Actor};
 use tether_esi::budget::{BULK_ERROR_RESERVE, BudgetSnapshot};
 use tether_jobs::schedule::{LastRun, ScheduleRow};
@@ -1183,60 +1182,6 @@ pub async fn check_updates(
         Ok(()) => Ok(super::stay::back(HEALTH, "Checked for updates.")),
         Err(err) => health_page(&state, shell, Some(err)).await,
     }
-}
-
-pub struct AuditRow {
-    pub id: i64,
-    pub at: String,
-    pub actor: String,
-    pub action: String,
-    pub target: String,
-    pub details: String,
-}
-
-#[derive(Template)]
-#[template(path = "admin_audit.html")]
-struct AuditPage {
-    shell: Shell,
-    rows: Vec<AuditRow>,
-    /// Link to the next (older) page.
-    older: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AuditQuery {
-    before: Option<i64>,
-}
-
-const AUDIT_PAGE: i64 = 50;
-
-/// `GET /admin/audit`
-pub async fn audit_log(
-    State(state): State<AppState>,
-    session: Option<CurrentSession>,
-    Query(query): Query<AuditQuery>,
-) -> Result<Response, PageError> {
-    let (_, shell) = guard(&state, session, ADMIN_AUDIT, "audit").await?;
-    let entries = audit::list(&state.db, AUDIT_PAGE + 1, query.before).await?;
-    let more = entries.len() as i64 > AUDIT_PAGE;
-    let rows: Vec<AuditRow> = entries
-        .into_iter()
-        .take(AUDIT_PAGE as usize)
-        .map(|e| AuditRow {
-            id: e.id,
-            at: e.at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            actor: e.actor_name.unwrap_or_else(|| "System".to_owned()),
-            action: e.action,
-            target: e.target.unwrap_or_default(),
-            details: if e.details.as_object().is_some_and(|o| o.is_empty()) {
-                String::new()
-            } else {
-                e.details.to_string()
-            },
-        })
-        .collect();
-    let older = more.then(|| rows.last().map(|r| r.id)).flatten();
-    Ok(render(StatusCode::OK, &AuditPage { shell, rows, older }))
 }
 
 #[derive(Template)]

@@ -1003,6 +1003,17 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/admin/audit?who=system&action=group.*&from=2026-01-01
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/admin/audit.csv?app=acme.moons
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+header "Content-Disposition" not exists
+
 POST {{base}}/admin/system/updates/check
 Origin: {{base}}
 HTTP 303

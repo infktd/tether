@@ -23,8 +23,8 @@ mod api;
 /// infrastructure, and the admin, member and apps pages.
 pub mod pages {
     pub use tether_web_admin::pages::{
-        admin, autogroups, blacklist, compliance, discord, menu, permissions_audit, pings, plugins,
-        setup, states, system, users,
+        admin, audit, autogroups, blacklist, compliance, discord, menu, permissions_audit, pings,
+        plugins, setup, states, system, users,
     };
     pub use tether_web_apps::pages::{plugin_pages, plugin_visuals};
     pub use tether_web_core::pages::*;
@@ -374,7 +374,8 @@ pub fn router(state: AppState) -> Router {
             "/admin/system/schedules/{name}/run",
             post(pages::system::run_now),
         )
-        .route("/admin/audit", get(pages::system::audit_log))
+        .route("/admin/audit", get(pages::audit::index))
+        .route("/admin/audit.csv", get(pages::audit::csv))
         // Uploads and keys live outside /admin/plugins/, so no plugin id
         // can collide with their routes.
         .route("/admin/plugins", admin_plugins_route())

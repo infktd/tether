@@ -221,9 +221,15 @@ impl ListQuery {
         }
     }
 
-    /// Adds `name` when `value` (trimmed) isn't empty.
+    /// Adds `name` when `value` (trimmed) isn't empty. The search keeps
+    /// what's read of it ([`cut`]), so a long one isn't copied into every
+    /// link.
     pub fn param(mut self, name: &str, value: &str) -> Self {
-        let value = value.trim();
+        let value = if name == SEARCH {
+            cut(value)
+        } else {
+            value.trim()
+        };
         if !value.is_empty() {
             self.params.push((name.to_owned(), value.to_owned()));
         }
@@ -306,19 +312,24 @@ fn address(path: &str, parts: &[String]) -> String {
     }
 }
 
+/// What's read of a search: trimmed, its first [`SEARCH_BYTES`].
+pub fn cut(q: &str) -> &str {
+    let q = q.trim();
+    if q.len() <= SEARCH_BYTES {
+        return q;
+    }
+    let mut end = SEARCH_BYTES;
+    while !q.is_char_boundary(end) {
+        end -= 1;
+    }
+    q[..end].trim_end()
+}
+
 /// A search's words, lowercase: its first [`SEARCH_WORDS`] different
 /// ones, from its first [`SEARCH_BYTES`].
 pub fn words(q: &str) -> Vec<String> {
-    let mut cut = q.trim();
-    if cut.len() > SEARCH_BYTES {
-        let mut end = SEARCH_BYTES;
-        while !cut.is_char_boundary(end) {
-            end -= 1;
-        }
-        cut = &cut[..end];
-    }
     let mut words: Vec<String> = Vec::new();
-    for word in cut.split_whitespace().map(str::to_lowercase) {
+    for word in cut(q).split_whitespace().map(str::to_lowercase) {
         if words.len() == SEARCH_WORDS {
             break;
         }
@@ -341,6 +352,25 @@ pub fn matches(words: &[String], fields: &[&str]) -> bool {
         .collect::<Vec<_>>()
         .join(" ");
     words.iter().all(|w| text.contains(w.as_str()))
+}
+
+/// The query of the page the browser is on (htmx's `HX-Current-URL`)
+/// when it's `path`, else the default: an action answered with the page
+/// itself shows it with the search and filters it had.
+pub fn current_query<T>(origin: &str, headers: &axum::http::HeaderMap, path: &str) -> T
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    let Some(page) = super::stay::current_page(origin, headers) else {
+        return T::default();
+    };
+    if page.split('?').next() != Some(path) {
+        return T::default();
+    }
+    axum::http::Uri::try_from(page.as_str())
+        .ok()
+        .and_then(|uri| axum::extract::Query::<T>::try_from_uri(&uri).ok())
+        .map_or_else(T::default, |q| q.0)
 }
 
 /// What an empty list says under a search: `Nothing matches “jita”.`
@@ -388,5 +418,10 @@ mod tests {
         assert!(matches(&words("rif PIL"), &["Rifter", "Pilot"]));
         assert!(!matches(&words("rif zzz"), &["Rifter", "Pilot"]));
         assert!(matches(&[], &["anything"]));
+        // A long search keeps what's read of it, in every link too.
+        let long = "é".repeat(150);
+        let list = ListQuery::new("/x").param("q", &long);
+        assert_eq!(list.get("q").len(), 200);
+        assert!(cut(&long).chars().all(|c| c == 'é'));
     }
 }

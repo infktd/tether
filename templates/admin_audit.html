@@ -15,10 +15,11 @@
     </div>
   </div>
   {% include "admin_views.html" %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
 
   <section class="card data-card">
     {% if rows.is_empty() %}
-    <p class="p-5 text-sm text-muted-foreground">Nothing here yet.</p>
+    <p class="p-5 text-sm text-muted-foreground">{{ empty }}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">When (EVE)</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Details</th></tr></thead>
@@ -26,8 +27,8 @@
         {% for r in rows %}
         <tr>
           <td class="num">{{ r.at }}</td>
-          <td>{{ r.actor }}</td>
-          <td><div class="num font-medium">{{ r.action }}</div>{% if !r.target.is_empty() %}<div class="text-xs text-muted-foreground num">{{ r.target }}</div>{% endif %}</td>
+          <td><a href="{{ r.actor_href }}" title="Only {{ r.actor }}">{{ r.actor }}</a></td>
+          <td><a class="num font-medium" href="{{ r.action_href }}" title="Only {{ r.action }}">{{ r.action }}</a>{% if !r.target.is_empty() %}<div class="text-xs text-muted-foreground num">{{ r.target }}</div>{% endif %}</td>
           <td class="w-full whitespace-normal">{% if r.details.len() > 120 %}<details><summary class="cursor-pointer"><code class="num text-xs break-all">{{ r.details|truncate(100) }}</code></summary><code class="num text-xs break-all">{{ r.details }}</code></details>{% else %}<code class="num text-xs break-all">{{ r.details }}</code>{% endif %}</td>
         </tr>
         {% endfor %}
@@ -36,9 +37,11 @@
     {% endif %}
   </section>
 
+  {% if older.is_some() || newest.is_some() %}
   <div class="flex gap-3">
-    {% if let Some(before) = older %}<a class="btn" data-variant="outline" href="/admin/audit?before={{ before }}">Older</a>{% endif %}
-    <a class="btn" data-variant="ghost" href="/admin/audit">Newest</a>
+    {% if let Some(href) = older %}<a class="btn" data-variant="outline" href="{{ href }}">Older</a>{% endif %}
+    {% if let Some(href) = newest %}<a class="btn" data-variant="ghost" href="{{ href }}">Newest</a>{% endif %}
   </div>
+  {% endif %}
 </div>
 {% endblock %}

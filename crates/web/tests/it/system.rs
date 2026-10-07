@@ -382,6 +382,302 @@ async fn the_audit_log_pages_back(db: PgPool) {
     assert!(!second.contains("thing:59"));
 }
 
+/// Entries for the audit log's filters: the owner's group changes, the
+/// system's app work (an app's own, one of its schedules', and a state
+/// requiring it), the CLI's, and one dated last year.
+async fn audit_entries(h: &Harness) -> i64 {
+    use serde_json::json;
+    use tether_db::audit::{Actor, record};
+    let owner: i64 =
+        sqlx::query_scalar("SELECT account_id FROM core.characters WHERE id = 196379789")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let me = Actor::Account(tether_db::accounts::AccountId(owner));
+    record(
+        &h.db,
+        me,
+        "group.join",
+        Some("group:1"),
+        json!({"name": "Capitals"}),
+    )
+    .await
+    .unwrap();
+    record(
+        &h.db,
+        me,
+        "group.leave",
+        Some("group:2"),
+        json!({"name": "Logistics"}),
+    )
+    .await
+    .unwrap();
+    record(
+        &h.db,
+        Actor::System,
+        "plugin.installed",
+        Some("plugin:acme.moons"),
+        json!({}),
+    )
+    .await
+    .unwrap();
+    record(
+        &h.db,
+        Actor::System,
+        "schedule.run_now",
+        Some("schedule:plugin:acme.moons:sync"),
+        json!({}),
+    )
+    .await
+    .unwrap();
+    record(
+        &h.db,
+        Actor::System,
+        "state.app_required",
+        Some("state:1"),
+        json!({"app": "acme.moons"}),
+    )
+    .await
+    .unwrap();
+    record(
+        &h.db,
+        Actor::Cli,
+        "sync.trigger",
+        None,
+        json!({"note": "=HYPERLINK(\"x\")"}),
+    )
+    .await
+    .unwrap();
+    // Entries can't be changed, so last year's is written as it was.
+    sqlx::query(
+        "INSERT INTO core.audit_log (at, action, target) VALUES ('2025-03-01T12:00:00Z', 'old.thing', 'thing:old')",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    owner
+}
+
+/// The rows' actions on an audit log page.
+fn audit_rows(body: &str) -> Vec<String> {
+    body.split(r#"<a class="num font-medium" href="#)
+        .skip(1)
+        .filter_map(|rest| rest.split('>').nth(1))
+        .filter_map(|text| text.split('<').next())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_audit_log_filters_by_who_action_app_and_date(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    let me = audit_entries(&h).await;
+    let rows = |uri: String| {
+        let (h, owner) = (&h, owner.clone());
+        async move {
+            let res = page(h, &uri, &owner).await;
+            assert_eq!(res.status, StatusCode::OK, "{uri}");
+            (audit_rows(&res.body), res.body)
+        }
+    };
+    let (all, body) = rows("/admin/audit".to_owned()).await;
+    assert!(all.len() >= 7, "{all:?}");
+    // The toolbar: the search, the filters and the CSV with them.
+    assert!(body.contains(r#"<form class="toolbar-search" method="get" action="/admin/audit""#));
+    assert!(
+        body.contains(r#"href="/admin/audit?action=group.%2A">group</a>"#),
+        "{body}"
+    );
+    assert!(body.contains(r#"href="/admin/audit?app=acme.moons">acme.moons</a>"#));
+    assert!(body.contains(r#"href="/admin/audit.csv""#));
+
+    let (mine, body) = rows(format!("/admin/audit?who={me}")).await;
+    assert_eq!(mine, ["group.leave", "group.join", "setup.owner"]);
+    assert!(body.contains(
+        r#"<span class="filter-chip">Who <span class="filter-chip-value">Chribba</span>"#
+    ));
+    assert!(body.contains(&format!(r#"href="/admin/audit.csv?who={me}""#)));
+    let (cli, _) = rows("/admin/audit?who=cli".to_owned()).await;
+    assert_eq!(cli, ["sync.trigger"]);
+    let (system, _) = rows("/admin/audit?who=system".to_owned()).await;
+    assert!(
+        system.contains(&"plugin.installed".to_owned())
+            && !system.contains(&"sync.trigger".to_owned())
+    );
+
+    let (family, _) = rows("/admin/audit?action=group.*".to_owned()).await;
+    assert_eq!(family, ["group.leave", "group.join"]);
+    let (one, body) = rows("/admin/audit?action=group.join".to_owned()).await;
+    assert_eq!(one, ["group.join"]);
+    assert!(body.contains(r#"Action <span class="filter-chip-value">group.join</span>"#));
+
+    let (app, _) = rows("/admin/audit?app=acme.moons".to_owned()).await;
+    assert_eq!(
+        app,
+        ["state.app_required", "schedule.run_now", "plugin.installed"]
+    );
+    let (both, _) = rows("/admin/audit?app=acme.moons&action=schedule.*".to_owned()).await;
+    assert_eq!(both, ["schedule.run_now"]);
+
+    let (old, body) = rows("/admin/audit?from=2025-01-01&to=2025-12-31".to_owned()).await;
+    assert_eq!(old, ["old.thing"]);
+    assert!(
+        body.contains(r#"Date <span class="filter-chip-value">2025-01-01 to 2025-12-31</span>"#)
+    );
+    let (recent, _) = rows("/admin/audit?from=2026-01-01".to_owned()).await;
+    assert!(!recent.contains(&"old.thing".to_owned()));
+
+    let (found, _) = rows("/admin/audit?q=LOGISTICS".to_owned()).await;
+    assert_eq!(found, ["group.leave"]);
+    // A search's % is a percent sign, not a wildcard.
+    let (none, body) = rows("/admin/audit?q=%25%25".to_owned()).await;
+    assert!(none.is_empty());
+    assert!(body.contains("Nothing matches these filters."));
+    // Nonsense is left out rather than refused.
+    let (all_again, _) = rows("/admin/audit?who=nobody&app=a%20b&from=yesterday".to_owned()).await;
+    assert_eq!(all_again, all);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_audit_log_pages_back_within_its_filters(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = owner_and_pilot(&h).await;
+    for i in 0..60 {
+        for action in ["test.kept", "other.dropped"] {
+            tether_db::audit::record(
+                &h.db,
+                tether_db::audit::Actor::System,
+                action,
+                Some(&format!("thing:{i}")),
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let first = page(&h, "/admin/audit?action=test.kept", &owner).await.body;
+    let older = first
+        .split(r#"href="/admin/audit?action=test.kept&#38;before="#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_owned();
+    let second = page(
+        &h,
+        &format!("/admin/audit?action=test.kept&before={older}"),
+        &owner,
+    )
+    .await
+    .body;
+    let rows = audit_rows(&second);
+    assert_eq!(rows.len(), 10, "{rows:?}");
+    assert!(rows.iter().all(|r| r == "test.kept"));
+    assert!(second.contains(r#"href="/admin/audit?action=test.kept">Newest</a>"#));
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_audit_log_exports_its_filtered_rows_as_csv(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    let me = audit_entries(&h).await;
+    assert_eq!(
+        send(&h.app, get("/admin/audit.csv", &[])).await.location(),
+        "/login"
+    );
+    assert_eq!(
+        page(&h, "/admin/audit.csv", &pilot).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let res = page(&h, "/admin/audit.csv?app=acme.moons", &owner).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.headers["content-type"], "text/csv; charset=utf-8");
+    let disposition = res.headers["content-disposition"].to_str().unwrap();
+    assert!(
+        disposition.starts_with("attachment; filename=\"tether-audit-"),
+        "{disposition}"
+    );
+    let lines: Vec<&str> = res.body.lines().collect();
+    assert_eq!(lines[0], "id,at (EVE),who,account id,action,target,details");
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert!(lines[1].contains(",System,,state.app_required,state:1,"));
+    // A formula in the details is defused.
+    let cli = page(&h, "/admin/audit.csv?who=cli", &owner).await.body;
+    assert!(
+        cli.contains(r#",CLI,,sync.trigger,,"{""note"":""=HYPERLINK(\""x\"")""}""#),
+        "{cli}"
+    );
+    // The export is logged, with its filters.
+    let logged: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM core.audit_log WHERE action = 'audit.export' ORDER BY id LIMIT 1",
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        logged,
+        serde_json::json!({"filters": {"app": "acme.moons"}})
+    );
+    // Every page of the log, a thousand at a time.
+    for i in 0..1_100 {
+        tether_db::audit::record(
+            &h.db,
+            tether_db::audit::Actor::System,
+            "bulk.entry",
+            Some(&format!("thing:{i}")),
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
+    let bulk = page(&h, "/admin/audit.csv?action=bulk.entry", &owner)
+        .await
+        .body;
+    assert_eq!(bulk.lines().count(), 1_101);
+    let mine = page(&h, &format!("/admin/audit.csv?who={me}"), &owner)
+        .await
+        .body;
+    assert!(mine.contains(",group.join,") && mine.contains(",group.leave,"));
+    assert!(
+        mine.lines()
+            .skip(1)
+            .all(|l| l.contains(&format!(",Chribba,{me},"))),
+        "{mine}"
+    );
+    // Asked by htmx, it's a navigation, so the browser saves it.
+    let mut req = get("/admin/audit.csv?who=cli", &[(SESSION, &owner)]);
+    req.headers_mut()
+        .insert("hx-request", "true".parse().unwrap());
+    let res = send(&h.app, req).await;
+    assert_eq!(res.headers["hx-redirect"], "/admin/audit.csv?who=cli");
+    assert!(res.body.is_empty());
+    // A link from another site opens the log instead, exporting nothing.
+    let exports = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.audit_log WHERE action = 'audit.export'",
+        )
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    };
+    let before = exports().await;
+    let mut req = get("/admin/audit.csv?q=planted", &[(SESSION, &owner)]);
+    req.headers_mut()
+        .insert("sec-fetch-site", "cross-site".parse().unwrap());
+    let res = send(&h.app, req).await;
+    assert_eq!(res.location(), "/admin/audit?q=planted");
+    assert_eq!(exports().await, before);
+    // Dates no log could hold are left out, not a server error.
+    let res = page(&h, "/admin/audit.csv?from=-5000-01-01&who=cli", &owner).await;
+    assert_eq!(res.status, StatusCode::OK);
+    // At most ten exports a minute each.
+    let mut last = StatusCode::OK;
+    for _ in 0..10 {
+        last = page(&h, "/admin/audit.csv?who=cli", &owner).await.status;
+    }
+    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn github_learns_nothing_about_the_instance_and_checks_do_not_pile_up(db: PgPool) {
     let h = harness(db, true).await;

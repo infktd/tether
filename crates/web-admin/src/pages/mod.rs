@@ -7,6 +7,7 @@
 pub use tether_web_core::pages::*;
 
 pub mod admin;
+pub mod audit;
 pub mod autogroups;
 pub mod blacklist;
 pub mod compliance;

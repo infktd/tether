@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT actor_account_id AS \"id!\",\n               (array_agg(actor_name ORDER BY id DESC))[1] AS name\n        FROM (SELECT id, actor_account_id, actor_name FROM core.audit_log\n              ORDER BY id DESC LIMIT $2) r\n        WHERE actor_account_id IS NOT NULL\n        GROUP BY actor_account_id\n        ORDER BY max(id) DESC\n        LIMIT $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.audit_log",
+            "name": "actor_account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "8e67776704df670f5582f5e29bd1382175eab3de115c32a00805550295ed9eca"
+}

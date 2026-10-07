@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH RECURSIVE a(app) AS (\n            (SELECT core.audit_log_app(target, details) FROM core.audit_log\n             WHERE core.audit_log_app(target, details) IS NOT NULL\n             ORDER BY core.audit_log_app(target, details) LIMIT 1)\n            UNION ALL\n            SELECT (SELECT core.audit_log_app(l.target, l.details) FROM core.audit_log l\n                    WHERE core.audit_log_app(l.target, l.details) IS NOT NULL\n                      AND core.audit_log_app(l.target, l.details) > a.app\n                    ORDER BY core.audit_log_app(l.target, l.details) LIMIT 1)\n            FROM a WHERE a.app IS NOT NULL\n        )\n        SELECT app AS \"app!\" FROM a WHERE app IS NOT NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "app!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a9b9d2d3cd16dbc48e5860a0186bc2cd593a8f4bcd98410f01f2f937327d83fb"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH RECURSIVE a(action) AS (\n            (SELECT action FROM core.audit_log ORDER BY action LIMIT 1)\n            UNION ALL\n            SELECT (SELECT l.action FROM core.audit_log l\n                    WHERE l.action > a.action ORDER BY l.action LIMIT 1)\n            FROM a WHERE a.action IS NOT NULL\n        )\n        SELECT action AS \"action!\" FROM a WHERE action IS NOT NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "action!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2ecb0eb22ee55c0e9b034cbe847f7438a4adf0ce4d957c39612956d3656ddaf6"
+}

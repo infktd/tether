@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, at, actor_account_id, actor_name, action, target, details\n        FROM core.audit_log\n        WHERE $2::bigint IS NULL OR id < $2\n        ORDER BY id DESC\n        LIMIT $1\n        ",
+  "query": "\n        SELECT id, at, actor_account_id, actor_name, action, target, details\n        FROM core.audit_log l\n        WHERE ($10::timestamptz IS NULL OR (at, id) < ($10, $2::bigint))\n          AND ($3::bigint IS NULL OR actor_account_id = $3)\n          AND ($4::text IS NULL OR (actor_account_id IS NULL AND CASE WHEN $4 = 'cli'\n                   THEN actor_name = 'cli' ELSE actor_name IS DISTINCT FROM 'cli' END))\n          AND ($5::text[] IS NULL OR action = ANY($5))\n          AND ($6::text IS NULL OR core.audit_log_app(target, details) = $6)\n          AND ($7::timestamptz IS NULL OR at >= $7)\n          AND ($8::timestamptz IS NULL OR at < $8)\n          AND ($9::text[] IS NULL OR NOT EXISTS (\n                SELECT 1 FROM unnest($9::text[]) AS w(p)\n                WHERE concat_ws(' ', l.actor_name, l.action, l.target, l.details::text) NOT ILIKE w.p))\n        ORDER BY at DESC, id DESC\n        LIMIT $1\n        ",
   "describe": {
     "columns": [
       {
@@ -84,7 +84,15 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Int8"
+        "Int8",
+        "Int8",
+        "Text",
+        "TextArray",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "TextArray",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -97,5 +105,5 @@
       false
     ]
   },
-  "hash": "de0824a9017db884c1cbe551c2f9f5dd665760c1e648145265b0fcfd475f7a1c"
+  "hash": "e20a292b92f41bcff1973c63faa56b22f8b222c53155769f8bcf481a321605f6"
 }
