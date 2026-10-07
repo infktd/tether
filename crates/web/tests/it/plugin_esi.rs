@@ -1227,6 +1227,12 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     )
     .await;
     assert!(out.starts_with("err Error::NotAllowed"), "{out}");
+    // No ping channel to give it yet: its page says where to add one.
+    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
+    assert!(
+        admin.contains(r#"A channel must be a ping channel first: add one on the <a class="underline underline-offset-4" href="/admin/discord">"#),
+        "{admin}"
+    );
     discord_ready(&h, &owner).await;
     let out = probe(
         &h,
@@ -1235,6 +1241,12 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     )
     .await;
     assert!(out.contains("not one of this plugin"), "{out}");
+    let admin = page(&h, "/admin/plugins/acme.esi", &owner).await.body;
+    assert!(admin.contains("Add a ping channel"), "{admin}");
+    assert!(
+        !admin.contains("A channel must be a ping channel first"),
+        "{admin}"
+    );
 
     let res = send(
         &h.app,
