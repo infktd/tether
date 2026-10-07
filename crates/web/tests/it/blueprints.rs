@@ -771,6 +771,89 @@ async fn blueprints_end_to_end(db: PgPool) {
     grant(&h, OUTSIDER, &["manage_requests"]).await;
     let open = page(&h, &format!("/plugins/{ID}/open"), &outsider).await;
     assert!(!open.body.contains("Merlin Blueprint"), "{}", open.body);
+
+    // The pilot cancels their own: the builders are told, as AA tells
+    // its approvers, on Discord (not every approver's bell)...
+    let merlin = request_of(&h, &schema, 3003).await;
+    page(&h, &format!("/plugins/{ID}/requests"), &pilot).await;
+    let res = post(
+        &h,
+        &pilot,
+        "requests",
+        &format!("_form=cancel_own&request={merlin}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let posted = cards(&h).await;
+    let last = posted.last().unwrap();
+    assert_eq!(last["title"], "Request canceled: Merlin Blueprint");
+    assert_eq!(
+        last["description"],
+        "The Mittani has canceled their request for Merlin Blueprint."
+    );
+    // ... and the builder who took one, in the bell.
+    let res = post(&h, &pilot, "", "_form=request&item=3001").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let rifter = request_of(&h, &schema, 3001).await;
+    page(&h, &format!("/plugins/{ID}/open"), &owner).await;
+    let res = post(
+        &h,
+        &owner,
+        "open",
+        &format!("_form=mark&request={rifter}&to=in_progress"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    page(&h, &format!("/plugins/{ID}/requests"), &pilot).await;
+    let res = post(
+        &h,
+        &pilot,
+        "requests",
+        &format!("_form=cancel_own&request={rifter}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        notices(&h, owner_account).await.last().unwrap(),
+        "Blueprints: Rifter Blueprint request canceled | \
+         The Mittani has canceled their request for Rifter Blueprint."
+    );
+    assert_eq!(
+        cards(&h).await.last().unwrap()["title"],
+        "Request canceled: Rifter Blueprint"
+    );
+    // Cancelling it again changes nothing and tells nobody.
+    let before = cards(&h).await.len();
+    post(
+        &h,
+        &pilot,
+        "requests",
+        &format!("_form=cancel_own&request={rifter}"),
+    )
+    .await;
+    assert_eq!(cards(&h).await.len(), before);
+}
+
+/// The cards the app posted to Discord.
+async fn cards(h: &Harness) -> Vec<serde_json::Value> {
+    h.discord_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/messages"))
+        .map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["embeds"][0].clone())
+        .collect()
+}
+
+/// The newest request for blueprint `item`.
+async fn request_of(h: &Harness, schema: &str, item: i64) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        r#"SELECT max(id) FROM "{schema}".requests WHERE item_id = {item}"#
+    )))
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
 }
 
 const FORMULA_BP: i64 = 46166;
@@ -797,7 +880,8 @@ async fn copies_only_of_originals_never_of_formulas(db: PgPool) {
     mount_world(&h).await;
     let owner = set_up(&h).await;
     sync(&h).await;
-    let offered = |body: &str, item: i64| body.contains(&format!("&#34;item&#34;:&#34;{item}&#34;"));
+    let offered =
+        |body: &str, item: i64| body.contains(&format!("&#34;item&#34;:&#34;{item}&#34;"));
 
     // The formula isn't named yet: it waits, as one can't tell.
     let library = page(&h, &format!("/plugins/{ID}"), &owner).await;

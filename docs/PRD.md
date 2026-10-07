@@ -334,7 +334,7 @@ Phase 5, release 1.0:
 - [ ] Structures: edit, enable and disable fuel alert configs (aa-structures `structures/models/notifications.py:716`, `:724`)
 - [ ] Structures: send a test notification to a channel (aa-structures `structures/admin.py:1170`, `tasks.py:252`)
 - [x] Blueprints: copies requested of originals only, never reaction formulas (aa-blueprints `blueprints/templates/blueprints/modals/view_blueprint_content.html:27`, `:88`). Done in 0.1.12: Request only on originals whose name doesn't end in " Formula" (one not named yet waits), checked again on submit
-- [ ] Blueprints: a requester's cancel tells the builders (aa-blueprints `blueprints/models.py:924-935`)
+- [x] Blueprints: a requester's cancel tells the builders (aa-blueprints `blueprints/models.py:924-935`). Done in 0.1.12: a "Request canceled" card in the builders' channel, where new requests go, and a bell notice to the builder who took it, in AA's words
 - [ ] Ship Replacement: the pilot told when a request is approved or rejected (AA core `srp/views.py:273-278`, `:306-311`; aa-srp `aasrp/views/ajax.py:446-455`)
 - [ ] Ship Replacement: the pilot sees their request's history and reject reason (aa-srp `aasrp/views/ajax.py:235`)
 - [ ] Ship Replacement: remove a single request (AA core `srp/views.py:227-250`)

@@ -14,8 +14,9 @@
 //!   builder may fulfil (the owner's corporation is one of theirs, or the
 //!   owner is their own character) and those they took: In progress,
 //!   Fulfilled, Re-open, Cancel. The pilot hears each step in Tether's
-//!   notifications; builders get new requests on Discord (a notice to
-//!   every approver, as AA sends, would reach other corporations').
+//!   notifications; builders get new and cancelled requests on Discord (a
+//!   notice to every approver, as AA sends, would reach other
+//!   corporations'), and the builder who took one hears of its cancel.
 //! - **Admin notices** (aa-blueprints' BLUEPRINTS_ADMIN_NOTIFICATIONS_ENABLED,
 //!   on Settings): `manage` holders, superusers included, hear when an
 //!   owner is added: a personal one at once, by its character, a
@@ -793,11 +794,7 @@ fn request_copy(access: &Access, item: i64, runs: &str) -> Result<SubmitResult, 
 
 /// A card for a new request in the channel Settings picked, if any.
 fn post_card(a: &About) {
-    let Ok(settings) = settings() else { return };
-    let Some(channel) = settings.channel else {
-        return;
-    };
-    let mut card = Embed::new(format!("Copy requested: {}", a.blueprint))
+    let card = Embed::new(format!("Copy requested: {}", a.blueprint))
         .description(format!(
             "{} asks for a copy of {}.",
             escape(&a.requester),
@@ -809,8 +806,32 @@ fn post_card(a: &About) {
             "Runs per copy",
             a.runs
                 .map_or_else(|| "As many as allowed".to_owned(), |r| r.to_string()),
-        )
-        .footer("Blueprints");
+        );
+    post(a, card);
+}
+
+/// A card for a request its pilot cancelled, where new ones go: the
+/// builders' channel (aa-blueprints' notify_request_canceled_by_requestor
+/// tells every approver; that would reach other corporations' builders).
+fn post_cancelled_card(a: &About) {
+    let card = Embed::new(format!("Request canceled: {}", a.blueprint))
+        .description(format!(
+            "{} has canceled their request for {}.",
+            escape(&a.requester),
+            escape(&a.blueprint)
+        ))
+        .color(0xef4444)
+        .field("Owner", escape(&a.owner));
+    post(a, card);
+}
+
+/// Posts a request's card to the channel Settings picked, if any.
+fn post(a: &About, card: Embed) {
+    let Ok(settings) = settings() else { return };
+    let Some(channel) = settings.channel else {
+        return;
+    };
+    let mut card = card.footer("Blueprints");
     if let Some(product) = a.product {
         card = card.thumbnail(Image::TypeIcon(product));
     }
@@ -819,15 +840,35 @@ fn post_card(a: &About) {
     }
 }
 
+/// The pilot cancels their own open request; its builders are told, as
+/// aa-blueprints tells its approvers: on Discord, and in the bell the
+/// builder who took it.
 fn cancel_own(access: &Access, submission: &Submission) -> Result<SubmitResult, PageError> {
     let id = number(submission.value("request"))?;
-    storage::execute(
-        "UPDATE requests SET status = 'cancelled', closed_at = now(), fulfiller_account = NULL, \
-             fulfiller_name = NULL \
-         WHERE id = $1 AND requester_account = $2 AND closed_at IS NULL",
+    let cancelled = storage::query(
+        "WITH old AS ( \
+             SELECT id, fulfiller_account FROM requests \
+             WHERE id = $1 AND requester_account = $2 AND closed_at IS NULL FOR UPDATE) \
+         UPDATE requests r SET status = 'cancelled', closed_at = now(), \
+             fulfiller_account = NULL, fulfiller_name = NULL \
+         FROM old WHERE r.id = old.id RETURNING old.fulfiller_account",
         &[id.into(), access.account.into()],
     )
     .map_err(|e| failed("cancelling the request", e))?;
+    if let Some(row) = cancelled.rows.first()
+        && let Some(a) = about(id)?
+    {
+        post_cancelled_card(&a);
+        if let Some(builder) = opt_int(row, 0) {
+            let bp = a.blueprint.as_str();
+            tell(
+                builder,
+                &format!("{bp} request canceled"),
+                &format!("{} has canceled their request for {bp}.", a.requester),
+                Level::Danger,
+            );
+        }
+    }
     Ok(SubmitResult::Redirect("requests".into()))
 }
 
