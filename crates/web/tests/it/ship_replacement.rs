@@ -686,3 +686,83 @@ async fn ship_replacement_end_to_end(db: PgPool) {
         ]
     );
 }
+
+/// AA lists every request of a fleet: past one page, the rest are on the
+/// next pages, and a manager's buttons there come back to the same page.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_request_of_a_big_fleet_can_be_opened(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
+    cover(&db, Builtin::Blue, EntityKind::Corporation, BLUE_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let manager = log_in_as(&h, "1887431749:gigX", None).await;
+    for state in [MEMBER_STATE, BLUE_STATE] {
+        grant(&h, &owner, "access_srp", state).await;
+    }
+    grant(&h, &owner, "srp_management", BLUE_STATE).await;
+    let res = post(&h, &manager, "add", &add_fleet("Big+fight")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (fleet, _) = newest_fleet(&h).await;
+    // 401 losses after a big fight, the newest last.
+    sqlx::query(
+        "INSERT INTO \"plugin_tether.ship-replacement\".requests (fleet_id, account_id, \
+             character_id, character_name, killmail_id, killmail_hash, killboard_link, \
+             ship_type_id, ship_name, killmail_time, created_at) \
+         SELECT $1, 1, 90000000 + n, 'Pilot ' || n, 5000 + n, 'h', \
+             'https://zkillboard.com/kill/' || (5000 + n) || '/', 587, 'Rifter', now(), \
+             now() - make_interval(secs => 1000 - n) \
+         FROM generate_series(1, 401) n",
+    )
+    .bind(fleet)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let newest = request_of(&h, 5401).await;
+
+    let first = open(&h, &manager, &format!("fleet/{fleet}")).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    assert!(
+        first.body.contains("SRP Requests 1 to 400 of 401"),
+        "{}",
+        first.body
+    );
+    assert!(!first.body.contains(&format!("review/{newest}\"")));
+    let second = format!("fleet/{fleet}/page/2");
+    assert!(
+        first
+            .body
+            .contains(&format!("href=\"{}\">Page 2 of 2</a>", at(&second))),
+        "{}",
+        first.body
+    );
+    let page2 = open(&h, &manager, &second).await;
+    assert_eq!(page2.status, StatusCode::OK, "{}", page2.body);
+    assert!(
+        page2.body.contains("SRP Requests 401 to 401 of 401"),
+        "{}",
+        page2.body
+    );
+    assert!(
+        page2.body.contains(&format!("review/{newest}\"")),
+        "{}",
+        page2.body
+    );
+    assert_eq!(
+        open(&h, &manager, &format!("fleet/{fleet}/page/3"))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // Approved from its row on page 2, back to page 2.
+    let res = post(
+        &h,
+        &manager,
+        &second,
+        &format!("_form=decide&request={newest}&decision=approve"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&second));
+    assert_eq!(status_of(&h, newest).await.0, "approved");
+}

@@ -8,8 +8,9 @@
 //!   mark them Completed.
 //! - Everyone with `access_srp` sees the open fleets with their Total ISK
 //!   Cost and pending requests, and opens any fleet's requests (pilots,
-//!   ships, amounts, status), as AA. All fleets (AA's View All, completed
-//!   fleets too) is open to every `access_srp` holder, as AA's view is.
+//!   ships, amounts, status), as AA, every one of them, a page at a time.
+//!   All fleets (AA's View All, completed fleets too) is open to every
+//!   `access_srp` holder, as AA's view is.
 //! - **Request SRP** (`access_srp`): a pilot pastes a zKillboard link for
 //!   a loss on an open fleet. The loss comes from ESI's public killmail
 //!   endpoint (through Tether), its value from zKillboard (over the app's
@@ -46,7 +47,8 @@ const MAX_INFO: u32 = 1000;
 /// At most 4 bytes a character: one page value (2 KiB) always holds it.
 const MAX_COMMENT: u32 = 500;
 const MAX_COMMENTS: i64 = 100;
-/// Rows on one page (the host allows 500).
+/// Rows on one page (the host allows 500). A fleet's requests go on as
+/// many pages as they need.
 const FLEET_ROWS: i64 = 200;
 const REQUEST_ROWS: i64 = 400;
 const MY_ROWS: i64 = 100;
@@ -65,7 +67,8 @@ impl Plugin for ShipReplacement {
             [""] => srp_fleets(&viewer, false),
             ["all"] => srp_fleets(&viewer, true),
             ["add"] => add_page(&viewer, None),
-            ["fleet", fleet] => fleet_page(&viewer, id(fleet)?, None),
+            ["fleet", fleet] => fleet_page(&viewer, id(fleet)?, 1, None),
+            ["fleet", fleet, "page", n] => fleet_page(&viewer, id(fleet)?, id(n)?, None),
             ["request", code] => request_page(code, None),
             ["review", request] => review_page(&viewer, id(request)?, None),
             _ => Err(PageError::NotFound),
@@ -79,7 +82,10 @@ impl Plugin for ShipReplacement {
         let parts: Vec<&str> = path.split('/').collect();
         let result = match (parts.as_slice(), submission.form.as_str()) {
             (["add"], "add_fleet") => add_fleet(&viewer, &submission),
-            (["fleet", fleet], _) => fleet_action(&viewer, id(fleet)?, &submission),
+            (["fleet", fleet], _) => fleet_action(&viewer, id(fleet)?, 1, &submission),
+            (["fleet", fleet, "page", n], _) => {
+                fleet_action(&viewer, id(fleet)?, id(n)?, &submission)
+            }
             (["request", code], "request") => request_srp(&viewer, code, &submission),
             (["review", request], _) => review_action(&viewer, id(request)?, &submission),
             _ => Err(PageError::NotFound),
@@ -815,18 +821,45 @@ fn request_srp(
 
 // ---- fleet view ----------------------------------------------------------------
 
-/// A fleet's requests, for everyone with `access_srp` (AA's fleet view);
-/// managers' buttons and the requests' own pages for `srp_management`.
-fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page, PageError> {
+/// A fleet's page of requests: the first is `fleet/<id>`, the rest
+/// `fleet/<id>/page/<n>`.
+fn fleet_path(fleet_id: i64, page_number: i64) -> String {
+    if page_number > 1 {
+        format!("fleet/{fleet_id}/page/{page_number}")
+    } else {
+        format!("fleet/{fleet_id}")
+    }
+}
+
+/// A fleet's requests, for everyone with `access_srp` (AA's fleet view),
+/// oldest first, `REQUEST_ROWS` a page; managers' buttons and the
+/// requests' own pages for `srp_management`.
+fn fleet_page(
+    viewer: &Viewer,
+    fleet_id: i64,
+    page_number: i64,
+    note: Option<&str>,
+) -> Result<Page, PageError> {
     let f = fleet_by_id(fleet_id)?;
+    let sums = query(&format!("{TOTALS} WHERE fleet_id = $1"), &[f.id.into()])?;
+    let count = sums.first().map_or(0, |r| int(r, 0));
+    let pages = ((count + REQUEST_ROWS - 1) / REQUEST_ROWS).max(1);
+    if page_number > pages {
+        return Err(PageError::NotFound);
+    }
     let requests: Vec<Req> = query(
-        &format!("{REQUEST_SELECT} WHERE r.fleet_id = $1 ORDER BY r.created_at, r.id LIMIT $2"),
-        &[f.id.into(), REQUEST_ROWS.into()],
+        &format!(
+            "{REQUEST_SELECT} WHERE r.fleet_id = $1 ORDER BY r.created_at, r.id LIMIT $2 OFFSET $3"
+        ),
+        &[
+            f.id.into(),
+            REQUEST_ROWS.into(),
+            ((page_number - 1) * REQUEST_ROWS).into(),
+        ],
     )?
     .iter()
     .map(|r| request(r))
     .collect();
-    let sums = query(&format!("{TOTALS} WHERE fleet_id = $1"), &[f.id.into()])?;
     let mut about = Card::new("SRP fleet")
         .field("Fleet Name", f.name.clone())
         .field("Doctrine", f.doctrine.clone())
@@ -865,8 +898,15 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
     if manage {
         columns.push(Column::text(""));
     }
+    // Which page, only when there's more than one.
     let mut table = Table::new(columns)
-        .title("SRP Requests")
+        .title(if pages > 1 {
+            let first = (page_number - 1) * REQUEST_ROWS + 1;
+            let last = (page_number * REQUEST_ROWS).min(count);
+            format!("SRP Requests {first} to {last} of {count}")
+        } else {
+            "SRP Requests".to_owned()
+        })
         .empty("No requests yet.");
     for r in &requests {
         let who: Value = if manage {
@@ -902,7 +942,31 @@ fn fleet_page(viewer: &Viewer, fleet_id: i64, note: Option<&str>) -> Result<Page
     if let Some(row) = sums.first() {
         page = page.stats(total_stats(&totals(row), "this fleet"));
     }
-    Ok(page.card(about).table(table))
+    page = page.card(about).table(table);
+    // Paging, oldest first: every request can be opened, however many.
+    let mut more = Card::new("Pages");
+    if page_number > 1 {
+        more = more.field(
+            "Earlier requests",
+            link(
+                format!("Page {} of {pages}", page_number - 1),
+                fleet_path(f.id, page_number - 1),
+            ),
+        );
+    }
+    if page_number < pages {
+        more = more.field(
+            "Later requests",
+            link(
+                format!("Page {} of {pages}", page_number + 1),
+                fleet_path(f.id, page_number + 1),
+            ),
+        );
+    }
+    if !more.fields.is_empty() {
+        page = page.card(more);
+    }
+    Ok(page)
 }
 
 /// A fleet's buttons for SRP managers: Mark Completed (or Incomplete),
@@ -954,14 +1018,17 @@ fn request_buttons(r: &Req) -> Vec<Action> {
     buttons
 }
 
+/// A fleet's buttons, and its requests' (posted from `page_number`, where
+/// the manager goes back to).
 fn fleet_action(
     viewer: &Viewer,
     fleet_id: i64,
+    page_number: i64,
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
     need(manager(viewer))?;
     let f = fleet_by_id(fleet_id)?;
-    let back = || Ok(SubmitResult::Redirect(format!("fleet/{fleet_id}")));
+    let back = || Ok(SubmitResult::Redirect(fleet_path(fleet_id, page_number)));
     let who = format!("{} ({})", viewer.main.name, viewer.main.id);
     match submission.form.as_str() {
         form @ ("complete" | "reopen") => {
@@ -1019,6 +1086,7 @@ fn fleet_action(
                 Some(note) => Ok(SubmitResult::Page(fleet_page(
                     viewer,
                     fleet_id,
+                    page_number,
                     Some(note),
                 )?)),
                 None => back(),
