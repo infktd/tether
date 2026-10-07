@@ -141,6 +141,87 @@ async fn an_app_open_to_everyone_signed_in_isnt_nobodys(db: PgPool) {
     );
 }
 
+/// A page rule naming several permissions opens its pages for any one of
+/// them (aa-afat's Logs: `log_view` or `manage_afat`), and the Manage
+/// link and the palette follow it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_rule_naming_several_permissions_opens_for_any(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let key = Key::new(1);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.any\"\nname = \"Any\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[permissions]\nview = \"See it\"\n\
+         log_view = \"See the log\"\nmanage = \"Run it\"\n\n\
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n\n\
+         [[manage]]\nlabel = \"Log\"\npath = \"values\"\n\n\
+         [[pages]]\npath = \"\"\npermission = \"view\"\n\n\
+         [[pages]]\npath = \"values\"\npermission = [\"log_view\", \"manage\"]\n",
+        key.public()
+    );
+    let component = component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    // The install review named both.
+    let about = page(&h, "/admin/plugins/acme.any", &owner).await.body;
+    assert!(
+        about.contains(
+            "plugin.acme.any.log_view</span> or <span class=\"num\">plugin.acme.any.manage"
+        ),
+        "{about}"
+    );
+    let grant = |permission: &'static str| {
+        let db = h.db.clone();
+        async move {
+            let mut ids = Vec::new();
+            for state in [MEMBER_STATE, BLUE_STATE, GUEST_STATE] {
+                ids.extend(
+                    tether_db::permissions::grant(
+                        &db,
+                        &format!("plugin.acme.any.{permission}"),
+                        Grantee::State(StateId(state)),
+                    )
+                    .await
+                    .unwrap(),
+                );
+            }
+            ids
+        }
+    };
+    grant("view").await;
+    let log = "/plugins/acme.any/values";
+    assert_eq!(page(&h, log, &pilot).await.status, StatusCode::NOT_FOUND);
+    let main = page(&h, "/plugins/acme.any", &pilot).await.body;
+    assert!(!main.contains(log), "no Manage link: {main}");
+
+    // Either one opens it, and shows its Manage link.
+    for permission in ["log_view", "manage"] {
+        let ids = grant(permission).await;
+        assert_eq!(
+            page(&h, log, &pilot).await.status,
+            StatusCode::OK,
+            "{permission}"
+        );
+        let main = page(&h, "/plugins/acme.any", &pilot).await.body;
+        assert!(main.contains(log), "{permission}: {main}");
+        let req = Request::get("/palette?q=Log")
+            .header(header::COOKIE, format!("{SESSION}={pilot}"))
+            .header("hx-request", "true")
+            .body(Body::empty())
+            .unwrap();
+        let palette = send(&h.app, req).await.body;
+        assert!(palette.contains(log), "{permission}: {palette}");
+        for id in ids {
+            tether_db::permissions::revoke(&h.db, id).await.unwrap();
+        }
+        assert_eq!(page(&h, log, &pilot).await.status, StatusCode::NOT_FOUND);
+    }
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn only_those_allowed_learn_a_page_exists(db: PgPool) {
     let (h, owner, pilot) = setup(db).await;

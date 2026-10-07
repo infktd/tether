@@ -38,7 +38,8 @@ use crate::error::AppError;
 /// registered Member character in it.
 pub const CORP_STATS_JOB: &str = "compliance.corp_stats";
 
-/// Job kind: aa-memberaudit's token-error notices ([`token_errors`]).
+/// Job kind: aa-memberaudit's token-error notices ([`token_errors`]), and
+/// the register-again notices of every app ([`scope_prompts`]).
 pub const TOKEN_ERRORS_JOB: &str = "compliance.token_errors";
 
 pub fn schedules() -> Vec<ScheduleSpec> {
@@ -65,12 +66,10 @@ pub async fn required_in(
     conn: &mut sqlx::PgConnection,
     state: &State,
 ) -> Result<BTreeSet<String>, sqlx::Error> {
+    let mut required = own_required_in(&mut *conn, state).await?;
     if state.is_guest() {
-        return Ok(BTreeSet::new());
+        return Ok(required);
     }
-    let admin = db::admin_scopes(&mut *conn, state.id).await?;
-    let member = state.builtin == Some(Builtin::Member);
-    let mut required = scopes::required(member, &admin);
     // An app asking for a scope that acts as the character can't be
     // required (see `plugins::apply`); should one be, its scopes aren't.
     for app in db::state_apps(&mut *conn, state.id).await? {
@@ -79,6 +78,24 @@ pub async fn required_in(
         }
     }
     Ok(required)
+}
+
+/// The scopes `state` itself requires of every character (core's and the
+/// admin's), without its apps': a character registered for an app the
+/// state requires counts whatever scopes the app asked for since
+/// (aa-memberaudit's compliance is every character registered), so the
+/// apps' scopes are checked only of characters not registered for them
+/// ([`scopes::check_with_apps`]).
+async fn own_required_in(
+    conn: &mut sqlx::PgConnection,
+    state: &State,
+) -> Result<BTreeSet<String>, sqlx::Error> {
+    if state.is_guest() {
+        return Ok(BTreeSet::new());
+    }
+    let admin = db::admin_scopes(&mut *conn, state.id).await?;
+    let member = state.builtin == Some(Builtin::Member);
+    Ok(scopes::required(member, &admin))
 }
 
 /// Every scope Tether may ask for, all of which Tether's EVE application
@@ -168,17 +185,17 @@ pub async fn problems(
     let Some(state) = state_db::get(&mut *conn, candidate).await? else {
         return Ok(Vec::new());
     };
-    let required = required_in(&mut *conn, &state).await?;
-    if required.is_empty() {
+    if required_in(&mut *conn, &state).await?.is_empty() {
         return Ok(Vec::new());
     }
+    let own = own_required_in(&mut *conn, &state).await?;
     let apps = required_apps_in(&mut *conn, &state, account).await?;
     let characters: Vec<(i64, scopes::Token)> = db::account_tokens(&mut *conn, account)
         .await?
         .into_iter()
         .map(|c| (c.id, c.token))
         .collect();
-    Ok(scopes::check_with_apps(&required, &apps, &characters))
+    Ok(scopes::check_with_apps(&own, &apps, &characters))
 }
 
 /// The user scopes registering for a plugin grants: only those a
@@ -233,6 +250,9 @@ pub struct CharacterStatus {
     pub is_main: bool,
     /// What it still needs; `None` when it's done.
     pub problem: Option<Problem>,
+    /// Registered for the app shown, but its token lacks these, which the
+    /// app asked for since: done, and registering again allows them.
+    pub register_again: Vec<String>,
     /// Scopes its token carries.
     pub scopes: Vec<String>,
 }
@@ -265,22 +285,24 @@ pub async fn registration(db: &PgPool, account: AccountId) -> Result<Registratio
     let target = state_db::account_state(&mut *conn, account)
         .await?
         .filter(|s| !s.is_guest());
-    let (required, apps) = match &target {
+    let (required, own, apps) = match &target {
         Some(state) => (
             required_in(&mut conn, state).await?,
+            own_required_in(&mut conn, state).await?,
             required_apps_in(&mut conn, state, account).await?,
         ),
-        None => (BTreeSet::new(), Vec::new()),
+        None => (BTreeSet::new(), BTreeSet::new(), Vec::new()),
     };
     let tokens = db::account_tokens(&mut *conn, account).await?;
     let pairs: Vec<(i64, scopes::Token)> = tokens.iter().map(|c| (c.id, c.token.clone())).collect();
-    let problems: BTreeMap<i64, Problem> = scopes::check_with_apps(&required, &apps, &pairs)
+    let problems: BTreeMap<i64, Problem> = scopes::check_with_apps(&own, &apps, &pairs)
         .into_iter()
         .collect();
     let characters = tokens
         .into_iter()
         .map(|c| CharacterStatus {
             problem: problems.get(&c.id).cloned(),
+            register_again: Vec::new(),
             scopes: match c.token {
                 scopes::Token::Valid(scopes) | scopes::Token::Revoked(scopes) => scopes,
                 scopes::Token::None => Vec::new(),
@@ -328,21 +350,27 @@ pub fn app_scopes(running: &crate::plugins::Running) -> Vec<String> {
     scopes
 }
 
-/// The running apps whose characters `character` is among (F16): it is
-/// registered for the app, its account holds one of the app's
-/// permissions, and its token carries all of the app's user scopes.
+/// The running apps that read all of `character` (F16): it is one of the
+/// app's characters (registered for it, its account holds one of the
+/// app's permissions, a working token), and its token carries every one
+/// of the app's user scopes. A login that registers it, or registers it
+/// again for a scope the app asked for since, adds the app.
 pub async fn apps_serving(
     state: &AppState,
     character: i64,
 ) -> Result<BTreeSet<String>, sqlx::Error> {
     let mut apps = BTreeSet::new();
+    let carried = tether_db::tokens::get(&state.db, character)
+        .await?
+        .map(|t| t.scopes)
+        .unwrap_or_default();
     for running in state.plugins.all_running() {
         let scopes = app_scopes(&running);
-        if scopes.is_empty() {
+        if scopes.is_empty() || !scopes.iter().all(|s| carried.contains(s)) {
             continue;
         }
         let id = &running.manifest.plugin.id;
-        if db::character_may_serve(&state.db, id, character, &scopes).await? {
+        if db::character_may_serve(&state.db, id, character).await? {
             apps.insert(id.clone());
         }
     }
@@ -450,12 +478,12 @@ pub async fn sync_if_newly_registered(
 pub struct AppRegistration {
     pub id: String,
     pub name: String,
-    /// The app's user scopes: every one is needed.
+    /// The app's user scopes: registering grants every one.
     pub scopes: BTreeSet<String>,
     /// Each character, with what it still needs for the app.
     pub characters: Vec<CharacterStatus>,
     /// The account's characters registered for it (read while their token
-    /// carries the app's scopes).
+    /// works, with the scopes it carries).
     pub registered: BTreeSet<i64>,
 }
 
@@ -506,11 +534,27 @@ async fn app_registration_of(
             .into_iter()
             .map(|c| CharacterStatus {
                 // Not registered for the app, whatever its token carries
-                // (aa-memberaudit reads only characters added to it).
-                problem: if registered.contains(&c.id) {
-                    problems.get(&c.id).cloned()
-                } else {
+                // (aa-memberaudit reads only characters added to it). One
+                // registered before the app asked for more is still done:
+                // registering again only allows the rest.
+                problem: if !registered.contains(&c.id) {
                     Some(Problem::NotRegistered)
+                } else {
+                    match problems.get(&c.id) {
+                        Some(Problem::Missing(_)) if matches!(c.token, scopes::Token::Valid(_)) => {
+                            None
+                        }
+                        other => other.cloned(),
+                    }
+                },
+                register_again: match problems.get(&c.id) {
+                    Some(Problem::Missing(missing))
+                        if registered.contains(&c.id)
+                            && matches!(c.token, scopes::Token::Valid(_)) =>
+                    {
+                        missing.clone()
+                    }
+                    _ => Vec::new(),
                 },
                 scopes: match c.token {
                     scopes::Token::Valid(scopes) => scopes,
@@ -752,8 +796,9 @@ async fn notify_removal(
 /// aa-memberaudit's token-error notice (`MEMBERAUDIT_NOTIFY_TOKEN_ERRORS`),
 /// sent by the host, which holds the tokens: a pilot whose character
 /// registered with Member Audit, as bundled with Tether, can't be read
-/// (its token revoked or deleted, or short of one of Member Audit's
-/// scopes) is told once, until it works again. AA tells them at the next
+/// (its token revoked or deleted) is told once, until it works again. A
+/// token short of a scope Member Audit asked for since isn't an error: it
+/// is still read, and [`scope_prompts`] asks its pilot to register again. AA tells them at the next
 /// update that needs the token, and clears the mark once the character's
 /// update works (`reset_token_error_notified_if_status_ok`). With the
 /// setting off, nothing is marked, as in AA. Returns how many were told.
@@ -790,6 +835,44 @@ pub async fn token_errors(db: &PgPool) -> Result<usize, sqlx::Error> {
             );
             told += 1;
         }
+    }
+    tx.commit().await?;
+    Ok(told)
+}
+
+/// The register-again notice: an app asked for a scope after a pilot
+/// registered characters for it, so their tokens lack it. The app still
+/// reads them with the scopes they have (only what needs the new one
+/// waits), they stay registered and compliant, and the pilot is asked
+/// once, gently, to register them again: one notice per app and account,
+/// naming the characters and what registering again allows. Returns how
+/// many notices were sent.
+pub async fn scope_prompts(db: &PgPool) -> Result<usize, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let prompts = db::take_scope_prompts(&mut tx).await?;
+    let mut grouped: BTreeMap<(AccountId, String), Vec<db::ScopePrompt>> = BTreeMap::new();
+    for prompt in prompts {
+        grouped
+            .entry((prompt.account, prompt.plugin_id.clone()))
+            .or_default()
+            .push(prompt);
+    }
+    let mut told = 0;
+    for ((account, plugin), characters) in &grouped {
+        let app = &characters[0].plugin_name;
+        let missing: BTreeSet<&str> = characters
+            .iter()
+            .flat_map(|c| c.missing.iter().map(String::as_str))
+            .collect();
+        let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
+        crate::notifications::register_again(&mut tx, *account, app, &names, &missing).await?;
+        tracing::info!(
+            account_id = account.0,
+            plugin,
+            characters = names.len(),
+            "register-again notice sent"
+        );
+        told += 1;
     }
     tx.commit().await?;
     Ok(told)
@@ -950,6 +1033,7 @@ pub fn register_jobs(
         let db = token_db.clone();
         async move {
             token_errors(&db).await.map_err(JobError::retry)?;
+            scope_prompts(&db).await.map_err(JobError::retry)?;
             Ok(())
         }
     });

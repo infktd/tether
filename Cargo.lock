@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "fleet-activity-tracking"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "chrono",
  "serde_json",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "member-audit"
-version = "0.4.9"
+version = "0.4.10"
 dependencies = [
  "chrono",
  "serde",

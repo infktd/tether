@@ -55,6 +55,9 @@ pub struct CheckRow {
     pub is_main: bool,
     /// What's wrong, or `None` when it's done.
     pub problem: Option<String>,
+    /// Done, but the app asked for more since: what registering again
+    /// allows, in words.
+    pub register_again: Option<String>,
     /// Registered for the app shown: it can be unregistered.
     pub unregister: bool,
 }
@@ -103,6 +106,13 @@ fn rows(characters: &[compliance::CharacterStatus]) -> Vec<CheckRow> {
             name: c.name.clone(),
             is_main: c.is_main,
             problem: c.problem.as_ref().map(problem_text),
+            register_again: (!c.register_again.is_empty()).then(|| {
+                c.register_again
+                    .iter()
+                    .map(|s| tether_core::scopes::describe(s))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            }),
             unregister: false,
         })
         .collect()

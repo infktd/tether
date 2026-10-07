@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.app_characters r SET scopes_prompted = NULL\n        FROM core.character_tokens t, core.plugins p\n        WHERE t.character_id = r.character_id AND p.id = r.plugin_id\n          AND r.scopes_prompted IS NOT NULL\n          AND t.state = 'valid' AND t.scopes @> p.user_scopes\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "02d74dbfd4bf8f8c50448323d33bea35d9250b10e85ff2b9e9e4f9e34f9490d9"
+}

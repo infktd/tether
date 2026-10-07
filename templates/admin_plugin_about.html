@@ -38,7 +38,7 @@
     <thead><tr><th scope="col">Pages</th><th scope="col">Whoever holds</th></tr></thead>
     <tbody>
       {% for r in about.pages %}
-      <tr><td class="num">{{ r.pages }}</td><td class="w-full whitespace-normal">{% if let Some(permission) = r.permission %}<span class="num">{{ permission }}</span>{% else %}Any signed-in pilot{% endif %}{% if r.audited %} <span class="badge" data-variant="outline">Every view audited</span>{% endif %}</td></tr>
+      <tr><td class="num">{{ r.pages }}</td><td class="w-full whitespace-normal">{% if r.permissions.is_empty() %}Any signed-in pilot{% else %}{% for p in r.permissions %}{% if !loop.first %} or {% endif %}<span class="num">{{ p }}</span>{% endfor %}{% endif %}{% if r.audited %} <span class="badge" data-variant="outline">Every view audited</span>{% endif %}</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT true AS \"ok!\"\n        FROM core.characters c\n        JOIN core.app_characters r ON r.character_id = c.id AND r.plugin_id = $2\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE c.id = $1 AND core.holds_app_permission(c.account_id, $2)\n          AND t.state IS DISTINCT FROM 'valid'\n          AND (t.state IS DISTINCT FROM 'revoked'\n               OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "593c1c806205dc81c384692dc2f6d4956442a9181a27ba7d6736b196f09beb80"
+}

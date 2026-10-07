@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*) AS \"count!\" FROM core.accounts a\n        WHERE a.state_id = $1 AND a.compliant\n          AND EXISTS (\n            SELECT 1 FROM core.characters c\n            WHERE c.account_id = a.id\n              AND NOT EXISTS (SELECT 1 FROM core.app_characters r\n                              WHERE r.plugin_id = $2 AND r.character_id = c.id)\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7278139c547a1575ed6a26f8250d1712948bb19b6122f776e15fefc5303d212c"
+}

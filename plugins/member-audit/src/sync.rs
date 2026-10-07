@@ -63,6 +63,8 @@ const fn section(name: &'static str, every: i64, calls: usize) -> Section {
 pub(crate) const SECTIONS: &[Section] = &[
     section("skills", 60, 2),
     section("location", 30, 2),
+    // aa-memberaudit's online status, as stale after an hour.
+    section("online", 60, 1),
     section("wallet", 30, 1),
     section("public", 1440, 1),
     section("clones", 60, 2),
@@ -102,6 +104,11 @@ enum Stop {
     Esi(u16, String),
     /// The character's token or registration: its other sections wait.
     Character(String),
+    /// Its login lacks the scope this section needs, which Member Audit
+    /// asked for after it registered (Last login's, say): the section has
+    /// nothing yet, every other one reads as before, and Tether asks the
+    /// pilot to register again.
+    Skipped,
     /// Out of calls: the run ends.
     Run,
     /// ESI (or the host) unavailable: the run ends, and this section goes
@@ -114,6 +121,7 @@ impl From<EsiError> for Stop {
     fn from(err: EsiError) -> Self {
         match err {
             EsiError::Token | EsiError::NotRegistered => Stop::Character(esi::describe(&err)),
+            EsiError::MissingScope(_) => Stop::Skipped,
             EsiError::Unavailable => Stop::Unavailable,
             // Over the host's limit after all (an endpoint that cost two).
             EsiError::Invalid(why) if why.contains("ESI calls") => Stop::Run,
@@ -284,6 +292,9 @@ pub(crate) fn run(only: Option<i64>) -> Result<(), JobError> {
         }
         match read(&mut run, *character, section.name) {
             Ok(()) => record(*character, section.name, None),
+            // Not an error: tried again at its interval, and read once the
+            // pilot registers again.
+            Err(Stop::Skipped) => record_skipped(*character, section.name),
             Err(Stop::Section(why) | Stop::Esi(_, why)) => {
                 log::warn(format!("character {character}, {}: {why}", section.name));
                 record(*character, section.name, Some(&why));
@@ -480,6 +491,30 @@ fn due(only: Option<i64>, roles: bool) -> Result<Vec<(i64, String)>, JobError> {
     Ok(rows.rows.iter().map(|r| (int(r, 0), text(r, 1))).collect())
 }
 
+/// The note a section skipped for a scope its login lacks carries, with
+/// `ok`: not an error, and not read (the sheet says so, never "Last
+/// update").
+pub(crate) const WAITS_FOR_REGISTERING: &str = "waits for its pilot to register it again";
+
+/// A section [`Stop::Skipped`]: tried, so it's due again at its interval,
+/// but nothing was read, so the character's own last update stays.
+fn record_skipped(character: i64, section: &str) {
+    let result = storage::execute(
+        "INSERT INTO section_syncs (character_id, section, synced_at, ok, error) \
+         VALUES ($1, $2, now(), true, $3) \
+         ON CONFLICT (character_id, section) DO UPDATE SET synced_at = now(), ok = true, \
+         error = EXCLUDED.error",
+        &[
+            character.into(),
+            section.into(),
+            WAITS_FOR_REGISTERING.into(),
+        ],
+    );
+    if let Err(err) = result {
+        log::warn(format!("recording a skipped read: {err:?}"));
+    }
+}
+
 fn record(character: i64, section: &str, error: Option<&str>) {
     let result = storage::transaction(&[
         stmt(
@@ -510,6 +545,7 @@ fn read(run: &mut Run, id: i64, section: &str) -> Result<(), Stop> {
         "skills" => skills(run, id),
         "location" => location(run, id),
         "wallet" => wallet(run, id),
+        "online" => online(run, id),
         "public" => public(run, id),
         "clones" => clones(run, id),
         "assets" => assets(run, id),
@@ -636,6 +672,22 @@ fn wallet(run: &mut Run, id: i64) -> Result<(), Stop> {
     store(&[stmt(
         "UPDATE characters SET wallet = $2 WHERE character_id = $1",
         vec![id.into(), balance.into()],
+    )])
+}
+
+/// aa-memberaudit's online status: last login and logout, and logins.
+fn online(run: &mut Run, id: i64) -> Result<(), Stop> {
+    let status: Json = run.json("character-online", id, &[])?;
+    store(&[stmt(
+        "UPDATE characters SET last_login = $2::timestamptz, last_logout = $3::timestamptz, \
+         logins = $4, online = $5 WHERE character_id = $1",
+        vec![
+            id.into(),
+            status["last_login"].as_str().map(str::to_owned).into(),
+            status["last_logout"].as_str().map(str::to_owned).into(),
+            status["logins"].as_i64().into(),
+            status["online"].as_bool().into(),
+        ],
     )])
 }
 

@@ -2770,6 +2770,123 @@ async fn a_new_write_scope_asks_pilots_again_and_no_state_may_require_it(db: PgP
     assert!(!states.contains("Require ESI probe"), "{states}");
 }
 
+/// An app asking for another (read) scope keeps reading its registered
+/// characters with the scopes their tokens have, as aa-memberaudit's
+/// sections each fetch a token for their own scope: only a call needing
+/// the new one is refused (`MissingScope`; `NotRegistered` through the
+/// older `get`). They stay registered and compliant (aa-memberaudit's
+/// compliance is every character registered), and their pilot is asked,
+/// gently, to register again, which allows it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_app_asking_for_another_scope_keeps_reading_what_it_may(db: PgPool) {
+    const ONLINE: &str = "esi-location.read_online.v1";
+    let (h, owner) = member_with_plugin(db).await;
+    tether_db::permissions::grant(
+        &h.db,
+        "plugin.acme.esi.view",
+        tether_db::permissions::Grantee::State(tether_core::states::StateId(MEMBER_STATE)),
+    )
+    .await
+    .unwrap();
+    let (_, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
+    let require = format!("/admin/states/{MEMBER_STATE}/scopes/app");
+    let applied = send(&h.app, form(&require, "plugin=acme.esi&confirm=1", &owner)).await;
+    assert_eq!(applied.location(), "/admin/states", "{}", applied.body);
+    run_jobs(&h).await;
+    let compliant = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT compliant FROM core.accounts a JOIN core.characters c ON c.account_id = a.id \
+             WHERE c.id = $1",
+        )
+        .bind(CHRIBBA)
+        .fetch_one(&h.db)
+        .await
+        .unwrap()
+    };
+    assert!(compliant().await);
+
+    // 1.1.0 also reads whether the character is online.
+    let (bytes, signature) = probe_package("1.1.0", &[SKILLS, ONLINE]);
+    install_package(&h, &owner, &bytes, &signature).await;
+    run_jobs(&h).await;
+    assert!(compliant().await, "still registered, still compliant");
+    let characters = probe(&h, "characters", &[]).await;
+    assert!(characters.contains("Chribba"), "{characters}");
+    let out = esi(&h, "character-skills", ("character", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+    let out = esi(&h, "character-online", ("character", CHRIBBA)).await;
+    assert_eq!(out, format!("err Error::MissingScope(\"{ONLINE}\")"));
+    let raw = probe(
+        &h,
+        "esi",
+        &[
+            ("endpoint", "character-online"),
+            ("character", &CHRIBBA.to_string()),
+            ("raw", "1"),
+        ],
+    )
+    .await;
+    assert_eq!(raw, "err Error::NotRegistered");
+    let log = access_log(&h.db).await;
+    assert_eq!(
+        log.last(),
+        Some(&(
+            "character-online".to_owned(),
+            "token lacks the scope".to_owned()
+        ))
+    );
+    // Not a token error; the app's page says what registering again allows,
+    // and the pilot is told once.
+    assert_eq!(
+        tether_web::compliance::token_errors(&h.db).await.unwrap(),
+        0
+    );
+    let app = page(&h, "/register?app=acme.esi", &owner).await.body;
+    assert!(
+        app.contains("Register again to allow: Read whether the character is online"),
+        "{app}"
+    );
+    assert!(app.contains(">Register again</button>"), "{app}");
+    let checklist = page(&h, "/register", &owner).await.body;
+    assert!(checklist.contains("You're all set"), "{checklist}");
+    assert_eq!(
+        tether_web::compliance::scope_prompts(&h.db).await.unwrap(),
+        1
+    );
+    assert_eq!(
+        tether_web::compliance::scope_prompts(&h.db).await.unwrap(),
+        0
+    );
+
+    // Registering again allows it.
+    let (asked, owner) = grant(
+        &h,
+        &owner,
+        "/register/start?app=acme.esi",
+        "196379789:Chribba",
+    )
+    .await;
+    assert!(asked.contains(&ONLINE.to_owned()), "{asked:?}");
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/online")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "online": true, "last_login": "2026-09-30T18:05:00Z",
+            "last_logout": "2026-09-30T17:40:00Z", "logins": 12
+        })))
+        .mount(&h.esi_server)
+        .await;
+    let out = esi(&h, "character-online", ("character", CHRIBBA)).await;
+    assert!(out.starts_with("ok"), "{out}");
+    let app = page(&h, "/register?app=acme.esi", &owner).await.body;
+    assert!(!app.contains("Register again to allow"), "{app}");
+}
+
 /// aa-memberaudit's removal notices: dropping a character from Member Audit
 /// (as bundled) tells the holders of `notified_on_character_removal` whose
 /// view scope covers the pilot.
@@ -3010,7 +3127,9 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     token(&h, CHRIBBA, "revoked", Some("owner hash changed")).await;
     assert_eq!(run(&h).await, 0);
 
-    // Short of a scope Member Audit needs now.
+    // Short of a scope Member Audit asked for since: not a token error.
+    // It's still read, and its pilot is asked once, gently, to register
+    // it again.
     token(&h, CHRIBBA, "valid", None).await;
     assert_eq!(run(&h).await, 0);
     sqlx::query(
@@ -3020,8 +3139,30 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     .execute(&h.db)
     .await
     .unwrap();
-    assert_eq!(run(&h).await, 1);
-    // Its token has every scope again: the mark clears.
+    assert_eq!(run(&h).await, 0);
+    assert!(!marked(&h, CHRIBBA).await);
+    async fn prompts(h: &Harness) -> usize {
+        tether_web::compliance::scope_prompts(&h.db).await.unwrap()
+    }
+    assert_eq!(prompts(&h).await, 1);
+    assert_eq!(prompts(&h).await, 0);
+    let (level, title, message): (String, String, String) = sqlx::query_as(
+        "SELECT level, title, message FROM core.notifications WHERE account_id = $1 \
+         AND title LIKE 'Member Audit: register again%'",
+    )
+    .bind(owner_account)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(level, "info");
+    assert_eq!(title, "Member Audit: register again to allow more");
+    assert_eq!(
+        message,
+        "Member Audit now also asks to read the character's wallet and journal. Register \
+         Chribba for Member Audit again (Register Character) to allow it. Until then Member \
+         Audit keeps reading everything else."
+    );
+    // Its token has every scope again: the prompt's mark clears.
     sqlx::query(
         "UPDATE core.plugins SET user_scopes = array_remove(user_scopes, \
          'esi-wallet.read_character_wallet.v1') WHERE id = 'tether.member-audit'",
@@ -3030,7 +3171,16 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(run(&h).await, 0);
-    assert!(!marked(&h, CHRIBBA).await);
+    assert_eq!(prompts(&h).await, 0);
+    let prompted: Option<Vec<String>> = sqlx::query_scalar(
+        "SELECT scopes_prompted FROM core.app_characters \
+         WHERE plugin_id = 'tether.member-audit' AND character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(prompted, None);
 
     // Switched off: nothing marked, nobody told.
     sqlx::query(
@@ -3058,7 +3208,7 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(run(&h).await, 1);
-    assert_eq!(notices(&h).await.len(), 4);
+    assert_eq!(notices(&h).await.len(), 3);
 
     // Registered by a pilot who holds none of Member Audit's permissions
     // any more (AA tells only users who may use it): the Mittani's token
@@ -3088,10 +3238,10 @@ async fn a_member_audit_character_that_cant_be_read_is_told_once(db: PgPool) {
     assert_eq!(run(&h).await, 1);
     assert!(marked(&h, MITTANI).await);
     let told = notices(&h).await;
-    assert_eq!(told.len(), 5, "{told:?}");
-    assert_eq!(told[4].0, mittani);
+    assert_eq!(told.len(), 4, "{told:?}");
+    assert_eq!(told[3].0, mittani);
     assert_eq!(
-        told[4].2,
+        told[3].2,
         "Member Audit: Invalid or missing token for The Mittani"
     );
 }

@@ -223,16 +223,40 @@ pub mod identity {
 /// }
 /// ```
 pub mod esi {
-    pub use crate::bindings::tether::plugin::esi::{Error, Named, Response, Subject};
+    /// What an ESI call answers when it doesn't go through. Among them
+    /// `MissingScope(scope)`: the character is one of yours, but its login
+    /// lacks this scope, which your app asked for after its pilot
+    /// registered it. Skip what needs it and carry on with the rest:
+    /// Tether asks the pilot to register again.
+    pub use crate::bindings::tether::plugin::esi::FetchError as Error;
+    pub use crate::bindings::tether::plugin::esi::{Named, Response, Subject};
     pub use crate::bindings::tether::plugin::identity::Character;
+
+    use crate::bindings::tether::plugin::esi::Error as HostError;
+
+    /// `post` and `names` answer the older error, which has no
+    /// `MissingScope`.
+    fn from_host(err: HostError) -> Error {
+        match err {
+            HostError::NotAllowed(why) => Error::NotAllowed(why),
+            HostError::NotRegistered => Error::NotRegistered,
+            HostError::NotADataSource => Error::NotADataSource,
+            HostError::Token => Error::Token,
+            HostError::Status(code) => Error::Status(code),
+            HostError::Invalid(why) => Error::Invalid(why),
+            HostError::TooLarge => Error::TooLarge,
+            HostError::Unavailable => Error::Unavailable,
+        }
+    }
 
     /// What went wrong, in words for a page, a notice or a log line:
     /// never the error's Rust form (`Status(403)`).
     pub fn describe(err: &Error) -> String {
         match err {
             Error::NotAllowed(why) => format!("not allowed: {why}"),
-            Error::NotRegistered => "the character isn't registered for this app, or its login \
-                                     lacks a scope the app needs"
+            Error::NotRegistered => "the character isn't registered for this app".to_owned(),
+            Error::MissingScope(_) => "the character's login lacks a scope this app asked for \
+                                       since it registered: it needs registering again"
                 .to_owned(),
             Error::NotADataSource => {
                 "the character isn't one of this app's data sources".to_owned()
@@ -255,22 +279,25 @@ pub mod esi {
     }
 
     /// Calls a catalogue endpoint as `subject`. `params` are the endpoint's
-    /// extra ids (e.g. `observer_id`); `page` is for paged endpoints.
+    /// extra ids (e.g. `observer_id`); `page` is for paged endpoints. A
+    /// character whose login lacks the endpoint's scope answers
+    /// `MissingScope`.
     pub fn get(
         endpoint: &str,
         subject: Subject,
         params: &[(String, String)],
         page: Option<u32>,
     ) -> Result<Response, Error> {
-        crate::bindings::tether::plugin::esi::get(endpoint, subject, params, page)
+        crate::bindings::tether::plugin::esi::fetch(endpoint, subject, params, page)
     }
 
     /// Changes something in EVE: one of Tether's write endpoints
     /// (`character-fitting-save`, with ESI's fitting JSON as `body`). Only
     /// in `submit`, for one of the viewer's own characters that is one of
-    /// this plugin's characters. Sent once, never retried.
+    /// this plugin's characters. Sent once, never retried. A character
+    /// whose login lacks the scope answers `NotRegistered`.
     pub fn post(endpoint: &str, subject: Subject, body: &str) -> Result<Response, Error> {
-        crate::bindings::tether::plugin::esi::post(endpoint, subject, body)
+        crate::bindings::tether::plugin::esi::post(endpoint, subject, body).map_err(from_host)
     }
 
     /// Every page of a paged endpoint, concatenated (for JSON arrays).
@@ -289,7 +316,9 @@ pub mod esi {
 
     /// Characters you can call user-scope endpoints as: this plugin's
     /// characters: registered for it by pilots holding one of its
-    /// permissions (any state), with tokens carrying all its user scopes.
+    /// permissions (any state), with working logins. One registered before
+    /// you asked for another scope is still yours: a call needing that
+    /// scope answers `MissingScope`, and the rest of it reads as before.
     pub fn characters() -> Vec<Character> {
         crate::bindings::tether::plugin::esi::characters()
     }
@@ -301,7 +330,7 @@ pub mod esi {
 
     /// Names for ids (public ESI; at most 1,000).
     pub fn names(ids: &[i64]) -> Result<Vec<Named>, Error> {
-        crate::bindings::tether::plugin::esi::names(ids)
+        crate::bindings::tether::plugin::esi::names(ids).map_err(from_host)
     }
 }
 

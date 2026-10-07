@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 12] = [
+const MIGRATIONS: [&str; 13] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -58,6 +58,7 @@ const MIGRATIONS: [&str; 12] = [
     "migrations/0010_assets_every_page.sql",
     "migrations/0011_skill_set_fields.sql",
     "migrations/0012_type_skills.sql",
+    "migrations/0013_online_status.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -155,6 +156,15 @@ async fn mount_esi(h: &Harness) {
             ]),
         ),
         ("wallet", serde_json::json!(1234567.89)),
+        (
+            "online",
+            serde_json::json!({
+                "online": false,
+                "last_login": "2026-09-30T18:05:00Z",
+                "last_logout": "2026-09-30T21:40:00Z",
+                "logins": 4242
+            }),
+        ),
         (
             "location",
             serde_json::json!({ "solar_system_id": JITA, "station_id": JITA_4_4 }),
@@ -447,6 +457,7 @@ async fn register(h: &Harness, token: &str) -> String {
         "esi-skills.read_skillqueue.v1",
         "esi-mail.read_mail.v1",
         "esi-universe.read_structures.v1",
+        "esi-location.read_online.v1",
     ] {
         assert!(asked.contains(&scope.to_owned()), "{asked:?}");
     }
@@ -524,7 +535,7 @@ async fn member_audit_end_to_end(db: PgPool) {
     .unwrap();
     // Roles aren't read: aa-memberaudit's MEMBERAUDIT_FEATURE_ROLES_ENABLED
     // is off by default.
-    assert_eq!(sections, 23, "{:?}", plugin_warnings(&h).await);
+    assert_eq!(sections, 24, "{:?}", plugin_warnings(&h).await);
 
     // My characters, which is the Dashboard: a row per character with its
     // portrait and facts, the totals, and Tether's Register Character last.
@@ -558,7 +569,7 @@ async fn member_audit_end_to_end(db: PgPool) {
 
     // The Character Sheet: every page and tab.
     let sheet_pages = [
-        ("", 4),
+        ("", 5),
         ("/skills", 4),
         ("/assets", 1),
         (&format!("/assets/{JITA_4_4}") as &str, 1),
@@ -589,6 +600,8 @@ async fn member_audit_end_to_end(db: PgPool) {
         "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
         ">5.0<",
         "2006-03-01",
+        // Last login, from character-online.
+        "2026-09-30 18:05",
         "Update now",
         "State War Academy",
         "Quartermaster",
@@ -906,6 +919,81 @@ const SPY_ALT: i64 = 90000031;
 /// registered with Member Audit's scopes (Chribba's) and known to it.
 /// Member holds Member Audit's basic access, as admins grant it: only
 /// holders' characters are the app's.
+/// A character registered before Member Audit asked for Last login's
+/// scope: everything else keeps updating, it has no Last login yet (not
+/// an error), and its pilot is asked to register again.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_character_without_the_online_scope_keeps_updating(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    sqlx::query(
+        "UPDATE core.character_tokens \
+         SET scopes = array_remove(scopes, 'esi-location.read_online.v1') WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".characters SET last_login = NULL
+           WHERE character_id = $1"#,
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.member-audit".section_syncs
+           SET synced_at = now() - interval '2 days', ok = false"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let read: Vec<(String, bool)> = sqlx::query_as(
+        r#"SELECT section, ok FROM "plugin_tether.member-audit".section_syncs
+           WHERE synced_at > now() - interval '1 hour' AND section IN ('skills', 'online')
+           ORDER BY section"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        read,
+        [("online".to_owned(), true), ("skills".to_owned(), true)]
+    );
+    // Skipped, not read: it says so, as no error.
+    let note: Option<String> = sqlx::query_scalar(
+        r#"SELECT error FROM "plugin_tether.member-audit".section_syncs
+           WHERE character_id = $1 AND section = 'online'"#,
+    )
+    .bind(CHRIBBA)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        note.as_deref(),
+        Some("waits for its pilot to register it again")
+    );
+    let last_login: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        r#"SELECT last_login FROM "plugin_tether.member-audit".characters
+           WHERE character_id = $1"#,
+    )
+    .bind(CHRIBBA)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(last_login, None);
+    let problems = plugin_warnings(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let sheet = page(&h, &format!("/plugins/{ID}/character/{CHRIBBA}"), &owner).await;
+    assert_eq!(sheet.status, StatusCode::OK, "{}", sheet.body);
+    assert!(!sheet.body.contains("2026-09-30 18:05"), "{}", sheet.body);
+    assert_eq!(
+        tether_web::compliance::scope_prompts(&h.db).await.unwrap(),
+        1
+    );
+}
+
 async fn member_account(h: &Harness, characters: &[(i64, &str, i64, Option<i64>)]) {
     let mut tx = h.db.begin().await.unwrap();
     sqlx::query(

@@ -261,7 +261,21 @@ impl tether::plugin::esi::Host for CallState {
         params: Vec<(String, String)>,
         page: Option<u32>,
     ) -> Result<services::EsiResponse, services::EsiError> {
-        let services = self.esi_costing(services::esi_cost(&endpoint))?;
+        self.fetch(endpoint, subject, params, page)
+            .await
+            .map_err(services::get_error)
+    }
+
+    async fn fetch(
+        &mut self,
+        endpoint: String,
+        subject: services::Subject,
+        params: Vec<(String, String)>,
+        page: Option<u32>,
+    ) -> Result<services::EsiResponse, services::FetchError> {
+        let services = self
+            .esi_costing(services::esi_cost(&endpoint))
+            .map_err(services::fetch_error)?;
         let reply = services
             .esi_get(self.plugin.clone(), endpoint, subject, params, page)
             .await?;

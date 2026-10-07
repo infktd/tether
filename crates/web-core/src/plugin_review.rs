@@ -43,7 +43,10 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
                 "{}. Whoever holds one of its permissions (below), whatever their state, may \
                  register characters for it: one EVE login from the app grants these. It reads \
                  only the characters registered for it, while their pilots hold one of its \
-                 permissions. {}{}",
+                 permissions. A scope added in a later version is read for characters \
+                 registered before only where their login already carries it (granted for \
+                 your states or another app, as in Alliance Auth), and their pilots are asked \
+                 to register again. {}{}",
                 c.esi.user.join(", "),
                 if manifest.permissions.is_empty() {
                     "It adds no permissions, so only superusers can. "
@@ -263,9 +266,9 @@ pub fn permissions(manifest: &Manifest) -> Vec<PermissionRow> {
 pub struct PageRuleRow {
     /// "All its pages", or "Pages under <path>".
     pub pages: String,
-    /// The permission they need, by its full name; none when any
-    /// signed-in pilot may open them.
-    pub permission: Option<String>,
+    /// The permissions that open them, by their full names, any one of
+    /// which will do; none when any signed-in pilot may open them.
+    pub permissions: Vec<String>,
     /// Every view is written to the audit log.
     pub audited: bool,
 }
@@ -274,17 +277,25 @@ pub fn page_rules(manifest: &Manifest) -> Vec<PageRuleRow> {
     manifest
         .pages
         .iter()
-        .map(|rule| PageRuleRow {
-            pages: if rule.path.is_empty() {
-                "All its pages".to_owned()
-            } else {
-                format!("Pages under {}", rule.path)
-            },
-            permission: rule
+        .map(|rule| {
+            // Sorted: the same names in another order are the same rule.
+            let mut permissions: Vec<String> = rule
                 .permission
                 .as_ref()
-                .map(|p| format!("plugin.{}.{p}", manifest.plugin.id)),
-            audited: rule.audit,
+                .map_or(&[][..], |p| p.names())
+                .iter()
+                .map(|p| format!("plugin.{}.{p}", manifest.plugin.id))
+                .collect();
+            permissions.sort();
+            PageRuleRow {
+                pages: if rule.path.is_empty() {
+                    "All its pages".to_owned()
+                } else {
+                    format!("Pages under {}", rule.path)
+                },
+                permissions,
+                audited: rule.audit,
+            }
         })
         .collect()
 }
@@ -440,7 +451,7 @@ mod tests {
     fn manifest(main_page: &str) -> Manifest {
         Manifest::parse(&format!(
             "[plugin]\nid = \"acme.hr\"\nname = \"HR\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
-             [permissions]\nview = \"See\"\n\n[[pages]]\npath = \"\"\n{main_page}\n"
+             [permissions]\nview = \"See\"\nmanage = \"Manage\"\n\n[[pages]]\npath = \"\"\n{main_page}\n"
         ))
         .unwrap()
     }
@@ -475,7 +486,25 @@ mod tests {
         assert!(!changes.unchanged());
         assert!(changes.any_added());
         assert_eq!(changes.pages_added.len(), 1);
-        assert_eq!(changes.pages_added[0].permission, None);
+        assert!(changes.pages_added[0].permissions.is_empty());
         assert!(Changes::new(&after, &after).unchanged());
+    }
+
+    #[test]
+    fn opening_pages_to_another_permission_asks_again() {
+        let before = manifest("permission = \"view\"");
+        let after = manifest("permission = [\"view\", \"manage\"]");
+        let changes = Changes::new(&before, &after);
+        assert!(changes.any_added());
+        assert_eq!(
+            changes.pages_added[0].permissions,
+            ["plugin.acme.hr.manage", "plugin.acme.hr.view"]
+        );
+        // The same names, written either way or in another order, are the
+        // same rule.
+        let listed = manifest("permission = [\"view\"]");
+        assert!(Changes::new(&before, &listed).unchanged());
+        let reordered = manifest("permission = [\"manage\", \"view\"]");
+        assert!(Changes::new(&after, &reordered).unchanged());
     }
 }
