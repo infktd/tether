@@ -2563,20 +2563,26 @@ impl Esi {
                     .get_characters_character_id_ship()
                     .character_id(character)
             ),
-            "character-assets" => paged!(
+            // Location flags and types are enums CCP adds to (new holds
+            // and bays), so read loosely.
+            "character-assets" => loose_paged!(
                 client
                     .get_characters_character_id_assets()
-                    .character_id(character)
+                    .character_id(character),
+                format!("/characters/{character}/assets")
             ),
             "character-wallet" => get!(
                 client
                     .get_characters_character_id_wallet()
                     .character_id(character)
             ),
-            "character-wallet-journal" => paged!(
+            // Ref types are the enum CCP adds to most (a new fee, a new
+            // feature's payouts), so read loosely.
+            "character-wallet-journal" => loose_paged!(
                 client
                     .get_characters_character_id_wallet_journal()
-                    .character_id(character)
+                    .character_id(character),
+                format!("/characters/{character}/wallet/journal")
             ),
             "character-clones" => get!(
                 client

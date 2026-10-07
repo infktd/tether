@@ -179,6 +179,55 @@ async fn an_enum_value_ccp_adds_later_does_not_break_a_read() {
     }
 }
 
+/// Member Audit's assets and wallet journal (and Blueprints' personal
+/// places): a hold or a journal ref type newer than Tether's ESI client
+/// doesn't fail the page, which keeps its page count.
+#[tokio::test]
+async fn character_assets_and_journal_take_values_ccp_adds_later() {
+    let (server, esi) = esi().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHARACTER}/assets")))
+        .and(query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "3")
+                .set_body_json(json!([{
+                    "is_singleton": true, "item_id": 1_040_000_000_001_i64, "type_id": 691,
+                    "location_flag": "SomeHoldCcpAddsNextYear", "location_id": 1_040_000_000_002_i64,
+                    "location_type": "item", "quantity": 1
+                }])),
+        )
+        .mount(&server)
+        .await;
+    let out = get(&esi, "character-assets", &[], Some(2)).await.unwrap();
+    assert_eq!(out.pages, 3);
+    assert_eq!(out.body[0]["location_flag"], "SomeHoldCcpAddsNextYear");
+    assert_eq!(out.refetched, 1);
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHARACTER}/wallet/journal")))
+        .and(query_param("page", "1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(json!([{
+                    "id": 77, "date": "2026-10-01T19:00:00Z", "description": "A new fee",
+                    "ref_type": "some_fee_ccp_adds_next_year", "amount": -1000.0,
+                    "context_id": 5, "context_id_type": "some_context_ccp_adds_later"
+                }])),
+        )
+        .mount(&server)
+        .await;
+    let out = get(&esi, "character-wallet-journal", &[], None)
+        .await
+        .unwrap();
+    assert_eq!(out.pages, 1);
+    assert_eq!(out.body[0]["ref_type"], "some_fee_ccp_adds_next_year");
+    assert_eq!(
+        out.body[0]["context_id_type"],
+        "some_context_ccp_adds_later"
+    );
+}
+
 #[tokio::test]
 async fn an_error_answer_is_esis_status_never_data() {
     let (server, esi) = esi().await;
