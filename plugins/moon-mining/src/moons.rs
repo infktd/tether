@@ -23,9 +23,14 @@ use crate::{
     value, when, with_rows,
 };
 
-/// The latest extraction at each moon: its refinery and corporation.
-const OWNED: &str = "WITH owned AS (SELECT DISTINCT ON (e.moon_id) e.moon_id, e.structure_id, e.corporation_id \
-     FROM extractions e ORDER BY e.moon_id, e.chunk_arrival DESC)";
+/// Owned moons: the latest extraction at each moon, with its refinery and
+/// corporation, while that refinery is still the corporation's and has a
+/// Moon Drill (aa-moonmining's refineries; it deletes the rest,
+/// `models/owners.py:210-211`, `:226-232`).
+pub(crate) const OWNED: &str = "WITH owned AS (SELECT * FROM (SELECT DISTINCT ON (e.moon_id) e.moon_id, e.structure_id, e.corporation_id \
+     FROM extractions e ORDER BY e.moon_id, e.chunk_arrival DESC) l \
+     WHERE EXISTS (SELECT 1 FROM structures r WHERE r.structure_id = l.structure_id \
+                   AND r.gone_at IS NULL AND r.drill IS NOT FALSE))";
 
 /// Σ share × unit price and the rarest class, per surveyed moon.
 const WORTH: &str = "(SELECT p.moon_id, \

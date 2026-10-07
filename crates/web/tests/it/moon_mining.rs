@@ -41,35 +41,43 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
+/// The app's migrations, in order, as its package has them.
+fn migrations() -> Vec<(String, String)> {
+    let dir = format!(
+        "{}/../../plugins/moon-mining/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|n| {
+            let sql = plugin_file(&format!("migrations/{n}"));
+            (format!("migrations/{n}"), sql)
+        })
+        .collect()
+}
+
 /// The real package, signed with a test key.
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(7);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let first = plugin_file("migrations/0001_moon_mining.sql");
-    let second = plugin_file("migrations/0002_surveys_and_prices.sql");
-    let third = plugin_file("migrations/0003_tether_rules_optional.sql");
-    let fourth = plugin_file("migrations/0004_old_moons_shown.sql");
-    let fifth = plugin_file("migrations/0005_refinery_drills.sql");
-    let sixth = plugin_file("migrations/0006_corporation_reads.sql");
-    let seventh = plugin_file("migrations/0007_admin_notifications.sql");
     let component = component();
-    let bytes = testing::zip(&[
+    let migrations = migrations();
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_moon_mining.sql", first.as_bytes()),
-        ("migrations/0002_surveys_and_prices.sql", second.as_bytes()),
-        (
-            "migrations/0003_tether_rules_optional.sql",
-            third.as_bytes(),
-        ),
-        ("migrations/0004_old_moons_shown.sql", fourth.as_bytes()),
-        ("migrations/0005_refinery_drills.sql", fifth.as_bytes()),
-        ("migrations/0006_corporation_reads.sql", sixth.as_bytes()),
-        (
-            "migrations/0007_admin_notifications.sql",
-            seventh.as_bytes(),
-        ),
-    ]);
+    ];
+    files.extend(
+        migrations
+            .iter()
+            .map(|(n, sql)| (n.as_str(), sql.as_bytes())),
+    );
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -2160,4 +2168,54 @@ async fn upcoming_until_twelve_hours_after_auto_fracture(db: PgPool) {
         "{}",
         settings.body
     );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn refineries_gone_own_no_moons(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
+    assert!(moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
+    assert!(moons.body.contains("Jita IV - Moon 5"), "{}", moons.body);
+    // The Athanor is gone from the corporation's structures (lost or
+    // unanchored): as aa-moonmining, it owns its moon no more, and the
+    // planner leaves it out. Its past extractions keep its name.
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(serde_json::json!([
+                    { "structure_id": TATARA, "name": "Jita - Drill Two", "system_id": SYSTEM,
+                      "type_id": 35836, "corporation_id": CHRIBBA_CORP, "profile_id": 1,
+                      "state": "shield_vulnerable",
+                      "services": [{ "name": "Moon Drilling", "state": "online" }] },
+                ])),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    run_schedule(&h, "sync").await;
+    let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
+    assert!(!moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
+    assert!(moons.body.contains("Jita IV - Moon 5"), "{}", moons.body);
+    let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
+    assert!(!reports.body.contains("Jita IV - Moon 4"), "{}", reports.body);
+    let planner = page(&h, &format!("/plugins/{ID}/planner"), &owner).await;
+    assert!(!planner.body.contains("Jita - Drill One"), "{}", planner.body);
+    assert!(planner.body.contains("Jita - Drill Two"), "{}", planner.body);
+    let past = page(&h, &format!("/plugins/{ID}?_tab=1"), &owner).await;
+    assert!(past.body.contains("Jita - Drill One"), "{}", past.body);
+    // Listed again (a refinery handed back): it owns its moon again.
+    sqlx::query(r#"UPDATE "plugin_tether.moon-mining".structures SET gone_at = NULL"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let moons = page(&h, &format!("/plugins/{ID}/moons"), &owner).await;
+    assert!(moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
 }

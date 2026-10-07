@@ -782,7 +782,9 @@ fn read_corporation(
         Err(Missed::Budget) => return Ok(Read::OutOfCalls),
         Err(Missed::Esi(err)) => return Ok(Read::Refused(err)),
     };
-    storage::transaction(&[Statement::new(
+    let listed = Db::json(concat(&bodies));
+    storage::transaction(&[
+        Statement::new(
         // A refinery without a Moon Drill (one for reprocessing, say)
         // isn't a drill: the planner leaves it out.
         "INSERT INTO structures (structure_id, corporation_id, name, system_id, type_id, drill, updated_at) \
@@ -794,13 +796,23 @@ fn read_corporation(
          WHERE type_id = ANY($3::bigint[]) \
          ON CONFLICT (structure_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id, \
          name = EXCLUDED.name, system_id = EXCLUDED.system_id, type_id = EXCLUDED.type_id, \
-         drill = EXCLUDED.drill, updated_at = now()",
+         drill = EXCLUDED.drill, gone_at = NULL, updated_at = now()",
         vec![
-            Db::json(concat(&bodies)),
+            listed.clone(),
             corp.into(),
             format!("{{{},{}}}", REFINERIES[0], REFINERIES[1]).into(),
         ],
-    )])
+        ),
+        // aa-moonmining deletes refineries the corporation no longer lists
+        // (`models/owners.py:210-211`): gone, they own no moon. Kept for
+        // their past extractions' names.
+        Statement::new(
+            "UPDATE structures SET gone_at = now() WHERE corporation_id = $2 AND gone_at IS NULL \
+             AND structure_id NOT IN (SELECT structure_id FROM json_to_recordset($1::json) AS x(structure_id bigint) \
+                                      WHERE structure_id IS NOT NULL)",
+            vec![listed, corp.into()],
+        ),
+    ])
     .map_err(|e| retry("storing structures", e))?;
     Ok(Read::Done)
 }
@@ -2118,7 +2130,7 @@ fn refineries(corp: i64, now: DateTime<Utc>) -> Result<Vec<Refinery>, PageError>
                 (SELECT max(e.natural_decay) FROM extractions e WHERE e.structure_id = s.structure_id \
                  AND e.natural_decay <= $2 AND e.cancelled_at IS NULL) \
          FROM structures s LEFT JOIN names y ON y.id = s.system_id \
-         WHERE s.corporation_id = $1 AND s.drill IS NOT FALSE ORDER BY s.name",
+         WHERE s.corporation_id = $1 AND s.drill IS NOT FALSE AND s.gone_at IS NULL ORDER BY s.name",
         &[corp.into(), Db::timestamp(rfc3339(now))],
     )
     .map_err(|e| failed("reading structures", e))?;
@@ -2145,7 +2157,7 @@ fn planner_page(viewer: &Viewer) -> Result<Page, PageError> {
     let managed = station_manager_corporations(viewer)?;
     let corporations = storage::query(
         "SELECT c.corporation_id, coalesce(n.name, 'Corporation ' || c.corporation_id::text) \
-         FROM (SELECT DISTINCT corporation_id FROM structures WHERE drill IS NOT FALSE) c \
+         FROM (SELECT DISTINCT corporation_id FROM structures WHERE drill IS NOT FALSE AND gone_at IS NULL) c \
          LEFT JOIN names n ON n.id = c.corporation_id ORDER BY 2",
         &[],
     )

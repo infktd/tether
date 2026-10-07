@@ -13,6 +13,7 @@ use tether_plugin_sdk::{
     link, time,
 };
 
+use crate::moons::OWNED;
 use crate::{
     PRICE, count, failed, float, int, isk_or_blank, rfc3339, text, value, when, with_rows,
 };
@@ -64,8 +65,7 @@ fn income_table() -> Result<(Table, f64, i64), PageError> {
     let rates = crate::rates()?;
     let rows = storage::query(
         &format!(
-            "WITH owned AS (SELECT DISTINCT ON (e.moon_id) e.moon_id, e.corporation_id \
-                 FROM extractions e ORDER BY e.moon_id, e.chunk_arrival DESC) \
+            "{OWNED} \
              SELECT o.moon_id, coalesce(mn.name, 'Moon ' || o.moon_id::text), o.corporation_id, \
                     coalesce(co.name, 'Corporation ' || o.corporation_id::text), coalesce(rn.name, ''), \
                     coalesce(v.rarity, 0), v.worth \
