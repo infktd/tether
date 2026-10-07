@@ -165,24 +165,50 @@ async fn sovereignty_timer_end_to_end(db: PgPool) {
     }
     // No change yet on the active one, which is Active rather than a
     // countdown; the others show no score before they start.
-    assert!(res.body.contains("60% · no change"), "{}", res.body);
+    assert!(res.body.contains("60% · no change yet"), "{}", res.body);
     assert!(res.body.contains(">Active<"), "{}", res.body);
     assert_eq!(res.body.matches("60%").count(), 1, "{}", res.body);
 
-    // The next sync: the attackers gain on the active one.
-    mount_campaigns(
-        &h,
+    // The next sync: the attackers gain on the active one. The two syncs
+    // after it see 55% again, then 58%.
+    let later = |score: f64| {
         serde_json::json!([
-            campaign(1, 30000474, now - Duration::hours(1), 0.55),
+            campaign(1, 30000474, now - Duration::hours(1), score),
             campaign(2, 30000475, now + Duration::hours(2), 0.6),
             campaign(3, 30000476, now + Duration::hours(10), 0.6),
-        ]),
-        1,
-    )
-    .await;
+        ])
+    };
+    Mock::given(method("GET"))
+        .and(path("/sovereignty/campaigns"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(later(0.55)))
+        .up_to_n_times(2)
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_campaigns(&h, later(0.58), 1).await;
     sync(&h).await;
     let res = page(&h, &at, &owner).await;
-    assert!(res.body.contains("55% · attackers gaining"), "{}", res.body);
+    // As aa-sov-timer, the score before and the score now.
+    assert!(
+        res.body.contains("60% → 55% · attackers gaining"),
+        "{}",
+        res.body
+    );
+    // Unchanged, the previous score is kept: the trend doesn't forget.
+    sync(&h).await;
+    let res = page(&h, &at, &owner).await;
+    assert!(
+        res.body.contains("60% → 55% · attackers gaining"),
+        "{}",
+        res.body
+    );
+    sync(&h).await;
+    let res = page(&h, &at, &owner).await;
+    assert!(
+        res.body.contains("55% → 58% · defenders gaining"),
+        "{}",
+        res.body
+    );
     // Each sync queues the next, 30 seconds on, once.
     let next: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM core.jobs WHERE job_key = 'sync-next' AND state = 'queued'",
