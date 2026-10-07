@@ -1804,6 +1804,12 @@ fn queue_relay(at: Option<DateTime<Utc>>) -> Result<(), JobError> {
 /// Sends waiting messages, five a run (the host's limit), again in 15
 /// seconds while more wait. Each is claimed before it's sent, so a retry
 /// can't send it twice.
+///
+/// A mention the host refuses because no Discord role is mapped to the
+/// state is sent again without it. The state is then remembered for the
+/// rest of the run, so later messages skip the refused try. A refusal on
+/// the run's last send releases the message: it goes first next run, where
+/// the plain send fits. It's never failed for want of a role.
 fn relay() -> Result<(), JobError> {
     storage::execute(
         "UPDATE outbox SET failed = 'too old to send' WHERE sent_at IS NULL AND failed IS NULL \
@@ -1820,6 +1826,8 @@ fn relay() -> Result<(), JobError> {
     .map_err(|e| retry("reading the outbox", e))?;
     let mut sends = 0;
     let mut later = Utc::now() + RELAY_GAP;
+    // States the host found no Discord role for this run.
+    let mut unmapped: Vec<String> = Vec::new();
     for row in &waiting.rows {
         if sends >= SENDS_PER_RUN {
             break;
@@ -1834,7 +1842,11 @@ fn relay() -> Result<(), JobError> {
             continue;
         }
         let (channel, message) = (text(row, 1), text(row, 2));
-        let mention = row.get(3).and_then(Db::as_text).map(str::to_owned);
+        let mention = row
+            .get(3)
+            .and_then(Db::as_text)
+            .map(str::to_owned)
+            .filter(|state| !unmapped.contains(state));
         // A card around the message, when it was queued with one.
         let embed = row
             .get(4)
@@ -1850,13 +1862,26 @@ fn relay() -> Result<(), JobError> {
             Some(state) => Mention::State(state.clone()),
             None => Mention::None,
         });
-        // No role mapped to that state: send it without the mention.
-        if mention.is_some()
+        // No role mapped to that state: send it without the mention, now
+        // if a send is left, else first thing next run.
+        if let Some(state) = &mention
             && matches!(result, Err(discord::Error::NotAllowed(_)))
-            && sends < SENDS_PER_RUN
         {
+            if sends >= SENDS_PER_RUN {
+                storage::execute(
+                    "UPDATE outbox SET sent_at = NULL WHERE id = $1",
+                    &[id.into()],
+                )
+                .map_err(|e| retry("releasing a message", e))?;
+                break;
+            }
             sends += 1;
             result = post(Mention::None);
+            // Only once the plain send went: a channel the host refuses
+            // fails both, and says nothing about the role.
+            if result.is_ok() {
+                unmapped.push(state.clone());
+            }
         }
         match result {
             Ok(()) => {}

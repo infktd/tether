@@ -2376,3 +2376,89 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
         "{shared:?}"
     );
 }
+
+// ---- the relay ------------------------------------------------------------------
+
+/// A mention of a state with no Discord role mapped is sent without it,
+/// wherever it falls in a run's five sends: never failed for good.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_mention_without_a_role_is_sent_plain_never_failed(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    discord_ready(&h, &owner).await;
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Member has no role (Discord isn't mapped yet).
+    sqlx::query("DELETE FROM core.discord_role_mappings")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+    // Four plain messages, then two mentioning Member: the first of those
+    // falls on the run's fifth send.
+    for i in 1..=6 {
+        sqlx::query(
+            r#"INSERT INTO "plugin_tether.structures".outbox (key, channel, message, mention_state)
+               VALUES ($1, $2, $3, $4)"#,
+        )
+        .bind(format!("test:{i}"))
+        .bind(DISCORD_PING_CHANNEL)
+        .bind(format!("Message {i}"))
+        .bind((i > 4).then_some("Member"))
+        .execute(&h.db)
+        .await
+        .unwrap();
+    }
+    // The sync queues the relay; each later run is let go at once.
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    for _ in 0..5 {
+        let unsent: i64 = sqlx::query_scalar(
+            r#"SELECT count(*) FROM "plugin_tether.structures".outbox
+               WHERE sent_at IS NULL AND failed IS NULL"#,
+        )
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+        if unsent == 0 {
+            break;
+        }
+        sqlx::query(
+            "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'relay' \
+             AND state = 'queued'",
+        )
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap();
+        work(&h).await;
+    }
+    let sent = discord_messages(&h).await;
+    assert_eq!(sent.len(), 6, "{sent:?}\n{}", backlog(&h).await);
+    assert!(sent.iter().all(|m| !m.contains("<@&")), "{sent:?}");
+    for i in 1..=6 {
+        assert!(sent.contains(&format!("Message {i}")), "{i}: {sent:?}");
+    }
+    let failed: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.structures".outbox WHERE failed IS NOT NULL"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(failed, 0, "{}", backlog(&h).await);
+}
