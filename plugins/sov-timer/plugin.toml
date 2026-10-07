@@ -26,6 +26,10 @@ every = "5m"
 [permissions]
 basic_access = "Can access the Sovereignty Timer module"
 
+# Who each is usually for, shown under it on Permissions.
+[permission_notes]
+basic_access = "Usually Member, and Blue if allies fly sovereignty fights with you. Holders see every sovereignty campaign in New Eden, which is public from ESI, so it gives nothing away."
+
 [[pages]]
 path = ""
 permission = "basic_access"

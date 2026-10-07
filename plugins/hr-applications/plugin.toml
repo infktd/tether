@@ -5,7 +5,7 @@
 id = "tether.hr-applications"
 name = "HR Applications"
 icon = "clipboard"
-version = "0.4.4"
+version = "0.4.5"
 host_api = "1"
 description = "Application forms per corporation: pilots apply, recruiters review with comments and approve or reject, applicants follow their status."
 
@@ -26,6 +26,15 @@ approve_application = "Approve applications you're reviewing"
 reject_application = "Reject applications you're reviewing"
 delete_application = "Delete applications you can review"
 manage = "Create and change application forms and their questions"
+
+# Who each is usually for, shown under it on Permissions.
+[permission_notes]
+human_resources = "For recruiters and HR staff. Holders read the applications to their main's corporation (superusers every corporation's), with the applicant's answers and characters, and mark them in progress. Commenting, deciding and deleting need the permissions below as well."
+add_applicationcomment = "For recruiters who discuss applicants. Works with Human resources: holders comment on the applications they can review."
+approve_application = "For recruiters who decide. Holders approve the applications they're reviewing (marked in progress by them); superusers approve any."
+reject_application = "For recruiters who decide. Holders reject the applications they're reviewing (marked in progress by them); superusers reject any."
+delete_application = "For HR leads. Holders delete any application they can review, decided or not, with its answers and comments; the pilot can then apply again."
+manage = "For HR leads or admins. Holders create and change every corporation's application form and its questions, and see how many applications each has."
 
 # Applying, and following your own applications: anyone signed in with a
 # main, as AA's login_required views.

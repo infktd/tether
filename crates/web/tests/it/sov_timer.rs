@@ -195,6 +195,15 @@ async fn sovereignty_timer_end_to_end(db: PgPool) {
     // Only for basic_access.
     let pilot = log_in(&h, None).await;
     assert_eq!(page(&h, &at, &pilot).await.status, StatusCode::NOT_FOUND);
+    // Permissions says who it's usually for.
+    let listed = page(&h, "/admin/permissions", &owner).await;
+    assert!(
+        listed
+            .body
+            .contains("Holders see every sovereignty campaign in New Eden"),
+        "{}",
+        listed.body
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

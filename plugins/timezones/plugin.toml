@@ -5,7 +5,7 @@
 id = "tether.timezones"
 name = "Time Zones"
 icon = "globe"
-version = "0.1.2"
+version = "0.1.3"
 host_api = "1"
 description = "EVE time beside other time zones, and every one of them at a time you pick: a reinforcement timer or a planned fleet, with a link to share."
 
@@ -19,6 +19,10 @@ storage = true
 # are set in AA's admin site, here by `manage`.
 [permissions]
 manage = "Configure the time zone panels"
+
+# Who each is usually for, shown under it on Permissions.
+[permission_notes]
+manage = "For whoever sets up the alliance's clocks. Holders add and delete the time zone panels everyone sees; anyone signed in can look without it."
 
 # Anyone signed in with a main, as aa-timezones.
 [[pages]]

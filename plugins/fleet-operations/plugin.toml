@@ -5,7 +5,7 @@
 id = "tether.fleet-operations"
 name = "Fleet Operations"
 icon = "crosshair"
-version = "0.1.3"
+version = "0.1.4"
 host_api = "1"
 description = "Fleet operations in EVE time: upcoming and past ops with doctrine, form-up system, FC and type, counting down, and the next ones on the Dashboard."
 
@@ -21,6 +21,11 @@ storage = true
 [permissions]
 optimer_view = "See fleet operations"
 optimer_management = "Create, edit and delete fleet operations"
+
+# Who each is usually for, shown under it on Permissions.
+[permission_notes]
+optimer_view = "Usually Member: everyone who flies your fleets. Holders see upcoming and past operations with their form-up, start time and doctrine, so it shows your op schedule."
+optimer_management = "For FCs and fleet officers, with See fleet operations too. Holders post operations, and edit and delete anyone's."
 
 [[pages]]
 path = ""

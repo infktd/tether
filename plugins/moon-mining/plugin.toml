@@ -66,6 +66,17 @@ view_moon_ledgers = "Can view moon ledgers: who mined each extraction"
 # it until an admin grants it.
 manage = "Change Moon Mining's settings"
 
+# Who each is usually for, shown under it on Permissions.
+[permission_notes]
+basic_access = "Usually Member, and Blue if allies may look. Alone it opens Moons, which shows nothing without one of the moon permissions below, and, while the Members-only window is on, the old-moon list (which moons, never when they popped)."
+extractions_access = "Usually Member: the pilots who mine your moons. Holders see every extraction with its pop time and value, the owned moons, what each pilot mined (Mining totals) and the planner, which together map out your moon schedule."
+reports_access = "For leadership. Holders see what each owned moon could earn a month, what each member mined over four months, who uploaded surveys, and ore prices."
+view_all_moons = "For leadership and scouts. Holders see every surveyed moon, owned or not, with its ores and value, but not the extractions behind them."
+upload_moon_scan = "Usually Member: anyone with moon surveys to paste. Holders also see the moons they uploaded."
+add_refinery_owner = "For Station Managers or Directors. Holders add one of their own characters as an owner, and Moon Mining reads that corporation's extractions, refineries and mining ledgers through it at once."
+view_moon_ledgers = "For leadership. With Extractions access, holders see on each extraction's page who mined it and how much."
+manage = "For whoever runs Moon Mining. Holders change its settings (pop pings, the Members-only window, values) and get its admin notices: an owner added, or one ESI refuses. Superusers get them anyway."
+
 # What 0.1.0 called them: their grants move on upgrade.
 [renamed_permissions]
 old = "basic_access"

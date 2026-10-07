@@ -5,7 +5,7 @@
 id = "tether.bulletin-board"
 name = "Bulletin Board"
 icon = "pin"
-version = "0.1.2"
+version = "0.1.3"
 host_api = "1"
 description = "Bulletins for everyone, or only for members of some groups, newest first."
 
@@ -21,6 +21,11 @@ groups = true
 [permissions]
 basic_access = "Can access this app"
 manage_bulletins = "Can manage (add/change/remove) bulletins"
+
+# Who each is usually for, shown under it on Permissions.
+[permission_notes]
+basic_access = "Usually Member, and Blue if some bulletins are for allies. Holders read the bulletins for everyone and those limited to groups they're in."
+manage_bulletins = "For leadership, or whoever posts news. Holders write, change and remove bulletins, and see every one, those limited to groups they aren't in too."
 
 [[pages]]
 path = ""
