@@ -149,6 +149,58 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["contract_id"],
     },
     Endpoint {
+        // The data source character's own contracts: aa-buybackprogram's
+        // programs whose contracts go to their manager's character, not
+        // its corporation (Jay, 2026-10-07). Only that character's, with
+        // its token, as offered for the app.
+        name: "source-contracts",
+        scope: "esi-contracts.read_character_contracts.v1",
+        about: About::Corporation,
+        paged: true,
+        params: &[],
+    },
+    Endpoint {
+        name: "source-contract-items",
+        scope: "esi-contracts.read_character_contracts.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &["contract_id"],
+    },
+    Endpoint {
+        // The corporation's wallet divisions and their balances
+        // (aa-buybackprogram's funding wallets). CCP requires the
+        // Accountant or Junior Accountant role.
+        name: "corporation-wallets",
+        scope: "esi-wallet.read_corporation_wallets.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // The names the corporation gave its hangar and wallet divisions.
+        // CCP requires the Director role.
+        name: "corporation-divisions",
+        scope: "esi-corporations.read_divisions.v1",
+        about: About::Corporation,
+        paged: false,
+        params: &[],
+    },
+    Endpoint {
+        // What the corporation keeps in its hangars at up to 100
+        // `structure_ids` (stations or Upwell structures), by division and
+        // type, and in the containers there, with the containers: what
+        // aa-buybackprogram's reverse buyback sells from. From every page
+        // of the assets, the same background read as
+        // `corporation-asset-places` (Jay, 2026-10-07): until it's ready
+        // the call answers unavailable, so the app asks again. A call
+        // costs 2. CCP requires the Director role.
+        name: "corporation-hangar-assets",
+        scope: ASSETS,
+        about: About::Corporation,
+        paged: false,
+        params: &["structure_ids"],
+    },
+    Endpoint {
         // An Upwell structure's name, system and type, by `structure_id`,
         // as the data source sees it (ESI answers only for structures it
         // may dock at): where a contract is, instead of a raw id. Not its
@@ -1042,6 +1094,9 @@ pub(crate) struct Asset {
     pub(crate) location_flag: String,
     pub(crate) location_type: String,
     pub(crate) quantity: i64,
+    /// Assembled (a ship, an anchored container), not a stack.
+    #[serde(default)]
+    pub(crate) is_singleton: bool,
 }
 
 impl Asset {
@@ -1401,6 +1456,7 @@ impl Esi {
                             location_flag: a.location_flag.to_string(),
                             location_type: a.location_type.to_string(),
                             quantity: a.quantity,
+                            is_singleton: a.is_singleton,
                         })
                         .collect::<Vec<_>>();
                     Ok(ResponseValue::new(items, status, headers))
@@ -2209,6 +2265,39 @@ impl Esi {
                     .get_corporations_corporation_id_customs_offices()
                     .corporation_id(corporation)
             ),
+            "source-contracts" => loose_paged!(
+                client
+                    .get_characters_character_id_contracts()
+                    .character_id(character),
+                format!("/characters/{character}/contracts")
+            ),
+            "source-contract-items" => get!(
+                client
+                    .get_characters_character_id_contracts_contract_id_items()
+                    .character_id(character)
+                    .contract_id(positive_id(params, "contract_id")?.ok_or_else(|| {
+                        EsiError::InvalidInput("contract_id must be a number".to_owned())
+                    })?)
+            ),
+            "corporation-wallets" => get!(
+                client
+                    .get_corporations_corporation_id_wallets()
+                    .corporation_id(corporation)
+            ),
+            "corporation-divisions" => get!(
+                client
+                    .get_corporations_corporation_id_divisions()
+                    .corporation_id(corporation)
+            ),
+            "corporation-hangar-assets" => {
+                let token = token.clone();
+                let tokens: crate::asset_places::TokenSource = std::sync::Arc::new(move || {
+                    let token = token.clone();
+                    Box::pin(async move { Ok(token) })
+                });
+                self.corporation_hangar_assets(tokens, corporation, character, params)
+                    .await
+            }
             "corporation-structure-assets" => {
                 let token = token.clone();
                 let tokens: crate::asset_places::TokenSource = std::sync::Arc::new(move || {
@@ -2858,6 +2947,7 @@ mod tests {
             location_flag: flag.to_owned(),
             location_type: location_type.to_owned(),
             quantity: 1,
+            is_singleton: false,
         }
     }
 

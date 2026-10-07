@@ -49,6 +49,7 @@ pub fn esi_cost(endpoint: &str) -> usize {
         "fleet-members"
         | "universe-system"
         | "corporation-structure-assets"
+        | "corporation-hangar-assets"
         | "corporation-asset-places" => 2,
         _ => 1,
     }

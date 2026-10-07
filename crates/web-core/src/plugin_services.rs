@@ -412,7 +412,7 @@ async fn esi_get(
     }
     let background = matches!(
         endpoint.name,
-        "corporation-asset-places" | "corporation-structure-assets"
+        "corporation-asset-places" | "corporation-structure-assets" | "corporation-hangar-assets"
     );
     let result = if background {
         // Every page of the corporation's assets is read in the background
@@ -451,6 +451,10 @@ async fn esi_get(
         if endpoint.name == "corporation-structure-assets" {
             deps.esi
                 .corporation_structure_assets(tokens, target.corporation_id, character)
+                .await
+        } else if endpoint.name == "corporation-hangar-assets" {
+            deps.esi
+                .corporation_hangar_assets(tokens, target.corporation_id, character, params)
                 .await
         } else {
             deps.esi

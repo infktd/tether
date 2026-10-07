@@ -100,6 +100,7 @@ struct Held {
     flag: u32,
     kind: u32,
     quantity: i64,
+    singleton: bool,
 }
 
 impl AssetTree {
@@ -126,6 +127,7 @@ impl AssetTree {
                     flag,
                     kind,
                     quantity: a.quantity,
+                    singleton: a.is_singleton,
                 },
             );
         }
@@ -220,6 +222,7 @@ impl AssetTree {
             location_flag: self.text(held.flag).to_owned(),
             location_type: self.text(held.kind).to_owned(),
             quantity: held.quantity,
+            is_singleton: held.singleton,
         }
     }
 
@@ -229,6 +232,91 @@ impl AssetTree {
             .iter()
             .any(|(id, held)| self.asset(*id, held).in_shared_slot())
     }
+}
+
+/// Hangar flags: the corporation's hangar divisions (and an NPC
+/// station's plain hangar).
+const HANGAR_FLAGS: &[&str] = &[
+    "Hangar", "CorpSAG1", "CorpSAG2", "CorpSAG3", "CorpSAG4", "CorpSAG5", "CorpSAG6", "CorpSAG7",
+];
+
+/// `corporation-hangar-assets` from a read, for the asked structures (or
+/// stations): what's in the corporation's hangars there, by structure,
+/// hangar flag and type, loose (`container_id` null) or in a container
+/// in one of those hangars (its id); and those hangars' assembled items
+/// that hold others (`containers`, with their type, structure and flag).
+/// Office hangars are placed at their structure, as aa-buybackprogram
+/// places them (`OfficeFolder`).
+pub(crate) fn hangar_items(tree: &AssetTree, structures: &[i64]) -> serde_json::Value {
+    let flag = |held: &Held| tree.text(held.flag);
+    let office_at: HashMap<i64, i64> = tree
+        .items
+        .iter()
+        .filter(|(_, held)| flag(held) == "OfficeFolder")
+        .map(|(id, held)| (*id, held.location_id))
+        .collect();
+    // Items in the asked structures' hangars: where each is.
+    let mut in_hangar: HashMap<i64, (i64, &str)> = HashMap::new();
+    for (id, held) in &tree.items {
+        if !HANGAR_FLAGS.contains(&flag(held)) {
+            continue;
+        }
+        let at = office_at
+            .get(&held.location_id)
+            .copied()
+            .unwrap_or(held.location_id);
+        if structures.contains(&at) {
+            in_hangar.insert(*id, (at, flag(held)));
+        }
+    }
+    let holders: std::collections::HashSet<i64> = tree
+        .items
+        .values()
+        .filter(|held| in_hangar.contains_key(&held.location_id))
+        .map(|held| held.location_id)
+        .collect();
+    let mut stock: std::collections::BTreeMap<(i64, String, Option<i64>, i64), i64> =
+        std::collections::BTreeMap::new();
+    for (id, held) in &tree.items {
+        let key = if let Some((at, hangar)) = in_hangar.get(id) {
+            (*at, (*hangar).to_owned(), None)
+        } else if let Some((at, hangar)) = in_hangar.get(&held.location_id) {
+            (*at, (*hangar).to_owned(), Some(held.location_id))
+        } else {
+            continue;
+        };
+        *stock
+            .entry((key.0, key.1, key.2, held.type_id))
+            .or_default() += held.quantity;
+    }
+    let mut containers: Vec<serde_json::Value> = in_hangar
+        .iter()
+        .filter(|(id, _)| tree.items.get(id).is_some_and(|h| h.singleton) || holders.contains(id))
+        .filter_map(|(id, (at, hangar))| {
+            let held = tree.items.get(id)?;
+            Some(serde_json::json!({
+                "item_id": id,
+                "type_id": held.type_id,
+                "structure_id": at,
+                "location_flag": hangar,
+                "holds_items": holders.contains(id),
+            }))
+        })
+        .collect();
+    containers.sort_by_key(|c| c["item_id"].as_i64());
+    serde_json::json!({
+        "stock": stock
+            .into_iter()
+            .map(|((at, hangar, container, type_id), quantity)| serde_json::json!({
+                "structure_id": at,
+                "location_flag": hangar,
+                "container_id": container,
+                "type_id": type_id,
+                "quantity": quantity,
+            }))
+            .collect::<Vec<_>>(),
+        "containers": containers,
+    })
 }
 
 /// One corporation and character's read.
@@ -384,6 +472,44 @@ impl Esi {
         };
         Ok(Response {
             body: structure_items(&tree, upwell.as_deref()),
+            pages: 1,
+            refetched: again,
+        })
+    }
+
+    /// `corporation-hangar-assets` for `corporation`, from the same read
+    /// as [`Self::corporation_asset_places`]: what's in its hangars at the
+    /// asked `structure_ids` (up to 100), and the containers there.
+    pub async fn corporation_hangar_assets(
+        &self,
+        tokens: TokenSource,
+        corporation: i64,
+        character: i64,
+        params: &[(String, String)],
+    ) -> Result<Response, EsiError> {
+        let structures: Vec<i64> = params
+            .iter()
+            .find(|(k, _)| k == "structure_ids")
+            .map(|(_, v)| {
+                v.split(',')
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.trim().parse::<i64>().ok().filter(|id| *id > 0))
+                    .collect::<Option<Vec<i64>>>()
+            })
+            .unwrap_or(Some(Vec::new()))
+            .ok_or_else(|| {
+                EsiError::InvalidInput(
+                    "structure_ids are positive numbers, comma-separated".to_owned(),
+                )
+            })?;
+        if structures.is_empty() || structures.len() > 100 {
+            return Err(EsiError::InvalidInput(
+                "give 1 to 100 structure_ids".to_owned(),
+            ));
+        }
+        let (tree, again) = self.kept_read(tokens, corporation, character).await?;
+        Ok(Response {
+            body: hangar_items(&tree, &structures),
             pages: 1,
             refetched: again,
         })
@@ -647,6 +773,7 @@ mod tests {
             location_flag: flag.to_owned(),
             location_type: kind.to_owned(),
             quantity: 1,
+            is_singleton: false,
         }
     }
 
@@ -654,6 +781,38 @@ mod tests {
         let mut tree = AssetTree::default();
         tree.add(assets);
         tree
+    }
+
+    /// Hangar stock from a read: an office's hangars placed at its
+    /// structure, loose items by flag and type, a container's contents
+    /// under it; nothing at other structures.
+    #[test]
+    fn hangar_items_are_what_the_hangars_hold() {
+        const STATION: i64 = 60003760;
+        const OFFICE: i64 = 1_000_000_000_001;
+        const BOX: i64 = 1_000_000_000_002;
+        let mut container = asset(BOX, 17366, "CorpSAG2", OFFICE, "item");
+        container.is_singleton = true;
+        let tree = tree(vec![
+            asset(OFFICE, 27, "OfficeFolder", STATION, "station"),
+            asset(10, 34, "CorpSAG1", OFFICE, "item"),
+            asset(11, 34, "CorpSAG1", OFFICE, "item"),
+            container,
+            asset(12, 35, "Unlocked", BOX, "item"),
+            asset(13, 36, "CorpSAG1", 60008494, "station"),
+        ]);
+        let answer = hangar_items(&tree, &[STATION]);
+        let stock = answer["stock"].as_array().unwrap();
+        let tritanium = stock.iter().find(|s| s["type_id"] == 34).unwrap();
+        assert_eq!(tritanium["quantity"], 2);
+        assert_eq!(tritanium["location_flag"], "CorpSAG1");
+        assert_eq!(tritanium["structure_id"], STATION);
+        assert!(tritanium["container_id"].is_null());
+        let boxed = stock.iter().find(|s| s["type_id"] == 35).unwrap();
+        assert_eq!(boxed["container_id"], BOX);
+        assert!(stock.iter().all(|s| s["type_id"] != 36));
+        assert_eq!(answer["containers"][0]["item_id"], BOX);
+        assert_eq!(answer["containers"][0]["holds_items"], true);
     }
 
     /// Structure assets from a read: slots and bays only structures have,
