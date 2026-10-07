@@ -946,6 +946,89 @@ async fn the_pilot_sees_their_requests_history(db: PgPool) {
     }
 }
 
+/// AA core's srp_request_remove: an SRP manager removes one request, from
+/// the fleet's table or its own page, with its comments; its loss can be
+/// requested again. Nobody else may.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_single_request_is_removed(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner: _,
+        pilot,
+        manager,
+        fleet,
+        r1,
+        r4,
+    } = op_rock(db).await;
+    let fleet_url = format!("fleet/{fleet}");
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r4}"),
+        "_form=comment&comment=Looks+fine",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Not for pilots: they get no button.
+    let res = post(
+        &h,
+        &pilot,
+        &fleet_url,
+        &format!("_form=remove_request&request={r4}"),
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let rows = open(&h, &manager, &fleet_url).await;
+    assert!(
+        rows.body
+            .contains("Pilot A&#39;s request for their Rifter is removed with its comments"),
+        "{}",
+        rows.body
+    );
+    let res = post(
+        &h,
+        &manager,
+        &fleet_url,
+        &format!("_form=remove_request&request={r4}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&fleet_url));
+    let left: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM \"plugin_tether.ship-replacement\".requests")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(left, vec![r1]);
+    let comments: i64 = one(
+        &h,
+        "SELECT count(*) FROM \"plugin_tether.ship-replacement\".comments",
+    )
+    .await;
+    assert_eq!(comments, 0);
+    // Its loss can be requested again.
+    let (_, code) = newest_fleet(&h).await;
+    let res = post(
+        &h,
+        &pilot,
+        &format!("request/{code}"),
+        &request("https://zkillboard.com/kill/1004/"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // From its own page, back to the fleet.
+    let res = post(&h, &manager, &format!("review/{r1}"), "_form=remove").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&fleet_url));
+    assert_eq!(
+        open(&h, &manager, &format!("review/{r1}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
 /// Runs the app's queued jobs that are due (the relay).
 async fn work(h: &Harness) {
     let mut registry = Registry::new();

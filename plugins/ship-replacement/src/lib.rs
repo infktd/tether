@@ -19,7 +19,8 @@
 //! - **Managing** (`srp_management`, AA's `auth.srp_management`): approve
 //!   (the payout defaults to zKillboard's value) or reject with a comment,
 //!   update the payout at any time, mark approved ones paid (aa-srp's),
-//!   complete and remove fleets. As AA, nothing stops a manager deciding
+//!   remove a request (its loss can then be requested again), complete and
+//!   remove fleets. As AA, nothing stops a manager deciding
 //!   their own request. The pilot hears of each approval and rejection in
 //!   Tether's notifications, as AA's notify tells them.
 //! - **SRP team channel** (aa-srp's `srp_team_discord_channel_id`, none by
@@ -1409,7 +1410,29 @@ fn request_buttons(r: &Req) -> Vec<Action> {
             r.character_name, r.ship_name
         )));
     }
+    buttons.push(remove_button(r, on(action("Remove", "remove_request"))));
     buttons
+}
+
+/// AA core's Remove for one request: asks first.
+fn remove_button(r: &Req, button: Action) -> Action {
+    button.tone(Tone::Danger).confirm(format!(
+        "{}'s request for their {} is removed with its comments. The loss can then be \
+         requested again, as in AA.",
+        r.character_name, r.ship_name
+    ))
+}
+
+/// Removes one request (AA core's srp_request_remove), its comments and
+/// card with it. Callers check `srp_management`.
+fn remove_request(viewer: &Viewer, r: &Req) -> Result<(), PageError> {
+    storage::execute("DELETE FROM requests WHERE id = $1", &[r.id.into()])
+        .map_err(|e| failed("removing the request", e))?;
+    log::info(format!(
+        "SRP request {} ({}'s {}, kill {}) removed by {} ({})",
+        r.id, r.character_name, r.ship_name, r.killmail_id, viewer.main.name, viewer.main.id
+    ));
+    Ok(())
 }
 
 /// A fleet's buttons, and its requests' (posted from `page_number`, where
@@ -1461,10 +1484,15 @@ fn fleet_action(
             Ok(SubmitResult::Redirect(String::new()))
         }
         // A request's row buttons: one of this fleet's.
-        form @ ("decide" | "paid") => {
+        form @ ("decide" | "paid" | "remove_request") => {
             let r = request_by_id(id(submission.value("request"))?)?;
             if r.fleet_id != f.id {
                 return Err(PageError::NotFound);
+            }
+            if form == "remove_request" {
+                remove_request(viewer, &r)?;
+                // The fleet's first page: this one may be gone now.
+                return Ok(SubmitResult::Redirect(fleet_path(fleet_id, 1)));
             }
             let problem = if form == "paid" {
                 mark_paid(viewer, &r)?
@@ -1543,6 +1571,10 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
             )),
         );
     }
+    about = about.field(
+        "Remove",
+        remove_button(&r, action("Remove request", "remove")),
+    );
     let comments = query(
         "SELECT created_at, author_name, body, shown FROM comments WHERE request_id = $1 \
          ORDER BY created_at, id LIMIT $2",
@@ -1872,6 +1904,10 @@ fn review_action(
             Some(problem) => note(problem),
             None => back(),
         },
+        "remove" => {
+            remove_request(viewer, &r)?;
+            Ok(SubmitResult::Redirect(format!("fleet/{}", r.fleet_id)))
+        }
         "comment" => {
             if comment.is_empty() {
                 return note("Write a comment first.");
