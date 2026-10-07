@@ -13,10 +13,11 @@
 //!   corporation; superusers every one (as aa-contacts).
 //! - **Contacts**: each with its standing and labels; notes for
 //!   `view_*_notes` (edited with `manage_*_contacts` too), and server links
-//!   (a name, an address of any kind, a password) for `view_*_server_links`
-//!   (managed with `manage_*_contacts` too). A contact gone from EVE's
-//!   list is kept, at standing 0 without labels, while it has notes or
-//!   server links (aa-contacts).
+//!   (a name, an address of any kind, a password, one of aa-contacts' eight
+//!   colours; each changed or deleted on its own page) for
+//!   `view_*_server_links` (managed with `manage_*_contacts` too). A
+//!   contact gone from EVE's list is kept, at standing 0 without labels,
+//!   while it has notes or server links (aa-contacts).
 //!
 //! Not taken: aa-contacts' Secure Groups standings filter (apps don't learn
 //! every character of an account, so can't judge one).
@@ -28,19 +29,24 @@ use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Card, Column, Field, Form, Page, PageError, Plugin, Request, Submission, SubmitResult, Table,
-    Tone, Value, action, alliance, badge, character, corporation, faction, link, log, time,
+    Tone, Value, action, actions, alliance, badge, character, corporation, faction, link, log,
+    time,
 };
 
 const UPDATE: &str = "update";
 const MAX_NOTES: u32 = 2_000;
 const MAX_LINKS: i64 = 20;
-/// The colours offered, named as Tether draws them (Bootstrap's others,
-/// stored before, draw as the nearest).
-const COLORS: [(&str, &str); 4] = [
+/// aa-contacts' eight colours (`aa_contacts/models.py:166-174`), by its
+/// names; Tether draws each in the nearest of its tones (`tone_of`).
+const COLORS: [(&str, &str); 8] = [
+    ("primary", "Blue"),
     ("secondary", "Grey"),
-    ("success", "Blue"),
-    ("warning", "Signal"),
+    ("success", "Green"),
     ("danger", "Red"),
+    ("warning", "Yellow"),
+    ("info", "Cyan"),
+    ("light", "Light"),
+    ("dark", "Dark"),
 ];
 
 struct Contacts;
@@ -55,6 +61,14 @@ impl Plugin for Contacts {
             [kind, id, "contact", contact] => {
                 contact_page(&viewer, kind_of(kind)?, number(id)?, number(contact)?, None)
             }
+            [kind, id, "contact", contact, "link", link] => link_page(
+                &viewer,
+                kind_of(kind)?,
+                number(id)?,
+                number(contact)?,
+                number(link)?,
+                None,
+            ),
             _ => Err(PageError::NotFound),
         }
     }
@@ -100,7 +114,16 @@ impl Plugin for Contacts {
                 match form {
                     "notes" => save_notes(&viewer, kind, id, contact, &submission),
                     "add_link" => add_link(&viewer, kind, id, contact, &submission),
-                    "delete_link" => delete_link(&viewer, kind, id, contact, &submission),
+                    _ => Err(PageError::NotFound),
+                }
+            }
+            ([kind, id, "contact", contact, "link", link], form) => {
+                let kind = kind_of(kind)?;
+                let (id, contact, link) = (number(id)?, number(contact)?, number(link)?);
+                seen(&viewer, kind, id)?;
+                match form {
+                    "edit_link" => edit_link(&viewer, kind, id, contact, link, &submission),
+                    "delete_link" => delete_link(&viewer, kind, id, contact, link),
                     _ => Err(PageError::NotFound),
                 }
             }
@@ -957,56 +980,128 @@ fn contact_page(
             .title("Server links")
             .empty("No server links.");
         for l in &links.rows {
-            let tone = match text(l, 4).as_str() {
-                "success" | "primary" | "info" => Tone::Success,
-                "danger" => Tone::Danger,
-                "warning" => Tone::Warning,
-                _ => Tone::Neutral,
-            };
             let mut cells: Vec<Value> = vec![
-                badge(text(l, 1), tone).into(),
+                badge(text(l, 1), tone_of(&text(l, 4))).into(),
                 text(l, 2).into(),
                 text(l, 3).into(),
             ];
             if manage {
+                // Changed or deleted on its own page.
                 cells.push(
-                    action("Delete", "delete_link")
-                        .field("link", int(l, 0).to_string())
-                        .tone(Tone::Danger)
-                        .confirm(format!("The server link {} is deleted.", text(l, 1)))
-                        .into(),
+                    link(
+                        "Edit",
+                        format!("{kind}/{id}/contact/{contact}/link/{}", int(l, 0)),
+                    )
+                    .into(),
                 );
             }
             table = table.row(cells);
         }
         page = page.table(table);
         if manage {
-            page = page.form(
-                Form::new("add_link", "Add server link")
-                    .title("Add a server link")
-                    .field(Field::text("name", "Name", 100).required())
-                    .field(
-                        Field::text("url", "Address", 500)
-                            .help("A Discord invite, a TeamSpeak address, ...")
-                            .required(),
-                    )
-                    .field(Field::text("password", "Password", 255))
-                    .field(
-                        Field::select(
-                            "color",
-                            "Colour",
-                            COLORS
-                                .iter()
-                                .map(|(v, l)| ((*v).to_owned(), (*l).to_owned()))
-                                .collect(),
-                        )
-                        .value("secondary")
-                        .required(),
-                    ),
-            );
+            page = page
+                .form(link_form("add_link", "Add server link", None).title("Add a server link"));
         }
     }
     Ok(page)
+}
+
+/// How a server link's colour is drawn: Tether's tones stand in for
+/// Bootstrap's colours aa-contacts offers.
+fn tone_of(color: &str) -> Tone {
+    match color {
+        "primary" | "info" | "success" => Tone::Success,
+        "danger" => Tone::Danger,
+        "warning" => Tone::Warning,
+        _ => Tone::Neutral,
+    }
+}
+
+/// A server link's fields, empty or as `values` (name, address, password,
+/// colour) has them.
+fn link_form(id: &str, submit: &str, values: Option<[&str; 4]>) -> Form {
+    let [name, url, password, color] = values.unwrap_or(["", "", "", "secondary"]);
+    let colors = COLORS
+        .iter()
+        .map(|(v, l)| ((*v).to_owned(), (*l).to_owned()))
+        .collect();
+    // The select starts on a colour it offers (the host refuses one that
+    // doesn't).
+    let color = if COLORS.iter().any(|(v, _)| *v == color) {
+        color
+    } else {
+        "secondary"
+    };
+    Form::new(id, submit)
+        .field(Field::text("name", "Name", 100).value(name).required())
+        .field(
+            Field::text("url", "Address", 500)
+                .value(url)
+                .help("A Discord invite, a TeamSpeak address, ...")
+                .required(),
+        )
+        .field(Field::text("password", "Password", 255).value(password))
+        .field(
+            Field::select("color", "Colour", colors)
+                .value(color)
+                .help("aa-contacts' colours, drawn in Tether's: Blue, Cyan and Green as its blue, Yellow as its signal orange, Red as red, the rest grey.")
+                .required(),
+        )
+}
+
+/// A server link's own page: change it, or delete it.
+fn link_page(
+    viewer: &Viewer,
+    kind: &str,
+    id: i64,
+    contact: i64,
+    link_id: i64,
+    problem: Option<(&str, &Submission)>,
+) -> Result<Page, PageError> {
+    seen(viewer, kind, id)?;
+    if !may_manage_links(viewer, kind) {
+        return Err(PageError::NotFound);
+    }
+    let rows = storage::query(
+        "SELECT s.name, s.url, s.password, s.color, coalesce(n.name, '') FROM server_links s \
+         LEFT JOIN names n ON n.id = s.contact_id \
+         WHERE s.id = $1 AND s.kind = $2 AND s.entity_id = $3 AND s.contact_id = $4",
+        &[link_id.into(), kind.into(), id.into(), contact.into()],
+    )
+    .map_err(|e| failed("reading the server link", e))?;
+    let row = rows.rows.first().ok_or(PageError::NotFound)?;
+    let stored = [text(row, 0), text(row, 1), text(row, 2), text(row, 3)];
+    // What was posted wins (the form sent back with a problem).
+    let values = match problem {
+        Some((_, posted)) => ["name", "url", "password", "color"].map(|f| posted.value(f)),
+        None => [
+            stored[0].as_str(),
+            stored[1].as_str(),
+            stored[2].as_str(),
+            stored[3].as_str(),
+        ],
+    };
+    let contact_name = if text(row, 4).is_empty() {
+        contact.to_string()
+    } else {
+        text(row, 4)
+    };
+    let mut form = link_form("edit_link", "Save", Some(values)).title("Server link");
+    if let Some((problem, _)) = problem {
+        form = form.description(problem.to_owned());
+    }
+    Ok(Page::new(stored[0].clone())
+        .description(format!("A server link of {contact_name}"))
+        .link(contact_name, format!("{kind}/{id}/contact/{contact}"))
+        .form(form)
+        .card(Card::new("Delete").field(
+            "",
+            actions(vec![
+                action("Delete server link", "delete_link")
+                    .tone(Tone::Danger)
+                    .confirm(format!("The server link {} is deleted.", stored[0])),
+            ]),
+        )))
 }
 
 // ---- forms -------------------------------------------------------------------------
@@ -1055,6 +1150,28 @@ fn may_manage_links(viewer: &Viewer, kind: &str) -> bool {
         && viewer.can(&format!("view_{kind}_server_links"))
 }
 
+/// A posted server link, checked: its name, address, password and
+/// colour, or what's wrong with it.
+fn posted_link(submission: &Submission) -> Result<[&str; 4], &'static str> {
+    let (name, url, password) = (
+        submission.value("name").trim(),
+        submission.value("url").trim(),
+        submission.value("password").trim(),
+    );
+    let color = submission.value("color");
+    if name.is_empty() || name.chars().count() > 100 {
+        Err("A name is 1 to 100 characters.")
+    } else if url.is_empty() || url.chars().count() > 500 || url.chars().any(char::is_whitespace) {
+        Err("An address is 1 to 500 characters, with no spaces.")
+    } else if password.chars().count() > 255 {
+        Err("A password is at most 255 characters.")
+    } else if !COLORS.iter().any(|(v, _)| *v == color) {
+        Err("Pick a colour.")
+    } else {
+        Ok([name, url, password, color])
+    }
+}
+
 fn add_link(
     viewer: &Viewer,
     kind: &str,
@@ -1065,32 +1182,18 @@ fn add_link(
     if !may_manage_links(viewer, kind) {
         return Err(PageError::Forbidden);
     }
-    let (name, url, password) = (
-        submission.value("name").trim(),
-        submission.value("url").trim(),
-        submission.value("password").trim(),
-    );
-    let color = submission.value("color");
-    let problem = if name.is_empty() || name.chars().count() > 100 {
-        Some("A name is 1 to 100 characters.")
-    } else if url.is_empty() || url.chars().count() > 500 || url.chars().any(char::is_whitespace) {
-        Some("An address is 1 to 500 characters, with no spaces.")
-    } else if password.chars().count() > 255 {
-        Some("A password is at most 255 characters.")
-    } else if !COLORS.iter().any(|(v, _)| *v == color) {
-        Some("Pick a colour.")
-    } else {
-        None
+    let [name, url, password, color] = match posted_link(submission) {
+        Ok(link) => link,
+        Err(problem) => {
+            return Ok(SubmitResult::Page(contact_page(
+                viewer,
+                kind,
+                id,
+                contact,
+                Some(problem),
+            )?));
+        }
     };
-    if let Some(problem) = problem {
-        return Ok(SubmitResult::Page(contact_page(
-            viewer,
-            kind,
-            id,
-            contact,
-            Some(problem),
-        )?));
-    }
     let added = storage::execute(
         &format!(
             "INSERT INTO server_links (kind, entity_id, contact_id, name, url, password, color) \
@@ -1128,20 +1231,69 @@ fn add_link(
     )))
 }
 
-fn delete_link(
+/// Changes a server link (aa-contacts' `update_server_link`,
+/// `aa_contacts/api/common.py:166-184`).
+fn edit_link(
     viewer: &Viewer,
     kind: &str,
     id: i64,
     contact: i64,
+    link: i64,
     submission: &Submission,
 ) -> Result<SubmitResult, PageError> {
     if !may_manage_links(viewer, kind) {
         return Err(PageError::Forbidden);
     }
-    let link: i64 = submission
-        .value("link")
-        .parse()
-        .map_err(|_| PageError::NotFound)?;
+    let [name, url, password, color] = match posted_link(submission) {
+        Ok(link) => link,
+        Err(problem) => {
+            return Ok(SubmitResult::Page(link_page(
+                viewer,
+                kind,
+                id,
+                contact,
+                link,
+                Some((problem, submission)),
+            )?));
+        }
+    };
+    let changed = storage::execute(
+        "UPDATE server_links SET name = $5, url = $6, password = $7, color = $8 \
+         WHERE id = $1 AND kind = $2 AND entity_id = $3 AND contact_id = $4",
+        &[
+            link.into(),
+            kind.into(),
+            id.into(),
+            contact.into(),
+            name.into(),
+            url.into(),
+            password.into(),
+            color.into(),
+        ],
+    )
+    .map_err(|e| failed("saving the server link", e))?;
+    if changed == 0 {
+        return Err(PageError::NotFound);
+    }
+    log::info(format!(
+        "server link {link} of {kind} {id}'s contact {contact} changed by {} ({})",
+        viewer.main.name, viewer.main.id
+    ));
+    Ok(SubmitResult::Redirect(format!(
+        "{kind}/{id}/contact/{contact}"
+    )))
+}
+
+fn delete_link(
+    viewer: &Viewer,
+    kind: &str,
+    id: i64,
+    contact: i64,
+    link: i64,
+) -> Result<SubmitResult, PageError> {
+    if !may_manage_links(viewer, kind) {
+        return Err(PageError::Forbidden);
+    }
     storage::execute(
         "DELETE FROM server_links WHERE id = $1 AND kind = $2 AND entity_id = $3 AND contact_id = $4",
         &[link.into(), kind.into(), id.into(), contact.into()],
@@ -1228,6 +1380,43 @@ mod tests {
         assert!(may_begin(0, Duration::from_secs(55)));
         assert!(may_begin(5, Duration::from_secs(10)));
         assert!(!may_begin(5, READ_FOR));
+    }
+
+    #[test]
+    fn links_take_aa_contacts_eight_colours() {
+        assert_eq!(COLORS.len(), 8);
+        let tones: Vec<Tone> = COLORS.iter().map(|(c, _)| tone_of(c)).collect();
+        assert_eq!(
+            tones,
+            vec![
+                Tone::Success,
+                Tone::Neutral,
+                Tone::Success,
+                Tone::Danger,
+                Tone::Warning,
+                Tone::Success,
+                Tone::Neutral,
+                Tone::Neutral,
+            ]
+        );
+        let posted = |color: &str| Submission {
+            request: Request {
+                path: String::new(),
+                query: Vec::new(),
+            },
+            form: "edit_link".to_owned(),
+            values: vec![
+                ("name".to_owned(), " Comms ".to_owned()),
+                ("url".to_owned(), "ts3.example.org".to_owned()),
+                ("password".to_owned(), String::new()),
+                ("color".to_owned(), color.to_owned()),
+            ],
+        };
+        assert_eq!(
+            posted_link(&posted("dark")),
+            Ok(["Comms", "ts3.example.org", "", "dark"])
+        );
+        assert_eq!(posted_link(&posted("purple")), Err("Pick a colour."));
     }
 
     #[test]

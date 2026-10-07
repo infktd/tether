@@ -273,6 +273,60 @@ async fn contacts_end_to_end(db: PgPool) {
     for text in ["Shoot on sight", "Comms", "https://discord.gg/x", "hunter2"] {
         assert!(contact.body.contains(text), "{text}: {}", contact.body);
     }
+    // A server link is changed on its own page (aa-contacts'
+    // update_server_link), in any of AA's eight colours.
+    let link: i32 = sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.contacts".server_links"#)
+        .fetch_one(&h.db)
+        .await
+        .unwrap();
+    let edit = format!("{at}/link/{link}");
+    let res = page(&h, &format!("/plugins/{ID}/{edit}"), &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for text in ["Cyan", "Light", "Dark", "Delete server link"] {
+        assert!(res.body.contains(text), "{text}: {}", res.body);
+    }
+    let res = post(
+        &h,
+        &owner,
+        &edit,
+        "_form=edit_link&name=Voice&url=ts3.example.org&password=&color=info",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let saved: (String, String, String, String) = sqlx::query_as(
+        r#"SELECT name, url, password, color FROM "plugin_tether.contacts".server_links"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        saved,
+        (
+            "Voice".to_owned(),
+            "ts3.example.org".to_owned(),
+            String::new(),
+            "info".to_owned()
+        )
+    );
+    // Checked as when added: the form comes back with the problem.
+    let res = post(
+        &h,
+        &owner,
+        &edit,
+        "_form=edit_link&name=Voice&url=has+spaces&password=&color=info",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("with no spaces"), "{}", res.body);
+    // Another contact's path doesn't reach it.
+    let res = post(
+        &h,
+        &owner,
+        &format!("corporation/{CORP}/contact/{FRIEND}/link/{link}"),
+        "_form=edit_link&name=Moved&url=x&password=&color=info",
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
     // Both gone from EVE's list: the one with notes and a server link
     // stays, at standing 0 without labels (aa-contacts); the other goes.
@@ -350,6 +404,14 @@ async fn contacts_end_to_end(db: PgPool) {
             .status,
         StatusCode::NOT_FOUND
     );
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/{edit}"), &member)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let res = post(&h, &member, &edit, "_form=delete_link").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let res = post(&h, &member, &format!("corporation/{CORP}"), "_form=update").await;
     assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
 
