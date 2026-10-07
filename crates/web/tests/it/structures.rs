@@ -51,7 +51,7 @@ fn plugin_file(name: &str) -> String {
 }
 
 /// The plugin's migrations, in order.
-const MIGRATIONS: [&str; 7] = [
+const MIGRATIONS: [&str; 8] = [
     "migrations/0001_structures.sql",
     "migrations/0002_timers_corporation_only.sql",
     "migrations/0003_starbases_orbitals_tags.sql",
@@ -59,6 +59,7 @@ const MIGRATIONS: [&str; 7] = [
     "migrations/0005_all_notification_types.sql",
     "migrations/0006_outbox_cards.sql",
     "migrations/0007_aa_defaults.sql",
+    "migrations/0008_last_online.sql",
 ];
 
 /// The real package, signed with a test key.
@@ -3398,4 +3399,111 @@ async fn a_mention_without_a_role_is_sent_plain_never_failed(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(failed, 0, "{}", backlog(&h).await);
+}
+
+/// An owner whose two structures are out of fuel: the Keep with a service
+/// online, the Drill with none.
+async fn out_of_fuel(h: &Harness) -> String {
+    let owner = log_in_owner(h, "196379789:Chribba").await;
+    install(h, &owner).await;
+    let now = Utc::now();
+    let times = Times {
+        attacked: now - Duration::minutes(10),
+        shields: now - Duration::minutes(5),
+    };
+    mount_esi(h, now, &times).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CHRIBBA_CORP}/structures")))
+        .respond_with(json(serde_json::json!([
+            {
+                "structure_id": KEEP, "name": "Jita - Keep", "corporation_id": CHRIBBA_CORP,
+                "type_id": 35832, "system_id": SYSTEM, "profile_id": 1,
+                "services": [{ "name": "Market", "state": "online" }],
+                "state": "shield_vulnerable",
+            },
+            {
+                "structure_id": DRILL, "name": "Jita - Drill", "corporation_id": CHRIBBA_CORP,
+                "type_id": 35835, "system_id": SYSTEM, "profile_id": 1,
+                "services": [{ "name": "Moon Drilling", "state": "offline" }],
+                "state": "shield_vulnerable",
+            },
+        ])))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/notifications")))
+        .respond_with(json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    let owner = approve_owner(h, &owner).await;
+    assert!(sync(h).await.is_empty());
+    owner
+}
+
+/// The fuel cell of a structure's row on the list.
+fn row_of<'a>(body: &'a str, name: &str) -> &'a str {
+    let at = body
+        .find(&format!(">{name}<"))
+        .unwrap_or_else(|| panic!("{name}: {body}"));
+    let end = body[at..].find("</tr>").map_or(body.len(), |e| at + e);
+    &body[at..end]
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn power_modes_as_aa_structures(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    // aa-structures' power modes: out of fuel with a service online, low
+    // power; never seen with one online, "Abandoned?".
+    let list = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        row_of(&list.body, "Jita - Keep").contains(">Low power<"),
+        "{}",
+        list.body
+    );
+    assert!(
+        row_of(&list.body, "Jita - Drill").contains(">Abandoned?<"),
+        "{}",
+        list.body
+    );
+    // Seven days without a service online: Abandoned. The next sync keeps
+    // when one was last seen.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".structures SET last_online = now() - interval '8 days'
+           WHERE structure_id = $1"#,
+    )
+    .bind(KEEP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".structures SET last_online = now() - interval '8 days'
+           WHERE structure_id = $1"#,
+    )
+    .bind(DRILL)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(r#"UPDATE "plugin_tether.structures".owners SET structures_at = NULL"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    assert!(sync(&h).await.is_empty());
+    let list = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    // The Keep's Market was online again at this sync: low power.
+    assert!(
+        row_of(&list.body, "Jita - Keep").contains(">Low power<"),
+        "{}",
+        list.body
+    );
+    assert!(
+        row_of(&list.body, "Jita - Drill").contains(">Abandoned<"),
+        "{}",
+        list.body
+    );
+    // The structure's page says so, with when a service was last online.
+    let drill = page(&h, &format!("/plugins/{ID}/structure/{DRILL}"), &owner).await;
+    assert!(drill.body.contains(">Abandoned<"), "{}", drill.body);
+    assert!(drill.body.contains("Last online"), "{}", drill.body);
 }

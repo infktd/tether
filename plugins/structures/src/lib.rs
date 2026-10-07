@@ -1143,11 +1143,14 @@ fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
         Statement::new(
             "INSERT INTO structures (structure_id, corporation_id, kind, name, type_id, system_id, fuel_expires, \
                  blocks_expires, state, state_timer_start, state_timer_end, unanchors_at, reinforce_hour, \
-                 next_reinforce_hour, next_reinforce_apply, services, updated_at) \
+                 next_reinforce_hour, next_reinforce_apply, services, last_online, updated_at) \
              SELECT structure_id, $2, 'upwell', coalesce(name, 'Structure ' || structure_id::text), type_id, \
                  system_id, fuel_expires, fuel_expires, coalesce(state, 'unknown'), state_timer_start, \
                  state_timer_end, unanchors_at, reinforce_hour, next_reinforce_hour, next_reinforce_apply, \
-                 coalesce(services, '[]'::jsonb), now() \
+                 coalesce(services, '[]'::jsonb), \
+                 CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(services, '[]'::jsonb)) v \
+                                   WHERE v ->> 'state' = 'online') THEN now() END, \
+                 now() \
              FROM json_to_recordset($1::json) AS x(structure_id bigint, name text, type_id bigint, \
                  system_id bigint, fuel_expires timestamptz, state text, state_timer_start timestamptz, \
                  state_timer_end timestamptz, unanchors_at timestamptz, reinforce_hour integer, \
@@ -1160,6 +1163,7 @@ fn store_structures(corp: i64, bodies: &[String]) -> Result<(), JobError> {
                  unanchors_at = EXCLUDED.unanchors_at, reinforce_hour = EXCLUDED.reinforce_hour, \
                  next_reinforce_hour = EXCLUDED.next_reinforce_hour, \
                  next_reinforce_apply = EXCLUDED.next_reinforce_apply, services = EXCLUDED.services, \
+                 last_online = coalesce(EXCLUDED.last_online, structures.last_online), \
                  updated_at = now()",
             vec![Db::json(concat(bodies)), corp.into()],
         ),
@@ -2275,7 +2279,7 @@ const STRUCTURE_ROW: &str = "SELECT s.structure_id, s.name, coalesce(t.name, 'Ty
         coalesce((SELECT string_agg(g.name, ', ' ORDER BY g.sort_order, g.name) FROM structure_tags st \
             JOIN tags g ON g.id = st.tag_id WHERE st.structure_id = s.structure_id), ''), \
         coalesce(m.name, s.planet_name, pl.name, ''), s.strontium, s.details::text, s.unanchors_at, \
-        s.corporation_id, coalesce(s.type_id, 0) \
+        s.corporation_id, coalesce(s.type_id, 0), s.last_online \
      FROM structures s \
      LEFT JOIN names t ON t.id = s.type_id \
      LEFT JOIN systems y ON y.system_id = s.system_id \
@@ -2296,9 +2300,64 @@ fn name_link(row: &[Db]) -> Value {
     link(text(row, 1), format!("structure/{}", int(row, 0))).into()
 }
 
-/// Fuel expiry and time left, toned by the first alert.
+/// After this long without a service online, an Upwell structure out of
+/// fuel is Abandoned (aa-structures').
+const ABANDONED_AFTER: Duration = Duration::days(7);
+
+/// aa-structures' power modes (`models/structures_1.py:527-545`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Power {
+    Full,
+    Low,
+    Abandoned,
+    /// "Abandoned?": out of fuel, and never seen with a service online.
+    MaybeAbandoned,
+}
+
+impl Power {
+    fn badge(self) -> Value {
+        match self {
+            Power::Full => badge("Full power", Tone::Success),
+            Power::Low => badge("Low power", Tone::Warning),
+            Power::Abandoned => badge("Abandoned", Tone::Danger),
+            Power::MaybeAbandoned => badge("Abandoned?", Tone::Warning),
+        }
+        .into()
+    }
+}
+
+/// An Upwell structure's power mode: full power while its fuel lasts;
+/// out of fuel, low power for 7 days after a service was last seen
+/// online, then abandoned; never seen online, low power while anchoring,
+/// else "Abandoned?".
+fn power_mode(
+    fuel_expires: Option<DateTime<Utc>>,
+    last_online: Option<DateTime<Utc>>,
+    state: &str,
+    now: DateTime<Utc>,
+) -> Power {
+    if fuel_expires.is_some_and(|t| t > now) {
+        return Power::Full;
+    }
+    match last_online {
+        Some(at) if at >= now - ABANDONED_AFTER => Power::Low,
+        Some(_) => Power::Abandoned,
+        None if matches!(state, "anchoring" | "anchor_vulnerable") => Power::Low,
+        None => Power::MaybeAbandoned,
+    }
+}
+
+/// Fuel expiry and time left, toned by the first alert; out of fuel, an
+/// Upwell structure's power mode.
 fn fuel_cells(row: &[Db], now: DateTime<Utc>, alert: i64) -> (Value, Value) {
-    match when(row, 6) {
+    let upwell = text(row, 14) == "upwell";
+    let fuel = when(row, 6);
+    if upwell && fuel.is_none_or(|t| t <= now) {
+        let mode = power_mode(fuel, when(row, 23), &text(row, 8), now);
+        let expires = fuel.map_or_else(|| "".into(), |t| time(rfc3339(t)));
+        return (expires, mode.badge());
+    }
+    match fuel {
         Some(t) => {
             let d = t - now;
             let tone = if d < Duration::hours(24) {
@@ -2310,7 +2369,6 @@ fn fuel_cells(row: &[Db], now: DateTime<Utc>, alert: i64) -> (Value, Value) {
             };
             (time(rfc3339(t)), badge(left(d), tone).into())
         }
-        None if text(row, 14) == "upwell" => ("".into(), badge("Low power", Tone::Warning).into()),
         None => ("".into(), "Unknown".into()),
     }
 }
@@ -4120,6 +4178,34 @@ mod tests {
         assert_eq!(left(Duration::hours(76)), "3d 4h");
         assert_eq!(left(Duration::minutes(312)), "5h 12m");
         assert_eq!(left(Duration::minutes(-1)), "none");
+    }
+
+    #[test]
+    fn power_modes_as_aa_structures() {
+        let now = Utc::now();
+        let day = Duration::days(1);
+        // Fuel left: full power, whatever else.
+        assert_eq!(
+            power_mode(Some(now + day), None, "online", now),
+            Power::Full
+        );
+        // Out of fuel: low power for 7 days after a service was online.
+        assert_eq!(power_mode(None, Some(now - day), "online", now), Power::Low);
+        assert_eq!(
+            power_mode(Some(now - day), Some(now - day * 6), "online", now),
+            Power::Low
+        );
+        assert_eq!(
+            power_mode(None, Some(now - day * 8), "online", now),
+            Power::Abandoned
+        );
+        // Never seen online: "Abandoned?", unless it's anchoring.
+        assert_eq!(
+            power_mode(None, None, "shield_vulnerable", now),
+            Power::MaybeAbandoned
+        );
+        assert_eq!(power_mode(None, None, "anchoring", now), Power::Low);
+        assert_eq!(power_mode(None, None, "anchor_vulnerable", now), Power::Low);
     }
 
     #[test]
