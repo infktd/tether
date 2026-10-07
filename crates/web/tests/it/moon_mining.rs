@@ -273,8 +273,8 @@ async fn work(h: &Harness) {
     while run_once(&h.db, &registry, &config).await.unwrap() != Outcome::Idle {}
 }
 
-/// Runs one of the plugin's schedules now.
-async fn run_schedule(h: &Harness, name: &str) {
+/// Runs one of the plugin's schedules now, whatever it logs.
+async fn run_due_now(h: &Harness, name: &str) {
     sqlx::query(
         "UPDATE core.schedules SET next_run_at = now() - interval '1 minute' WHERE name = $1",
     )
@@ -284,13 +284,23 @@ async fn run_schedule(h: &Harness, name: &str) {
     .unwrap();
     tether_jobs::schedule::run_due(&h.db).await.unwrap();
     work(h).await;
-    let errors: Vec<String> = sqlx::query_scalar(
+}
+
+/// What the app logged at warn or error.
+async fn warnings(h: &Harness) -> Vec<String> {
+    sqlx::query_scalar(
         "SELECT message FROM core.plugin_logs WHERE plugin_id = $1 AND level IN ('warn', 'error')",
     )
     .bind(ID)
     .fetch_all(&h.db)
     .await
-    .unwrap_or_default();
+    .unwrap_or_default()
+}
+
+/// Runs one of the plugin's schedules now; it logs no warnings.
+async fn run_schedule(h: &Harness, name: &str) {
+    run_due_now(h, name).await;
+    let errors = warnings(h).await;
     assert!(errors.is_empty(), "{name}: {errors:?}");
 }
 
@@ -301,6 +311,24 @@ async fn moon_mining_end_to_end(db: PgPool) {
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
+    // aa-moonmining's periodic tasks: refineries and extractions every 10
+    // minutes, ledgers hourly, values daily.
+    let schedules: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT name, every_secs FROM core.schedules WHERE name LIKE $1 ORDER BY name",
+    )
+    .bind(format!("plugin:{ID}:%"))
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        schedules,
+        [
+            (format!("plugin:{ID}:ledger"), 3600),
+            (format!("plugin:{ID}:prices"), 86400),
+            (format!("plugin:{ID}:roles"), 86400),
+            (format!("plugin:{ID}:sync"), 600),
+        ]
+    );
     mount_esi(&h).await;
     mount_prices(&h).await;
     let owner = approve_source(&h, &owner).await;
@@ -1055,5 +1083,285 @@ async fn surveys_values_moons_and_reports(db: PgPool) {
         !shown.body.contains("Totals by character"),
         "{}",
         shown.body
+    );
+}
+
+/// Observers' ids from `FIRST_OBSERVER` on.
+const FIRST_OBSERVER: i64 = 1030000100000;
+
+/// Chribba Corp's observers, as ESI lists them (before `mount_esi`'s).
+async fn list_observers(h: &Harness, ids: impl IntoIterator<Item = i64>) {
+    let list: Vec<serde_json::Value> = ids
+        .into_iter()
+        .map(|id| {
+            serde_json::json!({ "observer_id": id, "observer_type": "structure",
+                                "last_updated": "2026-10-01" })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/corporation/{CHRIBBA_CORP}/mining/observers"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(list),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+}
+
+/// Any other observer's ledger: Chribba mined Sylvite today.
+async fn mount_ledgers(h: &Harness) {
+    let today = Utc::now().date_naive().to_string();
+    Mock::given(method("GET"))
+        .and(path_regex(format!(
+            r"^/corporation/{CHRIBBA_CORP}/mining/observers/\d+$"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(serde_json::json!([
+                    { "character_id": CHRIBBA, "last_updated": today, "quantity": 100,
+                      "recorded_corporation_id": CHRIBBA_CORP, "type_id": SYLVITE },
+                ])),
+        )
+        .with_priority(10)
+        .mount(&h.esi_server)
+        .await;
+}
+
+/// The ledgers asked of ESI so far, by observer.
+async fn ledger_reads(h: &Harness) -> Vec<i64> {
+    h.esi_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| {
+            let path = r.url.path().to_owned();
+            let rest = path.strip_prefix("/corporation/")?;
+            let (_, observer) = rest.split_once("/mining/observers/")?;
+            observer.trim_end_matches('/').parse().ok()
+        })
+        .collect()
+}
+
+/// An observer whose ledger was last tried `minutes_ago` (never: `None`).
+async fn seed_observer(h: &Harness, observer: i64, corporation: i64, minutes_ago: Option<i32>) {
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.moon-mining".observers (observer_id, corporation_id, synced_at)
+           VALUES ($1, $2, now() - make_interval(mins => $3))"#,
+    )
+    .bind(observer)
+    .bind(corporation)
+    .bind(minutes_ago)
+    .execute(&h.db)
+    .await
+    .unwrap();
+}
+
+async fn ledger_more_queued(h: &Harness) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM core.jobs WHERE plugin_id = $1 AND job_key = 'ledger_more' \
+         AND state = 'queued'",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// Observers whose ledger was tried in the last few minutes.
+async fn tried_now(h: &Harness) -> Vec<i64> {
+    sqlx::query_scalar(
+        r#"SELECT observer_id FROM "plugin_tether.moon-mining".observers
+           WHERE synced_at > now() - interval '5 minutes' ORDER BY observer_id"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn ledgers_read_every_listed_observer_hourly(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // More observers than one run's ESI calls.
+    let listed: Vec<i64> = (0..100).map(|n| FIRST_OBSERVER + n).collect();
+    list_observers(&h, listed.clone()).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    mount_ledgers(&h).await;
+    // One ESI no longer lists, and one of a corporation with no data
+    // source.
+    const GONE: i64 = 1030000999999;
+    const OTHER: i64 = 1030000888888;
+    seed_observer(&h, GONE, CHRIBBA_CORP, None).await;
+    seed_observer(&h, OTHER, 98000001, None).await;
+    // Adding the owner runs every schedule at once: the ledger run is
+    // that one.
+    approve_source(&h, &owner).await;
+    work(&h).await;
+    let first = ledger_reads(&h).await;
+    assert!(!first.is_empty() && first.len() <= 81, "{}", first.len());
+    assert_eq!(ledger_more_queued(&h).await, 1);
+    let left: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT observer_id FROM "plugin_tether.moon-mining".observers
+           WHERE observer_id = ANY($1) ORDER BY observer_id"#,
+    )
+    .bind(vec![GONE, OTHER])
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    // Gone isn't read any more; the other corporation's waits for a
+    // source.
+    assert_eq!(left, [OTHER]);
+    assert!(!first.contains(&OTHER) && !first.contains(&GONE));
+
+    // A minute later the rest.
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = now() WHERE plugin_id = $1 AND job_key = 'ledger_more'",
+    )
+    .bind(ID)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(&h).await;
+    assert_eq!(tried_now(&h).await, listed);
+    let mut read = ledger_reads(&h).await;
+    read.sort_unstable();
+    read.dedup();
+    assert_eq!(read, listed);
+    assert_eq!(ledger_more_queued(&h).await, 0);
+    let mined: i64 = sqlx::query_scalar(
+        r#"SELECT count(DISTINCT observer_id) FROM "plugin_tether.moon-mining".ledger"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(mined, 100);
+    assert!(warnings(&h).await.is_empty(), "{:?}", warnings(&h).await);
+
+    // Within the hour: only the list is read.
+    let before = ledger_reads(&h).await.len();
+    run_schedule(&h, "ledger").await;
+    assert_eq!(ledger_reads(&h).await.len(), before);
+
+    // An hour on, read again.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.moon-mining".observers SET synced_at = now() - interval '61 minutes'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    run_schedule(&h, "ledger").await;
+    assert!(ledger_reads(&h).await.len() > before);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn refused_ledgers_neither_block_nor_loop(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let listed: Vec<i64> = (0..6).map(|n| FIRST_OBSERVER + n).collect();
+    list_observers(&h, listed.clone()).await;
+    // ESI refuses the first five's ledgers (the in-game role gone, say).
+    for observer in &listed[..5] {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/corporation/{CHRIBBA_CORP}/mining/observers/{observer}"
+            )))
+            .respond_with(ResponseTemplate::new(403).set_body_json(
+                serde_json::json!({ "error": "Character does not have required role(s)" }),
+            ))
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    mount_ledgers(&h).await;
+    // The refused ones are oldest; the good one was read 55 minutes ago.
+    for (hours, observer) in (1..=5).rev().zip(&listed[..5]) {
+        seed_observer(&h, *observer, CHRIBBA_CORP, Some(hours * 60)).await;
+    }
+    let good = listed[5];
+    seed_observer(&h, good, CHRIBBA_CORP, Some(55)).await;
+    approve_source(&h, &owner).await;
+    work(&h).await;
+    // Four refusals end the run, before the good one, with no follow-up:
+    // a refusing corporation can't loop every minute.
+    assert_eq!(ledger_reads(&h).await, listed[..4]);
+    assert_eq!(tried_now(&h).await, listed[..4]);
+    assert_eq!(ledger_more_queued(&h).await, 0);
+
+    // The next run: the fifth, then the good one. Refused ones went to
+    // the back.
+    run_due_now(&h, "ledger").await;
+    assert_eq!(ledger_reads(&h).await[4..], [listed[4], good]);
+    let mined: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.moon-mining".ledger WHERE observer_id = $1"#,
+    )
+    .bind(good)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(mined, 1);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_ledger_too_big_to_store_doesnt_stop_the_rest(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let (big, good) = (FIRST_OBSERVER, FIRST_OBSERVER + 1);
+    list_observers(&h, [big, good]).await;
+    // More than a statement may carry (1 MiB).
+    let today = Utc::now().date_naive().to_string();
+    let rows: Vec<serde_json::Value> = (0..12_000)
+        .map(|n| {
+            serde_json::json!({ "character_id": 90000000 + n, "last_updated": today,
+                                "quantity": 100, "recorded_corporation_id": CHRIBBA_CORP,
+                                "type_id": SYLVITE })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/corporation/{CHRIBBA_CORP}/mining/observers/{big}"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(rows),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    mount_ledgers(&h).await;
+    seed_observer(&h, big, CHRIBBA_CORP, Some(120)).await;
+    seed_observer(&h, good, CHRIBBA_CORP, Some(60)).await;
+    approve_source(&h, &owner).await;
+    work(&h).await;
+    assert_eq!(ledger_reads(&h).await, [big, good]);
+    // The big one is tried for this hour, and the next is stored.
+    assert_eq!(tried_now(&h).await, [big, good]);
+    let mined: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT DISTINCT observer_id FROM "plugin_tether.moon-mining".ledger"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(mined, [good]);
+    let warned = warnings(&h).await;
+    assert!(
+        warned
+            .iter()
+            .any(|w| w.contains(&format!("observer {big}: its ledger couldn't be stored"))),
+        "{warned:?}"
     );
 }

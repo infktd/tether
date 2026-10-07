@@ -94,7 +94,8 @@ impl Plugin for MoonMining {
     fn run_job(job: Job) -> Result<(), JobError> {
         match job.name.as_str() {
             "sync" => sync(),
-            "ledger" => ledger(),
+            "ledger" => ledger(None),
+            LEDGER_MORE => ledger(Some(&job)),
             "roles" => roles(),
             "prices" => prices(),
             "places" => {
@@ -256,11 +257,27 @@ fn rates() -> Result<value::Rates, PageError> {
 /// well short and pick up next run.
 const ESI_BUDGET: usize = 90;
 const QUEUE_BUDGET: usize = 90;
-/// Observers whose ledgers are read per run, oldest first.
-const OBSERVERS_PER_RUN: i64 = 20;
+/// Calls a run keeps back for names.
+const NAME_RESERVE: usize = 8;
+/// The ledger run that carries on where one out of ESI calls stopped.
+const LEDGER_MORE: &str = "ledger_more";
+/// A ledger tried this recently isn't read again (an SQL interval): ESI
+/// caches it an hour, and this leaves room for follow-up runs and the
+/// scheduler's drift.
+const LEDGER_FRESH: &str = "50 minutes";
+/// Refused ledger reads a run tolerates: each is an ESI error, and the
+/// host throttles an app at 30 in five minutes.
+const LEDGER_REFUSALS: usize = 4;
 /// Station Manager entries not confirmed for this long are dropped (the
 /// corporation's roles can't be read any more).
 const MANAGERS_KEPT: &str = "2 days";
+
+/// A `ledger_more` run's corporations: those whose observers the hourly
+/// run listed.
+#[derive(Deserialize)]
+struct LedgerMore {
+    corporations: Vec<i64>,
+}
 
 /// Calls left this run.
 struct Budget(usize);
@@ -276,40 +293,48 @@ impl Budget {
     }
 }
 
-/// Every page of an endpoint, within the budget (`None` when it runs out
-/// or ESI says no, logged).
+/// Why `get_pages` has no answer.
+enum Missed {
+    /// The run's ESI calls ran out, before the first page or between
+    /// pages.
+    Budget,
+    /// ESI (or the host) said no: logged.
+    Esi,
+}
+
+/// Every page of an endpoint, within the budget.
 fn get_pages(
     budget: &mut Budget,
     endpoint: &str,
     subject: Subject,
     params: &[(String, String)],
     what: &str,
-) -> Option<Vec<String>> {
+) -> Result<Vec<String>, Missed> {
     if !budget.take() {
-        return None;
+        return Err(Missed::Budget);
     }
     let first = match esi::get(endpoint, subject, params, Some(1)) {
         Ok(first) => first,
         Err(err) => {
-            log::warn(format!("{what}: {err:?}"));
-            return None;
+            log::warn(format!("{what}: {}", esi::describe(&err)));
+            return Err(Missed::Esi);
         }
     };
     let mut bodies = vec![first.body];
     for page in 2..=first.pages {
         if !budget.take() {
             log::info(format!("{what}: out of ESI calls this run"));
-            return None;
+            return Err(Missed::Budget);
         }
         match esi::get(endpoint, subject, params, Some(page)) {
             Ok(response) => bodies.push(response.body),
             Err(err) => {
-                log::warn(format!("{what}: {err:?}"));
-                return None;
+                log::warn(format!("{what}: {}", esi::describe(&err)));
+                return Err(Missed::Esi);
             }
         }
     }
-    Some(bodies)
+    Ok(bodies)
 }
 
 /// A JSON array of every page's items.
@@ -344,9 +369,9 @@ fn sources_by_corporation() -> Vec<(i64, Subject)> {
     seen
 }
 
-/// Every 30 minutes: extractions and refineries from each corporation, a
-/// ping queued for each new or moved pop, then names, all within one
-/// budget.
+/// Every 10 minutes, as aa-moonmining's run_regular_updates: extractions
+/// and refineries from each corporation, a ping queued for each new or
+/// moved pop, then names, all within one budget.
 fn sync() -> Result<(), JobError> {
     let now = Utc::now();
     let sources = sources_by_corporation();
@@ -358,7 +383,7 @@ fn sync() -> Result<(), JobError> {
     let mut queue = QUEUE_BUDGET;
     // Extractions and pings first: they matter most.
     for (corp, subject) in &sources {
-        let Some(bodies) = get_pages(
+        let Ok(bodies) = get_pages(
             &mut budget,
             "corporation-mining-extractions",
             *subject,
@@ -436,7 +461,7 @@ fn sync() -> Result<(), JobError> {
     }
     // Refineries' names (a source without the role still has extractions).
     for (corp, subject) in &sources {
-        let Some(bodies) = get_pages(
+        let Ok(bodies) = get_pages(
             &mut budget,
             "corporation-structures",
             *subject,
@@ -770,54 +795,141 @@ fn learn_names(budget: &mut Budget, ids: &[i64]) -> Result<(), JobError> {
     Ok(())
 }
 
-/// Every 6 hours: what each pilot mined, from the oldest-read observers.
-fn ledger() -> Result<(), JobError> {
-    let mut budget = Budget(ESI_BUDGET);
-    for (corp, subject) in sources_by_corporation() {
-        let Some(bodies) = get_pages(
-            &mut budget,
-            "corporation-mining-observers",
-            subject,
-            &[],
-            &format!("observers for corporation {corp}"),
-        ) else {
-            continue;
-        };
-        storage::transaction(&[Statement::new(
-            "INSERT INTO observers (observer_id, corporation_id) \
-             SELECT observer_id, $2 FROM json_to_recordset($1::json) AS x(observer_id bigint) \
-             ON CONFLICT (observer_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id",
-            vec![Db::json(concat(&bodies)), corp.into()],
-        )])
-        .map_err(|e| retry("storing observers", e))?;
-    }
+/// Marks an observer's ledger tried for this hour, read or not. As
+/// aa-moonmining, which stamps `ledger_last_update_at` before it fetches
+/// (`_reset_update_status`), so a failed read waits for the next run; and
+/// a ledger that can't be read or stored never holds the front of the
+/// queue.
+fn ledger_tried(observer: i64) -> Result<(), JobError> {
+    storage::execute(
+        "UPDATE observers SET synced_at = now() WHERE observer_id = $1",
+        &[observer.into()],
+    )
+    .map_err(|e| retry("marking a ledger tried", e))?;
+    Ok(())
+}
+
+/// Hourly, as aa-moonmining's run_report_updates: each corporation's
+/// observers, then every listed observer's ledger not tried this hour,
+/// oldest first; a run out of ESI calls carries on a minute later
+/// (`ledger_more`).
+fn ledger(more: Option<&Job>) -> Result<(), JobError> {
+    let mut budget = Budget(ESI_BUDGET - NAME_RESERVE);
     let sources = sources_by_corporation();
+    let listed: Vec<i64> = match more {
+        // Those the hourly run listed, while they're still read.
+        Some(job) => {
+            let payload: LedgerMore = serde_json::from_str(&job.payload)
+                .map_err(|e| JobError::Permanent(format!("ledger_more payload: {e}")))?;
+            payload
+                .corporations
+                .into_iter()
+                .filter(|corp| sources.iter().any(|(c, _)| c == corp))
+                .collect()
+        }
+        None => {
+            let mut listed = Vec::new();
+            for (corp, subject) in &sources {
+                // A list not read leaves the corporation out of this
+                // run: its observers cost no errors.
+                let Ok(bodies) = get_pages(
+                    &mut budget,
+                    "corporation-mining-observers",
+                    *subject,
+                    &[],
+                    &format!("observers for corporation {corp}"),
+                ) else {
+                    continue;
+                };
+                let list = concat(&bodies);
+                storage::transaction(&[
+                    Statement::new(
+                        "INSERT INTO observers (observer_id, corporation_id) \
+                         SELECT observer_id, $2 FROM json_to_recordset($1::json) AS x(observer_id bigint) \
+                         ON CONFLICT (observer_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id",
+                        vec![Db::json(list.clone()), (*corp).into()],
+                    ),
+                    // Observers ESI no longer lists aren't read any more,
+                    // as aa-moonmining reads only the listed ones; what
+                    // their ledgers held stays.
+                    Statement::new(
+                        "DELETE FROM observers o WHERE o.corporation_id = $2 AND NOT EXISTS \
+                         (SELECT 1 FROM json_to_recordset($1::json) AS x(observer_id bigint) \
+                          WHERE x.observer_id = o.observer_id)",
+                        vec![Db::json(list), (*corp).into()],
+                    ),
+                ])
+                .map_err(|e| retry("storing observers", e))?;
+                listed.push(*corp);
+            }
+            listed
+        }
+    };
+    if listed.is_empty() {
+        return Ok(());
+    }
+    let corporations: Vec<String> = listed.iter().map(i64::to_string).collect();
+    // More rows than calls is enough: each costs at least one.
     let due = storage::query(
-        "SELECT observer_id, corporation_id FROM observers ORDER BY synced_at NULLS FIRST LIMIT $1",
-        &[OBSERVERS_PER_RUN.into()],
+        &format!(
+            "SELECT observer_id, corporation_id FROM observers \
+             WHERE corporation_id = ANY(string_to_array($1, ',')::bigint[]) \
+               AND (synced_at IS NULL OR synced_at < now() - interval '{LEDGER_FRESH}') \
+             ORDER BY synced_at NULLS FIRST, observer_id LIMIT $2"
+        ),
+        &[corporations.join(",").into(), (ESI_BUDGET as i64).into()],
     )
     .map_err(|e| retry("reading observers", e))?;
     let mut people = Vec::new();
+    // Ledgers stored, and observers marked tried, this run.
+    let (mut stored, mut tried, mut refused) = (0, 0, 0);
+    let mut out_of_calls = false;
     for row in &due.rows {
         let (observer, corp) = (int(row, 0), int(row, 1));
         let Some((_, subject)) = sources.iter().find(|(c, _)| *c == corp) else {
             continue;
         };
+        if budget.0 == 0 {
+            out_of_calls = true;
+            break;
+        }
         let params = [("observer_id".to_owned(), observer.to_string())];
-        let Some(bodies) = get_pages(
+        let had = budget.0;
+        let bodies = match get_pages(
             &mut budget,
             "corporation-mining-observer",
             *subject,
             &params,
             &format!("observer {observer}"),
-        ) else {
-            if budget.0 == 0 {
+        ) {
+            Ok(bodies) => bodies,
+            // Out of calls between its pages: the next run reads it
+            // first, with all of a run's calls. One that had them all
+            // and still ran out waits for the next hour.
+            Err(Missed::Budget) => {
+                out_of_calls = true;
+                if had == ESI_BUDGET - NAME_RESERVE {
+                    log::warn(format!(
+                        "observer {observer}: its ledger has more pages than one run may read"
+                    ));
+                    ledger_tried(observer)?;
+                    tried += 1;
+                }
                 break;
             }
-            continue;
+            Err(Missed::Esi) => {
+                ledger_tried(observer)?;
+                tried += 1;
+                refused += 1;
+                if refused >= LEDGER_REFUSALS {
+                    log::info("ledgers: too many refused this run; the rest wait for the next");
+                    break;
+                }
+                continue;
+            }
         };
         let rows = concat(&bodies);
-        storage::transaction(&[
+        let saved = storage::transaction(&[
             Statement::new(
                 // ESI gives a row per corporation a pilot mined for that
                 // day (and pages can repeat one): one ledger row each of
@@ -837,8 +949,18 @@ fn ledger() -> Result<(), JobError> {
                 "UPDATE observers SET synced_at = now() WHERE observer_id = $1",
                 vec![observer.into()],
             ),
-        ])
-        .map_err(|e| retry("storing the ledger", e))?;
+        ]);
+        // One ledger that can't be stored (larger than a statement may
+        // carry, say) doesn't stop the others.
+        if let Err(err) = saved {
+            log::warn(format!(
+                "observer {observer}: its ledger couldn't be stored: {err:?}"
+            ));
+            ledger_tried(observer)?;
+            tried += 1;
+            continue;
+        }
+        stored += 1;
         if let Ok(serde_json::Value::Array(items)) =
             serde_json::from_str::<serde_json::Value>(&rows)
         {
@@ -851,6 +973,20 @@ fn ledger() -> Result<(), JobError> {
             }
         }
     }
+    // Carry on only while runs get somewhere: the hourly run's follow-up
+    // has all its calls for ledgers; a follow-up must have read or marked
+    // one.
+    if out_of_calls && (more.is_none() || stored + tried > 0) {
+        log::info("ledgers: out of ESI calls; the rest in a minute");
+        jobs::enqueue(
+            NewJob::new(LEDGER_MORE)
+                .key(LEDGER_MORE)
+                .payload(serde_json::json!({ "corporations": listed }).to_string())
+                .at(rfc3339(Utc::now() + Duration::minutes(1))),
+        )
+        .map_err(|e| retry("queuing the next ledger run", e))?;
+    }
+    budget.0 += NAME_RESERVE;
     learn_names(&mut budget, &people)
 }
 
@@ -1436,8 +1572,8 @@ fn totals_page() -> Result<Page, PageError> {
     );
     Ok(Page::new("Mining totals")
         .description(
-            "From the corporations' mining observers, refreshed every 6 hours; values at CCP's \
-             average ore prices",
+            "From the corporations' mining observers, refreshed hourly; values at CCP's average \
+             ore prices",
         )
         .table(pilots)
         .table(ore_table))
