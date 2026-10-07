@@ -10,9 +10,11 @@ use std::sync::OnceLock;
 use crate::common::*;
 use axum::http::StatusCode;
 use sqlx::PgPool;
+use tether_core::Secret;
+use tether_esi::sso::SsoTokens;
 use tether_jobs::{Outcome, Registry, WorkerConfig, run_once};
 use tether_plugins::testing::{self, Key};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, ResponseTemplate};
 
 const ID: &str = "tether.contacts";
@@ -157,6 +159,62 @@ async fn mount(h: &Harness) {
         .await;
 }
 
+/// Chribba and Pilot A as owners, both in CORP and ALLIANCE.
+async fn two_owners(h: &Harness, owner: &str) -> String {
+    let owner = add_owner(h, owner).await;
+    let owner = add_owner_as(h, &owner, "443630591:Pilot A").await;
+    sqlx::query(
+        "UPDATE core.characters SET corporation_id = $1, alliance_id = $2 WHERE id = 443630591",
+    )
+    .bind(CORP)
+    .bind(ALLIANCE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    // (Approved for the corporation it's in now.)
+    sqlx::query(
+        "UPDATE core.plugin_data_sources SET corporation_id = $1 WHERE character_id = 443630591",
+    )
+    .bind(CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let in_use: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.plugin_data_sources d \
+         JOIN core.characters c ON c.id = d.character_id \
+         WHERE d.plugin_id = $1 AND d.approved_at IS NOT NULL AND d.corporation_id = c.corporation_id",
+    )
+    .bind(ID)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(in_use, 2);
+    owner
+}
+
+/// Runs the follow-ups updates queued (a minute early), until none is
+/// left; how many ran.
+async fn follow_ups(h: &Harness) -> usize {
+    let mut ran = 0;
+    loop {
+        let due = sqlx::query(
+            "UPDATE core.jobs SET run_at = now() \
+             WHERE plugin_id = $1 AND job_key = 'update-more' AND state = 'queued'",
+        )
+        .bind(ID)
+        .execute(&h.db)
+        .await
+        .unwrap()
+        .rows_affected();
+        if due == 0 {
+            return ran;
+        }
+        ran += 1;
+        assert!(ran < 5, "the follow-ups don't stop");
+        work(h).await;
+    }
+}
+
 async fn post(h: &Harness, token: &str, at: &str, body: &str) -> Res {
     send(&h.app, form(&format!("/plugins/{ID}/{at}"), body, token)).await
 }
@@ -266,34 +324,7 @@ async fn each_is_read_once_and_labels_outlast_a_failed_read(db: PgPool) {
     let owner = log_in_owner(&h, "196379789:Chribba").await;
     install(&h, &owner).await;
     mount(&h).await;
-    let owner = add_owner(&h, &owner).await;
-    let owner = add_owner_as(&h, &owner, "443630591:Pilot A").await;
-    sqlx::query(
-        "UPDATE core.characters SET corporation_id = $1, alliance_id = $2 WHERE id = 443630591",
-    )
-    .bind(CORP)
-    .bind(ALLIANCE)
-    .execute(&h.db)
-    .await
-    .unwrap();
-    // (Approved for the corporation it's in now.)
-    sqlx::query(
-        "UPDATE core.plugin_data_sources SET corporation_id = $1 WHERE character_id = 443630591",
-    )
-    .bind(CORP)
-    .execute(&h.db)
-    .await
-    .unwrap();
-    let in_use: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM core.plugin_data_sources d \
-         JOIN core.characters c ON c.id = d.character_id \
-         WHERE d.plugin_id = $1 AND d.approved_at IS NOT NULL AND d.corporation_id = c.corporation_id",
-    )
-    .bind(ID)
-    .fetch_one(&h.db)
-    .await
-    .unwrap();
-    assert_eq!(in_use, 2);
+    let owner = two_owners(&h, &owner).await;
     update(&h).await;
     let alliance = format!("/alliances/{ALLIANCE}/contacts");
     let corp = format!("/corporations/{CORP}/contacts");
@@ -337,4 +368,136 @@ async fn each_is_read_once_and_labels_outlast_a_failed_read(db: PgPool) {
     work(&h).await;
     assert_eq!(reads(&h, &corp).await, 3);
     assert_eq!(reads(&h, &alliance).await, 2);
+}
+
+/// The first owner in an alliance and corporation (by name) whose EVE
+/// login stopped working doesn't stop them being read: the next owner in
+/// them reads them.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_owner_whose_login_stopped_does_not_hold_the_rest_up(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount(&h).await;
+    let owner = two_owners(&h, &owner).await;
+    sqlx::query("UPDATE core.character_tokens SET state = 'revoked' WHERE character_id = $1")
+        .bind(CHRIBBA)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    update(&h).await;
+    assert_eq!(
+        reads(&h, &format!("/alliances/{ALLIANCE}/contacts")).await,
+        1
+    );
+    assert_eq!(
+        reads(&h, &format!("/corporations/{CORP}/contacts")).await,
+        1
+    );
+    let tracked: Vec<(String, Option<String>, bool)> = sqlx::query_as(
+        r#"SELECT kind, last_error, updated_at IS NOT NULL
+           FROM "plugin_tether.contacts".tracked ORDER BY kind"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        tracked,
+        vec![
+            ("alliance".to_owned(), None, true),
+            ("corporation".to_owned(), None, true),
+        ]
+    );
+    let corp = page(&h, &format!("/plugins/{ID}/corporation/{CORP}"), &owner).await;
+    assert!(corp.body.contains("Pandemic Horde"), "{}", corp.body);
+}
+
+/// More corporations than one run's ESI calls reach: the hourly run reads
+/// what it can, a follow-up the rest, each exactly once, and the follow-ups
+/// stop.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_run_s_tail_is_read_by_a_follow_up(db: PgPool) {
+    const MORE: i64 = 50;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount(&h).await;
+    add_owner(&h, &owner).await;
+    // Fifty more owners on Chribba's account, each in a corporation of
+    // its own (2,000,001 to 2,000,050), outside any alliance.
+    for sql in [
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 2100000000 + n, account_id, 'Owner ' || n, 2000000 + n \
+         FROM core.characters, generate_series(1, $2) n WHERE id = $1",
+        "INSERT INTO core.plugin_data_sources \
+             (plugin_id, character_id, offered_by, approved_by, approved_at, corporation_id) \
+         SELECT plugin_id, 2100000000 + n, offered_by, approved_by, now(), 2000000 + n \
+         FROM core.plugin_data_sources, generate_series(1, $2) n WHERE character_id = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(CHRIBBA)
+            .bind(MORE as i32)
+            .execute(&h.db)
+            .await
+            .unwrap();
+    }
+    let scopes: Vec<String> =
+        sqlx::query_scalar("SELECT scopes FROM core.character_tokens WHERE character_id = $1")
+            .bind(CHRIBBA)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    for n in 1..=MORE {
+        let id = 2_100_000_000 + n;
+        let tokens = SsoTokens {
+            access_token: Secret::new(format!("access-{id}-login")),
+            refresh_token: Some(Secret::new(format!("refresh-{id}-1"))),
+            expires_at: Some(std::time::SystemTime::now() + std::time::Duration::from_secs(1200)),
+            owner_hash: None,
+        };
+        h.vault.store(id, &tokens, &scopes).await.unwrap();
+    }
+    let json = |v: serde_json::Value| {
+        ResponseTemplate::new(200)
+            .insert_header("x-pages", "1")
+            .set_body_json(v)
+    };
+    Mock::given(method("GET"))
+        .and(path_regex(
+            r"^/corporations/20000[0-9]{2}/contacts(/labels)?$",
+        ))
+        .respond_with(json(serde_json::json!([])))
+        .mount(&h.esi_server)
+        .await;
+    update(&h).await;
+    let read_first = sqlx::query_scalar::<_, i64>(
+        r#"SELECT count(*) FROM "plugin_tether.contacts".tracked WHERE attempted_at IS NOT NULL"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(
+        read_first > 2 && read_first < MORE + 2,
+        "one run read {read_first}"
+    );
+    assert!(follow_ups(&h).await >= 1);
+    for corp in (1..=MORE).map(|n| 2_000_000 + n).chain([CORP]) {
+        assert_eq!(
+            reads(&h, &format!("/corporations/{corp}/contacts")).await,
+            1,
+            "{corp}"
+        );
+    }
+    assert_eq!(
+        reads(&h, &format!("/alliances/{ALLIANCE}/contacts")).await,
+        1
+    );
+    let untried: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.contacts".tracked
+           WHERE attempted_at IS NULL OR last_error IS NOT NULL"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(untried, 0);
 }

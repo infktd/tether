@@ -4,9 +4,11 @@
 //!   added by a holder of `manage_alliance_contacts` or
 //!   `manage_corporation_contacts`, as aa-contacts' tokens) corporation, and
 //!   its alliance, read hourly; a manager of that kind may update one now.
-//!   Each is read once a run (owners share them), the longest untried
-//!   first; what one run's ESI calls don't reach, a follow-up run reads.
-//!   Labels that can't be read for a moment stay as they were.
+//!   Each is read once a run (owners share them), as the first owner in it
+//!   whose login and roles let it, the longest untried first, and stored
+//!   every few reads; what one run's ESI calls or time don't reach, a
+//!   follow-up run reads. Labels that can't be read for a moment stay as
+//!   they were.
 //! - **Who sees them**: anyone with a character in that alliance or
 //!   corporation; superusers every one (as aa-contacts).
 //! - **Contacts**: each with its standing and labels; notes for
@@ -244,10 +246,17 @@ fn word(kind: &str) -> &'static str {
 const ESI_CALLS: usize = 100;
 /// Name lookups (a thousand ids each) a run keeps room for.
 const NAME_CALLS: usize = 4;
-/// Kept for a run's end: the second look at the data sources, and names.
+/// Kept for a run's end: the last look at the data sources, and names.
 const RESERVE: usize = 1 + NAME_CALLS;
-/// A follow-up run, when one run's ESI calls didn't reach every alliance
-/// and corporation, waits this long.
+/// Alliances and corporations read between looks at the data sources
+/// (an ESI call each), after which what was read is stored.
+const CHECK_EVERY: usize = 4;
+/// A job run has a minute, ESI's waits included: no alliance or
+/// corporation is begun after this long into a run, and a follow-up run
+/// reads the rest.
+const READ_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+/// A follow-up run, when one run didn't reach every alliance and
+/// corporation, waits this long.
 const FOLLOW_UP_SECONDS: i64 = 60;
 
 /// What a run has spent of its ESI calls.
@@ -266,44 +275,48 @@ impl Budget {
     }
 }
 
-/// An alliance or corporation to read, and the data source it's read as.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Whether a run may begin its `n`th alliance or corporation, `elapsed`
+/// into it. The first is always begun, so none waits forever.
+fn may_begin(n: usize, elapsed: std::time::Duration) -> bool {
+    n == 0 || elapsed < READ_FOR
+}
+
+/// An alliance or corporation to read, and the owners in it (data
+/// sources, by name): it's read as the first whose read goes through.
+#[derive(Debug, Clone, PartialEq)]
 struct Target {
     kind: &'static str,
     id: i64,
-    source: i64,
+    sources: Vec<i64>,
 }
 
 /// Each owner's corporation and alliance, once each (owners share an
-/// alliance, or a corporation), read as the first owner in it.
+/// alliance, or a corporation), with every owner in it.
 fn targets(sources: &[esi::Character]) -> Vec<Target> {
     let mut out: Vec<Target> = Vec::new();
     for s in sources {
-        let mut theirs = vec![Target {
-            kind: "corporation",
-            id: s.corporation_id,
-            source: s.id,
-        }];
+        let mut theirs = vec![("corporation", s.corporation_id)];
         if let Some(alliance) = s.alliance_id {
-            theirs.push(Target {
-                kind: "alliance",
-                id: alliance,
-                source: s.id,
-            });
+            theirs.push(("alliance", alliance));
         }
-        for t in theirs {
-            if !out.iter().any(|o| o.kind == t.kind && o.id == t.id) {
-                out.push(t);
+        for (kind, id) in theirs {
+            match out.iter_mut().find(|t| t.kind == kind && t.id == id) {
+                Some(t) => t.sources.push(s.id),
+                None => out.push(Target {
+                    kind,
+                    id,
+                    sources: vec![s.id],
+                }),
             }
         }
     }
     out
 }
 
-/// Whether `sources` still read `target` as its data source.
-fn still_reads(sources: &[esi::Character], target: Target) -> bool {
+/// Whether `sources` still read `target` as data source `source`.
+fn still_reads(sources: &[esi::Character], target: &Target, source: i64) -> bool {
     sources.iter().any(|s| {
-        s.id == target.source
+        s.id == source
             && match target.kind {
                 "alliance" => s.alliance_id == Some(target.id),
                 _ => s.corporation_id == target.id,
@@ -321,10 +334,12 @@ fn targets_json(targets: &[Target]) -> Db {
 
 /// The hourly update and its follow-ups: every owner's corporation and
 /// alliance not tried since the hourly run began (`since`), the longest
-/// untried first, as far as the run's ESI calls go; a follow-up run takes
-/// the rest. Update now asks for one (`kind`, `id`), as aa-contacts'
-/// manual update.
+/// untried first, as far as the run's ESI calls and time go; a follow-up
+/// run takes the rest. What's read is stored every few, so a run cut
+/// short keeps what it did. Update now asks for one (`kind`, `id`), as
+/// aa-contacts' manual update.
 fn update(job: &Job) -> Result<(), JobError> {
+    let started = std::time::Instant::now();
     let asked: serde_json::Value = serde_json::from_str(&job.payload).unwrap_or_default();
     let sources = esi::data_sources();
     let mut budget = Budget { used: 1 };
@@ -340,7 +355,7 @@ fn update(job: &Job) -> Result<(), JobError> {
         (Some(kind), Some(id)) => (
             all.iter()
                 .filter(|t| t.kind == kind && t.id == id)
-                .copied()
+                .cloned()
                 .collect(),
             None,
         ),
@@ -358,37 +373,28 @@ fn update(job: &Job) -> Result<(), JobError> {
     let mut read_now = Vec::new();
     let mut unreached = false;
     for (n, target) in due.iter().enumerate() {
-        match read(*target, &mut budget, n == 0) {
+        if !may_begin(n, started.elapsed()) {
+            unreached = true;
+            break;
+        }
+        match read(target, &mut budget, n == 0) {
             Read::NoRoom => {
                 unreached = true;
                 break;
             }
-            read => read_now.push((*target, read)),
-        }
-    }
-    // The host reads each source's corporation or alliance as it is now:
-    // only what's still the one asked for is kept, so a corporation that
-    // changed alliance mid-run can't file one alliance's standings as
-    // another's.
-    let sources = esi::data_sources();
-    budget.spend(1);
-    for (target, read) in read_now {
-        match read {
-            Read::Done(..) if !still_reads(&sources, target) => {
-                log::info(format!(
-                    "{} {}: owner {} moved on while reading; skipped",
-                    target.kind, target.id, target.source
-                ));
-                tried(target, None)?;
-            }
-            Read::Done(contacts, labels) => store(target, &contacts, labels)?,
             Read::Failed(why) => {
                 log::warn(format!("{} {}: {why}", target.kind, target.id));
                 tried(target, Some(why))?;
             }
-            Read::NoRoom => {}
+            Read::Done(done) => {
+                read_now.push((target, done));
+                if read_now.len() >= CHECK_EVERY {
+                    keep(&mut read_now, &mut budget)?;
+                }
+            }
         }
     }
+    keep(&mut read_now, &mut budget)?;
     learn_names()?;
     if unreached && let Some(since) = since {
         let since = since.as_text().unwrap_or_default().to_owned();
@@ -399,6 +405,30 @@ fn update(job: &Job) -> Result<(), JobError> {
                 .at(rfc3339(Utc::now() + Duration::seconds(FOLLOW_UP_SECONDS))),
         )
         .map_err(|e| JobError::Retry(format!("queuing the rest: {e:?}")))?;
+    }
+    Ok(())
+}
+
+/// Stores what's been read, after a look at the data sources. The host
+/// reads a source's corporation or alliance as it is at the time: only
+/// what's still the one asked for is kept, so a corporation that changed
+/// alliance mid-run can't file one alliance's standings as another's.
+fn keep(read_now: &mut Vec<(&Target, Done)>, budget: &mut Budget) -> Result<(), JobError> {
+    if read_now.is_empty() {
+        return Ok(());
+    }
+    let sources = esi::data_sources();
+    budget.spend(1);
+    for (target, done) in read_now.drain(..) {
+        if still_reads(&sources, target, done.source) {
+            store(target, &done.contacts, done.labels)?;
+        } else {
+            log::info(format!(
+                "{} {}: owner {} moved on while reading; skipped",
+                target.kind, target.id, done.source
+            ));
+            tried(target, None)?;
+        }
     }
     Ok(())
 }
@@ -417,13 +447,13 @@ fn due(all: &[Target], since: &Db) -> Result<Vec<Target>, JobError> {
         .iter()
         .filter_map(|r| {
             let (kind, id) = (text(r, 0), int(r, 1));
-            all.iter().find(|t| t.kind == kind && t.id == id).copied()
+            all.iter().find(|t| t.kind == kind && t.id == id).cloned()
         })
         .collect())
 }
 
 /// Notes that `target` was tried, and why it wasn't read, if it wasn't.
-fn tried(target: Target, why: Option<String>) -> Result<(), JobError> {
+fn tried(target: &Target, why: Option<String>) -> Result<(), JobError> {
     storage::execute(
         "UPDATE tracked SET attempted_at = now(), last_error = coalesce($3, last_error) \
          WHERE kind = $1 AND entity_id = $2",
@@ -435,14 +465,19 @@ fn tried(target: Target, why: Option<String>) -> Result<(), JobError> {
 
 /// One alliance's or corporation's reading.
 enum Read {
-    /// Its contacts (every page), and its labels or why they weren't read.
-    Done(
-        Vec<serde_json::Value>,
-        Result<Vec<serde_json::Value>, String>,
-    ),
+    Done(Done),
     Failed(String),
     /// The run's ESI calls don't reach it: for a follow-up run.
     NoRoom,
+}
+
+/// What was read, and as which owner.
+struct Done {
+    source: i64,
+    /// Every page.
+    contacts: Vec<serde_json::Value>,
+    /// Or why they weren't read.
+    labels: Result<Vec<serde_json::Value>, String>,
 }
 
 /// A JSON array, or nothing if it isn't one.
@@ -452,22 +487,71 @@ fn array(body: &str) -> Option<Vec<serde_json::Value>> {
         .and_then(|v| v.as_array().cloned())
 }
 
-/// A target's contacts and labels within the run's ESI calls. The run's
-/// first target is read whatever its size, so none waits forever.
-fn read(target: Target, budget: &mut Budget, first: bool) -> Read {
-    // Its first page and its labels, at least.
-    if budget.left() < 2 {
-        return Read::NoRoom;
-    }
+/// Whether ESI refused an owner for something of that owner's own (its
+/// login, its roles, its standing as a data source), so another owner in
+/// the same alliance or corporation may read it.
+fn owners_own(err: &esi::Error) -> bool {
+    matches!(
+        err,
+        esi::Error::Token | esi::Error::NotADataSource | esi::Error::Status(401 | 403)
+    )
+}
+
+/// A target's contacts and labels within the run's ESI calls, as the
+/// first of its owners whose read goes through. The run's first target is
+/// read whatever its size, so none waits forever.
+fn read(target: &Target, budget: &mut Budget, first: bool) -> Read {
     let endpoint = format!("{}-contacts", target.kind);
-    let subject = Subject::DataSource(target.source);
+    let unread = |e: &esi::Error| format!("contacts not read: {}", esi::describe(e));
+    let mut refused: Option<esi::Error> = None;
+    let mut asked = 0;
+    for &source in &target.sources {
+        // Its first page and its labels, at least.
+        if budget.left() < 2 {
+            return match refused {
+                Some(e) if first => Read::Failed(unread(&e)),
+                _ => Read::NoRoom,
+            };
+        }
+        budget.spend(1);
+        asked += 1;
+        match esi::get(&endpoint, Subject::DataSource(source), &[], Some(1)) {
+            Ok(page) => return read_rest(target, source, page, budget, first),
+            // That owner's own problem: the next one in it may read it.
+            Err(e) if owners_own(&e) => {
+                log::info(format!(
+                    "{} {}: owner {source}: {}",
+                    target.kind,
+                    target.id,
+                    esi::describe(&e)
+                ));
+                refused = Some(e);
+            }
+            Err(e) => return Read::Failed(unread(&e)),
+        }
+    }
+    Read::Failed(match refused {
+        Some(e) if asked > 1 => format!(
+            "contacts not read by any of its {asked} owners: {}",
+            esi::describe(&e)
+        ),
+        Some(e) => unread(&e),
+        None => "contacts not read: no owner is in it".to_owned(),
+    })
+}
+
+/// The rest of a target's contacts after their first page, and its labels.
+fn read_rest(
+    target: &Target,
+    source: i64,
+    page: esi::Response,
+    budget: &mut Budget,
+    first: bool,
+) -> Read {
+    let endpoint = format!("{}-contacts", target.kind);
+    let subject = Subject::DataSource(source);
     let unread = |e: &esi::Error| format!("contacts not read: {}", esi::describe(e));
     let unreadable = || "contacts not read: ESI's answer couldn't be read".to_owned();
-    budget.spend(1);
-    let page = match esi::get(&endpoint, subject, &[], Some(1)) {
-        Ok(page) => page,
-        Err(e) => return Read::Failed(unread(&e)),
-    };
     let more = page.pages.saturating_sub(1) as usize;
     if more + 1 > budget.left() {
         return if first {
@@ -501,13 +585,17 @@ fn read(target: Target, budget: &mut Budget, first: bool) -> Read {
     .and_then(|r| {
         array(&r.body).ok_or_else(|| "labels not read: ESI's answer couldn't be read".to_owned())
     });
-    Read::Done(contacts, labels)
+    Read::Done(Done {
+        source,
+        contacts,
+        labels,
+    })
 }
 
 /// Stores a target's contacts, and its labels if they were read (else the
 /// ones it had stay, and why is noted).
 fn store(
-    target: Target,
+    target: &Target,
     contacts: &[serde_json::Value],
     labels: Result<Vec<serde_json::Value>, String>,
 ) -> Result<(), JobError> {
@@ -1063,14 +1151,17 @@ mod tests {
         let read = targets(&owners);
         assert_eq!(read.len(), 22);
         let alliances: Vec<&Target> = read.iter().filter(|t| t.kind == "alliance").collect();
-        assert_eq!(
-            alliances,
-            vec![&Target {
-                kind: "alliance",
-                id: 99,
-                source: 0
-            }]
-        );
+        assert_eq!(alliances.len(), 1);
+        // Every owner in it, in order: if the first can't read it, the
+        // next one may.
+        let mut in_it: Vec<i64> = (0..20).collect();
+        in_it.push(50);
+        assert_eq!(alliances[0].sources, in_it);
+        let first = read
+            .iter()
+            .find(|t| t.kind == "corporation" && t.id == 1000)
+            .unwrap();
+        assert_eq!(first.sources, vec![0, 50]);
         assert_eq!(
             read.iter()
                 .filter(|t| t.kind == "corporation" && t.id == 1000)
@@ -1079,8 +1170,27 @@ mod tests {
         );
         // A source that moved on no longer reads what it was asked for.
         let target = alliances[0];
-        assert!(still_reads(&owners, *target));
-        assert!(!still_reads(&[owner(0, 1000, Some(98))], *target));
+        assert!(still_reads(&owners, target, 0));
+        assert!(still_reads(&owners, target, 50));
+        assert!(!still_reads(&owners, target, 51));
+        assert!(!still_reads(&[owner(0, 1000, Some(98))], target, 0));
+    }
+
+    #[test]
+    fn an_owner_s_own_refusal_passes_to_the_next() {
+        assert!(owners_own(&esi::Error::Token));
+        assert!(owners_own(&esi::Error::Status(403)));
+        assert!(owners_own(&esi::Error::NotADataSource));
+        assert!(!owners_own(&esi::Error::Status(502)));
+        assert!(!owners_own(&esi::Error::Unavailable));
+    }
+
+    #[test]
+    fn a_run_begins_nothing_late() {
+        use std::time::Duration;
+        assert!(may_begin(0, Duration::from_secs(55)));
+        assert!(may_begin(5, Duration::from_secs(10)));
+        assert!(!may_begin(5, READ_FOR));
     }
 
     #[test]
