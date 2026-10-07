@@ -312,6 +312,7 @@ Phase 5, release 1.0:
 
 **Apps against Alliance Auth** (Jay, 2026-10-06: once One Tether is done, "really address our plugins and their parity/improvement over alliance auth"). For each bundled app, set side by side with the Alliance Auth module or community app it replaces: what matches, what is missing, and what Tether does better, then the gaps closed one app at a time.
 
+- [ ] Buyback, aa-buybackprogram 1:1 (Jay, 2026-10-07): programs, the calculator, contract tracking and statistics, priced from Fuzzwork or Janice (both approved for it) by item, refined or compressed value, from CCP's static data bundled with Tether (`scripts/update-sde.sh`, committed)
 - [ ] A parity review of every bundled app against its AA counterpart, written into docs/AA_PARITY.md, with the gaps and improvements listed here as items
 
 Deferred past milestone 2: `platform plugin dev` (mock ESI, hot reload), from ARCHITECTURE.md. Also deferred until a plugin needs one: daily wall-clock schedules ("daily at HH:MM EVE", e.g. after downtime) as a simple extra form next to intervals.
