@@ -195,6 +195,23 @@ async fn buyback_end_to_end(db: PgPool) {
     let fuzzwork = MockServer::start().await;
     h.plugins.route_http_to(&fuzzwork.address().to_string());
     mount_fuzzwork(&fuzzwork).await;
+    // The FAQ's own questions are written under Settings, and shown on
+    // the members' FAQ.
+    let res = post(
+        &h,
+        &owner,
+        "settings/faq",
+        "_form=faq&header=Who+buys%3F&body=The+corporation.",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = page(&h, &format!("/plugins/{ID}/settings/faq"), &owner).await;
+    assert!(res.body.contains("Who buys?"), "{}", res.body);
+    let res = page(&h, &format!("/plugins/{ID}/faq"), &owner).await;
+    assert!(res.body.contains("The corporation."), "{}", res.body);
+    let res = page(&h, &format!("/plugins/{ID}/manage/faq"), &owner).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
     // Before any data source: the pages say so, as every app does, rather
     // than drawing a form with nothing to pick.
     for at in ["manage", "manage/locations", "manage/program/new"] {

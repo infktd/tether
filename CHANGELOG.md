@@ -8,6 +8,7 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ### Buyback
 - Locations and New program no longer fail before a data source is added: they say to add one under Data sources, as every app does, and the Programs page has no separate "Add a manager" box any more.
+- Your own FAQ questions are written under Settings › FAQ now, instead of a Manage tab of their own.
 
 ## 2026-10-07
 

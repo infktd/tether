@@ -20,6 +20,7 @@ pub fn render(access: &Access, request: &Request) -> Result<Page, PageError> {
         ["faq"] => faq(),
         ["me"] => me(access),
         ["settings"] if access.manage_all() => app_settings(),
+        ["settings", "faq"] => crate::manage::faq_page(access),
         ["program", id] => crate::calculator::page(access, id_of(id)?),
         ["program", id, "prices"] => crate::manage::prices_page(access, id_of(id)?, None),
         ["program", id, "leaderboard"] => crate::stats::leaderboard(access, id_of(id)?, request),
@@ -43,6 +44,8 @@ pub fn submit(access: &Access, s: &Submission) -> Result<SubmitResult, PageError
         (["program", _, "performance"], _) => crate::stats::submit(access, s),
         (["me"], "me") => save_me(access, s),
         (["settings"], "settings") if access.manage_all() => save_settings(access, s),
+        (["settings", "faq"], "faq") => crate::manage::add_faq(access, s),
+        (["settings", "faq"], "remove_faq") => crate::manage::remove_faq(access, s),
         (["reverse", ..] | ["manage", "reverse", ..], _) => crate::reverse::submit(access, s),
         (["tracking", ..] | ["program-stats"] | ["all-stats"] | ["stats"], _) => {
             crate::stats::submit(access, s)
@@ -188,13 +191,19 @@ fn save_me(access: &Access, s: &Submission) -> Result<SubmitResult, PageError> {
     Ok(SubmitResult::Redirect("me".to_owned()))
 }
 
+/// The settings pages (Settings and the FAQ's own questions), as chips
+/// under the Manage bar Tether draws, as Moon Mining's.
+pub(crate) fn settings_chips(page: Page) -> Page {
+    page.link("General", "settings").link("FAQ", "settings/faq")
+}
+
 /// aa-buybackprogram's Django settings, for app admins.
 fn app_settings() -> Result<Page, PageError> {
     let s = settings().map_err(|e| failed("reading settings", e))?;
     let refreshed = s
         .prices_updated_at
         .map_or_else(|| "not yet".to_owned(), crate::rfc3339);
-    let mut page = Page::new("Buyback settings");
+    let mut page = settings_chips(Page::new("Buyback settings"));
     if let Some(problem) = &s.sync_error {
         page = page
             .card(Card::new("The last contract read had a problem").description(problem.clone()));

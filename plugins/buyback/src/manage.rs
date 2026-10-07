@@ -23,7 +23,6 @@ pub fn render(access: &Access, request: &Request) -> Result<Page, PageError> {
         ["manage", "program", "new"] => editor(access, None, request),
         ["manage", "program", id] => editor(access, Some(id_of(id)?), request),
         ["manage", "locations"] => locations_page(access),
-        ["manage", "faq"] => faq_page(access),
         _ => Err(PageError::NotFound),
     }
 }
@@ -38,8 +37,6 @@ pub fn submit(access: &Access, s: &Submission) -> Result<SubmitResult, PageError
         (["manage", "program", id], "program") => save_program(access, Some(id_of(id)?), s),
         (["manage", "locations"], "location") => add_location(access, s),
         (["manage", "locations"], "remove_location") => remove_location(access, s),
-        (["manage", "faq"], "faq") => add_faq(access, s),
-        (["manage", "faq"], "remove_faq") => remove_faq(access, s),
         _ => Err(PageError::NotFound),
     }
 }
@@ -805,7 +802,7 @@ fn remove_location(access: &Access, s: &Submission) -> Result<SubmitResult, Page
 
 // ---- the FAQ ---------------------------------------------------------------
 
-fn faq_page(access: &Access) -> Result<Page, PageError> {
+pub(crate) fn faq_page(access: &Access) -> Result<Page, PageError> {
     if !access.manage_all() {
         return Err(PageError::NotFound);
     }
@@ -830,8 +827,8 @@ fn faq_page(access: &Access) -> Result<Page, PageError> {
                 .into(),
         ]);
     }
-    Ok(Page::new("FAQ")
-        .description("Questions shown after the three every program's FAQ has (aa-buybackprogram's admin-only FAQ).")
+    Ok(crate::pages::settings_chips(Page::new("FAQ"))
+        .description("Your own questions, shown on the FAQ after the three every program has.")
         .table(table.empty("No questions of your own yet."))
         .form(
             Form::new("faq", "Add question")
@@ -840,7 +837,7 @@ fn faq_page(access: &Access) -> Result<Page, PageError> {
         ))
 }
 
-fn add_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError> {
+pub(crate) fn add_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError> {
     if !access.manage_all() {
         return Err(PageError::Forbidden);
     }
@@ -853,10 +850,10 @@ fn add_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError> {
         ],
     )
     .map_err(|e| failed("adding the question", e))?;
-    Ok(SubmitResult::Redirect("manage/faq".to_owned()))
+    Ok(SubmitResult::Redirect("settings/faq".to_owned()))
 }
 
-fn remove_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError> {
+pub(crate) fn remove_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError> {
     if !access.manage_all() {
         return Err(PageError::Forbidden);
     }
@@ -865,7 +862,7 @@ fn remove_faq(access: &Access, s: &Submission) -> Result<SubmitResult, PageError
         &[id_of(s.value("faq"))?.into()],
     )
     .map_err(|e| failed("deleting the question", e))?;
-    Ok(SubmitResult::Redirect("manage/faq".to_owned()))
+    Ok(SubmitResult::Redirect("settings/faq".to_owned()))
 }
 
 // ---- special prices --------------------------------------------------------
