@@ -41,13 +41,35 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(10);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_hr_applications.sql");
     let component = component();
-    let bytes = testing::zip(&[
+    // Every migration the package has, in order.
+    let dir = format!(
+        "{}/../../plugins/hr-applications/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    names.sort();
+    let migrations: Vec<(String, String)> = names
+        .into_iter()
+        .map(|n| {
+            let sql = plugin_file(&format!("migrations/{n}"));
+            (format!("migrations/{n}"), sql)
+        })
+        .collect();
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_hr_applications.sql", migration.as_bytes()),
-    ]);
+    ];
+    files.extend(
+        migrations
+            .iter()
+            .map(|(n, sql)| (n.as_str(), sql.as_bytes())),
+    );
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -127,6 +149,21 @@ async fn applications_from(h: &Harness, main: &str) -> i64 {
     )
     .bind(main)
     .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// What the app told the pilot whose character is `name`, in the bell.
+async fn told(h: &Harness, name: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT n.title || ' | ' || n.message FROM core.notifications n \
+         WHERE n.plugin_id = $2 AND n.account_id = \
+             (SELECT account_id FROM core.characters WHERE name = $1) \
+         ORDER BY n.id",
+    )
+    .bind(name)
+    .bind(ID)
+    .fetch_all(&h.db)
     .await
     .unwrap()
 }
@@ -491,6 +528,15 @@ async fn hr_applications_end_to_end(db: PgPool) {
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     let res = post(&h, &a, &review, &claim).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // The applicant, a Guest holding none of the app's permissions, is
+    // told, as AA notifies them.
+    assert_eq!(
+        told(&h, "Pilot").await,
+        [
+            "HR Applications: Application In Progress | Your application to \
+          Science and Trade Institute is being reviewed by Pilot A"
+        ]
+    );
     let for_b = open(&h, &b, &review).await;
     assert!(for_b.body.contains("In progress"), "{}", for_b.body);
     assert!(for_b.body.contains("Pilot A"));
@@ -543,6 +589,11 @@ async fn hr_applications_end_to_end(db: PgPool) {
 
     let res = post(&h, &a, &review, &decide("approve")).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        told(&h, "Pilot").await.last().unwrap(),
+        "HR Applications: Application Accepted | Your application to \
+         Science and Trade Institute has been approved."
+    );
     let view = open(&h, &pilot, &format!("view/{pilot_app}")).await;
     assert!(view.body.contains("Approved"), "{}", view.body);
     assert!(!view.body.contains("apply again afterwards"));
@@ -618,9 +669,7 @@ async fn hr_applications_end_to_end(db: PgPool) {
     assert!(found.body.contains(&format!("review/{blue_owner_app}")));
     assert!(!found.body.contains(&format!("review/{pilot_app}")));
     assert!(
-        found
-            .body
-            .contains("gigX is rejected; they see it on their applications page."),
+        found.body.contains("gigX is rejected, and told."),
         "{}",
         found.body
     );
@@ -652,6 +701,19 @@ async fn hr_applications_end_to_end(db: PgPool) {
             .await
             .status,
         StatusCode::NOT_FOUND
+    );
+    // gigX heard of each: the claim on the one they withdrew (not their
+    // own withdrawal), the rejection and the deletion.
+    assert_eq!(
+        told(&h, "gigX").await,
+        [
+            "HR Applications: Application In Progress | Your application to \
+             Science and Trade Institute is being reviewed by Pilot A",
+            "HR Applications: Application Rejected | Your application to \
+             Otherworld Enterprises has been rejected.",
+            "HR Applications: Application Deleted | Your application to \
+             Otherworld Enterprises was deleted.",
+        ]
     );
     let res = post(
         &h,

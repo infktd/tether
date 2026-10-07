@@ -1604,7 +1604,7 @@ dependencies = [
 
 [[package]]
 name = "hr-applications"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "chrono",
  "serde_json",

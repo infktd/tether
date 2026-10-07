@@ -349,7 +349,7 @@ Phase 5, release 1.0:
 - [ ] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`)
 - [ ] Fleet Activity Tracking: `manage_afat` opens every corporation's and alliance's statistics and Logs (aa-afat `afat/views/statistics.py:66-69`, `afat/views/logs.py:23`)
 - [ ] Fleet Activity Tracking: tracking stops only after 3 identical ESI errors within 75 seconds (aa-afat `afat/tasks.py:33-34`, `:169-201`)
-- [ ] HR Applications: the applicant told when their application is taken, approved, rejected or deleted (AA core `hrapplications/views.py:152`, `:166`, `:182`, `:241`; needs the host's notify to reach the applicant)
+- [x] HR Applications: the applicant told when their application is taken, approved, rejected or deleted (AA core `hrapplications/views.py:152`, `:166`, `:182`, `:241`; needs the host's notify to reach the applicant). Done in 0.4.6: the host's new `notify.submitter-reference` and `notify.submitter` (Jay, 2026-10-07; ARCHITECTURE.md, Notices) reach the applicant, who holds none of the app's permissions; AA's four notices in AA's words, not for the applicant's own withdrawal
 - [ ] HR Applications: search by every character, corporation and alliance of the applicant (AA core `hrapplications/views.py:208-216`)
 - [ ] Contacts: a contact gone from EVE's list kept while it has notes or server links (aa-contacts `aa_contacts/tasks.py:186-200`)
 - [ ] Contacts: edit a server link, and AA's eight colours (aa-contacts `aa_contacts/api/common.py:166-184`, `aa_contacts/models.py:166-174`)

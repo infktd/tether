@@ -14,6 +14,11 @@
 //!   approve or reject it with `approve_application` /
 //!   `reject_application`; `delete_application` deletes one. As AA, a
 //!   reviewer's own applications are in their queue like any other.
+//! - **Notices** (AA's notify): the applicant hears in Tether's
+//!   notifications when their application is marked in progress,
+//!   approved, rejected or deleted by a reviewer. Applicants hold none of
+//!   the app's permissions, so each application keeps the host's
+//!   reference to the account that applied, which the app may notify.
 //!
 //! The applicant's characters are kept as they were when they applied:
 //! plugins only learn an account's characters while its owner is looking.
@@ -25,6 +30,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use tether_plugin_sdk::esi;
 use tether_plugin_sdk::identity::{self, Viewer};
+use tether_plugin_sdk::notify::{self, Level};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, Section, Stat,
@@ -249,12 +255,16 @@ struct Application {
     reviewer_id: i64,
     created_at: Option<DateTime<Utc>>,
     decided_at: Option<DateTime<Utc>>,
+    /// The applicant's account, and the host's reference to it (none for
+    /// applications from before notices).
+    account_id: i64,
+    submitter: Option<String>,
 }
 
 const APP_SELECT: &str = "SELECT a.id, f.corporation_name, a.main_name, a.main_corporation_id, \
      a.characters::text, a.approved, a.reviewer_account_id, coalesce(a.reviewer_name, ''), \
      a.created_at, a.decided_at, a.main_character_id, f.corporation_id, \
-     coalesce(a.reviewer_character_id, 0) \
+     coalesce(a.reviewer_character_id, 0), a.account_id, a.submitter \
      FROM applications a JOIN forms f ON f.id = a.form_id";
 
 fn application(row: &[Db]) -> Application {
@@ -282,6 +292,28 @@ fn application(row: &[Db]) -> Application {
         main_id: int(row, 10),
         corporation_id: int(row, 11),
         reviewer_id: int(row, 12),
+        account_id: int(row, 13),
+        submitter: match row.get(14) {
+            Some(Db::Text(reference)) => Some(reference.clone()),
+            _ => None,
+        },
+    }
+}
+
+/// AA's notice to the applicant. By the host's reference to whoever
+/// applied: applicants hold none of the app's permissions. Applications
+/// from before have none, and reach the applicant only while they hold
+/// one. Best effort: what was done stands either way.
+fn tell_applicant(a: &Application, title: &str, message: &str, level: Level) {
+    let sent = match &a.submitter {
+        Some(reference) => notify::submitter(reference, title, message, level),
+        None => notify::account(a.account_id, title, message, level),
+    };
+    if let Err(err) = sent {
+        log::warn(format!(
+            "application {}'s applicant wasn't told: {err:?}",
+            a.id
+        ));
     }
 }
 
@@ -578,13 +610,19 @@ fn apply(viewer: &Viewer, form: i64, submission: &Submission) -> Result<SubmitRe
             })
         })
         .collect();
+    // Tether's reference to the applicant, so they hear back however
+    // their account changes; without one they're told while they hold
+    // one of the app's permissions.
+    let submitter = notify::submitter_reference()
+        .map_err(|err| log::warn(format!("no submitter reference: {err:?}")))
+        .ok();
     // The application and its answers together; nothing if they've
     // already applied.
     let added = storage::query(
         "WITH a AS ( \
            INSERT INTO applications (form_id, account_id, main_character_id, main_name, \
-                                     main_corporation_id, characters) \
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb) \
+                                     main_corporation_id, characters, submitter) \
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $8) \
            ON CONFLICT (form_id, account_id) DO NOTHING RETURNING id), \
          r AS ( \
            INSERT INTO responses (application_id, position, question, answer) \
@@ -600,6 +638,7 @@ fn apply(viewer: &Viewer, form: i64, submission: &Submission) -> Result<SubmitRe
             viewer.main.corporation_id.into(),
             Db::json(serde_json::Value::Array(characters).to_string()),
             Db::json(serde_json::Value::Array(answers).to_string()),
+            submitter.into(),
         ],
     )
     .map_err(|e| failed("saving the application", e))?;
@@ -743,10 +782,7 @@ fn review_buttons(viewer: &Viewer, a: &Application) -> Vec<Action> {
         list.push(
             on("Approve", "decide")
                 .field("decision", "approve")
-                .confirm(format!(
-                    "{} is approved; they see it on their applications page.",
-                    a.main_name
-                )),
+                .confirm(format!("{} is approved, and told.", a.main_name)),
         );
     }
     if decides && viewer.can("reject_application") {
@@ -754,15 +790,12 @@ fn review_buttons(viewer: &Viewer, a: &Application) -> Vec<Action> {
             on("Reject", "decide")
                 .field("decision", "reject")
                 .tone(Tone::Danger)
-                .confirm(format!(
-                    "{} is rejected; they see it on their applications page.",
-                    a.main_name
-                )),
+                .confirm(format!("{} is rejected, and told.", a.main_name)),
         );
     }
     if viewer.can("delete_application") {
         list.push(on("Delete", "delete").tone(Tone::Danger).confirm(format!(
-            "Its answers and comments go with it, and {} can apply again.",
+            "Its answers and comments go with it, and {} is told and can apply again.",
             a.main_name
         )));
     }
@@ -996,6 +1029,15 @@ fn review_action(
                 "application {app} marked in progress by {} ({})",
                 viewer.main.name, viewer.main.id
             ));
+            tell_applicant(
+                &a,
+                "Application In Progress",
+                &format!(
+                    "Your application to {} is being reviewed by {}",
+                    a.corporation_name, viewer.main.name
+                ),
+                Level::Info,
+            );
             back()
         }
         "decide" => {
@@ -1031,6 +1073,27 @@ fn review_action(
                 viewer.main.name,
                 viewer.main.id
             ));
+            if approve {
+                tell_applicant(
+                    &a,
+                    "Application Accepted",
+                    &format!(
+                        "Your application to {} has been approved.",
+                        a.corporation_name
+                    ),
+                    Level::Success,
+                );
+            } else {
+                tell_applicant(
+                    &a,
+                    "Application Rejected",
+                    &format!(
+                        "Your application to {} has been rejected.",
+                        a.corporation_name
+                    ),
+                    Level::Danger,
+                );
+            }
             back()
         }
         "comment" => {
@@ -1073,12 +1136,20 @@ fn review_action(
             if !viewer.can("delete_application") {
                 return Err(PageError::Forbidden);
             }
-            storage::execute("DELETE FROM applications WHERE id = $1", &[app.into()])
+            let deleted = storage::execute("DELETE FROM applications WHERE id = $1", &[app.into()])
                 .map_err(|e| failed("deleting the application", e))?;
             log::info(format!(
                 "application {app} from {} to {} deleted by {} ({})",
                 a.main_name, a.corporation_name, viewer.main.name, viewer.main.id
             ));
+            if deleted > 0 {
+                tell_applicant(
+                    &a,
+                    "Application Deleted",
+                    &format!("Your application to {} was deleted.", a.corporation_name),
+                    Level::Info,
+                );
+            }
             Ok(SubmitResult::Redirect("review".to_owned()))
         }
         _ => Err(PageError::NotFound),
