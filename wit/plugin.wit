@@ -699,6 +699,14 @@ interface identity {
     /// AA shows superusers only; false in a job. (Superusers also hold
     /// every permission, so `permissions` lists all of yours for them.)
     superuser: func() -> bool;
+
+    /// First-party HR Applications only: the characters on the account
+    /// behind one of this app's `notify.submitter-reference`s as they are
+    /// now (as AA core's hrapplications shows and searches an applicant's
+    /// characters), for as long as the reference reaches them. None for
+    /// another app's reference, one gone or past its year, and for every
+    /// other app: apps never learn which characters share an account.
+    submitter-characters: func(reference: string) -> option<list<character>>;
 }
 
 /// ESI, through the host: plugins name an endpoint and whose token to use,
@@ -779,8 +787,9 @@ interface esi {
 }
 
 /// Discord messages, for plugins approved for `send_message`, to channels
-/// an admin assigned. Mentions are only Tether-managed state roles: never
-/// @everyone, @here or people.
+/// an admin assigned. Mentions are only the roles Tether manages for
+/// states, and for groups with `mention_groups`: never @everyone, @here or
+/// people.
 interface discord {
     record channel {
         /// Discord's id, as text.
@@ -871,6 +880,35 @@ interface discord {
     /// (e.g. "fleet/12", a query allowed). The host makes the address, so
     /// a card never links anywhere else.
     send-linked-embed: func(channel: string, embed: embed, page: string, mention: mention) -> result<_, error>;
+
+    /// Whom a `send-message` pings: the Discord role Tether gives a state
+    /// or a group (Discord, role mappings), by its name (any case). Never
+    /// @everyone, @here or people.
+    variant ping {
+        /// A state's role, e.g. "Member".
+        state(string),
+        /// A group's role. Only for a plugin approved for `mention_groups`.
+        group(string),
+    }
+
+    /// A message for `send-message`: text, a card, or both.
+    record message {
+        /// At most 1,500 characters; may be empty when there's a card.
+        text: string,
+        /// A card under the text.
+        embed: option<embed>,
+        /// The card's title a link to one of this plugin's own pages, as
+        /// `send-linked-embed`'s `page`. Only with a card.
+        page: option<string>,
+        /// At most 10, mentioned before the text. One the host finds no
+        /// role for (no such state or group, or no Discord role mapped to
+        /// it) is left out, and logged for admins; the message still goes.
+        pings: list<ping>,
+    }
+
+    /// Posts a message to an assigned channel, pinging the roles of
+    /// `pings` (several at once, unlike `send`'s one mention).
+    send-message: func(channel: string, message: message) -> result<_, error>;
 }
 
 /// Background work on Tether's job queue: the schedules declared in

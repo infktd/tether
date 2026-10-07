@@ -68,6 +68,10 @@ pub struct CallState {
     superuser: Option<bool>,
     /// Whether this plugin, as loaded, may learn who owns characters.
     sees_owners: bool,
+    /// Whether this plugin, as loaded, may learn its form submitters'
+    /// characters (`identity.submitter-characters`).
+    sees_submitters: bool,
+    submitter_lookups: usize,
     esi_calls: usize,
     /// Only `submit_as` sets it: a pilot's own form post, the one place a
     /// plugin may write to EVE (`esi.post`).
@@ -101,6 +105,8 @@ impl CallState {
             all_groups: None,
             superuser: None,
             sees_owners: false,
+            sees_submitters: false,
+            submitter_lookups: 0,
             esi_calls: 0,
             writes_allowed: false,
             esi_writes: 0,
@@ -173,6 +179,29 @@ impl tether::plugin::identity::Host for CallState {
             Ok(services) => services.identity_members(self.plugin.clone()).await,
             Err(_) => None,
         }
+    }
+
+    async fn submitter_characters(
+        &mut self,
+        reference: String,
+    ) -> Option<Vec<services::Character>> {
+        // As `owners`: decided when this component was loaded.
+        if !self.sees_submitters {
+            return None;
+        }
+        self.submitter_lookups += 1;
+        if self.submitter_lookups > services::MAX_SUBMITTER_LOOKUPS {
+            return None;
+        }
+        // Once a call: which characters share an account is told to
+        // nobody else, so its reads are on the log.
+        if self.submitter_lookups == 1 {
+            tracing::info!(plugin = %self.plugin, "plugin reads its submitters' characters");
+        }
+        let services = self.services.clone()?;
+        services
+            .identity_submitter_characters(self.plugin.clone(), reference)
+            .await
     }
 
     async fn superuser(&mut self) -> bool {
@@ -333,7 +362,8 @@ impl tether::plugin::discord::Host for CallState {
         text: String,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, text, None, None, mention).await
+        self.discord(channel, text, None, None, services::Mentions::One(mention))
+            .await
     }
 
     async fn send_embed(
@@ -342,8 +372,14 @@ impl tether::plugin::discord::Host for CallState {
         embed: services::Embed,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, String::new(), Some(embed), None, mention)
-            .await
+        self.discord(
+            channel,
+            String::new(),
+            Some(embed),
+            None,
+            services::Mentions::One(mention),
+        )
+        .await
     }
 
     async fn send_linked_embed(
@@ -353,8 +389,40 @@ impl tether::plugin::discord::Host for CallState {
         page: String,
         mention: services::Mention,
     ) -> Result<(), services::DiscordError> {
-        self.discord(channel, String::new(), Some(embed), Some(page), mention)
-            .await
+        self.discord(
+            channel,
+            String::new(),
+            Some(embed),
+            Some(page),
+            services::Mentions::One(mention),
+        )
+        .await
+    }
+
+    async fn send_message(
+        &mut self,
+        channel: String,
+        message: services::Message,
+    ) -> Result<(), services::DiscordError> {
+        if message.pings.len() > services::MAX_PINGS {
+            return Err(services::DiscordError::Invalid(format!(
+                "at most {} pings a message",
+                services::MAX_PINGS
+            )));
+        }
+        if message.page.is_some() && message.embed.is_none() {
+            return Err(services::DiscordError::Invalid(
+                "a page link needs a card".to_owned(),
+            ));
+        }
+        self.discord(
+            channel,
+            message.text,
+            message.embed,
+            message.page,
+            services::Mentions::Pings(message.pings),
+        )
+        .await
     }
 }
 
@@ -365,7 +433,7 @@ impl CallState {
         text: String,
         embed: Option<services::Embed>,
         page: Option<String>,
-        mention: services::Mention,
+        mention: services::Mentions,
     ) -> Result<(), services::DiscordError> {
         if self.jobs_refused {
             return Err(services::DiscordError::NotAllowed(
@@ -849,6 +917,7 @@ pub struct LoadedPlugin {
     pre: PluginPre<Sandbox<CallState>>,
     storage: Option<Storage>,
     sees_owners: bool,
+    sees_submitters: bool,
 }
 
 impl std::fmt::Debug for LoadedPlugin {
@@ -873,6 +942,15 @@ impl LoadedPlugin {
     /// app allowed to: Tether's web crate decides which when loading it.
     pub fn seeing_owners(mut self) -> Self {
         self.sees_owners = true;
+        self
+    }
+
+    /// Lets this component learn the characters of its form submitters
+    /// (`identity.submitter-characters`; the services still decide what it
+    /// gets). Only for the first-party app allowed to: Tether's web crate
+    /// decides which when loading it.
+    pub fn seeing_submitters(mut self) -> Self {
+        self.sees_submitters = true;
         self
     }
 }
@@ -961,6 +1039,7 @@ impl Host {
         let mut state = CallState::new(&plugin.id, plugin.storage.clone(), self.jobs.clone());
         state.services = self.services.clone();
         state.sees_owners = plugin.sees_owners;
+        state.sees_submitters = plugin.sees_submitters;
         state
     }
 
@@ -975,6 +1054,7 @@ impl Host {
         state.jobs_refused = true;
         state.services = self.services.clone();
         state.sees_owners = plugin.sees_owners;
+        state.sees_submitters = plugin.sees_submitters;
         state
     }
 
@@ -1001,6 +1081,7 @@ impl Host {
             pre,
             storage,
             sees_owners: false,
+            sees_submitters: false,
         })
     }
 

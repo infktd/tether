@@ -32,8 +32,8 @@ use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
     DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted,
     Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Member, MemberCharacter, Mention,
-    Named, NotifyError, NotifyLevel, Owner, Services, SharedDoctrine, SharedTimer, State, Subject,
-    Timer, TimerError,
+    Mentions, Named, NotifyError, NotifyLevel, Owner, Ping, Services, SharedDoctrine, SharedTimer,
+    State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -49,6 +49,11 @@ pub const SENDS_PER_MINUTE: usize = 20;
 /// and don't count against [`SENDS_PER_MINUTE`].
 pub const REFUSAL_MEMORY: Duration = Duration::from_secs(60);
 pub const MAX_MESSAGE: usize = 1500;
+/// Longer than any state's or group's name: a ping naming more isn't
+/// looked up.
+const MAX_PING_NAME: usize = 256;
+/// Discord's limit on a message's text.
+const DISCORD_CONTENT: usize = 2000;
 /// Plugin ESI calls are kept this long in the access log...
 pub const ACCESS_LOG_DAYS: i32 = 90;
 /// ...and at most this many per plugin.
@@ -201,6 +206,20 @@ pub const OWNERS_APP: &str = "tether.member-audit";
 /// (Tether without bundled apps) is `signed`, so it gets nothing.
 pub fn may_see_owners(id: &str, origin: tether_db::plugins::Origin) -> bool {
     id == OWNERS_APP && origin == tether_db::plugins::Origin::Bundled
+}
+
+/// The one app told the characters now on its form submitters' accounts
+/// (`identity.submitter-characters`): HR Applications, as bundled with
+/// Tether, since AA core's hrapplications shows and searches an
+/// applicant's characters as they are (Jay, 2026-10-07). Decided as
+/// [`OWNERS_APP`] is.
+pub const SUBMITTERS_APP: &str = "tether.hr-applications";
+
+/// Whether the running plugin `id` may learn its form submitters'
+/// characters: only [`SUBMITTERS_APP`], and only the bundled package, as
+/// [`may_see_owners`].
+pub fn may_see_submitters(id: &str, origin: tether_db::plugins::Origin) -> bool {
+    id == SUBMITTERS_APP && origin == tether_db::plugins::Origin::Bundled
 }
 
 /// Whether the running plugin `id` was approved for `groups` (the
@@ -797,6 +816,69 @@ fn card(mut embed: Embed) -> Result<DiscordEmbed, DiscordError> {
     })
 }
 
+/// Whom a plugin's message pings, once the host has found the roles.
+enum PingTarget {
+    One(DiscordMention),
+    Roles(Vec<u64>),
+}
+
+/// The Discord roles Tether maps to the states and groups `pings` name,
+/// each once and in the order named. One with no role (no such state or
+/// group, nothing mapped to it) is left out and logged, never refused:
+/// the message still goes. Only roles of Tether's own mappings, so never
+/// @everyone (whose role id is the server's), @here or people.
+async fn ping_roles(
+    deps: &Deps,
+    plugin: &str,
+    guild: u64,
+    pings: &[Ping],
+) -> Result<Vec<u64>, sqlx::Error> {
+    // No state or group has a longer name, or a control character (which
+    // Postgres may refuse): those aren't looked up, so they're left out.
+    let named = |group: bool| -> Vec<String> {
+        pings
+            .iter()
+            .filter_map(|p| match p {
+                Ping::State(name) if !group => Some(name.trim()),
+                Ping::Group(name) if group => Some(name.trim()),
+                _ => None,
+            })
+            .filter(|name| {
+                name.chars().count() <= MAX_PING_NAME && !name.chars().any(char::is_control)
+            })
+            .map(str::to_owned)
+            .collect()
+    };
+    let found = discord_db::ping_roles(&deps.db, &named(false), &named(true)).await?;
+    let mut roles = Vec::new();
+    for ping in pings {
+        let (group, name) = match ping {
+            Ping::State(name) => (false, name.trim()),
+            Ping::Group(name) => (true, name.trim()),
+        };
+        let role = found
+            .iter()
+            .find(|r| r.group == group && r.name == name)
+            .and_then(|r| u64::try_from(r.role_id).ok())
+            .filter(|id| *id != guild);
+        match role {
+            Some(id) if !roles.contains(&id) => roles.push(id),
+            Some(_) => {}
+            None => {
+                // Debug-quoted and cut: the name is the plugin's text.
+                let name: String = name.chars().take(64).collect();
+                tracing::warn!(
+                    plugin,
+                    kind = if group { "group" } else { "state" },
+                    name = ?name,
+                    "plugin ping left out: no Discord role mapped to it"
+                );
+            }
+        }
+    }
+    Ok(roles)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn discord_send(
     deps: &Deps,
@@ -807,7 +889,7 @@ async fn discord_send(
     text: &str,
     embed: Option<Embed>,
     page: Option<String>,
-    mention: Mention,
+    mention: Mentions,
 ) -> Result<(), DiscordError> {
     let running = plugins
         .upgrade()
@@ -854,9 +936,27 @@ async fn discord_send(
             "not one of this plugin's channels".to_owned(),
         ));
     }
+    let mention_groups = running
+        .manifest
+        .capabilities
+        .discord
+        .iter()
+        .any(|a| a == "mention_groups");
     let target = match mention {
-        Mention::None => DiscordMention::None,
-        Mention::State(name) => {
+        Mentions::Pings(pings) => {
+            if !mention_groups && pings.iter().any(|p| matches!(p, Ping::Group(_))) {
+                return Err(DiscordError::NotAllowed(
+                    "this plugin wasn't approved to mention groups".to_owned(),
+                ));
+            }
+            PingTarget::Roles(
+                ping_roles(deps, plugin, config.guild_id, &pings)
+                    .await
+                    .map_err(|e| unavailable(e.to_string()))?,
+            )
+        }
+        Mentions::One(Mention::None) => PingTarget::One(DiscordMention::None),
+        Mentions::One(Mention::State(name)) => {
             // One answer for "no such state" and "no role": plugins don't
             // learn which states exist.
             let no_role =
@@ -876,55 +976,80 @@ async fn discord_send(
                 .iter()
                 .find(|m| m.grantee == Grantee::State(state.id))
                 .ok_or_else(no_role)?;
-            DiscordMention::Role(
+            PingTarget::One(DiscordMention::Role(
                 u64::try_from(role.role_id).map_err(|e| unavailable(e.to_string()))?,
-            )
+            ))
         }
     };
-    let mut content = target.prefix();
+    let mut content = match &target {
+        PingTarget::One(mention) => mention.prefix(),
+        PingTarget::Roles(roles) => tether_discord::roles_prefix(roles),
+    };
     if !content.is_empty() && !text.is_empty() {
         content.push(' ');
     }
     content.push_str(&crate::pings::defuse(text));
+    // The pings and the defused text together within Discord's limit.
+    if content.chars().count() > DISCORD_CONTENT {
+        return Err(DiscordError::Invalid(format!(
+            "with its pings, a message is at most {DISCORD_CONTENT} characters"
+        )));
+    }
     let nonce = tether_core::new_token()
         .map_err(|e| unavailable(e.to_string()))?
         .expose()
         .chars()
         .take(25)
         .collect::<String>();
-    deps.discord
-        .send_message(
-            &config,
-            u64::try_from(channel_id).map_err(|e| unavailable(e.to_string()))?,
-            &content,
-            embed.as_ref(),
-            target,
-            &nonce,
-        )
-        .await
-        .map(|_| ())
-        .map_err(|e| {
-            // Only a passing failure is worth sending again. Discord
-            // refusing the bot (no access to the channel, a channel
-            // deleted, a token revoked) stays until an admin fixes it, so
-            // the app hears it as final and moves on to its next message.
-            if e.is_transient() || matches!(e, tether_discord::DiscordError::Protocol(_)) {
-                return unavailable(e.to_string());
-            }
-            tracing::warn!(plugin, error = %e, "plugin Discord send refused");
-            let why = crate::pings::explain(&e);
-            // The bot itself refused there (not this one message): its next
-            // sends there would be too.
-            if matches!(
-                e,
-                tether_discord::DiscordError::Forbidden { .. }
-                    | tether_discord::DiscordError::NotFound { .. }
-                    | tether_discord::DiscordError::BadBotToken
-            ) {
-                refusals.remember(plugin, channel, &why);
-            }
-            DiscordError::NotAllowed(why)
-        })
+    let channel_id = u64::try_from(channel_id).map_err(|e| unavailable(e.to_string()))?;
+    let sent = match target {
+        PingTarget::One(mention) => {
+            deps.discord
+                .send_message(
+                    &config,
+                    channel_id,
+                    &content,
+                    embed.as_ref(),
+                    mention,
+                    &nonce,
+                )
+                .await
+        }
+        PingTarget::Roles(roles) => {
+            deps.discord
+                .send_message_to_roles(
+                    &config,
+                    channel_id,
+                    &content,
+                    embed.as_ref(),
+                    &roles,
+                    &nonce,
+                )
+                .await
+        }
+    };
+    sent.map(|_| ()).map_err(|e| {
+        // Only a passing failure is worth sending again. Discord
+        // refusing the bot (no access to the channel, a channel
+        // deleted, a token revoked) stays until an admin fixes it, so
+        // the app hears it as final and moves on to its next message.
+        if e.is_transient() || matches!(e, tether_discord::DiscordError::Protocol(_)) {
+            return unavailable(e.to_string());
+        }
+        tracing::warn!(plugin, error = %e, "plugin Discord send refused");
+        let why = crate::pings::explain(&e);
+        // The bot itself refused there (not this one message): its next
+        // sends there would be too.
+        if matches!(
+            e,
+            tether_discord::DiscordError::Forbidden { .. }
+                | tether_discord::DiscordError::NotFound { .. }
+                | tether_discord::DiscordError::BadBotToken
+        ) {
+            refusals.remember(plugin, channel, &why);
+        }
+        DiscordError::NotAllowed(why)
+    })
 }
 
 impl Services for PluginServices {
@@ -1089,6 +1214,45 @@ impl Services for PluginServices {
                 }),
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin character owners");
+                    None
+                }
+            }
+        })
+    }
+
+    fn identity_submitter_characters(
+        &self,
+        plugin: String,
+        reference: String,
+    ) -> Fut<Option<Vec<Character>>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            // The host passes this on only for a component loaded as the
+            // allowed app (`LoadedPlugin::seeing_submitters`); what holds
+            // the id now must be the allowed app too.
+            let running = plugins.upgrade().and_then(|p| p.running(&plugin))?;
+            if !may_see_submitters(&plugin, running.origin)
+                || !crate::plugin_notify::well_formed(&reference)
+            {
+                return None;
+            }
+            // Only this app's own reference, while it still reaches them; an
+            // account with no characters left reaches nobody either.
+            match tether_db::submitters::characters(&db, &plugin, &reference).await {
+                Ok(rows) if rows.is_empty() => None,
+                Ok(rows) => Some(
+                    rows.into_iter()
+                        .map(|c| Character {
+                            id: c.id,
+                            name: c.name,
+                            corporation_id: c.corporation_id.unwrap_or(0),
+                            alliance_id: c.alliance_id,
+                        })
+                        .collect(),
+                ),
+                Err(err) => {
+                    tracing::error!(plugin, error = %err, "plugin submitter characters");
                     None
                 }
             }
@@ -1270,7 +1434,7 @@ impl Services for PluginServices {
         text: String,
         embed: Option<Embed>,
         page: Option<String>,
-        mention: Mention,
+        mention: Mentions,
     ) -> Fut<Result<(), DiscordError>> {
         // Refused there a moment ago: the same answer, without asking
         // Discord again or spending one of the plugin's sends. Like a

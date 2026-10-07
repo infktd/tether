@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 pub use crate::host::tether::plugin::discord::{
-    Channel, Embed, EmbedAuthor, EmbedField, Error as DiscordError, Image, Mention,
+    Channel, Embed, EmbedAuthor, EmbedField, Error as DiscordError, Image, Mention, Message, Ping,
 };
 pub use crate::host::tether::plugin::doctrines::{
     Doctrine, Error as DoctrineError, Shared as SharedDoctrine,
@@ -71,6 +71,8 @@ pub struct EsiReply {
 pub const MAX_FILTER_REPORTS: usize = 50;
 /// Discord messages in one plugin call.
 pub const MAX_DISCORD_SENDS: usize = 5;
+/// Pings in one `discord.send-message`.
+pub const MAX_PINGS: usize = 10;
 /// `notify` calls in one plugin call.
 pub const MAX_NOTIFY_CALLS: usize = 10;
 /// HTTP requests in one job run or form submission.
@@ -79,6 +81,9 @@ pub const MAX_HTTP_CALLS: usize = 20;
 pub const MAX_HTTP_CALLS_PAGE: usize = 5;
 /// The largest request body a plugin may send.
 pub const MAX_HTTP_REQUEST_BODY: usize = 64 * 1024;
+/// `identity.submitter-characters` lookups in one plugin call: a review
+/// queue's worth.
+pub const MAX_SUBMITTER_LOOKUPS: usize = 1000;
 
 pub type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -113,6 +118,14 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// characters, registered or not: `None` for every plugin but the
     /// first-party one allowed to know.
     fn identity_members(&self, plugin: String) -> Fut<Option<Vec<Member>>>;
+    /// The characters now on the account behind one of `plugin`'s
+    /// submitter references: `None` for every plugin but the first-party
+    /// one allowed to know, and for a reference that reaches nobody.
+    fn identity_submitter_characters(
+        &self,
+        plugin: String,
+        reference: String,
+    ) -> Fut<Option<Vec<Character>>>;
     /// The groups of `account` (the viewer's, as the host built it), for a
     /// `plugin` approved for `groups`; none otherwise.
     fn identity_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>>;
@@ -132,7 +145,7 @@ pub trait Services: Send + Sync + std::fmt::Debug {
         text: String,
         embed: Option<Embed>,
         page: Option<String>,
-        mention: Mention,
+        mention: Mentions,
     ) -> Fut<Result<(), DiscordError>>;
     /// One outbound HTTPS request, to a host approved for `plugin`;
     /// `from_page` while rendering a page.
@@ -238,6 +251,15 @@ pub trait Services: Send + Sync + std::fmt::Debug {
 }
 
 pub type Shared = Arc<dyn Services>;
+
+/// Whom a Discord message pings.
+#[derive(Debug, Clone)]
+pub enum Mentions {
+    /// `send`'s one mention: refused when no role is mapped to its state.
+    One(Mention),
+    /// `send-message`'s pings: each without a role is left out and logged.
+    Pings(Vec<Ping>),
+}
 
 #[cfg(test)]
 mod tests {

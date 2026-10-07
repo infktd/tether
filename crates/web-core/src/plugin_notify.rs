@@ -253,7 +253,7 @@ pub async fn submitter_reference(
 
 /// Whether `reference` could be one the host made: 32 lowercase hex
 /// digits. Anything else isn't looked up.
-fn well_formed(reference: &str) -> bool {
+pub(crate) fn well_formed(reference: &str) -> bool {
     reference.len() == 32
         && reference
             .bytes()

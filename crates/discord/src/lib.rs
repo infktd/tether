@@ -356,9 +356,24 @@ impl Mention {
         match self {
             Self::None => serde_json::json!({ "parse": [] }),
             Self::Here | Self::Everyone => serde_json::json!({ "parse": ["everyone"] }),
-            Self::Role(id) => serde_json::json!({ "parse": [], "roles": [id.to_string()] }),
+            Self::Role(id) => roles_allowed(&[id]),
         }
     }
+}
+
+/// The text that pings each of `roles`, placed at the start of a message.
+pub fn roles_prefix(roles: &[u64]) -> String {
+    roles
+        .iter()
+        .map(|id| format!("<@&{id}>"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Only these roles may be pinged: never @everyone, @here or people.
+fn roles_allowed(roles: &[u64]) -> serde_json::Value {
+    let roles: Vec<String> = roles.iter().map(u64::to_string).collect();
+    serde_json::json!({ "parse": [], "roles": roles })
 }
 
 /// A member of the server, as far as syncing cares.
@@ -734,6 +749,42 @@ impl Discord {
         mention: Mention,
         nonce: &str,
     ) -> Result<u64, DiscordError> {
+        self.post_message(config, channel_id, content, embed, mention.allowed(), nonce)
+            .await
+    }
+
+    /// As [`send_message`](Self::send_message), pinging only `roles`
+    /// (whose mentions [`roles_prefix`] writes), never @everyone, @here or
+    /// people.
+    pub async fn send_message_to_roles(
+        &self,
+        config: &DiscordConfig,
+        channel_id: u64,
+        content: &str,
+        embed: Option<&Embed>,
+        roles: &[u64],
+        nonce: &str,
+    ) -> Result<u64, DiscordError> {
+        self.post_message(
+            config,
+            channel_id,
+            content,
+            embed,
+            roles_allowed(roles),
+            nonce,
+        )
+        .await
+    }
+
+    async fn post_message(
+        &self,
+        config: &DiscordConfig,
+        channel_id: u64,
+        content: &str,
+        embed: Option<&Embed>,
+        allowed_mentions: serde_json::Value,
+        nonce: &str,
+    ) -> Result<u64, DiscordError> {
         #[derive(Deserialize)]
         struct Created {
             id: String,
@@ -743,7 +794,7 @@ impl Discord {
         // twilight has no enforce_nonce, so the body is written here.
         let mut body = serde_json::json!({
             "content": content,
-            "allowed_mentions": mention.allowed(),
+            "allowed_mentions": allowed_mentions,
             "nonce": nonce,
             "enforce_nonce": true,
         });

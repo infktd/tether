@@ -561,6 +561,9 @@ impl Plugins {
         if crate::plugin_services::may_see_owners(&installed.id, installed.origin) {
             loaded = loaded.seeing_owners();
         }
+        if crate::plugin_services::may_see_submitters(&installed.id, installed.origin) {
+            loaded = loaded.seeing_submitters();
+        }
         // Installs from before scope compliance didn't record their user
         // scopes (what registering for them grants); catch them up.
         crate::compliance::sync_plugin_scopes(db, &installed.id, &manifest.capabilities.esi.user)

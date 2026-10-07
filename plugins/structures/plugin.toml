@@ -5,16 +5,18 @@
 id = "tether.structures"
 name = "Structures"
 icon = "citadel"
-version = "0.5.12"
+version = "0.5.13"
 host_api = "1"
-description = "Owners' Upwell structures, starbases, customs offices, skyhooks and jump gates with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner by type with pings by severity, fuel alerts, and notices to admins."
+description = "Owners' Upwell structures, starbases, customs offices, skyhooks and jump gates with fuel, fittings, state, timers and tags; their notifications relayed to Discord per owner by type with pings by severity and ping groups, fuel alerts, and notices to admins."
 
 [publisher]
 key = "PUBLISHER_KEY"
 
 [capabilities]
 storage = true
-discord = ["send_message"]
+# mention_groups: aa-structures' ping groups, per owner and per channel
+# (its webhooks), ping those groups' Discord roles.
+discord = ["send_message", "mention_groups"]
 # Structures' timers go to Structure Timers, as aa-structures feeds the
 # timerboard.
 timers = "publish"

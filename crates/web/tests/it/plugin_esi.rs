@@ -1311,6 +1311,99 @@ async fn a_signed_app_under_member_audits_id_learns_no_owners_or_members(db: PgP
     assert_eq!(told, 0);
 }
 
+/// HR Applications, as bundled with Tether, reads the characters now on
+/// the account behind one of its own submitter references (AA core's
+/// hrapplications shows and searches them); nobody else does.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn only_bundled_hr_applications_reads_its_submitters_characters(db: PgPool) {
+    let hr = bundled_probe("tether.hr-applications");
+    let other = bundled_probe("acme.bundled");
+    let h = harness_with_bundled(db, vec![hr.clone(), other.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    approve_bundled(&h, &owner, "tether.hr-applications", &hr).await;
+    approve_bundled(&h, &owner, "acme.bundled", &other).await;
+    install(&h, &owner).await;
+    let account = account_of(&h, CHRIBBA).await;
+    let reference = |plugin: &'static str| {
+        let db = h.db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "INSERT INTO core.plugin_submitters (plugin_id, account_id) VALUES ($1, $2) \
+                 RETURNING reference",
+            )
+            .bind(plugin)
+            .bind(account)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let hr_ref = reference("tether.hr-applications").await;
+    let other_ref = reference("acme.bundled").await;
+    let signed_ref = reference(ID).await;
+    let read = |plugin: &'static str, reference: String| {
+        run_probe(
+            &h,
+            plugin,
+            "submitter-characters",
+            vec![("reference".to_owned(), reference)],
+            true,
+        )
+    };
+    // An alt added since: the account as it is now.
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id, alliance_id) \
+         VALUES (90000078, $1, 'Later Alt', 98000001, 99000001)",
+    )
+    .bind(account)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let out = read("tether.hr-applications", hr_ref.clone()).await;
+    for part in [
+        format!("id: {CHRIBBA}, name: \"Chribba\""),
+        "name: \"Later Alt\", corporation-id: 98000001, alliance-id: Some(99000001)".to_owned(),
+    ] {
+        assert!(out.contains(&part), "{part}\n{out}");
+    }
+    // Not another app's reference, nor a made-up one, nor one past its
+    // year; and never for another app, even its own reference.
+    assert_eq!(
+        read("tether.hr-applications", other_ref.clone()).await,
+        "None"
+    );
+    assert_eq!(read("tether.hr-applications", "0".repeat(32)).await, "None");
+    assert_eq!(
+        read("tether.hr-applications", "not hex".to_owned()).await,
+        "None"
+    );
+    assert_eq!(read("acme.bundled", other_ref).await, "None");
+    assert_eq!(read(ID, signed_ref).await, "None");
+    // At most 1,000 lookups a call, a malformed reference's included.
+    for (before, answered) in [("999", true), ("1000", false)] {
+        let out = run_probe(
+            &h,
+            "tether.hr-applications",
+            "submitter-lookups",
+            vec![
+                ("reference".to_owned(), hr_ref.clone()),
+                ("n".to_owned(), before.to_owned()),
+            ],
+            false,
+        )
+        .await;
+        assert_eq!(out, format!("answered={answered}"));
+    }
+    sqlx::query(
+        "UPDATE core.plugin_submitters SET last_posted_at = now() - interval '366 days' \
+         WHERE plugin_id = 'tether.hr-applications'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(read("tether.hr-applications", hr_ref).await, "None");
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     let h = harness(db, true).await;
@@ -1445,6 +1538,165 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
     assert!(out.contains("title is 1 to 256"), "{out}");
     let out = probe(&h, "embed", &[("title", "x"), ("image", "-1")]).await;
     assert!(out.contains("image id is positive"), "{out}");
+}
+
+/// Several pings in one message (aa-structures' ping groups): the roles
+/// Tether maps to states and, for an app approved for `mention_groups`,
+/// groups, by name; one with no role is left out and the message still
+/// goes. Never @everyone, @here or anyone else.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn discord_messages_ping_several_state_and_group_roles(db: PgPool) {
+    const FC_ROLE: &str = "500000000000000004";
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let key = Key::new(3);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.pings\"\nname = \"Pings\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[capabilities]\ndiscord = [\"send_message\", \"mention_groups\"]\n",
+        key.public()
+    );
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &probe_component()),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    // The install review says it can mention groups.
+    let review = page(&h, "/admin/plugins/acme.pings", &owner).await.body;
+    assert!(review.contains("Discord group mentions"), "{review}");
+    discord_ready(&h, &owner).await;
+    for id in [ID, "acme.pings"] {
+        let res = send(
+            &h.app,
+            form(
+                &format!("/admin/plugins/{id}/channels"),
+                &format!("channel_id={DISCORD_PING_CHANNEL}"),
+                &owner,
+            ),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "id": "700000000000000001", "channel_id": DISCORD_PING_CHANNEL }),
+        ))
+        .mount(&h.discord_server)
+        .await;
+    let group: i64 =
+        sqlx::query_scalar("INSERT INTO core.groups (name) VALUES ('Capital FCs') RETURNING id")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO core.discord_role_mappings (role_id, role_name, group_id) \
+         VALUES ($1, 'Capital FCs', $2)",
+    )
+    .bind(FC_ROLE.parse::<i64>().unwrap())
+    .bind(group)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO core.groups (name) VALUES ('No Role')")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let last_body = || async {
+        let sent = h.discord_server.received_requests().await.unwrap();
+        let last = sent
+            .iter()
+            .rev()
+            .find(|r| r.url.path().ends_with("/messages"))
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&last.body).unwrap()
+    };
+    let pings = |query: &[(&str, &str)]| {
+        run_probe(
+            &h,
+            "acme.pings",
+            "send-message",
+            query
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            false,
+        )
+    };
+
+    // A state's and a group's role (any case), each once; a group with no
+    // role, one that doesn't exist and an unmapped state are left out.
+    let out = pings(&[
+        ("text", "Timer @here"),
+        ("states", "member,Blue"),
+        ("groups", "capital fcs,No Role,Nobody,Capital FCs"),
+    ])
+    .await;
+    assert_eq!(out, "ok");
+    let body = last_body().await;
+    assert_eq!(
+        body["content"],
+        format!("<@&{DISCORD_MEMBER_ROLE}> <@&{FC_ROLE}> Timer @\u{200B}here")
+    );
+    assert_eq!(
+        body["allowed_mentions"],
+        serde_json::json!({ "parse": [], "roles": [DISCORD_MEMBER_ROLE, FC_ROLE] })
+    );
+    // Nothing to ping still sends; a card alone too.
+    let out = pings(&[("groups", "Nobody"), ("title", "Reinforced")]).await;
+    assert_eq!(out, "ok");
+    let body = last_body().await;
+    assert_eq!(body["content"], "");
+    assert_eq!(
+        body["allowed_mentions"],
+        serde_json::json!({ "parse": [], "roles": [] })
+    );
+    assert_eq!(body["embeds"][0]["title"], "Reinforced");
+
+    // At most 10 pings; not from a page.
+    let many = ["Member"; 11].join(",");
+    let out = pings(&[("text", "x"), ("states", &many)]).await;
+    assert!(out.contains("at most 10 pings"), "{out}");
+    let out = run_probe(
+        &h,
+        "acme.pings",
+        "send-message",
+        vec![("text".to_owned(), "x".to_owned())],
+        true,
+    )
+    .await;
+    assert!(out.contains("pages can't send"), "{out}");
+
+    // An app not approved for group mentions can't name a group; states
+    // are fine.
+    let out = run_probe(
+        &h,
+        ID,
+        "send-message",
+        vec![
+            ("text".to_owned(), "x".to_owned()),
+            ("groups".to_owned(), "Capital FCs".to_owned()),
+        ],
+        false,
+    )
+    .await;
+    assert!(out.contains("wasn't approved to mention groups"), "{out}");
+    let out = run_probe(
+        &h,
+        ID,
+        "send-message",
+        vec![
+            ("text".to_owned(), "x".to_owned()),
+            ("states".to_owned(), "Member".to_owned()),
+        ],
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok");
+    assert_eq!(
+        last_body().await["allowed_mentions"]["roles"],
+        serde_json::json!([DISCORD_MEMBER_ROLE])
+    );
 }
 
 /// Discord refusing the bot is final for the app, so it moves on (Moon

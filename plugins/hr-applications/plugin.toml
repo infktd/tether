@@ -5,7 +5,7 @@
 id = "tether.hr-applications"
 name = "HR Applications"
 icon = "clipboard"
-version = "0.4.6"
+version = "0.4.7"
 host_api = "1"
 description = "Application forms per corporation: pilots apply, recruiters review with comments and approve or reject, applicants follow their status."
 

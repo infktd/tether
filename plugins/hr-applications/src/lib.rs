@@ -20,8 +20,11 @@
 //!   the app's permissions, so each application keeps the host's
 //!   reference to the account that applied, which the app may notify.
 //!
-//! The applicant's characters are kept as they were when they applied:
-//! plugins only learn an account's characters while its owner is looking.
+//! Reviewers see and search the applicant's characters as they are now,
+//! as AA: the host tells the bundled HR Applications the characters on
+//! the account behind its reference to the applicant. Applications from
+//! before (without a reference) keep the characters stored when they
+//! applied.
 
 mod text;
 
@@ -61,6 +64,9 @@ const MY_ROWS: i64 = 200;
 /// Corporations and alliances a search looks up by name (public ESI's
 /// names, 1,000 a call; a page may make 20 ESI calls).
 const MAX_SEARCHED_ORGS: i64 = 5000;
+/// Applications a search looks through, newest first: each one's
+/// characters are asked of the host (at most 1,000 a call).
+const MAX_SEARCHED_APPS: i64 = 1000;
 
 struct HrApplications;
 
@@ -325,6 +331,30 @@ impl Application {
         self.approved.is_none()
     }
 
+    /// The applicant's characters as they are now (AA shows and searches
+    /// the account's characters), through the host's reference to them;
+    /// whether it could. Applications without a reference, or one past
+    /// its year, keep the characters stored when they applied.
+    fn current_characters(&mut self) -> bool {
+        let Some(now) = self
+            .submitter
+            .as_deref()
+            .and_then(identity::submitter_characters)
+        else {
+            return false;
+        };
+        self.characters = now
+            .into_iter()
+            .map(|c| Character {
+                id: c.id,
+                name: c.name,
+                corporation_id: c.corporation_id,
+                alliance_id: c.alliance_id,
+            })
+            .collect();
+        true
+    }
+
     fn status(&self) -> Badge {
         match self.approved {
             Some(true) => badge("Approved", Tone::Success),
@@ -527,7 +557,7 @@ fn apply_page(viewer: &Viewer, form: i64, note: Option<&str>) -> Result<Page, Pa
             )));
     }
     let mut apply = Form::new("apply", "Submit application").description(format!(
-        "{corporation}'s recruiters, and HR staff who review every corporation, see your answers and the characters on your account."
+        "{corporation}'s recruiters, and HR staff who review every corporation, see your answers and the characters on your account, as they are while your application is kept."
     ));
     for q in questions(form)? {
         let help = (!q.help.is_empty()).then(|| q.help.clone());
@@ -568,7 +598,7 @@ fn apply_page(viewer: &Viewer, form: i64, note: Option<&str>) -> Result<Page, Pa
     apply = apply.field(
         Field::checkbox(
             "consent",
-            format!("Share my answers and characters with {corporation}'s recruiters and HR staff"),
+            format!("Share my answers and my account's characters, as they are now and later, with {corporation}'s recruiters and HR staff"),
             false,
         )
         .required(),
@@ -805,77 +835,102 @@ fn review_buttons(viewer: &Viewer, a: &Application) -> Vec<Action> {
     list
 }
 
-/// The corporations and alliances of applicants in scope (`scope`'s two
-/// parameters) whose name holds `q` (lowercase), from public ESI's names;
-/// and whether there were more than [`MAX_SEARCHED_ORGS`] to look at.
-fn matching_orgs(scope: &[Db], q: &str) -> Result<(Vec<i64>, bool), PageError> {
-    let ids: Vec<i64> = query(
-        &format!(
-            "SELECT DISTINCT x.id FROM applications a JOIN forms f ON f.id = a.form_id \
-             CROSS JOIN LATERAL ( \
-                 SELECT (c->>'corporation_id')::bigint AS id \
-                 FROM jsonb_array_elements(a.characters) c \
-                 UNION SELECT (c->>'alliance_id')::bigint \
-                 FROM jsonb_array_elements(a.characters) c) x \
-             WHERE {IN_SCOPE} AND x.id > 0 ORDER BY x.id LIMIT {}",
-            MAX_SEARCHED_ORGS + 1
-        ),
-        scope,
-    )?
-    .iter()
-    .map(|r| int(r, 0))
-    .collect();
-    let cut = ids.len() > usize::try_from(MAX_SEARCHED_ORGS).unwrap_or(usize::MAX);
-    let named = names(
-        ids.into_iter()
-            .take(usize::try_from(MAX_SEARCHED_ORGS).unwrap_or(0)),
-    );
+/// The corporations and alliances of these applicants' characters whose
+/// name holds `q` (lowercase), from public ESI's names; and whether there
+/// were more than [`MAX_SEARCHED_ORGS`] to look at.
+fn matching_orgs(apps: &[Application], q: &str) -> (Vec<i64>, bool) {
+    let mut ids: Vec<i64> = apps
+        .iter()
+        .flat_map(|a| &a.characters)
+        .flat_map(|c| [Some(c.corporation_id), c.alliance_id])
+        .flatten()
+        .filter(|id| *id > 0)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let max = usize::try_from(MAX_SEARCHED_ORGS).unwrap_or(usize::MAX);
+    let cut = ids.len() > max;
+    let named = names(ids.into_iter().take(max));
     let mut matching: Vec<i64> = named
         .into_iter()
         .filter(|(_, name)| name.to_lowercase().contains(q))
         .map(|(id, _)| id)
         .collect();
     matching.sort_unstable();
-    Ok((matching, cut))
+    (matching, cut)
+}
+
+/// AA's search: whether any of the applicant's characters holds `q`
+/// (lowercase) in its name, or is in one of `orgs` (its corporation or
+/// alliance matched by name).
+fn matches(a: &Application, q: &str, orgs: &[i64]) -> bool {
+    a.characters.iter().any(|c| {
+        c.name.to_lowercase().contains(q)
+            || orgs.binary_search(&c.corporation_id).is_ok()
+            || c.alliance_id
+                .is_some_and(|id| orgs.binary_search(&id).is_ok())
+    })
 }
 
 fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError> {
     let search = search.filter(|q| !q.is_empty()).map(str::to_lowercase);
-    let mut params = scope(viewer);
-    let mut filter = String::new();
-    let mut orgs_cut = false;
-    if let Some(q) = &search {
-        // AA's search: any of the applicant's characters by name, or by
-        // its corporation's or alliance's name (the main's among them).
-        let (orgs, cut) = matching_orgs(&params, q)?;
-        orgs_cut = cut;
-        params.push(q.clone().into());
-        params.push(Db::json(serde_json::Value::from(orgs).to_string()));
-        filter = " AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.characters) c \
-                   WHERE strpos(lower(c->>'name'), $3) > 0 \
-                      OR (c->>'corporation_id')::bigint IN \
-                         (SELECT jsonb_array_elements_text($4::jsonb)::bigint) \
-                      OR (c->>'alliance_id')::bigint IN \
-                         (SELECT jsonb_array_elements_text($4::jsonb)::bigint))"
-            .to_owned();
-    }
-    let list = |status: &str, order: &str, limit: i64| -> Result<Vec<Application>, PageError> {
+    let params = scope(viewer);
+    let list = |filter: &str, order: &str, limit: i64| -> Result<Vec<Application>, PageError> {
         Ok(query(
-            &format!(
-                "{APP_SELECT} WHERE {IN_SCOPE} AND {status}{filter} ORDER BY {order} LIMIT {limit}"
-            ),
+            &format!("{APP_SELECT} WHERE {IN_SCOPE} AND {filter} ORDER BY {order} LIMIT {limit}"),
             &params,
         )?
         .iter()
         .map(|r| application(r))
         .collect())
     };
-    let pending = list("a.approved IS NULL", "a.created_at, a.id", QUEUE_ROWS)?;
-    let reviewed = list(
-        "a.approved IS NOT NULL",
-        "a.decided_at DESC NULLS LAST, a.id DESC",
-        REVIEWED_ROWS,
-    )?;
+    let mut orgs_cut = false;
+    let mut apps_cut = false;
+    let (pending, reviewed) = match &search {
+        None => {
+            // The list shows the main and a count: characters as they
+            // applied, so a view costs no lookups.
+            let pending = list("a.approved IS NULL", "a.created_at, a.id", QUEUE_ROWS)?;
+            let reviewed = list(
+                "a.approved IS NOT NULL",
+                "a.decided_at DESC NULLS LAST, a.id DESC",
+                REVIEWED_ROWS,
+            )?;
+            (pending, reviewed)
+        }
+        Some(q) => {
+            // AA's search: any of the applicant's characters as they are
+            // now by name, or by its corporation's or alliance's name (the
+            // main's among them), among the newest applications.
+            let mut apps = list(
+                "true",
+                "a.created_at DESC, a.id DESC",
+                MAX_SEARCHED_APPS + 1,
+            )?;
+            apps_cut = apps.len() > usize::try_from(MAX_SEARCHED_APPS).unwrap_or(usize::MAX);
+            apps.truncate(usize::try_from(MAX_SEARCHED_APPS).unwrap_or(0));
+            for a in &mut apps {
+                a.current_characters();
+            }
+            let (orgs, cut) = matching_orgs(&apps, q);
+            orgs_cut = cut;
+            apps.retain(|a| matches(a, q, &orgs));
+            let (mut pending, mut reviewed): (Vec<Application>, Vec<Application>) =
+                apps.into_iter().partition(Application::pending);
+            pending.sort_by_key(|a| (a.created_at, a.id));
+            pending.truncate(usize::try_from(QUEUE_ROWS).unwrap_or(0));
+            // Latest decided first, undated last.
+            reviewed.sort_by(|a, b| {
+                (b.decided_at.is_some(), b.decided_at, b.id).cmp(&(
+                    a.decided_at.is_some(),
+                    a.decided_at,
+                    a.id,
+                ))
+            });
+            reviewed.truncate(usize::try_from(REVIEWED_ROWS).unwrap_or(0));
+            (pending, reviewed)
+        }
+    };
     let names = names(
         pending
             .iter()
@@ -907,6 +962,11 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
     page = page.toolbar(
         Toolbar::new().search("Search applicants' characters, corporations and alliances"),
     );
+    if apps_cut {
+        page = page.text(format!(
+            "The search looked through the newest {MAX_SEARCHED_APPS} applications."
+        ));
+    }
     if orgs_cut {
         page = page.text(format!(
             "Corporation and alliance names were matched among the first {MAX_SEARCHED_ORGS} \
@@ -933,7 +993,8 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
 }
 
 fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, PageError> {
-    let a = reviewable(viewer, app)?;
+    let mut a = reviewable(viewer, app)?;
+    let current = a.current_characters();
     let names = names(
         a.characters
             .iter()
@@ -971,7 +1032,11 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
         Column::text("Alliance"),
     ])
     .title("Characters")
-    .empty("No characters were on the account.");
+    .empty(if current {
+        "No characters are on the account."
+    } else {
+        "No characters were on the account."
+    });
     if a.characters.len() > MAX_CHARACTERS_SHOWN {
         characters = characters.title(format!(
             "Characters: the first {MAX_CHARACTERS_SHOWN} of {}",
@@ -992,10 +1057,17 @@ fn review_view(viewer: &Viewer, app: i64, note: Option<&str>) -> Result<Page, Pa
             },
         ]);
     }
-    let mut page = Page::new("Application").description(format!(
-        "{} to {}. Characters as they were when they applied.",
-        a.main_name, a.corporation_name
-    ));
+    // As AA, the account's characters now; as they were when they applied
+    // for an application from before the host could tell (or past the
+    // reference's year).
+    let mut page = Page::new("Application").description(if current {
+        format!("{} to {}.", a.main_name, a.corporation_name)
+    } else {
+        format!(
+            "{} to {}. Characters as they were when they applied.",
+            a.main_name, a.corporation_name
+        )
+    });
     if let Some(note) = note {
         page = page.text(note);
     }
