@@ -23,8 +23,9 @@
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
+  {% if any %}{% let t = toolbar %}{% include "toolbar.html" %}{% endif %}
   {% if groups.is_empty() %}
-  <section class="card"><section><p class="text-sm text-muted-foreground">No Secure Groups are open to you.</p></section></section>
+  <section class="card"><section><p class="text-sm text-muted-foreground">{% if any %}No group matches.{% else %}No Secure Groups are open to you.{% endif %}</p></section></section>
   {% else %}
   <section class="card data-card" aria-labelledby="secure">
     <header><h2 id="secure">Groups <span class="num text-muted-foreground font-normal">{{ groups.len() }}</span></h2></header>

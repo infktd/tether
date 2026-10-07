@@ -5,7 +5,7 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde::Deserialize;
@@ -15,6 +15,7 @@ use tether_db::audit::Actor;
 use tether_db::states as db;
 
 use super::admin::guard;
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, render};
 use crate::AppState;
 use crate::admin::esi_unavailable;
@@ -102,6 +103,7 @@ fn chip(scope: &str, by: String) -> ScopeChip {
 #[template(path = "admin_states.html")]
 struct StatesPage {
     shell: Shell,
+    toolbar: ToolbarView,
     cards: Vec<Card>,
     /// Every scope Tether may ask for: all must be enabled on the EVE
     /// application.
@@ -109,10 +111,18 @@ struct StatesPage {
     error: Option<String>,
 }
 
+/// The toolbar's search: a state by its name, or by anyone it covers.
+#[derive(Debug, Default, Deserialize)]
+pub struct StatesQuery {
+    #[serde(default)]
+    q: String,
+}
+
 async fn states_page(
     state: &AppState,
     shell: Shell,
     error: Option<AppError>,
+    query: &StatesQuery,
 ) -> Result<Response, PageError> {
     let states = db::list(&state.db).await?;
     let covered = db::covered(&state.db).await?;
@@ -142,7 +152,7 @@ async fn states_page(
     let application_scopes = crate::compliance::application_scopes(state, false).await?;
     // Guest is last; the one above it can't move down past it.
     let movable = states.iter().filter(|s| !s.is_guest()).count();
-    let cards = states
+    let cards: Vec<Card> = states
         .iter()
         .enumerate()
         .map(|(i, s)| {
@@ -239,6 +249,16 @@ async fn states_page(
         }
         })
         .collect();
+    let list = ListQuery::new("/admin/states").param("q", &query.q);
+    let words = list.words();
+    let cards: Vec<Card> = cards
+        .into_iter()
+        .filter(|c| {
+            let mut text: Vec<&str> = vec![&c.name];
+            text.extend(c.covers.iter().map(|e| e.name.as_str()));
+            toolbar::matches(&words, &text)
+        })
+        .collect();
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -247,6 +267,8 @@ async fn states_page(
             status,
             &StatesPage {
                 shell,
+                toolbar: ToolbarView::new(&list)
+                    .search("A state, or an alliance, corporation or pilot it covers"),
                 cards,
                 application_scopes: application_scopes.into_iter().collect(),
                 error: error.map(|e| e.message().to_owned()),
@@ -259,9 +281,10 @@ async fn states_page(
 pub async fn page(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(query): Query<StatesQuery>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, ADMIN_STATES, "states").await?;
-    states_page(&state, shell, None).await
+    states_page(&state, shell, None, &query).await
 }
 
 #[derive(Template)]
@@ -290,7 +313,7 @@ async fn change(
     if !confirmed {
         let preview = match state_admin::preview(&state.db, &state.esi, &change).await {
             Ok(preview) => preview,
-            Err(err) => return states_page(state, shell, Some(err)).await,
+            Err(err) => return states_page(state, shell, Some(err), &StatesQuery::default()).await,
         };
         if preview.needs_confirming() {
             let total = preview.moves.iter().map(|m| m.accounts).sum();
@@ -317,7 +340,7 @@ async fn change(
     .await
     {
         Ok(_) => Ok(super::stay::back("/admin/states", "Saved.")),
-        Err(err) => states_page(state, shell, Some(err)).await,
+        Err(err) => states_page(state, shell, Some(err), &StatesQuery::default()).await,
     }
 }
 

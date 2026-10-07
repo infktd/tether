@@ -1,11 +1,11 @@
 {% extends "layout.html" %}
 {%- import "icons.html" as icons -%}
 {%- import "organization.html" as organization -%}
-{% macro request_table(title, rows, empty) %}
+{% macro request_table(title, rows, empty, searched) %}
   <section class="card data-card">
     <header><h2>{{ title }} <span class="num text-muted-foreground font-normal">{{ rows.len() }}</span></h2></header>
     {% if rows.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">{{ empty }}</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">{% if searched %}Nobody matches.{% else %}{{ empty }}{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Pilot</th><th scope="col">Organization</th><th scope="col">Group</th><th scope="col">Requested</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
@@ -52,8 +52,9 @@
   {% include "admin_views.html" %}
   {% let tab = "requests" %}{% include "group_management_tabs.html" %}
   {% include "admin_error.html" %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
 
-  {% call request_table("Join requests", joins, "No one is waiting to join.") %}{% endcall %}
-  {% call request_table("Leave requests", leaves, "No one is waiting to leave.") %}{% endcall %}
+  {% call request_table("Join requests", joins, "No one is waiting to join.", searched) %}{% endcall %}
+  {% call request_table("Leave requests", leaves, "No one is waiting to leave.", searched) %}{% endcall %}
 </div>
 {% endblock %}

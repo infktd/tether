@@ -62,6 +62,17 @@ async fn owners_see_refresh_and_delete_their_tokens(db: PgPool) {
     .await;
     assert_eq!(theirs.status, StatusCode::NOT_FOUND);
 
+    let none = page(&h, "/tokens?status=broken", &owner).await.body;
+    assert!(none.contains("No token matches."), "{none}");
+    let found = page(&h, "/tokens?q=mittani", &owner).await.body;
+    assert!(
+        found.contains(r#"<div class="font-medium">The Mittani</div>"#),
+        "{found}"
+    );
+    assert!(
+        !found.contains(r#"<div class="font-medium">Chribba</div>"#),
+        "{found}"
+    );
     let page = page(&h, "/tokens", &owner).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("The Mittani") && page.body.contains("Working"));

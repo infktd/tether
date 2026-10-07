@@ -12,6 +12,7 @@ use tether_core::permissions::{
 };
 use tether_db::corpstats::{self as db, Scope};
 
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -62,6 +63,9 @@ fn corp_row(c: db::Corporation) -> CorpRow {
 #[template(path = "corpstats.html")]
 struct ListPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Corporations the viewer may see, before the toolbar's search.
+    any: bool,
     corporations: Vec<CorpRow>,
     query: String,
     found: Vec<db::Found>,
@@ -90,11 +94,24 @@ pub async fn index(
     } else {
         Vec::new()
     };
+    // The search finds pilots across the corporations (from 3 letters),
+    // and the corporations by name.
+    let list = ListQuery::new("/corpstats").param("q", &q);
+    let words = list.words();
+    let any = !corporations.is_empty();
+    let corporations = corporations
+        .into_iter()
+        .map(corp_row)
+        .filter(|c| toolbar::matches(&words, &[&c.name]))
+        .collect();
     Ok(render(
         StatusCode::OK,
         &ListPage {
             shell: loaded.shell,
-            corporations: corporations.into_iter().map(corp_row).collect(),
+            toolbar: ToolbarView::new(&list)
+                .search("Search pilots (3 letters or more) and corporations"),
+            any,
+            corporations,
             query: q,
             found,
         },
@@ -112,6 +129,9 @@ pub struct MemberView {
 #[template(path = "corpstats_corp.html")]
 struct CorpPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Under the toolbar's search.
+    searched: bool,
     corp: CorpRow,
     /// May Update Now (AA: officers, or the owner of the token that read it).
     can_update: bool,
@@ -125,6 +145,9 @@ struct CorpPage {
 pub struct TabQuery {
     #[serde(default)]
     tab: String,
+    /// The toolbar's search among the tab's rows.
+    #[serde(default)]
+    q: String,
 }
 
 async fn visible_corp(
@@ -144,18 +167,34 @@ async fn corp_page(
     state: &AppState,
     session: &CurrentSession,
     id: i64,
-    tab: &str,
+    query: &TabQuery,
     notice: Option<String>,
 ) -> Result<Response, PageError> {
     let corp = visible_corp(state, session, id).await?;
     let loaded = load(state, session, "corpstats").await?;
-    let tab = match tab {
+    let tab = match query.tab.trim() {
         "members" => "members",
         "unregistered" => "unregistered",
         _ => "mains",
     };
+    let list = ListQuery::new(format!("/corpstats/{id}"))
+        .param("tab", if tab == "mains" { "" } else { tab })
+        .param("q", &query.q.chars().take(100).collect::<String>());
+    let words = list.words();
     let (mains, members) = match tab {
-        "mains" => (db::mains(&state.db, id).await?, Vec::new()),
+        "mains" => {
+            let mains = db::mains(&state.db, id)
+                .await?
+                .into_iter()
+                .filter(|m| {
+                    let mut text: Vec<&str> = vec![&m.main_name];
+                    text.extend(m.main_corporation.as_deref());
+                    text.extend(m.characters.iter().map(String::as_str));
+                    toolbar::matches(&words, &text)
+                })
+                .collect();
+            (mains, Vec::new())
+        }
         _ => {
             let all = db::members(&state.db, id).await?;
             let members = all
@@ -167,15 +206,27 @@ async fn corp_page(
                     registered: m.registered,
                     main: m.main_name.unwrap_or_default(),
                 })
+                .filter(|m| toolbar::matches(&words, &[&m.name, &m.main]))
                 .collect();
             (Vec::new(), members)
         }
     };
+    let toolbar = ToolbarView::new(&list).search("Search pilots").views(
+        &list,
+        "tab",
+        [
+            ("mains", "Mains"),
+            ("members", "Members"),
+            ("unregistered", "Unregistered"),
+        ],
+    );
     let can_update = may_update(state, session, id).await?;
     Ok(render(
         StatusCode::OK,
         &CorpPage {
             shell: loaded.shell,
+            searched: !words.is_empty(),
+            toolbar,
             corp: corp_row(corp),
             can_update,
             tab,
@@ -194,7 +245,7 @@ pub async fn show(
     Query(query): Query<TabQuery>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
-    corp_page(&state, &session, id, &query.tab, None).await
+    corp_page(&state, &session, id, &query, None).await
 }
 
 /// AA's rule: officers (`compliance.view`) or the owner of the token that
@@ -242,7 +293,7 @@ pub async fn update(
             &state,
             &session,
             id,
-            "",
+            &TabQuery::default(),
             Some(if gap.as_secs() <= 60 {
                 "An update is already waiting, or ran a minute ago.".to_owned()
             } else {

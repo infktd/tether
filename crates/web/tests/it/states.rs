@@ -291,4 +291,11 @@ async fn a_public_state_takes_any_main_but_never_sensitive_permissions(db: PgPoo
     assert_eq!(grant.status, StatusCode::BAD_REQUEST, "{}", grant.body);
     let listed = page(&h, "/admin/states", &owner).await;
     assert!(listed.body.contains(">Public<"), "{}", listed.body);
+    // The toolbar's search finds a state by its name.
+    let blue = page(&h, "/admin/states?q=blue", &owner).await.body;
+    assert!(blue.contains(r#"id="state-2""#), "{blue}");
+    let member = page(&h, "/admin/states?q=member", &owner).await.body;
+    assert!(!member.contains(r#"id="state-2""#), "{member}");
+    let none = page(&h, "/admin/states?q=zzz", &owner).await.body;
+    assert!(none.contains("No state matches."), "{none}");
 }

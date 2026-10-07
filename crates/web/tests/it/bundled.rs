@@ -96,6 +96,20 @@ async fn a_bundled_app_installs_after_review_with_no_signature(db: PgPool) {
         .unwrap();
     assert!(included < offer, "{}", res.body);
     assert!(res.body.contains("Review and install"));
+    // The toolbar: the search, and the apps' status.
+    let none = page(&h, "/admin/plugins?q=zzz", &owner).await.body;
+    assert!(
+        !none.contains(&format!("/admin/plugin-bundled/{ID}")),
+        "{none}"
+    );
+    assert!(none.contains("No installed app matches."));
+    let waiting = page(&h, "/admin/plugins?status=not_installed", &owner)
+        .await
+        .body;
+    assert!(waiting.contains(&format!("/admin/plugin-bundled/{ID}")));
+    assert!(waiting.contains(r#"Status <span class="filter-chip-value">Not installed</span>"#));
+    let running = page(&h, "/admin/plugins?status=running", &owner).await.body;
+    assert!(!running.contains(&format!("/admin/plugin-bundled/{ID}")));
 
     // The same review as any app: what it asks for, no publisher key.
     let res = page(&h, &format!("/admin/plugin-bundled/{ID}"), &owner).await;

@@ -15,6 +15,7 @@ use tether_core::scopes::Problem;
 use tether_db::compliance as db;
 
 use super::admin::guard;
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -295,6 +296,9 @@ pub struct UncoveredCorp {
 #[template(path = "compliance.html")]
 struct CompliancePage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Pilots not compliant, before the toolbar's search and filter.
+    not_compliant_total: usize,
     not_compliant: Vec<NotCompliantRow>,
     corporations: Vec<CorpRow>,
     uncovered: Vec<UncoveredCorp>,
@@ -308,15 +312,42 @@ fn when(at: chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M EVE").to_string()
 }
 
+/// The toolbar over Not compliant: a pilot or one of their characters,
+/// and their state (its id).
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    state: String,
+}
+
 /// `GET /compliance`
 pub async fn page(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, COMPLIANCE_VIEW, "compliance").await?;
     let states = tether_db::states::list(&state.db).await?;
+    let all = db::not_compliant(&state.db).await?;
+    let not_compliant_total = all.len();
+    // The states someone not compliant is in, as the filter's values.
+    let in_states: Vec<(String, String)> = states
+        .iter()
+        .filter(|s| all.iter().any(|r| r.state == s.id))
+        .map(|s| (s.id.0.to_string(), s.name.clone()))
+        .collect();
+    let chosen = Some(params.state.trim()).filter(|v| in_states.iter().any(|(id, _)| id == v));
+    let list = ListQuery::new("/compliance")
+        .param("q", &params.q)
+        .param("state", chosen.unwrap_or(""));
+    let words = list.words();
     let mut not_compliant = Vec::new();
-    for row in db::not_compliant(&state.db).await? {
+    for row in all {
+        if chosen.is_some_and(|id| row.state.0.to_string() != id) {
+            continue;
+        }
         let current = states.iter().find(|s| s.id == row.state);
         let status = compliance::registration(&state.db, row.account).await?;
         not_compliant.push(NotCompliantRow {
@@ -338,6 +369,14 @@ pub async fn page(
                 .collect(),
         });
     }
+    not_compliant.retain(|r: &NotCompliantRow| {
+        let mut text: Vec<&str> = vec![&r.main_name];
+        text.extend(r.shortfalls.iter().map(|s| s.name.as_str()));
+        toolbar::matches(&words, &text)
+    });
+    let toolbar = ToolbarView::new(&list)
+        .search("A pilot, or one of their characters")
+        .filter(&list, "State", "state", in_states);
     let mut corporations = Vec::new();
     let mut unregistered_total = 0;
     for list in db::member_lists(&state.db).await? {
@@ -378,6 +417,8 @@ pub async fn page(
         StatusCode::OK,
         &CompliancePage {
             shell,
+            toolbar,
+            not_compliant_total,
             not_compliant,
             corporations,
             uncovered,

@@ -1102,6 +1102,12 @@ async fn the_secure_groups_page_and_its_audit_follow_aas_permissions(db: PgPool)
     );
     assert!(!listed.contains("Secret"), "Internal: {listed}");
     assert!(listed.contains("state is Guest"), "{listed}");
+    // The toolbar: the search, and where the pilot stands as a chip.
+    let none = page(&h, "/securegroups?q=zzz", &pilot).await.body;
+    assert!(none.contains("No group matches."), "{none}");
+    let members = page(&h, "/securegroups?show=member", &pilot).await.body;
+    assert!(!members.contains(">Scouts<"), "{members}");
+    assert!(members.contains(r#"Standing <span class="filter-chip-value">Member</span>"#));
     // Guests can't request groups, but the Secure Groups page asks for
     // them (AA).
     let res = send(
@@ -1160,6 +1166,33 @@ async fn the_secure_groups_page_and_its_audit_follow_aas_permissions(db: PgPool)
     assert_eq!(audit.status, StatusCode::OK, "{}", audit.body);
     assert!(audit.body.contains("The Mittani"), "{}", audit.body);
     assert!(audit.body.contains("state is Guest"), "{}", audit.body);
+    // Both lists on the toolbar.
+    let found = page(&h, "/securegroups/audit?q=scou", &officer).await.body;
+    assert!(found.contains(">Scouts</a>"), "{found}");
+    let none = page(&h, "/securegroups/audit?show=auto", &officer)
+        .await
+        .body;
+    assert!(none.contains("No group matches."), "{none}");
+    let found = page(
+        &h,
+        &format!("/securegroups/audit/{scouts}?q=mitt"),
+        &officer,
+    )
+    .await;
+    assert!(found.body.contains("The Mittani"), "{}", found.body);
+    let none = page(&h, &format!("/securegroups/audit/{scouts}?q=zzz"), &officer).await;
+    assert!(none.body.contains("Nobody matches."), "{}", none.body);
+    let leaving = page(
+        &h,
+        &format!("/securegroups/audit/{scouts}?show=leaving"),
+        &officer,
+    )
+    .await;
+    assert!(
+        leaving
+            .body
+            .contains(r#"Standing <span class="filter-chip-value">Leaving</span>"#)
+    );
     let res = send(
         &h.app,
         form(&format!("/securegroups/audit/{scouts}/check"), "", &officer),

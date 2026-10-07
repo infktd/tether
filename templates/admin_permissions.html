@@ -17,18 +17,12 @@
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
-  <form method="get" action="/admin/permissions" class="flex flex-wrap gap-2 items-end" role="search">
-    <div class="grid gap-1.5 min-w-64 flex-1 max-w-md">
-      <label class="label" for="q">Permission</label>
-      <input class="input" type="search" id="q" name="q" value="{{ q }}" placeholder="What it allows, an app or a name, e.g. blacklist" maxlength="100">
-    </div>
-    <button type="submit" class="btn" data-variant="outline">Filter</button>
-  </form>
+  {% let t = toolbar %}{% include "toolbar.html" %}
 
   <section class="card data-card">
-    <header><h2>Grants <span class="num text-muted-foreground font-normal">{% if q.is_empty() %}{{ total }}{% else %}{{ shown() }} of {{ total }}{% endif %}</span></h2><p>By area of Tether, then by app. Each says what it allows and who it's usually for; Edit ticks the states and groups that hold it, and Save changes only what you changed.</p></header>
+    <header><h2>Grants <span class="num text-muted-foreground font-normal">{% if !searched %}{{ total }}{% else %}{{ shown() }} of {{ total }}{% endif %}</span></h2><p>By area of Tether, then by app. Each says what it allows and who it's usually for; Edit ticks the states and groups that hold it, and Save changes only what you changed.</p></header>
     {% if sections.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No permission matches “{{ q }}”.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">No permission matches.</p>
     {% else %}
     <table class="table table-set permissions-table">
       <thead><tr><th scope="col">Permission</th><th scope="col">Granted to</th></tr></thead>

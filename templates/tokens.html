@@ -18,10 +18,11 @@
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
   {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
+  {% if total > 0 %}{% let t = toolbar %}{% include "toolbar.html" %}{% endif %}
 
   <section class="card data-card">
     {% if rows.is_empty() %}
-    <p class="px-5 py-5 text-sm text-muted-foreground">No tokens.</p>
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if total > 0 %}No token matches.{% else %}No tokens.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Character</th><th scope="col">Scopes</th><th scope="col">State</th><th scope="col">Refreshed</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>

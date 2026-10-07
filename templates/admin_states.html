@@ -17,6 +17,8 @@
   </div>
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
+  {% if cards.is_empty() %}<section class="card"><section><p class="text-sm text-muted-foreground">No state matches.</p></section></section>{% endif %}
 
   {% for c in cards %}
   <section class="card" aria-labelledby="state-{{ c.id }}">

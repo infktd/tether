@@ -256,7 +256,7 @@ pub fn find_rows(views: &mut [SectionView], q: &str) {
     if words.is_empty() {
         return;
     }
-    find(views, &words, q.trim());
+    find(views, &words, tether_web_core::pages::toolbar::cut(q));
 }
 
 fn find(views: &mut [SectionView], words: &[String], q: &str) {

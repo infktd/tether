@@ -1,14 +1,16 @@
 //! The Notifications page: only the recipient's own, newest first.
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderName, StatusCode};
 use axum::response::sse::Sse;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
+use serde::Deserialize;
 use tether_core::hash_token;
 use tether_db::notifications::{self as db, Notification};
 
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::{CurrentSession, SESSION_COOKIE};
@@ -43,27 +45,102 @@ fn row(n: Notification) -> Row {
 #[template(path = "notifications.html")]
 struct ListPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Under the toolbar's search, filters or tab.
+    searched: bool,
     rows: Vec<Row>,
     any_read: bool,
 }
+
+/// The toolbar: the search, the tab (`unread`, `read`), the level and the
+/// app that sent them (`tether` for Tether's own).
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    show: String,
+    #[serde(default)]
+    level: String,
+    #[serde(default)]
+    app: String,
+}
+
+/// The app filter's value for Tether's own notifications.
+const TETHER: &str = "tether";
 
 /// `GET /notifications`
 pub async fn index(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
     let loaded = load(&state, &session, "notifications").await?;
-    let rows: Vec<Row> = db::list(&state.db, session.account)
+    let all: Vec<Row> = db::list(&state.db, session.account)
         .await?
         .into_iter()
         .map(row)
         .collect();
+    let any_read = all.iter().any(|r| r.read);
+    let mut levels: Vec<String> = Vec::new();
+    let mut apps: Vec<String> = Vec::new();
+    for r in &all {
+        if !levels.contains(&r.level) {
+            levels.push(r.level.clone());
+        }
+        let app = r.app.clone().unwrap_or_else(|| TETHER.to_owned());
+        if !apps.contains(&app) {
+            apps.push(app);
+        }
+    }
+    levels.sort();
+    apps.sort();
+    let show = Some(params.show.trim()).filter(|s| ["unread", "read"].contains(s));
+    let level = Some(params.level.trim()).filter(|l| levels.iter().any(|x| x == l));
+    let app = Some(params.app.trim()).filter(|a| apps.iter().any(|x| x == a));
+    let list = ListQuery::new("/notifications")
+        .param("q", &params.q)
+        .param("show", show.unwrap_or(""))
+        .param("level", level.unwrap_or(""))
+        .param("app", app.unwrap_or(""));
+    let words = list.words();
+    let rows: Vec<Row> = all
+        .into_iter()
+        .filter(|r| show.is_none_or(|s| r.read == (s == "read")))
+        .filter(|r| level.is_none_or(|l| r.level == l))
+        .filter(|r| app.is_none_or(|a| r.app.as_deref().unwrap_or(TETHER) == a))
+        .filter(|r| toolbar::matches(&words, &[&r.title, &r.message]))
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("Search notifications")
+        .filter(
+            &list,
+            "Level",
+            "level",
+            levels.iter().map(|l| (l.clone(), l.clone())),
+        )
+        .filter(
+            &list,
+            "From",
+            "app",
+            apps.iter().map(|a| {
+                let label = if a == TETHER { "Tether" } else { a.as_str() };
+                (a.clone(), label.to_owned())
+            }),
+        )
+        .views(
+            &list,
+            "show",
+            [("all", "All"), ("unread", "Unread"), ("read", "Read")],
+        );
     Ok(render(
         StatusCode::OK,
         &ListPage {
             shell: loaded.shell,
-            any_read: rows.iter().any(|r| r.read),
+            searched: list.href() != list.path,
+            toolbar,
+            any_read,
             rows,
         },
     ))

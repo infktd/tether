@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, entity_id, entity_kind, name, note, blacklisted, restricted,\n               ultra_restricted, corporation_id, corporation_name, alliance_id,\n               alliance_name, added_by, added_by_name, added_at, edited_at\n        FROM core.pilot_notes\n        WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))\n          AND ($2::text IS NULL OR name ILIKE $2)\n          AND (CASE WHEN $3 THEN blacklisted\n                    ELSE ($4 OR ($5::bigint IS NOT NULL AND corporation_id = $5))\n                         AND ($6 OR NOT restricted) AND ($7 OR NOT ultra_restricted)\n               END)\n        ORDER BY added_at DESC, id DESC LIMIT $8\n        ",
+  "query": "\n        SELECT id, entity_id, entity_kind, name, note, blacklisted, restricted,\n               ultra_restricted, corporation_id, corporation_name, alliance_id,\n               alliance_name, added_by, added_by_name, added_at, edited_at\n        FROM core.pilot_notes\n        WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))\n          AND ($2::text IS NULL OR name ILIKE $2)\n          AND ($9::text IS NULL OR entity_kind = $9)\n          AND (CASE WHEN $3 THEN blacklisted\n                    ELSE ($4 OR ($5::bigint IS NOT NULL AND corporation_id = $5))\n                         AND ($6 OR NOT restricted) AND ($7 OR NOT ultra_restricted)\n               END)\n        ORDER BY added_at DESC, id DESC LIMIT $8\n        ",
   "describe": {
     "columns": [
       {
@@ -189,7 +189,8 @@
         "Int8",
         "Bool",
         "Bool",
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -211,5 +212,5 @@
       true
     ]
   },
-  "hash": "f0c8f296278ee9745e968897bdc5408225902d00675fda19b99d0a2985229cfd"
+  "hash": "547a58ca7657a7c51c4dcb4239e1e9516745e533ed5f9a6c59a16fbb3fde177e"
 }

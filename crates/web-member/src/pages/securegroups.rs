@@ -6,13 +6,15 @@
 //! every member against every filter, Check now, and removing members.
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
+use serde::Deserialize;
 use tether_core::permissions::{SECUREGROUPS_ACCESS, SECUREGROUPS_AUDIT};
 use tether_db::accounts::AccountId;
 use tether_db::groups::GroupId;
 
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -24,13 +26,43 @@ fn when(at: &chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M").to_string()
 }
 
+/// A list's toolbar: its search and its filter.
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    q: String,
+    /// Secure Groups: `member`, `eligible` or `blocked`. The audit:
+    /// `auto` or `requests`; a group's members: `kept`, `leaving` or
+    /// `blocked`.
+    #[serde(default)]
+    show: String,
+}
+
+/// The filter's value, if it's one of `choices`.
+fn chosen<'a>(params: &ListParams, choices: &[(&'a str, &str)]) -> Option<&'a str> {
+    choices
+        .iter()
+        .find(|(value, _)| *value == params.show.trim())
+        .map(|(value, _)| *value)
+}
+
 #[derive(Template)]
 #[template(path = "securegroups.html")]
 struct SecureGroupsPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Groups offered, before the toolbar's search and filter.
+    any: bool,
     groups: Vec<Offered>,
     error: Option<String>,
 }
+
+/// Secure Groups' filter: where the pilot stands.
+const STANDING: [(&str, &str); 3] = [
+    ("member", "Member"),
+    ("eligible", "Can join"),
+    ("blocked", "Can't join yet"),
+];
 
 async fn guard(
     state: &AppState,
@@ -49,8 +81,28 @@ async fn page(
     session: &CurrentSession,
     shell: Shell,
     error: Option<AppError>,
+    params: &ListParams,
 ) -> Result<Response, PageError> {
-    let groups = crate::smart_groups::offered(&state.db, session.account).await?;
+    let offered = crate::smart_groups::offered(&state.db, session.account).await?;
+    let show = chosen(params, &STANDING);
+    let list = ListQuery::new("/securegroups")
+        .param("q", &params.q)
+        .param("show", show.unwrap_or(""));
+    let words = list.words();
+    let any = !offered.is_empty();
+    let groups = offered
+        .into_iter()
+        .filter(|o| match show {
+            Some("member") => o.member,
+            Some("eligible") => !o.member && o.passes,
+            Some(_) => !o.member && !o.passes,
+            None => true,
+        })
+        .filter(|o| toolbar::matches(&words, &[&o.group.name, &o.group.description]))
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("Search groups")
+        .filter(&list, "Standing", "show", STANDING);
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -59,6 +111,8 @@ async fn page(
             status,
             &SecureGroupsPage {
                 shell,
+                toolbar,
+                any,
                 groups,
                 error: error.map(|e| e.message().to_owned()),
             },
@@ -70,9 +124,10 @@ async fn page(
 pub async fn index(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, SECUREGROUPS_ACCESS, "securegroups").await?;
-    page(&state, &session, shell, None).await
+    page(&state, &session, shell, None, &params).await
 }
 
 /// The group, if it's on the account's Secure Groups page (else not
@@ -101,7 +156,7 @@ pub async fn join(
     match result {
         Ok(Joined::Added) => Ok(super::stay::back("/securegroups", "Joined.")),
         Ok(Joined::Requested) => Ok(super::stay::back("/securegroups", "Request sent.")),
-        Err(err) => page(&state, &session, shell, Some(err)).await,
+        Err(err) => page(&state, &session, shell, Some(err), &ListParams::default()).await,
     }
 }
 
@@ -119,7 +174,7 @@ pub async fn leave(
     match result {
         Ok(Left::Removed) => Ok(super::stay::back("/securegroups", "Left.")),
         Ok(Left::Requested) => Ok(super::stay::back("/securegroups", "Request sent.")),
-        Err(err) => page(&state, &session, shell, Some(err)).await,
+        Err(err) => page(&state, &session, shell, Some(err), &ListParams::default()).await,
     }
 }
 
@@ -137,8 +192,21 @@ pub struct AuditListRow {
 #[template(path = "securegroups_audit.html")]
 struct AuditListPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Groups to audit, before the toolbar's search and filter.
+    any: bool,
     groups: Vec<AuditListRow>,
 }
+
+/// The audit's filter: how members join.
+const JOINING: [(&str, &str); 2] = [("auto", "Auto"), ("requests", "On request")];
+
+/// A group's members' filter: their standing.
+const KEPT: [(&str, &str); 3] = [
+    ("kept", "Kept"),
+    ("leaving", "Leaving"),
+    ("blocked", "Blocked"),
+];
 
 /// The switched-on smart groups the account manages (AA: every
 /// non-Internal one with Group Management, else the ones it leads).
@@ -157,6 +225,7 @@ async fn audited(state: &AppState, account: AccountId) -> Result<Vec<GroupId>, A
 pub async fn audit_list(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, SECUREGROUPS_AUDIT, "securegroups_audit").await?;
     let audited = audited(&state, session.account).await?;
@@ -179,13 +248,38 @@ pub async fn audit_list(
             pending_removal,
         });
     }
-    Ok(render(StatusCode::OK, &AuditListPage { shell, groups }))
+    let show = chosen(&params, &JOINING);
+    let list = ListQuery::new("/securegroups/audit")
+        .param("q", &params.q)
+        .param("show", show.unwrap_or(""));
+    let words = list.words();
+    let any = !groups.is_empty();
+    let groups = groups
+        .into_iter()
+        .filter(|g| show.is_none_or(|s| g.auto == (s == "auto")))
+        .filter(|g| toolbar::matches(&words, &[&g.name]))
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("Search groups")
+        .filter(&list, "Joining", "show", JOINING);
+    Ok(render(
+        StatusCode::OK,
+        &AuditListPage {
+            shell,
+            toolbar,
+            any,
+            groups,
+        },
+    ))
 }
 
 #[derive(Template)]
 #[template(path = "securegroups_audit_group.html")]
 struct AuditPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Members in all, before the toolbar's search and filter.
+    total: usize,
     id: i64,
     name: String,
     filters: Vec<String>,
@@ -199,6 +293,7 @@ async fn audit_page(
     shell: Shell,
     id: i64,
     error: Option<AppError>,
+    params: &ListParams,
 ) -> Result<Response, PageError> {
     let group = GroupId(id);
     if !audited(state, session.account).await?.contains(&group) {
@@ -208,8 +303,27 @@ async fn audit_page(
         .await?
         .map(|g| g.name)
         .unwrap_or_default();
-    let (filters, rows) =
+    let (filters, all) =
         crate::smart_groups::audit_group(&state.db, session.account, group).await?;
+    let show = chosen(params, &KEPT);
+    let list = ListQuery::new(format!("/securegroups/audit/{id}"))
+        .param("q", &params.q)
+        .param("show", show.unwrap_or(""));
+    let words = list.words();
+    let total = all.len();
+    let rows = all
+        .into_iter()
+        .filter(|r| match show {
+            Some("blocked") => r.blocked.is_some(),
+            Some("leaving") => r.blocked.is_none() && r.grace_until.is_some(),
+            Some(_) => r.blocked.is_none() && r.grace_until.is_none(),
+            None => true,
+        })
+        .filter(|r| toolbar::matches(&words, &[&r.main_name]))
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("Search pilots")
+        .filter(&list, "Standing", "show", KEPT);
     let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -218,6 +332,8 @@ async fn audit_page(
             status,
             &AuditPage {
                 shell,
+                toolbar,
+                total,
                 id,
                 name,
                 filters,
@@ -233,9 +349,10 @@ pub async fn audit(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
     Path(id): Path<i64>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session, SECUREGROUPS_AUDIT, "securegroups_audit").await?;
-    audit_page(&state, &session, shell, id, None).await
+    audit_page(&state, &session, shell, id, None, &params).await
 }
 
 /// `POST /securegroups/audit/{id}/check`: Check now (AA's manual
@@ -263,7 +380,17 @@ pub async fn check_now(
                 n => format!("Checked: {n} memberships changed."),
             },
         )),
-        Err(err) => audit_page(&state, &session, shell, id, Some(err)).await,
+        Err(err) => {
+            audit_page(
+                &state,
+                &session,
+                shell,
+                id,
+                Some(err),
+                &ListParams::default(),
+            )
+            .await
+        }
     }
 }
 
@@ -294,7 +421,17 @@ pub async fn remove(
             &format!("/securegroups/audit/{id}"),
             "Removed.",
         )),
-        Err(err) => audit_page(&state, &session, shell, id, Some(err)).await,
+        Err(err) => {
+            audit_page(
+                &state,
+                &session,
+                shell,
+                id,
+                Some(err),
+                &ListParams::default(),
+            )
+            .await
+        }
     }
 }
 

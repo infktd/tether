@@ -19,16 +19,17 @@
     </div>
   </div>
   {% include "admin_views.html" %}
+  {% if total > 0 %}{% let t = toolbar %}{% include "toolbar.html" %}{% endif %}
   <section class="card data-card" aria-labelledby="sources-title">
     <header>
       <div class="panel-head">
         <h2 id="sources-title">Data sources <span class="num text-muted-foreground font-normal">{{ rows.len() }}</span></h2>
-        {% if !rows.is_empty() %}<span class="panel-meta">{% if broken == 0 %}All working{% else %}<span class="num">{{ broken }}</span> not working{% endif %}</span>{% endif %}
+        {% if total > 0 %}<span class="panel-meta">{% if broken == 0 %}All working{% else %}<span class="num">{{ broken }}</span> not working{% endif %}</span>{% endif %}
       </div>
       <p>How each did on the last day's calls, as its app's notice says. Each is added, removed or withdrawn on its app's Data sources page.</p>
     </header>
     {% if rows.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No app reads through a data source yet.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">{% if total > 0 %}No data source matches.{% else %}No app reads through a data source yet.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">App</th><th scope="col">Character</th><th scope="col">Corporation</th><th scope="col" class="num">Last read</th><th scope="col">Status</th></tr></thead>

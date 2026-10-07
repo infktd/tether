@@ -15,9 +15,10 @@
     </div>
   </div>
   {% include "admin_views.html" %}
+  {% if any %}{% let t = toolbar %}{% include "toolbar.html" %}{% endif %}
   <section class="card data-card">
     {% if groups.is_empty() %}
-    <p class="p-5 text-sm text-muted-foreground">You don't manage any Secure Groups.</p>
+    <p class="p-5 text-sm text-muted-foreground">{% if any %}No group matches.{% else %}You don't manage any Secure Groups.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col" class="text-right">Members</th><th scope="col" class="text-right">Pending removal</th></tr></thead>

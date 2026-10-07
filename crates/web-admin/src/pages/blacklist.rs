@@ -8,6 +8,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use tether_db::blacklist::{self as db, Comment, Filter, Note};
 
+use super::toolbar::{ListQuery, ToolbarView};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -36,18 +37,31 @@ pub struct NoteView {
 #[template(path = "blacklist.html")]
 struct BlacklistPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Under the toolbar's search or filter.
+    searched: bool,
     access: Access,
     listed: Vec<Listed>,
     notes: Vec<NoteView>,
-    query: String,
     error: Option<String>,
 }
 
+/// The toolbar's search (a name, in the Blacklist and the Pilot Log alike)
+/// and what the entries are about.
 #[derive(Debug, Default, Deserialize)]
 pub struct NotesQuery {
     #[serde(default)]
     q: String,
+    #[serde(default)]
+    kind: String,
 }
+
+const KINDS: [(&str, &str); 4] = [
+    ("character", "Pilots"),
+    ("corporation", "Corporations"),
+    ("alliance", "Alliances"),
+    ("faction", "Factions"),
+];
 
 /// Signed in, with any of the Blacklist page's permissions.
 async fn guard(
@@ -70,16 +84,26 @@ async fn page(
     state: &AppState,
     session: &CurrentSession,
     shell: Shell,
-    query: String,
+    query: &NotesQuery,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let access = blacklist::access(state, session.account).await?;
+    let q: String = query.q.trim().chars().take(100).collect();
+    let kind = KINDS
+        .iter()
+        .find(|(value, _)| *value == query.kind.trim())
+        .map(|(value, _)| *value);
+    let list = ListQuery::new("/blacklist")
+        .param("q", &q)
+        .param("kind", kind.unwrap_or(""));
     let listed = if access.blacklist {
         db::notes(
             &state.db,
             &access.reader,
             Filter {
                 blacklist: true,
+                search: (!q.is_empty()).then_some(q.as_str()),
+                kind,
                 ..Filter::default()
             },
             500,
@@ -94,13 +118,13 @@ async fn page(
     } else {
         Vec::new()
     };
-    let q: String = query.trim().chars().take(100).collect();
     let notes = if access.notes() {
         db::notes(
             &state.db,
             &access.reader,
             Filter {
                 search: (!q.is_empty()).then_some(q.as_str()),
+                kind,
                 ..Filter::default()
             },
             200,
@@ -140,10 +164,13 @@ async fn page(
             code,
             &BlacklistPage {
                 shell,
+                toolbar: ToolbarView::new(&list)
+                    .search("Search names")
+                    .filter(&list, "About", "kind", KINDS),
+                searched: list.href() != list.path,
                 access,
                 listed,
                 notes,
-                query,
                 error: error.map(|e| e.message().to_owned()),
             },
         ),
@@ -157,7 +184,7 @@ pub async fn index(
     Query(query): Query<NotesQuery>,
 ) -> Result<Response, PageError> {
     let (session, shell) = guard(&state, session).await?;
-    page(&state, &session, shell, query.q, None).await
+    page(&state, &session, shell, &query, None).await
 }
 
 async fn done<T>(
@@ -169,7 +196,7 @@ async fn done<T>(
 ) -> Result<Response, PageError> {
     match result {
         Ok(_) => Ok(super::stay::back("/blacklist", message)),
-        Err(err) => page(state, session, shell, String::new(), Some(err)).await,
+        Err(err) => page(state, session, shell, &NotesQuery::default(), Some(err)).await,
     }
 }
 

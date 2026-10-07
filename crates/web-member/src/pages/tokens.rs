@@ -3,11 +3,13 @@
 //! registered).
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use serde::Deserialize;
 
 use super::stay::{Toast, notice, with_toast};
+use super::toolbar::{self, ListQuery, ToolbarView, current_query};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -40,6 +42,9 @@ pub struct TokenRow {
 #[template(path = "tokens.html")]
 struct TokensPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Tokens in all, before the toolbar's search and filter.
+    total: usize,
     rows: Vec<TokenRow>,
     /// The account's characters that apps read corporation data through.
     owners: Vec<super::plugin_access::OwnSource>,
@@ -61,11 +66,30 @@ fn summary(count: usize, required: usize, missing: usize) -> String {
     }
 }
 
+/// The toolbar: a character or a scope, and how the tokens are
+/// (`working`, `missing`: short of the state's scopes, `broken`).
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    status: String,
+}
+
+const STATUSES: [(&str, &str); 3] = [
+    ("working", "Working"),
+    ("missing", "Missing scopes"),
+    ("broken", "Not working"),
+];
+
+const PATH: &str = "/tokens";
+
 async fn tokens_page(
     state: &AppState,
     session: &CurrentSession,
     notice: Option<String>,
     error: Option<AppError>,
+    params: &ListParams,
 ) -> Result<Response, PageError> {
     let loaded = load(state, session, "tokens").await?;
     let registration = crate::compliance::registration(&state.db, session.account).await?;
@@ -109,7 +133,7 @@ async fn tokens_page(
             users.join(", ")
         }
     };
-    let rows = tokens::list(&state.db, session.account)
+    let all: Vec<TokenRow> = tokens::list(&state.db, session.account)
         .await?
         .into_iter()
         .map(|t| {
@@ -148,11 +172,40 @@ async fn tokens_page(
             }
         })
         .collect();
-    let status = error.as_ref().map_or(StatusCode::OK, AppError::status);
+    let status = STATUSES
+        .iter()
+        .find(|(value, _)| *value == params.status.trim())
+        .map(|(value, _)| *value);
+    let list = ListQuery::new(PATH)
+        .param("q", &params.q)
+        .param("status", status.unwrap_or(""));
+    let words = list.words();
+    let total = all.len();
+    let rows = all
+        .into_iter()
+        .filter(|t| match status {
+            Some("working") => !t.revoked && !t.missing,
+            Some("missing") => !t.revoked && t.missing,
+            Some(_) => t.revoked,
+            None => true,
+        })
+        .filter(|t| {
+            let mut text: Vec<&str> = vec![&t.name];
+            text.extend(t.scopes.iter().map(|s| s.description.as_str()));
+            text.extend(t.scopes.iter().map(|s| s.scope.as_str()));
+            toolbar::matches(&words, &text)
+        })
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("A character, or a scope")
+        .filter(&list, "Status", "status", STATUSES);
+    let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     Ok(render(
-        status,
+        code,
         &TokensPage {
             shell: loaded.shell,
+            toolbar,
+            total,
             rows,
             owners: super::plugin_access::own_sources(state, session.account).await?,
             notice,
@@ -169,7 +222,8 @@ async fn done(
     message: &str,
 ) -> Result<Response, PageError> {
     let (inline, toast) = notice(headers, message);
-    let page = tokens_page(state, session, inline, None).await?;
+    let params = current_query(state.site.origin(), headers, PATH);
+    let page = tokens_page(state, session, inline, None, &params).await?;
     Ok(match toast {
         Some(toast) => with_toast(page, toast),
         None => page,
@@ -181,11 +235,13 @@ async fn done(
 async fn failed(
     state: &AppState,
     session: &CurrentSession,
+    headers: &HeaderMap,
     err: AppError,
 ) -> Result<Response, PageError> {
     let toast = Toast::problem(err.message().to_owned());
+    let params = current_query(state.site.origin(), headers, PATH);
     Ok(with_toast(
-        tokens_page(state, session, None, Some(err)).await?,
+        tokens_page(state, session, None, Some(err), &params).await?,
         toast,
     ))
 }
@@ -194,9 +250,10 @@ async fn failed(
 pub async fn index(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let session = session.ok_or_else(AppError::unauthorized)?;
-    tokens_page(&state, &session, None, None).await
+    tokens_page(&state, &session, None, None, &params).await
 }
 
 /// `POST /tokens/{character_id}/refresh`
@@ -229,7 +286,7 @@ pub async fn refresh(
             )
             .await
         }
-        Err(err) => failed(&state, &session, err).await,
+        Err(err) => failed(&state, &session, &headers, err).await,
     }
 }
 
@@ -251,7 +308,7 @@ pub async fn delete(
             )
             .await
         }
-        Err(err) => failed(&state, &session, err).await,
+        Err(err) => failed(&state, &session, &headers, err).await,
     }
 }
 

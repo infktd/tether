@@ -14,6 +14,7 @@ use tether_db::accounts::{self, AccountId};
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::{self, Grantee};
 
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, load, render};
 use crate::AppState;
 use crate::admin;
@@ -193,12 +194,20 @@ pub struct GroupsQuery {
     /// Groups page's New Secure Group).
     #[serde(default)]
     secure: String,
+    /// The toolbar's search and Kind (`internal`, `open`, `requestable`).
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    kind: String,
 }
 
 #[derive(Template)]
 #[template(path = "admin_groups.html")]
 struct GroupsPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Groups there are, before the toolbar's search and filter.
+    any: bool,
     groups: Vec<GroupRow>,
     reserved: Vec<ReservedRow>,
     options: crate::groups::Options,
@@ -211,12 +220,40 @@ async fn groups_page(
     shell: Shell,
     form: NewGroupForm,
     error: Option<AppError>,
+    query: &GroupsQuery,
 ) -> Result<Response, PageError> {
-    let groups = groups::summaries(&state.db)
+    let all: Vec<GroupRow> = groups::summaries(&state.db)
         .await?
         .into_iter()
         .map(group_row)
         .collect();
+    let kinds = [
+        ("internal", "Internal"),
+        ("open", "Open"),
+        ("requestable", "Requestable"),
+    ];
+    let kind = kinds
+        .iter()
+        .find(|(value, _)| *value == query.kind.trim())
+        .map(|(_, label)| *label);
+    let list = ListQuery::new("/admin/groups").param("q", &query.q).param(
+        "kind",
+        if kind.is_some() {
+            query.kind.trim()
+        } else {
+            ""
+        },
+    );
+    let words = list.words();
+    let any = !all.is_empty();
+    let groups = all
+        .into_iter()
+        .filter(|g| kind.is_none_or(|k| g.label == k))
+        .filter(|g| toolbar::matches(&words, &[&g.name, &g.description]))
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("Search groups")
+        .filter(&list, "Kind", "kind", kinds);
     let reserved = groups::reserved(&state.db)
         .await?
         .into_iter()
@@ -229,6 +266,8 @@ async fn groups_page(
     let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = GroupsPage {
         shell,
+        toolbar,
+        any,
         groups,
         reserved,
         options: crate::groups::options(&state.db).await?,
@@ -250,7 +289,7 @@ pub async fn groups(
     } else {
         NewGroupForm::default()
     };
-    groups_page(&state, shell, form, None).await
+    groups_page(&state, shell, form, None, &query).await
 }
 
 /// `POST /admin/groups`
@@ -281,7 +320,9 @@ pub async fn create_group(
     .await
     {
         Ok(id) => id,
-        Err(err) => return groups_page(&state, shell, form, Some(err)).await,
+        Err(err) => {
+            return groups_page(&state, shell, form, Some(err), &GroupsQuery::default()).await;
+        }
     };
     if !secure {
         return Ok(super::stay::back(
@@ -319,7 +360,16 @@ pub async fn group_options(
     };
     match crate::groups::set_options(&state.db, session.account, options).await {
         Ok(()) => Ok(super::stay::back("/admin/groups", "Settings saved.")),
-        Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
+        Err(err) => {
+            groups_page(
+                &state,
+                shell,
+                NewGroupForm::default(),
+                Some(err),
+                &GroupsQuery::default(),
+            )
+            .await
+        }
     }
 }
 
@@ -339,7 +389,16 @@ pub async fn reserve(
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::groups::reserve(&state.db, session.account, &form.name, &form.reason).await {
         Ok(()) => Ok(super::stay::back("/admin/groups", "Name reserved.")),
-        Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
+        Err(err) => {
+            groups_page(
+                &state,
+                shell,
+                NewGroupForm::default(),
+                Some(err),
+                &GroupsQuery::default(),
+            )
+            .await
+        }
     }
 }
 
@@ -352,7 +411,16 @@ pub async fn unreserve(
     let (session, shell) = guard(&state, session, ADMIN_GROUPS, "admin_groups").await?;
     match crate::groups::unreserve(&state.db, session.account, &form.name).await {
         Ok(()) => Ok(super::stay::back("/admin/groups", "Reservation removed.")),
-        Err(err) => groups_page(&state, shell, NewGroupForm::default(), Some(err)).await,
+        Err(err) => {
+            groups_page(
+                &state,
+                shell,
+                NewGroupForm::default(),
+                Some(err),
+                &GroupsQuery::default(),
+            )
+            .await
+        }
     }
 }
 
@@ -1453,11 +1521,12 @@ pub struct GrantChoice {
 #[template(path = "admin_permissions.html")]
 struct PermissionsPage {
     shell: Shell,
+    toolbar: ToolbarView,
     /// The rows by area of Tether, then by app.
     sections: Vec<PermissionSection>,
     choices: Vec<GrantChoice>,
-    /// The filter, as typed.
-    q: String,
+    /// Under the toolbar's search or filter.
+    searched: bool,
     /// How many permissions there are, filtered or not.
     total: usize,
     error: Option<String>,
@@ -1501,7 +1570,7 @@ fn grantee_value(grantee: Grantee) -> Option<String> {
 async fn permissions_page(
     state: &AppState,
     shell: Shell,
-    q: &str,
+    query: &PermissionsQuery,
     error: Option<AppError>,
 ) -> Result<Response, PageError> {
     let grants = permissions::list(&state.db).await?;
@@ -1527,7 +1596,6 @@ async fn permissions_page(
     }
     let available = permissions::available(&state.db).await?;
     let total = available.len();
-    let needle = q.trim().to_lowercase();
     let apps: std::collections::HashMap<String, String> = tether_db::plugins::list(&state.db)
         .await?
         .into_iter()
@@ -1553,17 +1621,39 @@ async fn permissions_page(
             None => tether_core::permissions::note(name).map(str::to_owned),
         }
     };
-    let rows: Vec<(String, PermissionRow)> = available
+    let described: Vec<_> = available
         .into_iter()
         .map(|(name, description)| (area_of(&name), note_of(&name), name, description))
+        .collect();
+    // The areas, as the filter's values: core's in their order, then apps.
+    let mut areas: Vec<String> = Vec::new();
+    for (area, ..) in &described {
+        if !areas.contains(area) {
+            areas.push(area.clone());
+        }
+    }
+    areas.sort_by_key(|a| {
+        (
+            CORE_AREAS
+                .iter()
+                .position(|c| c == a)
+                .unwrap_or(CORE_AREAS.len()),
+            a.to_lowercase(),
+        )
+    });
+    let area = Some(query.area.trim()).filter(|a| areas.iter().any(|x| x == a));
+    let list = ListQuery::new("/admin/permissions")
+        .param("q", &query.q.chars().take(100).collect::<String>())
+        .param("area", area.unwrap_or(""));
+    let words = list.words();
+    let rows: Vec<(String, PermissionRow)> = described
+        .into_iter()
+        .filter(|(a, ..)| area.is_none_or(|x| a == x))
         .filter(|(area, note, name, description)| {
-            needle.is_empty()
-                || name.to_lowercase().contains(&needle)
-                || description.to_lowercase().contains(&needle)
-                || area.to_lowercase().contains(&needle)
-                || note
-                    .as_ref()
-                    .is_some_and(|n| n.to_lowercase().contains(&needle))
+            toolbar::matches(
+                &words,
+                &[name, description, area, note.as_deref().unwrap_or("")],
+            )
         })
         .map(|(area, note, name, description)| {
             let mine: Vec<&permissions::Grant> =
@@ -1643,19 +1733,30 @@ async fn permissions_page(
     let problem = error.as_ref().map(|e| e.message().to_owned());
     let page = PermissionsPage {
         shell,
+        toolbar: ToolbarView::new(&list)
+            .search("What it allows, an app or a name, e.g. blacklist")
+            .filter(
+                &list,
+                "Area",
+                "area",
+                areas.iter().map(|a| (a.clone(), a.clone())),
+            ),
+        searched: list.href() != list.path,
         sections,
         choices,
-        q: q.to_owned(),
         total,
         error: error.map(|e| e.message().to_owned()),
     };
     Ok(super::with_problem(problem, render(status, &page)))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct PermissionsQuery {
     #[serde(default)]
     q: String,
+    /// An area of Tether, or an app's name.
+    #[serde(default)]
+    area: String,
 }
 
 /// `GET /admin/permissions`
@@ -1665,8 +1766,7 @@ pub async fn permissions(
     Query(query): Query<PermissionsQuery>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
-    let q: String = query.q.chars().take(100).collect();
-    permissions_page(&state, shell, &q, None).await
+    permissions_page(&state, shell, &query, None).await
 }
 
 /// A `<select>` or picker value: `state:<id>` or `group:<id>`.
@@ -1698,7 +1798,7 @@ pub async fn set_grants(
     let (session, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
     match apply_grants(&state, session.account, &fields).await {
         Ok(done) => Ok(super::stay::back("/admin/permissions", done)),
-        Err(err) => permissions_page(&state, shell, "", Some(err)).await,
+        Err(err) => permissions_page(&state, shell, &PermissionsQuery::default(), Some(err)).await,
     }
 }
 
@@ -1807,6 +1907,6 @@ pub async fn revoke(
     let (session, shell) = guard(&state, session, ADMIN_PERMISSIONS, "permissions").await?;
     match admin::revoke(&state, session.account, grant_id).await {
         Ok(()) => Ok(super::stay::back("/admin/permissions", "Revoked.")),
-        Err(err) => permissions_page(&state, shell, "", Some(err)).await,
+        Err(err) => permissions_page(&state, shell, &PermissionsQuery::default(), Some(err)).await,
     }
 }

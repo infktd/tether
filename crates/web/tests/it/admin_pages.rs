@@ -298,7 +298,7 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
     assert_eq!(listed.status, StatusCode::OK);
     assert!(listed.body.contains("Capitals"), "{}", listed.body);
     let asked = send(&h.app, form(&format!("/groups/{id}/join"), "", &pilot)).await;
-    assert!(asked.body.contains("Request sent"), "{}", asked.body);
+    assert_eq!(asked.location(), "/groups");
     send(&h.app, form(&format!("/groups/{id}/join"), "", &other)).await;
 
     // Pilots without groups to manage can't open Group Management.
@@ -459,6 +459,117 @@ async fn requests_are_accepted_and_rejected_in_group_management(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn group_lists_search_and_filter_on_the_toolbar(db: PgPool) {
+    for pilot in [443630591, 1887431749] {
+        cover(
+            &db,
+            tether_core::states::Builtin::Member,
+            tether_core::states::EntityKind::Character,
+            pilot,
+        )
+        .await;
+    }
+    let h = harness(db, true).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    let other = log_in_as(&h, "1887431749:gigX", None).await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", Some(&pilot)).await;
+    let other = log_in_as(&h, "1887431749:gigX", Some(&other)).await;
+    let capitals = create_group(&h, &owner, "Capitals", "request").await;
+    let id = capitals.rsplit('/').next().unwrap().to_owned();
+    create_group(&h, &owner, "Logistics", "open").await;
+    let row = |name: &str| format!(r#"<div class="font-medium">{name}</div>"#);
+
+    // Administration's groups: the search, and Kind as a chip.
+    let found = page(&h, "/admin/groups?q=capi", &owner).await.body;
+    assert!(found.contains(&row("Capitals")) && !found.contains(&row("Logistics")));
+    assert!(found.contains(r#"<form class="toolbar-search" method="get" action="/admin/groups""#));
+    let open = page(&h, "/admin/groups?kind=open", &owner).await.body;
+    assert!(open.contains(&row("Logistics")) && !open.contains(&row("Capitals")));
+    assert!(
+        open.contains(r#"Kind <span class="filter-chip-value">Open</span><a href="/admin/groups""#)
+    );
+    assert!(
+        page(&h, "/admin/groups?q=zzz", &owner)
+            .await
+            .body
+            .contains("No group matches.")
+    );
+
+    // A pilot's Groups: the search over both lists.
+    let mine = page(&h, "/groups?q=logi", &pilot).await.body;
+    assert!(mine.contains(&row("Logistics")) && !mine.contains(&row("Capitals")));
+    // An action goes back to the page as it was, its search kept.
+    let asked = send(&h.app, form(&format!("/groups/{id}/join"), "", &pilot)).await;
+    assert_eq!(asked.location(), "/groups");
+    send(&h.app, form(&format!("/groups/{id}/join"), "", &other)).await;
+
+    // Group Requests: the search, and the group as a filter.
+    let gigx = page(&h, "/group-management?q=gigx", &owner).await.body;
+    assert!(
+        gigx.contains("gigX") && !gigx.contains(">The Mittani<"),
+        "{gigx}"
+    );
+    let by_group = page(&h, &format!("/group-management?group={id}"), &owner)
+        .await
+        .body;
+    assert!(by_group.contains(r#"Group <span class="filter-chip-value">Capitals</span>"#));
+    assert!(
+        page(&h, "/group-management?q=zzz", &owner)
+            .await
+            .body
+            .contains("Nobody matches.")
+    );
+
+    // Group Membership: Kind.
+    let open = page(&h, "/group-management/membership?kind=open", &owner)
+        .await
+        .body;
+    assert!(
+        open.contains(">Logistics</a>") && !open.contains(">Capitals</a>"),
+        "{open}"
+    );
+
+    let pilot_account = me(&h, &pilot).await["account_id"].as_i64().unwrap();
+    let other_account = me(&h, &other).await["account_id"].as_i64().unwrap();
+    for (account, decision) in [(pilot_account, "accept"), (other_account, "reject")] {
+        send(
+            &h.app,
+            form(
+                &format!("/group-management/{id}/requests/{account}/{decision}"),
+                "",
+                &owner,
+            ),
+        )
+        .await;
+    }
+    // A group's members: the search and their state.
+    let members = page(&h, &format!("/group-management/{id}?q=mitt"), &owner)
+        .await
+        .body;
+    assert!(members.contains(r#"<span class="font-medium">The Mittani</span>"#));
+    let none = page(&h, &format!("/group-management/{id}?q=zzz"), &owner)
+        .await
+        .body;
+    assert!(none.contains("Nobody matches."), "{none}");
+    let member = page(&h, &format!("/group-management/{id}?state=Member"), &owner)
+        .await
+        .body;
+    assert!(member.contains(r#"State <span class="filter-chip-value">Member</span>"#));
+    // Its Audit Log: the decision as a filter.
+    let rejected = page(
+        &h,
+        &format!("/group-management/{id}/audit?action=reject"),
+        &owner,
+    )
+    .await
+    .body;
+    assert!(
+        rejected.contains(">gigX<") && !rejected.contains(">The Mittani<"),
+        "{rejected}"
+    );
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn permissions_are_granted_and_revoked_from_the_page(db: PgPool) {
     let h = harness(db, true).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
@@ -611,6 +722,15 @@ async fn a_rows_picker_saves_only_what_changed(db: PgPool) {
     assert!(filtered.contains("blacklist.view_eve_blacklist"));
     assert!(!filtered.contains(">admin.audit<"), "{filtered}");
     assert!(filtered.contains(" of "), "shown of all");
+    // The area as a filter on the toolbar, kept with the search.
+    let area = page(&h, "/admin/permissions?area=Discord", &owner)
+        .await
+        .body;
+    assert!(area.contains(r#"Area <span class="filter-chip-value">Discord</span>"#));
+    assert!(!area.contains("blacklist.view_eve_blacklist"));
+    assert!(
+        filtered.contains(r#"href="/admin/permissions?q=blacklist&#38;area=Discord">Discord</a>"#)
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

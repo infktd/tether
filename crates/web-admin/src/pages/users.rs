@@ -15,7 +15,8 @@ use tether_db::accounts::AccountId;
 use tether_db::audit::Actor;
 use tether_db::users::{self as db, CharacterRow, Row, Status};
 
-use super::admin::{StateOption, guard, state_options};
+use super::admin::{guard, state_options};
+use super::toolbar::{ListQuery, ToolbarView};
 use super::{PageError, Shell, render};
 use crate::AppState;
 use crate::admin;
@@ -42,11 +43,9 @@ pub struct Search {
 #[template(path = "admin_users.html")]
 struct ListPage {
     shell: Shell,
-    query: String,
-    /// The state filter; 0 for all.
-    state: i64,
-    status: String,
-    states: Vec<StateOption>,
+    toolbar: ToolbarView,
+    /// What the list says when nobody's in it.
+    empty: &'static str,
     rows: Vec<Row>,
     total: i64,
 }
@@ -66,18 +65,45 @@ pub async fn index(
         _ => Status::All,
     };
     let (rows, total) = db::search(&state.db, &query, state_id, status).await?;
+    let states = state_options(&state).await?;
+    let list = ListQuery::new("/admin/users")
+        .param("q", &query)
+        .param(
+            "state",
+            &state_id.map(|id| id.to_string()).unwrap_or_default(),
+        )
+        .param(
+            "status",
+            match status {
+                Status::All => "",
+                Status::Active => "active",
+                Status::Inactive => "inactive",
+            },
+        );
+    let toolbar = ToolbarView::new(&list)
+        .search("Name, character id or account id")
+        .filter(
+            &list,
+            "State",
+            "state",
+            states.iter().map(|s| (s.id.to_string(), s.name.clone())),
+        )
+        .filter(
+            &list,
+            "Status",
+            "status",
+            [("active", "Active"), ("inactive", "Deactivated")],
+        );
     Ok(render(
         StatusCode::OK,
         &ListPage {
             shell,
-            query,
-            state: state_id.unwrap_or(0),
-            status: match status {
-                Status::All => String::new(),
-                Status::Active => "active".into(),
-                Status::Inactive => "inactive".into(),
+            empty: if list.href() == list.path {
+                "No accounts yet."
+            } else {
+                "Nobody matches."
             },
-            states: state_options(&state).await?,
+            toolbar,
             rows,
             total,
         },

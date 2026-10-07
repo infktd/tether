@@ -297,7 +297,7 @@ Phase 3, lists and settings:
 
 Phase 4, core, Administration and phone:
 
-- [ ] Core lists on the toolbar; the audit log filtered by who, action, app and date, and exported as CSV
+- [x] Core lists on the toolbar; the audit log filtered by who, action, app and date, and exported as CSV. Built: Users, Groups (Administration's and the pilot's), Group Requests, Group Membership, a group's members and Audit Log, Secure Groups and its audit, States, Permissions, Permissions Audit, Blacklist and Pilot Log, Compliance, Corporation Stats (its tabs as view chips), Notifications, Apps, Data sources and Token Management draw the toolbar, searched and filtered on the server; the audit log by who, action (or a family), app and dates, paged, indexed (migration 0065), and its CSV (`/admin/audit.csv`)
 - [x] Administration's Health page and Instance settings (System split in two; Jay, 2026-10-06: ESI as a status, not a badge, and columns that line up). Health reads what Tether knows (no uptime history yet); Settings saves from the save bar since phase 3
 - [ ] The ⌘K command palette: pages, pilots and actions, only what the viewer may open
 - [ ] Phone: the views bar scrolls with a fade, toolbars fold into one search line and Filters, the primary action at the bottom; a skip link; a WCAG 2.2 AA pass

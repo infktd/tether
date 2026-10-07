@@ -17,10 +17,11 @@
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
 
+  {% if any %}{% let t = toolbar %}{% include "toolbar.html" %}{% endif %}
   <section class="card data-card">
-    <header><h2>All groups</h2></header>
+    <header><h2>All groups <span class="num text-muted-foreground font-normal">{{ groups.len() }}</span></h2></header>
     {% if groups.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No groups yet.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">{% if any %}No group matches.{% else %}No groups yet.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead>

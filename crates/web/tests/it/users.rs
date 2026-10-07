@@ -99,6 +99,17 @@ async fn finds_accounts_by_any_character(db: PgPool) {
         "{}",
         inactive.body
     );
+    // On the toolbar: the search kept in the address, the filter as a
+    // chip taking it off, the rest under + Filter keeping the search.
+    let both = page(&h, "/admin/users?q=gig&status=inactive", &owner)
+        .await
+        .body;
+    assert!(both.contains(r#"<input type="hidden" name="status" value="inactive">"#));
+    assert!(both.contains(r#"name="q" value="gig""#));
+    assert!(both.contains(
+        r#"Status <span class="filter-chip-value">Deactivated</span><a href="/admin/users?q=gig""#
+    ));
+    assert!(both.contains(r#"href="/admin/users?q=gig&#38;status=active">Active</a>"#));
 
     // The account's page.
     let one = page(&h, &format!("/admin/users/{pilot_account}"), &owner).await;

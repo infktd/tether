@@ -80,6 +80,21 @@ async fn only_the_recipient_sees_opens_and_deletes(db: PgPool) {
     let listed = page(&h, "/notifications", &pilot).await;
     assert!(listed.body.contains("Hello"));
     assert!(listed.body.contains("1 unread"), "{}", listed.body);
+    // The toolbar: Unread and Read as view chips, the search.
+    assert!(
+        listed
+            .body
+            .contains(r#"<a href="/notifications" aria-current="page">All</a>"#)
+    );
+    let read = page(&h, "/notifications?show=read", &pilot).await.body;
+    assert!(read.contains("No notification matches."), "{read}");
+    assert!(read.contains(r#"<a href="/notifications?show=read" aria-current="page">Read</a>"#));
+    let found = page(&h, "/notifications?q=hel&show=unread", &pilot)
+        .await
+        .body;
+    assert!(found.contains(">Hello</a>"), "{found}");
+    let from = page(&h, "/notifications?app=tether", &pilot).await.body;
+    assert!(from.contains(r#"From <span class="filter-chip-value">Tether</span>"#));
     // Deleting asks first, in the layout's designed confirmation (live.js
     // fills it from hx-confirm), never the browser's own dialog.
     assert!(

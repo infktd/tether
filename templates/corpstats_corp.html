@@ -27,16 +27,12 @@
     <div class="card stat"><div class="stat-label">Unregistered</div><div class="stat-value num">{{ corp.unregistered }}</div></div>
   </div>
 
-  <nav class="view-chips" aria-label="Corporation Stats">
-    <a href="/corpstats/{{ corp.id }}?tab=mains"{% if tab == "mains" %} aria-current="page"{% endif %}>Mains</a>
-    <a href="/corpstats/{{ corp.id }}?tab=members"{% if tab == "members" %} aria-current="page"{% endif %}>Members</a>
-    <a href="/corpstats/{{ corp.id }}?tab=unregistered"{% if tab == "unregistered" %} aria-current="page"{% endif %}>Unregistered</a>
-  </nav>
+  {% let t = toolbar %}{% include "toolbar.html" %}
 
   <section class="card data-card">
     {% if tab == "mains" %}
     {% if mains.is_empty() %}
-    <p class="px-5 py-5 text-sm text-muted-foreground">Nobody in this corporation has registered yet.</p>
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if searched %}Nobody matches.{% else %}Nobody in this corporation has registered yet.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Main</th><th scope="col">Main's corporation</th><th scope="col">Characters here</th></tr></thead>
@@ -59,7 +55,7 @@
     {% endif %}
     {% else %}
     {% if members.is_empty() %}
-    <p class="px-5 py-5 text-sm text-muted-foreground">{% if tab == "unregistered" %}Everyone has registered.{% else %}No members listed.{% endif %}</p>
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if searched %}Nobody matches.{% else if tab == "unregistered" %}Everyone has registered.{% else %}No members listed.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Character</th><th scope="col">Registered</th><th scope="col">Main</th></tr></thead>

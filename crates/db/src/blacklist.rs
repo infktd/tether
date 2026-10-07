@@ -49,6 +49,9 @@ pub struct Filter<'a> {
     pub about: Option<&'a [i64]>,
     /// Whose subject's name contains this.
     pub search: Option<&'a str>,
+    /// About a pilot, corporation, alliance or faction (`EntityKind`'s
+    /// word).
+    pub kind: Option<&'a str>,
     /// Only blacklisted notes, whatever the reader's tiers (the Blacklist:
     /// a restricted note's reason is hidden, not the entry).
     pub blacklist: bool,
@@ -124,6 +127,7 @@ pub async fn notes<'e>(
         FROM core.pilot_notes
         WHERE ($1::bigint[] IS NULL OR entity_id = ANY($1))
           AND ($2::text IS NULL OR name ILIKE $2)
+          AND ($9::text IS NULL OR entity_kind = $9)
           AND (CASE WHEN $3 THEN blacklisted
                     ELSE ($4 OR ($5::bigint IS NOT NULL AND corporation_id = $5))
                          AND ($6 OR NOT restricted) AND ($7 OR NOT ultra_restricted)
@@ -138,6 +142,7 @@ pub async fn notes<'e>(
         reader.restricted,
         reader.ultra_restricted,
         limit,
+        filter.kind,
     )
     .fetch_all(executor)
     .await?;

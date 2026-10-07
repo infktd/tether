@@ -124,6 +124,15 @@ async fn every_character_must_register_to_be_compliant(db: PgPool) {
     assert_eq!(compliance(&h, &owner).await, (false, false));
     let officers = page(&h, "/compliance", &owner).await.body;
     assert!(officers.contains("Not registered yet"), "{officers}");
+    // The toolbar searches pilots and their characters, by state too.
+    let found = page(&h, "/compliance?q=chribba", &owner).await.body;
+    assert!(found.contains("Not registered yet"), "{found}");
+    let none = page(&h, "/compliance?q=zzz", &owner).await.body;
+    assert!(none.contains("Nobody matches."), "{none}");
+    let member = page(&h, &format!("/compliance?state={MEMBER_STATE}"), &owner)
+        .await
+        .body;
+    assert!(member.contains(r#"State <span class="filter-chip-value">Member</span>"#));
     let owner = round_trip(&h, &owner, "/register/start", CHRIBBA).await;
     assert_eq!(compliance(&h, &owner).await, (true, true));
 
@@ -353,6 +362,21 @@ async fn corp_stats_lists_members_who_never_registered(db: PgPool) {
         .await
         .body;
     assert!(mains.contains("Chribba"), "{mains}");
+    // The tabs are view chips on the toolbar, which keeps the search.
+    assert!(mains.contains(&format!(
+        r#"<a href="/corpstats/{CHRIBBA_CORP}" aria-current="page">Mains</a>"#
+    )));
+    let searched = page(
+        &h,
+        &format!("/corpstats/{CHRIBBA_CORP}?tab=members&q=zzz"),
+        &owner,
+    )
+    .await
+    .body;
+    assert!(searched.contains("Nobody matches."), "{searched}");
+    assert!(searched.contains(&format!(
+        r#"href="/corpstats/{CHRIBBA_CORP}?q=zzz&#38;tab=unregistered">Unregistered</a>"#
+    )));
     let found = page(&h, "/corpstats?q=chrib", &owner).await.body;
     assert!(
         found.contains("Search results") && found.contains("Chribba"),

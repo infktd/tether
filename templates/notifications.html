@@ -21,10 +21,11 @@
     </div>
   </div>
   {% include "admin_views.html" %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
 
   <section class="card data-card">
     {% if rows.is_empty() %}
-    <p class="px-5 py-5 text-sm text-muted-foreground">No notifications.</p>
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if searched %}No notification matches.{% else %}No notifications.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Notification</th><th scope="col">Level</th><th scope="col">Date</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>

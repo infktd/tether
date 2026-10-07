@@ -17,12 +17,12 @@
   </div>
   {% include "admin_views.html" %}
   {% include "admin_error.html" %}
-  {% if let Some(notice) = notice %}<div class="alert" role="status"><section>{{ notice }}</section></div>{% endif %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
 
   <section class="card data-card" aria-labelledby="mine">
     <header><h2 id="mine">Your groups</h2></header>
     {% if mine.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">You're not in any groups yet.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">{% if searched %}None of your groups matches.{% else %}You're not in any groups yet.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
@@ -56,7 +56,7 @@
   <section class="card data-card" aria-labelledby="available">
     <header><h2 id="available">Available groups</h2></header>
     {% if available.is_empty() %}
-    <p class="px-5 pb-5 text-sm text-muted-foreground">No groups are open to you right now.</p>
+    <p class="px-5 pb-5 text-sm text-muted-foreground">{% if searched %}No group open to you matches.{% else %}No groups are open to you right now.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>

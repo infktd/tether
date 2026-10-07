@@ -15,9 +15,10 @@
     </div>
   </div>
   {% include "admin_views.html" %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
   <section class="card data-card">
     {% if entries.is_empty() %}
-    <p class="px-5 py-5 text-sm text-muted-foreground">Nothing logged yet.</p>
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if searched %}Nothing matches.{% else %}Nothing logged yet.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Date</th><th scope="col">Requestor</th><th scope="col">Corporation</th><th scope="col">Type</th><th scope="col">Action</th><th scope="col">Actor</th></tr></thead>

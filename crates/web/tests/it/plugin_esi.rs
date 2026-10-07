@@ -909,6 +909,21 @@ async fn data_sources_say_how_they_are_doing_and_what_they_cover(db: PgPool) {
     ] {
         assert!(all.body.contains(part), "{part}: {}", all.body);
     }
+    // The toolbar: the search, the app and whether they work.
+    let broken = page(&h, "/admin/data-sources?status=broken", &owner)
+        .await
+        .body;
+    assert!(
+        broken.contains(r#"<a href="/plugins/acme.esi/data-sources""#),
+        "{broken}"
+    );
+    assert!(broken.contains(r#"Status <span class="filter-chip-value">Not working</span>"#));
+    let working = page(&h, "/admin/data-sources?status=working", &owner)
+        .await
+        .body;
+    assert!(working.contains("No data source matches."), "{working}");
+    let none = page(&h, "/admin/data-sources?q=zzz", &owner).await.body;
+    assert!(none.contains("No data source matches."), "{none}");
     // Not to those who only use the app.
     grant_to_guests(&h, &owner, "view").await;
     let pilot = log_in_as(&h, "443630591:The Mittani", None).await;

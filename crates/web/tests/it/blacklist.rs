@@ -207,6 +207,18 @@ async fn a_blacklisted_main_gets_the_blacklist_state_and_nothing_else(db: PgPool
     );
     let listed = page(&h, "/blacklist", &owner).await.body;
     assert!(listed.contains("CircleOfTwo Holding") && listed.contains("Awoxed a Rorqual"));
+    // The toolbar searches both lists by name, and filters what they're
+    // about.
+    let found = page(&h, "/blacklist?q=circle", &owner).await.body;
+    assert!(found.contains("Awoxed a Rorqual"), "{found}");
+    let none = page(&h, "/blacklist?q=zzz", &owner).await.body;
+    assert!(
+        none.contains("Nobody matches.") && none.contains("No note matches."),
+        "{none}"
+    );
+    let pilots = page(&h, "/blacklist?kind=character", &owner).await.body;
+    assert!(!pilots.contains("CircleOfTwo Holding"), "{pilots}");
+    assert!(pilots.contains(r#"About <span class="filter-chip-value">Pilots</span>"#));
     // The Blacklist state is offered where states are named.
     let permissions = page(&h, "/admin/permissions", &owner).await.body;
     assert!(permissions.contains(">Blacklist<"), "{permissions}");

@@ -16,7 +16,11 @@
   </div>
   {% include "admin_views.html" %}
   {% let tab = "membership" %}{% include "group_management_tabs.html" %}
+  {% let t = toolbar %}{% include "toolbar.html" %}
   <section class="card data-card">
+    {% if groups.is_empty() %}
+    <p class="px-5 py-5 text-sm text-muted-foreground">No group matches.</p>
+    {% else %}
     <table class="table">
       <thead><tr><th scope="col">Group</th><th scope="col">Kind</th><th scope="col">Members</th><th scope="col">Pending</th><th scope="col" class="text-right"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
@@ -43,6 +47,7 @@
         {% endfor %}
       </tbody>
     </table>
+    {% endif %}
   </section>
 </div>
 {% endblock %}

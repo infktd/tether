@@ -16,13 +16,9 @@
   </div>
   {% include "admin_views.html" %}
 
-  <form method="get" action="/corpstats" class="flex gap-2 max-w-xl" role="search">
-    <label class="sr-only" for="q">Search members</label>
-    <input class="input" type="search" id="q" name="q" value="{{ query }}" placeholder="Search characters and mains (3 letters or more)" minlength="3" maxlength="100">
-    <button type="submit" class="btn" data-variant="outline">Search</button>
-  </form>
+  {% if any %}{% let t = toolbar %}{% include "toolbar.html" %}{% endif %}
 
-  {% if !query.is_empty() %}
+  {% if query.chars().count() >= 3 %}
   <section class="card data-card">
     <header><h2>Search results</h2></header>
     {% if found.is_empty() %}
@@ -46,7 +42,7 @@
 
   <section class="card data-card">
     {% if corporations.is_empty() %}
-    <p class="px-5 py-5 text-sm text-muted-foreground">No corporations you may see have a member list yet.</p>
+    <p class="px-5 py-5 text-sm text-muted-foreground">{% if any %}No corporation matches.{% else %}No corporations you may see have a member list yet.{% endif %}</p>
     {% else %}
     <table class="table">
       <thead><tr><th scope="col">Corporation</th><th scope="col">Members</th><th scope="col">Mains</th><th scope="col">Registered</th><th scope="col">Unregistered</th><th scope="col">Updated</th></tr></thead>

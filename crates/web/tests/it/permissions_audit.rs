@@ -72,6 +72,27 @@ async fn lists_who_holds_a_permission_and_through_what(db: PgPool) {
     assert_eq!(one.status, StatusCode::OK);
     assert!(one.body.contains("Group: FCs"), "{}", one.body);
     assert!(one.body.contains(">Superuser<"), "{}", one.body);
+    // On the toolbar: who holds it through a group; the list searched.
+    let via = page(
+        &h,
+        "/admin/permissions/audit/fleetpings.basic_access?via=group",
+        &owner,
+    )
+    .await
+    .body;
+    assert!(
+        via.contains("Group: FCs") && !via.contains(r#"data-variant="outline">Superuser<"#),
+        "{via}"
+    );
+    assert!(via.contains(r#"Through <span class="filter-chip-value">Group</span>"#));
+    let found = page(&h, "/admin/permissions/audit?q=fleetpings", &owner)
+        .await
+        .body;
+    assert!(found.contains("fleetpings.basic_access") && !found.contains(">admin.audit<"));
+    let unheld = page(&h, "/admin/permissions/audit?q=fleetpings&held=no", &owner)
+        .await
+        .body;
+    assert!(unheld.contains("No permission matches."), "{unheld}");
 
     // Deactivated accounts hold nothing.
     sqlx::query("UPDATE core.accounts SET active = false WHERE id = $1")

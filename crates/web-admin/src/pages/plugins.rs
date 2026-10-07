@@ -7,7 +7,7 @@ use askama::Template;
 use axum::Form;
 #[cfg(feature = "dev-upload")]
 use axum::extract::multipart::{Field, Multipart, MultipartRejection};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
@@ -18,6 +18,7 @@ use tether_plugins::manifest;
 use tether_plugins::package::{self, Package, Trust};
 
 use super::admin::guard;
+use super::toolbar::{self, ListQuery, ToolbarView};
 use super::{PageError, Shell, render};
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -148,8 +149,23 @@ pub struct PinRow {
 #[template(path = "admin_data_sources.html")]
 struct DataSourcesPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Data sources in all, before the toolbar's search and filters.
+    total: usize,
     rows: Vec<tether_web_core::pages::plugin_access::SourceRow>,
     broken: usize,
+}
+
+/// Data sources' toolbar: the search, the app, and whether they work
+/// (`working`, `broken`).
+#[derive(Debug, Default, Deserialize)]
+pub struct SourcesParams {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    app: String,
+    #[serde(default)]
+    status: String,
 }
 
 /// `GET /admin/data-sources`: every app's data sources, those not working
@@ -158,14 +174,51 @@ struct DataSourcesPage {
 pub async fn data_sources(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<SourcesParams>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, ADMIN_PLUGINS, "data_sources").await?;
-    let rows = tether_web_core::pages::plugin_access::every_source(&state).await?;
-    let broken = rows.iter().filter(|r| r.broken()).count();
+    let all = tether_web_core::pages::plugin_access::every_source(&state).await?;
+    let broken = all.iter().filter(|r| r.broken()).count();
+    let total = all.len();
+    let mut apps: Vec<String> = Vec::new();
+    for r in &all {
+        if !apps.contains(&r.app) {
+            apps.push(r.app.clone());
+        }
+    }
+    apps.sort_by_key(|a| a.to_lowercase());
+    let app = Some(params.app.trim()).filter(|a| apps.iter().any(|x| x == a));
+    let statuses = [("working", "Working"), ("broken", "Not working")];
+    let status = statuses
+        .iter()
+        .find(|(value, _)| *value == params.status.trim())
+        .map(|(value, _)| *value);
+    let list = ListQuery::new("/admin/data-sources")
+        .param("q", &params.q)
+        .param("app", app.unwrap_or(""))
+        .param("status", status.unwrap_or(""));
+    let words = list.words();
+    let rows = all
+        .into_iter()
+        .filter(|r| app.is_none_or(|a| r.app == a))
+        .filter(|r| status.is_none_or(|s| r.broken() == (s == "broken")))
+        .filter(|r| toolbar::matches(&words, &[&r.app, &r.name, &r.corporation]))
+        .collect();
+    let toolbar = ToolbarView::new(&list)
+        .search("Search apps, pilots and corporations")
+        .filter(
+            &list,
+            "App",
+            "app",
+            apps.iter().map(|a| (a.clone(), a.clone())),
+        )
+        .filter(&list, "Status", "status", statuses);
     Ok(render(
         StatusCode::OK,
         &DataSourcesPage {
             shell,
+            toolbar,
+            total,
             rows,
             broken,
         },
@@ -176,6 +229,9 @@ pub async fn data_sources(
 #[template(path = "admin_plugins.html")]
 struct PluginsPage {
     shell: Shell,
+    toolbar: ToolbarView,
+    /// Under the toolbar's search or filter.
+    searched: bool,
     /// Installed apps, by name.
     installed: Vec<PluginRow>,
     /// Included with Tether and not installed yet, by name.
@@ -214,10 +270,39 @@ fn pinned_by(how: &str) -> &'static str {
     }
 }
 
+/// The Apps page's toolbar: its search and the apps' status (`running`,
+/// `disabled`, `failed`, `update`: an update waits; `not_installed`).
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    status: String,
+}
+
+const STATUSES: [(&str, &str); 5] = [
+    ("running", "Running"),
+    ("disabled", "Disabled"),
+    ("failed", "Failed to load"),
+    ("update", "Update waiting"),
+    ("not_installed", "Not installed"),
+];
+
+fn has_status(p: &PluginRow, status: &str) -> bool {
+    match status {
+        "running" => p.status == "Running",
+        "disabled" => p.status == "Disabled",
+        "failed" => p.status == "Failed to load",
+        "update" => p.update.is_some() || (p.is_installed && p.review.is_some()),
+        _ => !p.is_installed,
+    }
+}
+
 async fn list_page(
     state: &AppState,
     shell: Shell,
     error: Option<AppError>,
+    params: &ListParams,
 ) -> Result<Response, PageError> {
     let latest = tether_db::plugin_sources::latest(&state.db).await?;
     let installed = db::list(&state.db).await?;
@@ -308,8 +393,27 @@ async fn list_page(
         }
     }
     plugins.sort_by(|a, b| a.name.cmp(&b.name));
-    let (installed, available): (Vec<PluginRow>, Vec<PluginRow>) =
-        plugins.into_iter().partition(|p| p.is_installed);
+    let status = STATUSES
+        .iter()
+        .find(|(value, _)| *value == params.status.trim())
+        .map(|(value, _)| *value);
+    let list = ListQuery::new("/admin/plugins")
+        .param("q", &params.q)
+        .param("status", status.unwrap_or(""));
+    let words = list.words();
+    let (installed, available): (Vec<PluginRow>, Vec<PluginRow>) = plugins
+        .into_iter()
+        .filter(|p| status.is_none_or(|s| has_status(p, s)))
+        .filter(|p| {
+            toolbar::matches(
+                &words,
+                &[&p.name, &p.id, p.description.as_deref().unwrap_or("")],
+            )
+        })
+        .partition(|p| p.is_installed);
+    let toolbar = ToolbarView::new(&list)
+        .search("Search apps")
+        .filter(&list, "Status", "status", STATUSES);
     let uploads = db::list_uploads(&state.db)
         .await?
         .into_iter()
@@ -336,6 +440,8 @@ async fn list_page(
         code,
         &PluginsPage {
             shell,
+            searched: list.href() != list.path,
+            toolbar,
             installed,
             available,
             uploads,
@@ -354,9 +460,10 @@ async fn list_page(
 pub async fn list(
     State(state): State<AppState>,
     session: Option<CurrentSession>,
+    Query(params): Query<ListParams>,
 ) -> Result<Response, PageError> {
     let (_, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
-    list_page(&state, shell, None).await
+    list_page(&state, shell, None, &params).await
 }
 
 #[cfg(feature = "dev-upload")]
@@ -435,7 +542,7 @@ pub async fn upload(
             "Another upload is being checked. Try again in a moment.",
         );
         let err = plugins::reject(&state, session.account, None, 0, busy).await;
-        return list_page(&state, shell, Some(err)).await;
+        return list_page(&state, shell, Some(err), &ListParams::default()).await;
     };
     let result = match multipart {
         Ok(multipart) => tokio::time::timeout(UPLOAD_READ_TIMEOUT, read_upload(multipart))
@@ -456,7 +563,7 @@ pub async fn upload(
     };
     match result {
         Ok(id) => Ok(Redirect::to(&format!("/admin/plugin-uploads/{id}")).into_response()),
-        Err(err) => list_page(&state, shell, Some(err)).await,
+        Err(err) => list_page(&state, shell, Some(err), &ListParams::default()).await,
     }
 }
 
@@ -593,7 +700,7 @@ pub async fn approve(
         Ok(id) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         // The upload is gone (or never was): back to the list.
         Err(err) if err.status() == StatusCode::NOT_FOUND => {
-            list_page(&state, shell, Some(err)).await
+            list_page(&state, shell, Some(err), &ListParams::default()).await
         }
         Err(err) => review_page(&state, shell, upload_id, Some(err)).await,
     }
@@ -692,7 +799,7 @@ pub async fn approve_bundled(
     match result {
         Ok(id) => Ok(Redirect::to(&format!("/admin/plugins/{id}")).into_response()),
         Err(err) if err.status() == StatusCode::NOT_FOUND => {
-            list_page(&state, shell, Some(err)).await
+            list_page(&state, shell, Some(err), &ListParams::default()).await
         }
         Err(err) => bundled_review_page(&state, shell, id, Some(err)).await,
     }
@@ -868,7 +975,7 @@ pub async fn discard(
     let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
     match plugins::discard(&state, session.account, upload_id).await {
         Ok(()) => Ok(Redirect::to("/admin/plugins").into_response()),
-        Err(err) => list_page(&state, shell, Some(err)).await,
+        Err(err) => list_page(&state, shell, Some(err), &ListParams::default()).await,
     }
 }
 
@@ -1300,7 +1407,7 @@ pub async fn install_github(
     let (session, shell) = guard(&state, session, ADMIN_PLUGINS, "plugins").await?;
     let Some(_permit) = state.plugins.upload_permit() else {
         let err = plugins::reject(&state, session.account, None, 0, busy()).await;
-        return list_page(&state, shell, Some(err)).await;
+        return list_page(&state, shell, Some(err), &ListParams::default()).await;
     };
     let app = form.app.trim();
     let result = match crate::plugin_github::Repo::parse(&form.repo) {
@@ -1317,7 +1424,7 @@ pub async fn install_github(
     };
     match result {
         Ok(id) => Ok(Redirect::to(&format!("/admin/plugin-uploads/{id}")).into_response()),
-        Err(err) => list_page(&state, shell, Some(err)).await,
+        Err(err) => list_page(&state, shell, Some(err), &ListParams::default()).await,
     }
 }
 
