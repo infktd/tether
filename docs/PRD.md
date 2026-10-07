@@ -351,7 +351,7 @@ Phase 5, release 1.0:
 - [ ] Fleet Activity Tracking: tracking stops only after 3 identical ESI errors within 75 seconds (aa-afat `afat/tasks.py:33-34`, `:169-201`)
 - [ ] HR Applications: the applicant told when their application is taken, approved, rejected or deleted (AA core `hrapplications/views.py:152`, `:166`, `:182`, `:241`; needs the host's notify to reach the applicant)
 - [ ] HR Applications: search by every character, corporation and alliance of the applicant (AA core `hrapplications/views.py:208-216`)
-- [ ] Contacts: a contact gone from EVE's list kept while it has notes or server links (aa-contacts `aa_contacts/tasks.py:186-200`)
+- [x] Contacts: a contact gone from EVE's list kept while it has notes or server links (aa-contacts `aa_contacts/tasks.py:186-200`). Done 2026-10-07: kept at standing 0 without labels, marked "Not in EVE's list", and as EVE has it again if it comes back
 - [ ] Contacts: edit a server link, and AA's eight colours (aa-contacts `aa_contacts/api/common.py:166-184`, `aa_contacts/models.py:166-174`)
 - [ ] Contacts: every contact listed, not the first 500 (aa-contacts `aa_contacts/api/common.py:81-85`)
 - [ ] Sovereignty Timer: the previous score kept until the score changes, and shown (aa-sov-timer `sovtimer/tasks.py:124-134`, `sovtimer/views.py:173-178`)

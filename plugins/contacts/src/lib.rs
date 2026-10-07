@@ -14,7 +14,9 @@
 //! - **Contacts**: each with its standing and labels; notes for
 //!   `view_*_notes` (edited with `manage_*_contacts` too), and server links
 //!   (a name, an address of any kind, a password) for `view_*_server_links`
-//!   (managed with `manage_*_contacts` too).
+//!   (managed with `manage_*_contacts` too). A contact gone from EVE's
+//!   list is kept, at standing 0 without labels, while it has notes or
+//!   server links (aa-contacts).
 //!
 //! Not taken: aa-contacts' Secure Groups standings filter (apps don't learn
 //! every character of an account, so can't judge one).
@@ -621,11 +623,24 @@ fn store(
         })
         .collect();
     let rows = Db::json(serde_json::Value::Array(rows).to_string());
+    // Gone from EVE: gone here too, unless it has notes or server links;
+    // those stay at standing 0 without labels (aa-contacts,
+    // `aa_contacts/tasks.py:186-200`), marked as no longer in EVE's list.
+    let gone = "kind = $1 AND entity_id = $2 AND contact_id NOT IN \
+         (SELECT contact_id FROM json_to_recordset($3::json) AS x(contact_id bigint))";
     let mut statements = vec![
-        // Gone from EVE: gone here (with their notes and links).
         Statement::new(
-            "DELETE FROM contacts WHERE kind = $1 AND entity_id = $2 AND contact_id NOT IN \
-             (SELECT contact_id FROM json_to_recordset($3::json) AS x(contact_id bigint))",
+            format!(
+                "DELETE FROM contacts c WHERE {gone} AND c.notes = '' AND NOT EXISTS \
+                 (SELECT 1 FROM server_links s WHERE s.kind = c.kind \
+                     AND s.entity_id = c.entity_id AND s.contact_id = c.contact_id)"
+            ),
+            vec![kind.into(), entity_id.into(), rows.clone()],
+        ),
+        Statement::new(
+            format!(
+                "UPDATE contacts SET standing = 0, label_ids = '', in_eve = false WHERE {gone}"
+            ),
             vec![kind.into(), entity_id.into(), rows.clone()],
         ),
         Statement::new(
@@ -635,7 +650,7 @@ fn store(
                  standing double precision, label_ids text) \
              ON CONFLICT (kind, entity_id, contact_id) DO UPDATE SET \
                  contact_type = EXCLUDED.contact_type, standing = EXCLUDED.standing, \
-                 label_ids = EXCLUDED.label_ids",
+                 label_ids = EXCLUDED.label_ids, in_eve = true",
             vec![kind.into(), entity_id.into(), rows],
         ),
     ];
@@ -772,7 +787,7 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
                  WHERE l.kind = c.kind AND l.entity_id = c.entity_id \
                    AND l.label_id::text = ANY(string_to_array(c.label_ids, ','))), ''), \
              (SELECT count(*) FROM server_links s WHERE s.kind = c.kind \
-                 AND s.entity_id = c.entity_id AND s.contact_id = c.contact_id) \
+                 AND s.entity_id = c.entity_id AND s.contact_id = c.contact_id), c.in_eve \
          FROM contacts c LEFT JOIN names n ON n.id = c.contact_id \
          WHERE c.kind = $1 AND c.entity_id = $2 \
          ORDER BY c.standing DESC, lower(coalesce(n.name, '')) LIMIT 500",
@@ -812,7 +827,7 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
             ),
             word_of_contact(&kind_of_contact).into(),
             standing(float(r, 2)),
-            text(r, 5).into(),
+            labels_or_gone(text(r, 5), in_eve(r, 7)),
         ];
         if notes {
             let mut note: String = text(r, 4).chars().take(200).collect();
@@ -834,6 +849,24 @@ fn list_page(viewer: &Viewer, kind: &str, id: i64) -> Result<Page, PageError> {
             page.card(Card::new("Update").field("Read them again", action("Update now", "update")));
     }
     Ok(page)
+}
+
+/// Whether a contact is in EVE's list still (else kept for its notes or
+/// server links).
+fn in_eve(row: &[Db], i: usize) -> bool {
+    row.get(i).and_then(Db::as_bool).unwrap_or(true)
+}
+
+/// What says a contact is kept though gone from EVE's list.
+const GONE: &str = "Not in EVE's list";
+
+/// A contact's labels; one gone from EVE's list has none, and says so.
+fn labels_or_gone(labels: String, in_eve: bool) -> Value {
+    if in_eve {
+        labels.into()
+    } else {
+        badge(GONE, Tone::Neutral).into()
+    }
 }
 
 fn word_of_contact(kind: &str) -> String {
@@ -860,8 +893,8 @@ fn contact_page(
         return Err(PageError::NotFound);
     }
     let rows = storage::query(
-        "SELECT c.contact_type, c.standing, coalesce(n.name, ''), c.notes FROM contacts c \
-         LEFT JOIN names n ON n.id = c.contact_id \
+        "SELECT c.contact_type, c.standing, coalesce(n.name, ''), c.notes, c.in_eve \
+         FROM contacts c LEFT JOIN names n ON n.id = c.contact_id \
          WHERE c.kind = $1 AND c.entity_id = $2 AND c.contact_id = $3",
         &[kind.into(), id.into(), contact.into()],
     )
@@ -872,14 +905,18 @@ fn contact_page(
     } else {
         text(row, 2)
     };
-    let mut page = Page::new(shown.clone())
+    let mut card = Card::new("Contact")
+        .field("Contact", entity(&text(row, 0), contact, shown.clone()))
+        .field("Standing", standing(float(row, 1)));
+    if !in_eve(row, 4) {
+        card = card.description(
+            "No longer in EVE's list: kept, at standing 0, for its notes and server links. It goes at the next update once it has neither.",
+        );
+    }
+    let mut page = Page::new(shown)
         .description(format!("A contact of {}", name(id)?))
         .link("All contacts", format!("{kind}/{id}"))
-        .card(
-            Card::new("Contact")
-                .field("Contact", entity(&text(row, 0), contact, shown))
-                .field("Standing", standing(float(row, 1))),
-        );
+        .card(card);
     if let Some(problem) = problem {
         page = page.text(problem);
     }
@@ -1191,6 +1228,18 @@ mod tests {
         assert!(may_begin(0, Duration::from_secs(55)));
         assert!(may_begin(5, Duration::from_secs(10)));
         assert!(!may_begin(5, READ_FOR));
+    }
+
+    #[test]
+    fn a_contact_gone_from_eve_says_so() {
+        assert!(matches!(labels_or_gone("Reds".to_owned(), true), Value::Text(t) if t == "Reds"));
+        assert!(matches!(
+            labels_or_gone("Reds".to_owned(), false),
+            Value::Badge(b) if b.label == GONE
+        ));
+        // Not told: in EVE's list, as every contact was before.
+        assert!(in_eve(&[], 7));
+        assert!(!in_eve(&[Db::Boolean(false)], 0));
     }
 
     #[test]

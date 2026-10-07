@@ -42,12 +42,14 @@ async fn install(h: &Harness, owner: &str) {
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
     let migration = plugin_file("migrations/0001_contacts.sql");
     let rotation = plugin_file("migrations/0002_update_rotation.sql");
+    let kept = plugin_file("migrations/0003_kept_contacts.sql");
     let component = component();
     let bytes = testing::zip(&[
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
         ("migrations/0001_contacts.sql", migration.as_bytes()),
         ("migrations/0002_update_rotation.sql", rotation.as_bytes()),
+        ("migrations/0003_kept_contacts.sql", kept.as_bytes()),
     ]);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
@@ -271,6 +273,59 @@ async fn contacts_end_to_end(db: PgPool) {
     for text in ["Shoot on sight", "Comms", "https://discord.gg/x", "hunter2"] {
         assert!(contact.body.contains(text), "{text}: {}", contact.body);
     }
+
+    // Both gone from EVE's list: the one with notes and a server link
+    // stays, at standing 0 without labels (aa-contacts); the other goes.
+    let corp_contacts = |body: serde_json::Value, priority: u8| {
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORP}/contacts")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "1")
+                    .set_body_json(body),
+            )
+            .with_priority(priority)
+    };
+    corp_contacts(serde_json::json!([]), 2)
+        .mount(&h.esi_server)
+        .await;
+    update(&h).await;
+    let kept: Vec<(i64, f64, String, bool)> = sqlx::query_as(
+        r#"SELECT contact_id, standing, label_ids, in_eve FROM "plugin_tether.contacts".contacts
+           WHERE kind = 'corporation' ORDER BY 1"#,
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, vec![(HOSTILE, 0.0, String::new(), false)]);
+    let corp = page(&h, &format!("/plugins/{ID}/corporation/{CORP}"), &owner).await;
+    assert!(corp.body.contains("Not in EVE&#39;s list"), "{}", corp.body);
+    assert!(!corp.body.contains("Friendly Corp"), "{}", corp.body);
+    let contact = page(&h, &format!("/plugins/{ID}/{at}"), &owner).await;
+    assert!(
+        contact.body.contains("No longer in EVE&#39;s list"),
+        "{}",
+        contact.body
+    );
+    // Back in EVE's list: as EVE has it again.
+    corp_contacts(
+        serde_json::json!([
+            { "contact_id": HOSTILE, "contact_type": "alliance", "standing": -10.0, "label_ids": [1] },
+        ]),
+        1,
+    )
+    .mount(&h.esi_server)
+    .await;
+    update(&h).await;
+    let back: (f64, String, bool) = sqlx::query_as(
+        r#"SELECT standing, label_ids, in_eve FROM "plugin_tether.contacts".contacts
+           WHERE kind = 'corporation' AND contact_id = $1"#,
+    )
+    .bind(HOSTILE)
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(back, (-10.0, "1".to_owned(), true));
 
     // A member of the corporation without the notes and links permissions:
     // the contacts, not the notes, links or the update.
