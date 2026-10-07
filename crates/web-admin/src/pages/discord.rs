@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
-use tether_core::permissions::ADMIN_DISCORD;
+use tether_core::permissions::{ADMIN_DISCORD, DISCORD_ACCESS};
 use tether_db::discord as db;
 use tether_db::groups::{self, GroupId};
 use tether_db::permissions::Grantee;
@@ -26,6 +26,9 @@ pub struct MappingRow {
     pub grantee: String,
     /// `state` or `group`.
     pub kind: &'static str,
+    /// A state that doesn't hold Discord access itself: its pilots can't
+    /// link, so get the role, unless a group gives them access.
+    pub no_access: bool,
 }
 
 pub struct RoleOption {
@@ -126,10 +129,17 @@ async fn page(
             .find(|g| g.group.id == id)
             .map_or_else(|| format!("group {}", id.0), |g| g.group.name.clone())
     };
+    let grants = tether_db::permissions::list(&state.db).await?;
+    let has_access = |grantee: &Grantee| {
+        grants
+            .iter()
+            .any(|g| g.permission == DISCORD_ACCESS && g.grantee == *grantee)
+    };
     let mappings = db::mappings(&state.db)
         .await?
         .into_iter()
         .map(|m| {
+            let no_access = matches!(m.grantee, Grantee::State(_)) && !has_access(&m.grantee);
             let (grantee, kind) = match m.grantee {
                 Grantee::State(id) => (state_name(&states, id), "state"),
                 Grantee::Group(g) => (group_name(g), "group"),
@@ -150,6 +160,7 @@ async fn page(
                 role_name,
                 grantee,
                 kind,
+                no_access,
             }
         })
         .collect();

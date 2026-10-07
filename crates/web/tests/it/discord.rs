@@ -759,6 +759,52 @@ async fn moderation_roles_never_go_to_guest_or_open_groups(db: PgPool) {
     );
 }
 
+/// Discord access for a state, as an admin grants it on Permissions.
+async fn grant_discord(h: &Harness, owner: &str, state: i64) {
+    let res = send(
+        &h.app,
+        form(
+            "/admin/permissions/set",
+            &format!("permission=discord.access_discord&grantee=state:{state}"),
+            owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+/// A role mapped to a state whose pilots can't link reaches nobody: the
+/// Roles card says so, with the fix.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_role_for_a_state_without_discord_access_says_so(db: PgPool) {
+    let h = harness(db, true).await;
+    let (owner, _) = set_up(&h).await;
+    sqlx::query("DELETE FROM core.permission_grants WHERE permission = 'discord.access_discord'")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    grant_discord(&h, &owner, MEMBER_STATE).await;
+    map(&h, &owner, MEMBER_ROLE, "state:1").await;
+    map(&h, &owner, BLUE_ROLE, "state:2").await;
+    let admin = page(&h, "/admin/discord", &owner).await.body;
+    assert!(
+        admin.contains("Pilots with Discord access (Can access the Discord service) get these"),
+        "{admin}"
+    );
+    assert_eq!(
+        admin.matches("Can&#39;t be given yet").count(),
+        1,
+        "{admin}"
+    );
+    assert!(
+        admin.contains("Blue doesn't hold Can access the Discord service"),
+        "{admin}"
+    );
+    grant_discord(&h, &owner, BLUE_STATE).await;
+    let admin = page(&h, "/admin/discord", &owner).await.body;
+    assert!(!admin.contains("Can&#39;t be given yet"), "{admin}");
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn a_role_that_became_too_powerful_is_not_handed_out(db: PgPool) {
     let h = harness(db, true).await;
