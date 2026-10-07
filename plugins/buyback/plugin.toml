@@ -1,0 +1,170 @@
+# Buyback, a first-party Tether plugin: aa-buybackprogram 1:1 (Jay,
+# 2026-10-07). Pilots paste their items, get a price and a tracking
+# number, and contract them to the program's manager; Tether checks each
+# contract against the calculation. Reverse buyback sells hangar stock to
+# members. `scripts/package-plugin.sh` builds, zips and signs it.
+[plugin]
+id = "tether.buyback"
+name = "Buyback"
+icon = "package"
+version = "0.1.0"
+host_api = "1"
+description = "Buyback programs: members paste items for a price and contract them to the corporation; contracts are checked against the calculation. Reverse buyback sells corporation hangar stock to members."
+
+[publisher]
+key = "PUBLISHER_KEY"
+
+[capabilities]
+storage = true
+# Managers hear of new contracts, sellers of accepted or rejected ones,
+# in Tether's notifications (aa-buybackprogram's notify; no DMs).
+notify = true
+# Programs' new contracts and reverse requests, posted to a channel of
+# the app's (aa-buybackprogram's webhook).
+discord = ["send_message"]
+# Programs restricted to groups (aa-buybackprogram's restricted_to_group).
+groups = true
+# Approved by Jay (2026-10-07): item prices from Fuzzwork's market API
+# (aa-buybackprogram's default) or Janice, with the admin's API key.
+http = ["market.fuzzwork.co.uk", "janice.e-351.com"]
+
+[capabilities.secrets.janice_api_key]
+host = "janice.e-351.com"
+header = "X-ApiKey"
+
+# A program's manager: a character offered as the app's data source
+# (aa-buybackprogram's Setup Manager, with its six scopes).
+[capabilities.esi]
+data_source = [
+    "esi-contracts.read_character_contracts.v1",
+    "esi-contracts.read_corporation_contracts.v1",
+    "esi-universe.read_structures.v1",
+    "esi-wallet.read_corporation_wallets.v1",
+    "esi-corporations.read_divisions.v1",
+    "esi-assets.read_corporation_assets.v1",
+]
+owner_permissions = ["manage_programs", "manage_all_programs"]
+
+# aa-buybackprogram's periodic tasks.
+[[capabilities.schedules]]
+name = "contracts"
+every = "30m"
+
+[[capabilities.schedules]]
+name = "prices"
+every = "24h"
+
+[[capabilities.schedules]]
+name = "wallets"
+every = "1h"
+
+[[capabilities.schedules]]
+name = "hangars"
+every = "30m"
+
+[permissions]
+basic_access = "Can access this app and see own statics."
+manage_programs = "Can manage own buyback programs and see own program statics."
+see_leaderboard = "Can see leaderboards for all available programs."
+see_performance = "Can see performance for all available programs."
+see_all_statics = "Can see all program statics."
+manage_all_programs = "Can manage ALL buyback programs"
+
+[permission_notes]
+basic_access = "Usually Member. Holders see the programs they may use, sell through them, and follow their own contracts. Programs marked public are open to every pilot who can log in, without it."
+manage_programs = "For buyback managers. Holders add their own character as a program's manager, create and edit the programs they manage, and see their contracts and wallets."
+see_leaderboard = "For anyone you want to see who sold the most to each program, month by month."
+see_performance = "For leadership. Holders see each program's monthly totals, item groups and the CSV export."
+see_all_statics = "For leadership or auditors. Holders see every program's contracts and wallets, not only their own."
+manage_all_programs = "For admins of the buyback. Holders edit and delete every program, location and reverse program, whoever manages it. Give it with Manage own programs."
+
+[[pages]]
+path = ""
+permission = "basic_access"
+
+# The calculators, a contract's details, the leaderboard and performance:
+# the app checks who may see each program (its groups and states, or
+# public for everyone signed in).
+[[pages]]
+path = "program"
+[[pages]]
+path = "tracking"
+[[pages]]
+path = "reverse"
+
+[[pages]]
+path = "faq"
+permission = "basic_access"
+
+[[pages]]
+path = "me"
+permission = "basic_access"
+
+[[pages]]
+path = "stats"
+permission = "basic_access"
+
+[[pages]]
+path = "program-stats"
+permission = "manage_programs"
+
+[[pages]]
+path = "all-stats"
+permission = "see_all_statics"
+
+[[pages]]
+path = "manage"
+permission = "manage_programs"
+
+[[pages]]
+path = "settings"
+
+[[navigation]]
+label = "Buyback"
+path = ""
+section = "industry"
+
+# The app shell (DESIGN.md): its views, action and Manage pages.
+[[views]]
+label = "Programs"
+path = ""
+
+[[views]]
+label = "My statistics"
+path = "stats"
+
+[[views]]
+label = "Program statistics"
+path = "program-stats"
+
+[[views]]
+label = "All statistics"
+path = "all-stats"
+
+[[views]]
+label = "Reverse buyback"
+path = "reverse"
+
+[[views]]
+label = "FAQ"
+path = "faq"
+
+[action]
+label = "New program"
+path = "manage/program/new"
+
+[[manage]]
+label = "Programs"
+path = "manage"
+
+[[manage]]
+label = "Locations"
+path = "manage/locations"
+
+[[manage]]
+label = "Reverse programs"
+path = "manage/reverse"
+
+[[manage]]
+label = "FAQ"
+path = "manage/faq"

@@ -25,6 +25,7 @@ members = [
     "plugins/contacts",
     "plugins/freight",
     "plugins/blueprints",
+    "plugins/buyback",
 ]
 
 [workspace.package]
