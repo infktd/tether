@@ -23,7 +23,7 @@ use tether_plugin_sdk::jobs::{self, JobError, NewJob};
 use tether_plugin_sdk::log;
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 
-use crate::{clip, int, plain_text, retry, rfc3339, text};
+use crate::{clip, int, opt_int, plain_text, retry, rfc3339, text};
 
 /// The host allows 100 ESI calls per run; stop short.
 const ESI_BUDGET: usize = 90;
@@ -1330,58 +1330,86 @@ fn mining(run: &mut Run, id: i64) -> Result<(), Stop> {
 
 // ---- mail ------------------------------------------------------------------
 
+/// Mail headers ESI gives a call: the newest, or those before
+/// `last_mail_id`.
+const MAIL_PAGE: usize = 50;
+/// Pages of older mail read per character per read, at most.
+const OLDER_MAIL_PAGES: usize = 10;
+
+/// Mail, as aa-memberaudit pages it: headers newest first, 50 a call, down
+/// to the newest stored; then older ones, a few pages a read, until the
+/// Settings' mails kept per character are stored, ESI has no more, or the
+/// rest is older than the Settings keep; then bodies, a few a read.
 fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
-    let headers: Vec<Json> = run.json("character-mail", id, &[])?;
     let lists = storage::query(
         "SELECT mailing_list_id FROM mailing_lists WHERE character_id = $1",
         &[id.into()],
     )
     .map(|r| r.rows.iter().map(|r| int(r, 0)).collect::<Vec<_>>())
     .unwrap_or_default();
-    let items: Vec<Json> = headers
-        .into_iter()
-        .filter_map(|m| {
-            let from = i(&m["from"])?;
-            if !lists.contains(&from) {
-                run.ids.push(from);
+    let cutoff = Utc::now() - chrono::Duration::days(run.settings.retention_days);
+    let stored = storage::query(
+        "SELECT (SELECT max(mail_id) FROM mails WHERE character_id = $1), mail_older \
+         FROM characters WHERE character_id = $1",
+        &[id.into()],
+    )
+    .map_err(|e| Stop::Section(format!("reading mail: {e:?}")))?;
+    let newest = stored.rows.first().and_then(|r| opt_int(r, 0));
+    let mut older = stored.rows.first().is_some_and(|r| crate::boolean(r, 1));
+    // New mail, down to the newest stored: all of it or none (out of calls
+    // part way, the next run reads it again), so what's stored has no gaps.
+    let mut headers: Vec<Json> = Vec::new();
+    let mut before = None;
+    loop {
+        let page = mail_page(run, id, before)?;
+        let lowest = page.iter().filter_map(|m| i(&m["mail_id"])).min();
+        let last = page.len() < MAIL_PAGE || reaches(&page, cutoff);
+        headers.extend(page);
+        if last {
+            older = false;
+            break;
+        }
+        match (newest, lowest) {
+            (Some(newest), Some(lowest)) if lowest <= newest => break,
+            // A first read: older mail follows below, a page at a time.
+            (None, _) => {
+                older = true;
+                break;
             }
-            let recipients: Vec<Json> = m["recipients"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .inspect(|r| {
-                    if r["recipient_type"] != "mailing_list" {
-                        run.ids.extend(i(&r["recipient_id"]));
-                    }
-                })
-                .collect();
-            Some(json!({
-                "mail_id": m["mail_id"], "at": m["timestamp"], "from_id": from,
-                "subject": clip(m["subject"].as_str().unwrap_or_default(), MAX_SHORT),
-                "is_read": m["is_read"].as_bool().unwrap_or(false),
-                "labels": m["labels"].as_array().cloned().unwrap_or_default(),
-                "recipients": recipients,
-            }))
-        })
-        .collect();
-    store(&[
-        stmt(
-            "INSERT INTO mails (character_id, mail_id, at, from_id, subject, is_read, labels, recipients) \
-         SELECT $2, mail_id, at, from_id, subject, is_read, labels, recipients \
-         FROM json_to_recordset($1::json) AS x(mail_id bigint, at timestamptz, from_id bigint, \
-              subject text, is_read boolean, labels jsonb, recipients jsonb) \
-         WHERE at IS NOT NULL \
-         ON CONFLICT (character_id, mail_id) DO UPDATE SET is_read = EXCLUDED.is_read, labels = EXCLUDED.labels",
-            vec![rows(items), id.into()],
-        ),
-        // aa-memberaudit's MEMBERAUDIT_MAX_MAILS: the newest are kept.
-        stmt(
-            "DELETE FROM mails WHERE character_id = $1 AND mail_id NOT IN ( \
-               SELECT mail_id FROM mails WHERE character_id = $1 ORDER BY at DESC, mail_id DESC LIMIT $2)",
-            vec![id.into(), run.settings.max_mails.into()],
-        ),
-    ])?;
+            _ => {}
+        }
+        if i64::try_from(headers.len()).unwrap_or(i64::MAX) >= run.settings.max_mails {
+            break;
+        }
+        before = lowest;
+    }
+    store_mail(run, id, &lists, headers, older)?;
+    // Older mail, before the oldest stored.
+    for _ in 0..OLDER_MAIL_PAGES {
+        if !older || run.calls <= 1 {
+            break;
+        }
+        let kept = storage::query(
+            "SELECT min(mail_id), count(*) FROM mails WHERE character_id = $1",
+            &[id.into()],
+        )
+        .map_err(|e| Stop::Section(format!("reading mail: {e:?}")))?;
+        let (oldest, count) = kept
+            .rows
+            .first()
+            .map_or((None, 0), |r| (opt_int(r, 0), int(r, 1)));
+        let Some(oldest) = oldest.filter(|_| count < run.settings.max_mails) else {
+            break;
+        };
+        let page = match mail_page(run, id, Some(oldest)) {
+            Ok(page) => page,
+            // On the next read.
+            Err(Stop::Run) => break,
+            Err(other) => return Err(other),
+        };
+        older = page.len() >= MAIL_PAGE && !reaches(&page, cutoff);
+        store_mail(run, id, &lists, page, older)?;
+    }
     // Bodies: each read once, newest first, a few a run (those ESI failed
     // to give last time after the others).
     let pending = storage::query(
@@ -1423,6 +1451,84 @@ fn mail(run: &mut Run, id: i64) -> Result<(), Stop> {
         )])?;
     }
     Ok(())
+}
+
+/// A page of mail headers: the newest, or those before `before`.
+fn mail_page(run: &mut Run, id: i64, before: Option<i64>) -> Result<Vec<Json>, Stop> {
+    let params: Vec<(&str, String)> = before
+        .map(|m| ("last_mail_id", m.to_string()))
+        .into_iter()
+        .collect();
+    run.json("character-mail", id, &params)
+}
+
+/// Whether a page of headers goes back past `cutoff` (what's older isn't
+/// kept).
+fn reaches(page: &[Json], cutoff: chrono::DateTime<Utc>) -> bool {
+    page.iter()
+        .filter_map(|m| m["timestamp"].as_str().and_then(crate::parse_time))
+        .any(|at| at < cutoff)
+}
+
+/// Stores mail headers, keeps the Settings' newest, and whether older mail
+/// is still to be read.
+fn store_mail(
+    run: &mut Run,
+    id: i64,
+    lists: &[i64],
+    headers: Vec<Json>,
+    older: bool,
+) -> Result<(), Stop> {
+    let items: Vec<Json> = headers
+        .into_iter()
+        .filter_map(|m| {
+            let from = i(&m["from"])?;
+            if !lists.contains(&from) {
+                run.ids.push(from);
+            }
+            let recipients: Vec<Json> = m["recipients"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .inspect(|r| {
+                    if r["recipient_type"] != "mailing_list" {
+                        run.ids.extend(i(&r["recipient_id"]));
+                    }
+                })
+                .collect();
+            Some(json!({
+                "mail_id": m["mail_id"], "at": m["timestamp"], "from_id": from,
+                "subject": clip(m["subject"].as_str().unwrap_or_default(), MAX_SHORT),
+                "is_read": m["is_read"].as_bool().unwrap_or(false),
+                "labels": m["labels"].as_array().cloned().unwrap_or_default(),
+                "recipients": recipients,
+            }))
+        })
+        .collect();
+    insert_all(
+        vec![],
+        "INSERT INTO mails (character_id, mail_id, at, from_id, subject, is_read, labels, recipients) \
+         SELECT $2, mail_id, at, from_id, subject, is_read, labels, recipients \
+         FROM json_to_recordset($1::json) AS x(mail_id bigint, at timestamptz, from_id bigint, \
+              subject text, is_read boolean, labels jsonb, recipients jsonb) \
+         WHERE at IS NOT NULL \
+         ON CONFLICT (character_id, mail_id) DO UPDATE SET is_read = EXCLUDED.is_read, labels = EXCLUDED.labels",
+        &items,
+        id,
+    )?;
+    store(&[
+        // aa-memberaudit's MEMBERAUDIT_MAX_MAILS: the newest are kept.
+        stmt(
+            "DELETE FROM mails WHERE character_id = $1 AND mail_id NOT IN ( \
+               SELECT mail_id FROM mails WHERE character_id = $1 ORDER BY at DESC, mail_id DESC LIMIT $2)",
+            vec![id.into(), run.settings.max_mails.into()],
+        ),
+        stmt(
+            "UPDATE characters SET mail_older = $2 WHERE character_id = $1",
+            vec![id.into(), older.into()],
+        ),
+    ])
 }
 
 fn mail_meta(run: &mut Run, id: i64) -> Result<(), Stop> {

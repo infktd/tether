@@ -100,7 +100,10 @@ pub(crate) fn page(note: Option<&str>) -> Result<Page, PageError> {
                         Field::number("max_mails", "Mails kept per character")
                             .range(mails_min, mails_max, true)
                             .value(settings.max_mails.to_string())
-                            .help("The newest are kept. Default: 250.")
+                            .help(
+                                "The newest are kept, and older mail is read back to this many. \
+                                 Default: 250.",
+                            )
                             .required(),
                     ),
             )

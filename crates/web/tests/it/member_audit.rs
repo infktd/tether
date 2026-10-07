@@ -45,13 +45,14 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 6] = [
+const MIGRATIONS: [&str; 7] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
     "migrations/0004_aa_settings.sql",
     "migrations/0005_data_exports.sql",
     "migrations/0006_passing_failures.sql",
+    "migrations/0007_older_mail.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -1884,6 +1885,106 @@ async fn the_whole_journal_is_read(db: PgPool) {
     .await
     .unwrap();
     assert!(ok);
+}
+
+/// A character's mail, ids `oldest` to `newest`, answered as ESI does:
+/// the newest 50, or the 50 before `last_mail_id`.
+struct MailHistory {
+    oldest: i64,
+    newest: i64,
+}
+
+impl wiremock::Respond for MailHistory {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let before = request
+            .url
+            .query_pairs()
+            .find(|(k, _)| k == "last_mail_id")
+            .and_then(|(_, v)| v.parse::<i64>().ok())
+            .unwrap_or(self.newest + 1);
+        let top = (before - 1).min(self.newest);
+        let headers: Vec<serde_json::Value> = (self.oldest.max(top - 49)..=top)
+            .rev()
+            .map(|id| {
+                serde_json::json!({
+                    "mail_id": id, "from": 90000011, "subject": format!("Mail {id}"),
+                    "is_read": true, "labels": [1], "timestamp": recent(id),
+                    "recipients": [{ "recipient_id": CHRIBBA, "recipient_type": "character" }],
+                })
+            })
+            .collect();
+        ResponseTemplate::new(200).set_body_json(headers)
+    }
+}
+
+/// Mail is paged back 50 headers a call (aa-memberaudit's `last_mail_id`):
+/// all that came since the last read, however many, and on a first read
+/// older mail too, until the Settings' mails kept per character are
+/// stored or ESI has no more.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn mail_is_paged_back(db: PgPool) {
+    let (h, _) = synced(db).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/mail")))
+        .respond_with(MailHistory {
+            oldest: 931,
+            newest: 1050,
+        })
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(format!(
+            r"^/characters/{CHRIBBA}/mail/\d+$"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "o7" })))
+        .with_priority(6)
+        .mount(&h.esi_server)
+        .await;
+    let mail_due = || {
+        sqlx::query(
+            r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'mail'"#,
+        )
+        .execute(&h.db)
+    };
+    let stored = || {
+        sqlx::query_as::<_, (i64, i64, i64, bool)>(
+            r#"SELECT count(*), min(mail_id), max(mail_id),
+                      (SELECT mail_older FROM "plugin_tether.member-audit".characters)
+               FROM "plugin_tether.member-audit".mails"#,
+        )
+        .fetch_one(&h.db)
+    };
+    // 120 mails since the last read: every one, down to the one stored.
+    mail_due().await.unwrap();
+    sync(&h).await;
+    assert_eq!(
+        stored().await.unwrap(),
+        (121, MAIL, 1050, false),
+        "{:?}",
+        plugin_warnings(&h).await
+    );
+
+    // A first read, keeping 60: the newest 50, then the page before them,
+    // and the newest 60 of those kept.
+    sqlx::raw_sql(
+        r#"DELETE FROM "plugin_tether.member-audit".mails;
+           UPDATE "plugin_tether.member-audit".settings SET max_mails = 60;"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    mail_due().await.unwrap();
+    sync(&h).await;
+    assert_eq!(stored().await.unwrap(), (60, 991, 1050, true));
+    // Keeping more, the rest comes on the next read.
+    sqlx::query(r#"UPDATE "plugin_tether.member-audit".settings SET max_mails = 250"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    mail_due().await.unwrap();
+    sync(&h).await;
+    assert_eq!(stored().await.unwrap(), (120, 931, 1050, false));
 }
 
 /// ESI having trouble (a 503, as around downtime) while a mail's body, a
