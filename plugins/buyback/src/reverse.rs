@@ -1323,7 +1323,8 @@ struct Contracted {
 }
 
 /// Requests whose contract matches `filter` (on `c`, with `$1` a JSON
-/// list of ids), not expired yet (AA's lists hide expired contracts).
+/// list of ids). Finished contracts stay after their expiry date (B5:
+/// AA's lists hid them, so totals shrank); outstanding ones past it go.
 fn contracted(filter: &str, ids: &[i64]) -> Result<Vec<Contracted>, PageError> {
     Ok(storage::query(
         &format!(
@@ -1332,7 +1333,7 @@ fn contracted(filter: &str, ids: &[i64]) -> Result<Vec<Contracted>, PageError> {
              FROM reverse_trackings t JOIN contracts c ON c.contract_id = t.contract_id \
              LEFT JOIN reverse_programs p ON p.id = t.program_id \
              WHERE {filter} IN (SELECT jsonb_array_elements_text($1::jsonb)::bigint) \
-               AND c.date_expired >= now() \
+               AND (c.status = 'finished' OR c.date_expired IS NULL OR c.date_expired >= now()) \
              ORDER BY c.date_issued DESC LIMIT 2000"
         ),
         &[json_ids(ids)],

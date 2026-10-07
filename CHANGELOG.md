@@ -6,6 +6,26 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ## 2026-10-07
 
+### Everyone
+- Press ⌘K (Ctrl K on Windows and Linux), or use the search in the top bar, to jump to any page or action you can use.
+- Under your account menu, Sessions lists the browsers you're signed in on, so you can sign out of one or of all the others.
+- Lists across Tether have a search and filters that stay in the address, so a link or a refresh keeps what you were looking at.
+- Better on phones: filters fold into one button, a page's main button sits at the bottom of the screen, and there's a "Skip to content" link and clearer keyboard focus.
+
+### Buyback
+- New app: sell items to your corporation's buyback programs. Paste your items from the game's inventory, get a price and a tracking number, and contract them to the program's manager. Tether checks the contract against your calculation and tells you when it's accepted or rejected.
+- Reverse buyback: buy from your corporation's hangar stock, with your items set aside until your contract comes in.
+- Statistics for your own contracts, leaderboards by month and, for managers, their programs' contracts and wallets.
+
+### Admins
+- Buyback is a new included app (Alliance Auth's aa-buybackprogram): approve it on the Apps page, then add a manager as its data source, add locations and create programs. Prices come from Fuzzwork, or from Janice with its API key.
+- The audit log can be filtered by who, action, app and date, and exported as a CSV.
+- Admins with user management can sign a user out everywhere from the user's page.
+- An optional Prometheus metrics endpoint, off unless METRICS_ENABLED and METRICS_TOKEN are set (deploy/README.md).
+- Every release on GitHub now has its notes from this changelog, and there are guides for admins, members and app developers in the repository.
+
+## 2026-10-07
+
 ### Structures
 - Corporations with very large asset lists now show their structures' fittings, quantum cores, fuel and moon material bays, and their Orbital Skyhooks: Tether reads every page of the assets in the background, as Alliance Auth does.
 - A problem with one of an owner's reads stays shown until that read works again.

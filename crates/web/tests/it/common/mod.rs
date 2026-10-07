@@ -739,6 +739,7 @@ const GUESTS: &[&str] = &[
     "hello-plugin",
     "blueprints",
     "bulletin-board",
+    "buyback",
     "contacts",
     "contracts",
     "esi-status",
