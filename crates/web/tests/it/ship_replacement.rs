@@ -722,8 +722,20 @@ async fn told(h: &Harness, character: i64) -> Vec<String> {
 /// AA core's srp tells the pilot of each approval and rejection
 /// (`srp/views.py:273-278`, `:306-311`): in the bell, whatever they hold by
 /// then (by Tether's reference to who requested it), in AA's words.
-#[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn the_pilot_is_told_of_each_decision(db: PgPool) {
+/// Op Rock, added by gigX (who manages SRP), with Pilot A's requests for
+/// kills 1001 and 1004 on it.
+struct OpRock {
+    h: Harness,
+    _zkill: MockServer,
+    owner: String,
+    pilot: String,
+    manager: String,
+    fleet: i64,
+    r1: i64,
+    r4: i64,
+}
+
+async fn op_rock(db: PgPool) -> OpRock {
     cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
     cover(&db, Builtin::Blue, EntityKind::Corporation, BLUE_CORP).await;
     let h = harness(db, true).await;
@@ -753,6 +765,30 @@ async fn the_pilot_is_told_of_each_decision(db: PgPool) {
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     }
     let (r1, r4) = (request_of(&h, 1001).await, request_of(&h, 1004).await);
+    OpRock {
+        h,
+        _zkill: zkill,
+        owner,
+        pilot,
+        manager,
+        fleet,
+        r1,
+        r4,
+    }
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_pilot_is_told_of_each_decision(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner,
+        pilot: _,
+        manager,
+        fleet,
+        r1,
+        r4,
+    } = op_rock(db).await;
     assert!(told(&h, PILOT_A).await.is_empty());
 
     // Approved on its page, with a comment; rejected from the fleet's
@@ -834,6 +870,80 @@ async fn the_pilot_is_told_of_each_decision(db: PgPool) {
     let got = told(&h, PILOT_A).await;
     assert_eq!(got.len(), 3, "{got:?}");
     assert!(got[2].contains("SRP Request Rejected"), "{got:?}");
+}
+
+/// aa-srp's request details for its requester: the pilot opens their own
+/// request from My SRP requests and sees where it stands, why it was
+/// rejected and its history; SRP staff's own comments stay theirs, and
+/// nobody else opens it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_pilot_sees_their_requests_history(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner,
+        pilot,
+        manager,
+        fleet: _,
+        r1,
+        r4,
+    } = op_rock(db).await;
+    let home = open(&h, &pilot, "").await;
+    assert!(
+        home.body
+            .contains(&format!("href=\"{}\"", at(&format!("mine/{r4}")))),
+        "{}",
+        home.body
+    );
+    let mine = open(&h, &pilot, &format!("mine/{r4}")).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    assert!(mine.body.contains("Nothing decided yet."), "{}", mine.body);
+    assert!(mine.body.contains("Tackled first"), "{}", mine.body);
+
+    for body in [
+        "_form=comment&comment=Check+his+fit+first",
+        "_form=payout&payout=4000000&comment=Hull+only",
+        "_form=decide&decision=reject&comment=Not+on+grid",
+    ] {
+        let res = post(&h, &manager, &format!("review/{r4}"), body).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{body}: {}", res.body);
+    }
+    let mine = open(&h, &pilot, &format!("mine/{r4}")).await;
+    for want in [
+        "Rejected",
+        "Reason",
+        "Not on grid",
+        "Payout set to 4000000 ISK: Hull only",
+        "Rejected: Not on grid",
+        "gigX",
+    ] {
+        assert!(mine.body.contains(want), "{want}: {}", mine.body);
+    }
+    // Staff's own comment isn't the pilot's to read.
+    assert!(!mine.body.contains("Check his fit"), "{}", mine.body);
+    // Staff see which lines the pilot sees.
+    let review = open(&h, &manager, &format!("review/{r4}")).await;
+    assert!(review.body.contains("Check his fit"), "{}", review.body);
+    assert!(review.body.contains("Pilot and staff"), "{}", review.body);
+
+    // Approved again: no reason any more.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r4}"),
+        "_form=decide&decision=approve&comment=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let mine = open(&h, &pilot, &format!("mine/{r4}")).await;
+    assert!(!mine.body.contains(">Reason<"), "{}", mine.body);
+    assert!(mine.body.contains("Approved."), "{}", mine.body);
+
+    // Only theirs: not a manager's, not even the owner's.
+    for other in [&manager, &owner] {
+        let res = open(&h, other, &format!("mine/{r1}")).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
 }
 
 /// Runs the app's queued jobs that are due (the relay).

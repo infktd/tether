@@ -98,6 +98,7 @@ impl Plugin for ShipReplacement {
             ["fleet", fleet, "page", n] => fleet_page(&viewer, id(fleet)?, id(n)?, None),
             ["request", code] => request_page(code, None),
             ["review", request] => review_page(&viewer, id(request)?, None),
+            ["mine", request] => my_request_page(&viewer, id(request)?),
             _ => Err(PageError::NotFound),
         }?;
         Ok(with_add(page, &viewer))
@@ -443,6 +444,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
         Column::numeric("Loss value"),
         Column::numeric("Payout"),
         Column::text("Status"),
+        Column::text(""),
     ])
     .title("My SRP requests")
     .empty("You haven't requested SRP yet.");
@@ -455,6 +457,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
             isk_or(r.kb_total_loss, "unknown"),
             isk_or(r.payout, ""),
             r.status().into(),
+            link("Details", format!("mine/{}", r.id)).into(),
         ]);
     }
 
@@ -1541,7 +1544,7 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
         );
     }
     let comments = query(
-        "SELECT created_at, author_name, body FROM comments WHERE request_id = $1 \
+        "SELECT created_at, author_name, body, shown FROM comments WHERE request_id = $1 \
          ORDER BY created_at, id LIMIT $2",
         &[r.id.into(), MAX_COMMENTS.into()],
     )?;
@@ -1549,6 +1552,7 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
         Column::numeric("When"),
         Column::text("By"),
         Column::text("Comment"),
+        Column::text("Seen by"),
     ])
     .title("Comments")
     .empty("No comments yet.");
@@ -1557,6 +1561,12 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
             time_or(when(c, 0), ""),
             text(c, 1).into(),
             cut(&text(c, 2), 600).into(),
+            if flag(c, 3) {
+                badge("Pilot and staff", Tone::Accent)
+            } else {
+                badge("Staff", Tone::Neutral)
+            }
+            .into(),
         ]);
     }
     let mut page = Page::new("SRP request").description(format!(
@@ -1571,7 +1581,8 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
         Form::new("decide", "Save Decision")
             .description(
                 "Approving without a payout set pays zKillboard's value; rejecting a paid request \
-                 unmarks it paid. The pilot is told, with the comment.",
+                 unmarks it paid. The pilot is told, and sees the comment in their request's \
+                 history (the reason, for a rejection).",
             )
             .field(
                 Field::select(
@@ -1595,22 +1606,112 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
     }
     page = page.form(
         Form::new("payout", "Update Payout")
-            .description("What this loss pays out, whole ISK. The status stays as it is.")
+            .description(
+                "What this loss pays out, whole ISK. The status stays as it is. The pilot sees \
+                 it, and the comment, in their request's history.",
+            )
             .field(amount)
             .field(Field::textarea("comment", "Comment", MAX_COMMENT)),
     );
     Ok(page.form(
         Form::new("comment", "Add Comment")
-            .description("Only SRP staff see comments.")
+            .description("Only SRP staff see these: the pilot sees decisions and payouts.")
             .field(Field::textarea("comment", "Comment", MAX_COMMENT).required()),
     ))
 }
 
+/// Who sees a line on a request's record.
+#[derive(Clone, Copy)]
+enum Seen {
+    /// Its history, the pilot's too (aa-srp's status changes, reject
+    /// reasons and reviser comments): decisions, payouts, payments.
+    ByPilot,
+    /// SRP staff's own comments.
+    ByStaff,
+}
+
+/// The pilot's own request (aa-srp's request details for its requester):
+/// what they asked, where it stands, why it was rejected and its history.
+/// Only the requester's; SRP staff's own comments stay theirs.
+fn my_request_page(viewer: &Viewer, request_id: i64) -> Result<Page, PageError> {
+    let r = request_by_id(request_id)?;
+    if r.account_id != viewer.account_id {
+        return Err(PageError::NotFound);
+    }
+    let history = query(
+        "SELECT created_at, author_name, body FROM comments \
+         WHERE request_id = $1 AND shown ORDER BY created_at, id LIMIT $2",
+        &[r.id.into(), MAX_COMMENTS.into()],
+    )?;
+    let mut about = Card::new("Your SRP request")
+        .field("Fleet", r.fleet_name.clone())
+        .field("Character", pilot(r.character_id, &r.character_name))
+        .field("Ship", ship(r.ship_type_id, &r.ship_name))
+        .field("Lost", time_or(r.killmail_time, ""))
+        .field("Killmail", r.killmail_id)
+        .field(
+            "Loss value (zKillboard)",
+            isk_or(r.kb_total_loss, "unknown"),
+        )
+        .field("Payout", isk_or(r.payout, "not set"))
+        .field("Status", r.status())
+        .field("Requested", time_or(r.created_at, ""));
+    if !r.reviewer.is_empty() {
+        about = about.field("Reviewer", r.reviewer.clone());
+    }
+    if let Some(decided) = r.decided_at {
+        about = about.field("Decided", time(rfc3339(decided)));
+    }
+    if let Some(paid) = r.paid_at {
+        about = about.field("Paid", time(rfc3339(paid)));
+    }
+    // aa-srp's reject reason: the rejection's comment, the latest.
+    if r.status == "rejected"
+        && let Some(reason) = history
+            .iter()
+            .rev()
+            .map(|c| text(c, 2))
+            .find(|b| b.starts_with("Rejected"))
+            .and_then(|b| b.split_once(": ").map(|(_, why)| why.to_owned()))
+    {
+        about = about.field("Reason", cut(&reason, 1500));
+    }
+    if !r.info.is_empty() {
+        about = about.field("Additional Info", cut(&r.info, 1500));
+    }
+    let mut table = Table::new(vec![
+        Column::numeric("When"),
+        Column::text("By"),
+        Column::text("What"),
+    ])
+    .title("History")
+    .empty("Nothing decided yet.");
+    for c in &history {
+        table = table.row(vec![
+            time_or(when(c, 0), ""),
+            text(c, 1).into(),
+            cut(&text(c, 2), 600).into(),
+        ]);
+    }
+    Ok(Page::new("SRP request")
+        .description(format!(
+            "Your {} on {}, and what SRP staff decided",
+            r.ship_name, r.fleet_name
+        ))
+        .card(about)
+        .table(table))
+}
+
 /// Adds a comment (at most `MAX_COMMENTS` per request); false if full.
-fn add_comment(viewer: &Viewer, request_id: i64, body: &str) -> Result<bool, PageError> {
+fn add_comment(
+    viewer: &Viewer,
+    request_id: i64,
+    body: &str,
+    seen: Seen,
+) -> Result<bool, PageError> {
     let added = storage::execute(
-        "INSERT INTO comments (request_id, author_account_id, author_name, body) \
-         SELECT $1, $2, $3, $4 \
+        "INSERT INTO comments (request_id, author_account_id, author_name, body, shown) \
+         SELECT $1, $2, $3, $4, $6 \
          WHERE (SELECT count(*) FROM comments WHERE request_id = $1) < $5",
         &[
             request_id.into(),
@@ -1618,6 +1719,7 @@ fn add_comment(viewer: &Viewer, request_id: i64, body: &str) -> Result<bool, Pag
             viewer.main.name.clone().into(),
             body.into(),
             MAX_COMMENTS.into(),
+            matches!(seen, Seen::ByPilot).into(),
         ],
     )
     .map_err(|e| failed("adding the comment", e))?;
@@ -1673,7 +1775,7 @@ fn decide(
     } else {
         format!("{word}: {comment}")
     };
-    if !add_comment(viewer, r.id, &line)? {
+    if !add_comment(viewer, r.id, &line, Seen::ByPilot)? {
         return Ok(Some(
             "Decision saved, but this request holds no more comments.",
         ));
@@ -1699,7 +1801,7 @@ fn mark_paid(viewer: &Viewer, r: &Req) -> Result<Option<&'static str>, PageError
     if changed == 0 {
         return Ok(Some("Only approved requests can be paid, once."));
     }
-    add_comment(viewer, r.id, "Marked paid.")?;
+    add_comment(viewer, r.id, "Marked paid.", Seen::ByPilot)?;
     log::info(format!(
         "SRP request {} marked paid by {} ({})",
         r.id, viewer.main.name, viewer.main.id
@@ -1759,7 +1861,7 @@ fn review_action(
                 format!("Payout set to {amount:.0} ISK: {comment}")
             };
             // A note for the record; a full comment list doesn't block it.
-            add_comment(viewer, r.id, &line)?;
+            add_comment(viewer, r.id, &line, Seen::ByPilot)?;
             log::info(format!(
                 "SRP request {} payout set to {amount:.0} ISK by {who}",
                 r.id
@@ -1774,7 +1876,7 @@ fn review_action(
             if comment.is_empty() {
                 return note("Write a comment first.");
             }
-            if !add_comment(viewer, r.id, &comment)? {
+            if !add_comment(viewer, r.id, &comment, Seen::ByStaff)? {
                 return note(&format!("A request holds at most {MAX_COMMENTS} comments."));
             }
             back()
