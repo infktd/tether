@@ -2170,10 +2170,23 @@ async fn a_longer_keep_reads_the_journal_back(db: PgPool) {
 }
 
 /// A character's mail, ids `oldest` to `newest`, answered as ESI does:
-/// the newest 50, or the 50 before `last_mail_id`.
+/// the newest 50, or the 50 before `last_mail_id`. Each mail's time is
+/// fixed, a second apart by id from `since` (as ESI's are fixed), so a
+/// mail read again later doesn't turn newer.
 struct MailHistory {
     oldest: i64,
     newest: i64,
+    since: chrono::DateTime<chrono::Utc>,
+}
+
+impl MailHistory {
+    fn new(oldest: i64, newest: i64) -> Self {
+        Self {
+            oldest,
+            newest,
+            since: chrono::Utc::now() - chrono::Duration::days(2),
+        }
+    }
 }
 
 impl wiremock::Respond for MailHistory {
@@ -2190,7 +2203,9 @@ impl wiremock::Respond for MailHistory {
             .map(|id| {
                 serde_json::json!({
                     "mail_id": id, "from": 90000011, "subject": format!("Mail {id}"),
-                    "is_read": true, "labels": [1], "timestamp": recent(id),
+                    "is_read": true, "labels": [1],
+                    "timestamp": (self.since + chrono::Duration::seconds(id))
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     "recipients": [{ "recipient_id": CHRIBBA, "recipient_type": "character" }],
                 })
             })
@@ -2209,10 +2224,7 @@ async fn mail_is_paged_back(db: PgPool) {
     let (h, owner) = synced(db).await;
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/mail")))
-        .respond_with(MailHistory {
-            oldest: 931,
-            newest: 1050,
-        })
+        .respond_with(MailHistory::new(931, 1050))
         .with_priority(1)
         .mount(&h.esi_server)
         .await;
@@ -2299,10 +2311,7 @@ async fn a_mail_backlog_comes_in_over_several_reads(db: PgPool) {
     let (h, _) = synced(db).await;
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/mail")))
-        .respond_with(MailHistory {
-            oldest: 1000,
-            newest: 5499,
-        })
+        .respond_with(MailHistory::new(1000, 5499))
         .with_priority(1)
         .mount(&h.esi_server)
         .await;
