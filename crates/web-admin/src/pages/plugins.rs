@@ -892,8 +892,11 @@ pub struct SecretView {
 struct PluginPage {
     shell: Shell,
     /// It runs and has permissions, but none is granted to anyone: only
-    /// superusers can use it.
+    /// superusers can use it, or (`open_to_all`) do what they allow.
     ungranted: bool,
+    /// Some of its pages are open to every signed-in pilot, no grant
+    /// needed.
+    open_to_all: bool,
     channels: Vec<ChannelView>,
     free_channels: Vec<ChannelView>,
     uses_discord: bool,
@@ -1091,6 +1094,11 @@ async fn plugin_page(
         })
         .collect();
     let prefix = format!("plugin.{id}.");
+    let open_to_all = package
+        .manifest
+        .pages
+        .iter()
+        .any(|rule| rule.permission.is_none());
     let ungranted = running
         && !package.manifest.permissions.is_empty()
         && !tether_db::permissions::list(&state.db)
@@ -1103,6 +1111,7 @@ async fn plugin_page(
         &PluginPage {
             shell,
             ungranted,
+            open_to_all,
             http_hosts: approved.hosts,
             http_unapproved,
             http_secrets,

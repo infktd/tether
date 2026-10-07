@@ -44,7 +44,7 @@
   </div>
   {% endif %}
 
-  {% if ungranted %}<div class="alert" role="status"><section>Nobody may use it yet: none of its permissions is granted, so only superusers see it. Grant them to states or groups on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>.</section></div>{% endif %}
+  {% if ungranted %}<div class="alert" role="status"><section>{% if open_to_all %}Every signed-in pilot may open it. None of its permissions is granted yet, so only superusers can do what they allow: <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a> says whom each is for.{% else %}Nobody may use it yet: none of its permissions is granted, so only superusers see it. Grant them to states or groups on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>.{% endif %}</section></div>{% endif %}
 
   {% if !esi_scopes.is_empty() %}
   <section class="card">

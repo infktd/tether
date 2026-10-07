@@ -94,6 +94,53 @@ async fn an_app_nobody_may_use_says_so(db: PgPool) {
     assert!(!admin.contains("Nobody may use it yet"), "{admin}");
 }
 
+/// An app whose main page is open to everyone signed in (as Timezones,
+/// Contacts and HR Applications) isn't "nobody may use it", and the
+/// admin isn't told to hand its manage rights to states.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_app_open_to_everyone_signed_in_isnt_nobodys(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let pilot = log_in_as(&h, "443630591:The Mittani", None).await;
+    let key = Key::new(1);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.open\"\nname = \"Open\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[permissions]\nmanage = \"Configure it\"\n\n\
+         [[views]]\nlabel = \"Overview\"\npath = \"\"\n\n\
+         [[pages]]\npath = \"\"\nsigned_in = true\n",
+        key.public()
+    );
+    let component = component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    assert_eq!(
+        page(&h, "/plugins/acme.open", &pilot).await.status,
+        StatusCode::OK
+    );
+    let admin = page(&h, "/admin/plugins/acme.open", &owner).await.body;
+    assert!(!admin.contains("Nobody may use it yet"), "{admin}");
+    assert!(!admin.contains("Grant them to states"), "{admin}");
+    assert!(
+        admin.contains("Every signed-in pilot may open it"),
+        "{admin}"
+    );
+    tether_db::permissions::grant(
+        &h.db,
+        "plugin.acme.open.manage",
+        Grantee::State(StateId(MEMBER_STATE)),
+    )
+    .await
+    .unwrap();
+    let admin = page(&h, "/admin/plugins/acme.open", &owner).await.body;
+    assert!(
+        !admin.contains("Every signed-in pilot may open it"),
+        "{admin}"
+    );
+}
+
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn only_those_allowed_learn_a_page_exists(db: PgPool) {
     let (h, owner, pilot) = setup(db).await;
