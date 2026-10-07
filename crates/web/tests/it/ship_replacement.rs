@@ -911,6 +911,106 @@ async fn srp_team_channel_gets_new_requests(db: PgPool) {
         "{}",
         settings.body
     );
+    // A card for it now is refused, and noted.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.ship-replacement".outbox (request_id, channel)
+           VALUES ($1, $2)"#,
+    )
+    .bind(request_of(&h, 1004).await)
+    .bind(DISCORD_PING_CHANNEL)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    tether_db::plugin_jobs::enqueue(
+        &h.db,
+        ID,
+        "relay",
+        Some("relay"),
+        &serde_json::json!({}),
+        None,
+        100,
+    )
+    .await
+    .unwrap();
+    work(&h).await;
+    let failed: Option<String> = sqlx::query_scalar(
+        r#"SELECT failed FROM "plugin_tether.ship-replacement".outbox ORDER BY id DESC LIMIT 1"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(failed.as_deref(), Some("not one of this plugin's channels"));
+
+    // Another channel assigned and picked: that refusal was the old
+    // channel's, so Settings has nothing to say of the new one.
+    const ANNOUNCEMENTS: &str = "600000000000000002";
+    for uri in [
+        "/admin/discord/channels".to_owned(),
+        format!("/admin/plugins/{ID}/channels"),
+    ] {
+        let res = send(
+            &h.app,
+            form(&uri, &format!("channel_id={ANNOUNCEMENTS}"), &owner),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{uri}: {}", res.body);
+    }
+    let settings = open(&h, &owner, "settings").await;
+    assert!(
+        settings.body.contains("is no longer assigned to this app"),
+        "{}",
+        settings.body
+    );
+    let pick = |channel: &str| format!("_form=settings&channel={channel}");
+    let res = post(&h, &owner, "settings", &pick(ANNOUNCEMENTS)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = open(&h, &owner, "settings").await;
+    assert!(
+        settings.body.contains("#announcements"),
+        "{}",
+        settings.body
+    );
+    assert!(
+        !settings.body.contains("The last new request"),
+        "{}",
+        settings.body
+    );
+    // One refused there is said.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.ship-replacement".outbox (request_id, channel, failed)
+           VALUES ($1, $2, 'Discord isn''t set up')"#,
+    )
+    .bind(request_of(&h, 1004).await)
+    .bind(ANNOUNCEMENTS)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let settings = open(&h, &owner, "settings").await;
+    assert!(
+        settings.body.contains("The last new request"),
+        "{}",
+        settings.body
+    );
+    // The first channel assigned and picked again: its refusal from
+    // before doesn't come back.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugins/{ID}/channels"),
+            &format!("channel_id={DISCORD_PING_CHANNEL}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(&h, &owner, "settings", &pick(DISCORD_PING_CHANNEL)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = open(&h, &owner, "settings").await;
+    assert!(
+        !settings.body.contains("The last new request"),
+        "{}",
+        settings.body
+    );
 }
 
 /// AA lists every request of a fleet: past one page, the rest are on the

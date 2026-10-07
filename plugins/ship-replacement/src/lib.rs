@@ -1065,7 +1065,7 @@ fn settings_page() -> Result<Page, PageError> {
             "The channel picked before is no longer assigned to this app, so new requests aren't \
              posted: pick another, or ask an admin to assign it again.",
         );
-    } else if let Some(why) = last_failure()? {
+    } else if let Some(why) = last_failure(&current)? {
         group = group.description(format!("The last new request wasn't posted: {why}."));
     }
     group = group.field(
@@ -1081,14 +1081,16 @@ fn settings_page() -> Result<Page, PageError> {
         .settings(SettingsForm::new("settings").group(group)))
 }
 
-/// Why the newest card that wasn't posted wasn't, if none was posted
-/// since.
-fn last_failure() -> Result<Option<String>, PageError> {
+/// Why the newest card for `channel` that wasn't posted wasn't, if none
+/// was posted there since. Cards for a channel picked before don't count:
+/// their failure says nothing of this one.
+fn last_failure(channel: &str) -> Result<Option<String>, PageError> {
     Ok(query(
-        "SELECT failed FROM outbox WHERE failed IS NOT NULL AND id > coalesce( \
-             (SELECT max(id) FROM outbox WHERE sent_at IS NOT NULL AND failed IS NULL), 0) \
+        "SELECT failed FROM outbox WHERE channel = $1 AND failed IS NOT NULL AND id > coalesce( \
+             (SELECT max(id) FROM outbox \
+              WHERE channel = $1 AND sent_at IS NOT NULL AND failed IS NULL), 0) \
          ORDER BY id DESC LIMIT 1",
-        &[],
+        &[channel.into()],
     )?
     .first()
     .map(|r| text(r, 0)))
@@ -1104,10 +1106,20 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         .into_iter()
         .map(|c| c.id)
         .find(|id| id.as_str() == value);
-    storage::execute(
-        "UPDATE settings SET channel = $1 WHERE id = 1",
-        &[channel.clone().into()],
-    )
+    // A changed pick starts clean: refused cards go, so a channel picked
+    // again later doesn't bring back a refusal from before (why each was
+    // refused is in the app's log).
+    storage::transaction(&[
+        Statement::new(
+            "DELETE FROM outbox WHERE failed IS NOT NULL \
+             AND $1::text IS DISTINCT FROM (SELECT channel FROM settings WHERE id = 1)",
+            vec![channel.clone().into()],
+        ),
+        Statement::new(
+            "UPDATE settings SET channel = $1 WHERE id = 1",
+            vec![channel.clone().into()],
+        ),
+    ])
     .map_err(|e| failed("saving settings", e))?;
     log::info(format!(
         "settings changed by {} ({}): SRP team channel {channel:?}",
