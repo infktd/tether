@@ -1,6 +1,6 @@
 //! Users (AA's admin site Users): find any account by any of its
 //! characters, see its characters, state, groups and permissions,
-//! deactivate or reactivate it, grant it permissions of its own (AA's user
+//! deactivate or reactivate it, sign it out everywhere, grant it permissions of its own (AA's user
 //! permissions, for `admin.permissions` holders) and, for superusers, make
 //! it a superuser or not.
 
@@ -117,6 +117,10 @@ struct OnePage {
     link_audit: bool,
     /// The Pilot Log on its characters, for those who may read it.
     notes: Option<Vec<NoteView>>,
+    /// Its live sessions (browsers signed in), for Sign out everywhere.
+    sessions: usize,
+    /// The viewer's own account: signed out from Sessions, not here.
+    viewer_is_target: bool,
     error: Option<String>,
 }
 
@@ -227,6 +231,10 @@ async fn user_page(
                 link_groups: viewer.contains(ADMIN_GROUPS),
                 link_audit: viewer.contains(PERMISSIONS_AUDIT),
                 notes,
+                sessions: tether_db::auth::sessions_of(&state.db, account)
+                    .await?
+                    .len(),
+                viewer_is_target: session.account == account,
                 error: error.map(|e| e.message().to_owned()),
             },
         ),
@@ -305,6 +313,24 @@ pub async fn reactivate(
     Path(id): Path<i64>,
 ) -> Result<Response, PageError> {
     set_active(state, session, id, true).await
+}
+
+/// `POST /admin/users/{id}/sign-out`: end every session of the account
+/// (sudo mode, audited; only an account whose permissions are all the
+/// admin's, as deactivating).
+pub async fn sign_out(
+    State(state): State<AppState>,
+    session: Option<CurrentSession>,
+    Path(id): Path<i64>,
+) -> Result<Response, PageError> {
+    let (session, shell) = guard(&state, session, ADMIN_USERS, "users").await?;
+    match crate::sessions::sign_out_user(&state, session.account, AccountId(id)).await {
+        Ok(ended) => Ok(super::stay::back(
+            &format!("/admin/users/{id}"),
+            format!("Signed out of {}.", crate::sessions::sessions(ended)),
+        )),
+        Err(err) => user_page(&state, &session, shell, id, Some(err)).await,
+    }
 }
 
 /// `POST /admin/users/{id}/superuser`: make it a superuser (superusers

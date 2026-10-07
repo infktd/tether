@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{%- import "ui.html" as ui -%}
+{% block title %}Sessions{% endblock %}
+{% block breadcrumb %}<a href="/dashboard">Dashboard</a>&nbsp;/&nbsp;<span class="text-foreground">Sessions</span>{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6" hx-boost="true">
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("monitor") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Sessions</h1>
+        <p class="page-desc max-w-3xl">Where you're signed in to Tether. A session lasts 14 days from logging in. Signing one out ends it at once: that browser has to log in with EVE again.</p>
+      </div>
+    </div>
+    {% if self.others() > 0 %}
+    <div class="page-head-actions">
+      <form method="post" action="/sessions/sign-out-others" hx-confirm="Sign out every other browser? Only this one stays signed in.">
+        <button type="submit" class="btn btn-destructive-outline" data-variant="outline">Sign out everywhere else</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% include "admin_views.html" %}
+  {% include "admin_error.html" %}
+
+  <section class="card data-card">
+    <header><h2>Signed in <span class="num text-muted-foreground font-normal">{{ rows.len() }}</span></h2></header>
+    <table class="table">
+      <thead><tr><th scope="col">Browser</th><th scope="col">Logged in</th><th scope="col">Last used</th><th scope="col">Ends</th><th scope="col"><span class="sr-only">Sign out</span></th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="w-full">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-medium">{% if let Some(d) = r.device %}{{ d }}{% else %}<span class="text-muted-foreground">Unknown browser</span>{% endif %}</span>
+              {% if r.id == current %}{% call ui::status("ok", "This browser") %}{% endcall %}{% endif %}
+            </div>
+          </td>
+          <td class="num">{{ self.when(r.created_at) }}</td>
+          <td class="num">{% if r.id == current %}Now{% else %}{{ self.when(r.last_seen_at) }}{% endif %}</td>
+          <td class="num">{{ self.when(r.expires_at) }}</td>
+          <td class="text-right">
+            {% if r.id != current %}
+            <form method="post" action="/sessions/{{ r.id }}/sign-out" hx-confirm="Sign out this session? That browser has to log in again.">
+              <button type="submit" class="btn" data-variant="ghost" data-size="sm">Sign out</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

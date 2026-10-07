@@ -63,6 +63,7 @@
     {% endif %}
     <a href="/tokens" class="user-menu-item"{% if shell.active == "tokens" %} aria-current="page"{% endif %}>{% call icons::icon("lock") %}{% endcall %} Token Management</a>
     <a href="/dashboard/access-tokens" class="user-menu-item"{% if shell.active == "access_tokens" %} aria-current="page"{% endif %}>{% call icons::icon("scroll") %}{% endcall %} Access tokens</a>
+    <a href="/sessions" class="user-menu-item"{% if shell.active == "sessions" %} aria-current="page"{% endif %}>{% call icons::icon("monitor") %}{% endcall %} Sessions</a>
     <a href="/whats-new" class="user-menu-item"{% if shell.active == "whats_new" %} aria-current="page"{% endif %}>{% call icons::icon("book") %}{% endcall %} What's new</a>
     <form method="post" action="/auth/logout" class="border-t mt-1 pt-1">
       <button type="submit" class="user-menu-item w-full">{% call icons::icon("log-out") %}{% endcall %} Log out</button>

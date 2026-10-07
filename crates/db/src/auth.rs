@@ -146,6 +146,8 @@ pub async fn take_login_attempt(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRecord {
+    /// Names it on the Sessions page (never the cookie or its hash).
+    pub id: i64,
     pub account: AccountId,
     pub expires_at: DateTime<Utc>,
     /// When it last logged in with EVE SSO with the account's main (a
@@ -154,26 +156,30 @@ pub struct SessionRecord {
 }
 
 /// Starts a session. `reauthenticated_at`: when the browser last proved
-/// it holds the account's main, if it did (sudo mode).
+/// it holds the account's main, if it did (sudo mode). `device`: a coarse
+/// label for the Sessions page ("Firefox on Windows"), if one was read.
 pub async fn create_session(
     pool: &PgPool,
     token_hash: &[u8],
     account: AccountId,
     ttl: Duration,
     reauthenticated_at: Option<DateTime<Utc>>,
+    device: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!("DELETE FROM core.sessions WHERE expires_at < now()")
         .execute(pool)
         .await?;
     sqlx::query!(
         r#"
-        INSERT INTO core.sessions (token_hash, account_id, expires_at, reauthenticated_at)
-        VALUES ($1, $2, now() + make_interval(secs => $3), $4)
+        INSERT INTO core.sessions
+            (token_hash, account_id, expires_at, reauthenticated_at, device)
+        VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5)
         "#,
         token_hash,
         account.0,
         ttl.as_secs_f64(),
         reauthenticated_at,
+        device,
     )
     .execute(pool)
     .await?;
@@ -206,7 +212,7 @@ pub async fn find_session(
 ) -> Result<Option<SessionRecord>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT s.account_id, s.expires_at, s.reauthenticated_at,
+        SELECT s.id, s.account_id, s.expires_at, s.reauthenticated_at,
                s.last_seen_at < now() - make_interval(secs => $2) AS "stale!"
         FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id
         WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active
@@ -232,6 +238,7 @@ pub async fn find_session(
     }
     let expires_at = row.expires_at;
     Ok(Some(SessionRecord {
+        id: row.id,
         account: AccountId(row.account_id),
         expires_at,
         reauthenticated_at: row.reauthenticated_at,
@@ -246,6 +253,82 @@ pub async fn delete_session(pool: &PgPool, token_hash: &[u8]) -> Result<(), sqlx
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// One of an account's sessions, for its Sessions page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    pub id: i64,
+    pub created_at: DateTime<Utc>,
+    /// Moved at most every few minutes ([`find_session`]'s `touch_every`).
+    pub last_seen_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub device: Option<String>,
+}
+
+/// The account's live sessions, the most recently used first.
+pub async fn sessions_of(
+    pool: &PgPool,
+    account: AccountId,
+) -> Result<Vec<SessionRow>, sqlx::Error> {
+    sqlx::query_as!(
+        SessionRow,
+        r#"
+        SELECT id, created_at, last_seen_at, expires_at, device
+        FROM core.sessions
+        WHERE account_id = $1 AND expires_at > now()
+        ORDER BY last_seen_at DESC, id DESC
+        "#,
+        account.0,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Ends one of the account's sessions by its id: `None` if the account
+/// has no such session, else the device label it had, if any.
+pub async fn end_session<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    id: i64,
+) -> Result<Option<Option<String>>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "DELETE FROM core.sessions WHERE id = $1 AND account_id = $2 RETURNING device",
+        id,
+        account.0,
+    )
+    .fetch_optional(executor)
+    .await
+}
+
+/// Ends every session of the account but the one with id `keep`; returns
+/// how many ended.
+pub async fn end_other_sessions<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+    keep: i64,
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query!(
+        "DELETE FROM core.sessions WHERE account_id = $1 AND id <> $2",
+        account.0,
+        keep,
+    )
+    .execute(executor)
+    .await?
+    .rows_affected())
+}
+
+/// Ends every session of the account; returns how many ended.
+pub async fn end_all_sessions<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    account: AccountId,
+) -> Result<u64, sqlx::Error> {
+    Ok(
+        sqlx::query!("DELETE FROM core.sessions WHERE account_id = $1", account.0)
+            .execute(executor)
+            .await?
+            .rows_affected(),
+    )
 }
 
 /// Remembers the page a signed-out browser was headed to, keyed by the

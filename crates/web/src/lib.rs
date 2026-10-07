@@ -32,7 +32,7 @@ pub mod pages {
         act_as, change_main_login, home, login, make_main, profile, remove_character, to_dashboard,
     };
     pub use tether_web_member::pages::{
-        access_tokens, corpstats, groups, notifications, securegroups, tokens, whats_new,
+        access_tokens, corpstats, groups, notifications, securegroups, sessions, tokens, whats_new,
     };
 }
 
@@ -69,6 +69,12 @@ pub fn router(state: AppState) -> Router {
             "/dashboard/access-tokens/{id}/revoke",
             post(pages::access_tokens::revoke),
         )
+        .route("/sessions", get(pages::sessions::index))
+        .route(
+            "/sessions/sign-out-others",
+            post(pages::sessions::sign_out_others),
+        )
+        .route("/sessions/{id}/sign-out", post(pages::sessions::sign_out))
         // The old name (before AA's): kept so bookmarks still work.
         .route("/profile", get(pages::to_dashboard))
         .route("/profile/main", post(pages::make_main))
@@ -196,6 +202,7 @@ pub fn router(state: AppState) -> Router {
             "/admin/users/{id}/reactivate",
             post(pages::users::reactivate),
         )
+        .route("/admin/users/{id}/sign-out", post(pages::users::sign_out))
         .route(
             "/admin/users/{id}/superuser",
             post(pages::users::make_superuser),

@@ -17,7 +17,7 @@
           <span class="state-badge" data-state="{{ state_style }}">{{ state }}</span>
           {% if owner %}<span class="badge" data-variant="outline">Superuser</span>{% endif %}
           {% if !active %}{% call ui::status("danger", "Deactivated") %}{% endcall %}{% endif %}
-          <span>Account <span class="num">{{ id }}</span>, joined <span class="num">{{ joined }}</span></span>
+          <span>Account <span class="num">{{ id }}</span>, joined <span class="num">{{ joined }}</span>, signed in on <span class="num">{{ sessions }}</span> {% if sessions == 1 %}browser{% else %}browsers{% endif %}</span>
         </div>
       </div>
     </div>
@@ -33,6 +33,11 @@
         <button type="submit" class="btn" data-variant="outline">Make superuser</button>
       </form>
       {% endif %}
+      {% endif %}
+      {% if sessions > 0 && !viewer_is_target %}
+      <form method="post" action="/admin/users/{{ id }}/sign-out" hx-confirm="Sign {{ main_name }} out everywhere? Each browser has to log in with EVE again.">
+        <button type="submit" class="btn" data-variant="outline">Sign out everywhere</button>
+      </form>
       {% endif %}
       {% if !owner %}
       {% if active %}

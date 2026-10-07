@@ -275,7 +275,7 @@ async fn account_pages_are_in_the_account_menu_only(db: PgPool) {
     for uri in ["/dashboard", "/groups", "/services", "/tokens"] {
         let body = page(&h, uri, &pilot).await.body;
         let nav = sidebar(&body);
-        for link in ["/tokens", "/dashboard/access-tokens"] {
+        for link in ["/tokens", "/dashboard/access-tokens", "/sessions"] {
             assert!(
                 !nav.contains(&format!(r#"href="{link}""#)),
                 "{uri}: {link} in the sidebar"
@@ -291,7 +291,7 @@ async fn account_pages_are_in_the_account_menu_only(db: PgPool) {
         );
         let menu = body.split(r#"id="user-menu""#).nth(1).unwrap();
         let menu = &menu[..menu.find("</nav>").unwrap()];
-        for link in ["/tokens", "/dashboard/access-tokens"] {
+        for link in ["/tokens", "/dashboard/access-tokens", "/sessions"] {
             assert!(
                 menu.contains(&format!(r#"href="{link}""#)),
                 "{uri}: {link} in the menu"

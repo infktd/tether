@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.sessions WHERE id = $1 AND account_id = $2 RETURNING device",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "device",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sessions",
+            "name": "device"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "0494b24eefabdc32d306b60231129bf51752e9735225a767f8bfab684fede585"
+}

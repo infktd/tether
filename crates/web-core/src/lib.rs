@@ -42,6 +42,7 @@ pub mod plugin_services;
 pub mod plugin_shared;
 pub mod plugins;
 pub mod ratelimit;
+pub mod sessions;
 pub mod setup;
 pub mod site_name;
 pub mod smart_groups;

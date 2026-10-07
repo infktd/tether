@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.sessions WHERE account_id = $1 AND id <> $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2e59b4d99620fb3f9fa53a9b61d653bf5d572a0c989170427ce17c7d2450ca0"
+}

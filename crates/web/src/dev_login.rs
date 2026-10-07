@@ -64,6 +64,7 @@ pub async fn list() -> Json<&'static [Fixture]> {
 pub async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Response, AppError> {
     let fixture = FIXTURES
@@ -100,6 +101,7 @@ pub async fn login(
         account,
         SESSION_TTL,
         Some(chrono::Utc::now()),
+        crate::sessions::device_of(&headers).as_deref(),
     )
     .await?;
     tracing::warn!(

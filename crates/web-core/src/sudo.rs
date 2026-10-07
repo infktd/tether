@@ -85,10 +85,13 @@ pub enum Action {
     /// Removing a character from an account: an admin, always; its owner,
     /// for the same accounts as [`Action::ChangeMain`].
     RemoveCharacter,
+    /// Signing someone else out of every session (an admin, from their
+    /// page).
+    SignOutUser,
 }
 
 impl Action {
-    pub const ALL: [Action; 18] = [
+    pub const ALL: [Action; 19] = [
         Self::SensitivePermission,
         Self::AppInstall,
         Self::AppRollback,
@@ -107,6 +110,7 @@ impl Action {
         Self::PlatformUpgrade,
         Self::PlatformRollback,
         Self::RemoveCharacter,
+        Self::SignOutUser,
     ];
 
     /// Its name in URLs and the audit log.
@@ -130,6 +134,7 @@ impl Action {
             Self::PlatformUpgrade => "platform_upgrade",
             Self::PlatformRollback => "platform_rollback",
             Self::RemoveCharacter => "remove_character",
+            Self::SignOutUser => "sign_out_user",
         }
     }
 
@@ -154,6 +159,7 @@ impl Action {
             Self::PlatformUpgrade => "Upgrade Tether",
             Self::PlatformRollback => "Roll Tether back",
             Self::RemoveCharacter => "Remove a character from an account",
+            Self::SignOutUser => "Sign a user out everywhere",
         }
     }
 

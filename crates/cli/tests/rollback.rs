@@ -242,6 +242,7 @@ async fn snapshot_migrate_roll_back_and_check_the_data(db: PgPool) {
         pilot,
         std::time::Duration::from_secs(3600),
         None,
+        None,
     )
     .await
     .unwrap();

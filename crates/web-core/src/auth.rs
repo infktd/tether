@@ -128,6 +128,7 @@ pub struct CallbackQuery {
 pub async fn callback(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, AppError> {
     let browser = jar.get(LOGIN_COOKIE).map(|c| c.value().to_owned());
@@ -491,6 +492,8 @@ pub async fn callback(
         account,
         SESSION_TTL,
         reauthenticated_at,
+        // A coarse label for the Sessions page, never the header itself.
+        crate::sessions::device_of(&headers).as_deref(),
     )
     .await?;
 
@@ -536,6 +539,9 @@ pub struct CurrentSession {
     pub account: AccountId,
     /// A personal access token's scopes; `None` for a browser session.
     pub token_scopes: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+    /// A browser session's id (`core.sessions.id`, for the Sessions page);
+    /// `None` for a token.
+    pub session_id: Option<i64>,
     /// A browser session's last login with the account's main (sudo
     /// mode); `None` for a token.
     pub reauthenticated_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -675,6 +681,7 @@ impl FromRequestParts<AppState> for CurrentSession {
             return Ok(Self {
                 account: scope.account,
                 token_scopes: Some(scope.scopes),
+                session_id: None,
                 reauthenticated_at: None,
                 folded: Vec::new(),
                 acting: None,
@@ -688,6 +695,7 @@ impl FromRequestParts<AppState> for CurrentSession {
         Ok(Self {
             account: record.account,
             token_scopes: None,
+            session_id: Some(record.id),
             reauthenticated_at: record.reauthenticated_at,
             folded: folded_sections(&jar),
             acting: acting_character(&jar),

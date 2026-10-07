@@ -44,6 +44,7 @@ mod plugin_http;
 mod plugin_keys;
 mod plugin_pages;
 mod plugins;
+mod sessions;
 mod setup;
 mod ship_replacement;
 mod signed_out;

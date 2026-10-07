@@ -1,10 +1,21 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT s.account_id, s.expires_at, s.reauthenticated_at,\n               s.last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id\n        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active\n        ",
+  "query": "\n        SELECT s.id, s.account_id, s.expires_at, s.reauthenticated_at,\n               s.last_seen_at < now() - make_interval(secs => $2) AS \"stale!\"\n        FROM core.sessions s JOIN core.accounts a ON a.id = s.account_id\n        WHERE s.token_hash = $1 AND s.expires_at > now() AND a.active\n        ",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
         "name": "account_id",
         "type_info": "Int8",
         "origin": {
@@ -15,7 +26,7 @@
         }
       },
       {
-        "ordinal": 1,
+        "ordinal": 2,
         "name": "expires_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "reauthenticated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "stale!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -52,9 +63,10 @@
     "nullable": [
       false,
       false,
+      false,
       true,
       null
     ]
   },
-  "hash": "b2b4ef42a8e1c39d0447be9f0fd83a6ce50cfa4de31f37c822e9bf204ac47332"
+  "hash": "fe6bc73c2ff743862b3526beb87a8bc76de368c25b157f5a9edb88a38081d3df"
 }

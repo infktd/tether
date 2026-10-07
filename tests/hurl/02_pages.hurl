@@ -632,6 +632,29 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+GET {{base}}/sessions
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/sessions/sign-out-others
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/sessions/1/sign-out
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+POST {{base}}/admin/users/1/sign-out
+Origin: {{base}}
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 POST {{base}}/admin/groups/1/smart
 Origin: {{base}}
 HTTP 303
