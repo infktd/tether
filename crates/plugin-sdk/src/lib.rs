@@ -130,7 +130,7 @@ pub mod log {
 /// Who is looking at a page or posting a form (none in jobs).
 pub mod identity {
     pub use crate::bindings::tether::plugin::identity::{
-        Builtin, Character, Group, Owner, State, Viewer,
+        Builtin, Character, Group, Member, MemberCharacter, Owner, State, Viewer,
     };
 
     /// The viewer, or `None` in a job.
@@ -174,6 +174,13 @@ pub mod identity {
     /// share an account.
     pub fn owners() -> Option<Vec<Owner>> {
         crate::bindings::tether::plugin::identity::owners()
+    }
+
+    /// First-party Member Audit only: every account holding one of its
+    /// permissions (its main and state) with all its characters,
+    /// registered or not. Every other app gets `None`.
+    pub fn members() -> Option<Vec<Member>> {
+        crate::bindings::tether::plugin::identity::members()
     }
 
     impl Viewer {

@@ -31,8 +31,9 @@ use tether_esi::vault::{TokenVault, VaultError};
 use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
     DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FilterError, FilterValue, FilterWanted,
-    Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Mention, Named, NotifyError,
-    NotifyLevel, Owner, Services, SharedDoctrine, SharedTimer, State, Subject, Timer, TimerError,
+    Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Member, MemberCharacter, Mention,
+    Named, NotifyError, NotifyLevel, Owner, Services, SharedDoctrine, SharedTimer, State, Subject,
+    Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -1088,6 +1089,52 @@ impl Services for PluginServices {
                 }),
                 Err(err) => {
                     tracing::error!(plugin, error = %err, "plugin character owners");
+                    None
+                }
+            }
+        })
+    }
+
+    fn identity_members(&self, plugin: String) -> Fut<Option<Vec<Member>>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            // As `identity_owners`: only the bundled Member Audit, checked
+            // again against what holds the id now.
+            let running = plugins.upgrade().and_then(|p| p.running(&plugin))?;
+            if !may_see_owners(&plugin, running.origin) {
+                return None;
+            }
+            // Members are those who register characters for it: none
+            // without user scopes.
+            let scopes =
+                crate::compliance::allowed_plugin_scopes(&running.manifest.capabilities.esi.user);
+            if scopes.is_empty() {
+                return Some(Vec::new());
+            }
+            match tether_db::compliance::serving_members(&db, &plugin).await {
+                Ok(rows) => Some({
+                    tracing::info!(plugin, members = rows.len(), "plugin read members");
+                    rows.into_iter()
+                        .map(|r| Member {
+                            main: character(r.main),
+                            state: State {
+                                builtin: builtin(r.builtin.as_deref()),
+                                name: r.state,
+                            },
+                            characters: r
+                                .characters
+                                .into_iter()
+                                .map(|(c, registered)| MemberCharacter {
+                                    character: character(c),
+                                    registered,
+                                })
+                                .collect(),
+                        })
+                        .collect()
+                }),
+                Err(err) => {
+                    tracing::error!(plugin, error = %err, "plugin members");
                     None
                 }
             }

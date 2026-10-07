@@ -1187,6 +1187,50 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
         .unwrap();
     let owners = run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await;
     assert!(!owners.contains("The Mittani"), "{owners}");
+    // Every character of the app's members, registered or not, is Member
+    // Audit's alone too (aa-memberaudit's Finder and compliance reports):
+    // an alt not registered with it is listed, unregistered; a pilot
+    // holding none of its permissions isn't; nor is a character sold on.
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000077, account_id, 'Unregistered Alt', 98000001 FROM core.characters WHERE id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(probe(&h, "members", &[]).await, "None");
+    assert_eq!(
+        run_probe(&h, "acme.bundled", "members", Vec::new(), true).await,
+        "None"
+    );
+    for as_page in [false, true] {
+        let members = run_probe(&h, "tether.member-audit", "members", Vec::new(), as_page).await;
+        for part in [
+            format!(
+                "main: Character {{ id: {CHRIBBA}, name: \"Chribba\", corporation-id: {CHRIBBA_CORP}"
+            ),
+            format!("character: Character {{ id: {CHRIBBA}, name: \"Chribba\""),
+            "name: \"Unregistered Alt\", corporation-id: 98000001, alliance-id: None }, \
+             registered: false"
+                .to_owned(),
+            "name: \"Member\"".to_owned(),
+        ] {
+            assert!(members.contains(&part), "{part}\n{members}");
+        }
+        assert!(!members.contains("The Mittani"), "{members}");
+    }
+    sqlx::query(
+        "INSERT INTO core.character_tokens (character_id, refresh_token, scopes, state, revoked_reason) \
+         SELECT 90000077, refresh_token, scopes, 'revoked', 'owner hash changed' \
+         FROM core.character_tokens WHERE character_id = $1",
+    )
+    .bind(CHRIBBA)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let members = run_probe(&h, "tether.member-audit", "members", Vec::new(), false).await;
+    assert!(!members.contains("Unregistered Alt"), "{members}");
     // Any state, as AA's: the owner holds every app, and the owner's state
     // is told as it is.
     sqlx::query("UPDATE core.accounts SET state_id = $1 WHERE is_owner")
@@ -1204,7 +1248,7 @@ async fn only_bundled_member_audit_learns_who_owns_characters(db: PgPool) {
 /// A signed package can take Member Audit's id only where Tether bundles
 /// no Member Audit, and then it learns nothing either.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn a_signed_app_under_member_audits_id_learns_no_owners(db: PgPool) {
+async fn a_signed_app_under_member_audits_id_learns_no_owners_or_members(db: PgPool) {
     use tether_core::states::{Builtin, EntityKind};
     cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
     let h = harness(db, true).await;
@@ -1230,10 +1274,12 @@ async fn a_signed_app_under_member_audits_id_learns_no_owners(db: PgPool) {
     .await;
     let characters = run_probe(&h, "tether.member-audit", "characters", Vec::new(), false).await;
     assert!(characters.contains("Chribba"), "{characters}");
-    assert_eq!(
-        run_probe(&h, "tether.member-audit", "owners", Vec::new(), false).await,
-        "None"
-    );
+    for asked in ["owners", "members"] {
+        assert_eq!(
+            run_probe(&h, "tether.member-audit", asked, Vec::new(), false).await,
+            "None"
+        );
+    }
     // Nor does the host send Member Audit's token-error notice for it:
     // nothing told, nothing marked.
     sqlx::query(

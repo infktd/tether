@@ -650,6 +650,31 @@ interface identity {
     /// characters share an account.
     owners: func() -> option<list<owner>>;
 
+    /// A character on a member's account (see `members`).
+    record member-character {
+        character: character,
+        /// Registered for the plugin (whether `esi.characters` lists it
+        /// also depends on its token).
+        registered: bool,
+    }
+
+    /// An account holding one of the plugin's permissions: its main, its
+    /// state and every character on it.
+    record member {
+        main: character,
+        state: state,
+        /// Every character on the account, the main included, registered
+        /// or not; none sold on.
+        characters: list<member-character>,
+    }
+
+    /// First-party Member Audit only: every account holding one of its
+    /// permissions, with all its characters, registered or not, for
+    /// aa-memberaudit's Character Finder, compliance reports and sheet.
+    /// Every other app gets none: apps never learn which characters share
+    /// an account.
+    members: func() -> option<list<member>>;
+
     /// A group, as Alliance Auth's: apps limit what they show to groups
     /// (allianceauth-fittings' categories do).
     record group {

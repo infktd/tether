@@ -1,0 +1,155 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id AS account_id, m.id AS main_id, m.name AS main_name,\n               m.corporation_id AS main_corporation_id, m.alliance_id AS main_alliance_id,\n               s.name AS state, s.builtin,\n               c.id, c.name, c.corporation_id, c.alliance_id,\n               EXISTS (SELECT 1 FROM core.app_characters r\n                       WHERE r.character_id = c.id AND r.plugin_id = $1) AS \"registered!\"\n        FROM core.accounts a\n        JOIN core.states s ON s.id = a.state_id\n        JOIN core.characters m ON m.id = a.main_character_id\n        JOIN core.characters c ON c.account_id = a.id\n        LEFT JOIN core.character_tokens t ON t.character_id = c.id\n        WHERE core.holds_app_permission(a.id, $1)\n          AND (t.state IS DISTINCT FROM 'revoked'\n               OR t.revoked_reason IS DISTINCT FROM 'owner hash changed')\n        ORDER BY a.id, c.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "main_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "main_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "main_corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "main_alliance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "alliance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "builtin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "builtin"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "corporation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "corporation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "alliance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.characters",
+            "name": "alliance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "registered!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "f2ee025d55ca662aa1048176b618c0515f5729cbcec8af091392342616ebdf1a"
+}

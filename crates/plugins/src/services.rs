@@ -24,7 +24,9 @@ pub use crate::host::tether::plugin::filters::{
 pub use crate::host::tether::plugin::http::{
     Error as HttpError, Method as HttpMethod, Request as HttpRequest, Response as HttpResponse,
 };
-pub use crate::host::tether::plugin::identity::{Builtin, Character, Group, Owner, State, Viewer};
+pub use crate::host::tether::plugin::identity::{
+    Builtin, Character, Group, Member, MemberCharacter, Owner, State, Viewer,
+};
 pub use crate::host::tether::plugin::notify::{Error as NotifyError, Level as NotifyLevel};
 pub use crate::host::tether::plugin::timers::{Error as TimerError, Shared as SharedTimer, Timer};
 
@@ -107,6 +109,10 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// Who owns each of `plugin`'s [`esi_characters`](Self::esi_characters):
     /// `None` for every plugin but the first-party one allowed to know.
     fn identity_owners(&self, plugin: String) -> Fut<Option<Vec<Owner>>>;
+    /// Every account holding one of `plugin`'s permissions with all its
+    /// characters, registered or not: `None` for every plugin but the
+    /// first-party one allowed to know.
+    fn identity_members(&self, plugin: String) -> Fut<Option<Vec<Member>>>;
     /// The groups of `account` (the viewer's, as the host built it), for a
     /// `plugin` approved for `groups`; none otherwise.
     fn identity_groups(&self, plugin: String, account: i64) -> Fut<Vec<Group>>;

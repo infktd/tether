@@ -161,6 +161,17 @@ impl tether::plugin::identity::Host for CallState {
         }
     }
 
+    async fn members(&mut self) -> Option<Vec<services::Member>> {
+        // As `owners`: decided when this component was loaded.
+        if !self.sees_owners {
+            return None;
+        }
+        match self.esi() {
+            Ok(services) => services.identity_members(self.plugin.clone()).await,
+            Err(_) => None,
+        }
+    }
+
     async fn superuser(&mut self) -> bool {
         if let Some(superuser) = self.superuser {
             return superuser;
