@@ -92,6 +92,23 @@ notified_on_character_removal = "Notified when member drops character"
 exports_access = "Can access data exports (every character's contracts and wallet journal)"
 manage = "Create and delete skill sets (on Skill sets, which view_skill_sets opens), and change Member Audit's settings"
 
+# Who each is for, for admins deciding whom to grant it (Permissions
+# shows it under the description).
+[permission_notes]
+basic_access = "Usually Member, and any state whose pilots should register their characters (a state that requires Member Audit needs it). Holders register characters and see their own characters' sheets and mail, nobody else's."
+share_characters = "Usually Member, where recruiters vet applicants. Holders share their own characters, mail included, with recruiters who view shared characters, until they stop sharing or the sharing timeout ends it."
+finder_access = "For officers and recruiters. The Character Finder lists the characters in the holder's view scope (below), with each one's main and state; without a scope, only their own. Opening others' sheets takes viewing characters owned by others too."
+reports_access = "For officers who check doctrine readiness. Reports count who can use each skill set among the characters in the holder's view scope; without a scope, only their own."
+characters_access = "For officers who audit members. Holders open the whole sheet of every character in their view scope, mail included, so keep it to trusted staff. It needs a view scope to reach past their own characters. Every mail view is in the audit log."
+view_shared_characters = "For recruiters. Holders find and open the characters their pilots chose to share, mail included. Every mail view is in the audit log."
+view_same_corporation = "A view scope for corporation officers: every character of pilots whose main is in the holder's main's corporation, alts elsewhere included. Alone it shows nothing: it widens the finder, reports and viewing characters."
+view_same_alliance = "A view scope for alliance officers: every character of pilots whose main is in the holder's main's alliance, alts elsewhere included. Alone it shows nothing: it widens the finder, reports and viewing characters."
+view_everything = "A view scope for alliance leadership and auditors: every character registered with Member Audit. With viewing characters it opens every sheet and its mail, so keep it to the few who need it."
+view_skill_sets = "Usually Member. Holders see which of their characters can use each skill set (a doctrine, say), on the Skill sets page and on each sheet."
+notified_on_character_removal = "For officers who watch who leaves. Holders get a Tether notice when a pilot in their view scope unregisters a character from Member Audit."
+exports_access = "For leadership and auditors checking ISK and trades. Holders download every registered character's contracts, contract items and wallet journal, whatever their view scope, so keep it to the few who need it."
+manage = "For Member Audit's admins. Holders add and delete skill sets, which Secure Groups' skill set filters follow, and change the app's settings, such as how long history and mail are kept."
+
 # What 0.2 called them: their grants move on upgrade. view_mail is gone
 # (mail goes with the sheet, as aa-memberaudit's), and its grants with it.
 [renamed_permissions]
