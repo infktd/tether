@@ -2527,9 +2527,19 @@ fn settings() -> Result<Settings, PageError> {
 /// `use_doctrines_from_fittings_module` one of the doctrines Fittings
 /// shares that the FC may see (checked again on posting, by
 /// [`doctrine_offered`]). `current`, a link's doctrine, stays offered.
+/// While Fittings shares none the FC may see (it isn't installed or
+/// running, say), it's typed in, as aa-afat's without Fittings.
 fn doctrine_field(from_fittings: bool, current: Option<&str>) -> Field {
-    if !from_fittings {
-        let field = Field::text("doctrine", "Doctrine", MAX_DOCTRINE);
+    let mut names = if from_fittings {
+        shared_doctrines()
+    } else {
+        Vec::new()
+    };
+    if names.is_empty() {
+        let mut field = Field::text("doctrine", "Doctrine", MAX_DOCTRINE);
+        if from_fittings {
+            field = field.help("Fittings shares no doctrines with you: type it in.");
+        }
         return match current {
             Some(value) => field.value(value),
             None => field,
@@ -2537,7 +2547,6 @@ fn doctrine_field(from_fittings: bool, current: Option<&str>) -> Field {
     }
     // As the fleet types: an explicit None, so the list is never empty.
     let mut options = vec![(String::new(), "None".to_owned())];
-    let mut names = shared_doctrines();
     if let Some(value) = current.filter(|v| !names.iter().any(|n| n == v)) {
         names.insert(0, value.to_owned());
     }
@@ -2572,14 +2581,35 @@ fn shared_doctrines() -> Vec<String> {
 }
 
 /// Whether a posted doctrine is one the form offered: anything while it's
-/// typed in; with doctrines from Fittings none, the link's own, or one the
-/// viewer may see.
+/// typed in (Fittings sharing none the viewer may see included); with
+/// doctrines from Fittings none, the link's own, or one the viewer may
+/// see.
 fn doctrine_offered(from_fittings: bool, doctrine: Option<&str>, current: Option<&str>) -> bool {
     match doctrine {
         _ if !from_fittings => true,
         None => true,
         Some(name) if Some(name) == current => true,
-        Some(name) => shared_doctrines().iter().any(|n| n == name),
+        Some(name) => {
+            let shared = shared_doctrines();
+            shared.is_empty() || shared.iter().any(|n| n == name)
+        }
+    }
+}
+
+/// What "Use doctrines from Fittings" does, and, while it's on but
+/// Fittings shares no doctrines the viewer may see, that FCs type the
+/// doctrine in until it does, with the fix.
+fn doctrines_help(on: bool) -> String {
+    let what = "New FAT link offers the doctrines Fittings shares that the FC may see, instead of \
+                a text field. Default: off.";
+    if on && shared_doctrines().is_empty() {
+        format!(
+            "{what} Fittings shares no doctrines with you now, so FCs type the doctrine in: \
+             install or start Fittings (Administration, Apps), or add a doctrine there that FCs \
+             may see."
+        )
+    } else {
+        what.to_owned()
     }
 }
 
@@ -2626,10 +2656,7 @@ fn settings_page() -> Result<Page, PageError> {
                                 "Use doctrines from Fittings",
                                 settings.doctrines_from_fittings,
                             )
-                            .help(
-                                "New FAT link offers the doctrines Fittings shares that the FC may \
-                                 see, instead of a text field. Default: off.",
-                            ),
+                            .help(doctrines_help(settings.doctrines_from_fittings)),
                         ),
                 )
                 .group(

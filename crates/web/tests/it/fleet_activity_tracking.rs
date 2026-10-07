@@ -1763,6 +1763,26 @@ async fn an_fc_logs_in_with_the_fleet_boss_from_create_fat_link(db: PgPool) {
     assert!(!listed.contains("waiting for an admin"), "{listed}");
 }
 
+const PUBLISHER: &str = "acme.doctrines";
+
+/// The storage probe as an app sharing doctrines, as Fittings does.
+async fn install_doctrine_publisher(h: &Harness, owner: &str) {
+    let key = Key::new(4);
+    let manifest = format!(
+        "[plugin]\nid = \"{PUBLISHER}\"\nname = \"Doctrine Book\"\nversion = \"1.0.0\"\n\
+         host_api = \"1\"\n\n[publisher]\nkey = \"{}\"\n\n[capabilities]\ndoctrines = \"publish\"\n\n\
+         [permissions]\nview = \"See\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n\
+         [[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = build_guest("tether-plugins-test-guest-storage");
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(h, owner, &bytes, &key.sign(&bytes)).await;
+}
+
 /// aa-afat's Setting and its rules: the reopen grace time and duration,
 /// manual FATs within 24 hours, the log duration, all from the settings.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
@@ -1789,12 +1809,9 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
         create.body
     );
     // aa-afat's use_doctrines_from_fittings_module, off by default: the
-    // doctrine is typed in. On, it's one Fittings shares (none here).
-    assert!(
-        !create
-            .body
-            .contains("<select class=\"select\" id=\"doctrine\"")
-    );
+    // doctrine is typed in.
+    let select = "<select class=\"select\" id=\"doctrine\"";
+    assert!(!create.body.contains(select));
     assert!(create.body.contains("name=\"doctrine\""), "{}", create.body);
     let res = post(
         &h,
@@ -1805,6 +1822,56 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let on: bool = sqlx::query_scalar(sql!(
+        "SELECT use_doctrines_from_fittings FROM \"{schema}\".settings"
+    ))
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(on);
+    // On, while no app shares a doctrine (Fittings not installed): still
+    // typed in, as aa-afat's without Fittings, and Settings says why and
+    // what to do.
+    let create = open(&h, "links/create", &owner).await;
+    assert!(!create.body.contains(select), "{}", create.body);
+    assert!(
+        create
+            .body
+            .contains("Fittings shares no doctrines with you: type it in."),
+        "{}",
+        create.body
+    );
+    let settings = open(&h, "settings", &owner).await;
+    assert!(
+        settings
+            .body
+            .contains("Fittings shares no doctrines with you now, so FCs type the doctrine in"),
+        "{}",
+        settings.body
+    );
+    let res = post(
+        &h,
+        "links/create",
+        "_form=create&fleet=Roam&fleet_type=&doctrine=Ferox&expiry=60",
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Shared (here by a stand-in for Fittings): one of those it shares.
+    install_doctrine_publisher(&h, &owner).await;
+    let shared = serde_json::json!([{ "key": "1", "name": "Frigate Gang", "link": "doctrine/1" }]);
+    let out = run_probe(
+        &h,
+        PUBLISHER,
+        "doctrines-publish",
+        vec![
+            ("list".to_owned(), shared.to_string()),
+            ("see_all".to_owned(), "view".to_owned()),
+        ],
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok");
     let create = open(&h, "links/create", &owner).await;
     assert!(
         create
@@ -1813,13 +1880,17 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
         "{}",
         create.body
     );
-    let on: bool = sqlx::query_scalar(sql!(
-        "SELECT use_doctrines_from_fittings FROM \"{schema}\".settings"
-    ))
-    .fetch_one(&h.db)
-    .await
-    .unwrap();
-    assert!(on);
+    assert!(
+        create.body.contains(r#"<option value="Frigate Gang">"#),
+        "{}",
+        create.body
+    );
+    let settings = open(&h, "settings", &owner).await;
+    assert!(
+        !settings.body.contains("Fittings shares no doctrines"),
+        "{}",
+        settings.body
+    );
     // A doctrine that isn't offered is refused (by the host, and FAT).
     let res = post(
         &h,
