@@ -460,14 +460,11 @@ fn note_sources(s: &Settings, all: &[esi::Character]) -> Result<(), JobError> {
 
 /// aa-moonmining's "Owner added" notice for each owner not told yet, a
 /// few a run. aa-moonmining names who added it; here it names the
-/// corporation alone, as holders of `manage` don't see data sources. With
-/// the notices off they're marked told, so turning them on announces only
-/// owners added after.
-fn announce_sources(
-    s: &Settings,
-    budget: &mut Budget,
-    notices: &mut usize,
-) -> Result<(), JobError> {
+/// corporation alone, as holders of `manage` don't see data sources. One
+/// whose corporation has no name yet (ESI said no) waits for a sync that
+/// names it, or a day. With the notices off they're marked told, so
+/// turning them on announces only owners added after.
+fn announce_sources(s: &Settings, notices: &mut usize) -> Result<(), JobError> {
     if !s.admin_notices {
         storage::execute(
             "UPDATE sources SET announced = true WHERE NOT announced",
@@ -477,37 +474,22 @@ fn announce_sources(
         return Ok(());
     }
     let rows = storage::query(
-        "SELECT s.character_id, s.corporation_id, n.name \
+        "SELECT s.character_id, s.corporation_id, n.name, s.seen_at < now() - interval '1 day' \
          FROM sources s LEFT JOIN names n ON n.id = s.corporation_id \
          WHERE NOT s.announced ORDER BY s.seen_at LIMIT $1",
         &[OWNERS_PER_RUN.into()],
     )
     .map_err(|e| retry("reading owners", e))?;
-    // Corporations `places` couldn't name this run (out of calls).
-    let unnamed: Vec<i64> = rows
-        .rows
-        .iter()
-        .filter(|r| r.get(2).and_then(Db::as_text).is_none())
-        .map(|r| int(r, 1))
-        .collect();
-    let mut named: Vec<esi::Named> = Vec::new();
-    if !unnamed.is_empty() && budget.take() {
-        match esi::names(&unnamed) {
-            Ok(found) => named = found,
-            Err(err) => log::warn(format!("owners' corporations: {}", esi::describe(&err))),
-        }
-    }
     for row in &rows.rows {
         if *notices == 0 {
             break;
         }
         let corp = int(row, 1);
-        let corporation = row
-            .get(2)
-            .and_then(Db::as_text)
-            .map(str::to_owned)
-            .or_else(|| named.iter().find(|n| n.id == corp).map(|n| n.name.clone()))
-            .unwrap_or_else(|| format!("corporation {corp}"));
+        let corporation = match row.get(2).and_then(Db::as_text) {
+            Some(name) => name.to_owned(),
+            None if row.get(3).and_then(Db::as_bool) == Some(true) => format!("corporation {corp}"),
+            None => continue,
+        };
         tell_admins(
             notices,
             &format!("Owner added: {corporation}"),
@@ -581,12 +563,13 @@ fn owner_read(character: i64, corp: i64) -> Result<(), JobError> {
 
 // ---- the sync ----------------------------------------------------------------
 
-/// Every 10 minutes, as aa-moonmining's run_regular_updates: each
-/// corporation's extractions and refineries, the longest unread first, a
-/// ping queued for each new or moved pop, then names, and the admin
-/// notices. A run out of ESI calls carries on a minute later
-/// (`sync_more`) with the corporations it didn't reach, so every one is
-/// read however many there are.
+/// Every 10 minutes, as aa-moonmining's run_regular_updates: the owners'
+/// corporations' names (for the admin notices), each corporation's
+/// extractions and refineries, the longest unread first, a ping queued
+/// for each new or moved pop, the admin notices, then places and names. A
+/// run out of ESI calls carries on a minute later (`sync_more`) with the
+/// corporations it didn't reach, so every one is read however many there
+/// are.
 fn sync(more: Option<&Job>) -> Result<(), JobError> {
     let now = Utc::now();
     let settings = settings().map_err(|e| retry("reading settings", e))?;
@@ -627,6 +610,11 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
     // Never read first, then the longest unread.
     due.sort_by_key(|(at, _, _)| *at);
     let mut budget = Budget(ESI_BUDGET - PLACES_RESERVE);
+    // Named before the calls go, so the notices name them: a call only
+    // when an owner's corporation is new.
+    let owners: Vec<i64> = sources.iter().map(|(corp, _)| *corp).collect();
+    learn_names(&mut budget, &owners)?;
+    let full = budget.0;
     let mut queue = QUEUE_BUDGET;
     let mut notices = NOTICES_PER_RUN;
     let (mut done, mut left) = (0, 0);
@@ -636,7 +624,7 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
             left = due.len() - i;
             break;
         }
-        let whole = budget.0 == ESI_BUDGET - PLACES_RESERVE;
+        let whole = budget.0 == full;
         let character = match subject {
             Subject::DataSource(id) => *id,
             _ => 0,
@@ -696,7 +684,11 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
             }
         }
     }
-    // Carry on while runs get somewhere.
+    announce_sources(&settings, &mut notices)?;
+    budget.0 += PLACES_RESERVE;
+    places(&mut budget, &sources)?;
+    // Carry on while runs get somewhere. Queued last: a follow-up that
+    // failed after queuing its own would end as replaced, its error lost.
     if left > 0 && done > 0 {
         log::info(format!(
             "{left} corporations wait for the next run, a minute on: out of ESI calls"
@@ -709,9 +701,7 @@ fn sync(more: Option<&Job>) -> Result<(), JobError> {
         )
         .map_err(|e| retry("queuing the next sync", e))?;
     }
-    budget.0 += PLACES_RESERVE;
-    places(&mut budget, &sources)?;
-    announce_sources(&settings, &mut budget, &mut notices)
+    Ok(())
 }
 
 /// How reading a corporation went.
@@ -1358,9 +1348,12 @@ fn ledger(more: Option<&Job>) -> Result<(), JobError> {
             }
         }
     }
+    budget.0 += NAME_RESERVE;
+    learn_names(&mut budget, &people)?;
     // Carry on only while runs get somewhere: the hourly run's follow-up
     // has all its calls; a follow-up must have tried a list, or read or
-    // marked a ledger.
+    // marked a ledger. Queued last: a follow-up that failed after queuing
+    // its own would end as replaced, its error lost.
     let out_of_calls = out_of_calls || !lists.unlisted.is_empty();
     if out_of_calls && (more.is_none() || lists.tried + stored + tried > 0) {
         if lists.unlisted.is_empty() {
@@ -1383,8 +1376,7 @@ fn ledger(more: Option<&Job>) -> Result<(), JobError> {
         )
         .map_err(|e| retry("queuing the next ledger run", e))?;
     }
-    budget.0 += NAME_RESERVE;
-    learn_names(&mut budget, &people)
+    Ok(())
 }
 
 /// Daily: who holds Station Manager in each data source's corporation.

@@ -1492,9 +1492,10 @@ async fn finish_ledgers(h: &Harness) {
     panic!("ledger_more kept coming");
 }
 
-#[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn every_corporations_observers_are_listed_however_many(db: PgPool) {
-    let h = harness(db, true).await;
+/// More owner corporations than one run's ESI calls: Chribba Corp and 90
+/// more, each with one mining observer where Chribba mined, and nothing
+/// else. Returns the corporations, in order.
+async fn many_owners(h: &Harness) -> Vec<i64> {
     let fixture = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/fixtures/esi/characters_affiliation.json"
@@ -1506,15 +1507,12 @@ async fn every_corporations_observers_are_listed_however_many(db: PgPool) {
         .with_priority(1)
         .mount(&h.esi_server)
         .await;
-    let owner = log_in_owner(&h, "196379789:Chribba").await;
-    install(&h, &owner).await;
-    // No refineries, Station Managers or mining anywhere: only the
-    // observer lists matter here.
+    let owner = log_in_owner(h, "196379789:Chribba").await;
+    install(h, &owner).await;
     for empty in [
         r"^/corporation/\d+/mining/extractions$",
         r"^/corporations/\d+/structures$",
         r"^/corporations/\d+/roles$",
-        r"^/corporation/\d+/mining/observers/\d+$",
     ] {
         Mock::given(method("GET"))
             .and(path_regex(empty))
@@ -1531,17 +1529,36 @@ async fn every_corporations_observers_are_listed_however_many(db: PgPool) {
         .respond_with(OneObserverEach)
         .mount(&h.esi_server)
         .await;
-    mount_prices(&h).await;
-    // More corporations than one run's ESI calls: Chribba Corp and 90
-    // more. Their observers were listed in the data sources' order from
-    // one run's calls, so the last few's never were.
-    let mut session = approve_source(&h, &owner).await;
+    let today = Utc::now().date_naive().to_string();
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/corporation/\d+/mining/observers/\d+$"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "1")
+                .set_body_json(serde_json::json!([
+                    { "character_id": CHRIBBA, "last_updated": today, "quantity": 100,
+                      "recorded_corporation_id": CHRIBBA_CORP, "type_id": SYLVITE },
+                ])),
+        )
+        .mount(&h.esi_server)
+        .await;
+    mount_prices(h).await;
+    let mut session = approve_source(h, &owner).await;
     for n in 0..90 {
-        session = add_source(&h, &session, &format!("{}:Pilot{n}", MANY + n)).await;
+        session = add_source(h, &session, &format!("{}:Pilot{n}", MANY + n)).await;
     }
     let mut corporations: Vec<i64> = (0..90).map(|n| MANY_CORP + n).collect();
     corporations.push(CHRIBBA_CORP);
     corporations.sort_unstable();
+    corporations
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_corporations_observers_are_listed_however_many(db: PgPool) {
+    let h = harness(db, true).await;
+    // Their observers were listed in the data sources' order from one
+    // run's calls, so the last few's never were.
+    let corporations = many_owners(&h).await;
     // Adding the owners ran every schedule: the ledger run is that one.
     work(&h).await;
     let first = observer_lists(&h).await;
@@ -1603,6 +1620,173 @@ async fn every_corporations_observers_are_listed_however_many(db: PgPool) {
         assert_eq!(again.iter().filter(|c| *c == corp).count(), 2, "{corp}");
     }
     assert!(warnings(&h).await.is_empty(), "{:?}", warnings(&h).await);
+}
+
+/// The app's jobs under `key`, oldest first: state and last error.
+async fn jobs_keyed(h: &Harness, key: &str) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT state, last_error FROM core.jobs WHERE plugin_id = $1 AND job_key = $2 ORDER BY id",
+    )
+    .bind(ID)
+    .bind(key)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+/// Runs the queued job under `key` now, and the other follow-up's later.
+async fn run_keyed(h: &Harness, key: &str, other: &str) {
+    sqlx::query(
+        "UPDATE core.jobs SET run_at = CASE WHEN job_key = $2 THEN now() \
+                                            ELSE now() + interval '1 hour' END \
+         WHERE plugin_id = $1 AND job_key IN ($2, $3) AND state = 'queued'",
+    )
+    .bind(ID)
+    .bind(key)
+    .bind(other)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    work(h).await;
+}
+
+/// Renames one of the app's tables, so what uses it fails.
+async fn rename_table(h: &Harness, from: &str, to: &str) {
+    // Both come from this file.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"ALTER TABLE "plugin_tether.moon-mining".{from} RENAME TO {to}"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn failed_follow_ups_keep_their_error(db: PgPool) {
+    let h = harness(db, true).await;
+    let corporations = many_owners(&h).await;
+    // Adding the owners ran every schedule: the sync and the ledger run
+    // each carry on a minute later.
+    work(&h).await;
+    assert_eq!(
+        jobs_keyed(&h, "sync_more").await,
+        [("queued".to_owned(), None)]
+    );
+    assert_eq!(
+        jobs_keyed(&h, "ledger_more").await,
+        [("queued".to_owned(), None)]
+    );
+
+    // A sync follow-up that queued the next and then failed (its places
+    // can't be stored) ended at once as replaced, its error lost.
+    rename_table(&h, "systems", "systems_away").await;
+    run_keyed(&h, "sync_more", "ledger_more").await;
+    let sync = jobs_keyed(&h, "sync_more").await;
+    assert_eq!(sync.len(), 1, "{sync:?}");
+    assert_eq!(sync[0].0, "queued");
+    assert!(
+        sync[0]
+            .1
+            .as_deref()
+            .is_some_and(|e| e.contains("finding systems")),
+        "{sync:?}"
+    );
+    // Tried again, it finishes the round.
+    rename_table(&h, "systems_away", "systems").await;
+    run_keyed(&h, "sync_more", "ledger_more").await;
+    while sync_more_queued(&h).await > 0 {
+        run_keyed(&h, "sync_more", "ledger_more").await;
+    }
+    let synced: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM "plugin_tether.moon-mining".corporations WHERE synced_at IS NOT NULL"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(synced, i64::try_from(corporations.len()).unwrap());
+    assert!(
+        jobs_keyed(&h, "sync_more")
+            .await
+            .iter()
+            .all(|(state, _)| state != "dead")
+    );
+
+    // The same for a ledger follow-up whose names can't be stored.
+    rename_table(&h, "names", "names_away").await;
+    run_keyed(&h, "ledger_more", "sync_more").await;
+    let ledger = jobs_keyed(&h, "ledger_more").await;
+    assert_eq!(ledger.len(), 1, "{ledger:?}");
+    assert_eq!(ledger[0].0, "queued");
+    assert!(
+        ledger[0]
+            .1
+            .as_deref()
+            .is_some_and(|e| e.contains("reading names")),
+        "{ledger:?}"
+    );
+    rename_table(&h, "names_away", "names").await;
+    finish_ledgers(&h).await;
+    assert_eq!(tried_now(&h).await.len(), corporations.len());
+    assert!(
+        jobs_keyed(&h, "ledger_more")
+            .await
+            .iter()
+            .all(|(state, _)| state != "dead")
+    );
+}
+
+/// /universe/names fails while `fails` is above zero, a time each call.
+struct NamesFail(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl wiremock::Match for NamesFail {
+    fn matches(&self, _: &wiremock::Request) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst) > 0
+    }
+}
+
+impl wiremock::Respond for NamesFail {
+    fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": "Bad request" }))
+    }
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn an_owner_added_notice_waits_for_its_corporations_name(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    // Before mount_esi's names, which it overrides while failing.
+    let fails = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path("/universe/names"))
+        .and(NamesFail(fails.clone()))
+        .respond_with(NamesFail(fails.clone()))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    approve_source(&h, &owner).await;
+    // ESI names nothing in the first sync, which tries twice: the notice
+    // went out as "corporation 1164409536", and never again.
+    fails.store(2, std::sync::atomic::Ordering::SeqCst);
+    work(&h).await;
+    assert_eq!(fails.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let superuser = account_of(&h, CHRIBBA).await;
+    assert!(notices(&h, superuser).await.is_empty());
+    let told: bool =
+        sqlx::query_scalar(r#"SELECT announced FROM "plugin_tether.moon-mining".sources"#)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    assert!(!told);
+    // The next sync names it, then tells.
+    run_due_now(&h, "sync").await;
+    assert_eq!(
+        notices(&h, superuser).await,
+        ["Moon Mining: Owner added: Chribba Corp | Chribba Corp was added as a new owner."]
+    );
 }
 
 /// gigX's corporation, a second owner's.
