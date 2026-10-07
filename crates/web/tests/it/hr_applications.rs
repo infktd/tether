@@ -784,3 +784,150 @@ async fn hr_applications_end_to_end(db: PgPool) {
     .unwrap();
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+/// The package as bundled into Tether's image: no `[publisher]`, unsigned.
+fn bundled_package() -> Vec<u8> {
+    let mut skip = false;
+    let manifest: String = plugin_file("plugin.toml")
+        .lines()
+        .filter(|line| {
+            if line.starts_with('[') {
+                skip = *line == "[publisher]";
+            }
+            !skip
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let dir = format!(
+        "{}/../../plugins/hr-applications/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    names.sort();
+    let migrations: Vec<(String, String)> = names
+        .into_iter()
+        .map(|n| {
+            (
+                format!("migrations/{n}"),
+                plugin_file(&format!("migrations/{n}")),
+            )
+        })
+        .collect();
+    let component = component();
+    let mut files: Vec<(&str, &[u8])> = vec![
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ];
+    files.extend(
+        migrations
+            .iter()
+            .map(|(n, sql)| (n.as_str(), sql.as_bytes())),
+    );
+    testing::zip(&files)
+}
+
+/// As AA's, reviewers see and search the applicant's characters as they
+/// are now: the bundled app reads them through its reference to the
+/// applicant. An application without one keeps the characters stored
+/// when they applied.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn reviewers_see_the_applicants_characters_as_they_are_now(db: PgPool) {
+    use sha2::Digest;
+    cover(&db, Builtin::Member, EntityKind::Alliance, 159826257).await;
+    let package = bundled_package();
+    let h = harness_with_bundled(db, vec![package.clone()]).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    let review = page(&h, &format!("/admin/plugin-bundled/{ID}"), &owner).await;
+    assert!(
+        review.body.contains("the characters on an applicant"),
+        "{}",
+        review.body
+    );
+    let sha: String = sha2::Sha256::digest(&package)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let res = send(
+        &h.app,
+        form(
+            &format!("/admin/plugin-bundled/{ID}/approve"),
+            &format!("package={sha}&reviewed=none"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    mount_names(&h).await;
+    let res = post(
+        &h,
+        &owner,
+        "forms",
+        &format!("_form=add_form&corporation_id={NPC_CORP}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let npc_form = form_of(&h, NPC_CORP).await;
+    let pilot = log_in(&h, None).await;
+    let res = post(
+        &h,
+        &pilot,
+        &format!("apply/{npc_form}"),
+        "_form=apply&consent=on",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let app = application_of(&h, "Pilot", npc_form).await;
+
+    // An alt added since they applied, in Chribba's corporation.
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id, alliance_id) \
+         SELECT 90000077, account_id, 'Later Alt', $1, 159826257 FROM core.characters \
+         WHERE id = 90000001",
+    )
+    .bind(OWNER_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let view = open(&h, &owner, &format!("review/{app}")).await;
+    assert_eq!(view.status, StatusCode::OK, "{}", view.body);
+    assert!(view.body.contains("Later Alt"), "{}", view.body);
+    assert!(!view.body.contains("as they were"), "{}", view.body);
+    // Searched by the alt's name, or its corporation's or alliance's.
+    for q in ["later", "otherworld+enterprises", "OTHERWORLD+EMPIRE"] {
+        let found = open(&h, &owner, &format!("review?q={q}")).await;
+        assert!(
+            found.body.contains(&format!("review/{app}")),
+            "{q}: {}",
+            found.body
+        );
+    }
+    let missed = open(&h, &owner, "review?q=nobody").await;
+    assert!(
+        !missed.body.contains(&format!("review/{app}")),
+        "{}",
+        missed.body
+    );
+
+    // Without a reference (from before notices): as they applied.
+    sqlx::query("UPDATE \"plugin_tether.hr-applications\".applications SET submitter = NULL")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let view = open(&h, &owner, &format!("review/{app}")).await;
+    assert!(!view.body.contains("Later Alt"), "{}", view.body);
+    assert!(
+        view.body.contains("as they were when they applied"),
+        "{}",
+        view.body
+    );
+    let found = open(&h, &owner, "review?q=later").await;
+    assert!(
+        !found.body.contains(&format!("review/{app}")),
+        "{}",
+        found.body
+    );
+}
