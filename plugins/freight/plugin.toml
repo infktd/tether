@@ -42,7 +42,7 @@ manage = "Manage pricing and settings (aa-freight's admin site)"
 [permission_notes]
 basic_access = "Usually Member, or whoever ships with the service. Holders open Freight: the contract handler and the priced routes."
 use_calculator = "Usually given with basic access, to whoever ships with the service. Holders work out a route's reward for a volume and a collateral, and how to issue the contract, and see their own courier contracts (My contracts)."
-view_contracts = "For haulers and the service's staff. Holders see every outstanding and in-progress courier contract: issuers, routes, rewards, collateral and the check against the pricing."
+view_contracts = "For haulers and the service's staff. Holders see every courier contract, active or not: issuers, routes, rewards, collateral and the check against the pricing."
 view_statistics = "For the service's leads. Holders see the last 90 days' finished contracts by route, pilot, pilot corporation and customer."
 add_location = "For the service's leads. Holders add and remove route ends: stations by ID, and structures by ID and name."
 setup_contract_handler = "For the service's leads. Holders add the contract handler, a character whose corporation's courier contracts are read, and choose the operation mode. Changing either starts the contracts afresh."

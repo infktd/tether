@@ -662,6 +662,42 @@ async fn freight_end_to_end(db: PgPool) {
         "{}",
         contracts.body
     );
+    // Active and All (aa-freight's two lists): delivered ones only in All.
+    assert!(
+        contracts.body.contains("Active contracts") && !contracts.body.contains("Finished"),
+        "{}",
+        contracts.body
+    );
+    let all = format!("/plugins/{ID}/contracts?_tab=1");
+    let contracts = page(&h, &all, &owner).await;
+    for text in ["All contracts", "Finished", "Emperor Family Academy"] {
+        assert!(contracts.body.contains(text), "{text}: {}", contracts.body);
+    }
+    // Past the newest 400, All says how many there are.
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.freight".contracts (contract_id, issuer_id,
+               issuer_corporation_id, start_location, end_location, status, date_issued)
+           SELECT 1000 + n, $1, $2, $3, $4, 'finished', now() - interval '20 days'
+           FROM generate_series(1, 400) n"#,
+    )
+    .bind(PILOT_A)
+    .bind(OTHER_CORP)
+    .bind(JITA)
+    .bind(AMARR)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let contracts = page(&h, &all, &owner).await;
+    assert_eq!(contracts.status, StatusCode::OK, "{}", contracts.body);
+    assert!(
+        contracts.body.contains("The newest 400 of 404 contracts."),
+        "{}",
+        contracts.body
+    );
+    sqlx::query(r#"DELETE FROM "plugin_tether.freight".contracts WHERE contract_id > 1000"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
     // Statistics: the delivered one, by route and pilot.
     let stats = page(&h, &format!("/plugins/{ID}/statistics"), &owner).await;
     for text in [

@@ -343,7 +343,7 @@ Phase 5, release 1.0:
 - [x] Freight: My Alliance keeps only contracts issued by the alliance's members (aa-freight `freight/models/contract_handlers.py:343-344`). Done 2026-10-07: both alliance modes keep contracts whose issuer ESI's affiliation puts in the handler's alliance; one kept is followed to its end
 - [x] Freight: customer notices only for priced contracts unless notify-all is on (aa-freight `freight/managers.py:428-429`). Done 2026-10-07: an unpriced contract's customer hears nothing unless "Announce every contract" is on, and does once a pricing is added while it's news
 - [x] Freight: My contracts for `use_calculator`, with aa-freight's statuses (aa-freight `freight/views.py:70-71`, `freight/managers.py:262-272`). Done 2026-10-07: the page and its view need `use_calculator`, and list outstanding, in-progress, finished and failed contracts only
-- [ ] Freight: the All contracts tab (aa-freight `freight/templates/freight/contracts_all.html`, `freight/managers.py:258-261`)
+- [x] Freight: the All contracts tab (aa-freight `freight/templates/freight/contracts_all.html`, `freight/managers.py:258-261`). Done 2026-10-07: Contracts has Active and All tabs; All lists every status, the newest 400, and says how many there are past that
 - [ ] Freight: Discord cards linking to the app's contracts (aa-freight `freight/models/contracts.py:335-341`)
 - [ ] Fleet Activity Tracking: ESI-tracked links that don't expire, tracked until the fleet ends (aa-afat `afat/views/fatlinks.py:366-377`, `afat/tasks.py:335-346`)
 - [ ] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`)
