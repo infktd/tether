@@ -39,6 +39,7 @@ mod notifications;
 mod openapi;
 mod ownership;
 mod pages;
+mod palette;
 mod permissions_audit;
 mod plugin_esi;
 mod plugin_http;

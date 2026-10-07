@@ -300,6 +300,20 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# The command palette: its search, as a page or as the palette's results,
+# lists nothing to anyone signed out.
+GET {{base}}/palette?q=admin
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
+GET {{base}}/palette?q=admin&scope=pilots
+HX-Request: true
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+body not contains "/admin"
+
 GET {{base}}/static/notifications.js
 HTTP 200
 [Asserts]

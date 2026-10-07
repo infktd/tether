@@ -10,6 +10,7 @@ pub mod account;
 pub mod corpstats;
 pub mod groups;
 pub mod notifications;
+pub mod palette;
 pub mod securegroups;
 pub mod sessions;
 pub mod tokens;

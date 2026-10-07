@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{%- import "icons.html" as icons -%}
+{% block title %}Search{% endblock %}
+{% block breadcrumb %}<span class="text-foreground">Search</span>{% endblock %}
+{% block content %}
+{#- The command palette as a page of its own (DESIGN.md, Command palette):
+    where the command bar's search field goes without script. -#}
+<div class="flex flex-col gap-6 max-w-[680px]">
+  <div class="page-head">
+    <div class="page-id">
+      <span class="page-icon" aria-hidden="true">{% call icons::icon("search") %}{% endcall %}</span>
+      <div class="min-w-0">
+        <div class="page-eyebrow">Account</div>
+        <h1 class="page-title">Search</h1>
+        <p class="page-desc">Pages, {% if shell.nav.users %}pilots {% endif %}and actions, only what you may open.</p>
+      </div>
+    </div>
+  </div>
+  <form class="card palette-page" method="get" action="/palette" role="search">
+    <section class="grid gap-4">
+      <div class="flex flex-wrap items-end gap-2">
+        <div class="grid gap-2 flex-1 min-w-[220px]">
+          <label class="label" for="palette-page-q">Search pages, {% if shell.nav.users %}pilots {% endif %}and actions</label>
+          <input class="input" id="palette-page-q" type="search" name="q" value="{{ query }}" autocomplete="off" enterkeyhint="search">
+        </div>
+        <button type="submit" class="btn" data-variant="primary">Search</button>
+      </div>
+      <fieldset class="palette-scopes">
+        <legend class="sr-only">Show</legend>
+        {% for (key, label) in [("all", "All"), ("pages", "Pages"), ("pilots", "Pilots"), ("actions", "Actions")] %}
+        {% if *key != "pilots" || shell.nav.users %}
+        <label><input type="radio" name="scope" value="{{ key }}"{% if scope == *key %} checked{% endif %}> {{ label }}</label>
+        {% endif %}
+        {% endfor %}
+      </fieldset>
+    </section>
+  </form>
+  <section class="card palette-page">
+    {% let combobox = false %}{% include "palette_results.html" %}
+  </section>
+</div>
+{% endblock %}

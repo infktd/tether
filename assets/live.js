@@ -803,6 +803,114 @@
     enhance(document);
   }
 
+  // The command palette (DESIGN.md, Command palette): ⌘K or Ctrl K, or the
+  // command bar's field, opens it; the server answers each search with
+  // the results (htmx). The cursor stays in the box: the arrows move the
+  // highlight, Enter opens it, Tab changes the scope, Escape closes.
+  const paletteBox = () => document.getElementById("palette");
+  const mac = /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+  const paletteKeys = (root) => {
+    if (!mac || !root.querySelectorAll) return;
+    for (const key of root.querySelectorAll("[data-palette-key]")) key.textContent = "⌘K";
+  };
+  const options = (box) => [...box.querySelectorAll('#palette-results [role="option"]')];
+  const highlight = (box, index) => {
+    const all = options(box);
+    const input = box.querySelector("#palette-q");
+    all.forEach((option, i) => option.setAttribute("aria-selected", i === index ? "true" : "false"));
+    const chosen = all[index];
+    if (chosen) {
+      input?.setAttribute("aria-activedescendant", chosen.id);
+      chosen.scrollIntoView({ block: "nearest" });
+    } else {
+      input?.removeAttribute("aria-activedescendant");
+    }
+  };
+  const highlighted = (box) => options(box).findIndex((o) => o.getAttribute("aria-selected") === "true");
+  const openPalette = () => {
+    const box = paletteBox();
+    if (!(box instanceof HTMLDialogElement) || box.open) return;
+    box.showModal();
+    const input = box.querySelector("#palette-q");
+    input?.focus();
+    input?.select();
+    window.htmx?.trigger(box.querySelector("form"), "palette-open");
+  };
+  document.addEventListener("keydown", (event) => {
+    if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+    const box = paletteBox();
+    if (!(box instanceof HTMLDialogElement)) return;
+    event.preventDefault();
+    if (box.open) box.close();
+    else openPalette();
+  });
+  // The field is a link to the palette's page, for when there's no script.
+  document.addEventListener("click", (event) => {
+    const field = event.target instanceof Element && event.target.closest("a[data-palette]");
+    if (!field || event.ctrlKey || event.metaKey || event.shiftKey || !paletteBox()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openPalette();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    const box = paletteBox();
+    if (!box?.open || event.target?.id !== "palette-q") return;
+    const all = options(box);
+    const at = highlighted(box);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!all.length) return;
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      highlight(box, at < 0 ? 0 : (at + step + all.length) % all.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      all[at < 0 ? 0 : at]?.click();
+    } else if (event.key === "Tab") {
+      const scopes = [...box.querySelectorAll('.palette-scopes input[name="scope"]')];
+      if (!scopes.length) return;
+      event.preventDefault();
+      const now = scopes.findIndex((s) => s.checked);
+      const next = scopes[(now + (event.shiftKey ? -1 : 1) + scopes.length) % scopes.length];
+      next.checked = true;
+      next.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if (event.key === "Escape") {
+      // A search box would clear itself first; Escape closes at once.
+      event.preventDefault();
+      box.close();
+    }
+  });
+  // Results arrive: the first is highlighted, so Enter opens it.
+  document.addEventListener("htmx:afterSwap", (event) => {
+    const box = paletteBox();
+    if (box?.open && box.contains(event.detail.target) && event.detail.target.id === "palette-results") highlight(box, 0);
+  });
+  document.addEventListener("htmx:load", (event) => {
+    const box = paletteBox();
+    if (box?.open && event.detail.elt?.id === "palette-results") highlight(box, 0);
+  });
+  document.addEventListener("mousemove", (event) => {
+    const box = paletteBox();
+    const option = box?.open && event.target instanceof Element && event.target.closest('#palette-results [role="option"]');
+    if (option && option.getAttribute("aria-selected") !== "true") highlight(box, options(box).indexOf(option));
+  });
+  document.addEventListener("click", (event) => {
+    const box = paletteBox();
+    if (!box?.open || !(event.target instanceof Element)) return;
+    // A click on the scrim (the dialog itself, not its panel), or ESC.
+    if (event.target === box || event.target.closest("[data-palette-close]")) {
+      box.close();
+      return;
+    }
+    // A row opened: its link or form goes on; the palette closes.
+    if (event.target.closest('#palette-results [role="option"]')) setTimeout(() => box.close());
+  });
+  // A scope picked with the pointer keeps the cursor in the box.
+  document.addEventListener("change", (event) => {
+    if (event.target instanceof Element && event.target.closest("#palette .palette-scopes")) paletteBox()?.querySelector("#palette-q")?.focus();
+  });
+  paletteKeys(document);
+  document.addEventListener("htmx:load", (event) => paletteKeys(event.detail.elt));
+
   // Copy buttons: the text is the <pre> in the same block, or its
   // read-only field (a group's direct join link).
   document.addEventListener("click", (event) => {

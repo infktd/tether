@@ -25,6 +25,13 @@
   <button type="button" class="nav-toggle btn" data-variant="ghost" data-size="icon" popovertarget="main-nav" aria-label="Menu">{% call icons::icon("menu") %}{% endcall %}</button>
   <a href="/" class="wordmark" aria-label="Tether, home">{% include "wordmark.html" %}</a>
   {% if let Some(site) = shell.site_name %}<span class="site-chip"><span class="site-chip-mark num" aria-hidden="true">{% if let Some(i) = shell.site_initials() %}{{ i }}{% endif %}</span><span class="site-chip-name">{{ site }}</span></span>{% endif %}
+  {#- The command palette's field (DESIGN.md): without script, a link to
+      the same search as a page; live.js opens the palette instead. -#}
+  <a href="/palette" class="command-search" data-palette hx-boost="false" aria-keyshortcuts="Meta+K Control+K">
+    {% call icons::icon("search") %}{% endcall %}
+    <span class="command-search-text">Search pages, {% if shell.nav.users %}pilots {% endif %}and actions</span>
+    <kbd class="kbd" aria-hidden="true" data-palette-key>Ctrl K</kbd>
+  </a>
   <span class="command-bar-gap"></span>
   <div class="command-status">
     {#- Kept across navigations (hx-preserve): the clock doesn't blank and
@@ -149,6 +156,33 @@
     <button type="button" class="btn" data-size="sm" data-variant="primary" id="confirm-box-go"></button>
   </div>
 </div>
+{#- The command palette (DESIGN.md): ⌘K or Ctrl K, or the command bar's
+    field. live.js opens it and moves the highlight; the server answers
+    each search with only what this viewer may open. -#}
+<dialog id="palette" class="palette" aria-labelledby="palette-label">
+  <div class="palette-panel bk">
+    <form class="palette-search" method="get" action="/palette" role="search" hx-get="/palette" hx-target="#palette-results" hx-swap="outerHTML" hx-trigger="input delay:120ms, submit, palette-open" hx-sync="this:replace">
+      <div class="palette-field">
+        {% call icons::icon("search") %}{% endcall %}
+        <label for="palette-q" id="palette-label" class="sr-only">Search pages, {% if shell.nav.users %}pilots {% endif %}and actions</label>
+        <input id="palette-q" type="search" name="q" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" enterkeyhint="go" placeholder="Search pages, {% if shell.nav.users %}pilots {% endif %}and actions">
+        <button type="button" class="kbd palette-close" data-palette-close>ESC<span class="sr-only"> close</span></button>
+      </div>
+      <fieldset class="palette-scopes">
+        <legend class="sr-only">Show</legend>
+        <label><input type="radio" name="scope" value="all" checked> All</label>
+        <label><input type="radio" name="scope" value="pages"> Pages</label>
+        {% if shell.nav.users %}<label><input type="radio" name="scope" value="pilots"> Pilots</label>{% endif %}
+        <label><input type="radio" name="scope" value="actions"> Actions</label>
+      </fieldset>
+    </form>
+    <div id="palette-results" class="palette-results"></div>
+    <footer class="palette-foot">
+      <span class="palette-keys" aria-hidden="true"><kbd class="kbd">↑</kbd> <kbd class="kbd">↓</kbd> move <kbd class="kbd">↵</kbd> open <kbd class="kbd">TAB</kbd> scope <kbd class="kbd">ESC</kbd> close</span>
+      <span>Searches only what you may open</span>
+    </footer>
+  </div>
+</dialog>
 {% if let Some(w) = shell.whats_new %}
 {#- What's new (DESIGN.md): live.js opens it once after an update, and
     opening it marks what it shows as read. -#}

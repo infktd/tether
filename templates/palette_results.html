@@ -1,0 +1,46 @@
+{%- import "icons.html" as icons -%}
+{%- macro tile(item) -%}
+<span class="palette-tile" aria-hidden="true">
+  {%- if let Some(src) = item.portrait_url() -%}<img src="{{ src }}" alt="" width="28" height="28">{%- else -%}{% call icons::icon(item.icon) %}{% endcall %}{%- endif -%}
+</span>
+<span class="palette-text">
+  <span class="palette-title">{{ item.title }}</span>
+  {%- if !item.context.is_empty() %}<span class="palette-context">{{ item.context }}</span>{% endif -%}
+</span>
+{%- endmacro -%}
+{#- The command palette's results (DESIGN.md, Command palette): grouped
+    under overlines, each a tile, a title and a line of context. In the
+    palette they're a listbox its search box controls (live.js moves the
+    highlight); as a page, plain links. -#}
+<div id="palette-results" class="palette-results">
+  {% if !groups.is_empty() %}
+  <div id="palette-list"{% if combobox %} role="listbox" aria-label="Results"{% endif %}>
+  {% for group in groups %}
+  {% let g = loop.index0 %}
+  <div class="palette-group"{% if combobox %} role="group" aria-labelledby="palette-group-{{ g }}"{% endif %}>
+    <p class="palette-group-label ov" id="palette-group-{{ g }}"{% if combobox %} role="presentation"{% endif %}>{{ group.label }}</p>
+    {% for item in group.items %}
+    {%- let i = loop.index0 -%}
+    {%- match item.target -%}
+    {%- when crate::pages::palette::Target::Link with { href, new_tab } -%}
+    <a href="{{ href }}" id="palette-opt-{{ g }}-{{ i }}" class="palette-item"{% if combobox %} role="option" tabindex="-1" aria-selected="false"{% endif %}{% if *new_tab %} target="_blank" rel="noopener noreferrer"{% endif %}>
+      {%- call tile(item) %}{% endcall -%}
+    </a>
+    {%- when crate::pages::palette::Target::Post with { action, boost } -%}
+    <form method="post" action="{{ action }}" class="contents"{% if !boost %} hx-boost="false"{% endif %}>
+      <button type="submit" id="palette-opt-{{ g }}-{{ i }}" class="palette-item"{% if combobox %} role="option" tabindex="-1" aria-selected="false"{% endif %}>
+        {%- call tile(item) %}{% endcall -%}
+      </button>
+    </form>
+    {%- endmatch -%}
+    {% endfor %}
+  </div>
+  {% endfor %}
+  </div>
+  {% else if !pilot_hint %}
+  <p class="palette-empty">Nothing you may open matches.</p>
+  {% endif %}
+  {% if pilot_hint %}
+  <p class="palette-hint">Type two letters or more to find pilots.</p>
+  {% endif %}
+</div>
