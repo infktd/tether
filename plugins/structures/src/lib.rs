@@ -79,6 +79,8 @@ const SHORT_ROWS: i64 = 60;
 const GATE_ROWS: i64 = 50;
 const TIMER_ROWS: i64 = 80;
 const OWNER_ROWS: i64 = 60;
+/// Rows of the public customs office list (6 columns).
+const POCO_ROWS: i64 = 500;
 /// Fuel alert configs' hours: a year at most.
 const MAX_ALERT_HOURS: i64 = 8760;
 /// Fuel alerts queued per run.
@@ -2595,18 +2597,32 @@ fn jump_gate_tab(
         rows,
     );
     let mut sections = vec![Section::Table(table)];
-    if total > GATE_ROWS {
-        sections.push(Section::Text(format!(
-            "Showing the first {GATE_ROWS} of {total}: pick an owner on the Owners tab, or tags, \
-             to see theirs."
-        )));
-    }
+    sections.extend(cut(GATE_ROWS, total));
     sections.push(Section::Text(
         "Liquid ozone in each gate's fuel bay, as its corporation's assets last said. They're \
          read with a data source's Director role: until then the figure is empty."
             .to_owned(),
     ));
     Ok(sections)
+}
+
+/// A tab cut at `shown` rows of `total` says so (aa-structures pages
+/// through every row, `views/structures.py:188-195`), and how to see the
+/// rest: an owner's page or tags narrow the list.
+fn cut(shown: i64, total: i64) -> Option<Section> {
+    (total > shown).then(|| {
+        Section::Text(format!(
+            "Showing the first {shown} of {total}: pick an owner on the Owners tab, or tags, to \
+             see theirs."
+        ))
+    })
+}
+
+/// A tab's sections: its table, then a line if it was cut.
+fn tab_of(table: Table, shown: i64, total: i64) -> Vec<Section> {
+    let mut sections = vec![Section::Table(table)];
+    sections.extend(cut(shown, total));
+    sections
 }
 
 /// What the list shows: an owner's, or those with any of some tags.
@@ -2725,6 +2741,17 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         )
         .map_err(|e| failed("reading timers", e))
     };
+    let timer_count = storage::query(
+        &format!(
+            "SELECT count(*) FROM timers t JOIN structures s ON s.structure_id = t.structure_id \
+             {scope} AND t.at > now() AND ($8 OR t.kind <> 'Unanchoring')"
+        ),
+        &[params.clone(), vec![unanchoring.into()]].concat(),
+    )
+    .map_err(|e| failed("counting timers", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
     let structure_timers = timers_of(false, TIMER_ROWS)?;
     let extractions = timers_of(true, TIMER_ROWS - count(structure_timers.rows.len()))?;
     let mut timers: Vec<&Vec<Db>> = structure_timers
@@ -2748,6 +2775,17 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         &visible,
     )
     .map_err(|e| failed("reading owners", e))?;
+    let owner_count = storage::query(
+        &format!(
+            "SELECT count(DISTINCT o.corporation_id) FROM owners o WHERE {}",
+            VISIBLE.replace("s.corporation_id", "o.corporation_id")
+        ),
+        &visible,
+    )
+    .map_err(|e| failed("counting owners", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
 
     let row = counts.rows.first();
     let count_of = |i: usize| row.map_or(0, |r| int(r, i));
@@ -2773,11 +2811,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         "No structures yet. Owners' structures appear within the hour.",
         rows_of(&upwell),
     )));
-    if total > LIST_ROWS {
-        list.push(Section::Text(format!(
-            "Showing the first {LIST_ROWS} of {total}: pick an owner on the Owners tab, or tags, to see theirs."
-        )));
-    }
+    list.extend(cut(LIST_ROWS, total));
     let timer_table = with_rows(
         Table::new(vec![
             Column::numeric("When (EVE)"),
@@ -2868,47 +2902,59 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         .tab("Structures", list)
         .tab(
             "Low fuel",
-            vec![Section::Table(structure_table(
-                &format!("Under {alert} hours of fuel, or low power"),
-                "No structure is low on fuel.",
-                rows_of(&low),
-            ))],
+            tab_of(
+                structure_table(
+                    &format!("Under {alert} hours of fuel, or low power"),
+                    "No structure is low on fuel.",
+                    rows_of(&low),
+                ),
+                SHORT_ROWS,
+                low_count,
+            ),
         )
         .tab(
             "Reinforced",
-            vec![Section::Table(structure_table(
-                "Reinforced or vulnerable",
-                "No structure is reinforced.",
-                rows_of(&reinforced),
-            ))],
-        )
-        .tab(
-            "Timers",
-            vec![
-                Section::Table(timer_table),
-                Section::Text(
-                    "From structures' states and their notifications, and moon extractions' \
-                     chunks if the settings say so. Structure Timers shows them too, as \
-                     automatic timers (corporation-only if the settings say so)."
-                        .to_owned(),
+            tab_of(
+                structure_table(
+                    "Reinforced or vulnerable",
+                    "No structure is reinforced.",
+                    rows_of(&reinforced),
                 ),
-            ],
+                SHORT_ROWS,
+                reinforced_count,
+            ),
         )
+        .tab("Timers", {
+            let mut sections = tab_of(timer_table, TIMER_ROWS, timer_count);
+            sections.push(Section::Text(
+                "From structures' states and their notifications, and moon extractions' \
+                 chunks if the settings say so. Structure Timers shows them too, as \
+                 automatic timers (corporation-only if the settings say so)."
+                    .to_owned(),
+            ));
+            sections
+        })
         .tab(
             "Starbases",
-            vec![Section::Table(starbase_table(
-                starbases
-                    .rows
-                    .iter()
-                    .map(|r| starbase_row(r, now, alert, unanchoring))
-                    .collect(),
-            ))],
+            tab_of(
+                starbase_table(
+                    starbases
+                        .rows
+                        .iter()
+                        .map(|r| starbase_row(r, now, alert, unanchoring))
+                        .collect(),
+                ),
+                STARBASE_ROWS,
+                starbase_count,
+            ),
         )
         .tab(
             "Orbitals",
-            vec![Section::Table(orbital_table(
-                orbitals.rows.iter().map(|r| orbital_row(r)).collect(),
-            ))],
+            tab_of(
+                orbital_table(orbitals.rows.iter().map(|r| orbital_row(r)).collect()),
+                ORBITAL_ROWS,
+                orbital_count,
+            ),
         );
     if let Some(gates) = &gates {
         page = page.tab(
@@ -2933,18 +2979,25 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
         );
     }
     if filter.owner.is_none() && filter.tags.is_none() {
+        let mut sections = vec![Section::Table(owner_table)];
+        if owner_count > OWNER_ROWS {
+            sections.push(Section::Text(format!(
+                "Showing the first {OWNER_ROWS} of {owner_count} owners, by name."
+            )));
+        }
         page = page.tab(
             "Owners",
-            vec![
-                Section::Table(owner_table),
-                Section::Text(
+            [
+                sections,
+                vec![Section::Text(
                     "Add data source logs in with a character with the in-game Station Manager role. \
                      Its corporation's structures show \
                      here within the hour; starbases, customs offices, skyhooks and fittings need \
                      the Director role."
                         .to_owned(),
-                ),
-            ],
+                )],
+            ]
+            .concat(),
         );
     }
     Ok(page)
@@ -2956,6 +3009,7 @@ fn list_page(viewer: &Viewer, filter: Filter) -> Result<Page, PageError> {
 /// known to Tether).
 fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
     let rows = storage::query(
+        &format!(
         "SELECT coalesce(o.name, 'Corporation ' || s.corporation_id::text), \
              coalesce(y.name, sn.name, 'System ' || s.system_id::text), y.security_status, \
              coalesce(r.name, ''), coalesce(s.planet_name, p.name, ''), s.details::text, s.corporation_id, \
@@ -2964,10 +3018,21 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
          LEFT JOIN names o ON o.id = s.corporation_id \
          LEFT JOIN systems y ON y.system_id = s.system_id LEFT JOIN names sn ON sn.id = s.system_id \
          LEFT JOIN names r ON r.id = y.region_id LEFT JOIN names p ON p.id = s.planet_id \
-         WHERE s.kind = 'customs_office' ORDER BY 4, 2, 5 LIMIT 500",
+         WHERE s.kind = 'customs_office' ORDER BY 4, 2, 5 LIMIT {POCO_ROWS}"
+        ),
         &[],
     )
     .map_err(|e| failed("reading customs offices", e))?;
+    let total = storage::query(
+        "SELECT count(*) FROM structures s \
+         JOIN owner_settings w ON w.corporation_id = s.corporation_id AND w.pocos_public \
+         WHERE s.kind = 'customs_office'",
+        &[],
+    )
+    .map_err(|e| failed("counting customs offices", e))?
+    .rows
+    .first()
+    .map_or(0, |r| int(r, 0));
     let (corp, alliance) = (viewer.main.corporation_id, viewer.main.alliance_id);
     let table = with_rows(
         Table::new(vec![
@@ -3020,15 +3085,20 @@ fn pocos_page(viewer: &Viewer) -> Result<Page, PageError> {
             ]
         }),
     );
-    Ok(Page::new("Customs offices")
+    let mut page = Page::new("Customs offices")
         .description("Customs offices their owners opened to everyone who may open Structures")
-        .table(table)
-        .text(
-            "Access and tax for your main's corporation and alliance. As aa-structures, access \
+        .table(table);
+    if total > POCO_ROWS {
+        page = page.text(format!(
+            "Showing the first {POCO_ROWS} of {total}, by region and system."
+        ));
+    }
+    Ok(page.text(
+        "Access and tax for your main's corporation and alliance. As aa-structures, access \
              and tax for pilots in neither (\"Yes (?)\": the neutral standing rate) may not be \
              accurate: they depend on the owner's standings towards you, which Tether doesn't \
              know.",
-        ))
+    ))
 }
 
 /// Whether a customs office lets in pilots of neither its corporation nor

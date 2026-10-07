@@ -3507,3 +3507,72 @@ async fn power_modes_as_aa_structures(db: PgPool) {
     assert!(drill.body.contains(">Abandoned<"), "{}", drill.body);
     assert!(drill.body.contains("Last online"), "{}", drill.body);
 }
+
+/// `n` structures of `kind` for Chribba Corp, ids from `first`, out of fuel.
+async fn seed_structures(h: &Harness, kind: &str, first: i64, n: i64) {
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".structures
+               (structure_id, corporation_id, kind, name, type_id, system_id, state)
+           SELECT $1 + g, $2, $3, $3 || ' ' || g, 35832, $4, 'shield_vulnerable'
+           FROM generate_series(0, $5 - 1) g"#,
+    )
+    .bind(first)
+    .bind(CHRIBBA_CORP)
+    .bind(kind)
+    .bind(SYSTEM)
+    .bind(n)
+    .execute(&h.db)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn every_tab_says_when_its_cut(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = out_of_fuel(&h).await;
+    let list = format!("/plugins/{ID}");
+    // Few enough: nothing to say.
+    let all = page(&h, &list, &owner).await;
+    assert!(!all.body.contains("Showing the first"), "{}", all.body);
+    // More than each tab shows (aa-structures pages through every row):
+    // 62 out of fuel, 121 starbases, 501 customs offices (public), 81
+    // timers.
+    seed_structures(&h, "upwell", 2_000_000_000_000, 60).await;
+    seed_structures(&h, "starbase", 2_100_000_000_000, 121).await;
+    seed_structures(&h, "customs_office", 2_200_000_000_000, 501).await;
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".timers (structure_id, kind, at, corporation_id)
+           SELECT $1, 'Armor', now() + make_interval(hours => g + 1), $2
+           FROM generate_series(0, 80) g"#,
+    )
+    .bind(KEEP)
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.structures".owner_settings (corporation_id, pocos_public)
+           VALUES ($1, true) ON CONFLICT (corporation_id) DO UPDATE SET pocos_public = true"#,
+    )
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    for (tab, says) in [
+        (1, "Showing the first 60 of 62"),
+        (3, "Showing the first 80 of 81"),
+        (4, "Showing the first 120 of 121"),
+        (5, "Showing the first 150 of 501"),
+    ] {
+        let shown = page(&h, &format!("{list}?_tab={tab}"), &owner).await;
+        assert_eq!(shown.status, StatusCode::OK, "{tab}: {}", shown.body);
+        assert!(shown.body.contains(says), "{tab}: {says}: {}", shown.body);
+    }
+    let pocos = page(&h, &format!("{list}/pocos"), &owner).await;
+    assert_eq!(pocos.status, StatusCode::OK, "{}", pocos.body);
+    assert!(
+        pocos.body.contains("Showing the first 500 of 501"),
+        "{}",
+        pocos.body
+    );
+}
