@@ -97,7 +97,7 @@ manage = "Create, change, copy and delete skill sets and their groups, and chang
 [permission_notes]
 basic_access = "Usually Member, and any state whose pilots should register their characters (a state that requires Member Audit needs it). Holders register characters and see their own characters' sheets and mail, nobody else's."
 share_characters = "Usually Member, where recruiters vet applicants. Holders share their own characters, mail included, with recruiters who view shared characters, until they stop sharing or the sharing timeout ends it."
-finder_access = "For officers and recruiters. Holders list the characters in their view scope (only their own without one) with each one's main and state, and opening those sheets takes viewing characters owned by others too."
+finder_access = "For officers and recruiters. Holders list every character of the pilots in their view scope (only their own without one), unregistered ones too, with each one's main and state, and opening those sheets takes viewing characters owned by others too."
 reports_access = "For officers who check doctrine readiness and registration. Reports count who can use each skill set, and which pilots and corporations have every character registered, among those in the holder's view scope; without a scope, only their own."
 characters_access = "For officers who audit members, so keep it to trusted staff. Holders open the whole sheet of every character in their view scope (only their own without one), mail included, and every mail view is in the audit log."
 view_shared_characters = "For recruiters. Holders find and open the characters pilots chose to share with them, mail included, and every mail view is in the audit log."

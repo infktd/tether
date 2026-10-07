@@ -1176,6 +1176,74 @@ async fn skill_sets_are_for_view_skill_sets(db: PgPool) {
     assert_eq!(send(&h.app, add()).await.status, StatusCode::SEE_OTHER);
 }
 
+/// aa-memberaudit's Character Finder lists every character of the pilots
+/// in scope, those not registered flagged (no sheet to open), the main
+/// marked, with its filters; and only the bundled Member Audit learns of
+/// the unregistered ones (the host's `identity.members`).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_finder_lists_unregistered_characters(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    member_account(
+        &h,
+        &[
+            (CORP_MATE, "Corp Mate", 98133756, Some(1695357456)),
+            (MATE_ALT, "Mate Alt", 98000002, None),
+        ],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO core.characters (id, account_id, name, corporation_id) \
+         SELECT 90000022, account_id, 'Hidden Alt', 98000003 FROM core.characters WHERE id = $1",
+    )
+    .bind(CORP_MATE)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let finder = format!("/plugins/{ID}/finder");
+    let res = page(&h, &finder, &owner).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let row = finder_row(&res.body, "Hidden Alt");
+    assert!(
+        row.contains(">Unregistered<") && row.contains("Corp Mate"),
+        "{row}"
+    );
+    assert!(!row.contains("/character/90000022"), "{row}");
+    let row = finder_row(&res.body, ">Corp Mate<");
+    assert!(row.contains(">Main<"), "{row}");
+    let row = finder_row(&res.body, ">Mate Alt<");
+    assert!(
+        !row.contains(">Main<") && !row.contains(">Unregistered<"),
+        "{row}"
+    );
+    // The filters: unregistered only; mains only; by the main's
+    // corporation; the search finds an unregistered alt by its main.
+    for (query, shown, hidden) in [
+        ("unregistered=yes", "Hidden Alt", "Mate Alt"),
+        ("unregistered=no", "Mate Alt", "Hidden Alt"),
+        ("main=yes", "Corp Mate", "Hidden Alt"),
+        (
+            "main_corporation=98133756",
+            "Hidden Alt",
+            "character/196379789\"",
+        ),
+        ("q=corp+mate", "Hidden Alt", "character/196379789\""),
+    ] {
+        let body = page(&h, &format!("{finder}?{query}"), &owner).await.body;
+        assert!(
+            body.contains(shown) && !body.contains(hidden),
+            "{query}\n{body}"
+        );
+    }
+    // Without a view scope, a pilot sees only their own account's.
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    grant(&h, &owner, "finder_access").await;
+    let theirs = page(&h, &finder, &blue).await.body;
+    assert!(!theirs.contains("Hidden Alt"), "{theirs}");
+    grant(&h, &owner, "view_same_corporation").await;
+    let theirs = page(&h, &finder, &blue).await.body;
+    assert!(theirs.contains("Hidden Alt"), "{theirs}");
+}
+
 /// aa-memberaudit's User Compliance and Corporation Compliance reports:
 /// each pilot in scope (their main), whether any and every one of their
 /// characters is registered with Member Audit; each corporation of the

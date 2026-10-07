@@ -12,7 +12,8 @@
 //!   Clones (implants, jump clones), Industry (jobs, blueprints, mining,
 //!   planets), Contacts (contacts, NPC standings), and Mail on its own
 //!   audited pages. Pilots share their own characters from it.
-//! - **Character Finder**: member characters within the viewer's scope,
+//! - **Character Finder**: every character of the pilots within the
+//!   viewer's scope, unregistered ones flagged,
 //!   with each one's main, main organisation and state.
 //! - **Skill Sets** and **Reports**.
 //! - **Settings**: aa-memberaudit's settings (see `settings`).
