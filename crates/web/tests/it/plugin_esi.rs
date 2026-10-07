@@ -3255,3 +3255,216 @@ async fn apps_notify_only_their_own_audience(db: PgPool) {
     .await;
     assert!(out.starts_with("err Error::Invalid"), "{out}");
 }
+
+/// Jay, 2026-10-07: an app may notify an account that submitted one of
+/// its forms (an applicant, a requester), holding none of its permissions,
+/// by the reference the host gave it while that pilot posted; nobody else.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn apps_notify_who_submitted_their_forms_by_reference(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    log_in_as(&h, "443630591:The Mittani", None).await;
+    install_notices(&h, &owner).await;
+    let pilot = account_of(&h, MITTANI).await;
+    // The pilot posting a form holds none of the app's permissions (an
+    // applicant on a signed-in page).
+    let mut applicant = chribba_looking(&h).await;
+    applicant.account_id = pilot;
+    applicant.permissions.clear();
+    let reference = |viewer, as_page| {
+        run_probe_as(
+            &h,
+            "acme.notes",
+            "notify-submitter-reference",
+            Vec::new(),
+            viewer,
+            as_page,
+        )
+    };
+
+    // Only for the pilot posting a form: not while a page draws, not
+    // with nobody posting (a job's way).
+    let out = reference(Some(applicant.clone()), true).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    let out = reference(None, false).await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.plugin_submitters")
+            .fetch_one(&h.db)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // One per account and app, the same every time: random hex.
+    let out = reference(Some(applicant.clone()), false).await;
+    let token = out.strip_prefix("ok ").expect(&out).to_owned();
+    assert_eq!(token.len(), 32, "{token}");
+    assert!(
+        token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{token}"
+    );
+    assert_eq!(
+        reference(Some(applicant.clone()), false).await,
+        format!("ok {token}")
+    );
+
+    let to = |reference: &str, title: &str| {
+        vec![
+            ("reference".to_owned(), reference.to_owned()),
+            ("title".to_owned(), title.to_owned()),
+            (
+                "message".to_owned(),
+                "Your application was accepted.".to_owned(),
+            ),
+        ]
+    };
+    // Not from a page.
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-submitter",
+        to(&token, "Accepted"),
+        true,
+    )
+    .await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+    // From a job or a recruiter's submit: reaches the applicant, who
+    // holds none of the app's permissions.
+    let before = notices(&h, pilot).await.len();
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-submitter",
+        to(&token, "Accepted"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok true");
+    let got = notices(&h, pilot).await;
+    assert_eq!(got.len(), before + 1);
+    assert_eq!(
+        got.last().unwrap(),
+        &(
+            "info".to_owned(),
+            "Notes: Accepted".to_owned(),
+            "Your application was accepted.".to_owned()
+        )
+    );
+
+    // A year after the last post it was asked for in, it reaches nobody;
+    // asking again in a new post renews it.
+    sqlx::query(
+        "UPDATE core.plugin_submitters SET last_posted_at = now() - interval '366 days' \
+         WHERE account_id = $1",
+    )
+    .bind(pilot)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-submitter",
+        to(&token, "Late"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok false");
+    assert_eq!(
+        reference(Some(applicant.clone()), false).await,
+        format!("ok {token}")
+    );
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-submitter",
+        to(&token, "Late"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok true");
+
+    // A reference never made reaches nobody; something that isn't one is
+    // refused unread.
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-submitter",
+        to(&"0".repeat(32), "Accepted"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok false");
+    for bad in [pilot.to_string(), format!("{token}'"), String::new()] {
+        let out = run_probe(&h, "acme.notes", "notify-submitter", to(&bad, "X"), false).await;
+        assert!(out.starts_with("err Error::Invalid"), "{bad}: {out}");
+    }
+
+    // Another app can't use it, even with the capability; its own
+    // reference for the same account is another.
+    let key = Key::new(10);
+    let manifest = format!(
+        "[plugin]\nid = \"acme.other\"\nname = \"Other\"\nversion = \"1.0.0\"\nhost_api = \"1\"\n\n\
+         [publisher]\nkey = \"{}\"\n\n[capabilities]\nnotify = true\n\n\
+         [permissions]\nview = \"See\"\n\n[[views]]\nlabel = \"Overview\"\npath = \"\"\n\n[[pages]]\npath = \"\"\npermission = \"view\"\n",
+        key.public()
+    );
+    let component = probe_component();
+    let bytes = testing::zip(&[
+        ("plugin.toml", manifest.as_bytes()),
+        ("plugin.wasm", &component),
+    ]);
+    install_package(&h, &owner, &bytes, &key.sign(&bytes)).await;
+    let out = run_probe(
+        &h,
+        "acme.other",
+        "notify-submitter",
+        to(&token, "Hi"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok false");
+    let theirs = run_probe_as(
+        &h,
+        "acme.other",
+        "notify-submitter-reference",
+        Vec::new(),
+        Some(applicant.clone()),
+        false,
+    )
+    .await;
+    assert_ne!(theirs, format!("ok {token}"));
+    assert!(theirs.starts_with("ok "), "{theirs}");
+
+    // Only with the capability.
+    install_files(&h, &owner).await;
+    let out = run_probe_as(
+        &h,
+        "acme.files",
+        "notify-submitter-reference",
+        Vec::new(),
+        Some(applicant.clone()),
+        false,
+    )
+    .await;
+    assert!(out.starts_with("err Error::Invalid"), "{out}");
+
+    // References go with the account.
+    sqlx::query("DELETE FROM core.accounts WHERE id = $1")
+        .bind(pilot)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let out = run_probe(
+        &h,
+        "acme.notes",
+        "notify-submitter",
+        to(&token, "Again"),
+        false,
+    )
+    .await;
+    assert_eq!(out, "ok false");
+}

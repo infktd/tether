@@ -47,20 +47,35 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(11);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_ship_replacement.sql");
-    let second = plugin_file("migrations/0002_claims_follow_requests.sql");
-    let third = plugin_file("migrations/0003_srp_team_channel.sql");
     let component = component();
-    let bytes = testing::zip(&[
+    // Every migration the package has, in order.
+    let dir = format!(
+        "{}/../../plugins/ship-replacement/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    names.sort();
+    let migrations: Vec<(String, String)> = names
+        .into_iter()
+        .map(|n| {
+            let sql = plugin_file(&format!("migrations/{n}"));
+            (format!("migrations/{n}"), sql)
+        })
+        .collect();
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_ship_replacement.sql", migration.as_bytes()),
-        (
-            "migrations/0002_claims_follow_requests.sql",
-            second.as_bytes(),
-        ),
-        ("migrations/0003_srp_team_channel.sql", third.as_bytes()),
-    ]);
+    ];
+    files.extend(
+        migrations
+            .iter()
+            .map(|(n, sql)| (n.as_str(), sql.as_bytes())),
+    );
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -688,6 +703,448 @@ async fn ship_replacement_end_to_end(db: PgPool) {
             "/api/killID/1005/".to_owned(),
         ]
     );
+}
+
+/// The pilot's notices from the app, title and message.
+async fn told(h: &Harness, character: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT n.title || ' | ' || n.message FROM core.notifications n \
+         JOIN core.characters c ON c.account_id = n.account_id \
+         WHERE c.id = $1 AND n.plugin_id = $2 ORDER BY n.id",
+    )
+    .bind(character)
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+/// AA core's srp tells the pilot of each approval and rejection
+/// (`srp/views.py:273-278`, `:306-311`): in the bell, whatever they hold by
+/// then (by Tether's reference to who requested it), in AA's words.
+/// Op Rock, added by gigX (who manages SRP), with Pilot A's requests for
+/// kills 1001 and 1004 on it.
+struct OpRock {
+    h: Harness,
+    _zkill: MockServer,
+    owner: String,
+    pilot: String,
+    manager: String,
+    fleet: i64,
+    r1: i64,
+    r4: i64,
+}
+
+async fn op_rock(db: PgPool) -> OpRock {
+    cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
+    cover(&db, Builtin::Blue, EntityKind::Corporation, BLUE_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let zkill = MockServer::start().await;
+    h.plugins.route_http_to(&zkill.address().to_string());
+    mount_esi(&h).await;
+    mount_zkill(&zkill).await;
+    let pilot = log_in_as(&h, "443630591:Pilot A", None).await;
+    let manager = log_in_as(&h, "1887431749:gigX", None).await;
+    for state in [MEMBER_STATE, BLUE_STATE] {
+        grant(&h, &owner, "access_srp", state).await;
+    }
+    grant(&h, &owner, "srp_management", BLUE_STATE).await;
+    let res = post(&h, &manager, "add", &add_fleet("Op+Rock")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (fleet, code) = newest_fleet(&h).await;
+    for kill in [1001, 1004] {
+        let res = post(
+            &h,
+            &pilot,
+            &format!("request/{code}"),
+            &request(&format!("https://zkillboard.com/kill/{kill}/")),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let (r1, r4) = (request_of(&h, 1001).await, request_of(&h, 1004).await);
+    OpRock {
+        h,
+        _zkill: zkill,
+        owner,
+        pilot,
+        manager,
+        fleet,
+        r1,
+        r4,
+    }
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_pilot_is_told_of_each_decision(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner,
+        pilot: _,
+        manager,
+        fleet,
+        r1,
+        r4,
+    } = op_rock(db).await;
+    assert!(told(&h, PILOT_A).await.is_empty());
+
+    // Approved on its page, with a comment; rejected from the fleet's
+    // table. A payout changed or a comment added tells nobody.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r1}"),
+        "_form=decide&decision=approve&comment=o7",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r1}"),
+        "_form=payout&payout=11000000&comment=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(
+        &h,
+        &manager,
+        &format!("fleet/{fleet}"),
+        &format!("_form=decide&request={r4}&decision=reject"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        told(&h, PILOT_A).await,
+        [
+            "Ship Replacement: SRP Request Approved | Your SRP request for a Rifter lost during \
+             Op Rock has been approved for 12,500,000 ISK. Comment: o7",
+            "Ship Replacement: SRP Request Rejected | Your SRP request for a Rifter lost during \
+             Op Rock has been rejected.",
+        ]
+    );
+    // Deciding it the same way again isn't news.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r4}"),
+        "_form=decide&decision=reject&comment=Still+no",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(told(&h, PILOT_A).await.len(), 2);
+
+    // The pilot no longer holds access_srp: still told, as AA tells the
+    // character's owner. A request from before Tether gave references
+    // reaches them only while they hold one of the app's permissions.
+    sqlx::query(
+        "UPDATE \"plugin_tether.ship-replacement\".requests SET submitter = NULL WHERE id = $1",
+    )
+    .bind(r4)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    // (Read, so the same words come again: the bell skips one unread.)
+    sqlx::query("UPDATE core.notifications SET read_at = now()")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM core.permission_grants WHERE permission LIKE $1")
+        .bind(format!("plugin.{ID}.%"))
+        .execute(&h.db)
+        .await
+        .unwrap();
+    for (r, decision) in [(r1, "reject"), (r4, "approve")] {
+        let res = post(
+            &h,
+            &owner,
+            &format!("review/{r}"),
+            &format!("_form=decide&decision={decision}&comment="),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let got = told(&h, PILOT_A).await;
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert!(got[2].contains("SRP Request Rejected"), "{got:?}");
+}
+
+/// aa-srp's request details for its requester: the pilot opens their own
+/// request from My SRP requests and sees where it stands, why it was
+/// rejected and its history; SRP staff's own comments stay theirs, and
+/// nobody else opens it.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_pilot_sees_their_requests_history(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner,
+        pilot,
+        manager,
+        fleet: _,
+        r1,
+        r4,
+    } = op_rock(db).await;
+    let home = open(&h, &pilot, "").await;
+    assert!(
+        home.body
+            .contains(&format!("href=\"{}\"", at(&format!("mine/{r4}")))),
+        "{}",
+        home.body
+    );
+    let mine = open(&h, &pilot, &format!("mine/{r4}")).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    assert!(mine.body.contains("Nothing decided yet."), "{}", mine.body);
+    assert!(mine.body.contains("Tackled first"), "{}", mine.body);
+
+    for body in [
+        "_form=comment&comment=Check+his+fit+first",
+        "_form=payout&payout=4000000&comment=Hull+only",
+        "_form=decide&decision=reject&comment=Not+on+grid",
+    ] {
+        let res = post(&h, &manager, &format!("review/{r4}"), body).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{body}: {}", res.body);
+    }
+    let mine = open(&h, &pilot, &format!("mine/{r4}")).await;
+    for want in [
+        "Rejected",
+        "Reason",
+        "Not on grid",
+        "Payout set to 4000000 ISK: Hull only",
+        "Rejected: Not on grid",
+        "gigX",
+    ] {
+        assert!(mine.body.contains(want), "{want}: {}", mine.body);
+    }
+    // Staff's own comment isn't the pilot's to read.
+    assert!(!mine.body.contains("Check his fit"), "{}", mine.body);
+    // Staff see which lines the pilot sees.
+    let review = open(&h, &manager, &format!("review/{r4}")).await;
+    assert!(review.body.contains("Check his fit"), "{}", review.body);
+    assert!(review.body.contains("Pilot and staff"), "{}", review.body);
+
+    // Approved again: no reason any more.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r4}"),
+        "_form=decide&decision=approve&comment=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let mine = open(&h, &pilot, &format!("mine/{r4}")).await;
+    assert!(!mine.body.contains(">Reason<"), "{}", mine.body);
+    assert!(mine.body.contains("Approved."), "{}", mine.body);
+
+    // Only theirs: not a manager's, not even the owner's.
+    for other in [&manager, &owner] {
+        let res = open(&h, other, &format!("mine/{r1}")).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
+}
+
+/// AA core's srp_request_remove: an SRP manager removes one request, from
+/// the fleet's table or its own page, with its comments; its loss can be
+/// requested again. Nobody else may.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_single_request_is_removed(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner: _,
+        pilot,
+        manager,
+        fleet,
+        r1,
+        r4,
+    } = op_rock(db).await;
+    let fleet_url = format!("fleet/{fleet}");
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r4}"),
+        "_form=comment&comment=Looks+fine",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Not for pilots: they get no button.
+    let res = post(
+        &h,
+        &pilot,
+        &fleet_url,
+        &format!("_form=remove_request&request={r4}"),
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let rows = open(&h, &manager, &fleet_url).await;
+    assert!(
+        rows.body
+            .contains("Pilot A&#39;s request for their Rifter is removed with its comments"),
+        "{}",
+        rows.body
+    );
+    let res = post(
+        &h,
+        &manager,
+        &fleet_url,
+        &format!("_form=remove_request&request={r4}"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&fleet_url));
+    let left: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM \"plugin_tether.ship-replacement\".requests")
+            .fetch_all(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(left, vec![r1]);
+    let comments: i64 = one(
+        &h,
+        "SELECT count(*) FROM \"plugin_tether.ship-replacement\".comments",
+    )
+    .await;
+    assert_eq!(comments, 0);
+    // Its loss can be requested again.
+    let (_, code) = newest_fleet(&h).await;
+    let res = post(
+        &h,
+        &pilot,
+        &format!("request/{code}"),
+        &request("https://zkillboard.com/kill/1004/"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // From its own page, back to the fleet.
+    let res = post(&h, &manager, &format!("review/{r1}"), "_form=remove").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&fleet_url));
+    assert_eq!(
+        open(&h, &manager, &format!("review/{r1}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// AA core's srp_fleet_edit_view: an SRP manager changes a fleet's AAR
+/// after it's made; nobody else may.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_fleets_aar_is_edited(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner: _,
+        pilot,
+        manager,
+        fleet,
+        r1: _,
+        r4: _,
+    } = op_rock(db).await;
+    let fleet_url = format!("fleet/{fleet}");
+    let seen = open(&h, &pilot, &fleet_url).await;
+    assert!(seen.body.contains("Held the grid"), "{}", seen.body);
+    assert!(!seen.body.contains("Edit AAR"), "{}", seen.body);
+    let res = post(&h, &pilot, &fleet_url, "_form=edit_aar&aar=Mine").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(page.body.contains("Edit AAR"), "{}", page.body);
+    let res = post(
+        &h,
+        &manager,
+        &fleet_url,
+        "_form=edit_aar&aar=Held+the+grid%2C+lost+two+Rifters",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&fleet_url));
+    let seen = open(&h, &pilot, &fleet_url).await;
+    assert!(
+        seen.body.contains("Held the grid, lost two Rifters"),
+        "{}",
+        seen.body
+    );
+    // Emptied, it's gone, and a manager may add one again.
+    let res = post(&h, &manager, &fleet_url, "_form=edit_aar&aar=").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(!page.body.contains("Held the grid"), "{}", page.body);
+    assert!(page.body.contains("Add AAR"), "{}", page.body);
+}
+
+/// AA core's srp_fleet_disable and srp_fleet_enable (aa-srp's Closed and
+/// Active): a disabled fleet takes no requests until enabled, without
+/// being completed; its requests stay and are still decided.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_fleet_is_disabled_and_enabled(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner: _,
+        pilot,
+        manager,
+        fleet,
+        r1,
+        r4: _,
+    } = op_rock(db).await;
+    let fleet_url = format!("fleet/{fleet}");
+    let (_, code) = newest_fleet(&h).await;
+    let res = post(&h, &pilot, &fleet_url, "_form=disable").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let res = post(&h, &manager, &fleet_url, "_form=disable").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(page.body.contains("Disabled"), "{}", page.body);
+    assert!(page.body.contains(">Enable<"), "{}", page.body);
+    // Not taking requests: the form says why, and a post is refused.
+    let form = open(&h, &pilot, &format!("request/{code}")).await;
+    assert!(
+        form.body
+            .contains("it takes no requests until SRP staff enable it"),
+        "{}",
+        form.body
+    );
+    let res = post(
+        &h,
+        &pilot,
+        &format!("request/{code}"),
+        &request("https://zkillboard.com/kill/1003/"),
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Still on the open list (it isn't completed), closed to requests.
+    let home = open(&h, &pilot, "").await;
+    assert!(home.body.contains("Op Rock"), "{}", home.body);
+    assert!(
+        !home.body.contains(&format!("request/{code}")),
+        "{}",
+        home.body
+    );
+    // Its requests are still decided.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r1}"),
+        "_form=decide&decision=approve&comment=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // Enabled, with the same code: requests again.
+    let res = post(&h, &manager, &fleet_url, "_form=enable").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let form = open(&h, &pilot, &format!("request/{code}")).await;
+    assert!(form.body.contains("Killboard Link"), "{}", form.body);
+    // Completed, it offers neither.
+    let res = post(&h, &manager, &fleet_url, "_form=complete").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(!page.body.contains(">Disable<"), "{}", page.body);
+    assert!(!page.body.contains(">Enable<"), "{}", page.body);
 }
 
 /// Runs the app's queued jobs that are due (the relay).

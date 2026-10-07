@@ -516,7 +516,8 @@ pub mod downloads {
 /// Notices in Tether's notifications (the bell), as AA apps `notify`,
 /// with `notify = true`: plain text from a submit or a job, your app's
 /// name put before the title, only to accounts holding one of your
-/// permissions, a limited number an hour.
+/// permissions or that submitted one of your forms, a limited number an
+/// hour.
 pub mod notify {
     pub use crate::bindings::tether::plugin::notify::{Error, Level};
 
@@ -547,6 +548,26 @@ pub mod notify {
         except: Option<i64>,
     ) -> Result<u32, Error> {
         crate::bindings::tether::plugin::notify::holders(permission, title, message, level, except)
+    }
+
+    /// Only in `submit`, for the pilot posting the form: a reference to
+    /// their account to keep with what they submitted (an application, a
+    /// request), so [`submitter`] reaches them later even if they hold
+    /// none of your permissions. Always the same for the same account; it
+    /// reaches them for a year after the last post it was asked for in.
+    pub fn submitter_reference() -> Result<String, Error> {
+        crate::bindings::tether::plugin::notify::submitter_reference()
+    }
+
+    /// To the account behind one of your [`submitter_reference`]s; false
+    /// if it's gone, past its year, or past the hourly limit for them.
+    pub fn submitter(
+        reference: &str,
+        title: &str,
+        message: &str,
+        level: Level,
+    ) -> Result<bool, Error> {
+        crate::bindings::tether::plugin::notify::submitter(reference, title, message, level)
     }
 }
 
