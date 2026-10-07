@@ -6,6 +6,30 @@ Each entry is a `## YYYY-MM-DD` heading (EVE time), then `### Everyone`, `### Ad
 
 ## 2026-10-07
 
+### Everyone
+- When an app asks for more access, you get a gentle notice to register your characters again, and everything else keeps working meanwhile, instead of an error.
+
+### Member Audit
+- The character sheet shows Last login. Register your characters again to fill it in; everything else keeps updating meanwhile.
+
+### Structures
+- Notifications can ping groups' Discord roles too, chosen per owner and per channel, as in Alliance Auth.
+
+### HR Applications
+- Reviewers see and search an applicant's characters as they are now, not only as they were when they applied.
+
+### Fleet Activity Tracking
+- Logs now open for fleet managers (manage_afat) as well as log viewers, as in Alliance Auth.
+
+### Admins
+- When an app asks for a new scope, characters already registered keep working and stay compliant; only what needs the new scope waits until their pilot registers again.
+- An app page can now open for any one of several permissions, and the install review lists them all.
+- Apps can ping several Discord roles in one message, and groups' roles if you approve it: updating Structures asks you to approve "Discord group mentions".
+- The included HR Applications can read the current characters of pilots who applied, as Alliance Auth's HR does.
+- Approve the updated Member Audit, Structures, HR Applications and Fleet Activity Tracking on the Apps page.
+
+## 2026-10-07
+
 ### Buyback
 - Locations and New program no longer fail before a data source is added: they say to add one under Data sources, as every app does, and the Programs page has no separate "Add a manager" box any more.
 - Your own FAQ questions are written under Settings › FAQ now, instead of a Manage tab of their own.
