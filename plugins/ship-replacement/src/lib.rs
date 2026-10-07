@@ -19,8 +19,8 @@
 //! - **Managing** (`srp_management`, AA's `auth.srp_management`): approve
 //!   (the payout defaults to zKillboard's value) or reject with a comment,
 //!   update the payout at any time, mark approved ones paid (aa-srp's),
-//!   remove a request (its loss can then be requested again), complete and
-//!   remove fleets. As AA, nothing stops a manager deciding
+//!   remove a request (its loss can then be requested again), edit a
+//!   fleet's AAR, complete and remove fleets. As AA, nothing stops a manager deciding
 //!   their own request. The pilot hears of each approval and rejection in
 //!   Tether's notifications, as AA's notify tells them.
 //! - **SRP team channel** (aa-srp's `srp_team_discord_channel_id`, none by
@@ -1272,12 +1272,25 @@ fn fleet_page(
                 link("Request SRP", format!("request/{}", f.code)),
             );
     }
+    let manage = manager(viewer);
     if !f.aar.is_empty() {
         about = about.field("After Action Report", cut(&f.aar, 1500));
     }
-    let manage = manager(viewer);
     if manage {
-        about = about.field("Actions", actions(fleet_buttons(&f)));
+        // AA core's fleet edit: the AAR, in a popup (the form below).
+        about = about
+            .field(
+                "Edit",
+                action(
+                    if f.aar.is_empty() {
+                        "Add AAR"
+                    } else {
+                        "Edit AAR"
+                    },
+                    "edit_aar",
+                ),
+            )
+            .field("Actions", actions(fleet_buttons(&f)));
     }
     let mut columns = vec![
         Column::numeric("Requested"),
@@ -1338,6 +1351,18 @@ fn fleet_page(
         page = page.stats(total_stats(&totals(row), "this fleet"));
     }
     page = page.card(about).table(table);
+    // The AAR's Edit opens this in a popup (not drawn on the page).
+    if manage {
+        page = page.form(
+            Form::new("edit_aar", "Save")
+                .title("After Action Report")
+                .field(
+                    Field::textarea("aar", "After Action Report", MAX_AAR)
+                        .value(f.aar.clone())
+                        .help("What happened, or where the report is. Empty for none."),
+                ),
+        );
+    }
     // Paging, oldest first: every request can be opened, however many.
     let mut more = Card::new("Pages");
     if page_number > 1 {
@@ -1462,6 +1487,18 @@ fn fleet_action(
                 f.id,
                 if completed { "completed" } else { "incomplete" }
             ));
+            back()
+        }
+        "edit_aar" => {
+            storage::execute(
+                "UPDATE fleets SET aar = $2 WHERE id = $1",
+                &[
+                    f.id.into(),
+                    submission.value("aar").trim().to_owned().into(),
+                ],
+            )
+            .map_err(|e| failed("saving the AAR", e))?;
+            log::info(format!("SRP fleet {}'s AAR edited by {who}", f.id));
             back()
         }
         "pay_all" => {

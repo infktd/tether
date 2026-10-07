@@ -1029,6 +1029,52 @@ async fn a_single_request_is_removed(db: PgPool) {
     );
 }
 
+/// AA core's srp_fleet_edit_view: an SRP manager changes a fleet's AAR
+/// after it's made; nobody else may.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_fleets_aar_is_edited(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner: _,
+        pilot,
+        manager,
+        fleet,
+        r1: _,
+        r4: _,
+    } = op_rock(db).await;
+    let fleet_url = format!("fleet/{fleet}");
+    let seen = open(&h, &pilot, &fleet_url).await;
+    assert!(seen.body.contains("Held the grid"), "{}", seen.body);
+    assert!(!seen.body.contains("Edit AAR"), "{}", seen.body);
+    let res = post(&h, &pilot, &fleet_url, "_form=edit_aar&aar=Mine").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(page.body.contains("Edit AAR"), "{}", page.body);
+    let res = post(
+        &h,
+        &manager,
+        &fleet_url,
+        "_form=edit_aar&aar=Held+the+grid%2C+lost+two+Rifters",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(res.location(), at(&fleet_url));
+    let seen = open(&h, &pilot, &fleet_url).await;
+    assert!(
+        seen.body.contains("Held the grid, lost two Rifters"),
+        "{}",
+        seen.body
+    );
+    // Emptied, it's gone, and a manager may add one again.
+    let res = post(&h, &manager, &fleet_url, "_form=edit_aar&aar=").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(!page.body.contains("Held the grid"), "{}", page.body);
+    assert!(page.body.contains("Add AAR"), "{}", page.body);
+}
+
 /// Runs the app's queued jobs that are due (the relay).
 async fn work(h: &Harness) {
     let mut registry = Registry::new();
