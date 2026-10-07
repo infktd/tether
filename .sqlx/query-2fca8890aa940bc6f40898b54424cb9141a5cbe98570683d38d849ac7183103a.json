@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT ON (n.name) n.name AS \"name!\", m.role_id\n        FROM unnest($1::text[]) AS n(name)\n        JOIN core.states s ON lower(s.name) = lower(n.name)\n        JOIN core.discord_role_mappings m ON m.state_id = s.id\n        ORDER BY n.name, m.role_name, m.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "role_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null,
+      false
+    ]
+  },
+  "hash": "2fca8890aa940bc6f40898b54424cb9141a5cbe98570683d38d849ac7183103a"
+}

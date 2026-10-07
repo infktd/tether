@@ -115,8 +115,9 @@ pub fn capabilities(manifest: &Manifest) -> Vec<Capability> {
         add(
             "Discord group mentions",
             "Its messages can ping the Discord roles Tether gives groups (as well as states'): \
-             any group, Hidden and Internal ones included, that whoever manages the app names; \
-             never @everyone, @here or people"
+             any group with a role, Hidden and Internal ones included, that whoever manages \
+             the app picks. It sees those groups' names, not who is in them; never \
+             @everyone, @here or people"
                 .to_owned(),
         );
     }
@@ -471,6 +472,14 @@ mod tests {
         assert!(changes.removed.is_empty());
         assert_eq!(changes.added.len(), 1);
         assert_eq!(changes.added[0].title, "Discord group mentions");
+        // The admin is told the app learns the groups' names, not members.
+        assert!(
+            changes.added[0]
+                .detail
+                .contains("sees those groups' names, not who is in them"),
+            "{}",
+            changes.added[0].detail
+        );
         assert!(
             capabilities(&after)
                 .iter()

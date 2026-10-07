@@ -36,8 +36,8 @@ use tether_plugins::services::{
     Builtin, Channel, Character, DiscordError, Doctrine, DoctrineError, DownloadError,
     DownloadFile, Embed, EsiError, EsiReply, EsiResponse, FetchError, FilterError, FilterValue,
     FilterWanted, Fut, Group, HttpError, HttpRequest, HttpResponse, Image, Member, MemberCharacter,
-    Mention, Mentions, Named, NotifyError, NotifyLevel, Owner, Ping, Services, SharedDoctrine,
-    SharedTimer, State, Subject, Timer, TimerError,
+    Mention, Mentions, Named, NotifyError, NotifyLevel, Owner, Ping, PingGroup, Services,
+    SharedDoctrine, SharedTimer, State, Subject, Timer, TimerError,
 };
 
 use crate::plugins::Plugins;
@@ -53,7 +53,7 @@ pub const SENDS_PER_MINUTE: usize = 20;
 /// and don't count against [`SENDS_PER_MINUTE`].
 pub const REFUSAL_MEMORY: Duration = Duration::from_secs(60);
 pub const MAX_MESSAGE: usize = 1500;
-/// Longer than any state's or group's name: a ping naming more isn't
+/// Longer than any state's name: a ping naming more isn't
 /// looked up.
 const MAX_PING_NAME: usize = 256;
 /// Discord's limit on a message's text.
@@ -835,56 +835,76 @@ enum PingTarget {
     Roles(Vec<u64>),
 }
 
-/// The Discord roles Tether maps to the states and groups `pings` name,
-/// each once and in the order named. One with no role (no such state or
-/// group, nothing mapped to it) is left out and logged, never refused:
-/// the message still goes. Only roles of Tether's own mappings, so never
-/// @everyone (whose role id is the server's), @here or people.
+/// The Discord roles Tether maps to the states (by name) and groups (by
+/// id) `pings` give, each once and in the order given. One with no role
+/// (no such state or group, a group deleted, nothing mapped to it) is
+/// left out and logged, never refused: the message still goes. Only roles
+/// of Tether's own mappings, so never @everyone (whose role id is the
+/// server's), @here or people.
 async fn ping_roles(
     deps: &Deps,
     plugin: &str,
     guild: u64,
     pings: &[Ping],
 ) -> Result<Vec<u64>, sqlx::Error> {
-    // No state or group has a longer name, or a control character (which
-    // Postgres may refuse): those aren't looked up, so they're left out.
-    let named = |group: bool| -> Vec<String> {
-        pings
-            .iter()
-            .filter_map(|p| match p {
-                Ping::State(name) if !group => Some(name.trim()),
-                Ping::Group(name) if group => Some(name.trim()),
-                _ => None,
-            })
-            .filter(|name| {
-                name.chars().count() <= MAX_PING_NAME && !name.chars().any(char::is_control)
-            })
-            .map(str::to_owned)
-            .collect()
+    // No state has a longer name, or a control character (which Postgres
+    // may refuse): those aren't looked up, so they're left out.
+    let states: Vec<String> = pings
+        .iter()
+        .filter_map(|p| match p {
+            Ping::State(name) => Some(name.trim()),
+            Ping::Group(_) => None,
+        })
+        .filter(|name| name.chars().count() <= MAX_PING_NAME && !name.chars().any(char::is_control))
+        .map(str::to_owned)
+        .collect();
+    let groups: Vec<i64> = pings
+        .iter()
+        .filter_map(|p| match p {
+            Ping::Group(id) => Some(*id),
+            Ping::State(_) => None,
+        })
+        .collect();
+    let states = if states.is_empty() {
+        Vec::new()
+    } else {
+        discord_db::state_ping_roles(&deps.db, &states).await?
     };
-    let found = discord_db::ping_roles(&deps.db, &named(false), &named(true)).await?;
+    let groups = if groups.is_empty() {
+        Vec::new()
+    } else {
+        discord_db::group_ping_roles(&deps.db, &groups).await?
+    };
     let mut roles = Vec::new();
     for ping in pings {
-        let (group, name) = match ping {
-            Ping::State(name) => (false, name.trim()),
-            Ping::Group(name) => (true, name.trim()),
-        };
-        let role = found
-            .iter()
-            .find(|r| r.group == group && r.name == name)
-            .and_then(|r| u64::try_from(r.role_id).ok())
-            .filter(|id| *id != guild);
-        match role {
-            Some(id) if !roles.contains(&id) => roles.push(id),
-            Some(_) => {}
-            None => {
+        let role = match ping {
+            Ping::State(name) => {
+                let name = name.trim();
+                states.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+            }
+            Ping::Group(id) => groups.iter().find(|(g, _)| g == id).map(|(_, r)| *r),
+        }
+        .and_then(|r| u64::try_from(r).ok())
+        .filter(|id| *id != guild);
+        match (role, ping) {
+            (Some(id), _) if !roles.contains(&id) => roles.push(id),
+            (Some(_), _) => {}
+            (None, Ping::State(name)) => {
                 // Debug-quoted and cut: the name is the plugin's text.
-                let name: String = name.chars().take(64).collect();
+                let name: String = name.trim().chars().take(64).collect();
                 tracing::warn!(
                     plugin,
-                    kind = if group { "group" } else { "state" },
+                    kind = "state",
                     name = ?name,
                     "plugin ping left out: no Discord role mapped to it"
+                );
+            }
+            (None, Ping::Group(id)) => {
+                tracing::warn!(
+                    plugin,
+                    kind = "group",
+                    group = id,
+                    "plugin ping left out: no such group, or no Discord role mapped to it"
                 );
             }
         }
@@ -1439,6 +1459,38 @@ impl Services for PluginServices {
                     name,
                 })
                 .collect()
+        })
+    }
+
+    fn discord_ping_groups(&self, plugin: String) -> Fut<Vec<PingGroup>> {
+        let db = self.deps.db.clone();
+        let plugins = self.plugins.clone();
+        Box::pin(async move {
+            // Only for an app approved for group mentions: their names are
+            // what it may offer, and nothing about who is in them.
+            let approved = plugins
+                .upgrade()
+                .and_then(|p| p.running(&plugin))
+                .is_some_and(|r| {
+                    r.manifest
+                        .capabilities
+                        .discord
+                        .iter()
+                        .any(|a| a == "mention_groups")
+                });
+            if !approved {
+                return Vec::new();
+            }
+            match discord_db::ping_groups(&db).await {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|(id, name)| PingGroup { id, name })
+                    .collect(),
+                Err(err) => {
+                    tracing::error!(plugin, error = %err, "plugin ping groups");
+                    Vec::new()
+                }
+            }
         })
     }
 

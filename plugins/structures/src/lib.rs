@@ -100,12 +100,8 @@ const NOTIFICATIONS_GAP: Duration = Duration::seconds(60);
 const MAX_PUBLISHED: i64 = 500;
 /// A relayed message's characters, at most: under the host's 1,500.
 const MAX_MESSAGE_CHARS: usize = 1_400;
-/// Tether's group names are 1 to 100 characters.
-const MAX_GROUP_NAME: usize = 100;
-/// Channels whose ping groups the settings offer (a settings group's
-/// fields), and a ping groups field's characters.
-const MAX_PING_CHANNELS: usize = 30;
-const PING_GROUPS_CHARS: u32 = 1_000;
+/// Groups a ping groups picker offers: a settings group's fields.
+const MAX_PICKER: usize = 30;
 /// The one-off job that sends a channel's test message (pages can't post
 /// to Discord).
 const TEST_JOB: &str = "test_message";
@@ -207,6 +203,9 @@ fn render_page(request: &Request, viewer: &Viewer) -> Result<Page, PageError> {
         let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
         return owner_settings_page(corp, None);
     }
+    if let Some(channel) = path.strip_prefix("settings/channel/") {
+        return channel_settings_page(channel, None);
+    }
     match path {
         "settings" => settings_page(None),
         "settings/tags" => tags::settings_page(None),
@@ -239,6 +238,12 @@ fn submit_form(submission: &Submission, viewer: &Viewer) -> Result<SubmitResult,
         let corp: i64 = corp.parse().map_err(|_| PageError::NotFound)?;
         return match submission.form.as_str() {
             "owner_routes" => save_owner_settings(viewer, corp, submission),
+            _ => Err(PageError::NotFound),
+        };
+    }
+    if let Some(channel) = path.strip_prefix("settings/channel/") {
+        return match submission.form.as_str() {
+            "channel_groups" => save_channel_settings(viewer, channel, submission),
             _ => Err(PageError::NotFound),
         };
     }
@@ -1545,7 +1550,7 @@ fn handle_notifications() -> Result<(), JobError> {
                 };
                 statements.push(Statement::new(
                     "INSERT INTO outbox (key, channel, message, mention_state, card, ping_groups) \
-                     VALUES ($1, $2, $3, $4, $5, string_to_array($6, E'\\n')) \
+                     VALUES ($1, $2, $3, $4, $5, string_to_array($6, ',')::bigint[]) \
                      ON CONFLICT (key) DO NOTHING",
                     vec![
                         format!("notification:{id}").into(),
@@ -1663,7 +1668,7 @@ fn fuel_alerts() -> Result<(), JobError> {
         storage::transaction(&[
             Statement::new(
                 "INSERT INTO outbox (key, channel, message, mention_state, card, ping_groups) \
-                 VALUES ($1, $2, $3, $4, $5, string_to_array($6, E'\\n')) \
+                 VALUES ($1, $2, $3, $4, $5, string_to_array($6, ',')::bigint[]) \
                  ON CONFLICT (key) DO NOTHING",
                 vec![
                     // Once per alert, low-fuel episode (the expiry) and
@@ -1787,7 +1792,8 @@ fn refuelled() -> Result<(), JobError> {
         };
         storage::execute(
             "INSERT INTO outbox (key, channel, message, card, ping_groups) \
-             VALUES ($1, $2, $3, $4, string_to_array($5, E'\\n')) ON CONFLICT (key) DO NOTHING",
+             VALUES ($1, $2, $3, $4, string_to_array($5, ',')::bigint[]) \
+             ON CONFLICT (key) DO NOTHING",
             &[
                 format!("refuel:{structure}:{}", expires.timestamp()).into(),
                 channel.into(),
@@ -1870,7 +1876,7 @@ fn jump_fuel_alerts() -> Result<(), JobError> {
         storage::transaction(&[
             Statement::new(
                 "INSERT INTO outbox (key, channel, message, mention_state, card, ping_groups) \
-                 VALUES ($1, $2, $3, $4, $5, string_to_array($6, E'\\n')) \
+                 VALUES ($1, $2, $3, $4, $5, string_to_array($6, ',')::bigint[]) \
                  ON CONFLICT (key) DO NOTHING",
                 vec![
                     format!("jump-fuel:{structure}:{config}:{quantity}").into(),
@@ -2061,10 +2067,9 @@ fn assets_again() -> Result<(), JobError> {
 }
 
 /// The groups a message from `corp` to `channel` pings (aa-structures'
-/// ping groups), as the outbox keeps them: one per line, none for none.
+/// ping groups), as the outbox keeps them: their ids, none for none.
 fn ping_groups(routes: &Routes, corp: i64, channel: &str) -> Db {
-    let groups = routes.groups(corp, channel);
-    (!groups.is_empty()).then(|| groups.join("\n")).into()
+    routing::group_ids(&routes.groups(corp, channel))
 }
 
 fn queue_relay(at: Option<DateTime<Utc>>) -> Result<(), JobError> {
@@ -2088,9 +2093,10 @@ fn queue_relay(at: Option<DateTime<Utc>>) -> Result<(), JobError> {
 /// can't send it twice.
 ///
 /// Each pings its severity's state and its ping groups (aa-structures'
-/// default pings and ping groups). The host leaves out one with no
-/// Discord role mapped and sends the rest: a message is never failed for
-/// want of a role.
+/// default pings and ping groups). The host leaves out a group deleted or
+/// without a Discord role, and a state with no role, logging it for
+/// admins, and sends the rest: a message is never failed for want of a
+/// role.
 fn relay() -> Result<(), JobError> {
     storage::execute(
         "UPDATE outbox SET failed = 'too old to send' WHERE sent_at IS NULL AND failed IS NULL \
@@ -2100,7 +2106,7 @@ fn relay() -> Result<(), JobError> {
     .map_err(|e| retry("expiring messages", e))?;
     let waiting = storage::query(
         "SELECT id, channel, message, coalesce(mention_state, CASE WHEN mention THEN 'Member' END), \
-                card::text, array_to_string(ping_groups, E'\\n') \
+                card::text, array_to_string(ping_groups, ',') \
          FROM outbox WHERE sent_at IS NULL AND failed IS NULL ORDER BY id LIMIT $1",
         &[count(SENDS_PER_RUN).into()],
     )
@@ -3380,19 +3386,22 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
              coalesce(w.mention, 'default'), coalesce(w.pocos_public, false), \
              cardinality(w.notification_types), \
              coalesce(w.alliance_main = (SELECT a.alliance_id FROM owners a \
-                 WHERE a.corporation_id = o.corporation_id AND a.alliance_id IS NOT NULL LIMIT 1), false) \
+                 WHERE a.corporation_id = o.corporation_id AND a.alliance_id IS NOT NULL LIMIT 1), false), \
+             array_to_string(w.ping_groups, ',') \
          FROM (SELECT DISTINCT corporation_id FROM owners) o \
          LEFT JOIN names n ON n.id = o.corporation_id \
          LEFT JOIN owner_settings w ON w.corporation_id = o.corporation_id ORDER BY 2",
         &[],
     )
     .map_err(|e| failed("reading owners", e))?;
+    let ping_groups = PingGroups::load()?;
     let routing_table = with_rows(
         Table::new(vec![
             Column::text("Owner"),
             Column::text("Channels"),
             Column::text("Types"),
             Column::text("Pings"),
+            Column::text("Ping groups"),
             Column::text("Customs offices public"),
             Column::text("Alliance main"),
         ])
@@ -3419,6 +3428,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                     _ => "The default",
                 }
                 .into(),
+                ping_groups.names(&routing::group_list(r.get(7))).into(),
                 if r.get(4).and_then(Db::as_bool).unwrap_or(false) {
                     "Yes"
                 } else {
@@ -3436,11 +3446,11 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     );
     // One form, saved at once from Tether's save bar (DESIGN.md, Save bar):
     // the channels, pings and list, then which types are sent, by kind.
-    let mut form = SettingsForm::new("settings").group(discord).group(pings);
-    if let Some(groups) = channel_ping_groups()? {
-        form = form.group(groups);
-    }
-    let mut form = form.group(shown).group(admin);
+    let mut form = SettingsForm::new("settings")
+        .group(discord)
+        .group(pings)
+        .group(shown)
+        .group(admin);
     for (i, category) in Category::ALL.into_iter().enumerate() {
         let mut types = type_group(category, settings.notification_types.as_ref());
         if i == 0 {
@@ -3462,6 +3472,7 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         .form(jump_fuel_alert_form(types))
         .form(edit_jump_fuel_alert_form())
         .table(routing_table)
+        .table(channel_groups_table(&ping_groups)?)
         .table(owner_table)
         .text(
             "A data source ESI refused (a lost role or token) is left alone for an hour, doubling \
@@ -3473,75 +3484,251 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         .table(sent_table))
 }
 
-/// Ping groups as a manager types them: one group's name per line, each
-/// once (any case); or why they can't be saved.
-fn typed_groups(value: &str) -> Result<Vec<String>, String> {
-    let mut groups: Vec<String> = Vec::new();
-    for name in value.lines().map(str::trim).filter(|n| !n.is_empty()) {
-        if name.chars().count() > MAX_GROUP_NAME {
-            return Err(format!(
-                "A group's name is at most {MAX_GROUP_NAME} characters."
+// ---- ping groups ---------------------------------------------------------------
+
+/// aa-structures' ping groups as managers pick them: the groups with a
+/// Discord role (the host's list, by id, so a renamed group stays picked),
+/// and the name each picked group was last saved under, to say which one
+/// it was once it's deleted or loses its role.
+struct PingGroups {
+    offered: Vec<discord::PingGroup>,
+    remembered: Vec<(i64, String)>,
+}
+
+impl PingGroups {
+    fn load() -> Result<Self, PageError> {
+        let remembered = storage::query("SELECT id, name FROM ping_group_names", &[])
+            .map_err(|e| failed("reading ping groups", e))?;
+        Ok(Self {
+            offered: discord::ping_groups(),
+            remembered: remembered
+                .rows
+                .iter()
+                .map(|r| (int(r, 0), text(r, 1)))
+                .collect(),
+        })
+    }
+
+    /// A picked group as shown: its name now, or, once it's deleted or
+    /// has no Discord role, as such (it's skipped).
+    fn label(&self, id: i64) -> String {
+        if let Some(group) = self.offered.iter().find(|g| g.id == id) {
+            return group.name.clone();
+        }
+        let name = self
+            .remembered
+            .iter()
+            .find(|(g, _)| *g == id)
+            .map_or_else(|| format!("Group {id}"), |(_, n)| n.clone());
+        format!("{name} (deleted or no Discord role: skipped)")
+    }
+
+    /// Picked groups for a table: their names, or None.
+    fn names(&self, picked: &[i64]) -> String {
+        if picked.is_empty() {
+            return "None".to_owned();
+        }
+        picked
+            .iter()
+            .map(|id| self.label(*id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// A checkbox for each group with a Discord role, those `picked`
+    /// ticked, the picked first (one since deleted or unmapped shown as
+    /// such, to untick); none with nothing to offer.
+    fn picker(&self, description: &str, picked: &[i64]) -> Option<SettingsGroup> {
+        let choices: Vec<(i64, String)> = picked
+            .iter()
+            .map(|id| (*id, self.label(*id)))
+            .chain(
+                self.offered
+                    .iter()
+                    .filter(|g| !picked.contains(&g.id))
+                    .map(|g| (g.id, g.name.clone())),
+            )
+            .collect();
+        if choices.is_empty() {
+            return None;
+        }
+        let mut description = description.to_owned();
+        if choices.len() > MAX_PICKER {
+            description.push_str(&format!(
+                " Only the first {MAX_PICKER} groups with a Discord role are offered here."
             ));
         }
-        if !groups
-            .iter()
-            .any(|g| g.to_lowercase() == name.to_lowercase())
-        {
-            groups.push(name.to_owned());
+        let mut group = SettingsGroup::new("Ping groups").description(description);
+        for (id, label) in choices.into_iter().take(MAX_PICKER) {
+            group = group.field(Field::checkbox(
+                ping_group_field(id),
+                label,
+                picked.contains(&id),
+            ));
         }
+        Some(group)
     }
-    if groups.len() > routing::MAX_PING_GROUPS {
-        return Err(format!(
-            "At most {} ping groups for one channel or owner.",
-            routing::MAX_PING_GROUPS
-        ));
+
+    /// The groups a picker's form ticked, among those it could offer; or
+    /// why they can't be saved.
+    fn ticked(&self, submission: &Submission, picked: &[i64]) -> Result<Vec<i64>, String> {
+        let mut ticked: Vec<i64> = Vec::new();
+        for id in picked
+            .iter()
+            .copied()
+            .chain(self.offered.iter().map(|g| g.id))
+        {
+            if submission.checked(&ping_group_field(id)) && !ticked.contains(&id) {
+                ticked.push(id);
+            }
+        }
+        if ticked.len() > routing::MAX_PING_GROUPS {
+            return Err(format!(
+                "At most {} ping groups for one channel or owner.",
+                routing::MAX_PING_GROUPS
+            ));
+        }
+        Ok(ticked)
     }
-    Ok(groups)
+
+    /// Remembers the names of the `groups` that have one now.
+    fn remember(&self, groups: &[i64]) -> Vec<Statement> {
+        self.offered
+            .iter()
+            .filter(|g| groups.contains(&g.id))
+            .map(|g| {
+                Statement::new(
+                    "INSERT INTO ping_group_names (id, name) VALUES ($1, $2) \
+                     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+                    vec![g.id.into(), g.name.clone().into()],
+                )
+            })
+            .collect()
+    }
 }
 
-/// A ping groups field's name for a channel.
-fn ping_groups_field(channel: &str) -> String {
-    format!("ping_groups_{channel}")
+/// A ping groups checkbox's name.
+fn ping_group_field(id: i64) -> String {
+    format!("ping_group_{id}")
 }
 
-/// Each assigned channel's ping groups (aa-structures' ping groups per
-/// webhook), or none without a channel.
-fn channel_ping_groups() -> Result<Option<SettingsGroup>, PageError> {
+const NO_PING_GROUPS: &str = "No group has a Discord role yet. Map one to a group on \
+    Administration's Discord page to pick it as a ping group.";
+
+/// A channel's ping groups (aa-structures' ping groups per webhook).
+fn stored_channel_groups(channel: &str) -> Result<Vec<i64>, PageError> {
     let stored = storage::query(
-        "SELECT channel, array_to_string(groups, E'\\n') FROM channel_ping_groups",
+        "SELECT array_to_string(groups, ',') FROM channel_ping_groups WHERE channel = $1",
+        &[channel.into()],
+    )
+    .map_err(|e| failed("reading ping groups", e))?;
+    Ok(stored
+        .rows
+        .first()
+        .map(|r| routing::group_list(r.first()))
+        .unwrap_or_default())
+}
+
+/// Each assigned channel's ping groups, by their names now, the channel
+/// linking to its page where they're picked.
+fn channel_groups_table(ping_groups: &PingGroups) -> Result<Table, PageError> {
+    let stored = storage::query(
+        "SELECT channel, array_to_string(groups, ',') FROM channel_ping_groups",
         &[],
     )
     .map_err(|e| failed("reading ping groups", e))?;
-    let channels: Vec<discord::Channel> = discord::channels()
+    Ok(with_rows(
+        Table::new(vec![Column::text("Channel"), Column::text("Ping groups")])
+            .title("Channels' ping groups")
+            .empty("No channels yet: an admin assigns Structures channels (Admin → Apps)."),
+        discord::channels().into_iter().map(|channel| {
+            let picked = stored
+                .rows
+                .iter()
+                .find(|r| text(r, 0) == channel.id)
+                .map(|r| routing::group_list(r.get(1)))
+                .unwrap_or_default();
+            vec![
+                link(
+                    format!("#{}", channel.name),
+                    format!("settings/channel/{}", channel.id),
+                )
+                .into(),
+                ping_groups.names(&picked).into(),
+            ]
+        }),
+    ))
+}
+
+/// One assigned channel's ping groups (aa-structures' ping groups per
+/// webhook), picked from the groups with a Discord role.
+fn channel_settings_page(channel: &str, problem: Option<&str>) -> Result<Page, PageError> {
+    let channel = discord::channels()
         .into_iter()
-        .take(MAX_PING_CHANNELS)
-        .collect();
-    if channels.is_empty() {
-        return Ok(None);
+        .find(|c| c.id == channel)
+        .ok_or(PageError::NotFound)?;
+    let picked = stored_channel_groups(&channel.id)?;
+    let ping_groups = PingGroups::load()?;
+    let mut page = Page::new(format!("Structures channel: #{}", channel.name))
+        .description("The groups every Structures message to this channel pings");
+    if let Some(problem) = problem {
+        page = page.text(problem);
     }
-    let mut group = SettingsGroup::new("Ping groups").description(
-        "aa-structures' ping groups: every message to a channel pings the Discord roles of its \
-         groups and of its owner's (on the owner's page), whatever the pings above. One group \
-         name per line, as on Groups, at most 9. A group with no Discord role mapped on \
-         Administration's Discord page is left out.",
-    );
-    for channel in channels {
-        let value = stored
-            .rows
-            .iter()
-            .find(|r| text(r, 0) == channel.id)
-            .map(|r| routing::group_list(r.get(1)).join("\n"))
-            .unwrap_or_default();
-        group = group.field(
-            Field::textarea(
-                ping_groups_field(&channel.id),
-                format!("#{}", channel.name),
-                PING_GROUPS_CHARS,
-            )
-            .value(value),
-        );
+    Ok(
+        match ping_groups.picker(
+            "aa-structures' ping groups: every notification and alert to this channel pings \
+             these groups' Discord roles, with its owner's (on the owner's page), whatever the \
+             pings in the settings. At most 9. A group deleted or without a Discord role is \
+             skipped and the message still goes.",
+            &picked,
+        ) {
+            Some(group) => page.settings(SettingsForm::new("channel_groups").group(group)),
+            None => page.text(NO_PING_GROUPS),
+        },
+    )
+}
+
+fn save_channel_settings(
+    viewer: &Viewer,
+    channel: &str,
+    submission: &Submission,
+) -> Result<SubmitResult, PageError> {
+    let channel = discord::channels()
+        .into_iter()
+        .find(|c| c.id == channel)
+        .ok_or(PageError::NotFound)?;
+    let picked = stored_channel_groups(&channel.id)?;
+    let ping_groups = PingGroups::load()?;
+    let groups = match ping_groups.ticked(submission, &picked) {
+        Ok(groups) => groups,
+        Err(why) => {
+            return Ok(SubmitResult::Page(channel_settings_page(
+                &channel.id,
+                Some(&why),
+            )?));
+        }
+    };
+    let mut statements = vec![Statement::new(
+        "DELETE FROM channel_ping_groups WHERE channel = $1",
+        vec![channel.id.clone().into()],
+    )];
+    if !groups.is_empty() {
+        statements.push(Statement::new(
+            "INSERT INTO channel_ping_groups (channel, groups) \
+             VALUES ($1, string_to_array($2, ',')::bigint[])",
+            vec![channel.id.clone().into(), routing::group_ids(&groups)],
+        ));
     }
-    Ok(Some(group))
+    statements.extend(ping_groups.remember(&groups));
+    storage::transaction(&statements).map_err(|e| failed("saving ping groups", e))?;
+    log::info(format!(
+        "ping groups for #{} set by {} ({}): {}",
+        channel.name,
+        viewer.main.name,
+        viewer.main.id,
+        ping_groups.names(&groups),
+    ));
+    Ok(SubmitResult::Redirect("settings".into()))
 }
 
 fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
@@ -3560,13 +3747,6 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
     // Every type ticked is stored as none: every type, new ones included.
     let types = ticked_types(submission);
     let types = (types.len() < notification::TYPES.len()).then(|| types.join(","));
-    let mut channel_groups = Vec::new();
-    for channel in discord::channels().into_iter().take(MAX_PING_CHANNELS) {
-        match typed_groups(submission.value(&ping_groups_field(&channel.id))) {
-            Ok(groups) => channel_groups.push((channel, groups)),
-            Err(why) => return Ok(SubmitResult::Page(settings_page(Some(&why))?)),
-        }
-    }
     let moon_timers = submission.checked("moon_extraction_timers");
     let mut statements = vec![Statement::new(
         "UPDATE settings SET attack_channel = $1, fuel_channel = $2, state_channel = $3, \
@@ -3594,19 +3774,6 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
             submission.checked("admin_notifications").into(),
         ],
     )];
-    for (channel, groups) in &channel_groups {
-        statements.push(Statement::new(
-            "DELETE FROM channel_ping_groups WHERE channel = $1",
-            vec![channel.id.clone().into()],
-        ));
-        if !groups.is_empty() {
-            statements.push(Statement::new(
-                "INSERT INTO channel_ping_groups (channel, groups) \
-                 VALUES ($1, string_to_array($2, E'\\n'))",
-                vec![channel.id.clone().into(), groups.join("\n").into()],
-            ));
-        }
-    }
     if !moon_timers {
         // Off: the extraction timers made go too.
         statements.push(Statement::new(
@@ -3641,17 +3808,6 @@ fn save_settings(viewer: &Viewer, submission: &Submission) -> Result<SubmitResul
         submission.checked("admin_notifications"),
         types.as_deref().unwrap_or("every type"),
     ));
-    for (channel, groups) in &channel_groups {
-        if !groups.is_empty() {
-            log::info(format!(
-                "ping groups for #{} set by {} ({}): {}",
-                channel.name,
-                viewer.main.name,
-                viewer.main.id,
-                groups.join(", ")
-            ));
-        }
-    }
     Ok(SubmitResult::Redirect("settings".into()))
 }
 
@@ -4408,16 +4564,16 @@ fn owner_settings_page(corp: i64, problem: Option<&str>) -> Result<Page, PageErr
         "SELECT mention, pocos_public, array_to_string(notification_types, ','), \
              alliance_main IS NOT NULL AND alliance_main = (SELECT o.alliance_id FROM owners o \
                  WHERE o.corporation_id = $1 AND o.alliance_id IS NOT NULL LIMIT 1), \
-             in_service_status, array_to_string(ping_groups, E'\\n') \
+             in_service_status, array_to_string(ping_groups, ',') \
          FROM owner_settings WHERE corporation_id = $1",
         &[corp.into()],
     )
     .map_err(|e| failed("reading owner settings", e))?;
     let own_types = own.rows.first().and_then(|r| routing::type_list(r.get(2)));
-    let ping_groups = own
+    let picked = own
         .rows
         .first()
-        .map(|r| routing::group_list(r.get(5)).join("\n"))
+        .map(|r| routing::group_list(r.get(5)))
         .unwrap_or_default();
     let in_service_status = own
         .rows
@@ -4484,16 +4640,6 @@ fn owner_settings_page(corp: i64, problem: Option<&str>) -> Result<Page, PageErr
             .required(),
         )
         .field(
-            Field::textarea("ping_groups", "Ping groups", PING_GROUPS_CHARS)
-                .value(ping_groups)
-                .help(
-                    "aa-structures' ping groups for this owner: every one of its notifications \
-                     and alerts pings these groups' Discord roles, with the channel's own \
-                     (Settings, Ping groups), whatever its pings. One group name per line, as \
-                     on Groups, at most 9. A group with no Discord role is left out.",
-                ),
-        )
-        .field(
             Field::checkbox("pocos_public", "Customs offices are public", public).help(
                 "List this owner's customs offices, with access and tax, for everyone who may \
                  open Structures (aa-structures' public customs offices).",
@@ -4545,11 +4691,24 @@ fn owner_settings_page(corp: i64, problem: Option<&str>) -> Result<Page, PageErr
         );
     let shown = own_types.or_else(|| settings.notification_types.clone());
     // One form, saved at once from Tether's save bar (DESIGN.md, Save bar).
+    let picker = PingGroups::load()?.picker(
+        "aa-structures' ping groups for this owner: every one of its notifications and alerts \
+         pings these groups' Discord roles, with the channel's own (Settings, Channels' ping \
+         groups), whatever its pings. At most 9. A group deleted or without a Discord role is \
+         skipped and the message still goes.",
+        &picked,
+    );
+    let owner = match picker {
+        Some(_) => owner,
+        None => owner.description(format!("Ping groups: {NO_PING_GROUPS}")),
+    };
     let mut form = SettingsForm::new("owner_routes")
         .group(discord)
-        .group(owner)
-        .group(notices)
-        .group(types);
+        .group(owner);
+    if let Some(picker) = picker {
+        form = form.group(picker);
+    }
+    let mut form = form.group(notices).group(types);
     for category in Category::ALL {
         form = form.group(type_group(category, shown.as_ref()));
     }
@@ -4594,13 +4753,22 @@ fn save_owner_settings(
     if !matches!(mention, "default" | "on" | "off") {
         return Err(PageError::NotFound);
     }
-    let groups = match typed_groups(submission.value("ping_groups")) {
+    let picked = storage::query(
+        "SELECT array_to_string(ping_groups, ',') FROM owner_settings WHERE corporation_id = $1",
+        &[corp.into()],
+    )
+    .map_err(|e| failed("reading owner settings", e))?
+    .rows
+    .first()
+    .map(|r| routing::group_list(r.first()))
+    .unwrap_or_default();
+    let ping_groups = PingGroups::load()?;
+    let groups = match ping_groups.ticked(submission, &picked) {
         Ok(groups) => groups,
         Err(why) => {
             return Ok(SubmitResult::Page(owner_settings_page(corp, Some(&why))?));
         }
     };
-    let groups = (!groups.is_empty()).then(|| groups.join("\n"));
     let alliance_main = submission.checked("alliance_main");
     // Its types: the defaults (none of its own), or those ticked.
     let types = match submission.value("types_from") {
@@ -4626,7 +4794,7 @@ fn save_owner_settings(
             "INSERT INTO owner_settings (corporation_id, mention, pocos_public, alliance_main, \
                  notification_types, in_service_status, ping_groups) \
              VALUES ($1, $2, $3, CASE WHEN $4 THEN {alliance} END, string_to_array($5, ','), $6, \
-                 string_to_array($7, E'\\n')) \
+                 string_to_array($7, ',')::bigint[]) \
              ON CONFLICT (corporation_id) DO UPDATE SET mention = EXCLUDED.mention, \
                  pocos_public = EXCLUDED.pocos_public, alliance_main = EXCLUDED.alliance_main, \
                  notification_types = EXCLUDED.notification_types, \
@@ -4640,9 +4808,10 @@ fn save_owner_settings(
             alliance_main.into(),
             types.clone().into(),
             submission.checked("in_service_status").into(),
-            groups.clone().into(),
+            routing::group_ids(&groups),
         ],
     ));
+    statements.extend(ping_groups.remember(&groups));
     storage::transaction(&statements).map_err(|e| failed("saving the owner", e))?;
     log::info(format!(
         "owner {corp} routing set by {} ({}): {}, mention {mention}, customs offices public {}, \
@@ -4653,9 +4822,7 @@ fn save_owner_settings(
         submission.checked("pocos_public"),
         submission.checked("in_service_status"),
         types.as_deref().unwrap_or("the defaults"),
-        groups
-            .as_deref()
-            .map_or_else(|| "none".to_owned(), |g| g.replace('\n', ", ")),
+        ping_groups.names(&groups),
     ));
     Ok(SubmitResult::Redirect("settings".into()))
 }

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 pub use crate::host::tether::plugin::discord::{
     Channel, Embed, EmbedAuthor, EmbedField, Error as DiscordError, Image, Mention, Message, Ping,
+    PingGroup,
 };
 pub use crate::host::tether::plugin::doctrines::{
     Doctrine, Error as DoctrineError, Shared as SharedDoctrine,
@@ -168,6 +169,9 @@ pub trait Services: Send + Sync + std::fmt::Debug {
     /// Whether `account` is an active superuser.
     fn identity_superuser(&self, account: i64) -> Fut<bool>;
     fn discord_channels(&self, plugin: String) -> Fut<Vec<Channel>>;
+    /// The groups with a Discord role mapped, for a `plugin` approved for
+    /// `mention_groups`; none otherwise.
+    fn discord_ping_groups(&self, plugin: String) -> Fut<Vec<PingGroup>>;
     /// `text`, or with `embed` a card and no text of its own, its title a
     /// link to the plugin's own `page` when one is given.
     fn discord_send(

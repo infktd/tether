@@ -337,7 +337,7 @@ pub mod esi {
 /// Discord messages to channels an admin assigned this plugin.
 pub mod discord {
     pub use crate::bindings::tether::plugin::discord::{
-        Channel, Embed, EmbedAuthor, EmbedField, Error, Image, Mention, Message, Ping,
+        Channel, Embed, EmbedAuthor, EmbedField, Error, Image, Mention, Message, Ping, PingGroup,
     };
 
     pub fn channels() -> Vec<Channel> {
@@ -373,11 +373,20 @@ pub mod discord {
 
     /// Posts a [`Message`] (text, a card, or both) to an assigned channel,
     /// pinging up to 10 roles at once: states' (`Ping::State("Member".into())`)
-    /// and, with `mention_groups` approved, groups' (`Ping::Group(name)`).
-    /// A ping without a mapped role is left out and logged; the message
-    /// still goes. Not from pages.
+    /// and, with `mention_groups` approved, groups' by id
+    /// (`Ping::Group(id)`, an id from [`ping_groups`]). A ping without a
+    /// mapped role is left out and logged; the message still goes. Not
+    /// from pages.
     pub fn send_message(channel: &str, message: &Message) -> Result<(), Error> {
         crate::bindings::tether::plugin::discord::send_message(channel, message)
+    }
+
+    /// The groups with a Discord role mapped (Hidden and Internal ones
+    /// too), by name: what to offer as ping groups. Store their ids, which
+    /// a rename doesn't change. Empty without `mention_groups` approved.
+    /// From pages and jobs alike.
+    pub fn ping_groups() -> Vec<PingGroup> {
+        crate::bindings::tether::plugin::discord::ping_groups()
     }
 
     impl Message {

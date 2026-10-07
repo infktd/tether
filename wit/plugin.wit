@@ -909,13 +909,15 @@ interface discord {
     send-linked-embed: func(channel: string, embed: embed, page: string, mention: mention) -> result<_, error>;
 
     /// Whom a `send-message` pings: the Discord role Tether gives a state
-    /// or a group (Discord, role mappings), by its name (any case). Never
-    /// @everyone, @here or people.
+    /// or a group (Discord, role mappings). Never @everyone, @here or
+    /// people.
     variant ping {
-        /// A state's role, e.g. "Member".
+        /// A state's role, by its name (any case), e.g. "Member".
         state(string),
-        /// A group's role. Only for a plugin approved for `mention_groups`.
-        group(string),
+        /// A group's role, by the group's id from `ping-groups`, so a
+        /// renamed group is still pinged. Only for a plugin approved for
+        /// `mention_groups`.
+        group(s64),
     }
 
     /// A message for `send-message`: text, a card, or both.
@@ -929,13 +931,26 @@ interface discord {
         page: option<string>,
         /// At most 10, mentioned before the text. One the host finds no
         /// role for (no such state or group, or no Discord role mapped to
-        /// it) is left out, and logged for admins; the message still goes.
+        /// it, as for a group deleted) is left out, and logged for admins;
+        /// the message still goes.
         pings: list<ping>,
     }
 
     /// Posts a message to an assigned channel, pinging the roles of
     /// `pings` (several at once, unlike `send`'s one mention).
     send-message: func(channel: string, message: message) -> result<_, error>;
+
+    /// A group whose Discord role a message may ping.
+    record ping-group {
+        id: s64,
+        /// Its name now, to show.
+        name: string,
+    }
+
+    /// The groups with a Discord role mapped (Hidden and Internal ones
+    /// too), by name, to offer as ping groups. Nothing about any pilot.
+    /// Empty for a plugin not approved for `mention_groups`.
+    ping-groups: func() -> list<ping-group>;
 }
 
 /// Background work on Tether's job queue: the schedules declared in

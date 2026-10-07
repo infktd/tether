@@ -3404,12 +3404,15 @@ async fn a_mention_without_a_role_is_sent_plain_never_failed(db: PgPool) {
 
 /// aa-structures' ping groups: every message pings the Discord roles of
 /// the owner's groups and the channel's (its webhook's), whatever the
-/// default pings; a group without a role is left out, never failing the
-/// message.
+/// default pings. Managers pick them from the groups with a role, by id,
+/// so they follow the group as aa-structures' do: a renamed group still
+/// pings and shows its new name; one deleted is shown as such and
+/// skipped, never failing the message.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn ping_groups_per_owner_and_channel(db: PgPool) {
     const FC_ROLE: &str = "500000000000000004";
     const SCOUT_ROLE: &str = "500000000000000005";
+    const DOOMED_ROLE: &str = "500000000000000006";
     cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
     let h = harness(db, true).await;
     let owner = log_in_owner(&h, "196379789:Chribba").await;
@@ -3445,23 +3448,59 @@ async fn ping_groups_per_owner_and_channel(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    for (name, role) in [("Capital FCs", FC_ROLE), ("Scouts", SCOUT_ROLE)] {
-        sqlx::query(
+    let mut ids = Vec::new();
+    for (name, role) in [
+        ("Capital FCs", FC_ROLE),
+        ("Scouts", SCOUT_ROLE),
+        ("Doomed", DOOMED_ROLE),
+    ] {
+        let id: i64 = sqlx::query_scalar(
             "WITH g AS (INSERT INTO core.groups (name) VALUES ($1) RETURNING id) \
              INSERT INTO core.discord_role_mappings (role_id, role_name, group_id) \
-             SELECT $2, $1, id FROM g",
+             SELECT $2, $1, id FROM g RETURNING group_id",
         )
         .bind(name)
         .bind(role.parse::<i64>().unwrap())
-        .execute(&h.db)
+        .fetch_one(&h.db)
         .await
         .unwrap();
+        ids.push(id);
     }
-    sqlx::query("INSERT INTO core.groups (name) VALUES ('No Role')")
-        .execute(&h.db)
-        .await
-        .unwrap();
-    let field = format!("ping_groups_{DISCORD_PING_CHANNEL}");
+    let (fcs, scouts, doomed) = (ids[0], ids[1], ids[2]);
+    let no_role: i64 =
+        sqlx::query_scalar("INSERT INTO core.groups (name) VALUES ('No Role') RETURNING id")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let field = |id: i64| format!("ping_group_{id}");
+
+    // A channel's page offers the groups with a role, nothing else.
+    let at = format!("/plugins/{ID}/settings/channel/{DISCORD_PING_CHANNEL}");
+    let shown = page(&h, &at, &owner).await.body;
+    for id in [fcs, scouts, doomed] {
+        assert!(
+            shown.contains(&format!("name=\"{}\"", field(id))),
+            "{shown}"
+        );
+    }
+    assert!(!shown.contains(&field(no_role)), "{shown}");
+    assert!(!shown.contains("No Role"), "{shown}");
+    let body = form_body(
+        &shown,
+        "channel_groups",
+        &[(&field(scouts), "on"), (&field(fcs), "on")],
+    );
+    let res = send(&h.app, form(&at, &body, &owner)).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Not one of the app's channels: no page.
+    let res = page(
+        &h,
+        &format!("/plugins/{ID}/settings/channel/600000000000000099"),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
     // Default pings off: the groups ping all the same.
     let res = save_settings(
         &h,
@@ -3469,44 +3508,61 @@ async fn ping_groups_per_owner_and_channel(db: PgPool) {
         &[
             ("attack_channel", DISCORD_PING_CHANNEL),
             ("default_pings", ""),
-            (&field, "Scouts\nNo Role\ncapital fcs"),
         ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    // At most 9, and names as long as groups' at most.
-    let ten = (1..=10)
-        .map(|i| format!("G{i}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let res = save_settings(&h, &owner, &[(&field, &ten)]).await;
+    // At most 9 a list.
+    for i in 1..=7 {
+        sqlx::query(
+            "WITH g AS (INSERT INTO core.groups (name) VALUES ($1) RETURNING id) \
+             INSERT INTO core.discord_role_mappings (role_id, role_name, group_id) \
+             SELECT $2, $1, id FROM g",
+        )
+        .bind(format!("Wing {i}"))
+        .bind(500_000_000_000_000_100_i64 + i)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    }
+    let every: Vec<i64> = sqlx::query_scalar(
+        "SELECT group_id FROM core.discord_role_mappings WHERE group_id IS NOT NULL",
+    )
+    .fetch_all(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(every.len(), 10);
+    let ten: Vec<(String, &str)> = every.iter().map(|id| (field(*id), "on")).collect();
+    let ten: Vec<(&str, &str)> = ten.iter().map(|(f, v)| (f.as_str(), *v)).collect();
+    let res = save_owner(&h, &owner, CHRIBBA_CORP, &ten, None).await;
     assert!(res.body.contains("At most 9 ping groups"), "{}", res.body);
     let res = save_owner(
         &h,
         &owner,
         CHRIBBA_CORP,
-        &[("ping_groups", &"x".repeat(101))],
-        None,
-    )
-    .await;
-    assert!(res.body.contains("at most 100 characters"), "{}", res.body);
-    let res = save_owner(
-        &h,
-        &owner,
-        CHRIBBA_CORP,
-        &[("ping_groups", "Capital FCs\nNobody")],
+        &[(&field(fcs), "on"), (&field(doomed), "on")],
         None,
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    // Kept as typed, shown again.
+
+    // Renamed, the group stays picked under its new name; deleted, it's
+    // shown as such, by the name it was saved under.
+    sqlx::query("UPDATE core.groups SET name = 'Super FCs' WHERE id = $1")
+        .bind(fcs)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM core.groups WHERE id = $1")
+        .bind(doomed)
+        .execute(&h.db)
+        .await
+        .unwrap();
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner)
         .await
         .body;
-    assert!(
-        settings.contains("Scouts\nNo Role\ncapital fcs"),
-        "{settings}"
-    );
+    assert!(settings.contains("ping groups"), "{settings}");
+    assert!(settings.contains("Super FCs, Scouts"), "{settings}");
     let own = page(
         &h,
         &format!("/plugins/{ID}/settings/owner/{CHRIBBA_CORP}"),
@@ -3514,7 +3570,21 @@ async fn ping_groups_per_owner_and_channel(db: PgPool) {
     )
     .await
     .body;
-    assert!(own.contains("Capital FCs\nNobody"), "{own}");
+    let ticked = form_body(&own, "owner_routes", &[]);
+    assert!(ticked.contains(&format!("{}=on", field(fcs))), "{ticked}");
+    assert!(
+        ticked.contains(&format!("{}=on", field(doomed))),
+        "{ticked}"
+    );
+    assert!(
+        !ticked.contains(&format!("{}=on", field(scouts))),
+        "{ticked}"
+    );
+    assert!(own.contains("Super FCs"), "{own}");
+    assert!(
+        own.contains("Doomed (deleted or no Discord role: skipped)"),
+        "{own}"
+    );
     Mock::given(method("POST"))
         .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -3525,6 +3595,14 @@ async fn ping_groups_per_owner_and_channel(db: PgPool) {
 
     let problems = sync(&h).await;
     assert!(problems.is_empty(), "{problems:?}");
+    // The owner's row, once synced, shows its groups too.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner)
+        .await
+        .body;
+    assert!(
+        settings.contains("Super FCs, Doomed (deleted or no Discord role: skipped)"),
+        "{settings}"
+    );
     let posted: Vec<serde_json::Value> = h
         .discord_server
         .received_requests()
@@ -3535,8 +3613,9 @@ async fn ping_groups_per_owner_and_channel(db: PgPool) {
         .map(|r| serde_json::from_slice(&r.body).unwrap())
         .collect();
     assert_eq!(posted.len(), 1, "{posted:?}\n{}", backlog(&h).await);
-    // The owner's first, then the channel's, each once: no @everyone
-    // stand-in with default pings off, nothing for groups without roles.
+    // The owner's first, then the channel's, each once: the renamed group
+    // still pinged, the deleted one skipped, no @everyone stand-in with
+    // default pings off.
     assert_eq!(
         posted[0]["content"],
         format!("<@&{FC_ROLE}> <@&{SCOUT_ROLE}>")

@@ -1541,9 +1541,10 @@ async fn discord_messages_go_only_where_an_admin_allows(db: PgPool) {
 }
 
 /// Several pings in one message (aa-structures' ping groups): the roles
-/// Tether maps to states and, for an app approved for `mention_groups`,
-/// groups, by name; one with no role is left out and the message still
-/// goes. Never @everyone, @here or anyone else.
+/// Tether maps to states (by name) and, for an app approved for
+/// `mention_groups`, groups (by id, from `ping-groups`); one with no role
+/// is left out and the message still goes. Never @everyone, @here or
+/// anyone else.
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]
 async fn discord_messages_ping_several_state_and_group_roles(db: PgPool) {
     const FC_ROLE: &str = "500000000000000004";
@@ -1598,10 +1599,11 @@ async fn discord_messages_ping_several_state_and_group_roles(db: PgPool) {
     .execute(&h.db)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO core.groups (name) VALUES ('No Role')")
-        .execute(&h.db)
-        .await
-        .unwrap();
+    let no_role: i64 =
+        sqlx::query_scalar("INSERT INTO core.groups (name) VALUES ('No Role') RETURNING id")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
     let last_body = || async {
         let sent = h.discord_server.received_requests().await.unwrap();
         let last = sent
@@ -1624,12 +1626,24 @@ async fn discord_messages_ping_several_state_and_group_roles(db: PgPool) {
         )
     };
 
-    // A state's and a group's role (any case), each once; a group with no
+    // The groups it may offer: those with a role (this one Hidden and
+    // Internal, as new groups are), by id and name; nothing else. From a
+    // page too. An app not approved for group mentions gets none.
+    let listed = format!("[PingGroup {{ id: {group}, name: \"Capital FCs\" }}]");
+    for from_page in [false, true] {
+        let out = run_probe(&h, "acme.pings", "ping-groups", Vec::new(), from_page).await;
+        assert_eq!(out, listed);
+    }
+    let out = run_probe(&h, ID, "ping-groups", Vec::new(), true).await;
+    assert_eq!(out, "[]");
+
+    // A state's (any case) and a group's role, each once; a group with no
     // role, one that doesn't exist and an unmapped state are left out.
+    let groups = format!("{group},{no_role},{},{group}", no_role + 1000);
     let out = pings(&[
         ("text", "Timer @here"),
         ("states", "member,Blue"),
-        ("groups", "capital fcs,No Role,Nobody,Capital FCs"),
+        ("groups", &groups),
     ])
     .await;
     assert_eq!(out, "ok");
@@ -1642,8 +1656,25 @@ async fn discord_messages_ping_several_state_and_group_roles(db: PgPool) {
         body["allowed_mentions"],
         serde_json::json!({ "parse": [], "roles": [DISCORD_MEMBER_ROLE, FC_ROLE] })
     );
+    // A renamed group is still pinged: pings follow the group, not its
+    // name, and it's offered under its new one.
+    sqlx::query("UPDATE core.groups SET name = 'Super FCs' WHERE id = $1")
+        .bind(group)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    let out = pings(&[("text", "Renamed"), ("groups", &group.to_string())]).await;
+    assert_eq!(out, "ok");
+    assert_eq!(
+        last_body().await["allowed_mentions"]["roles"],
+        serde_json::json!([FC_ROLE])
+    );
+    let out = run_probe(&h, "acme.pings", "ping-groups", Vec::new(), true).await;
+    assert!(out.contains("Super FCs"), "{out}");
+
     // Nothing to ping still sends; a card alone too.
-    let out = pings(&[("groups", "Nobody"), ("title", "Reinforced")]).await;
+    let nobody = (no_role + 1000).to_string();
+    let out = pings(&[("groups", &nobody), ("title", "Reinforced")]).await;
     assert_eq!(out, "ok");
     let body = last_body().await;
     assert_eq!(body["content"], "");
@@ -1675,7 +1706,7 @@ async fn discord_messages_ping_several_state_and_group_roles(db: PgPool) {
         "send-message",
         vec![
             ("text".to_owned(), "x".to_owned()),
-            ("groups".to_owned(), "Capital FCs".to_owned()),
+            ("groups".to_owned(), group.to_string()),
         ],
         false,
     )

@@ -364,8 +364,8 @@ fn probe(request: Request) -> Result<Page, PageError> {
         "characters" => format!("{:?}", esi::characters()),
         "owners" => format!("{:?}", identity::owners()),
         "members" => format!("{:?}", identity::members()),
-        // send-message?text=&states=a,b&groups=c,d&title=: pings by name,
-        // a card when titled.
+        // send-message?text=&states=a,b&groups=1,2&title=: pings states by
+        // name and groups by id, a card when titled.
         "send-message" => {
             let channel = arg("channel")
                 .or_else(|| discord::channels().first().map(|c| c.id.clone()))
@@ -382,7 +382,9 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 message = message.ping(discord::Ping::State(state));
             }
             for group in names(arg("groups")) {
-                message = message.ping(discord::Ping::Group(group));
+                if let Ok(id) = group.parse() {
+                    message = message.ping(discord::Ping::Group(id));
+                }
             }
             if let Some(title) = arg("title") {
                 message = message.embed(discord::Embed::new(title));
@@ -392,6 +394,7 @@ fn probe(request: Request) -> Result<Page, PageError> {
                 Err(e) => format!("err {e:?}"),
             }
         }
+        "ping-groups" => format!("{:?}", discord::ping_groups()),
         "sources" => format!("{:?}", esi::data_sources()),
         // send?channel=&text=&state=Member
         "send" => {

@@ -370,6 +370,13 @@ impl tether::plugin::discord::Host for CallState {
         }
     }
 
+    async fn ping_groups(&mut self) -> Vec<services::PingGroup> {
+        match &self.services {
+            Some(services) => services.discord_ping_groups(self.plugin.clone()).await,
+            None => Vec::new(),
+        }
+    }
+
     async fn send(
         &mut self,
         channel: String,

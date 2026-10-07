@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT ON (m.group_id) m.group_id AS \"group_id!\", m.role_id\n        FROM core.discord_role_mappings m\n        WHERE m.group_id = ANY($1::bigint[])\n        ORDER BY m.group_id, m.role_name, m.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "group_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "role_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.discord_role_mappings",
+            "name": "role_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "8a60c366ca8ae70a64147c5b5a3722c63386f28a6c7383748c169c68f6f05e24"
+}

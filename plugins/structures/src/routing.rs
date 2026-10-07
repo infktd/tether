@@ -6,8 +6,10 @@
 //! are the defaults; an owner can route a kind to its own channel, or not
 //! send it, pick its own types, and turn its pings on or off. Ping groups
 //! are the owner's and the channel's together, on every message, as
-//! aa-structures adds an owner's and a webhook's.
+//! aa-structures adds an owner's and a webhook's; by the group's id, so
+//! they follow the group as aa-structures' do.
 
+use tether_plugin_sdk::discord;
 use tether_plugin_sdk::storage::{self, Value as Db};
 
 use crate::notification::{Category, Severity};
@@ -26,28 +28,36 @@ pub struct Routes {
     /// (corporation, its own types).
     types: Vec<(i64, Vec<String>)>,
     /// (corporation, its ping groups).
-    owner_groups: Vec<(i64, Vec<String>)>,
+    owner_groups: Vec<(i64, Vec<i64>)>,
     /// (channel, its ping groups).
-    channel_groups: Vec<(String, Vec<String>)>,
+    channel_groups: Vec<(String, Vec<i64>)>,
+    /// The groups that have a Discord role now: kept first.
+    pingable: Vec<i64>,
 }
 
 /// Groups a message pings at most: the host takes 10 pings, one of them
 /// a state's.
 pub const MAX_PING_GROUPS: usize = 9;
 
-/// A stored list of group names (`array_to_string(..., E'\n')`): a
-/// group's name may hold a comma, never a line break.
-pub fn group_list(value: Option<&Db>) -> Vec<String> {
+/// A stored list of group ids (`array_to_string(..., ',')`).
+pub fn group_list(value: Option<&Db>) -> Vec<i64> {
     value
         .and_then(Db::as_text)
-        .map(|t| {
-            t.lines()
-                .map(str::trim)
-                .filter(|g| !g.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
+        .map(|t| t.split(',').filter_map(|g| g.trim().parse().ok()).collect())
         .unwrap_or_default()
+}
+
+/// Group ids as stored (`string_to_array($n, ',')::bigint[]`), or none.
+pub fn group_ids(groups: &[i64]) -> Db {
+    (!groups.is_empty())
+        .then(|| {
+            groups
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .into()
 }
 
 fn index(category: Category) -> usize {
@@ -80,15 +90,16 @@ impl Routes {
         )?;
         let own = storage::query(
             "SELECT corporation_id, mention, array_to_string(notification_types, ','), \
-                    array_to_string(ping_groups, E'\\n') \
+                    array_to_string(ping_groups, ',') \
              FROM owner_settings",
             &[],
         )?;
         let channel_groups = storage::query(
-            "SELECT channel, array_to_string(groups, E'\\n') FROM channel_ping_groups",
+            "SELECT channel, array_to_string(groups, ',') FROM channel_ping_groups",
             &[],
         )?;
         Ok(Self {
+            pingable: discord::ping_groups().into_iter().map(|g| g.id).collect(),
             defaults: Category::ALL.map(|c| settings.channel(c).map(str::to_owned)),
             default_pings: settings.default_pings,
             danger_ping: settings.danger_ping.clone(),
@@ -135,9 +146,10 @@ impl Routes {
 
     /// The groups a message from an owner to a channel pings
     /// (aa-structures' ping groups): the owner's and the channel's, each
-    /// once (any case), whatever its pings are set to; at most
-    /// [`MAX_PING_GROUPS`].
-    pub fn groups(&self, corporation: i64, channel: &str) -> Vec<String> {
+    /// once, whatever its pings are set to; at most [`MAX_PING_GROUPS`].
+    /// A group deleted or without a Discord role now goes last; the host
+    /// skips it.
+    pub fn groups(&self, corporation: i64, channel: &str) -> Vec<i64> {
         let owner = self
             .owner_groups
             .iter()
@@ -148,15 +160,16 @@ impl Routes {
             .iter()
             .filter(|(c, _)| c == channel)
             .flat_map(|(_, g)| g);
-        let mut groups: Vec<String> = Vec::new();
+        let mut groups: Vec<i64> = Vec::new();
         for group in owner.chain(channel) {
-            if !groups
-                .iter()
-                .any(|g| g.to_lowercase() == group.to_lowercase())
-            {
-                groups.push(group.clone());
+            if !groups.contains(group) {
+                groups.push(*group);
             }
         }
+        // Those with a role first, so a dead one never crowds out a live
+        // one. The dead are kept for the host to leave out and log, and
+        // an empty list (the host couldn't say) drops none.
+        groups.sort_by_key(|g| !self.pingable.contains(g));
         groups.truncate(MAX_PING_GROUPS);
         groups
     }
