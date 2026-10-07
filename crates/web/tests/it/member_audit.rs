@@ -1715,6 +1715,55 @@ async fn a_big_hangar_is_stored_whole(db: PgPool) {
     assert!(whole);
 }
 
+/// More pages of assets than a read takes: what was read is kept, and the
+/// sheet says the list is incomplete (the section shows as failed), rather
+/// than showing it as whole.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn assets_read_in_part_say_so(db: PgPool) {
+    let (h, owner) = synced(db).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHRIBBA}/assets")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "21")
+                .set_body_json(serde_json::json!([
+                    { "item_id": 1_000_000_000_010_i64, "type_id": 34, "quantity": 5, "location_id": JITA_4_4,
+                      "location_flag": "Hangar", "location_type": "station", "is_singleton": false },
+                ])),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    sqlx::query(
+        r#"DELETE FROM "plugin_tether.member-audit".section_syncs WHERE section = 'assets'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let (stored, filtered, ok): (i64, bool, bool) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.member-audit".assets),
+                  (SELECT assets_at IS NOT NULL FROM "plugin_tether.member-audit".characters),
+                  (SELECT ok FROM "plugin_tether.member-audit".section_syncs WHERE section = 'assets')"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, 1);
+    assert!(!filtered && !ok);
+    let tab = page(
+        &h,
+        &format!("/plugins/{ID}/character/{CHRIBBA}/assets"),
+        &owner,
+    )
+    .await
+    .body;
+    assert!(tab.contains("Tritanium"), "{tab}");
+    assert!(tab.contains("this list is incomplete"), "{tab}");
+    let mine = page(&h, "/dashboard", &owner).await.body;
+    assert!(mine.contains("Update issues"), "{mine}");
+}
+
 /// Two characters colonising one planet that isn't named yet: it's named
 /// once, and the run goes on past naming places (an upsert naming it
 /// twice failed every run).

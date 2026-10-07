@@ -744,11 +744,11 @@ fn assets(run: &mut Run, id: i64) -> Result<(), Stop> {
             vec![id.into()],
         )])
     } else {
-        log::warn(format!(
-            "character {id}: assets only in part (more than {MAX_PAGES} pages, or a page ESI \
-             garbled): the asset filter leaves it out"
-        ));
-        Ok(())
+        // What was read stays, and the sheet says it's only part.
+        Err(Stop::Section(format!(
+            "only part of the assets was read, so this list is incomplete (more than \
+             {MAX_PAGES} pages of them, or a page ESI sent garbled)"
+        )))
     }
 }
 
