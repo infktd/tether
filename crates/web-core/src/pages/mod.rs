@@ -602,18 +602,39 @@ pub struct Loaded {
     pub apps: Vec<String>,
 }
 
-pub async fn load(
-    state: &AppState,
-    session: &CurrentSession,
-    active: &'static str,
-) -> Result<Loaded, PageError> {
+/// What one account may open: its permissions, the admin pages and apps'
+/// sidebar links they allow, and the sidebar as the Menu arranges them.
+/// The shell is built from it, and the command palette lists from it, so
+/// both offer exactly the same.
+pub struct Reach {
+    pub account: accounts::Account,
+    pub access: AccessState,
+    pub perms: std::collections::BTreeSet<String>,
+    pub nav: AdminNav,
+    /// Pending requests, when the account may open Group Management.
+    pub group_management: Option<i64>,
+    /// The Dashboard is the character audit (`Shell::character_audit`).
+    pub character_audit: bool,
+    pub plugin_nav: Vec<PluginNavLink>,
+    pub menu: Vec<crate::menu::Section>,
+}
+
+impl Reach {
+    /// Whether the account may open an app page with this access.
+    pub fn may_open(&self, access: &tether_plugins::manifest::PageAccess) -> bool {
+        crate::plugins::may_open(access, self.access.is_blacklist(), |p| {
+            self.perms.contains(p)
+        })
+    }
+}
+
+pub async fn reach(state: &AppState, session: &CurrentSession) -> Result<Reach, PageError> {
     let account = accounts::get(&state.db, session.account)
         .await?
         .ok_or_else(AppError::unauthorized)?;
     let access = state_db::account_state(&state.db, session.account)
         .await?
         .ok_or_else(AppError::unauthorized)?;
-    let token_states = tether_db::tokens::states_for_account(&state.db, session.account).await?;
     let perms = permissions::effective(&state.db, session.account).await?;
     let nav = AdminNav {
         groups: perms.contains(tether_core::permissions::ADMIN_GROUPS),
@@ -682,6 +703,34 @@ pub async fn load(
         .collect::<Vec<_>>();
     let menu =
         crate::menu::sidebar(&state.db, menu_items(&nav, group_management, &plugin_nav)).await?;
+    Ok(Reach {
+        account,
+        access,
+        perms,
+        nav,
+        group_management,
+        character_audit,
+        plugin_nav,
+        menu,
+    })
+}
+
+pub async fn load(
+    state: &AppState,
+    session: &CurrentSession,
+    active: &'static str,
+) -> Result<Loaded, PageError> {
+    let Reach {
+        account,
+        access,
+        perms,
+        nav,
+        group_management,
+        character_audit,
+        plugin_nav,
+        menu,
+    } = reach(state, session).await?;
+    let token_states = tether_db::tokens::states_for_account(&state.db, session.account).await?;
     let characters = account
         .characters
         .iter()
