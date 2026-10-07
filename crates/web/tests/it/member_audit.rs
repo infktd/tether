@@ -45,7 +45,7 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
-const MIGRATIONS: [&str; 12] = [
+const MIGRATIONS: [&str; 13] = [
     "migrations/0001_member_audit.sql",
     "migrations/0002_complete_data.sql",
     "migrations/0003_character_sheet.sql",
@@ -58,6 +58,7 @@ const MIGRATIONS: [&str; 12] = [
     "migrations/0010_assets_every_page.sql",
     "migrations/0011_skill_set_fields.sql",
     "migrations/0012_type_skills.sql",
+    "migrations/0013_online_status.sql",
 ];
 
 /// Member Audit as the image bundles it (`scripts/bundle-apps.sh`): its
@@ -155,6 +156,15 @@ async fn mount_esi(h: &Harness) {
             ]),
         ),
         ("wallet", serde_json::json!(1234567.89)),
+        (
+            "online",
+            serde_json::json!({
+                "online": false,
+                "last_login": "2026-09-30T18:05:00Z",
+                "last_logout": "2026-09-30T21:40:00Z",
+                "logins": 4242
+            }),
+        ),
         (
             "location",
             serde_json::json!({ "solar_system_id": JITA, "station_id": JITA_4_4 }),
@@ -447,6 +457,7 @@ async fn register(h: &Harness, token: &str) -> String {
         "esi-skills.read_skillqueue.v1",
         "esi-mail.read_mail.v1",
         "esi-universe.read_structures.v1",
+        "esi-location.read_online.v1",
     ] {
         assert!(asked.contains(&scope.to_owned()), "{asked:?}");
     }
@@ -524,7 +535,7 @@ async fn member_audit_end_to_end(db: PgPool) {
     .unwrap();
     // Roles aren't read: aa-memberaudit's MEMBERAUDIT_FEATURE_ROLES_ENABLED
     // is off by default.
-    assert_eq!(sections, 23, "{:?}", plugin_warnings(&h).await);
+    assert_eq!(sections, 24, "{:?}", plugin_warnings(&h).await);
 
     // My characters, which is the Dashboard: a row per character with its
     // portrait and facts, the totals, and Tether's Register Character last.
@@ -558,7 +569,7 @@ async fn member_audit_end_to_end(db: PgPool) {
 
     // The Character Sheet: every page and tab.
     let sheet_pages = [
-        ("", 4),
+        ("", 5),
         ("/skills", 4),
         ("/assets", 1),
         (&format!("/assets/{JITA_4_4}") as &str, 1),
@@ -589,6 +600,8 @@ async fn member_audit_end_to_end(db: PgPool) {
         "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
         ">5.0<",
         "2006-03-01",
+        // Last login, from character-online.
+        "2026-09-30 18:05",
         "Update now",
         "State War Academy",
         "Quartermaster",

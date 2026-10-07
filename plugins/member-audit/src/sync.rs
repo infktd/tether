@@ -63,6 +63,8 @@ const fn section(name: &'static str, every: i64, calls: usize) -> Section {
 pub(crate) const SECTIONS: &[Section] = &[
     section("skills", 60, 2),
     section("location", 30, 2),
+    // aa-memberaudit's online status, as stale after an hour.
+    section("online", 60, 1),
     section("wallet", 30, 1),
     section("public", 1440, 1),
     section("clones", 60, 2),
@@ -511,6 +513,7 @@ fn read(run: &mut Run, id: i64, section: &str) -> Result<(), Stop> {
         "skills" => skills(run, id),
         "location" => location(run, id),
         "wallet" => wallet(run, id),
+        "online" => online(run, id),
         "public" => public(run, id),
         "clones" => clones(run, id),
         "assets" => assets(run, id),
@@ -637,6 +640,22 @@ fn wallet(run: &mut Run, id: i64) -> Result<(), Stop> {
     store(&[stmt(
         "UPDATE characters SET wallet = $2 WHERE character_id = $1",
         vec![id.into(), balance.into()],
+    )])
+}
+
+/// aa-memberaudit's online status: last login and logout, and logins.
+fn online(run: &mut Run, id: i64) -> Result<(), Stop> {
+    let status: Json = run.json("character-online", id, &[])?;
+    store(&[stmt(
+        "UPDATE characters SET last_login = $2::timestamptz, last_logout = $3::timestamptz, \
+         logins = $4, online = $5 WHERE character_id = $1",
+        vec![
+            id.into(),
+            status["last_login"].as_str().map(str::to_owned).into(),
+            status["last_logout"].as_str().map(str::to_owned).into(),
+            status["logins"].as_i64().into(),
+            status["online"].as_bool().into(),
+        ],
     )])
 }
 

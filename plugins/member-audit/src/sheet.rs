@@ -317,7 +317,7 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
                     c.faction_id, {fact}, coalesce(c.bio, ''), c.update_requested_at, \
                     (SELECT count(*) FROM clones WHERE character_id = c.character_id), \
                     (SELECT max(finish) FROM queue WHERE character_id = c.character_id), \
-                    c.update_done_at, c.is_shared \
+                    c.update_done_at, c.is_shared, c.last_login \
              FROM characters c WHERE c.character_id = $1",
             system = name_of("c.system_id"),
             place = name_of("c.location_id"),
@@ -436,6 +436,8 @@ fn overview(access: &Access, who: &Subject, note: Option<&str>) -> Result<Page, 
             fact_or(opt_float(c, 11).map(|s| format!("{s:.1}").into())),
         )
         .fact("Born", time_or_blank(c, 12))
+        // aa-memberaudit's online status.
+        .fact("Last login", time_or_blank(c, 24))
         .fact(
             "Training",
             training.map_or_else(
