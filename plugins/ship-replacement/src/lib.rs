@@ -20,7 +20,8 @@
 //!   (the payout defaults to zKillboard's value) or reject with a comment,
 //!   update the payout at any time, mark approved ones paid (aa-srp's),
 //!   complete and remove fleets. As AA, nothing stops a manager deciding
-//!   their own request.
+//!   their own request. The pilot hears of each approval and rejection in
+//!   Tether's notifications, as AA's notify tells them.
 //! - **SRP team channel** (aa-srp's `srp_team_discord_channel_id`, none by
 //!   default): Settings, for `manage` (aa-srp's setting is changed in
 //!   Django's admin), picks one of the Discord channels an admin assigned
@@ -40,6 +41,7 @@ use tether_plugin_sdk::esi::{self, Subject};
 use tether_plugin_sdk::http;
 use tether_plugin_sdk::identity::{self, Viewer};
 use tether_plugin_sdk::jobs::{self, Job, JobError, NewJob};
+use tether_plugin_sdk::notify::{self, Level};
 use tether_plugin_sdk::storage::{self, Statement, Value as Db};
 use tether_plugin_sdk::{
     Action, Badge, Card, Column, Field, Form, Page, PageError, Plugin, Request, SettingsForm,
@@ -579,12 +581,14 @@ struct Req {
     created_at: Option<DateTime<Utc>>,
     decided_at: Option<DateTime<Utc>>,
     paid_at: Option<DateTime<Utc>>,
+    account_id: i64,
+    submitter: Option<String>,
 }
 
 const REQUEST_SELECT: &str = "SELECT r.id, r.fleet_id, f.name, r.character_name, r.killmail_id, \
      r.killboard_link, r.ship_name, r.killmail_time, r.kb_total_loss, r.payout, r.status, r.paid, \
      r.additional_info, coalesce(r.reviewer_name, ''), r.created_at, r.decided_at, r.paid_at, \
-     r.account_id, f.fleet_time, r.character_id, r.ship_type_id \
+     r.account_id, f.fleet_time, r.character_id, r.ship_type_id, r.submitter \
      FROM requests r JOIN fleets f ON f.id = r.fleet_id";
 
 fn request(row: &[Db]) -> Req {
@@ -606,8 +610,13 @@ fn request(row: &[Db]) -> Req {
         created_at: when(row, 14),
         decided_at: when(row, 15),
         paid_at: when(row, 16),
+        account_id: int(row, 17),
         character_id: int(row, 19),
         ship_type_id: int(row, 20),
+        submitter: match row.get(21) {
+            Some(Db::Text(reference)) => Some(reference.clone()),
+            _ => None,
+        },
     }
 }
 
@@ -823,8 +832,8 @@ fn request_srp(
     let added = storage::query(
         "WITH added AS (INSERT INTO requests (fleet_id, account_id, character_id, \
              character_name, killmail_id, killmail_hash, killboard_link, ship_type_id, ship_name, \
-             solar_system_id, killmail_time, kb_total_loss, additional_info) \
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13 \
+             solar_system_id, killmail_time, kb_total_loss, additional_info, submitter) \
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14 \
          WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed) \
            AND NOT EXISTS (SELECT 1 FROM legacy_claims WHERE killmail_id = $5) \
          ON CONFLICT (killmail_id) DO NOTHING RETURNING id), \
@@ -846,6 +855,7 @@ fn request_srp(
             Db::timestamp(rfc3339(km.time)),
             zkb.total_value.into(),
             submission.value("additional_info").trim().to_owned().into(),
+            submitter().into(),
         ],
     )
     .map_err(|e| failed("saving the request", e))?;
@@ -866,6 +876,74 @@ fn request_srp(
         ));
     }
     Ok(SubmitResult::Redirect(String::new()))
+}
+
+/// Tether's reference to the pilot posting the request, so they hear of
+/// its decision whatever they hold by then (AA tells the character's
+/// owner). None if Tether wouldn't give one: they're then told while they
+/// hold `access_srp`.
+fn submitter() -> Option<String> {
+    notify::submitter_reference()
+        .map_err(|err| log::warn(format!("no submitter reference: {err:?}")))
+        .ok()
+}
+
+/// A number as AA's intcomma writes it: 1,234,567.
+fn grouped(amount: f64) -> String {
+    let digits = format!("{:.0}", amount.max(0.0));
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// AA core's notice to the pilot when their request is approved or
+/// rejected (`srp/views.py:273-278`, `:306-311`), with the reviewer's
+/// comment if any, as aa-srp adds it.
+fn decision_notice(
+    approve: bool,
+    ship: &str,
+    fleet: &str,
+    payout: Option<f64>,
+    comment: &str,
+) -> (&'static str, String, Level) {
+    let (title, mut message, level) = if approve {
+        (
+            "SRP Request Approved",
+            format!(
+                "Your SRP request for a {ship} lost during {fleet} has been approved for {} ISK.",
+                grouped(payout.unwrap_or_default())
+            ),
+            Level::Success,
+        )
+    } else {
+        (
+            "SRP Request Rejected",
+            format!("Your SRP request for a {ship} lost during {fleet} has been rejected."),
+            Level::Danger,
+        )
+    };
+    if !comment.is_empty() {
+        message.push_str(&format!(" Comment: {comment}"));
+    }
+    (title, message, level)
+}
+
+/// Tells the pilot who requested `r`: by Tether's reference to them when
+/// the request has one, else their account while it holds `access_srp`.
+/// Best effort: the decision stands either way.
+fn tell_pilot(r: &Req, title: &str, message: &str, level: Level) {
+    let sent = match &r.submitter {
+        Some(reference) => notify::submitter(reference, title, message, level),
+        None => notify::account(r.account_id, title, message, level),
+    };
+    if let Err(err) = sent {
+        log::warn(format!("request {}'s pilot wasn't told: {err:?}", r.id));
+    }
 }
 
 // ---- the SRP team's channel ------------------------------------------------------
@@ -1317,7 +1395,7 @@ fn request_buttons(r: &Req) -> Vec<Action> {
                 .tone(Tone::Danger)
                 .confirm(format!(
                     "{}'s request for their {} is rejected (and no longer paid, if it was); they \
-                     see it on their SRP page.",
+                     are told.",
                     r.character_name, r.ship_name
                 )),
         );
@@ -1493,7 +1571,7 @@ fn review_page(viewer: &Viewer, request_id: i64, note: Option<&str>) -> Result<P
         Form::new("decide", "Save Decision")
             .description(
                 "Approving without a payout set pays zKillboard's value; rejecting a paid request \
-                 unmarks it paid. The pilot sees the decision on their SRP page.",
+                 unmarks it paid. The pilot is told, with the comment.",
             )
             .field(
                 Field::select(
@@ -1558,12 +1636,12 @@ fn decide(
     // At any time, as AA. Approving keeps a payout set earlier, else pays
     // zKillboard's value; rejecting unmarks a paid request (only approved
     // ones are paid).
-    let changed = storage::execute(
+    let changed = storage::query(
         "UPDATE requests SET status = $2, \
            payout = CASE WHEN $3 THEN coalesce(payout, kb_total_loss) ELSE payout END, \
            paid = paid AND $3, paid_at = CASE WHEN $3 THEN paid_at END, \
            reviewer_name = $4, decided_at = now() \
-         WHERE id = $1",
+         WHERE id = $1 RETURNING payout",
         &[
             r.id.into(),
             if approve { "approved" } else { "rejected" }.into(),
@@ -1572,8 +1650,16 @@ fn decide(
         ],
     )
     .map_err(|e| failed("saving the decision", e))?;
-    if changed == 0 {
+    let Some(row) = changed.rows.first() else {
         return Ok(Some("That request is gone."));
+    };
+    // The pilot hears of a change of status, as AA tells them of each
+    // approval and rejection.
+    let status = if approve { "approved" } else { "rejected" };
+    if r.status != status {
+        let (title, message, level) =
+            decision_notice(approve, &r.ship_name, &r.fleet_name, float(row, 0), comment);
+        tell_pilot(r, title, &message, level);
     }
     // Every decision is on the record, with the comment if any (and that
     // it had been paid, if a paid request is rejected).
@@ -1764,6 +1850,31 @@ mod tests {
         let long = team_card(&rifter(&"*".repeat(1000))).description.unwrap();
         assert!(long.chars().count() <= 2000, "{}", long.chars().count());
         assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn the_pilot_is_told_in_aa_cores_words() {
+        assert_eq!(grouped(0.0), "0");
+        assert_eq!(grouped(999.4), "999");
+        assert_eq!(grouped(1_000.0), "1,000");
+        assert_eq!(grouped(12_345_678.0), "12,345,678");
+        let (title, message, level) =
+            decision_notice(true, "Rifter", "Op Rock", Some(15_000_000.0), "");
+        assert_eq!(title, "SRP Request Approved");
+        assert_eq!(
+            message,
+            "Your SRP request for a Rifter lost during Op Rock has been approved for 15,000,000 ISK."
+        );
+        assert!(matches!(level, Level::Success));
+        let (title, message, level) =
+            decision_notice(false, "Rifter", "Op Rock", None, "Not on the doctrine.");
+        assert_eq!(title, "SRP Request Rejected");
+        assert_eq!(
+            message,
+            "Your SRP request for a Rifter lost during Op Rock has been rejected. \
+             Comment: Not on the doctrine."
+        );
+        assert!(matches!(level, Level::Danger));
     }
 
     #[test]

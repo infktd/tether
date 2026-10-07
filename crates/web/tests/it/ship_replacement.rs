@@ -47,20 +47,35 @@ fn plugin_file(name: &str) -> String {
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(11);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let migration = plugin_file("migrations/0001_ship_replacement.sql");
-    let second = plugin_file("migrations/0002_claims_follow_requests.sql");
-    let third = plugin_file("migrations/0003_srp_team_channel.sql");
     let component = component();
-    let bytes = testing::zip(&[
+    // Every migration the package has, in order.
+    let dir = format!(
+        "{}/../../plugins/ship-replacement/migrations",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".sql"))
+        .collect();
+    names.sort();
+    let migrations: Vec<(String, String)> = names
+        .into_iter()
+        .map(|n| {
+            let sql = plugin_file(&format!("migrations/{n}"));
+            (format!("migrations/{n}"), sql)
+        })
+        .collect();
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
         ("plugin.wasm", &component),
-        ("migrations/0001_ship_replacement.sql", migration.as_bytes()),
-        (
-            "migrations/0002_claims_follow_requests.sql",
-            second.as_bytes(),
-        ),
-        ("migrations/0003_srp_team_channel.sql", third.as_bytes()),
-    ]);
+    ];
+    files.extend(
+        migrations
+            .iter()
+            .map(|(n, sql)| (n.as_str(), sql.as_bytes())),
+    );
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -688,6 +703,137 @@ async fn ship_replacement_end_to_end(db: PgPool) {
             "/api/killID/1005/".to_owned(),
         ]
     );
+}
+
+/// The pilot's notices from the app, title and message.
+async fn told(h: &Harness, character: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT n.title || ' | ' || n.message FROM core.notifications n \
+         JOIN core.characters c ON c.account_id = n.account_id \
+         WHERE c.id = $1 AND n.plugin_id = $2 ORDER BY n.id",
+    )
+    .bind(character)
+    .bind(ID)
+    .fetch_all(&h.db)
+    .await
+    .unwrap()
+}
+
+/// AA core's srp tells the pilot of each approval and rejection
+/// (`srp/views.py:273-278`, `:306-311`): in the bell, whatever they hold by
+/// then (by Tether's reference to who requested it), in AA's words.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn the_pilot_is_told_of_each_decision(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Corporation, NPC_CORP).await;
+    cover(&db, Builtin::Blue, EntityKind::Corporation, BLUE_CORP).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    let zkill = MockServer::start().await;
+    h.plugins.route_http_to(&zkill.address().to_string());
+    mount_esi(&h).await;
+    mount_zkill(&zkill).await;
+    let pilot = log_in_as(&h, "443630591:Pilot A", None).await;
+    let manager = log_in_as(&h, "1887431749:gigX", None).await;
+    for state in [MEMBER_STATE, BLUE_STATE] {
+        grant(&h, &owner, "access_srp", state).await;
+    }
+    grant(&h, &owner, "srp_management", BLUE_STATE).await;
+    let res = post(&h, &manager, "add", &add_fleet("Op+Rock")).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let (fleet, code) = newest_fleet(&h).await;
+    for kill in [1001, 1004] {
+        let res = post(
+            &h,
+            &pilot,
+            &format!("request/{code}"),
+            &request(&format!("https://zkillboard.com/kill/{kill}/")),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let (r1, r4) = (request_of(&h, 1001).await, request_of(&h, 1004).await);
+    assert!(told(&h, PILOT_A).await.is_empty());
+
+    // Approved on its page, with a comment; rejected from the fleet's
+    // table. A payout changed or a comment added tells nobody.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r1}"),
+        "_form=decide&decision=approve&comment=o7",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r1}"),
+        "_form=payout&payout=11000000&comment=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let res = post(
+        &h,
+        &manager,
+        &format!("fleet/{fleet}"),
+        &format!("_form=decide&request={r4}&decision=reject"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(
+        told(&h, PILOT_A).await,
+        [
+            "Ship Replacement: SRP Request Approved | Your SRP request for a Rifter lost during \
+             Op Rock has been approved for 12,500,000 ISK. Comment: o7",
+            "Ship Replacement: SRP Request Rejected | Your SRP request for a Rifter lost during \
+             Op Rock has been rejected.",
+        ]
+    );
+    // Deciding it the same way again isn't news.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r4}"),
+        "_form=decide&decision=reject&comment=Still+no",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    assert_eq!(told(&h, PILOT_A).await.len(), 2);
+
+    // The pilot no longer holds access_srp: still told, as AA tells the
+    // character's owner. A request from before Tether gave references
+    // reaches them only while they hold one of the app's permissions.
+    sqlx::query(
+        "UPDATE \"plugin_tether.ship-replacement\".requests SET submitter = NULL WHERE id = $1",
+    )
+    .bind(r4)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    // (Read, so the same words come again: the bell skips one unread.)
+    sqlx::query("UPDATE core.notifications SET read_at = now()")
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM core.permission_grants WHERE permission LIKE $1")
+        .bind(format!("plugin.{ID}.%"))
+        .execute(&h.db)
+        .await
+        .unwrap();
+    for (r, decision) in [(r1, "reject"), (r4, "approve")] {
+        let res = post(
+            &h,
+            &owner,
+            &format!("review/{r}"),
+            &format!("_form=decide&decision={decision}&comment="),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    }
+    let got = told(&h, PILOT_A).await;
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert!(got[2].contains("SRP Request Rejected"), "{got:?}");
 }
 
 /// Runs the app's queued jobs that are due (the relay).

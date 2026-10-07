@@ -5,7 +5,7 @@
 id = "tether.ship-replacement"
 name = "Ship Replacement"
 icon = "life-buoy"
-version = "0.3.5"
+version = "0.3.6"
 host_api = "1"
 description = "SRP fleets: pilots request SRP for their losses by zKillboard link; SRP managers approve, reject and set payouts, with totals per fleet."
 
@@ -20,6 +20,9 @@ http = ["zkillboard.com"]
 # aa-srp's SRP team channel: new requests are posted, pinging nobody, to
 # the channel Settings picks, none by default.
 discord = ["send_message"]
+# The pilot hears in Tether's notifications when their request is approved
+# or rejected, as AA core's srp tells them.
+notify = true
 
 # AA's srp permissions: access_srp for pilots (grant it to Member; they
 # see every fleet's requests and totals, as in AA), add_srpfleetmain for
