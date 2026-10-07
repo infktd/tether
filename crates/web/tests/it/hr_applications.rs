@@ -668,6 +668,35 @@ async fn hr_applications_end_to_end(db: PgPool) {
     );
     assert!(found.body.contains(&format!("review/{blue_owner_app}")));
     assert!(!found.body.contains(&format!("review/{pilot_app}")));
+    // ...or by their corporation's or alliance's name, as AA's search
+    // (gigX's: CircleOfTwo Holding, in Circle-Of-Two); not the
+    // corporation applied to.
+    for q in ["holding", "CIRCLE-OF", "circleoftwo"] {
+        let found = open(&h, &owner, &format!("review?q={q}")).await;
+        assert!(
+            found.body.contains(&format!("review/{blue_owner_app}")),
+            "{q}: {}",
+            found.body
+        );
+        assert!(
+            !found.body.contains(&format!("review/{pilot_app}")),
+            "{q}: {}",
+            found.body
+        );
+    }
+    let elsewhere = open(&h, &owner, "review?q=otherworld").await;
+    assert!(
+        !elsewhere.body.contains(&format!("review/{blue_owner_app}")),
+        "{}",
+        elsewhere.body
+    );
+    assert!(
+        elsewhere
+            .body
+            .contains("Search applicants&#39; characters, corporations and alliances"),
+        "{}",
+        elsewhere.body
+    );
     assert!(
         found.body.contains("gigX is rejected, and told."),
         "{}",

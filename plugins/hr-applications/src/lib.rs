@@ -58,6 +58,9 @@ const REVIEWED_ROWS: i64 = 200;
 const MAX_COMMENTS: i64 = 200;
 const MAX_CHARACTERS_SHOWN: usize = 250;
 const MY_ROWS: i64 = 200;
+/// Corporations and alliances a search looks up by name (public ESI's
+/// names, 1,000 a call; a page may make 20 ESI calls).
+const MAX_SEARCHED_ORGS: i64 = 5000;
 
 struct HrApplications;
 
@@ -802,14 +805,58 @@ fn review_buttons(viewer: &Viewer, a: &Application) -> Vec<Action> {
     list
 }
 
+/// The corporations and alliances of applicants in scope (`scope`'s two
+/// parameters) whose name holds `q` (lowercase), from public ESI's names;
+/// and whether there were more than [`MAX_SEARCHED_ORGS`] to look at.
+fn matching_orgs(scope: &[Db], q: &str) -> Result<(Vec<i64>, bool), PageError> {
+    let ids: Vec<i64> = query(
+        &format!(
+            "SELECT DISTINCT x.id FROM applications a JOIN forms f ON f.id = a.form_id \
+             CROSS JOIN LATERAL ( \
+                 SELECT (c->>'corporation_id')::bigint AS id \
+                 FROM jsonb_array_elements(a.characters) c \
+                 UNION SELECT (c->>'alliance_id')::bigint \
+                 FROM jsonb_array_elements(a.characters) c) x \
+             WHERE {IN_SCOPE} AND x.id > 0 ORDER BY x.id LIMIT {}",
+            MAX_SEARCHED_ORGS + 1
+        ),
+        scope,
+    )?
+    .iter()
+    .map(|r| int(r, 0))
+    .collect();
+    let cut = ids.len() > usize::try_from(MAX_SEARCHED_ORGS).unwrap_or(usize::MAX);
+    let named = names(
+        ids.into_iter()
+            .take(usize::try_from(MAX_SEARCHED_ORGS).unwrap_or(0)),
+    );
+    let mut matching: Vec<i64> = named
+        .into_iter()
+        .filter(|(_, name)| name.to_lowercase().contains(q))
+        .map(|(id, _)| id)
+        .collect();
+    matching.sort_unstable();
+    Ok((matching, cut))
+}
+
 fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError> {
     let search = search.filter(|q| !q.is_empty()).map(str::to_lowercase);
     let mut params = scope(viewer);
     let mut filter = String::new();
+    let mut orgs_cut = false;
     if let Some(q) = &search {
+        // AA's search: any of the applicant's characters by name, or by
+        // its corporation's or alliance's name (the main's among them).
+        let (orgs, cut) = matching_orgs(&params, q)?;
+        orgs_cut = cut;
         params.push(q.clone().into());
+        params.push(Db::json(serde_json::Value::from(orgs).to_string()));
         filter = " AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.characters) c \
-                   WHERE strpos(lower(c->>'name'), $3) > 0)"
+                   WHERE strpos(lower(c->>'name'), $3) > 0 \
+                      OR (c->>'corporation_id')::bigint IN \
+                         (SELECT jsonb_array_elements_text($4::jsonb)::bigint) \
+                      OR (c->>'alliance_id')::bigint IN \
+                         (SELECT jsonb_array_elements_text($4::jsonb)::bigint))"
             .to_owned();
     }
     let list = |status: &str, order: &str, limit: i64| -> Result<Vec<Application>, PageError> {
@@ -855,9 +902,17 @@ fn review_page(viewer: &Viewer, search: Option<&str>) -> Result<Page, PageError>
             Stat::new("Yours", count(yours)).caption("you're reviewing"),
             Stat::new("Reviewed", count(reviewed.len())),
         ]);
-    // Its own search, by any of the applicant's characters (the table
-    // shows the main alone).
-    page = page.toolbar(Toolbar::new().search("Search applicants' characters"));
+    // Its own search, by any of the applicant's characters, corporations
+    // and alliances (the table shows the main alone).
+    page = page.toolbar(
+        Toolbar::new().search("Search applicants' characters, corporations and alliances"),
+    );
+    if orgs_cut {
+        page = page.text(format!(
+            "Corporation and alliance names were matched among the first {MAX_SEARCHED_ORGS} \
+             of the applicants'; character names among all of them."
+        ));
+    }
     Ok(page
         .tab(
             "Pending",
