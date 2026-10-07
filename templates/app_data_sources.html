@@ -93,7 +93,11 @@
     </tbody>
   </table>
   {% endif %}
-  {% if cov.missing > 0 && !o.share.is_empty() %}
+  {% if cov.missing > 0 && !o.share.is_empty() && cov.nobody_adds %}
+  <footer class="flex flex-col items-stretch gap-2">
+    <p class="text-sm text-foreground-soft">{% if o.owner_permissions.is_empty() %}Only app admins may add its data sources: Directors can't, so there's no link to send them.{% else %}Nobody may add data sources yet, so this page's link would show Directors nothing. Grant {% for (name, label) in o.owner_permissions %}{% if !loop.first %} or {% endif %}{% if !label.is_empty() %}{{ label }} ({% endif %}<span class="num">{{ name }}</span>{% if !label.is_empty() %}){% endif %}{% endfor %} to them (a group or state) on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>, then send them the link.{% endif %}</p>
+  </footer>
+  {% else if cov.missing > 0 && !o.share.is_empty() %}
   <footer class="flex flex-col items-stretch gap-2">
     <p class="text-sm text-foreground-soft">Send a Director of a corporation without one this link: one EVE login adds them, if they may add data sources.</p>
     <div class="flex items-center gap-2" data-code>

@@ -768,7 +768,8 @@ async fn data_sources_say_how_they_are_doing_and_what_they_cover(db: PgPool) {
     let gigx = log_in_as(&h, "1887431749:gigX", None).await;
     assert_eq!(state_of(&h, &gigx).await, "Member");
 
-    // Two member corporations, neither read: the link to send a Director.
+    // Two member corporations, neither read. Nobody may add a source yet:
+    // what to grant, not a link that would show Directors Not found.
     let listed = page(&h, SOURCES, &owner).await.body;
     assert!(listed.contains("0 of 2 corporations read"), "{listed}");
     assert_eq!(
@@ -777,9 +778,34 @@ async fn data_sources_say_how_they_are_doing_and_what_they_cover(db: PgPool) {
         "{listed}"
     );
     assert!(
+        listed.contains("Nobody may add data sources yet")
+            && listed.contains(r#"Add owners (<span class="num">add_owner</span>)"#),
+        "{listed}"
+    );
+    assert!(!listed.contains("Link to this page"), "{listed}");
+    // Once someone may: the link to send a Director.
+    tether_db::permissions::grant(
+        &h.db,
+        "plugin.acme.esi.add_owner",
+        tether_db::permissions::Grantee::State(tether_core::states::StateId(1)),
+    )
+    .await
+    .unwrap();
+    let listed = page(&h, SOURCES, &owner).await.body;
+    assert!(
+        !listed.contains("Nobody may add data sources yet"),
+        "{listed}"
+    );
+    assert!(
         listed.contains(r#"/plugins/acme.esi/data-sources" aria-label="Link to this page""#),
         "{listed}"
     );
+    sqlx::query(
+        "DELETE FROM core.permission_grants WHERE permission = 'plugin.acme.esi.add_owner'",
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
     // Tether's own pages take no posts, and nothing under them (in any
     // case) is the app's, though its main page rule covers every path.
     for host in ["data-sources", "activity"] {

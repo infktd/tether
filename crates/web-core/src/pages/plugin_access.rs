@@ -65,6 +65,9 @@ pub struct Coverage {
     /// Without one that works (none, refused, or broken): the ones to
     /// send a Director the link for.
     pub missing: usize,
+    /// Nobody holds a permission that adds one (the app's owner
+    /// permissions): the link would only show them Not found.
+    pub nobody_adds: bool,
     pub rows: Vec<CoverageRow>,
 }
 
@@ -82,6 +85,9 @@ pub struct Owners {
     pub app: String,
     /// May add one: Add data source on the Data sources page.
     pub can_offer: bool,
+    /// The app's permissions that add one (its owner permissions), as
+    /// `(name, description)`.
+    pub owner_permissions: Vec<(String, String)>,
     /// Sees every source, with Remove (app admins).
     pub can_manage: bool,
     pub scopes: Vec<String>,
@@ -276,6 +282,14 @@ fn skeleton(
     Some(Owners {
         app: manifest.plugin.name.clone(),
         can_offer,
+        owner_permissions: manifest
+            .owner_permissions()
+            .into_iter()
+            .map(|name| {
+                let label = manifest.permissions.get(name).cloned().unwrap_or_default();
+                (name.to_owned(), label)
+            })
+            .collect(),
         can_manage,
         corporate: manifest.capabilities.esi.data_source.iter().any(|s| {
             tether_core::scopes::info(s)
@@ -434,7 +448,23 @@ pub async fn load(
             .map(gone_row)
             .collect();
         if owners.corporate {
-            owners.coverage = Some(coverage(state, &owners.rows).await?);
+            let mut coverage = coverage(state, &owners.rows).await?;
+            if coverage.missing > 0 {
+                let prefix = format!("plugin.{}.", owners.plugin_id);
+                coverage.nobody_adds =
+                    !tether_db::permissions::list(&state.db)
+                        .await?
+                        .iter()
+                        .any(|g| {
+                            g.permission.strip_prefix(&prefix).is_some_and(|held| {
+                                owners
+                                    .owner_permissions
+                                    .iter()
+                                    .any(|(name, _)| name == held)
+                            })
+                        });
+            }
+            owners.coverage = Some(coverage);
         }
     }
     Ok(())
@@ -671,6 +701,7 @@ async fn coverage(state: &AppState, rows: &[OwnerRow]) -> Result<Coverage, AppEr
             .iter()
             .filter(|r| r.tone == "warn" || r.tone == "danger")
             .count(),
+        nobody_adds: false,
         rows: list,
     })
 }
