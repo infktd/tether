@@ -500,3 +500,79 @@ async fn contracts_end_to_end(db: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+/// A busy buyback corporation has thousands of contracts in ESI's 30
+/// days: more than one statement may carry, so they're stored in parts.
+/// Contracts that can't be stored are that corporation's problem, on the
+/// page; the run goes on.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_busy_corporation_is_stored_whole(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount(&h).await;
+    for page in 1..=3_i64 {
+        let contracts: Vec<serde_json::Value> = (0..1000_i64)
+            .map(|n| {
+                contract(
+                    10_000 + page * 1000 + n,
+                    CORP,
+                    JITA,
+                    "outstanding",
+                    5_000_000.0,
+                    "Buyback https://janice.e-351.com/a/GoodAb",
+                )
+            })
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORP}/contracts")))
+            .and(wiremock::matchers::query_param("page", page.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-pages", "3")
+                    .set_body_json(contracts),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&h.esi_server)
+            .await;
+    }
+    let owner = add_owner(&h, &owner).await;
+    sync(&h).await;
+    let (stored, synced, error): (i64, bool, Option<String>) = sqlx::query_as(
+        r#"SELECT (SELECT count(*) FROM "plugin_tether.contracts".contracts),
+                  synced_at IS NOT NULL, sync_error
+           FROM "plugin_tether.contracts".settings"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert_eq!((stored, synced, error), (3000, true, None));
+
+    // One that can't be stored: said on the page, and the run finishes.
+    let mut broken = contract(99, CORP, JITA, "outstanding", 1.0, "");
+    broken["date_issued"] = serde_json::json!("not a time");
+    contracts_answer(&h, serde_json::json!([broken]), None).await;
+    sqlx::query(r#"UPDATE "plugin_tether.contracts".settings SET synced_at = NULL"#)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    sync(&h).await;
+    let (synced, error): (bool, Option<String>) = sqlx::query_as(
+        r#"SELECT synced_at IS NOT NULL, sync_error FROM "plugin_tether.contracts".settings"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap();
+    assert!(synced);
+    assert_eq!(
+        error.as_deref(),
+        Some("Otherworld Enterprises: contracts not stored")
+    );
+    let listed = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        listed.body.contains("contracts not stored"),
+        "{}",
+        listed.body
+    );
+}

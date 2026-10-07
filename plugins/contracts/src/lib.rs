@@ -50,6 +50,9 @@ const RELAY_GAP_SECONDS: i64 = 15;
 const RELAY_BACKOFF_SECONDS: i64 = 60;
 /// Contracts listed on the page.
 const LISTED: i64 = 100;
+/// Contracts' JSON per storing statement: the host takes 1 MiB of
+/// parameters a call.
+const STORE_BYTES: usize = 512 * 1024;
 
 struct Contracts;
 
@@ -233,7 +236,13 @@ fn sync() -> Result<(), JobError> {
                     &[(*corp).into()],
                 )
                 .map_err(|e| retry("reading corporations", e))?;
-                store(*corp, &assigned, known.rows.is_empty())?;
+                // One corporation's contracts that can't be stored are its
+                // problem: the others, and the rest of the run, go on.
+                if let Err(err) = store(*corp, &assigned, known.rows.is_empty()) {
+                    log::warn(format!("corporation {corp}'s contracts: {err:?}"));
+                    problems.push(format!("{}: contracts not stored", corp_name(*corp)));
+                    continue;
+                }
                 storage::execute(
                     "INSERT INTO corporations (corporation_id) VALUES ($1) ON CONFLICT DO NOTHING",
                     &[(*corp).into()],
@@ -241,15 +250,9 @@ fn sync() -> Result<(), JobError> {
                 .map_err(|e| retry("noting a corporation", e))?;
             }
             Err(err) => {
-                // By name where the app has read it, never by id.
-                let name =
-                    storage::query("SELECT name FROM names WHERE id = $1", &[(*corp).into()])
-                        .ok()
-                        .and_then(|found| found.rows.first().map(|r| text(r, 0)))
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| "A corporation".to_owned());
                 problems.push(format!(
-                    "{name}: contracts not read: {}",
+                    "{}: contracts not read: {}",
+                    corp_name(*corp),
                     esi::describe(&err)
                 ));
             }
@@ -272,8 +275,20 @@ fn sync() -> Result<(), JobError> {
     relay()
 }
 
-fn store(corp: i64, contracts: &[serde_json::Value], backlog: bool) -> Result<(), JobError> {
-    let rows: Vec<serde_json::Value> = contracts
+/// A corporation by name where the app has read it, never by id.
+fn corp_name(corp: i64) -> String {
+    storage::query("SELECT name FROM names WHERE id = $1", &[corp.into()])
+        .ok()
+        .and_then(|found| found.rows.first().map(|r| text(r, 0)))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "A corporation".to_owned())
+}
+
+/// Stores a corporation's contracts, as many statements as the host's
+/// parameter limit takes: a busy corporation has thousands in ESI's 30
+/// days.
+fn store(corp: i64, contracts: &[serde_json::Value], backlog: bool) -> Result<(), storage::Error> {
+    let rows: Vec<String> = contracts
         .iter()
         .filter_map(|c| {
             let title: String = c["title"]
@@ -282,30 +297,58 @@ fn store(corp: i64, contracts: &[serde_json::Value], backlog: bool) -> Result<()
                 .chars()
                 .take(500)
                 .collect();
-            Some(serde_json::json!({
-                "contract_id": c["contract_id"].as_i64()?,
-                "type": c["type"].as_str()?,
-                "status": c["status"].as_str()?,
-                "issuer_id": c["issuer_id"].as_i64()?,
-                "issuer_corporation_id": c["issuer_corporation_id"].as_i64()?,
-                "acceptor_id": c["acceptor_id"].as_i64().filter(|id| *id > 0),
-                "start_location": c["start_location_id"].as_i64(),
-                "end_location": c["end_location_id"].as_i64(),
-                "price": c["price"].as_f64().unwrap_or(0.0),
-                "reward": c["reward"].as_f64().unwrap_or(0.0),
-                "collateral": c["collateral"].as_f64().unwrap_or(0.0),
-                "volume": c["volume"].as_f64().unwrap_or(0.0),
-                "appraisal_code": janice::code(&title),
-                "title": title,
-                "date_issued": c["date_issued"].as_str()?,
-                "date_expired": c["date_expired"].as_str(),
-                "date_completed": c["date_completed"].as_str(),
-            }))
+            Some(
+                serde_json::json!({
+                    "contract_id": c["contract_id"].as_i64()?,
+                    "type": c["type"].as_str()?,
+                    "status": c["status"].as_str()?,
+                    "issuer_id": c["issuer_id"].as_i64()?,
+                    "issuer_corporation_id": c["issuer_corporation_id"].as_i64()?,
+                    "acceptor_id": c["acceptor_id"].as_i64().filter(|id| *id > 0),
+                    "start_location": c["start_location_id"].as_i64(),
+                    "end_location": c["end_location_id"].as_i64(),
+                    "price": c["price"].as_f64().unwrap_or(0.0),
+                    "reward": c["reward"].as_f64().unwrap_or(0.0),
+                    "collateral": c["collateral"].as_f64().unwrap_or(0.0),
+                    "volume": c["volume"].as_f64().unwrap_or(0.0),
+                    "appraisal_code": janice::code(&title),
+                    "title": title,
+                    "date_issued": c["date_issued"].as_str()?,
+                    "date_expired": c["date_expired"].as_str(),
+                    "date_completed": c["date_completed"].as_str(),
+                })
+                .to_string(),
+            )
         })
         .collect();
-    if rows.is_empty() {
-        return Ok(());
+    for part in batches(&rows, STORE_BYTES) {
+        store_part(corp, &part, backlog)?;
     }
+    Ok(())
+}
+
+/// JSON rows joined into arrays of at most `max` bytes each (a row longer
+/// than that goes alone).
+fn batches(rows: &[String], max: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut part = String::new();
+    for row in rows {
+        if !part.is_empty() && part.len() + row.len() + 2 > max {
+            part.push(']');
+            out.push(std::mem::take(&mut part));
+        }
+        part.push(if part.is_empty() { '[' } else { ',' });
+        part.push_str(row);
+    }
+    if !part.is_empty() {
+        part.push(']');
+        out.push(part);
+    }
+    out
+}
+
+/// One batch of [`store`]'s rows, a JSON array.
+fn store_part(corp: i64, json: &str, backlog: bool) -> Result<u64, storage::Error> {
     storage::execute(
         "INSERT INTO contracts (contract_id, corporation_id, type, status, issuer_id, \
              issuer_corporation_id, acceptor_id, start_location, end_location, price, reward, \
@@ -325,14 +368,8 @@ fn store(corp: i64, contracts: &[serde_json::Value], backlog: bool) -> Result<()
              date_completed = EXCLUDED.date_completed, \
              updated_at = CASE WHEN contracts.status IS DISTINCT FROM EXCLUDED.status \
                  THEN now() ELSE contracts.updated_at END",
-        &[
-            Db::json(serde_json::Value::Array(rows).to_string()),
-            corp.into(),
-            backlog.into(),
-        ],
+        &[Db::json(json), corp.into(), backlog.into()],
     )
-    .map_err(|e| retry("storing contracts", e))?;
-    Ok(())
 }
 
 /// An ESI refusal that won't change (not a rate limit, which does).
@@ -1083,6 +1120,28 @@ mod tests {
     fn names_cannot_ping_or_link() {
         assert_eq!(escape("@everyone [x](y)"), "\\@everyone \\[x\\]\\(y\\)");
         assert!(!escape("https://evil.example/sso").contains("://"));
+    }
+
+    #[test]
+    fn contracts_are_stored_in_batches_under_the_limit() {
+        let rows: Vec<String> = (0..10).map(|n| format!("{{\"n\":{n}}}")).collect();
+        let parts = batches(&rows, 30);
+        assert!(parts.len() > 1, "{parts:?}");
+        assert!(parts.iter().all(|p| p.len() <= 30), "{parts:?}");
+        let back: Vec<serde_json::Value> = parts
+            .iter()
+            .flat_map(|p| serde_json::from_str::<Vec<serde_json::Value>>(p).unwrap())
+            .collect();
+        assert_eq!(back.len(), 10);
+        assert_eq!(back[9]["n"], 9);
+        // A row longer than a batch goes alone; none is lost.
+        let long = vec![
+            "1".to_owned(),
+            format!("\"{}\"", "y".repeat(40)),
+            "2".to_owned(),
+        ];
+        assert_eq!(batches(&long, 30).len(), 3);
+        assert!(batches(&[], 30).is_empty());
     }
 
     #[test]
