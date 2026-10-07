@@ -440,25 +440,42 @@ fn settings() -> Result<Settings, storage::Error> {
 
 // ---- jobs ------------------------------------------------------------------
 
-/// Calls left this run.
-struct Budget(usize);
+/// Calls left this run, and the most one paged read may have.
+struct Budget {
+    left: usize,
+    most: usize,
+}
 
 impl Budget {
+    fn new(calls: usize) -> Self {
+        Budget {
+            left: calls,
+            most: calls,
+        }
+    }
+
+    /// The hourly reads begin: every corporation's notifications have
+    /// been read, so no paged read can have more than what's left. One
+    /// longer than that can't be made this run even if it went first.
+    fn hourly(&mut self) {
+        self.most = self.left;
+    }
+
     fn take(&mut self) -> bool {
         self.take_n(1)
     }
 
     fn take_n(&mut self, n: usize) -> bool {
-        if self.0 < n {
+        if self.left < n {
             return false;
         }
-        self.0 -= n;
+        self.left -= n;
         true
     }
 
     /// Whether `n` calls are left.
     fn has(&self, n: usize) -> bool {
-        self.0 >= n
+        self.left >= n
     }
 }
 
@@ -517,11 +534,14 @@ fn call(
         "corporation-structures" => "the corporation's structures",
         _ => "ESI's answer",
     };
-    if paged && pages.saturating_mul(cost) > ESI_BUDGET {
+    // Judged against what the hourly reads had after every corporation's
+    // notifications: a read that couldn't fit even going first would
+    // otherwise be tried, and its first page paid for, every sync.
+    if paged && pages.saturating_mul(cost) > budget.most {
         return Outcome::BackOff(format!(
-            "{what}: {pages} pages at ESI, more than one sync can read ({}); what was read \
-             before stays",
-            ESI_BUDGET / cost
+            "{what}: {pages} pages at ESI, more than one sync can read ({} after the \
+             notifications); what was read before stays",
+            budget.most / cost
         ));
     }
     if paged && !budget.has(pages.saturating_sub(1) * cost) {
@@ -689,7 +709,7 @@ fn queue_notifications() -> Result<(), JobError> {
 /// relayed at once (aa-structures' rotation, about a minute's delay).
 /// Structures, timers and alerts wait for the sync.
 fn notifications_between_syncs() -> Result<(), JobError> {
-    let mut budget = Budget(ESI_BUDGET);
+    let mut budget = Budget::new(ESI_BUDGET);
     let mut read = false;
     for corp in rotating_owners()? {
         read |= read_notifications(&mut budget, corp)?;
@@ -769,13 +789,14 @@ fn sync_steps() -> Result<(), JobError> {
         log::info("no structure owners yet: add one");
         return Ok(());
     }
-    let mut budget = Budget(ESI_BUDGET);
+    let mut budget = Budget::new(ESI_BUDGET);
     // Every corporation's notifications first: an hourly read below can be
     // long (a large corporation's assets), and must never keep another's
     // attacks from being read.
     for &corp in &corporations {
         read_notifications(&mut budget, corp)?;
     }
+    budget.hourly();
     // Then the hourly reads, the corporation read longest ago first, so
     // one this run's calls didn't reach goes first next time.
     for corp in stalest_first(&corporations)? {

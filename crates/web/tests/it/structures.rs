@@ -20,6 +20,7 @@ use wiremock::{Mock, ResponseTemplate};
 const ID: &str = "tether.structures";
 const CHRIBBA: i64 = 196379789;
 const CHRIBBA_CORP: i64 = 1164409536;
+const GIGX: i64 = 1887431749;
 const GIGX_CORP: i64 = 98133756;
 const KEEP: i64 = 1035466617946;
 const DRILL: i64 = 1035466617947;
@@ -2911,7 +2912,6 @@ async fn admins_hear_of_owners_and_services(db: PgPool) {
         .mount(&h.esi_server)
         .await;
     // A Member who may open Structures, but isn't an admin.
-    const GIGX: i64 = 1887431749;
     let _gigx = log_in_as(&h, "1887431749:gigX", None).await;
     grant(&h, &owner, "basic_access").await;
     let owner = approve_owner(&h, &owner).await;
@@ -3022,22 +3022,19 @@ async fn admins_hear_of_owners_and_services(db: PgPool) {
 
 // ---- the sync's ESI calls ----------------------------------------------------
 
-/// One corporation's assets too long for a sync (more pages than its ESI
-/// calls) don't use the run up: every corporation's notifications are read
-/// first, and the long read stops after its first page, backing off with
-/// why.
-#[sqlx::test(migrator = "tether_db::MIGRATOR")]
-async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
-    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
-    let h = harness(db, true).await;
-    let owner = log_in_owner(&h, "196379789:Chribba").await;
-    install(&h, &owner).await;
+/// Chribba's corporation, with one attack in its notifications, and
+/// gigX's (a lower id, so first by id), whose assets run to `pages` pages
+/// at ESI; each corporation has one sync character. Returns the owner's
+/// session and the path of gigX's corporation's assets.
+async fn two_owners(h: &Harness, pages: u32) -> (String, String) {
+    let owner = log_in_owner(h, "196379789:Chribba").await;
+    install(h, &owner).await;
     let now = Utc::now();
     let times = Times {
         attacked: now - Duration::minutes(10),
         shields: now - Duration::minutes(5),
     };
-    mount_esi(&h, now, &times).await;
+    mount_esi(h, now, &times).await;
     Mock::given(method("GET"))
         .and(path(format!("/characters/{CHRIBBA}/notifications")))
         .respond_with(json(serde_json::json!([notification(
@@ -3048,9 +3045,6 @@ async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
         )])))
         .mount(&h.esi_server)
         .await;
-    // gigX's corporation (a lower id, so first by id) holds 60 pages of
-    // assets: more than a sync's calls.
-    const GIGX: i64 = 1887431749;
     for at in [
         format!("/characters/{GIGX}/notifications"),
         format!("/corporations/{GIGX_CORP}/structures"),
@@ -3068,12 +3062,12 @@ async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
         .and(path(gigx_assets.clone()))
         .respond_with(
             ResponseTemplate::new(200)
-                .insert_header("x-pages", "60")
+                .insert_header("x-pages", pages.to_string())
                 .set_body_json(serde_json::json!([])),
         )
         .mount(&h.esi_server)
         .await;
-    let mut owner = approve_owner(&h, &owner).await;
+    let mut owner = approve_owner(h, &owner).await;
     // As the second sync character is added: the first login brings it,
     // the second adds it for its corporation.
     for _ in 0..2 {
@@ -3092,6 +3086,31 @@ async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
         owner = res.cookie_value(SESSION);
     }
+    (owner, gigx_assets)
+}
+
+/// gigX's last error, failures in a row of its assets read, and when it
+/// was last read whole.
+async fn gigx_assets_read(h: &Harness) -> (Option<String>, i32, Option<DateTime<Utc>>) {
+    sqlx::query_as(
+        r#"SELECT last_error, assets_failures, assets_at FROM "plugin_tether.structures".owners
+           WHERE character_id = $1"#,
+    )
+    .bind(GIGX)
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// One corporation's assets too long for a sync (more pages than its ESI
+/// calls) don't use the run up: every corporation's notifications are read
+/// first, and the long read stops after its first page, backing off with
+/// why.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    let (owner, gigx_assets) = two_owners(&h, 60).await;
 
     let problems = sync(&h).await;
     // Chribba's corporation's notifications were read, though gigX's comes
@@ -3108,24 +3127,90 @@ async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
         problems.iter().all(|p| !p.contains("out of ESI calls")),
         "{problems:?}"
     );
-    let why: Option<String> = sqlx::query_scalar(
-        r#"SELECT last_error FROM "plugin_tether.structures".owners WHERE character_id = $1"#,
-    )
-    .bind(GIGX)
-    .fetch_one(&h.db)
-    .await
-    .unwrap();
+    let (why, failures, _) = gigx_assets_read(&h).await;
     assert!(
         why.as_deref()
             .is_some_and(|w| w.contains("assets: 60 pages at ESI, more than one sync can read")),
         "{why:?}"
     );
+    assert_eq!(failures, 1);
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(
         settings.body.contains("60 pages at ESI"),
         "{}",
         settings.body
     );
+}
+
+/// What a sync's hourly reads can have is what its notifications left
+/// (two calls here, one per corporation): a read longer than that backs
+/// off as one longer than any sync, though it's within the sync's 90
+/// calls. It isn't tried, its first page paid for, every sync for good.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_read_longer_than_the_notifications_leave_backs_off(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    // 45 pages at two calls each: the whole 90, but 88 are left.
+    let (_, gigx_assets) = two_owners(&h, 45).await;
+
+    let problems = sync(&h).await;
+    assert_eq!(reads(&h, &gigx_assets).await, 1, "{problems:?}");
+    let (why, failures, read) = gigx_assets_read(&h).await;
+    assert!(
+        why.as_deref().is_some_and(|w| w.contains(
+            "assets: 45 pages at ESI, more than one sync can read (44 after the notifications)"
+        )),
+        "{why:?}"
+    );
+    assert_eq!(failures, 1, "backing off, not tried again next sync");
+    assert_eq!(read, None);
+}
+
+/// A read that fits what the notifications leave, but not what this run's
+/// other reads left, is tried again next sync without counting a failure,
+/// goes first then (its corporation read longest ago), and is read whole.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_read_short_of_this_runs_calls_is_made_next_sync(db: PgPool) {
+    cover(&db, Builtin::Member, EntityKind::Alliance, ALLIANCE).await;
+    let h = harness(db, true).await;
+    // 44 pages: 88 calls, all the notifications leave; gigX's structures,
+    // starbases and customs offices are read first this time.
+    let (_, gigx_assets) = two_owners(&h, 44).await;
+
+    let problems = sync(&h).await;
+    assert_eq!(reads(&h, &gigx_assets).await, 1, "{problems:?}");
+    let (why, failures, read) = gigx_assets_read(&h).await;
+    assert!(
+        why.as_deref()
+            .is_some_and(|w| w.contains("44 pages, more than this run had ESI calls left for")),
+        "{why:?}"
+    );
+    assert_eq!((failures, read), (0, None));
+
+    // Ten minutes on: the notifications are due again, the hourly reads
+    // made aren't, and the pause after the short read is over.
+    sqlx::query(
+        r#"UPDATE "plugin_tether.structures".owners SET
+               notifications_at = notifications_at - interval '10 minutes',
+               structures_at = structures_at - interval '10 minutes',
+               starbases_at = starbases_at - interval '10 minutes',
+               offices_at = offices_at - interval '10 minutes',
+               assets_at = assets_at - interval '10 minutes',
+               assets_retry_at = assets_retry_at - interval '10 minutes'"#,
+    )
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let problems = sync(&h).await;
+    assert_eq!(
+        reads(&h, &format!("/characters/{GIGX}/notifications")).await,
+        2,
+        "{problems:?}"
+    );
+    assert_eq!(reads(&h, &gigx_assets).await, 1 + 44, "{problems:?}");
+    let (why, failures, read) = gigx_assets_read(&h).await;
+    assert_eq!((why, failures), (None, 0));
+    assert!(read.is_some());
 }
 
 // ---- the relay ------------------------------------------------------------------
