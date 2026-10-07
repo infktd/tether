@@ -51,6 +51,10 @@ every = "1d"
 access_fittings = "Can access the fittings module"
 manage = "Can manage doctrines and fits"
 
+[permission_notes]
+access_fittings = "Usually Member. Holders see the doctrines, fits and categories open to them (a category with groups only to their members), check whether their characters can fly a fit, and save fits to EVE."
+manage = "For doctrine designers. Holders add, edit and delete fits, doctrines and categories, and see every category, those limited to groups included."
+
 [[pages]]
 path = ""
 permission = "access_fittings"

@@ -54,6 +54,14 @@ stats_corporation_own = "Can see own corporation statistics"
 stats_corporation_other = "Can see statistics of other corporations and of alliances"
 log_view = "Can view the modules log"
 
+[permission_notes]
+basic_access = "Usually Member. Holders register their characters on open FAT links and see their own FATs and statistics."
+add_fatlink = "For FCs. Holders create FAT links, track a fleet through its boss, and change any link, as in aa-afat."
+manage_afat = "For fleet officers. Holders change and delete any link, add and remove FATs, and set the fleet types and settings."
+stats_corporation_own = "For a corporation's leaders: their main's corporation's statistics, by pilot and month."
+stats_corporation_other = "For alliance leadership: every corporation's and alliance's statistics, allies included, and any pilot's."
+log_view = "For officers who keep an eye on FCs: the log of links made, changed and deleted, and FATs added and removed."
+
 # 0.2 called aa-afat's log_view "logs_view"; its grants move.
 [renamed_permissions]
 logs_view = "log_view"

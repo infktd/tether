@@ -37,6 +37,14 @@ view_corporation_notes = "Can view notes on corporation contacts"
 view_alliance_server_links = "Can view server links (and their passwords) on alliance contacts"
 view_corporation_server_links = "Can view server links (and their passwords) on corporation contacts"
 
+[permission_notes]
+manage_alliance_contacts = "For the alliance's diplomats. Holders add data sources (each brings its corporation's and alliance's contacts) and update the alliance's contacts now; with the view permissions, they also edit notes and server links."
+manage_corporation_contacts = "For a corporation's diplomats. Holders add data sources (each brings its corporation's and alliance's contacts) and update the corporation's contacts now; with the view permissions, they also edit notes and server links."
+view_alliance_notes = "For the alliance's diplomats. Holders read the notes on their alliance's contacts; editing them takes managing alliance contacts too."
+view_corporation_notes = "For a corporation's diplomats. Holders read the notes on their corporation's contacts; editing them takes managing corporation contacts too."
+view_alliance_server_links = "For diplomats who need allies' comms. Holders see the server links on their alliance's contacts, passwords included, so keep it to trusted staff."
+view_corporation_server_links = "For diplomats who need allies' comms. Holders see the server links on their corporation's contacts, passwords included, so keep it to trusted staff."
+
 # Anyone signed in sees the alliances and corporations they have a
 # character in, as aa-contacts.
 [[pages]]

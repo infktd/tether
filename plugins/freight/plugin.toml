@@ -39,6 +39,15 @@ add_location = "Can add / update locations"
 setup_contract_handler = "Can setup contract handler"
 manage = "Manage pricing and settings (aa-freight's admin site)"
 
+[permission_notes]
+basic_access = "Usually Member, or whoever ships with the service. Holders open Freight: the contract handler, the priced routes, and their own courier contracts (My contracts)."
+use_calculator = "Usually given with basic access, to whoever ships with the service. Holders work out a route's reward for a volume and a collateral, and how to issue the contract."
+view_contracts = "For haulers and the service's staff. Holders see every outstanding and in-progress courier contract: issuers, routes, rewards, collateral and the check against the pricing."
+view_statistics = "For the service's leads. Holders see the last 90 days' finished contracts by route, pilot, pilot corporation and customer."
+add_location = "For the service's leads. Holders add and remove route ends: stations by ID, and structures by ID and name."
+setup_contract_handler = "For the service's leads. Holders add the contract handler, a character whose corporation's courier contracts are read, and choose the operation mode. Changing either starts the contracts afresh."
+manage = "For the service's leads (aa-freight's admin site). Holders set the routes' pricing and the settings: the modifier, the Discord channels and the pilots' mention, and which contracts are announced."
+
 [[pages]]
 path = ""
 permission = "basic_access"

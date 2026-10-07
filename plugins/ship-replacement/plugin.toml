@@ -33,7 +33,10 @@ srp_management = "Can manage SRP: approve, reject, update amounts and mark paid;
 manage = "Change the Discord channel new SRP requests are posted to"
 
 [permission_notes]
-manage = "For whoever runs SRP. Holders pick the Discord channel new requests are posted to. Not in AA: aa-srp's setting is changed by superusers in Django's admin, so nobody holds it until granted."
+access_srp = "Usually Member: every pilot who may claim losses. Holders see every SRP fleet with its requests (pilots, ships, amounts, status), as in AA, and request SRP for their own characters' losses."
+add_srpfleetmain = "For FCs. Holders add SRP fleets, whose SRP code their pilots request with. Deciding requests takes SRP management."
+srp_management = "For SRP managers. Holders approve, reject and price every request, their own included (as in AA), mark them paid, and complete or remove fleets. Removing a fleet frees its losses to be requested again."
+manage ="For whoever runs SRP. Holders pick the Discord channel new requests are posted to. Not in AA: aa-srp's setting is changed by superusers in Django's admin, so nobody holds it until granted."
 
 # 0.2 called it manage_srp; its grants move. 0.2's change_srpuserrequest
 # is gone (AA has no such permission): srp_management updates amounts.

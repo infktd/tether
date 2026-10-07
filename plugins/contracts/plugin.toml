@@ -41,6 +41,11 @@ view_contracts = "See the contracts assigned to the corporations"
 add_contract_owner = "Add owners: characters whose corporation's contracts are watched"
 manage = "Change the Discord channel, what's posted, and how close a price must be"
 
+[permission_notes]
+view_contracts = "For whoever handles the corporations' contracts, such as buyback or logistics staff. Holders see every contract assigned to the owners' corporations, with issuers, prices and appraisal checks."
+add_contract_owner = "For directors. Holders add owners: characters whose corporation's contracts are read every five minutes and shown here, so keep it to those who may share them."
+manage = "For directors. Holders pick the Discord channel contracts are posted to, which events are posted, and how close a price must be to its appraisal."
+
 [[pages]]
 path = ""
 permission = "view_contracts"
