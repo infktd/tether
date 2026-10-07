@@ -17,7 +17,8 @@
 //! request and nothing a token fetched is stored. The one exception is
 //! `corporation-asset-places`, whose read of every page of a
 //! corporation's assets is kept in memory for an hour for that
-//! corporation and character only (see [`crate::asset_places`]). Public
+//! corporation and character only, each call still asking ESI for the
+//! first page so the roles are checked (see [`crate::asset_places`]). Public
 //! endpoints skip the cache too (see `uncached`). Responses reach the
 //! plugin as JSON.
 //!
@@ -309,8 +310,10 @@ pub const ENDPOINTS: &[Endpoint] = &[
         // (Jay, 2026-10-04). Nothing about any other item. Every page of
         // the assets is read in the background (`asset_places`) and kept
         // an hour for the data source's character; until a read is ready
-        // the call answers unavailable, so the app asks again. A call
-        // costs 2. CCP requires the Director role.
+        // the call answers unavailable, so the app asks again. Each answer
+        // first asks ESI for the first page again, so ESI checks the
+        // character's roles on every call. A call costs 2. CCP requires
+        // the Director role.
         name: "corporation-asset-places",
         scope: ASSETS,
         about: About::Corporation,
@@ -1327,9 +1330,10 @@ impl Esi {
     /// default header, which eve-esi-client can't see when it keys its
     /// cache, so a cached copy would be keyed by URL alone: another
     /// character's request could be answered with it, and it would land
-    /// in Postgres unmarked. Every token-bearing request asks ESI; only
+    /// in Postgres unmarked. Every token-bearing call asks ESI; only
     /// `corporation-asset-places` keeps what it read, in memory, for the
-    /// same corporation and character (`asset_places`).
+    /// same corporation and character, and still asks ESI for the first
+    /// page on every call (`asset_places`).
     pub(crate) fn with_token(&self, token: &Secret<String>) -> Result<Client, EsiError> {
         let mut headers = HeaderMap::new();
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", token.expose()))

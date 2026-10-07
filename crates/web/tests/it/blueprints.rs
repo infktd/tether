@@ -1345,3 +1345,68 @@ async fn an_install_in_use_keeps_no_admin_notices(db: PgPool) {
     .unwrap();
     assert!(announced);
 }
+
+/// A data source withdrawn while its corporation's assets are read in the
+/// background: the read stops at the next page, its token no longer
+/// handed out.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_withdrawn_source_stops_its_assets_read(db: PgPool) {
+    let h = harness(db, true).await;
+    mount_blueprints(
+        &h,
+        serde_json::json!([blueprint(3001, RIFTER_BP, CONTAINER, "Unlocked", -1)]),
+    )
+    .await;
+    // The first page takes a while: the source is withdrawn meanwhile.
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/assets")))
+        .and(wiremock::matchers::query_param("page", "1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "3")
+                .set_body_json(serde_json::json!([]))
+                .set_delay(std::time::Duration::from_secs(3)),
+        )
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/assets")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-pages", "3")
+                .set_body_json(serde_json::json!([])),
+        )
+        .with_priority(2)
+        .mount(&h.esi_server)
+        .await;
+    mount_world(&h).await;
+    set_up(&h).await;
+    // The three runs, the places one after the blueprints: it starts the
+    // read.
+    run_schedule(&h, "sync_blueprints").await;
+    assets_read(&h, 1).await;
+    sqlx::query("DELETE FROM core.plugin_data_sources WHERE plugin_id = $1 AND character_id = $2")
+        .bind(ID)
+        .bind(CHRIBBA)
+        .execute(&h.db)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+    let at = format!("/corporations/{CORP}/assets");
+    let pages: Vec<String> = h
+        .esi_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == at)
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "page")
+                .map(|(_, v)| v.into_owned())
+        })
+        .collect();
+    assert_eq!(pages, ["1"]);
+}

@@ -596,7 +596,9 @@ async fn an_items_place_is_its_station_and_the_containers_between_only() {
                     asset(2001, 17366, "CorpSAG2", 1001, "item"),
                 ])),
         )
-        .expect(1)
+        // The read, then once for each answer: ESI checks the character's
+        // roles on every call.
+        .expect(3)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -658,7 +660,8 @@ async fn an_items_place_is_its_station_and_the_containers_between_only() {
     );
     // The pages were read in the background: the call isn't charged them.
     assert_eq!(out.refetched, 0);
-    // Within the hour, from the same read (the pages expect one request).
+    // Within the hour, from the same read: only the first page is asked
+    // again (the second expects one request).
     let again = get_corporate(
         &esi,
         "corporation-asset-places",
@@ -703,7 +706,8 @@ async fn every_page_of_a_large_corporations_assets_is_read() {
                 .set_body_json(json!([])),
         )
         .with_priority(2)
-        .expect(119)
+        // Pages 1 to 119, then the first again for the answer.
+        .expect(120)
         .mount(&server)
         .await;
     let out = places(
@@ -737,11 +741,12 @@ async fn a_failed_read_answers_its_error_without_reading_again() {
 }
 
 /// A read of many pages outlives one access token: each page asks the
-/// vault (here, a list) for the token to send.
+/// vault (here, a list) for the token to send, and so does the answer's
+/// check of the first page.
 #[tokio::test]
 async fn each_page_is_read_with_a_fresh_token() {
     let (server, esi) = esi().await;
-    for (page, token) in [("1", "t1"), ("2", "t2")] {
+    for (page, token) in [("1", "t1"), ("2", "t2"), ("1", "t3")] {
         Mock::given(method("GET"))
             .and(path(format!("/corporations/{CORPORATION}/assets")))
             .and(query_param("page", page))
@@ -761,15 +766,15 @@ async fn each_page_is_read_with_a_fresh_token() {
             .mount(&server)
             .await;
     }
-    let out = places(&esi, tokens(&["t1", "t2"]), CHARACTER, "1002,1003")
+    let out = places(&esi, tokens(&["t1", "t2", "t3"]), CHARACTER, "1002,1003")
         .await
         .unwrap();
     assert_eq!(out.body.as_array().unwrap().len(), 2);
 }
 
-/// A read answers only calls with the same character's token, whose
-/// roles ESI checked when it read the pages: another data source of the
-/// same corporation has its own read.
+/// A read answers only calls with the same character's token: another
+/// data source of the same corporation has its own read (and ESI checks
+/// each one's roles on its own calls).
 #[tokio::test]
 async fn another_characters_call_has_its_own_read() {
     let (server, esi) = esi().await;
@@ -782,7 +787,8 @@ async fn another_characters_call_has_its_own_read() {
                     .insert_header("x-pages", "1")
                     .set_body_json(json!([asset(1001, 17366, flag, 60003760, "station")])),
             )
-            .expect(1)
+            // The read, then the answer's check.
+            .expect(2)
             .mount(&server)
             .await;
     }

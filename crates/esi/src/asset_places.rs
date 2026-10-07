@@ -8,11 +8,15 @@
 //! each page with a token the data source's [`TokenSource`] hands out
 //! then, so a read of hundreds of pages outlives one access token.
 //!
-//! The read is kept in memory for an hour for that corporation *and that
-//! character*: only calls with the same character's token are answered
-//! from it, and ESI checked that character's scopes and roles when it
-//! read the pages. This is the one exception to "calls carrying a token
-//! are never cached" (docs/ARCHITECTURE.md, ESI layer). A failed read is
+//! The read is kept in memory for an hour after it finished, for that
+//! corporation *and that character*: only calls with the same
+//! character's token are answered from it. ESI still checks that
+//! character's scopes and roles on every call: before answering from the
+//! read, the call asks ESI for the first page with a fresh token, and a
+//! refusal (the Director role gone) ends the read for that character.
+//! This is the one exception to "nothing a token fetched is kept"
+//! (docs/ARCHITECTURE.md, ESI layer): an answer may be up to an hour old,
+//! plus the read's own length for its first pages. A failed read is
 //! answered with its error for a few minutes, again only to that
 //! character, then read again. Nothing is kept on disk; a restart starts
 //! empty.
@@ -226,10 +230,10 @@ impl AssetTrees {
     }
 }
 
-/// What a call gets: the read to answer from, its error, or a read to
-/// start (its number).
+/// What a call gets: the read to answer from (its number and tree), its
+/// error, or a read to start (its number).
 enum Next {
-    Answer(Arc<AssetTree>),
+    Answer(u64, Arc<AssetTree>),
     Fail(EsiError),
     Wait,
     Start(u64),
@@ -238,10 +242,11 @@ enum Next {
 impl Esi {
     /// `corporation-asset-places` for `corporation`, read with
     /// `character`'s tokens from `tokens`: the asked `item_ids` (checked
-    /// first) answered from a read of the last hour, or
-    /// [`EsiError::Pending`] while one is under way (this call starts one
-    /// if there is none), or the error the last read ended with, for a
-    /// few minutes. Never waits for ESI.
+    /// first) answered from a read of the last hour once ESI let the
+    /// character read the first page again now, or [`EsiError::Pending`]
+    /// while one is under way (this call starts one if there is none), or
+    /// the error the last read ended with, for a few minutes. Never waits
+    /// for more than that one page.
     pub async fn corporation_asset_places(
         &self,
         tokens: TokenSource,
@@ -256,10 +261,10 @@ impl Esi {
             let now = Instant::now();
             let mut slots = trees.slots();
             let next = match slots.get(&key) {
-                Some(Slot::Read { at, tree, .. })
+                Some(Slot::Read { read, at, tree })
                     if now.duration_since(*at) < trees.times.fresh =>
                 {
-                    Next::Answer(tree.clone())
+                    Next::Answer(*read, tree.clone())
                 }
                 Some(Slot::Failed { at, error, .. })
                     if now.duration_since(*at) < trees.times.retry =>
@@ -286,11 +291,14 @@ impl Esi {
             next
         };
         match next {
-            Next::Answer(tree) => Ok(Response {
-                body: places_in(&tree, &ids),
-                pages: 1,
-                refetched: 0,
-            }),
+            Next::Answer(read, tree) => {
+                let again = self.still_allowed(&tokens, key, read).await?;
+                Ok(Response {
+                    body: places_in(&tree, &ids),
+                    pages: 1,
+                    refetched: again,
+                })
+            }
             Next::Fail(error) => Err(error),
             Next::Wait => Err(EsiError::Pending),
             Next::Start(read) => {
@@ -299,6 +307,53 @@ impl Esi {
                     esi.read_asset_tree(tokens, key, read).await;
                 });
                 Err(EsiError::Pending)
+            }
+        }
+    }
+
+    /// Whether ESI still lets the character read the corporation's assets:
+    /// the first page, asked now with a fresh token from `tokens` (never
+    /// cached), so ESI checks its scopes and roles on every call answered
+    /// from a kept read. A refusal (401 or 403: the role or scope gone)
+    /// ends read number `read` for the character, as a failed read. With
+    /// whether the page was read again (an extra request).
+    async fn still_allowed(
+        &self,
+        tokens: &TokenSource,
+        key: (i64, i64),
+        read: u64,
+    ) -> Result<u32, EsiError> {
+        let (corporation, character) = key;
+        let checked = async {
+            let token = tokens().await?;
+            let client = self.with_token(&token)?;
+            self.corporation_assets_page(&client, corporation, 1, Priority::Bulk)
+                .await
+        }
+        .await;
+        match checked {
+            Ok((_, _, again)) => Ok(again),
+            Err(error) => {
+                if matches!(error, EsiError::Status(401 | 403)) {
+                    tracing::info!(
+                        corporation,
+                        character,
+                        %error,
+                        "corporation assets no longer readable: the kept read is dropped"
+                    );
+                    let mut slots = self.asset_trees.slots();
+                    if slots.get(&key).map(Slot::read) == Some(read) {
+                        slots.insert(
+                            key,
+                            Slot::Failed {
+                                read,
+                                at: Instant::now(),
+                                error: error.clone(),
+                            },
+                        );
+                    }
+                }
+                Err(error)
             }
         }
     }
@@ -560,10 +615,13 @@ mod tests {
         let server = MockServer::start().await;
         let mut esi = Esi::new("tether tests", Some(&server.uri())).unwrap();
         quick(&mut esi, 300, 50);
+        // Each read is one page, and each answer asks for the first page
+        // again (ESI checks the character's roles): the read, its answer,
+        // the answer from memory, then the read again and its answer.
         Mock::given(method("GET"))
             .and(path(format!("/corporations/{CORPORATION}/assets")))
             .respond_with(page(json!([json_asset(1_040_000_000_201, 60003760)]), 1))
-            .expect(2)
+            .expect(5)
             .mount(&server)
             .await;
         let out = answer(&esi, "1040000000201").await.unwrap();
@@ -581,6 +639,42 @@ mod tests {
         // Past it, the read is gone: read again.
         assert!(esi.asset_trees.slots().is_empty());
         answer(&esi, "1040000000201").await.unwrap();
+    }
+
+    /// ESI checks the character's roles on every call answered from a kept
+    /// read: the Director role taken away in game, the next call is
+    /// refused, and so are the character's calls after it, without asking
+    /// ESI, until the read is tried again.
+    #[tokio::test]
+    async fn a_role_taken_away_ends_the_kept_read_at_the_next_call() {
+        let server = MockServer::start().await;
+        let mut esi = Esi::new("tether tests", Some(&server.uri())).unwrap();
+        quick(&mut esi, 60_000, 60_000);
+        // The read, then its answer's check; then the role is gone.
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORPORATION}/assets")))
+            .respond_with(page(json!([json_asset(1_040_000_000_201, 60003760)]), 1))
+            .up_to_n_times(2)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/corporations/{CORPORATION}/assets")))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "Forbidden"})))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        let out = answer(&esi, "1040000000201").await.unwrap();
+        assert_eq!(out.body[0]["place_id"], 60003760);
+        for _ in 0..2 {
+            let err = answer(&esi, "1040000000201").await.unwrap_err();
+            assert!(matches!(err, EsiError::Status(403)), "{err:?}");
+        }
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
+        assert!(matches!(
+            esi.asset_trees.slots().get(&(CORPORATION, CHARACTER)),
+            Some(Slot::Failed { .. })
+        ));
     }
 
     #[tokio::test]

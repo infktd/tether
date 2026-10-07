@@ -396,12 +396,32 @@ async fn esi_get(
     let result = if endpoint.name == "corporation-asset-places" {
         // Every page of the corporation's assets is read in the background
         // (`tether_esi::asset_places`), each with a token the vault hands
-        // out then: a read of hundreds of pages outlives one token.
-        let vault = deps.vault.clone();
-        let (character, scope) = (target.character_id, endpoint.scope);
+        // out then: a read of hundreds of pages outlives one token. Each
+        // token only while the app still runs and the character is still
+        // its approved source in that corporation (the checks above): a
+        // source withdrawn, an account blacklisted or an app removed
+        // mid-read stops the read at its next page.
+        let (db, vault, plugins) = (deps.db.clone(), deps.vault.clone(), plugins.clone());
+        let plugin = plugin.to_owned();
+        let (character, corporation, scope) =
+            (target.character_id, target.corporation_id, endpoint.scope);
         let tokens: tether_esi::asset_places::TokenSource = Arc::new(move || {
-            let vault = vault.clone();
+            let (db, vault, plugins, plugin) =
+                (db.clone(), vault.clone(), plugins.clone(), plugin.clone());
             Box::pin(async move {
+                let withdrawn = |why: &str| tether_esi::EsiError::Unavailable(why.to_owned());
+                if plugins.upgrade().and_then(|p| p.running(&plugin)).is_none() {
+                    return Err(withdrawn("the app no longer runs"));
+                }
+                match db::approved_source_corporation(&db, &plugin, character).await {
+                    Ok(Some(now)) if now == corporation => {}
+                    Ok(_) => return Err(withdrawn("the data source was withdrawn")),
+                    Err(e) => {
+                        return Err(tether_esi::EsiError::Unavailable(format!(
+                            "checking the data source: {e}"
+                        )));
+                    }
+                }
                 vault.access_token(character, &[scope]).await.map_err(|e| {
                     tether_esi::EsiError::Unavailable(format!("the data source's token: {e}"))
                 })
