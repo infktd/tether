@@ -101,7 +101,7 @@ async fn owner_and_pilot(h: &Harness) -> (String, String) {
     (owner, pilot)
 }
 
-/// Guests don't join the server through Tether; other states do.
+/// Makes the pilot a Member (`set_up` grants Member Discord access).
 async fn make_member(h: &Harness, token: &str) {
     let account = me(h, token).await["account_id"].as_i64().unwrap();
     sqlx::query("UPDATE core.accounts SET state_id = 1 WHERE id = $1")
@@ -111,7 +111,8 @@ async fn make_member(h: &Harness, token: &str) {
         .unwrap();
 }
 
-/// Owner and pilot (both Member), with Discord set up.
+/// Owner and pilot (both Member, which may use Discord), with Discord set
+/// up.
 async fn set_up(h: &Harness) -> (String, String) {
     mount_bot(&h.discord_server).await;
     let (owner, pilot) = owner_and_pilot(h).await;
@@ -119,6 +120,7 @@ async fn set_up(h: &Harness) -> (String, String) {
     make_member(h, &pilot).await;
     let saved = send(&h.app, form("/admin/discord", SETTINGS, &owner)).await;
     assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+    grant_discord(h, &owner, MEMBER_STATE).await;
     // Nickname syncing (on by default, as AA) off: tests that want it
     // turn it on.
     let off = send(&h.app, form("/admin/discord/options", "", &owner)).await;
@@ -693,6 +695,7 @@ async fn guests_cannot_join_the_server(db: PgPool) {
     mount_bot(&h.discord_server).await;
     let (owner, pilot) = owner_and_pilot(&h).await;
     send(&h.app, form("/admin/discord", SETTINGS, &owner)).await;
+    grant_discord(&h, &owner, MEMBER_STATE).await;
 
     let profile = page(&h, "/services", &pilot).await;
     assert!(profile.body.contains("Your access doesn't include Discord"));
@@ -1938,7 +1941,7 @@ async fn changing_who_has_discord_access_checks_everyone(db: PgPool) {
     let (owner, _, _) = linked_pilot(&h).await;
     clear_jobs(&h.db).await;
     let grant: i64 = sqlx::query_scalar(
-        "SELECT id FROM core.permission_grants WHERE permission = 'discord.access_discord' AND state_id = 2",
+        "SELECT id FROM core.permission_grants WHERE permission = 'discord.access_discord' AND state_id = 1",
     )
     .fetch_one(&h.db)
     .await
@@ -1950,6 +1953,59 @@ async fn changing_who_has_discord_access_checks_everyone(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     assert_eq!(jobs_of_kind(&h.db, "discord.sync_all").await.len(), 1);
+}
+
+/// As in AA, nobody holds Discord access until an admin grants it:
+/// superusers can link meanwhile, and the Discord page says so.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn discord_access_is_granted_to_nobody_until_an_admin_does(db: PgPool) {
+    let h = harness(db, true).await;
+    mount_bot(&h.discord_server).await;
+    let (owner, pilot) = owner_and_pilot(&h).await;
+    make_member(&h, &owner).await;
+    make_member(&h, &pilot).await;
+    let saved = send(&h.app, form("/admin/discord", SETTINGS, &owner)).await;
+    assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+    let admin = page(&h, "/admin/discord", &owner).await.body;
+    assert!(admin.contains("No pilot may link Discord yet"), "{admin}");
+    let services = page(&h, "/services", &pilot).await.body;
+    assert!(
+        services.contains("Your access doesn't include Discord")
+            && !services.contains("Link Discord"),
+        "{services}"
+    );
+    assert!(
+        !page(&h, "/dashboard", &pilot)
+            .await
+            .body
+            .contains(r#"href="/services""#)
+    );
+    let refused = send(&h.app, form("/services/discord/link", "", &pilot)).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert!(refused.body.contains("ask an admin"), "{}", refused.body);
+    // Superusers hold everything, as in AA.
+    assert!(
+        page(&h, "/services", &owner)
+            .await
+            .body
+            .contains("Link Discord")
+    );
+
+    grant_discord(&h, &owner, MEMBER_STATE).await;
+    let admin = page(&h, "/admin/discord", &owner).await.body;
+    assert!(!admin.contains("No pilot may link Discord yet"), "{admin}");
+    assert!(
+        page(&h, "/services", &pilot)
+            .await
+            .body
+            .contains("Link Discord")
+    );
+    assert!(
+        page(&h, "/dashboard", &pilot)
+            .await
+            .body
+            .contains(r#"href="/services""#)
+    );
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

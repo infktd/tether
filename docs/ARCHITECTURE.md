@@ -242,7 +242,7 @@ Server-rendered HTML from Rust. No JS framework, no npm, no separate frontend bu
 
 ## Discord
 
-Built into the host, not a plugin. REST only (twilight-http): no gateway connection. One bot serves the core and every plugin. Members with Discord access (`discord.access_discord`, a permission) join the server through OAuth linking, which adds them with their roles; after that, only ESI affiliation drives role changes. Losing access, or unlinking, removes them from the server; a member the sync finds no longer in the server is unlinked and notified, as AA.
+Built into the host, not a plugin. REST only (twilight-http): no gateway connection. One bot serves the core and every plugin. Members with Discord access (`discord.access_discord`, a permission granted to nobody by default, as in AA) join the server through OAuth linking, which adds them with their roles; after that, only ESI affiliation drives role changes. Losing access, or unlinking, removes them from the server; a member the sync finds no longer in the server is unlinked and notified, as AA.
 
 - Account linking via OAuth from the Dashboard.
 - Tier and group to role mappings, applied automatically as membership changes.

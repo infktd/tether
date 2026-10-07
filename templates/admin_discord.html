@@ -11,7 +11,7 @@
       <div class="min-w-0">
         <div class="page-eyebrow">{% if shell.admin_group.is_empty() %}Administration{% else %}{{ shell.admin_group }}{% endif %}</div>
         <h1 class="page-title">Discord</h1>
-        <p class="page-desc">Members link Discord from their profile and join the server with the roles for their state and groups. Tether only talks to Discord's REST API; nothing runs in the server.</p>
+        <p class="page-desc">Pilots with Discord access link it on their Services page and join the server with the roles for their state and groups. Tether only talks to Discord's REST API; nothing runs in the server.</p>
       </div>
     </div>
   </div>
@@ -31,6 +31,7 @@
   {% else if let Some(status_error) = status_error %}
   <div class="alert" data-variant="destructive" role="alert"><section>Can't check Discord with the saved settings: {{ status_error }}</section></div>
   {% endif %}
+  {% if nobody_may_link %}<div class="alert" role="status"><section>No pilot may link Discord yet: only superusers hold Discord access. Grant Can access the Discord service (<span class="num">discord.access_discord</span>) to Member, or the states and groups it's for, on <a class="underline underline-offset-4" href="/admin/permissions">Permissions</a>.</section></div>{% endif %}
 
   <form class="card" method="post" action="/admin/discord" autocomplete="off">
     <header>

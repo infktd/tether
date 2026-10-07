@@ -480,7 +480,7 @@ fn to_grant(
 mod tests {
     use super::*;
     use crate::{accounts, groups, states};
-    use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, DISCORD_ACCESS, REQUEST_GROUPS};
+    use tether_core::permissions::{ADMIN_AUDIT, ADMIN_GROUPS, REQUEST_GROUPS};
     use tether_core::states::Builtin;
 
     /// Character 1 claims ownership; others are ordinary accounts.
@@ -548,19 +548,16 @@ mod tests {
             .unwrap();
 
         let before: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
-        // Member also has Discord access and request_groups by default (AA).
-        assert_eq!(before, vec![ADMIN_AUDIT, DISCORD_ACCESS, REQUEST_GROUPS]);
+        // Member also has request_groups by default (AA's docs).
+        assert_eq!(before, vec![ADMIN_AUDIT, REQUEST_GROUPS]);
 
         groups::add_member(&pool, officers, pilot).await.unwrap();
         let with_group: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
-        assert_eq!(
-            with_group,
-            vec![ADMIN_AUDIT, ADMIN_GROUPS, DISCORD_ACCESS, REQUEST_GROUPS]
-        );
+        assert_eq!(with_group, vec![ADMIN_AUDIT, ADMIN_GROUPS, REQUEST_GROUPS]);
 
         revoke(&pool, group_grant).await.unwrap();
         let after: Vec<_> = effective(&pool, pilot).await.unwrap().into_iter().collect();
-        assert_eq!(after, vec![ADMIN_AUDIT, DISCORD_ACCESS, REQUEST_GROUPS]);
+        assert_eq!(after, vec![ADMIN_AUDIT, REQUEST_GROUPS]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -613,8 +610,7 @@ mod tests {
             .unwrap();
         assert!(first.is_some());
         assert!(again.is_none());
-        // Beside the defaults: request_groups (Member) and Discord access
-        // (Member and Blue).
-        assert_eq!(list(&pool).await.unwrap().len(), 4);
+        // Beside the default: request_groups (Member).
+        assert_eq!(list(&pool).await.unwrap().len(), 2);
     }
 }

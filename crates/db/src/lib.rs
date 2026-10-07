@@ -221,6 +221,56 @@ mod tests {
         );
     }
 
+    /// Migrates `pool` to just before `version`, with one account (an
+    /// instance someone has signed in to).
+    async fn running_before(pool: &PgPool, version: i64) {
+        Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version < version)
+                .cloned()
+                .collect(),
+        )
+        .run(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO core.accounts (is_owner) VALUES (false)")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn discord_access(pool: &PgPool) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT s.builtin FROM core.permission_grants g JOIN core.states s ON s.id = g.state_id \
+             WHERE g.permission = 'discord.access_discord' ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// Migration 0059: Discord access starts as AA's, granted to nobody, on
+    /// a new instance only; one with accounts keeps Member's and Blue's.
+    #[sqlx::test(migrations = false)]
+    async fn discord_access_is_granted_to_nobody_on_a_new_instance_only(pool: PgPool) {
+        running_before(&pool, 59).await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(discord_access(&pool).await, ["blue", "member"]);
+    }
+
+    #[sqlx::test(migrations = false)]
+    async fn a_new_instance_starts_with_nobody_on_discord(pool: PgPool) {
+        migrate(&pool).await.unwrap();
+        assert!(discord_access(&pool).await.is_empty());
+        let queued: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM core.jobs WHERE kind = 'discord.sync_all'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 0);
+    }
+
     /// Migration 0049 (AA's rules for the Blacklist, Secure Groups and
     /// Fleet Pings) carries what was there over: renamed grants and token
     /// scopes, accounts blacklisted through an alt, and grace periods.

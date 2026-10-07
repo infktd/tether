@@ -937,8 +937,7 @@ async fn invalid_grants_are_rejected(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
-    // Only the defaults: request_groups (Member) and Discord access
-    // (Member and Blue).
+    // Only the default: request_groups (Member).
     let listed = call(&h, "GET", "/api/admin/permissions", &owner, None).await;
     let grants = json(&listed)["grants"].clone();
     let mut names: Vec<&str> = grants
@@ -948,14 +947,7 @@ async fn invalid_grants_are_rejected(db: PgPool) {
         .map(|g| g["permission"].as_str().unwrap())
         .collect();
     names.sort_unstable();
-    assert_eq!(
-        names,
-        [
-            "discord.access_discord",
-            "discord.access_discord",
-            "request_groups"
-        ]
-    );
+    assert_eq!(names, ["request_groups"]);
 }
 
 #[sqlx::test(migrator = "tether_db::MIGRATOR")]

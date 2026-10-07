@@ -68,6 +68,9 @@ struct DiscordPage {
     /// Discord couldn't be checked with the saved settings.
     status_error: Option<String>,
     mappings: Vec<MappingRow>,
+    /// Nobody holds Discord access (`discord.access_discord`): only
+    /// superusers can link. AA grants it to nobody by default.
+    nobody_may_link: bool,
     roles: Vec<RoleOption>,
     ping_channels: Vec<tether_db::pings::PingChannel>,
     other_channels: Vec<tether_discord::TextChannel>,
@@ -130,6 +133,7 @@ async fn page(
             .map_or_else(|| format!("group {}", id.0), |g| g.group.name.clone())
     };
     let grants = tether_db::permissions::list(&state.db).await?;
+    let nobody_may_link = !grants.iter().any(|g| g.permission == DISCORD_ACCESS);
     let has_access = |grantee: &Grantee| {
         grants
             .iter()
@@ -197,6 +201,7 @@ async fn page(
         status,
         status_error,
         mappings,
+        nobody_may_link,
         roles,
         ping_channels,
         other_channels,

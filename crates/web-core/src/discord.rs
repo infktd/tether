@@ -109,8 +109,9 @@ pub async fn is_configured(state: &AppState) -> Result<bool, AppError> {
     Ok(stored(state).await?.config().is_some())
 }
 
-/// Discord access is a permission (AA's `discord.access_discord`,
-/// granted to Member and Blue by default).
+/// Discord access is a permission (AA's `discord.access_discord`),
+/// granted to nobody by default, as in AA: admins grant it to states,
+/// groups or single users.
 pub async fn may_join(state: &AppState, account: AccountId) -> Result<bool, AppError> {
     has_access(&state.db, account).await
 }
@@ -121,10 +122,10 @@ pub async fn has_access(db: &PgPool, account: AccountId) -> Result<bool, AppErro
         .contains(tether_core::permissions::DISCORD_ACCESS))
 }
 
-fn guests_cannot_join() -> AppError {
+fn no_access() -> AppError {
     AppError::new(
         StatusCode::FORBIDDEN,
-        "Your access doesn't include the Discord service. It comes from your main's state (Member and Blue have it by default) and your groups.",
+        "Your access doesn't include the Discord service. It comes from your main's state, your groups or a grant to you: ask an admin.",
     )
 }
 
@@ -441,7 +442,7 @@ pub async fn begin_link(
 ) -> Result<(CookieJar, String), AppError> {
     let config = config(state).await?;
     if !may_join(state, account).await? {
-        return Err(guests_cannot_join());
+        return Err(no_access());
     }
     let browser = new_token().map_err(AppError::internal)?;
     let oauth_state = new_token().map_err(AppError::internal)?;
@@ -545,7 +546,7 @@ async fn link_with_token(
     };
     // The state may have changed since the link started.
     if !may_join(state, account).await? {
-        return Err(guests_cannot_join());
+        return Err(no_access());
     }
     let user = state
         .discord
