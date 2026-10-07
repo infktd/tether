@@ -446,7 +446,7 @@ fn name_location(contract_id: i64, owner: i64) -> Result<(), JobError> {
         Some(name) => Some(name),
         None if place < 100_000_000 => esi::names(&[place])
             .ok()
-            .and_then(|n| n.into_iter().next())
+            .and_then(|n| n.into_iter().find(|n| n.id == place))
             .map(|n| n.name),
         None => esi::get(
             "source-structure",

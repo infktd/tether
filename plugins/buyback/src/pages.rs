@@ -19,7 +19,7 @@ pub fn render(access: &Access, request: &Request) -> Result<Page, PageError> {
         [""] => index(access),
         ["faq"] => faq(),
         ["me"] => me(access),
-        ["settings"] => app_settings(),
+        ["settings"] if access.manage_all() => app_settings(),
         ["program", id] => crate::calculator::page(access, id_of(id)?),
         ["program", id, "prices"] => crate::manage::prices_page(access, id_of(id)?, request),
         ["program", id, "leaderboard"] => crate::stats::leaderboard(access, id_of(id)?, request),
@@ -41,7 +41,7 @@ pub fn submit(access: &Access, s: &Submission) -> Result<SubmitResult, PageError
         (["program", id], "calculate") => crate::calculator::submit(access, id_of(id)?, s),
         (["program", id, "prices"], _) => crate::manage::prices_submit(access, id_of(id)?, s),
         (["me"], "me") => save_me(access, s),
-        (["settings"], "settings") => save_settings(access, s),
+        (["settings"], "settings") if access.manage_all() => save_settings(access, s),
         (["reverse", ..] | ["manage", "reverse", ..], _) => crate::reverse::submit(access, s),
         (["tracking", ..] | ["program-stats"] | ["all-stats"] | ["stats"], _) => {
             crate::stats::submit(access, s)

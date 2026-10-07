@@ -87,10 +87,13 @@ permission = "basic_access"
 # public for everyone signed in).
 [[pages]]
 path = "program"
+signed_in = true
 [[pages]]
 path = "tracking"
+signed_in = true
 [[pages]]
 path = "reverse"
+signed_in = true
 
 [[pages]]
 path = "faq"
@@ -118,6 +121,7 @@ permission = "manage_programs"
 
 [[pages]]
 path = "settings"
+permission = "manage_all_programs"
 
 [[navigation]]
 label = "Buyback"

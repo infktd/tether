@@ -12,6 +12,7 @@ mod blacklist;
 mod blueprints;
 mod bulletin_board;
 mod bundled;
+mod buyback;
 mod compliance;
 mod contacts;
 mod contracts;

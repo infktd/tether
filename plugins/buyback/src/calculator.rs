@@ -170,7 +170,7 @@ pub(crate) fn owner_name(program: &Program) -> String {
     };
     tether_plugin_sdk::esi::names(&[id])
         .ok()
-        .and_then(|n| n.into_iter().next())
+        .and_then(|n| n.into_iter().find(|n| n.id == id))
         .map_or_else(|| id.to_string(), |n| n.name)
 }
 
@@ -203,7 +203,20 @@ pub fn calculate(
     wanted.extend(&compressed_ids);
     wanted.extend(materials.values().flatten().map(|(m, _)| *m));
     let prices = crate::prices::get(&wanted, true)?;
-    let npc = crate::prices::npc(&ids)?;
+    // ESI's averages only for programs using NPC prices; without them,
+    // those items say their price is missing rather than failing all.
+    let wants_npc = rules.blue_loot_npc_price
+        || rules.red_loot_npc_price
+        || rules.ope_npc_price
+        || rules.bonds_npc_price;
+    let npc = if wants_npc {
+        crate::prices::npc(&ids).unwrap_or_else(|why| {
+            tether_plugin_sdk::log::warn(format!("NPC prices weren't read: {why}"));
+            HashMap::new()
+        })
+    } else {
+        HashMap::new()
+    };
     let market = Market {
         prices: &prices,
         npc: &npc,
