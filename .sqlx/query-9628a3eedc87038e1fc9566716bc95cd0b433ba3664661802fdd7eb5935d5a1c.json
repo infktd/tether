@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT name FROM core.shared_doctrines ORDER BY name",
+  "query": "SELECT DISTINCT name FROM core.shared_doctrines WHERE plugin_id = ANY($1) ORDER BY name",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,13 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "TextArray"
+      ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "99dad9962d8260ed92cddb49448a307b663f225e687250bd2edd4e10416c49be"
+  "hash": "9628a3eedc87038e1fc9566716bc95cd0b433ba3664661802fdd7eb5935d5a1c"
 }

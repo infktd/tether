@@ -2819,6 +2819,47 @@ async fn pings_offer_the_doctrines_apps_share_to_whoever_may_see_them(db: PgPool
         .await
         .unwrap();
     assert_eq!(shared, 2);
+    h.discord_server.verify().await;
+    h.discord_server.reset().await;
+
+    // The app switched off (its list kept): the configured doctrines
+    // again, as aa-fleetpings without Fittings installed, and its names
+    // aren't refused; the settings say why.
+    add_option(&h, &owner, "kind=doctrine&name=Caracals").await;
+    let settings = page(&h, "/admin/pings", &owner).await.body;
+    assert!(!settings.contains("Fittings isn't running"), "{settings}");
+    let res = send(
+        &h.app,
+        form(&format!("/admin/plugins/{PUBLISHER}/disable"), "", &owner),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let form_page = page(&h, "/pings", &pilot).await.body;
+    assert!(
+        form_page.contains(r#"<option value="Caracals">"#),
+        "{form_page}"
+    );
+    assert!(!form_page.contains("Frigate Gang"), "{form_page}");
+    let settings = page(&h, "/admin/pings", &owner).await.body;
+    assert!(
+        settings.contains("Fittings isn't running, so the form uses the doctrines below"),
+        "{settings}"
+    );
+    Mock::given(method("POST"))
+        .and(path(format!("/api/v10/channels/{PING_CHANNEL}/messages")))
+        .respond_with(message_posted("900000000000000012"))
+        .mount(&h.discord_server)
+        .await;
+    let res = send(
+        &h.app,
+        form(
+            "/pings",
+            &format!("channel_id={PING_CHANNEL}&target=none&doctrine=black+ops&message=Hi"),
+            &pilot,
+        ),
+    )
+    .await;
+    assert_eq!(res.location(), "/pings", "{}", res.body);
 }
 
 /// The storage probe as an app offering shared doctrines (as FAT does).

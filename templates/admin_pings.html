@@ -90,6 +90,7 @@
       <p class="text-sm text-muted-foreground -mt-2">Open to everyone who can ping. A fleet type below with the same name takes a default one's place.</p>
       <label class="label gap-2 font-normal"><input type="checkbox" class="input" name="doctrines_from_apps" value="on"{% if settings.doctrines_from_apps %} checked{% endif %}> Use doctrines from Fittings</label>
       <p class="text-sm text-muted-foreground -mt-2">The form offers the doctrines Fittings shares that the pilot may see there, each linking to its page, instead of the doctrines below.</p>
+      {% if no_doctrine_apps %}<div class="alert" role="status"><section>Fittings isn't running, so the form uses the doctrines below. Install or enable it on <a class="underline underline-offset-4" href="/admin/plugins">Apps</a>.</section></div>{% endif %}
       <div class="grid gap-1.5 max-w-xs"><label class="label" for="default_embed_color">Default embed colour</label><input class="input w-28" id="default_embed_color" name="default_embed_color" value="{{ settings.default_color }}" placeholder="#faa61a" maxlength="7" required><p class="text-sm text-muted-foreground">The ping card's colour when its fleet type has none.</p></div>
     </section>
     <footer><button type="submit" class="btn" data-variant="outline">Save</button></footer>

@@ -107,10 +107,13 @@ pub async fn names_of_others(
     Ok(rows.into_iter().map(|r| (r.plugin_id, r.name)).collect())
 }
 
-/// Every shared doctrine's name, seen or not: typed in by hand, one the
+/// Every name these apps share, seen or not: typed in by hand, one the
 /// account can't see is refused, as a configured one is.
-pub async fn names(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar!("SELECT DISTINCT name FROM core.shared_doctrines ORDER BY name")
-        .fetch_all(pool)
-        .await
+pub async fn names(pool: &PgPool, plugin_ids: &[String]) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT DISTINCT name FROM core.shared_doctrines WHERE plugin_id = ANY($1) ORDER BY name",
+        plugin_ids
+    )
+    .fetch_all(pool)
+    .await
 }

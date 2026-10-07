@@ -221,6 +221,9 @@ pub struct Limitable {
 struct SettingsPage {
     shell: Shell,
     settings: pings::PingSettings,
+    /// "Use doctrines from Fittings" is on, but no running app shares
+    /// doctrines: the form uses the configured ones.
+    no_doctrine_apps: bool,
     default_fleet_types: &'static [(&'static str, &'static str)],
     channels: Vec<Limitable>,
     targets: Vec<Limitable>,
@@ -304,6 +307,12 @@ async fn settings_page(
             name: g.group.name,
         })
         .collect();
+    let settings = pings::ping_settings(&state.db).await?;
+    let no_doctrine_apps = settings.doctrines_from_apps
+        && tether_web_core::plugin_shared::doctrine_publishers(&std::sync::Arc::downgrade(
+            &state.plugins,
+        ))
+        .is_empty();
     let code = error.as_ref().map_or(StatusCode::OK, AppError::status);
     let problem = error.as_ref().map(|e| e.message().to_owned());
     Ok(super::with_problem(
@@ -312,7 +321,8 @@ async fn settings_page(
             code,
             &SettingsPage {
                 shell,
-                settings: pings::ping_settings(&state.db).await?,
+                settings,
+                no_doctrine_apps,
                 default_fleet_types: pings::DEFAULT_FLEET_TYPES,
                 channels,
                 targets,

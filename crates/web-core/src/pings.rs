@@ -232,7 +232,11 @@ pub async fn offer(state: &AppState, account: AccountId) -> Result<Offer, AppErr
         default_color: settings.default_color,
         ..Offer::default()
     };
-    let from_apps = settings.doctrines_from_apps;
+    // Apps' doctrines only while one runs that shares them (aa-fleetpings:
+    // only while Fittings is installed); else the configured ones.
+    let publishers =
+        crate::plugin_shared::doctrine_publishers(&std::sync::Arc::downgrade(&state.plugins));
+    let from_apps = settings.doctrines_from_apps && !publishers.is_empty();
     let options = ping_options::list(&state.db).await?;
     // aa-fleetpings' defaults come first, open to everyone who can ping; a
     // configured fleet type of the same name takes its place (and its
@@ -286,7 +290,7 @@ pub async fn offer(state: &AppState, account: AccountId) -> Result<Offer, AppErr
                 color: None,
             });
         }
-        offer.closed_doctrines = tether_db::doctrines::names(&state.db)
+        offer.closed_doctrines = tether_db::doctrines::names(&state.db, &publishers)
             .await?
             .into_iter()
             .filter(|n| !seen.iter().any(|d| d.name.eq_ignore_ascii_case(n)))

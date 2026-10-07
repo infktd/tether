@@ -324,6 +324,19 @@ pub struct SeenDoctrine {
     pub path: String,
 }
 
+/// The running apps that share doctrines (Fittings): Fleet Pings uses
+/// theirs only while there's one, as aa-fleetpings uses Fittings' only
+/// while it's installed.
+pub fn doctrine_publishers(plugins: &Weak<Plugins>) -> Vec<String> {
+    plugins.upgrade().map_or_else(Vec::new, |p| {
+        p.all_running()
+            .into_iter()
+            .filter(|r| r.manifest.capabilities.doctrines == Some(TimersAccess::Publish))
+            .map(|r| r.manifest.plugin.id.clone())
+            .collect()
+    })
+}
+
 /// The shared doctrines `account` may see (for Fleet Pings, and apps that
 /// read them): everyone's, those limited to one of its groups, and every
 /// one of a publisher whose see-all permission it holds.
