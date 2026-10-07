@@ -323,7 +323,7 @@ Phase 5, release 1.0:
 - [ ] Member Audit: the owner's main and other characters on the Character Sheet (aa-memberaudit `views/character_viewer_1.py:104-131`, `:242-272`)
 - [ ] Member Audit: Last login from `character-online` (aa-memberaudit `models/character_sections_3.py:71-83`; a new user scope for the app)
 - [ ] Member Audit: contracts kept by expiry, not issue date, and the mining ledger kept, as aa-memberaudit (`managers/character_sections_1.py:458-475`, `managers/character_sections_3.py:80-98`)
-- [ ] Moon Mining: an extraction stays on Upcoming until 12 hours after auto-fracture, then Past (aa-moonmining `moonmining/views/extractions.py:163-189`)
+- [x] Moon Mining: an extraction stays on Upcoming until 12 hours after auto-fracture, then Past (aa-moonmining `moonmining/views/extractions.py:163-189`). Built: Upcoming lists extractions not cancelled that auto-fractured less than the stale hours ago (a popped one shows Completed), Past the rest; Ready now, Extracting and Coming count only chunks still to fracture, and the setting says its hours start at auto-fracture
 - [ ] Moon Mining: refineries gone from the corporation's structures stop owning their moons (aa-moonmining `moonmining/models/owners.py:210-211`, `:457-482`)
 - [ ] Moon Mining: the moon extraction notifications for real chunk volumes, who started, fired and cancelled, jackpots, and `MOONMINING_OVERWRITE_SURVEYS_WITH_ESTIMATES` (aa-moonmining `moonmining/models/notifications.py:16-47`, `models/owners.py:641-711`; a new data-source scope)
 - [ ] Moon Mining: reprocess pricing, `MOONMINING_USE_REPROCESS_PRICING` and `MOONMINING_REPROCESSING_YIELD`, after Buyback bundles CCP's static data (aa-moonmining `moonmining/app_settings.py:12-20`)

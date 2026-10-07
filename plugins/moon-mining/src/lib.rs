@@ -1655,7 +1655,8 @@ impl Pop {
 enum Which {
     /// Not cancelled, fracturing between two instants.
     Decaying,
-    /// Cancelled, or ready more than 12 hours ago (AA's Past).
+    /// Cancelled, or auto-fractured more than the stale hours ago (AA's
+    /// Past).
     Past,
     /// Every one at a moon.
     AtMoon,
@@ -1671,7 +1672,7 @@ fn extractions(which: Which, params: &[Db]) -> Result<Vec<Pop>, PageError> {
              ORDER BY e.natural_decay LIMIT 500"
         }
         Which::Past => {
-            "(e.cancelled_at IS NOT NULL OR e.chunk_arrival < $1) ORDER BY e.chunk_arrival DESC LIMIT 200"
+            "(e.cancelled_at IS NOT NULL OR e.natural_decay < $1) ORDER BY e.natural_decay DESC LIMIT 200"
         }
         Which::AtMoon => "e.moon_id = $1 ORDER BY e.chunk_arrival DESC LIMIT 20",
         Which::One => "e.structure_id = $1 AND e.chunk_arrival = $2",
@@ -1779,10 +1780,15 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
             )));
     }
     let fresh = pops(now - settings.fresh, now)?;
-    let upcoming = pops(now, now + Duration::days(60))?;
-    let past = extractions(Which::Past, &[Db::timestamp(rfc3339(now - settings.stale))])?;
-    let ready = upcoming.iter().filter(|p| p.arrival <= now).count();
-    let coming_value: f64 = upcoming.iter().filter_map(Pop::value).sum();
+    // aa-moonmining's Upcoming: not cancelled, and auto-fractured less
+    // than the stale hours ago (so a chunk in space is still there);
+    // Past: the rest.
+    let stale = now - settings.stale;
+    let upcoming = pops(stale, now + Duration::days(60))?;
+    let past = extractions(Which::Past, &[Db::timestamp(rfc3339(stale))])?;
+    let coming: Vec<&Pop> = upcoming.iter().filter(|p| p.decay > now).collect();
+    let ready = coming.iter().filter(|p| p.arrival <= now).count();
+    let coming_value: f64 = coming.iter().filter_map(|p| p.value()).sum();
     let fresh_table = popped_table(
         "Fresh moons",
         "Nothing popped in the Members-only window.",
@@ -1859,7 +1865,7 @@ fn extractions_page(viewer: &Viewer) -> Result<Page, PageError> {
     stats.extend([
         Stat::new(
             "Extracting",
-            i64::try_from(upcoming.len() - ready).unwrap_or(i64::MAX),
+            i64::try_from(coming.len() - ready).unwrap_or(i64::MAX),
         ),
         Stat::new("Coming (est.)", isk(value::finite(coming_value)))
             .caption("chunks of surveyed moons"),
@@ -2333,7 +2339,7 @@ fn settings_page() -> Result<Page, PageError> {
                     .required(),)
             )
             .group(SettingsGroup::new("Extractions")
-                .field(Field::number("stale_hours", "Hours after the chunk arrives until an extraction is Past")
+                .field(Field::number("stale_hours", "Hours after auto-fracture until an extraction is Past")
                     .range(Some(1.0), Some(168.0), true)
                     .value(settings.stale.num_hours().to_string())
                     .help("Default: 12.")

@@ -2107,3 +2107,57 @@ async fn existing_installs_keep_no_admin_notices(db: PgPool) {
             .unwrap();
     assert!(told);
 }
+
+/// Seeds an extraction at `structure` whose chunk arrived `arrived_ago`
+/// (three hours before its auto-fracture): its details link.
+async fn seed_extraction(h: &Harness, structure: i64, arrived_ago: Duration) -> String {
+    let arrival = Utc::now() - arrived_ago;
+    let arrival = chrono::DateTime::from_timestamp(arrival.timestamp(), 0).unwrap();
+    sqlx::query(
+        r#"INSERT INTO "plugin_tether.moon-mining".extractions
+           (structure_id, chunk_arrival, moon_id, corporation_id, extraction_start, natural_decay)
+           VALUES ($1, $2, 40009082, $3, $2 - interval '7 days', $2 + interval '3 hours')"#,
+    )
+    .bind(structure)
+    .bind(arrival)
+    .bind(CHRIBBA_CORP)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    format!(
+        "href=\"/plugins/{ID}/extraction/{structure}/{}\"",
+        arrival.timestamp()
+    )
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn upcoming_until_twelve_hours_after_auto_fracture(db: PgPool) {
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    // aa-moonmining's rule: Upcoming until 12 hours after the automatic
+    // fracture, then Past. Fractured 5 hours ago (arrived 8 hours ago):
+    // still Upcoming, its chunk in space. Fractured 13 hours ago: Past.
+    let recent = seed_extraction(&h, TATARA, Duration::hours(8)).await;
+    let stale = seed_extraction(&h, TATARA, Duration::hours(16)).await;
+    let upcoming = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(upcoming.body.contains(&recent), "{}", upcoming.body);
+    assert!(!upcoming.body.contains(&stale), "{}", upcoming.body);
+    assert!(upcoming.body.contains("Completed"), "{}", upcoming.body);
+    let past = page(&h, &format!("/plugins/{ID}?_tab=1"), &owner).await;
+    assert!(past.body.contains(&stale), "{}", past.body);
+    assert!(!past.body.contains(&recent), "{}", past.body);
+    // The setting's label says where its hours start.
+    let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
+    assert!(
+        settings
+            .body
+            .contains("Hours after auto-fracture until an extraction is Past"),
+        "{}",
+        settings.body
+    );
+}
