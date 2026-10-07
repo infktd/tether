@@ -1,0 +1,2115 @@
+market_group_id	name	parent_id
+2	Blueprints & Reactions	
+4	Ships	
+5	Standard Frigates	1361
+6	Standard Cruisers	1367
+7	Standard Battleships	1376
+8	Standard Haulers	1382
+9	Ship Equipment	
+10	Turrets & Launchers	9
+11	Ammunition & Charges	
+14	Hull & Armor	9
+19	Trade Goods	
+20	Industrial Goods	19
+22	Radioactive Goods	19
+23	Passengers	19
+24	Implants & Boosters	
+27	Implants	24
+52	Propulsion	9
+54	Standard Ores	1031
+61	Caldari	5
+64	Minmatar	5
+65	Advanced Components	1035
+72	Amarr	5
+73	Minmatar	6
+74	Amarr	6
+75	Caldari	6
+76	Gallente	6
+77	Gallente	5
+78	Minmatar	7
+79	Amarr	7
+80	Caldari	7
+81	Gallente	7
+82	Minmatar	8
+83	Gallente	8
+84	Caldari	8
+85	Amarr	8
+86	Hybrid Turrets	10
+87	Projectile Turrets	10
+88	Energy Turrets	10
+99	Projectile Ammo	11
+100	Hybrid Charges	11
+101	Frequency Crystals	11
+102	Small	851
+103	Medium	851
+105	Large	851
+106	Large	848
+107	Small	848
+108	Medium	848
+109	Large	845
+112	Medium	845
+113	Small	845
+114	Missiles	11
+115	Auto-Targeting	114
+116	Defender	114
+117	Light Missiles	114
+118	Rockets	114
+120	Probes	11
+126	Shield Rechargers	554
+128	Remote Shield Boosters	554
+131	Microwarpdrives	52
+132	Propulsion Upgrades	52
+133	Armor Plates	14
+134	Armor Repairers	14
+135	Hull Upgrades	14
+139	Cap Booster Charges	11
+140	Missile Launchers	10
+141	Smartbombs	9
+143	Weapon Upgrades	10
+150	Skills	
+157	Drones	
+158	Mining Drones	157
+159	Combat Drones	157
+204	Ships	2
+205	Frigates	204
+206	Cruisers	204
+207	Battleships	204
+208	Haulers	204
+209	Ship Equipment	2
+210	Turrets & Bays	209
+211	Ammunition & Charges	2
+214	Hull & Armor	209
+252	Propulsion	209
+261	Caldari	205
+264	Minmatar	205
+272	Amarr	205
+273	Minmatar	206
+274	Amarr	206
+275	Caldari	206
+276	Gallente	206
+277	Gallente	205
+278	Minmatar	207
+279	Amarr	207
+280	Caldari	207
+281	Gallente	207
+282	Minmatar	208
+283	Gallente	208
+284	Caldari	208
+285	Amarr	208
+286	Hybrid Turrets	210
+287	Projectile Turrets	210
+288	Energy Turrets	210
+289	Large	286
+290	Medium	286
+291	Small	286
+292	Small	288
+293	Medium	288
+295	Large	288
+296	Small	287
+297	Medium	287
+298	Large	287
+299	Projectile Ammo	211
+300	Hybrid Charges	211
+301	Frequency Crystals	211
+302	Small	301
+303	Medium	301
+305	Large	301
+306	Large	300
+307	Small	300
+308	Medium	300
+309	Large	299
+312	Medium	299
+313	Small	299
+314	Missiles	211
+315	Auto-Targeting	314
+316	Defender	314
+318	Rockets	314
+320	Scan Probes	1520
+325	Scanners	1710
+331	Microwarpdrives	252
+332	Propulsion Upgrades	252
+335	Hull Upgrades	214
+338	Mining Lasers	1711
+339	Cap Booster Charges	211
+340	Missile Launchers	210
+341	Smartbombs	209
+343	Weapon Upgrades	210
+357	Drones	2
+358	Mining Drones	357
+359	Heavy Attack Drones	1530
+364	Gunnery	150
+365	Corporation Management	150
+366	Drones	150
+367	Electronic Systems	150
+368	Engineering	150
+369	Production	150
+370	Fleet Support	150
+372	Rigging	150
+373	Missiles	150
+374	Navigation	150
+375	Science	150
+376	Social	150
+377	Spaceship Command	150
+378	Trade	150
+379	Cargo Containers	404
+380	Micro	141
+381	Large	141
+382	Small	141
+383	Medium	141
+387	Torpedoes	114
+390	Torpedoes	314
+391	Shuttles	4
+393	Amarr	391
+394	Minmatar	391
+395	Gallente	391
+396	Caldari	391
+399	Interceptors	1364
+400	Amarr	399
+401	Caldari	399
+402	Gallente	399
+403	Minmatar	399
+404	Deployable Structures	477
+405	Warp Disruption Fields	404
+406	Deployable Structures	1338
+407	Warp Disruption Fields	406
+408	Interceptors	204
+410	Amarr	408
+411	Caldari	408
+412	Gallente	408
+413	Minmatar	408
+414	Shuttles	204
+415	Amarr	414
+416	Caldari	414
+417	Gallente	414
+418	Minmatar	414
+419	Covert Ops	204
+420	Covert Ops	1364
+421	Amarr	420
+422	Caldari	420
+423	Gallente	420
+424	Minmatar	420
+425	Amarr	419
+427	Caldari	419
+428	Gallente	419
+429	Minmatar	419
+430	Cloaking Devices	1578
+432	Assault Frigates	1364
+433	Amarr	432
+434	Caldari	432
+435	Gallente	432
+436	Minmatar	432
+437	Logistics	1368
+438	Amarr	437
+439	Caldari	437
+440	Gallente	437
+441	Minmatar	437
+442	Logistics	204
+443	Amarr	442
+444	Caldari	442
+445	Gallente	442
+446	Minmatar	442
+448	Heavy Assault Cruisers	1368
+449	Amarr	448
+450	Caldari	448
+451	Gallente	448
+452	Minmatar	448
+453	Heavy Assault Cruisers	204
+454	Amarr	453
+455	Caldari	453
+456	Gallente	453
+457	Minmatar	453
+458	Assault Frigates	204
+459	Amarr	458
+461	Caldari	458
+462	Gallente	458
+463	Minmatar	458
+464	Standard Destroyers	1372
+465	Amarr	464
+466	Caldari	464
+467	Gallente	464
+468	Minmatar	464
+469	Standard Battlecruisers	1374
+470	Amarr	469
+471	Caldari	469
+472	Gallente	469
+473	Minmatar	469
+475	Manufacture & Research	
+477	Structures	
+478	Control Towers	1285
+479	Missile Batteries	480
+480	Weapon Batteries	1285
+481	Electronic Warfare Batteries	480
+482	Reprocessing Arrays	1285
+483	Silos	1285
+484	Ship Maintenance Arrays	1285
+485	Shield Hardening Arrays	1285
+488	Moon Harvesting Arrays	1285
+490	Reactors	1285
+491	Narcotics	19
+492	Consumer Products	19
+494	Mining Barges	1384
+496	Mining Barges	204
+497	ORE	496
+499	Advanced Moon Materials	1034
+500	Processed Moon Materials	1034
+501	Raw Moon Materials	1034
+502	Extra Large	845
+503	Extra Large	851
+504	Extra Large	848
+505	XL Torpedoes	114
+506	Corporate Hangar Array	1285
+512	Arkonor	54
+514	Bistot	54
+515	Pyroxeres	54
+516	Plagioclase	54
+517	Spodumain	54
+518	Veldspar	54
+519	Scordite	54
+521	Crokite	54
+522	Dark Ochre	54
+523	Kernite	54
+525	Gneiss	54
+526	Omber	54
+527	Hedbergite	54
+528	Hemorphite	54
+529	Jaspet	54
+530	Mercoxit	54
+531	Skill Hardwiring	27
+532	Attribute Enhancers	27
+533	Materials	475
+535	Armor Hardeners	14
+537	Remote Armor Repairers	14
+538	Hull Repairers	14
+540	Armor Resistance Coatings	14
+541	Energized Armor Resistance Membranes	14
+542	Afterburners	52
+550	Shield Resistance Amplifiers	554
+551	Shield Extenders	554
+552	Shield Boosters	554
+553	Shield Hardeners	554
+554	Shield	9
+555	Railguns	86
+556	Blasters	86
+557	Beam Lasers	88
+558	Pulse Lasers	88
+559	Autocannons	87
+560	Artillery Cannons	87
+561	Small	556
+562	Medium	556
+563	Large	556
+564	Small	555
+565	Medium	555
+566	Large	555
+567	Small	557
+568	Medium	557
+569	Large	557
+570	Small	558
+572	Medium	558
+573	Large	558
+574	Small	559
+575	Medium	559
+576	Large	559
+577	Small	560
+578	Medium	560
+579	Large	560
+580	Cruise Missiles	114
+581	Heavy Missiles	114
+582	Destroyers	204
+583	Amarr	582
+584	Caldari	582
+585	Gallente	582
+586	Minmatar	582
+588	Battlecruisers	204
+589	Amarr	588
+590	Caldari	588
+591	Gallente	588
+592	Minmatar	588
+593	Mining Crystals	11
+594	Projectile Batteries	480
+595	Hybrid Batteries	480
+596	Laser Batteries	480
+597	Extra Large	299
+598	Extra Large	300
+599	Extra Large	301
+600	Capital	128
+601	Large	128
+602	Medium	128
+603	Small	128
+604	Micro	128
+605	Small	551
+606	Medium	551
+608	Large	551
+609	Small	552
+610	Medium	552
+611	Large	552
+612	Extra Large	552
+613	Boost Amplifiers	552
+614	Criminal Evidence	19
+615	Damage Controls	14
+616	Insignias	19
+617	XL Torpedoes	314
+618	Implant Slot 01	532
+619	Implant Slot 02	532
+620	Implant Slot 03	532
+621	Implant Slot 04	532
+622	Implant Slot 05	532
+629	Transport Ships	1385
+630	Amarr	629
+631	Caldari	629
+632	Gallente	629
+633	Minmatar	629
+634	Transport Ships	204
+635	Amarr	634
+636	Caldari	634
+637	Gallente	634
+638	Minmatar	634
+639	Rocket Launchers	140
+640	Light Missile Launchers	140
+641	Rapid Light Missile Launchers	140
+642	Heavy Launchers	140
+643	Cruise Launchers	140
+644	Torpedo Launchers	140
+645	Ballistic Control Systems	143
+646	Gyrostabilizers	143
+647	Heat Sinks	143
+648	Magnetic Field Stabilizers	143
+655	Engineering Equipment	9
+656	Electronics and Sensor Upgrades	9
+657	Electronic Warfare	9
+658	Power Diagnostic Systems	655
+659	Reactor Control Units	655
+660	Auxiliary Power Controls	655
+661	Energy Neutralizers	655
+662	Energy Nosferatu	655
+663	Remote Capacitor Transmitters	655
+664	Capacitor Batteries	655
+665	Capacitor Rechargers	655
+666	Capacitor Flux Coils	655
+667	Capacitor Power Relays	655
+668	Capacitor Boosters	655
+669	Signal Amplifiers	656
+670	Automated Targeting Systems	656
+671	Sensor Boosters	656
+672	Passive Targeting Systems	656
+673	Remote Sensor Boosters	656
+675	Cloaking Devices	656
+676	CPU Upgrades	656
+677	Electronic Counter Measures	657
+678	ECM Bursts	657
+679	Remote Sensor Dampeners	657
+680	Weapon Disruptors	657
+681	Sensor Backup Arrays	657
+683	Stasis Webifiers	657
+685	ECCM	657
+686	Projected ECCM	657
+687	Shield Flux Coils	554
+688	Shield Power Relays	554
+689	Small	661
+690	Medium	661
+691	Heavy	661
+692	Small	662
+693	Medium	662
+694	Heavy	662
+695	Small	663
+696	Medium	663
+697	Large	663
+698	Micro	668
+699	Small	668
+700	Medium	668
+701	Heavy	668
+702	Micro	664
+703	Small	664
+704	Medium	664
+705	Large	664
+706	Tracking Computers	143
+707	Tracking Enhancers	143
+708	Remote Tracking Computers	143
+711	Cargo Scanners	1708
+712	Scan Probe Launchers	1708
+713	Ship Scanners	1708
+714	Mining Survey Chipsets	1708
+715	Magnetometric Jammers	677
+716	Ladar Jammers	677
+717	Gravimetric Jammers	677
+718	Radar Jammers	677
+719	Multi Spectrum Jammers	677
+720	Gravimetric Backup Arrays	681
+721	Ladar Backup Arrays	681
+722	Radar Backup Arrays	681
+723	Magnetometric Backup Arrays	681
+724	Multi-Frequency Backup Arrays	681
+725	Gravimetric Sensors	685
+726	Ladar Sensors	685
+727	Magnetometric Sensors	685
+728	Multi-Spectrum Sensors	685
+729	Radar Sensors	685
+730	Amarr Navy	616
+731	Ammatar Navy	616
+732	Caldari Navy	616
+733	CONCORD	616
+734	Gallente Navy	616
+735	Khanid Navy	616
+736	Minmatar Fleet	616
+737	Individuals	616
+738	Nexus Chips	19
+739	Criminal Dog Tags	19
+740	Angels	739
+741	Blood Raiders	739
+742	Dark Blood	739
+743	Domination	739
+744	Dread Guristas	739
+745	Guristas	739
+746	Sansha	739
+747	Serpentis	739
+748	Shadow Serpentis	739
+749	True Sansha	739
+750	Commanders	739
+751	Overseer's Personal Effects	614
+752	Criminal DNA Patterns	614
+753	Mining Crystals	211
+754	Political Paraphernalia	19
+757	Target Painters	657
+761	Dreadnoughts	1381
+762	Amarr	3509
+763	Caldari	3509
+764	Gallente	3509
+765	Minmatar	3509
+766	Freighters	1381
+767	Amarr	766
+768	Caldari	766
+769	Gallente	766
+770	Minmatar	766
+771	Extra Large	556
+772	Extra Large	555
+773	Extra Large	557
+774	Extra Large	558
+775	Extra Large	560
+776	Extra Large	559
+777	XL Launchers	140
+778	Capital	552
+779	Fleet Assistance Modules	9
+781	Standard Capital Ship Components	1035
+782	Dreadnoughts	204
+783	Amarr	782
+784	Caldari	782
+785	Gallente	782
+786	Minmatar	782
+787	Freighters	204
+788	Amarr	787
+789	Caldari	787
+790	Gallente	787
+791	Minmatar	787
+792	Extra Large	286
+793	Extra Large	287
+794	Extra Large	288
+796	Standard Capital Ship Components	800
+798	Outpost Components	800
+799	Fleet Assistance Modules	209
+800	Components	1041
+801	Siege Modules	143
+802	Amarr	65
+803	Caldari	65
+812	Titans	1381
+813	Amarr	812
+814	Caldari	812
+815	Gallente	812
+816	Minmatar	812
+817	Carriers	1381
+818	Amarr	3885
+819	Caldari	3885
+820	Gallente	3885
+821	Minmatar	3885
+822	Command Ships	1375
+823	Interdictors	1373
+824	Recon Ships	1368
+825	Amarr	822
+826	Amarr	823
+827	Amarr	824
+828	Caldari	822
+829	Caldari	823
+830	Caldari	824
+831	Gallente	822
+832	Gallente	823
+833	Gallente	824
+834	Minmatar	822
+835	Minmatar	823
+836	Minmatar	824
+837	Light Scout Drones	159
+838	Medium Scout Drones	159
+839	Heavy Attack Drones	159
+840	Light Fighters	2410
+841	Electronic Warfare Drones	157
+842	Logistic Drones	157
+843	Combat Utility Drones	157
+845	Standard Ammo	99
+846	Advanced Artillery Ammo	99
+847	Advanced Autocannon Ammo	99
+848	Standard Charges	100
+849	Advanced Blaster Charges	100
+850	Advanced Railgun Charges	100
+851	Standard Crystals	101
+852	Advanced Beam Laser Crystals	101
+853	Advanced Pulse Laser Crystals	101
+854	Large	846
+855	Medium	846
+856	Small	846
+857	Large	847
+858	Medium	847
+859	Small	847
+860	Large	849
+861	Medium	849
+862	Small	849
+863	Large	850
+864	Medium	850
+865	Small	850
+866	Large	852
+867	Medium	852
+868	Small	852
+869	Large	853
+870	Medium	853
+871	Small	853
+872	Tractor Beams	656
+874	Exhumers	1384
+878	Titans	204
+879	Carriers	204
+880	Interdictors	204
+881	Command Ships	204
+882	Recon Ships	204
+883	Exhumers	204
+884	Amarr	878
+885	Caldari	878
+886	Gallente	878
+887	Minmatar	878
+888	Amarr	879
+889	Caldari	879
+890	Gallente	879
+891	Minmatar	879
+892	Amarr	880
+893	Caldari	880
+894	Gallente	880
+895	Minmatar	880
+896	Amarr	881
+897	Caldari	881
+898	Gallente	881
+899	Minmatar	881
+900	Amarr	882
+901	Caldari	882
+902	Gallente	882
+903	Minmatar	882
+904	ORE	883
+905	Tractor Beams	1578
+910	Capital	663
+911	Sentry Drones	159
+912	Superweapons	10
+913	Superweapons	210
+914	Standard Auto-Targeting	115
+917	Advanced High Precision Light Missiles	117
+918	Advanced High Precision Cruise Missiles	580
+919	Advanced High Precision Heavy Missiles	581
+920	Standard Light Missiles	117
+921	Standard Cruise Missiles	580
+922	Standard Rockets	118
+923	Standard Torpedoes	387
+924	Standard Heavy Missiles	581
+925	Advanced High Damage Cruise Missiles	580
+926	Advanced High Damage Heavy Missiles	581
+927	Advanced High Damage Light Missiles	117
+928	Advanced Long Range Rockets	118
+929	Advanced Long Range Torpedoes	387
+930	Advanced Anti-Ship Rockets	118
+931	Advanced Anti-Ship Torpedoes	387
+932	Assembly Arrays	1285
+933	Laboratory	1285
+935	Mining Upgrades	1713
+937	Mining Upgrades	1711
+938	Drone Upgrades	9
+939	Drone Upgrades	209
+940	Starbase Charters	19
+943	Ship Modifications	2
+944	Armor Rigs	943
+945	Astronautic Rigs	943
+946	Drone Rigs	943
+948	Electronics Superiority Rigs	943
+949	Engineering Rigs	943
+950	Energy Weapon Rigs	943
+951	Hybrid Weapon Rigs	943
+952	Missile Launcher Rigs	943
+953	Projectile Weapon Rigs	943
+954	Shield Rigs	943
+955	Ship and Module Modifications	
+956	Armor Rigs	1111
+957	Astronautic Rigs	1111
+958	Drone Rigs	1111
+960	Electronics Superiority Rigs	1111
+961	Engineering Rigs	1111
+962	Energy Weapon Rigs	1111
+963	Hybrid Weapon Rigs	1111
+964	Missile Launcher Rigs	1111
+965	Shield Rigs	1111
+967	Signal Distortion Amplifier	677
+968	Heavy Assault Missiles	114
+971	Standard Heavy Assault Missiles	968
+972	Advanced Long Range Heavy Assault Missiles	968
+973	Advanced Anti-Ship Heavy Assault Missile	968
+974	Heavy Assault Launchers	140
+975	Heavy Assault Missiles	314
+977	Booster	24
+979	Projectile Weapon Rigs	1111
+983	Booster Gas Clouds	1032
+986	Faction Ammo	99
+987	Large	986
+988	Medium	986
+989	Small	986
+990	Faction Charges	100
+991	Large	990
+992	Medium	990
+993	Small	990
+994	Faction Crystals	101
+995	Large	994
+996	Medium	994
+997	Small	994
+998	Faction Light Missiles	117
+999	Faction Rockets	118
+1000	Faction Torpedoes	387
+1001	Faction Cruise Missiles	580
+1002	Faction Heavy Missiles	581
+1003	Faction Heavy Assault Missiles	968
+1004	Extra Large	990
+1006	Extra Large	986
+1007	Extra Large	994
+1008	Cargo Containers	406
+1009	Energy Neutralization Batteries	480
+1010	System Scanning Array	1285
+1011	Jump Bridge	1285
+1012	Cynosural System Jammer	1285
+1013	Cynosural Generator Array	1285
+1014	Bomb Launchers	10
+1015	Bombs	11
+1016	Bombs	211
+1018	Remote Hull Repairers	14
+1019	Bomb Launchers	210
+1021	Outpost Components	1035
+1022	Improvement Platforms	1021
+1027	Outpost Upgrade Platforms	1021
+1028	Light Fighters	2237
+1029	Electronic Warfare Drones	357
+1030	Logistic Drones	357
+1031	Raw Materials	533
+1032	Gas Clouds Materials	533
+1033	Ice Products	533
+1034	Reaction Materials	533
+1035	Components	475
+1037	Gas Cloud Scoops	1713
+1038	Ice Harvesters	1713
+1039	Mining Lasers	1713
+1040	Strip Miners	1713
+1041	Manufacture & Research	2
+1045	Capital Industrial Ships	204
+1046	ORE	1045
+1047	Capital Industrial Ships	1381
+1048	ORE	1047
+1049	Small	134
+1050	Medium	134
+1051	Large	134
+1052	Capital	134
+1053	Small	538
+1054	Medium	538
+1055	Large	538
+1056	Capital	537
+1057	Large	537
+1058	Medium	537
+1059	Small	537
+1060	Small	1018
+1061	Medium	1018
+1062	Large	1018
+1063	Capital	1018
+1065	Electronic Attack Frigates	1364
+1066	Amarr	1065
+1067	Caldari	1065
+1068	Gallente	1065
+1069	Minmatar	1065
+1070	Heavy Interdiction Cruisers	1368
+1071	Amarr	1070
+1072	Caldari	1070
+1073	Gallente	1070
+1074	Minmatar	1070
+1075	Black Ops	1377
+1076	Amarr	1075
+1077	Caldari	1075
+1078	Gallente	1075
+1079	Minmatar	1075
+1080	Marauders	1377
+1081	Amarr	1080
+1082	Caldari	1080
+1083	Gallente	1080
+1084	Minmatar	1080
+1085	Warp Disruption Field Generators	657
+1086	Inertial Stabilizers	132
+1087	Overdrives	132
+1088	Warp Core Stabilizers	132
+1089	Jump Freighters	1381
+1090	Amarr	1089
+1091	Caldari	1089
+1092	Gallente	1089
+1093	Minmatar	1089
+1094	Scripts	11
+1097	Advanced Capital Ship Components	800
+1103	Nanite Repair Paste	11
+1105	Scripts	211
+1109	Sleeper Components	19
+1110	Scanning	150
+1111	Rigs	955
+1112	Subsystems	955
+1122	Amarr Core Subsystems	1610
+1123	Caldari Core Subsystems	1625
+1124	Gallente Core Subsystems	1627
+1125	Minmatar Core Subsystems	1626
+1126	Amarr Defensive Subsystems	1610
+1127	Caldari Defensive Subsystems	1625
+1128	Minmatar Defensive Subsystems	1626
+1129	Gallente Defensive Subsystems	1627
+1130	Amarr Offensive Subsystems	1610
+1131	Caldari Offensive Subsystems	1625
+1132	Gallente Offensive Subsystems	1627
+1133	Minmatar Offensive Subsystems	1626
+1134	Amarr Propulsion Subsystems	1610
+1135	Caldari Propulsion Subsystems	1625
+1136	Gallente Propulsion Subsystems	1627
+1137	Minmatar Propulsion Subsystems	1626
+1138	Strategic Cruisers	1368
+1139	Amarr	1138
+1140	Caldari	1138
+1141	Gallente	1138
+1142	Minmatar	1138
+1147	Subsystem Components	1035
+1191	Subsystem Components	800
+1192	Faction Auto-Targeting	115
+1193	Standard XL Torpedoes	505
+1194	Faction XL Torpedoes	505
+1195	Reinforced Bulkheads	135
+1196	Nanofiber Internal Structures	135
+1197	Expanded Cargoholds	135
+1198	Scan Probe Launchers	1710
+1199	Scan Probes	120
+1200	Survey Probes	120
+1201	Interdiction Probes	120
+1202	Large Armor Rigs	944
+1203	Small Armor Rigs	944
+1204	Medium Armor Rigs	944
+1206	Small Armor Rigs	956
+1207	Medium Armor Rigs	956
+1208	Large Armor Rigs	956
+1210	Small Astronautic Rigs	957
+1211	Medium Astronautic Rigs	957
+1212	Large Astronautic Rigs	957
+1213	Small Drone Rigs	958
+1214	Medium Drone Rigs	958
+1215	Large Drone Rigs	958
+1219	Small Electronics Superiority Rigs	960
+1220	Medium Electronics Superiority Rigs	960
+1221	Large Electronics Superiority Rigs	960
+1222	Small Engineering Rigs	961
+1223	Medium Engineering Rigs	961
+1224	Large Engineering Rigs	961
+1225	Small Energy Weapon Rigs	962
+1226	Medium Energy Weapon Rigs	962
+1227	Large Energy Weapon Rigs	962
+1228	Small Hybrid Weapon Rigs	963
+1229	Medium Hybrid Weapon Rigs	963
+1230	Large Hybrid Weapon Rigs	963
+1231	Small Missile Launcher Rigs	964
+1232	Medium Missile Launcher Rigs	964
+1233	Large Missile Launcher Rigs	964
+1234	Small Shield Rigs	965
+1235	Medium Shield Rigs	965
+1236	Large Shield Rigs	965
+1237	Small Projectile Weapon Rigs	979
+1238	Medium Projectile Weapon Rigs	979
+1239	Large Projectile Weapon Rigs	979
+1240	Small Astronautic Rigs	945
+1241	Medium Astronautic Rigs	945
+1242	Large Astronautic Rigs	945
+1243	Small Drone Rigs	946
+1244	Medium Drone Rigs	946
+1245	Large Drone Rigs	946
+1249	Small Electronics Superiority Rigs	948
+1250	Medium Electronics Superiority Rigs	948
+1251	Large Electronics Superiority Rigs	948
+1252	Small Engineering Rigs	949
+1253	Medium Engineering Rigs	949
+1254	Large Engineering Rigs	949
+1255	Small Energy Weapon Rigs	950
+1256	Medium Energy Weapon Rigs	950
+1257	Large Energy Weapon Rigs	950
+1258	Small Hybrid Weapon Rigs	951
+1259	Medium Hybrid Weapon Rigs	951
+1260	Large Hybrid Weapon Rigs	951
+1261	Small Missile Launcher Rigs	952
+1262	Medium Missile Launcher Rigs	952
+1263	Large Missile Launcher Rigs	952
+1264	Small Projectile Weapon Rigs	953
+1265	Medium Projectile Weapon Rigs	953
+1266	Large Projectile Weapon Rigs	953
+1267	Small Shield Rigs	954
+1268	Medium Shield Rigs	954
+1269	Large Shield Rigs	954
+1272	Sovereignty Structures	477
+1273	Territorial Claim Units	1272
+1274	Sovereignty Blockade Units	1272
+1275	Sovereignty Hubs	1272
+1276	Infrastructure Upgrades	1272
+1282	Strategic Upgrades	1276
+1283	Industrial Upgrades	1276
+1284	Military Upgrades	1276
+1285	Starbase Structures	477
+1286	XL Cruise Missiles	314
+1287	Standard XL Cruise Missiles	1316
+1310	Heavy Fighters	2410
+1313	Heavy Fighters	2237
+1316	XL Cruise Missiles	114
+1317	Faction XL Cruise Missiles	1316
+1320	Planetary Infrastructure	
+1322	Command Centers	1320
+1323	Resource Processing	150
+1332	Planetary Materials	533
+1333	Raw Planetary Materials	1332
+1334	Processed Planetary Materials	1332
+1335	Refined Planetary Materials	1332
+1336	Specialized Planetary Materials	1332
+1337	Advanced Planetary Materials	1332
+1338	Structures	2
+1339	Control Towers	1841
+1340	Assembly Arrays	1841
+1341	Corporate Hangar Arrays	1841
+1342	Cynosural Generator Arrays	1841
+1343	Cynosural System Jammers	1841
+1344	Electronic Warfare Batteries	1534
+1345	Energy Neutralization Batteries	1534
+1346	Jump Bridge	1841
+1347	Hybrid Batteries	1534
+1348	Laser Batteries	1534
+1349	Missile Batteries	1534
+1350	Projectile Batteries	1534
+1351	Reactors	1841
+1352	Moon Harvesting Arrays	1841
+1353	Reprocessing Arrays	1841
+1354	Shield Hardening Arrays	1841
+1355	Silos	1841
+1356	Sovereignty Structures	2015
+1358	Nanite Repair Paste	211
+1359	Laboratories	1841
+1361	Frigates	4
+1362	Faction Frigates	1361
+1364	Advanced Frigates	1361
+1365	Pirate Faction	1362
+1366	Navy Faction	1362
+1367	Cruisers	4
+1368	Advanced Cruisers	1367
+1369	Faction Cruisers	1367
+1370	Navy Faction	1369
+1371	Pirate Faction	1369
+1372	Destroyers	4
+1373	Advanced Destroyers	1372
+1374	Battlecruisers	4
+1375	Advanced Battlecruisers	1374
+1376	Battleships	4
+1377	Advanced Battleships	1376
+1378	Faction Battleships	1376
+1379	Navy Faction	1378
+1380	Pirate Faction	1378
+1381	Capital Ships	4
+1382	Haulers and Industrial Ships	4
+1384	Mining Barges	4
+1385	Advanced Haulers	1382
+1389	ORE	208
+1390	ORE	8
+1392	Faction Carrier	817
+1396	Apparel	
+1397	Men's Clothing	1396
+1398	Tops	1397
+1399	Outerwear	1397
+1400	Footwear	1397
+1401	Bottoms	1397
+1402	Women's Clothing	1396
+1403	Bottoms	1402
+1404	Footwear	1402
+1405	Outerwear	1402
+1406	Tops	1402
+1407	Accessories	1396
+1408	Eyewear	1407
+1410	Orbital Infrastructure	1320
+1416	Reactive Armor Hardeners	535
+1426	Signature Suppressor	657
+1427	Aurum Tokens	19
+1469	Armor Implants	531
+1470	Electronic Systems Implants	531
+1471	Engineering Implants	531
+1472	Faction Omega Implants	531
+1473	Gunnery Implants	531
+1474	Industry Implants	531
+1475	Fleet Support Implants	531
+1476	Missile Implants	531
+1477	Navigation Implants	531
+1478	Science Implants	531
+1479	Shield Implants	531
+1480	Implant Slot 06	1479
+1481	Implant Slot 07	1479
+1482	Implant Slot 08	1479
+1483	Implant Slot 09	1479
+1484	Implant Slot 06	1478
+1485	Implant Slot 07	1478
+1486	Implant Slot 08	1478
+1489	Implant Slot 06	1477
+1490	Implant Slot 07	1477
+1491	Implant Slot 08	1477
+1492	Implant Slot 09	1477
+1493	Implant Slot 06	1476
+1494	Implant Slot 07	1476
+1495	Implant Slot 08	1476
+1496	Implant Slot 09	1476
+1497	Implant Slot 10	1476
+1498	Implant Slot 06	1473
+1499	Implant Slot 07	1473
+1500	Implant Slot 08	1473
+1501	Implant Slot 09	1473
+1502	Implant Slot 10	1473
+1504	Implant Slot 08	1474
+1505	Implant Slot 10	1475
+1506	Implant Slot 06	1472
+1507	Implant Slot 06	1471
+1508	Implant Slot 07	1471
+1509	Implant Slot 08	1471
+1512	Implant Slot 08	1470
+1513	Implant Slot 09	1470
+1514	Implant Slot 06	1469
+1515	Implant Slot 07	1469
+1516	Implant Slot 08	1469
+1517	Implant Slot 09	1469
+1518	Implant Slot 10	1469
+1520	Probes	211
+1521	Survey Probes	1520
+1522	Materials	1041
+1525	Afterburners	252
+1526	Cruise Missiles	314
+1527	Heavy Missiles	314
+1528	Light Missiles	314
+1529	Interdiction Probes	1520
+1530	Combat Drones	357
+1531	Light Scout Drones	1530
+1532	Medium Scout Drones	1530
+1533	Sentry Drones	1530
+1534	Weapon Batteries	1841
+1535	Ship Maintenance Arrays	1841
+1536	Armor Repairers	214
+1537	Hull Repairers	214
+1538	Remote Hull Repairers	214
+1539	Remote Armor Repairers	214
+1540	Armor Hardeners	214
+1541	Armor Plates	214
+1542	Damage Controls	214
+1543	Energized Armor Membranes	214
+1544	Armor Coatings	214
+1545	Shield	209
+1546	Engineering Equipment	209
+1547	Shield Flux Coils	1545
+1548	Shield Hardeners	1545
+1549	Shield Extenders	1545
+1550	Shield Power Relays	1545
+1551	Shield Rechargers	1545
+1552	Shield Boosters	1545
+1553	Remote Shield Boosters	1545
+1554	Shield Resistance Amplifiers	1545
+1555	Capacitor Rechargers	1546
+1556	Capacitor Flux Coils	1546
+1557	Capacitor Power Relays	1546
+1558	Capacitor Batteries	1546
+1559	Auxiliary Power Controls	1546
+1560	Power Diagnostic Systems	1546
+1561	Reactor Control Units	1546
+1562	Remote Capacitor Transmitters	1546
+1563	Capacitor Boosters	1546
+1564	Energy Nosferatu	1546
+1565	Energy Neutralizers	1546
+1566	Electronic Warfare	209
+1567	Electronic Counter Measures	1566
+1568	ECM Burst	1566
+1570	Stasis Webifiers	1566
+1571	Target Painters	1566
+1572	Warp Disruption Field Generators	1566
+1574	Weapon Disruptors	1566
+1575	ECCM	1566
+1576	Remote Sensor Dampeners	1566
+1577	Projected ECCM	1566
+1578	Electronics and Sensor Upgrades	209
+1579	Automated Targeting Systems	1578
+1580	Remote Sensor Boosters	1578
+1581	Sensor Boosters	1578
+1582	Passive Targeting Systems	1578
+1583	Sensor Backup Arrays	1566
+1584	CPU Upgrades	1578
+1585	Signal Amplifiers	1578
+1586	Combat Utility Drones	357
+1587	Amarr	1097
+1588	Caldari	1097
+1589	Gallente	1097
+1590	Minmatar	1097
+1591	Advanced Components	800
+1592	Amarr	1591
+1593	Caldari	1591
+1594	Gallente	1591
+1595	Minmatar	1591
+1598	Orbital Strike	99
+1599	Orbital Strike	101
+1600	Orbital Strike	100
+1601	Orbital Strike	300
+1602	Orbital Strike	301
+1603	Orbital Strike	299
+1610	Amarr Subsystems	1112
+1612	Special Edition Ships	4
+1614	Special Edition Industrial Ships	1612
+1616	ORE	5
+1617	ORE	205
+1618	Special Edition Shuttles	1612
+1619	Special Edition Frigates	1612
+1620	Special Edition Battleships	1612
+1621	Special Edition Heavy Assault Cruisers	1612
+1623	Special Edition Assault Frigates	1612
+1624	Special Edition Logistics	1612
+1625	Caldari Subsystems	1112
+1626	Minmatar Subsystems	1112
+1627	Gallente Subsystems	1112
+1631	Faction Shuttles	391
+1633	Command Bursts	779
+1639	Command Processors	779
+1640	Jump Portal Generators	779
+1641	Cynosural Field Generators	779
+1642	Clone Vat Bays	779
+1643	Salvage Drones	357
+1646	Salvage Drones	157
+1650	Micro Jump Drives	52
+1651	Secure Containers	379
+1652	Audit Log Containers	379
+1653	Freight Containers	379
+1657	Standard Containers	379
+1658	Station Containers	379
+1659	Special Edition Assets	
+1660	Special Edition Tournament Cards	1659
+1661	Special Edition Commodities	1659
+1662	Special Edition Apparel	1659
+1663	Special Edition Festival Assets	1659
+1665	Thermal Coatings	540
+1666	Kinetic Coatings	540
+1667	Explosive Coatings	540
+1668	EM Coatings	540
+1669	Layered Armor Coatings	14
+1670	Multispectrum Coatings	540
+1672	100mm Armor Plate	133
+1673	200mm Armor Plate	133
+1674	400mm Armor Plate	133
+1675	800mm Armor Plate	133
+1676	1600mm Armor Plate	133
+1678	Thermal Armor Hardeners	535
+1679	Kinetic Armor Hardeners	535
+1680	Explosive Armor Hardeners	535
+1681	EM Armor Hardeners	535
+1682	Explosive Energized Membranes	541
+1683	Thermal Energized Membranes	541
+1684	EM Energized Membranes	541
+1685	Kinetic Energized Membranes	541
+1686	Multispectrum Energized Membranes	541
+1687	Layered Energized Armor Membranes	14
+1688	Thermal Shield Amplifiers	550
+1689	Kinetic Shield Amplifiers	550
+1690	Explosive Shield Amplifiers	550
+1691	EM Shield Amplifiers	550
+1692	Thermal Shield Hardeners	553
+1693	Kinetic Shield Hardeners	553
+1694	Explosive Shield Hardeners	553
+1695	EM Shield Hardeners	553
+1696	Multispectrum Shield Hardeners	553
+1697	Micro Jump Drives	252
+1698	Special Edition Battlecruisers	1612
+1699	Special Edition Cruisers	1612
+1700	Security Tags	19
+1701	Personal Hangar Arrays	1841
+1702	Personal Hangar Arrays	1285
+1703	Faction Battlecruisers	1374
+1704	Navy Faction	1703
+1707	Scanning Upgrades	1710
+1708	Scanning Equipment	9
+1709	Scanning Upgrades	1708
+1710	Scanning Equipment	209
+1711	Harvest Equipment	209
+1712	Salvagers	1711
+1713	Harvest Equipment	9
+1715	Salvagers	1713
+1716	Survey Probe Launchers	1710
+1717	Survey Probe Launchers	1708
+1718	Analyzers	1708
+1719	Capital Armor Rigs	944
+1720	Capital Astronautic Rigs	945
+1721	Capital Drone Rigs	946
+1723	Capital Electronics Superiority Rigs	948
+1724	Capital Engineering Rigs	949
+1725	Capital Energy Weapon Rigs	950
+1726	Capital Hybrid Weapon Rigs	951
+1727	Capital Missile Launcher Rigs	952
+1728	Capital Projectile Weapon Rigs	953
+1729	Capital Shield Rigs	954
+1730	Capital Armor Rigs	956
+1731	Capital Projectile Weapon Rigs	979
+1732	Capital Shield Rigs	965
+1733	Capital Missile Launcher Rigs	964
+1734	Capital Hybrid Weapon Rigs	963
+1735	Capital Energy Weapon Rigs	962
+1736	Capital Engineering Rigs	961
+1737	Capital Electronics Superiority Rigs	960
+1739	Capital Drone Rigs	958
+1740	Capital Astronautic Rigs	957
+1745	Armor	150
+1746	Neural Enhancement	150
+1747	Shields	150
+1748	Targeting	150
+1761	Targeting Implants	531
+1762	Resource Processing Implants	531
+1763	Scanning Implants	531
+1764	Neural Enhancement Implants	531
+1765	Implant Slot 07	1761
+1766	Implant Slot 08	1761
+1767	Implant Slot 10	1762
+1768	Implant Slot 08	1762
+1769	Implant Slot 07	1762
+1770	Implant Slot 06	1763
+1771	Implant Slot 07	1763
+1772	Implant Slot 08	1763
+1773	Implant Slot 09	1763
+1774	Implant Slot 10	1763
+1775	Implant Slot 08	1764
+1776	Implant Slot 09	1764
+1777	Implant Slot 10	1764
+1779	Resource Processing Rigs	1111
+1780	Scanning Rigs	1111
+1781	Targeting Rigs	1111
+1782	Small Resource Processing Rigs	1779
+1783	Medium Resource Processing Rigs	1779
+1784	Large Resource Processing Rigs	1779
+1785	Capital Resource Processing Rigs	1779
+1786	Small Scanning Rigs	1780
+1787	Medium Scanning Rigs	1780
+1788	Large Scanning Rigs	1780
+1789	Capital Scanning Rigs	1780
+1790	Small Targeting Rigs	1781
+1791	Medium Targeting Rigs	1781
+1792	Large Targeting Rigs	1781
+1793	Capital Targeting Rigs	1781
+1794	Resource Processing Rigs	943
+1795	Scanning Rigs	943
+1796	Targeting Rigs	943
+1797	Capital Resource Processing Rigs	1794
+1798	Large Resource Processing Rigs	1794
+1799	Medium Resource Processing Rigs	1794
+1800	Small Resource Processing Rigs	1794
+1801	Small Scanning Rigs	1795
+1802	Medium Scanning Rigs	1795
+1803	Large Scanning Rigs	1795
+1804	Capital Scanning Rigs	1795
+1805	Small Targeting Rigs	1796
+1806	Medium Targeting Rigs	1796
+1807	Large Targeting Rigs	1796
+1808	Capital Targeting Rigs	1796
+1809	Analyzers	1710
+1810	Alliance Tournament Cards	1660
+1811	New Eden Open Cards	1660
+1812	Alliance Tournament All Star Teams	1810
+1813	NEO YC 114 Team Cards	1811
+1814	Special Edition Implants	1659
+1815	Corvettes	4
+1816	Amarr	1815
+1817	Caldari	1815
+1818	Gallente	1815
+1819	Minmatar	1815
+1822	Tattoos	1407
+1823	Planet Management	150
+1824	Subsystems	150
+1827	Rapid Heavy Missile Launchers	140
+1828	Mobile Depots	406
+1829	Mobile Cynosural Inhibitors	406
+1830	Mobile Tractor Units	406
+1831	Mobile Depots	404
+1832	Mobile Cynosural Inhibitors	404
+1833	Mobile Tractor Units	404
+1834	Mobile Siphon Units	406
+1835	Mobile Siphon Units	404
+1836	Augmentations	1407
+1837	Special Edition Recon Ships	1612
+1838	Special Edition Covert Ops	1612
+1840	Covert Research Tools	19
+1841	Starbase Structures	1338
+1842	Mobile Micro Jump Units	406
+1843	Mobile Scan Inhibitors	406
+1844	Mobile Micro Jump Units	404
+1845	Mobile Scan Inhibitors	404
+1846	Bounty Encrypted Bonds	19
+1847	Encounter Surveillance Systems	404
+1849	Reaction Formulas	2
+1850	Simple Reactions	1849
+1851	Complex Reactions	1849
+1852	Simple Biochemical Reactions	1849
+1853	Complex Biochemical Reactions	1849
+1854	Polymer Reactions	1849
+1855	Ice Ores	1031
+1856	Alloys & Compounds	1031
+1857	Minerals	533
+1858	Booster Materials	1034
+1859	Fullerenes	1032
+1860	Polymer Materials	1034
+1861	Salvage Materials	533
+1862	Ancient Salvaged Materials	1861
+1863	Salvaged Materials	1861
+1864	Construction Platforms	1021
+1865	Structure Components	1035
+1866	Amarr Improvement Platforms	1022
+1867	Caldari Improvement Platforms	1022
+1868	Gallente Improvement Platforms	1022
+1869	Minmatar Improvement Platforms	1022
+1870	Fuel Blocks	1035
+1872	Research Equipment	475
+1873	Decryptors	1872
+1880	Datacores	1872
+1883	Advanced Capital Components	1035
+1884	Amarr	1883
+1885	Caldari	1883
+1886	Gallente	1883
+1887	Minmatar	1883
+1888	Gallente	65
+1889	Minmatar	65
+1897	Faction Materials	533
+1898	Angel Cartel	1897
+1899	Blood Raiders	1897
+1900	Guristas	1897
+1901	Serpentis	1897
+1902	Sleeper	1897
+1903	Talocan	1897
+1904	Yan Jung	1897
+1905	Takmahl	1897
+1906	Rogue Drones	1897
+1907	R.Db	1872
+1908	R.A.M.	1035
+1909	Ancient Relics	1872
+1912	Construction Platforms	798
+1913	Structure Components	800
+1918	R.A.M.	800
+1919	R.Db	1522
+1920	Fuel Blocks	800
+1921	Compression Array	1285
+1922	Pilot's Services	
+1923	PLEX	1922
+1924	Expedition Frigates	1364
+1931	Warp Accelerators	132
+1932	Special Edition Interceptors	1612
+1935	Warp Disruptors	657
+1936	Warp Scramblers	657
+1937	Interdiction Sphere Launchers	657
+1938	Warp Disruptors	1566
+1939	Warp Scramblers	1566
+1940	Interdiction Sphere Launchers	1566
+1941	Jump Economizers	132
+1942	Pilot's Services	1922
+1943	Headwear	1407
+1944	Bottoms, extras	1402
+1945	Compression Array	1841
+1949	ORE	787
+1950	ORE	766
+1951	Tactical Destroyers	1373
+1952	Amarr	1951
+1953	Minmatar	1951
+1954	Ship SKINs	
+1955	Battlecruisers	1954
+1956	Amarr	2101
+1957	Caldari	2101
+1958	Gallente	2101
+1959	Minmatar	2101
+1960	Battleships	1954
+1961	Faction Battleships	1960
+1962	Standard Battleships	1960
+1963	Pirate Faction	1961
+1964	Amarr	1962
+1965	Caldari	1962
+1966	Gallente	1962
+1967	Minmatar	1962
+1968	Capital Ships	1954
+1969	ORE	2114
+1970	Carriers	1968
+1971	Dreadnoughts	1968
+1972	Freighters	1968
+1973	Titans	1968
+1974	Amarr	2374
+1975	Caldari	2374
+1976	Gallente	2374
+1977	Minmatar	2374
+1978	Amarr	2381
+1979	Gallente	2381
+1980	Amarr	2377
+1981	Caldari	2377
+1982	Gallente	2377
+1983	Minmatar	2377
+1984	Amarr	1972
+1985	Caldari	1972
+1986	Gallente	1972
+1987	Minmatar	1972
+1988	Cruisers	1954
+1989	Destroyers	1954
+1990	Amarr	2028
+1991	Caldari	2028
+1992	Gallente	2028
+1993	Minmatar	2028
+1994	Amarr	2035
+1995	Caldari	2035
+1996	Gallente	2035
+1997	Minmatar	2035
+1998	Frigates	1954
+1999	Faction Frigates	1998
+2000	Navy Faction	1999
+2001	Standard Frigates	1998
+2002	Amarr	2001
+2003	Caldari	2001
+2004	Gallente	2001
+2005	Minmatar	2001
+2006	Haulers and Industrial Ships	1954
+2007	Amarr	2085
+2008	Caldari	2085
+2009	Gallente	2085
+2010	Minmatar	2085
+2011	Mining Barges	1954
+2012	Exhumers	2011
+2013	Unknown Components	19
+2014	Industrial Upgrades	2015
+2015	Sovereignty and Infrastructure	1338
+2016	Military Upgrades	2015
+2017	Strategic Upgrades	2015
+2018	Entosis Links	1708
+2020	Entosis Links	1710
+2021	Caldari	1951
+2022	Advanced Battleships	1960
+2023	Marauders	2022
+2024	Amarr	2023
+2025	Caldari	2023
+2026	Gallente	2023
+2027	Minmatar	2023
+2028	Standard Cruisers	1988
+2029	Faction Cruisers	1988
+2030	Pirate Faction	2029
+2031	Pirate Faction	1999
+2032	Missile Guidance Computers	143
+2033	Missile Guidance Enhancers	143
+2034	Gallente	1951
+2035	Standard Destroyers	1989
+2036	Advanced Destroyers	1989
+2037	Interdictors	2036
+2038	Amarr	2037
+2039	Caldari	2037
+2040	Gallente	2037
+2041	Minmatar	2037
+2042	Advanced Frigates	1998
+2043	Assault Frigates	2042
+2044	Covert Ops	2042
+2045	Electronic Attack Frigates	2042
+2046	Interceptors	2042
+2047	Amarr	2043
+2048	Caldari	2043
+2049	Gallente	2043
+2050	Minmatar	2043
+2051	Amarr	2044
+2052	Caldari	2044
+2053	Gallente	2044
+2054	Minmatar	2044
+2055	Amarr	2045
+2056	Caldari	2045
+2057	Gallente	2045
+2058	Minmatar	2045
+2059	Amarr	2046
+2060	Caldari	2046
+2061	Gallente	2046
+2062	Minmatar	2046
+2063	Navy Faction	2029
+2064	Advanced Cruisers	1988
+2065	Heavy Assault Cruisers	2064
+2066	Heavy Interdiction Cruisers	2064
+2067	Logistics	2064
+2068	Recon Ships	2064
+2069	Amarr	2065
+2070	Caldari	2065
+2071	Gallente	2065
+2072	Minmatar	2065
+2073	Amarr	2066
+2074	Caldari	2066
+2075	Gallente	2066
+2076	Minmatar	2066
+2077	Amarr	2067
+2078	Caldari	2067
+2079	Gallente	2067
+2080	Minmatar	2067
+2081	Amarr	2068
+2082	Caldari	2068
+2083	Gallente	2068
+2084	Minmatar	2068
+2085	Standard Haulers	2006
+2086	Advanced Haulers	2006
+2087	Transport Ships	2086
+2088	Amarr	2087
+2089	Caldari	2087
+2090	Gallente	2087
+2091	Minmatar	2087
+2092	Caldari	2381
+2093	Minmatar	2381
+2094	Jump Freighters	1968
+2095	Amarr	2094
+2096	Caldari	2094
+2097	Gallente	2094
+2098	Minmatar	2094
+2099	Advanced Battlecruisers	1955
+2100	Faction Battlecruisers	1955
+2101	Standard Battlecruisers	1955
+2102	Command Ships	2099
+2103	Navy Faction	2100
+2104	Amarr	2102
+2105	Caldari	2102
+2106	Gallente	2102
+2107	Minmatar	2102
+2108	Navy Faction	1961
+2109	Black Ops	2022
+2110	Amarr	2109
+2111	Caldari	2109
+2112	Gallente	2109
+2113	Minmatar	2109
+2114	Capital Industrial Ships	1968
+2115	Special Edition Heavy Interdiction Cruisers	1612
+2119	Multiple Hull SKINs	1954
+2120	Special Edition SKINs	2119
+2125	Command Destroyers	1373
+2126	Amarr	2125
+2131	Caldari	2125
+2132	Gallente	2125
+2133	Minmatar	2125
+2134	Micro Jump Field Generators	252
+2135	Micro Jump Field Generators	52
+2136	Logistics Frigates	2042
+2137	Amarr	2136
+2138	Caldari	2136
+2139	Gallente	2136
+2140	Minmatar	2136
+2141	Command Destroyers	2036
+2142	Amarr	2141
+2143	Caldari	2141
+2144	Gallente	2141
+2145	Minmatar	2141
+2146	Logistics Frigates	1364
+2147	Amarr	2146
+2148	Caldari	2146
+2149	Gallente	2146
+2150	Minmatar	2146
+2151	Ice Mining Lasers	1713
+2152	Structure Management	150
+2153	Stasis Grapplers	1566
+2154	Stasis Grapplers	657
+2155	Named Components	533
+2156	Citadels	1338
+2157	Structure Modifications	2
+2158	Structure Equipment	2
+2159	Structure Combat Rigs	2157
+2160	Structure Resource Processing Rigs	2157
+2161	Electronic Warfare	2158
+2162	Electronics and Sensor Upgrades	2158
+2163	Engineering Equipment	2158
+2164	Structure Weapons	2158
+2165	Fighter Upgrades	2158
+2166	Service Modules	2158
+2167	Electronic Counter Measures	2161
+2168	Remote Sensor Dampeners	2161
+2169	Stasis Webifiers	2161
+2170	Target Painters	2161
+2171	Weapon Disruptors	2161
+2172	Warp Scramblers	2161
+2173	CPU Upgrades	2162
+2174	Signal Amplifiers	2162
+2175	Capacitor Batteries	2163
+2176	Energy Neutralizers	2163
+2177	Reactor Control Units	2163
+2178	Missile Launchers	2164
+2179	Weapon Upgrades	2164
+2180	Doomsday Devices	2164
+2181	Citadel Service Modules	2166
+2182	Resource Processing Service Modules	2166
+2183	Structure Anticapital Launcher	2178
+2184	Structure Antisubcapital Launcher	2178
+2185	Guided Bomb Launchers	2164
+2186	Point Defense Batteries	2163
+2187	Ship Tractor Beams	2162
+2188	Capacitor Power Relays	2163
+2189	Ballistic Control Systems	2179
+2190	Missile Guidance Enhancers	2179
+2191	Structure Anticapital Missiles	314
+2192	Structure Antisubcapital Missiles	314
+2193	Structure Guided Bombs	211
+2196	Structure Antisubcapital Missiles	114
+2197	Structure Anticapital Missiles	114
+2198	Structure Guided Bombs	11
+2199	Citadels	477
+2200	Faction Citadels	2199
+2201	Standard Citadels	2199
+2202	Structure Equipment	
+2203	Structure Modifications	
+2204	Structure Resource Processing Rigs	2203
+2205	Structure Combat Rigs	2203
+2206	Electronic Warfare	2202
+2207	Electronics and Sensor Upgrades	2202
+2208	Engineering Equipment	2202
+2209	Structure Weapons	2202
+2210	Service Modules	2202
+2211	Electronic Counter Measures	2206
+2212	Remote Sensor Dampeners	2206
+2213	Stasis Webifiers	2206
+2214	Target Painters	2206
+2215	Weapon Disruptors	2206
+2216	Warp Disruptors	2206
+2218	CPU Upgrades	2207
+2219	Signal Amplifiers	2207
+2220	Capacitor Power Relays	2208
+2221	Point Defense Batteries	2208
+2222	Reactor Control Units	2208
+2223	Energy Neutralizers	2208
+2224	Capacitor Batteries	2208
+2226	Missile Launchers	2209
+2227	Weapon Upgrades	2209
+2228	Doomsday Devices	2209
+2229	Guided Bomb Launchers	2209
+2230	Structure Anticapital Launcher	2226
+2231	Structure Antisubcapital Launcher	2226
+2232	Citadel Service Modules	2210
+2233	Resource Processing Service Modules	2210
+2234	Ballistic Control Systems	2227
+2235	Missile Guidance Enhancers	2227
+2236	Fighters	157
+2237	Fighters	357
+2238	Support Fighters	2237
+2239	Support Fighters	2410
+2240	25000mm Armor Plate	133
+2241	Capital	551
+2242	Capital	664
+2243	Capital	668
+2244	Capital	538
+2245	Scriptable Armor Hardeners	535
+2246	Scriptable Shield Hardeners	553
+2247	Rapid Torpedo Launchers	140
+2248	Burst Projectors	1566
+2249	Burst Projectors	657
+2250	Capital	661
+2251	Capital	662
+2252	Extra Large	846
+2253	Extra Large	847
+2254	Extra Large	849
+2255	Extra Large	850
+2256	Extra Large	853
+2257	Extra Large	852
+2258	Advanced Anti-Ship XL Torpedoes	505
+2259	Advanced Long Range XL Torpedoes	505
+2260	Advanced High Precision XL Cruise Missiles	1316
+2261	Advanced High Damage XL Cruise Missiles	1316
+2262	Force Auxiliaries	204
+2263	Amarr	2262
+2264	Caldari	2262
+2265	Gallente	2262
+2266	Minmatar	2262
+2267	Amarr	912
+2268	Caldari	912
+2269	Gallente	912
+2270	Minmatar	912
+2271	Force Auxiliaries	1381
+2272	Amarr	2271
+2273	Caldari	2271
+2274	Gallente	2271
+2275	Minmatar	2271
+2276	Non-Racial	912
+2277	Force Auxiliaries	1968
+2278	Amarr	2277
+2279	Caldari	2277
+2280	Gallente	2277
+2281	Minmatar	2277
+2283	Capsules	1954
+2285	Capsules	2283
+2286	Special Edition Capsules	2283
+2287	Faction Titans	812
+2288	Faction Dreadnoughts	761
+2290	Command Burst Charges	211
+2291	Armor Command Burst Charges	2290
+2292	Information Command Burst Charges	2290
+2293	Mining Foreman Burst Charges	2290
+2294	Shield Command Burst Charges	2290
+2295	Skirmish Command Burst Charges	2290
+2297	Command Burst Charges	11
+2298	Armor Command Burst Charges	2297
+2299	Information Command Burst Charges	2297
+2300	Mining Foreman Burst Charges	2297
+2301	Shield Command Burst Charges	2297
+2302	Skirmish Command Burst Charges	2297
+2306	Corvettes	1954
+2307	Standard Corvettes	2306
+2308	Amarr	2307
+2309	Tactical Destroyers	2036
+2310	Amarr	2309
+2311	Special Battlecruisers	1955
+2312	Special Battlecruisers	2311
+2313	Special Destroyers	1989
+2314	Special Destroyers	2313
+2315	Shuttles	1954
+2316	Special Shuttles	2315
+2317	Strong Boxes	19
+2318	ORE	1972
+2319	Mining Barges	2011
+2320	Expedition Frigates	2042
+2321	ORE	2001
+2322	Engineering Complexes	1338
+2323	Engineering Service Modules	2166
+2324	Engineering Complexes	477
+2325	ORE	912
+2327	Refineries	477
+2328	ORE	2085
+2330	Special Edition Haulers	2006
+2331	ORE	2330
+2332	Engineering Service Modules	2210
+2333	Industrial Command Ships	204
+2334	ORE	2333
+2335	Industrial Command Ships	1382
+2336	ORE	2335
+2337	Industrial Command Ships	2006
+2338	ORE	2337
+2339	Structure Engineering Rigs	2157
+2340	Structure Engineering Rigs	2203
+2341	Medium Structure Resource Processing Rigs	2204
+2342	Large Structure Resource Processing Rigs	2204
+2343	X-Large Structure Resource Processing Rigs	2204
+2344	Medium Structure Combat Rigs	2205
+2345	Large Structure Combat Rigs	2205
+2346	X-Large Structure Combat Rigs	2205
+2347	Medium Structure Engineering Rigs	2340
+2348	Large Structure Engineering Rigs	2340
+2349	X-Large Structure Engineering Rigs	2340
+2350	Special Edition Destroyers	1612
+2351	Defender Launchers	140
+2353	Caldari	2307
+2354	Gallente	2307
+2355	Minmatar	2307
+2356	Gallente	2309
+2357	Faction Force Auxiliaries	2271
+2358	Skill Trading	1922
+2359	Faction Corvettes	2306
+2360	Pirate Faction	2359
+2361	Special Covert Ops	2044
+2362	Special Recon Ships	2068
+2369	Strategic Cruisers	2064
+2370	Caldari	2369
+2371	Amarr	2369
+2372	Gallente	2369
+2373	Minmatar	2369
+2374	Standard Carriers	1970
+2375	Faction Carriers	1970
+2376	Pirate Faction	2375
+2377	Standard Dreadnoughts	1971
+2378	Faction Dreadnoughts	1971
+2380	Pirate Faction	2378
+2381	Standard Titans	1973
+2382	Faction Titans	1973
+2383	Pirate Faction	2382
+2387	Amarr	2315
+2388	Caldari	2315
+2389	Gallente	2315
+2390	Minmatar	2315
+2391	Caldari	2309
+2392	Minmatar	2309
+2393	Refineries	1338
+2395	Moon Ores	1031
+2396	Ubiquitous Moon Ores	2395
+2397	Common Moon Ores	2395
+2398	Uncommon Moon Ores	2395
+2400	Rare Moon Ores	2395
+2401	Exceptional Moon Ores	2395
+2402	Biochemical Reaction Formulas	1849
+2403	Composite Reaction Formulas	1849
+2404	Polymer Reaction Formulas	1849
+2406	Special Black Ops	2109
+2407	Structure Burst Projectors	2161
+2408	Structure Burst Projectors	2206
+2409	Structure-based Fighters	2236
+2410	Carrier-based Fighters	2236
+2411	Standup Light Fighters	2409
+2412	Standup Heavy Fighters	2409
+2413	Standup Support Fighters	2409
+2414	Armor Reinforcers	2208
+2415	Armor Reinforcers	2163
+2416	Flag Cruisers	1368
+2417	CONCORD	2416
+2418	Flag Cruisers	2064
+2419	CONCORD	2418
+2420	Special Battleships	1960
+2421	Special Battleships	2420
+2425	Precursor Frigates	1361
+2426	Triglavian	2425
+2427	Precursor Cruisers	1367
+2428	Triglavian	2427
+2429	Precursor Battleships	1376
+2430	Triglavian	2429
+2431	Precursor Turrets	10
+2432	Entropic Disintegrators	2431
+2433	Small	2432
+2434	Medium	2432
+2435	Large	2432
+2436	Mutaplasmids	955
+2437	Armor Mutaplasmids	2436
+2438	Shield Mutaplasmids	2436
+2439	Astronautic Mutaplasmids	2436
+2440	Engineering Mutaplasmids	2436
+2441	Warp Disruption Mutaplasmids	2436
+2442	Stasis Webifier Mutaplasmids	2436
+2443	Small Armor Mutaplasmids	2437
+2444	Medium Armor Mutaplasmids	2437
+2445	Large Armor Mutaplasmids	2437
+2446	Small Shield Mutaplasmids	2438
+2447	Medium Shield Mutaplasmids	2438
+2448	Large Shield Mutaplasmids	2438
+2449	X-Large Shield Mutaplasmids	2438
+2450	Small Astronautic Mutaplasmids	2439
+2451	Medium Astronautic Mutaplasmids	2439
+2452	Large Astronautic Mutaplasmids	2439
+2453	Small Engineering Mutaplasmids	2440
+2454	Medium Engineering Mutaplasmids	2440
+2455	Large Engineering Mutaplasmids	2440
+2456	Filaments	19
+2457	Exotic Filaments	2456
+2458	Dark Filaments	2456
+2459	Firestorm Filaments	2456
+2460	Gamma Filaments	2456
+2461	Electrical Filaments	2456
+2462	Exotic Plasma Charges	11
+2463	Standard Exotic Plasma Charges	2462
+2464	Advanced Exotic Plasma Charges	2462
+2465	Small	2463
+2466	Medium	2463
+2467	Large	2463
+2468	Small	2464
+2469	Medium	2464
+2470	Large	2464
+2471	Entropic Radiation Sinks	143
+2473	Drone Implants	531
+2474	Implant Slot 06	2473
+2475	Implant Slot 07	2473
+2476	Implant Slot 08	2473
+2477	Implant Slot 09	2473
+2478	Implant Slot 10	2473
+2479	Abyssal Materials	1031
+2480	Triglavian Data	19
+2481	Precursor Battleships	1960
+2482	Triglavian	2481
+2483	Precursor Cruisers	1988
+2484	Precursor Frigates	1998
+2485	Triglavian	2483
+2486	Triglavian	2484
+2487	Cerebral Accelerators	24
+2488	Booster Slot 01	977
+2489	Booster Slot 02	977
+2490	Booster Slot 03	977
+2491	Blue Pill	2488
+2492	Exile	2488
+2493	Mindflood	2488
+2494	X-Instinct	2488
+2495	Antipharmakon	2488
+2496	Drop	2489
+2497	Frentix	2489
+2498	Sooth Sayer	2489
+2499	Antipharmakon	2489
+2500	Crash	2490
+2501	Antipharmakon	2490
+2502	Booster Slot 11	977
+2503	Hardshell	2502
+2504	Overclocker	2502
+2505	Pyrolancea	2502
+2506	Other	2488
+2508	Mass Entangler	214
+2509	Mass Entanglers	14
+2510	Navigation Structures	3626
+2511	Navigation Structures	3624
+2512	Weapon Upgrade Mutaplasmids	2436
+2513	Magnetic Field Stabilizer Mutaplasmids	2512
+2514	Heat Sink Mutaplasmids	2512
+2515	Gyrostabilizer Mutaplasmids	2512
+2516	Entropic Radiation Sink Mutaplasmids	2512
+2517	Ballistic Control System Mutaplasmids	2512
+2518	Precursor Battlecruisers	1955
+2519	Triglavian	2518
+2520	Precursor Destroyers	1989
+2521	Triglavian	2520
+2522	Precursor Destroyers	1372
+2523	Triglavian	2522
+2524	Precursor Battlecruisers	1374
+2525	Triglavian	2524
+2526	Triglavian	437
+2527	Mutadaptive Remote Armor Repairers	14
+2529	Medium	2527
+2530	Booster Slot 12	977
+2531	Booster Slot 14	977
+2532	Damage Control Mutaplasmids	2436
+2533	Damage Control Mutaplasmids	2532
+2534	Assault Damage Control Mutaplasmids	2532
+2535	Triglavian	448
+2536	Triglavian	432
+2537	Triglavian	2125
+2538	Bezdnacine	54
+2539	Rakovene	54
+2540	Talassonite	54
+2658	Triglavian	65
+2690	Triglavian	3508
+2691	Extra Large	2432
+2692	Extra Large	2463
+2693	Triglavian	1883
+2701	HyperNet Relay	1922
+2702	Special Edition Corvettes	1612
+2703	Precursor Dreadnoughts	1971
+2704	Triglavian	2703
+2706	Jump Filaments	2456
+2728	Condenser Packs	11
+2729	Standard Condenser Packs	2728
+2730	Advanced Condenser Packs	2728
+2734	Small	2729
+2735	Medium	2729
+2736	Large	2729
+2737	Small	2730
+2738	Medium	2730
+2739	Large	2730
+2740	Vorton Tuning Systems	143
+2741	Vorton Projectors	10
+2742	Small	2741
+2743	Medium	2741
+2744	Large	2741
+2747	Proving Ground Filaments	2456
+2749	Quantum Cores	2202
+2750	Capital Astronautic Mutaplasmids	2439
+2751	Capital Armor Mutaplasmids	2437
+2752	Capital Shield Mutaplasmids	2438
+2753	Capital Engineering Mutaplasmids	2440
+2754	Siege Module Mutaplasmids	2512
+2756	Triglavian Space Outbound	2456
+2757	Triglavian Space Inbound	2456
+2761	Clone Mappers	977
+2763	Mobile Cynosural Beacons	404
+2764	Mobile Cynosural Beacons	406
+2765	Advanced Protective Technology	533
+2766	Molecular-Forging Tools	533
+2767	Molecular-Forged Materials	1034
+2768	Protective Components	1035
+2769	Molecular-Forged Reaction Formulas	1849
+2770	Protective Components	800
+2771	Mobile Observatories	404
+2772	Mobile Observatories	406
+2783	Interdiction Nullifiers	132
+2790	Booster Slot 15	977
+2791	Booster Slot 16	977
+2792	Booster Slot 17	977
+2795	Gas Cloud Harvesters	1713
+2797	Analysis Beacons	406
+2798	Analysis Beacons	404
+2799	Rogue Drone Data	19
+2801	AEGIS Databases	19
+2804	Asteroid Mining Crystals	593
+2805	Moon Mining Crystals	593
+2806	Asteroid Mining Crystals	753
+2807	Moon Mining Crystals	753
+2814	Compressed Gas	1032
+2815	Compressors	9
+2816	Compressor Blueprints	209
+2819	Special Edition Electronic Attack Frigates	1612
+2820	Structure Area Denial Ammunition	11
+2821	Structure Area Denial Ammunition	211
+3450	Mobile Strategic Objectives	404
+3451	Mobile Strategic Objectives	406
+3453	Amarr Empire	1897
+3454	Minmatar Republic	1897
+3455	Caldari State	1897
+3456	Gallente Federation	1897
+3478	Masks	1407
+3480	Faction Destroyers	1372
+3481	Navy Faction	3480
+3483	Pirate Faction	2288
+3484	Navy Faction	2288
+3487	Mordunium	54
+3488	Ytirium	54
+3489	Eifyrium	54
+3490	Ducinium	54
+3495	Navy Faction	2378
+3496	Faction Destroyers	1989
+3497	Navy Faction	3496
+3508	Precursor Dreadnoughts	761
+3509	Standard Dreadnoughts	761
+3510	Advanced Dreadnoughts	761
+3511	Lancer Dreadnoughts	3510
+3512	Amarr	3511
+3513	Caldari	3511
+3514	Minmatar	3511
+3515	Gallente	3511
+3519	Advanced Dreadnoughts	1971
+3520	Lancer Dreadnoughts	3519
+3521	Gallente	3520
+3523	Minmatar	3520
+3531	Pirate Faction	3480
+3534	Pirate Faction	1703
+3535	Amarr	3520
+3536	EDENCOM	1362
+3537	EDENCOM	1369
+3538	EDENCOM	1378
+3539	EDENCOM	1961
+3540	EDENCOM	2029
+3541	EDENCOM	1999
+3542	Vorton Tuning System Mutaplasmids	2512
+3546	Caldari	3520
+3548	Special Frigates	1998
+3549	Special Frigates	3548
+3567	Pirate Faction	2100
+3568	Pirate Faction	3496
+3577	Upwell	8
+3578	Upwell	629
+3579	Upwell	208
+3580	Upwell	766
+3591	Upwell	787
+3593	Upwell	1591
+3594	Upwell	65
+3596	Colony Reagents	533
+3624	FLEX Structures	477
+3625	Mining Structures	3624
+3626	FLEX Structures	1338
+3627	Mining Structures	3626
+3628	Personalization	
+3629	Sequencing Binders	3628
+3630	Design Elements	3628
+3631	Basic Nanocoatings	3630
+3632	Metallic Nanocoatings	3630
+3633	Patterns	3630
+3636	Kylixium	54
+3637	Nocxite	54
+3638	Ueganite	54
+3639	Hezorime	54
+3640	Griemeer	54
+3641	Mordu's Legion	1897
+3642	Sansha's Nation	1897
+3643	Sisters of EVE	1897
+3651	Orbital Skyhooks	2015
+3653	Matte	3631
+3654	Satin	3631
+3655	Gloss	3631
+3656	Sequencing	150
+3667	Smartbomb Mutaplasmids	2436
+3668	Small Smartbomb Mutaplasmids	3667
+3669	Medium Smartbomb Mutaplasmids	3667
+3670	Large Smartbomb Mutaplasmids	3667
+3672	Upwell	2085
+3673	Upwell	2087
+3680	Mercenary Dens	404
+3681	Mercenary Dens	406
+3696	Infomorph Systems	533
+3697	Atavum	533
+3719	Drone Mutaplasmids	2436
+3720	Light Drone Mutaplasmids	3719
+3721	Medium Drone Mutaplasmids	3719
+3722	Heavy Drone Mutaplasmids	3719
+3723	Sentry Drone Mutaplasmids	3719
+3724	Drone Module Mutaplasmids	3719
+3725	Breacher Pods	11
+3726	Breacher Pod Launchers	10
+3732	Acceleration Gate Keys	19
+3734	Pirate Insurgency Contraband	614
+3736	Colony Resources Management	1276
+3737	Limited Rarities	19
+3738	Resource Management Upgrades	2015
+3739	Signature Detection Arrays	1276
+3740	System Effect Generator Upgrades	2015
+3741	System Effect Generator Upgrades	1276
+3742	Signature Detection Array Upgrades	2015
+3743	Tyranite	54
+3744	Triglavian	1080
+3745	Expert Systems	1922
+3746	Upwell	1972
+3754	ORE	582
+3755	ORE	464
+3756	Expedition Command Burst Charges	2297
+3757	Expedition Command Burst Charges	2290
+3759	Expedition Command Ships	1374
+3762	Sisters of EVE	3759
+3764	ORE	2125
+3765	Amarr	3481
+3766	Caldari	3481
+3767	Gallente	3481
+3768	Minmatar	3481
+3769	ORE	3481
+3770	Amarr	1366
+3771	Caldari	1366
+3772	Gallente	1366
+3773	Minmatar	1366
+3774	ORE	1366
+3776	Prismaticite	54
+3779	Mobile Phase Anchors	406
+3781	Mobile Phase Anchors	404
+3782	Erratic Ore Formulas	1849
+3784	Unrefined Minerals	1031
+3786	Harvesting Mutaplasmids	2436
+3790	Laser Miners	3786
+3792	Strip Miners	3786
+3794	Triglavian	2023
+3795	Ice Mining Lasers	3786
+3797	Ice Harvesters	3786
+3798	Gas Cloud Scoops	3786
+3799	Gas Cloud Harvesters	3786
+3800	Harvesting Drone Mutaplasmids	3719
+3801	Simple Asteroid Mining Crystals	2804
+3802	Coherent Asteroid Mining Crystals	2804
+3803	Variegated Asteroid Mining Crystals	2804
+3804	Complex Asteroid Mining Crystals	2804
+3805	Mercoxit Asteroid Mining Crystals	2804
+3806	Abyssal Asteroid Mining Crystals	2804
+3807	Phased Asteroid Mining Crystals	2804
+3808	Common Moon Mining Crystals	2805
+3809	Ubiquitous Moon Mining Crystals	2805
+3810	Uncommon Moon Mining Crystals	2805
+3811	Rare Moon Mining Crystals	2805
+3812	Exceptional Moon Mining Crystals	2805
+3813	ORE	2035
+3818	ORE	2141
+3831	Special Blueprint Crates	1661
+3832	Special Cosmetic Crates	1661
+3833	Special Trade Items	1661
+3834	Event Assets	1661
+3835	Trinkets and misc.	1661
+3836	Crimson Harvest Assets	3834
+3837	Capsuleer Day Assets	3834
+3838	Empire Days Assets	3834
+3839	Guardian's Gala Assets	3834
+3840	Interstellar Convergence Assets	3834
+3841	Winter Nexus Assets	3834
+3845	Gallente Election Assets	3834
+3846	Portrait Backgrounds	1396
+3848	Faction Materials	19
+3849	Empire Ores	54
+3851	Extra Large	2464
+3853	Command Carriers	3884
+3856	Amarr	3853
+3859	Caldari	3853
+3861	Gallente	3853
+3863	Minmatar	3853
+3864	Operation Avalon Assets	3834
+3869	Advanced Carriers	1970
+3871	Command Carriers	3869
+3873	Minmatar	3871
+3878	Amarr	3871
+3879	Caldari	3871
+3880	Hybrid Drones	157
+3881	Light Hybrid Drones	3880
+3882	Medium Hybrid Drones	3880
+3883	Heavy Hybrid Drones	3880
+3884	Advanced Carriers	817
+3885	Standard Carriers	817

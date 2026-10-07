@@ -49,6 +49,7 @@ tether-discord = { path = "crates/discord" }
 tether-net = { path = "crates/net" }
 tether-plugins = { path = "crates/plugins" }
 tether-plugin-sdk = { path = "crates/plugin-sdk" }
+tether-sde = { path = "crates/sde" }
 tether-snapshots = { path = "crates/snapshots" }
 
 anyhow = "1"

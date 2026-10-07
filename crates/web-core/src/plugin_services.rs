@@ -268,6 +268,13 @@ async fn esi_get(
         .upgrade()
         .and_then(|p| p.running(plugin))
         .ok_or(EsiError::Unavailable)?;
+    // Tether's built-in static data (`sde-*`): nobody's, no ESI call.
+    if let Some(answer) = crate::static_data::get(name, params) {
+        return answer.map(|body| EsiReply {
+            response: EsiResponse { body, pages: 1 },
+            extra_calls: 0,
+        });
+    }
     let endpoint = find_endpoint(name).ok_or_else(|| {
         EsiError::NotAllowed(format!("{name:?} isn't an endpoint plugins can call"))
     })?;

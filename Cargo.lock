@@ -3934,6 +3934,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tether-sde"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "tether-server"
 version = "0.1.0"
 dependencies = [
@@ -4092,6 +4099,7 @@ dependencies = [
  "tether-jobs",
  "tether-net",
  "tether-plugins",
+ "tether-sde",
  "tether-snapshots",
  "tether-web-core",
  "thiserror 2.0.21",
